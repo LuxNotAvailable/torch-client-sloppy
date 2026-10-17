@@ -5,7 +5,7 @@ pub(crate) mod clipboard;
 pub(crate) mod env;
 pub(crate) mod executor;
 pub(crate) mod fullscreen;
-#[cfg(any(feature = "asset_download", feature = "skins"))]
+#[cfg(any(feature = "asset_download", feature = "skins", explore_modrinth))]
 pub(crate) mod http;
 pub(crate) mod keyboard;
 #[cfg(target_os = "android")]

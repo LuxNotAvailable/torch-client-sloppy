@@ -95,12 +95,19 @@ pub fn send(msg: &ToWorker) {
     WORKER.with(|slot| {
         let slot = slot.borrow();
         let Some(handle) = slot.as_ref() else { return };
-        let buffer = to_buffer(&msg.encode());
-        if handle
-            .worker
-            .post_message_with_transfer(&buffer, &js_sys::Array::of1(&buffer))
-            .is_err()
-        {
+        let posted = super::tally::time(
+            msg.name(),
+            || {
+                let buffer = to_buffer(&msg.encode());
+                let ok = handle
+                    .worker
+                    .post_message_with_transfer(&buffer, &js_sys::Array::of1(&buffer))
+                    .is_ok();
+                (ok, buffer.byte_length() as u64)
+            },
+            |&(_, bytes)| bytes,
+        );
+        if !posted.0 {
             deactivate();
             log_error!("mesh", "the mesh worker stopped accepting messages");
         }
@@ -124,14 +131,24 @@ fn on_message(event: web_sys::MessageEvent) {
         return;
     };
     let bytes = js_sys::Uint8Array::new(buffer).to_vec();
-    let Some(msg) = FromWorker::decode(&bytes) else {
+    let Some(msg) = super::tally::time(
+        "decode",
+        || FromWorker::decode(&bytes),
+        |_| bytes.len() as u64,
+    ) else {
         log_warn!(
             "mesh",
             "the mesh worker sent a message this build cannot read"
         );
         return;
     };
-    apply(msg);
+    let (name, n) = match &msg {
+        FromWorker::Sections { chunks, edits } => ("sections", chunks.len() + edits.len()),
+        FromWorker::Light(delta) => ("light", delta.sections.len()),
+        FromWorker::Ready | FromWorker::Failed(_) => ("other", 0),
+    };
+    super::tally::time(name, || apply(msg), |_| n as u64);
+    super::tally::flush("page  ");
 }
 
 fn apply(msg: FromWorker) {
@@ -145,10 +162,9 @@ fn apply(msg: FromWorker) {
             let Some(shared) = crate::SHARED.get() else {
                 return;
             };
-            crate::diag::add(
-                crate::diag::Stat::SectionsMeshed,
-                (chunks.len() + edits.len()) as u64,
-            );
+            let count = chunks.len() + edits.len();
+            crate::diag::add(crate::diag::Stat::SectionsMeshed, count as u64);
+            super::note_received(count);
             let mut s = shared.lock().unwrap();
             let session = &mut s.session;
             supersede(
@@ -159,7 +175,6 @@ fn apply(msg: FromWorker) {
             );
             session.pending_chunks.extend(chunks);
             session.pending_edits.extend(edits);
-            super::resend_backlog();
         }
         FromWorker::Light(delta) => {
             let map = crate::client::worldsync::light_map();

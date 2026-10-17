@@ -432,11 +432,10 @@ pub fn build(app: &mut App) {
 }
 
 pub fn finish(app: &mut App) {
-    let crate_name = module_path!().split(':').next().unwrap_or("torch_client");
     let server = app.world().resource::<AssetServer>();
     let shaders = GuiShaders {
-        gui: server.load(format!("embedded://{crate_name}/gui/gui.wgsl")),
-        blit: server.load(format!("embedded://{crate_name}/gui/scene_blit.wgsl")),
+        gui: server.load(crate::renderer::embedded_path("gui/gui.wgsl")),
+        blit: server.load(crate::renderer::embedded_path("gui/scene_blit.wgsl")),
     };
     let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
         return;

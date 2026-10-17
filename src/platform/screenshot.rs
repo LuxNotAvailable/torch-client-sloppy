@@ -45,7 +45,7 @@ fn free_name(dir: &std::path::Path) -> (String, std::path::PathBuf) {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn epoch_secs() -> i64 {
+pub(crate) fn epoch_secs() -> i64 {
     crate::platform::time::SystemTime::now()
         .duration_since(crate::platform::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
@@ -53,7 +53,7 @@ fn epoch_secs() -> i64 {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn timestamp(secs: i64) -> String {
+pub(crate) fn timestamp(secs: i64) -> String {
     let days = secs.div_euclid(86_400);
     let rem = secs.rem_euclid(86_400);
     let (hour, minute, second) = (rem / 3600, (rem % 3600) / 60, rem % 60);

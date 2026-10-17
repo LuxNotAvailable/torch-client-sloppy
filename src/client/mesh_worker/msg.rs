@@ -124,22 +124,35 @@ pub enum ToWorker {
         cz: i32,
         data: Vec<u8>,
     },
-    BlockChange {
-        x: i32,
-        y: i32,
-        z: i32,
-        state: u32,
-    },
+    Blocks(Vec<(i32, i32, i32, u32)>),
     Unload {
         cx: i32,
         cz: i32,
     },
-    Backlog(u32),
+    Backlog {
+        pending: u32,
+        received: u32,
+    },
     ResetLight,
     ResetLevel,
 }
 
 impl ToWorker {
+    pub fn name(&self) -> &'static str {
+        match self {
+            ToWorker::Options { .. } => "options",
+            ToWorker::Level { .. } => "level",
+            ToWorker::BiomeTable(_) => "biomes",
+            ToWorker::Chunk { .. } => "chunk",
+            ToWorker::LightUpdate { .. } => "light update",
+            ToWorker::Blocks(_) => "blocks",
+            ToWorker::Unload { .. } => "unload",
+            ToWorker::Backlog { .. } => "backlog",
+            ToWorker::ResetLight => "reset light",
+            ToWorker::ResetLevel => "reset level",
+        }
+    }
+
     pub fn encode(&self) -> Vec<u8> {
         match self {
             ToWorker::Options { lighting, smooth } => {
@@ -184,12 +197,15 @@ impl ToWorker {
                 w.bytes(data);
                 w.finish()
             }
-            ToWorker::BlockChange { x, y, z, state } => {
+            ToWorker::Blocks(blocks) => {
                 let mut w = Writer::new(TO_BLOCK_CHANGE);
-                w.i32(*x);
-                w.i32(*y);
-                w.i32(*z);
-                w.u32(*state);
+                w.u32(blocks.len() as u32);
+                for &(x, y, z, state) in blocks {
+                    w.i32(x);
+                    w.i32(y);
+                    w.i32(z);
+                    w.u32(state);
+                }
                 w.finish()
             }
             ToWorker::Unload { cx, cz } => {
@@ -198,9 +214,10 @@ impl ToWorker {
                 w.i32(*cz);
                 w.finish()
             }
-            ToWorker::Backlog(n) => {
+            ToWorker::Backlog { pending, received } => {
                 let mut w = Writer::new(TO_BACKLOG);
-                w.u32(*n);
+                w.u32(*pending);
+                w.u32(*received);
                 w.finish()
             }
             ToWorker::ResetLight => Writer::new(TO_RESET_LIGHT).finish(),
@@ -240,17 +257,22 @@ impl ToWorker {
                 cz: r.i32()?,
                 data: r.bytes()?.to_vec(),
             },
-            TO_BLOCK_CHANGE => ToWorker::BlockChange {
-                x: r.i32()?,
-                y: r.i32()?,
-                z: r.i32()?,
-                state: r.u32()?,
-            },
+            TO_BLOCK_CHANGE => {
+                let n = r.count()?;
+                let mut blocks = Vec::with_capacity(n);
+                for _ in 0..n {
+                    blocks.push((r.i32()?, r.i32()?, r.i32()?, r.u32()?));
+                }
+                ToWorker::Blocks(blocks)
+            }
             TO_UNLOAD => ToWorker::Unload {
                 cx: r.i32()?,
                 cz: r.i32()?,
             },
-            TO_BACKLOG => ToWorker::Backlog(r.u32()?),
+            TO_BACKLOG => ToWorker::Backlog {
+                pending: r.u32()?,
+                received: r.u32()?,
+            },
             TO_RESET_LIGHT => ToWorker::ResetLight,
             TO_RESET_LEVEL => ToWorker::ResetLevel,
             _ => return None,

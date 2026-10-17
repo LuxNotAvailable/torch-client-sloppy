@@ -106,10 +106,12 @@ struct SpawnGate {
 }
 
 impl SpawnGate {
-    const NORMAL: SpawnGate = SpawnGate {
-        override_limiter: false,
-        always_show: false,
-    };
+    fn normal(kind: &P) -> SpawnGate {
+        SpawnGate {
+            override_limiter: overrides_limiter(kind),
+            always_show: false,
+        }
+    }
     const ALWAYS_SHOW: SpawnGate = SpawnGate {
         override_limiter: false,
         always_show: true,
@@ -254,6 +256,8 @@ fn spawn_particles(
     mut live: ResMut<LiveParticles>,
     mut particle_rng: ResMut<ParticleRng>,
 ) {
+    use crate::session::ParticleEmit;
+
     let emits = std::mem::take(&mut shared.0.lock().unwrap().session.particle_emits);
     if emits.is_empty() {
         return;
@@ -267,38 +271,33 @@ fn spawn_particles(
     let world_arc = particle_world();
     let world = world_arc.as_deref().map(|w| w.read());
     let world = world.as_deref();
+    let atlas = atlas.0.as_ref();
+    let rng = &mut particle_rng.0;
 
     let (mut breaks, mut packets, mut events) = (0u32, 0u32, 0u32);
     let before = live.0.len();
+    let mut explosions = Vec::new();
 
     for emit in emits {
         if live.0.len() >= MAX_LIVE_PARTICLES {
             break;
         }
         match emit {
-            crate::session::ParticleEmit::Block(spawn) => {
+            ParticleEmit::Block(spawn) => {
                 breaks += 1;
-                spawn_block_break(&spawn, status, world, &mut live.0, &mut particle_rng.0);
+                spawn_block_break(&spawn, status, world, &mut live.0, rng);
             }
-            crate::session::ParticleEmit::Level(level) => {
+            ParticleEmit::Level(level) => {
                 packets += 1;
-                let Some(atlas) = atlas.0.as_ref() else {
-                    continue;
-                };
-                spawn_level_particle(
-                    &level,
-                    atlas,
-                    world,
-                    eye,
-                    status,
-                    &mut live.0,
-                    &mut particle_rng.0,
-                );
+                if let Some(atlas) = atlas {
+                    spawn_level_particle(&level, atlas, world, eye, status, &mut live.0, rng);
+                }
             }
-            crate::session::ParticleEmit::Event(event) => {
-                let (Some(atlas), Some(world)) = (atlas.0.as_ref(), world) else {
+            ParticleEmit::Event(event) => {
+                let (Some(atlas), Some(world)) = (atlas, world) else {
                     continue;
                 };
+                events += 1;
                 let mut ctx = Emitter {
                     cell: event.pos,
                     world,
@@ -306,12 +305,44 @@ fn spawn_particles(
                     status,
                     eye,
                     live: &mut live.0,
-                    rng: &mut particle_rng.0,
+                    rng: &mut *rng,
                 };
-                events += 1;
                 crate::util::level_events::spawn(&event, &mut ctx);
             }
+            ParticleEmit::Explosion(explosion) => {
+                packets += 1;
+                let Some(atlas) = atlas else { continue };
+                let c = explosion.center;
+                add_level_particle(
+                    &mut live.0,
+                    atlas,
+                    world,
+                    rng,
+                    status,
+                    &explosion.particle,
+                    SpawnGate::normal(&explosion.particle),
+                    Vec3::new(c[0] as f32, c[1] as f32, c[2] as f32),
+                    Vec3::X,
+                    eye,
+                );
+                if !explosion.block_particles.is_empty() {
+                    explosions.push(explosion);
+                }
+            }
         }
+    }
+
+    if let (Some(atlas), Some(world)) = (atlas, world) {
+        let mut ctx = Emitter {
+            cell: [0; 3],
+            world,
+            atlas,
+            status,
+            eye,
+            live: &mut live.0,
+            rng,
+        };
+        scatter_explosions(&explosions, &mut ctx);
     }
 
     if breaks + packets + events > 0 {
@@ -321,6 +352,71 @@ fn spawn_particles(
             live.0.len()
         );
     }
+}
+
+const MAX_EXPLOSION_PARTICLES: i32 = 512;
+
+fn scatter_explosions(explosions: &[crate::session::ExplosionEmit], ctx: &mut Emitter) {
+    if ctx.status != ParticleStatus::All {
+        return;
+    }
+    let total = explosions
+        .iter()
+        .fold(0i32, |sum, e| sum.saturating_add(e.block_count.max(0)));
+    for _ in 0..total.min(MAX_EXPLOSION_PARTICLES) {
+        if let Some(explosion) = weighted_pick(explosions, |e| e.block_count, ctx.rng) {
+            scatter_one(explosion, ctx);
+        }
+    }
+}
+
+fn scatter_one(explosion: &crate::session::ExplosionEmit, ctx: &mut Emitter) {
+    let dir = Vec3::new(
+        ctx.f32() * 2.0 - 1.0,
+        ctx.f32() * 2.0 - 1.0,
+        ctx.f32() * 2.0 - 1.0,
+    )
+    .normalize_or_zero();
+    let radius = ctx.f32().cbrt() * explosion.radius;
+    let local = dir * radius;
+    let c = explosion.center;
+    let center = Vec3::new(c[0] as f32, c[1] as f32, c[2] as f32);
+    let cell = (center + local).floor();
+    if ctx
+        .block([cell.x as i32, cell.y as i32, cell.z as i32])
+        .is_some_and(|s| !s.is_air())
+    {
+        return;
+    }
+    let speed = 0.5 / (radius / explosion.radius + 0.1) * ctx.f32() * ctx.f32() + 0.3;
+    let Some(info) = weighted_pick(&explosion.block_particles, |w| w.weight, ctx.rng) else {
+        return;
+    };
+    let info = &info.value;
+    ctx.emit(
+        &info.particle,
+        center + local * info.scaling,
+        dir * (speed * info.speed),
+        false,
+    );
+}
+
+fn weighted_pick<'a, T>(
+    items: &'a [T],
+    weight: impl Fn(&T) -> i32,
+    rng: &mut JavaRandom,
+) -> Option<&'a T> {
+    let total = items
+        .iter()
+        .fold(0i32, |sum, i| sum.saturating_add(weight(i).max(0)));
+    if total <= 0 {
+        return None;
+    }
+    let mut pick = rng.next_int(total as u32) as i32;
+    items.iter().find(|i| {
+        pick -= weight(i).max(0);
+        pick < 0
+    })
 }
 
 pub(crate) fn spawn_block_break(
@@ -515,7 +611,7 @@ fn spawn_level_particle(
 ) {
     let base = Vec3::new(emit.pos[0] as f32, emit.pos[1] as f32, emit.pos[2] as f32);
     let gate = SpawnGate {
-        override_limiter: emit.override_limiter,
+        override_limiter: emit.override_limiter || overrides_limiter(&emit.particle),
         always_show: emit.always_show,
     };
     if emit.count == 0 {
@@ -589,6 +685,10 @@ fn add_level_particle(
             return;
         }
     }
+    if matches!(particle_kind, P::ExplosionEmitter) {
+        spawn_explosion_seed(live, atlas, world, rng, status, pos, eye);
+        return;
+    }
     let Some(recipe) = recipe(particle_kind, atlas, arg, rng) else {
         return;
     };
@@ -610,6 +710,80 @@ fn add_level_particle(
     particle.age = 1;
     advance_one_tick(&mut particle, world);
     live.push(particle);
+}
+
+fn overrides_limiter(kind: &P) -> bool {
+    matches!(
+        kind,
+        P::BlockMarker(_)
+            | P::DamageIndicator
+            | P::ElderGuardian
+            | P::ExplosionEmitter
+            | P::Explosion
+            | P::Gust
+            | P::GustEmitterLarge
+            | P::GustEmitterSmall
+            | P::SonicBoom
+            | P::SculkCharge(_)
+            | P::SculkChargePop
+            | P::Vibration(_)
+            | P::Poof
+            | P::Spit
+            | P::SquidInk
+            | P::SweepAttack
+            | P::CampfireCosySmoke
+            | P::CampfireSignalSmoke
+            | P::GlowSquidInk
+            | P::Glow
+            | P::WaxOn
+            | P::WaxOff
+            | P::ElectricSpark
+            | P::Scrape
+            | P::TrialSpawnerDetection
+            | P::TrialSpawnerDetectionOminous
+            | P::VaultConnection
+            | P::OminousSpawning
+    )
+}
+
+const SEED_TICKS: u32 = 8;
+
+fn spawn_explosion_seed(
+    live: &mut Vec<Particle>,
+    atlas: &Atlas,
+    world: Option<&azalea_world::World>,
+    rng: &mut JavaRandom,
+    status: ParticleStatus,
+    pos: Vec3,
+    eye: Vec3,
+) {
+    fn spread(rng: &mut JavaRandom) -> f32 {
+        ((rng.next_f64() - rng.next_f64()) * 4.0) as f32
+    }
+    for tick in 0..SEED_TICKS {
+        for _ in 0..6 {
+            if live.len() >= MAX_LIVE_PARTICLES {
+                return;
+            }
+            let offset = Vec3::new(spread(rng), spread(rng), spread(rng));
+            let len = live.len();
+            add_level_particle(
+                live,
+                atlas,
+                world,
+                rng,
+                status,
+                &P::Explosion,
+                SpawnGate::normal(&P::Explosion),
+                pos + offset,
+                Vec3::new(tick as f32 / SEED_TICKS as f32, 0.0, 0.0),
+                eye,
+            );
+            if let Some(puff) = live.get_mut(len) {
+                puff.tick_acc -= tick as f32 * TICK;
+            }
+        }
+    }
 }
 
 const ANIMATE_SAMPLES: u32 = 667;
@@ -751,7 +925,7 @@ impl Emitter<'_> {
             if always {
                 SpawnGate::ALWAYS_SHOW
             } else {
-                SpawnGate::NORMAL
+                SpawnGate::normal(kind)
             },
             pos,
             velocity,
@@ -1619,17 +1793,6 @@ fn recipe(
             r.flags = FULLBRIGHT;
             Some(r)
         }
-        P::ExplosionEmitter => {
-            let mut r = base_recipe(Sprite::Animated(atlas.sheet_index("explosion")?), rng);
-            r.velocity = Vec3::ZERO;
-            r.gravity = 0.0;
-            r.lifetime = 6 + rng.next_int(10);
-            let grey = rng.next_f32() * 0.6 + 0.4;
-            r.tint = [grey, grey, grey, 1.0];
-            r.size = 2.0;
-            r.flags = FULLBRIGHT;
-            Some(r)
-        }
 
         P::Splash | P::Rain => {
             let uv = random_frame(atlas, name, rng)?;
@@ -2230,6 +2393,9 @@ fn draw_particles(
         index.clear();
         let mut used = 0usize;
         for (i, particle) in live.0.iter().enumerate() {
+            if particle.tick_acc < 0.0 {
+                continue;
+            }
             let terrain = particle.flags & TERRAIN != 0;
             if terrain && terrain_atlas.is_none() {
                 continue;

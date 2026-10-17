@@ -1,18 +1,18 @@
-use std::f32::consts::PI;
-
 use azalea_core::direction::Direction;
 use azalea_registry::builtin::BlockEntityKind;
 use bevy::prelude::*;
 
-use crate::blockentities::models;
 use crate::blockentities::render::chest::facing_y_rot;
+use crate::blockentities::render::enchant;
 use crate::blockentities::{BeRegistry, BeSpec, BeState, GeomKey};
-use crate::entities::geom::{BakedModel, LayerDef, PartState};
+use crate::blocks::facing;
+use crate::entities::geom::{BakedModel, PartState};
 
 pub fn register(registry: &mut BeRegistry) {
     registry.add(
         BlockEntityKind::Lectern,
-        BeSpec::model("lectern_book", key, layer, texture, setup).with_transform(transform),
+        BeSpec::model("lectern_book", key, enchant::layer, enchant::texture, setup)
+            .with_transform(transform),
     );
 }
 
@@ -24,41 +24,13 @@ fn key(st: &BeState) -> Option<u64> {
     (st.state.prop("has_book") == "true").then(|| GeomKey::new().finish())
 }
 
-fn layer(_st: &BeState) -> LayerDef {
-    models::book()
-}
-
-fn texture(_st: &BeState) -> String {
-    "entity/enchantment/enchanting_table_book".to_string()
-}
-
 fn setup(model: &BakedModel, parts: &mut [PartState], _st: &BeState) {
-    let x = OPENNESS.sin();
-    parts[model.id("left_lid")].y_rot = PI + OPENNESS;
-    parts[model.id("right_lid")].y_rot = -OPENNESS;
-    for (part, y_rot) in [
-        ("left_pages", OPENNESS),
-        ("right_pages", -OPENNESS),
-        ("flip_page1", OPENNESS - OPENNESS * 2.0 * PAGE_FLIP_1),
-        ("flip_page2", OPENNESS - OPENNESS * 2.0 * PAGE_FLIP_2),
-    ] {
-        let state = &mut parts[model.id(part)];
-        state.y_rot = y_rot;
-        state.x = x;
-    }
-}
-
-fn clockwise(facing: Option<Direction>) -> Direction {
-    match facing {
-        Some(Direction::North) => Direction::East,
-        Some(Direction::East) => Direction::South,
-        Some(Direction::West) => Direction::North,
-        _ => Direction::West,
-    }
+    enchant::pose_book(model, parts, OPENNESS, PAGE_FLIP_1, PAGE_FLIP_2);
 }
 
 fn transform(st: &BeState) -> Transform {
-    let y_rot = facing_y_rot(Some(clockwise(st.state.facing)));
+    let placed = st.state.facing.unwrap_or(Direction::South);
+    let y_rot = facing_y_rot(Some(facing::clockwise(placed)));
     let rotation =
         Quat::from_rotation_y(-y_rot.to_radians()) * Quat::from_rotation_z(67.5_f32.to_radians());
     Transform {
@@ -85,8 +57,8 @@ mod tests {
     #[test]
     fn the_book_texture_is_on_disk() {
         let st = super::super::test_state("lectern", &[("facing", "north"), ("has_book", "true")]);
-        let file = crate::assets_root().join(format!("textures/{}.png", texture(&st)));
-        assert!(file.exists(), "missing {}", texture(&st));
+        let file = crate::assets_root().join(format!("textures/{}.png", enchant::texture(&st)));
+        assert!(file.exists(), "missing {}", enchant::texture(&st));
     }
 
     #[test]

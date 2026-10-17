@@ -40,6 +40,7 @@ pub(super) fn eval(
     match expr {
         Expr::Constant(v) => *v,
         Expr::Input(i) => input(*i),
+        Expr::Vector(parts) => parts.first().map_or(0.0, |first| e(first, state)),
         Expr::Custom(i) => state.values[*i],
         Expr::Unary(Unary::Negate, x) => -e(x, state),
         Expr::Unary(Unary::Not, x) => (!truth(e(x, state))) as u8 as f32,

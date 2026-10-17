@@ -4,8 +4,8 @@ use bevy::prelude::Transform;
 
 use crate::entities::TexturePath;
 use crate::entities::registry::Registry;
-use crate::entities::state::EntityState;
-use crate::entities::{CameraView, RenderSpec, RootPose, no_inner};
+use crate::entities::state::{Carried, EntityState};
+use crate::entities::{CameraView, ItemLift, RenderSpec, RootPose, no_inner};
 
 const THROWN: &[EntityKind] = &[
     EntityKind::Egg,
@@ -25,7 +25,8 @@ pub fn register(registry: &mut Registry) {
         EntityKind::Item,
         RenderSpec::item("item_entity", dropped_item, "ground", no_inner)
             .with_root(item_entity_root)
-            .as_item_cluster(dropped_count, dropped_seed),
+            .with_item_cluster(dropped_count, dropped_seed)
+            .with_item_lift(ItemLift::Hover),
     );
     registry.add_many(
         THROWN,
@@ -49,6 +50,43 @@ pub fn register(registry: &mut Registry) {
             .with_visible(frame_item_visible)
             .ignoring_invisibility(),
     );
+    registry.add_carried(
+        Carried::FixedItem,
+        RenderSpec::item("carried_fixed_item", dropped_item, "fixed", no_inner)
+            .with_root(carried_root),
+    );
+    registry.add_carried(
+        Carried::ShelfItemBottom,
+        RenderSpec::item(
+            "carried_shelf_item_bottom",
+            dropped_item,
+            "on_shelf",
+            no_inner,
+        )
+        .with_root(carried_root)
+        .with_item_lift(ItemLift::Bottom),
+    );
+    registry.add_carried(
+        Carried::ShelfItemCentered,
+        RenderSpec::item(
+            "carried_shelf_item_centered",
+            dropped_item,
+            "on_shelf",
+            no_inner,
+        )
+        .with_root(carried_root)
+        .with_item_lift(ItemLift::Center),
+    );
+    registry.add_carried(
+        Carried::GroundItemCluster,
+        RenderSpec::item("carried_item_cluster", dropped_item, "ground", no_inner)
+            .with_root(carried_root)
+            .with_item_cluster(dropped_count, dropped_seed),
+    );
+}
+
+fn carried_root(_st: &EntityState) -> RootPose {
+    RootPose::default()
 }
 
 fn item_key(item: &crate::renderer::anim::HeldItem) -> TexturePath {

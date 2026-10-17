@@ -124,30 +124,12 @@ fn ropes_texture(_st: &EntityState) -> TexturePath {
 }
 
 fn harness_texture(st: &EntityState) -> TexturePath {
-    const COLORS: [&str; 16] = [
-        "white",
-        "orange",
-        "magenta",
-        "light_blue",
-        "yellow",
-        "lime",
-        "pink",
-        "gray",
-        "light_gray",
-        "cyan",
-        "purple",
-        "blue",
-        "brown",
-        "green",
-        "red",
-        "black",
-    ];
     let asset = match &st.extras.body_armor {
         Some(id) => id.rsplit(':').next().unwrap_or("white_harness"),
         None => "white_harness",
     };
     let color = asset.strip_suffix("_harness").unwrap_or("white");
-    let color = if COLORS.contains(&color) {
+    let color = if crate::util::dye::id_by_name(color).is_some() {
         color
     } else {
         "white"

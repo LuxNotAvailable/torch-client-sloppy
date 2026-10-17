@@ -1,6 +1,7 @@
 use crate::renderer::clouds::CloudStatus;
 
 pub mod accountlist;
+pub mod advancements;
 #[cfg(feature = "asset_download")]
 pub mod assetdownload;
 pub mod atlas;
@@ -16,10 +17,13 @@ pub mod command_history;
 pub mod confirmlink;
 pub mod container;
 pub mod creative;
+pub mod credits;
 pub mod death;
 pub mod dialog;
 pub mod disconnected;
 pub mod draw;
+#[cfg(explore_modrinth)]
+pub mod explore_packs;
 pub mod focus;
 pub mod health;
 pub mod hud;
@@ -77,6 +81,7 @@ pub enum Screen {
     AssetDownload,
     Accounts,
     EditProfile,
+    Credits,
     #[cfg(feature = "online_mode")]
     AddAccount,
     #[cfg(feature = "online_mode")]
@@ -90,15 +95,19 @@ pub enum Screen {
     VideoSettings,
     Controls,
     GameSettings,
+    ManageStorage,
     #[cfg(feature = "audio")]
     AudioSettings,
     #[cfg(resource_packs)]
     ResourcePacks,
+    #[cfg(explore_modrinth)]
+    ExplorePacks,
     #[cfg(feature = "shader_support")]
     ShaderPacks,
     #[cfg(feature = "shader_support")]
     ShaderOptions,
     Dialog,
+    Advancements,
 
     Inventory,
     Creative,
@@ -144,6 +153,7 @@ impl Screen {
                 | Screen::DirectConnect
                 | Screen::Accounts
                 | Screen::EditProfile
+                | Screen::Credits
                 | Screen::Disconnected
         ) {
             return true;
@@ -163,7 +173,7 @@ impl Screen {
     }
 
     pub fn is_local_overlay(self) -> bool {
-        if self == Screen::Dialog {
+        if matches!(self, Screen::Dialog | Screen::Advancements) {
             return true;
         }
         #[cfg(feature = "hud_editor")]
@@ -193,9 +203,17 @@ impl Screen {
         if self == Screen::ResourcePacks {
             return true;
         }
+        #[cfg(explore_modrinth)]
+        if self == Screen::ExplorePacks {
+            return true;
+        }
         matches!(
             self,
-            Screen::Options | Screen::VideoSettings | Screen::Controls | Screen::GameSettings
+            Screen::Options
+                | Screen::VideoSettings
+                | Screen::Controls
+                | Screen::GameSettings
+                | Screen::ManageStorage
         )
     }
 
@@ -221,10 +239,12 @@ impl Screen {
                 | Screen::DirectConnect
                 | Screen::Accounts
                 | Screen::EditProfile
+                | Screen::Credits
                 | Screen::Disconnected
                 | Screen::Death
                 | Screen::SignedChatPrompt
                 | Screen::Dialog
+                | Screen::Advancements
         )
     }
 }
@@ -561,6 +581,7 @@ pub struct GuiState {
     pub nav: Option<Screen>,
     pub suppress_click: bool,
     pub death: death::DeathState,
+    pub advancements: advancements::AdvancementsUi,
     pub quit: bool,
     pub disconnect: bool,
     pub menu: multiplayer::MenuState,
@@ -571,10 +592,14 @@ pub struct GuiState {
     pub game_scroll_drag: Option<f32>,
     #[cfg(all(target_arch = "wasm32", feature = "asset_download"))]
     pub confirm_clear_assets: bool,
+    #[cfg(feature = "asset_download")]
+    pub storage_nothing_missing: bool,
     #[cfg(feature = "shader_support")]
     pub shaderpacks: shaderpacks::State,
     #[cfg(resource_packs)]
     pub resourcepacks: resourcepacks::State,
+    #[cfg(explore_modrinth)]
+    pub explore_packs: explore_packs::State,
     pub options_parent: Screen,
     pub disconnect_reason: Option<Vec<crate::text::Span>>,
     pub connect: Option<String>,
@@ -649,6 +674,8 @@ pub struct Snapshot {
     pub merchant: Option<std::sync::Arc<crate::session::MerchantOffers>>,
     pub merchant_future_xp: u32,
     pub stonecutter_recipes: std::sync::Arc<[crate::session::StonecutterRecipe]>,
+    pub advancements: Option<std::sync::Arc<crate::client::advancements::AdvancementTree>>,
+    pub advancement_tab: Option<u32>,
     pub active_effects: Vec<crate::play::mob_effects::MobEffectInstance>,
     pub xp_progress: f32,
     pub xp_level: u32,

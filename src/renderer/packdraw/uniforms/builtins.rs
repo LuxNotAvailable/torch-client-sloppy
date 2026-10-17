@@ -1,7 +1,7 @@
 use bevy::math::{IVec2, IVec3, Mat4, Vec3, Vec4};
 
 use super::values::FrameValues;
-use crate::shaderpack::expressions::Resolved;
+use crate::shaderpack::expressions::{MATRIX_ELEMENT, Resolved};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Value {
@@ -39,6 +39,9 @@ impl Value {
     }
 
     pub(super) fn has(self, index: Option<usize>) -> bool {
+        if let Value::Mat4(_) = self {
+            return index.is_some_and(|i| (MATRIX_ELEMENT..MATRIX_ELEMENT + 16).contains(&i));
+        }
         match (self.components(), index) {
             (None, None) => true,
             (Some(n), Some(i)) => i < n,
@@ -58,7 +61,10 @@ impl Value {
             Value::Vec4(v) => v[i],
             Value::IVec2(v) => v[i] as f32,
             Value::IVec3(v) => v[i] as f32,
-            Value::Mat4(_) => 0.0,
+            Value::Mat4(m) => {
+                let element = i - MATRIX_ELEMENT;
+                m.col(element / 4)[element % 4]
+            }
         }
     }
 }
@@ -108,6 +114,9 @@ pub(crate) enum Builtin {
     NightVision,
     DarknessFactor,
     HideGui,
+    EndFlashIntensity,
+    PreviousEndFlashIntensity,
+    EndFlashPosition,
     HeldItemId,
     HeldItemId2,
     HeldBlockLightValue,
@@ -226,6 +235,13 @@ pub(crate) const BUILTINS: &[(&str, &str, Builtin)] = &[
     ("nightVision", "float", Builtin::NightVision),
     ("darknessFactor", "float", Builtin::DarknessFactor),
     ("hideGUI", "int", Builtin::HideGui),
+    ("endFlashIntensity", "float", Builtin::EndFlashIntensity),
+    (
+        "previousEndFlashIntensity",
+        "float",
+        Builtin::PreviousEndFlashIntensity,
+    ),
+    ("endFlashPosition", "vec3", Builtin::EndFlashPosition),
     ("heldItemId", "int", Builtin::HeldItemId),
     ("heldItemId2", "int", Builtin::HeldItemId2),
     ("heldBlockLightValue", "int", Builtin::HeldBlockLightValue),
@@ -302,8 +318,10 @@ pub(super) fn builtin(name: &str, ty: &str) -> Option<Builtin> {
         .map(|(_, _, b)| *b)
 }
 
+pub(crate) const IDS_PER_BUILTIN: usize = MATRIX_ELEMENT + 17;
+
 fn input_id(index: usize, member: Option<usize>) -> u32 {
-    (index * 5 + member.map_or(0, |m| m + 1)) as u32
+    (index * IDS_PER_BUILTIN + member.map_or(0, |m| m + 1)) as u32
 }
 
 pub(crate) fn resolve_input(name: &str, member: Option<usize>) -> Option<Resolved> {
@@ -334,6 +352,12 @@ mod tests {
             resolve_input("cameraPosition", Some(1)),
             Some(Resolved::Input(_))
         ));
+        assert!(matches!(
+            resolve_input("gbufferModelViewInverse", Some(MATRIX_ELEMENT + 2 * 4 + 1)),
+            Some(Resolved::Input(_))
+        ));
+        assert!(resolve_input("gbufferModelViewInverse", None).is_none());
+        assert!(resolve_input("gbufferModelViewInverse", Some(1)).is_none());
         assert_eq!(
             resolve_input("cameraPosition", None),
             None,

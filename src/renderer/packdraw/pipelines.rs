@@ -135,6 +135,7 @@ pub(super) fn program_layout(
                             }
                             SampleKind::Uint => TextureSampleType::Uint,
                             SampleKind::Sint => TextureSampleType::Sint,
+                            SampleKind::Depth => TextureSampleType::Depth,
                         },
                         view_dimension: source.view_dimension(),
                         multisampled: false,
@@ -199,10 +200,10 @@ pub(super) fn program_layout(
                 entries.push(BindGroupLayoutEntry {
                     binding: *binding,
                     visibility: stages,
-                    ty: BindingType::Sampler(if kind == SampleKind::Float {
-                        SamplerBindingType::Filtering
-                    } else {
-                        SamplerBindingType::NonFiltering
+                    ty: BindingType::Sampler(match kind {
+                        SampleKind::Float => SamplerBindingType::Filtering,
+                        SampleKind::Depth => SamplerBindingType::Comparison,
+                        _ => SamplerBindingType::NonFiltering,
                     }),
                     count: None,
                 });

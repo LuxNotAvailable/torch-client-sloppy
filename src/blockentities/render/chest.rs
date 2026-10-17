@@ -8,6 +8,7 @@ use crate::blockentities::feed::ChestHalf;
 use crate::blockentities::models;
 use crate::blockentities::{BeRegistry, BeSpec, BeState, GeomKey};
 use crate::entities::geom::{BakedModel, LayerDef, PartState};
+use crate::entities::rotate_around;
 
 pub fn register(registry: &mut BeRegistry) {
     registry.add_many(
@@ -85,21 +86,13 @@ fn texture(st: &BeState) -> String {
 
 fn transform(st: &BeState) -> Transform {
     let rotation = Quat::from_rotation_y(-facing_y_rot(st.state.facing).to_radians());
-    let pivot = Vec3::new(0.5, 0.0, 0.5);
-    Transform {
-        translation: pivot - rotation * pivot,
-        rotation,
-        scale: Vec3::ONE,
-    }
+    rotate_around(rotation, Vec3::new(0.5, 0.0, 0.5))
 }
 
 pub fn facing_y_rot(facing: Option<Direction>) -> f32 {
-    match facing {
-        Some(Direction::West) => 90.0,
-        Some(Direction::North) => 180.0,
-        Some(Direction::East) => 270.0,
-        _ => 0.0,
-    }
+    facing.map_or(0.0, |facing| {
+        crate::direction::Direction::from(facing).to_y_rot()
+    })
 }
 
 fn setup(model: &BakedModel, parts: &mut [PartState], st: &BeState) {

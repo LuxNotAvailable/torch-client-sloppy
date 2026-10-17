@@ -176,6 +176,10 @@ pub struct SessionState {
     pub book_open: Option<InteractionHand>,
     pub book_edit_open: Option<BookEditRequest>,
     pub edit_book: Option<EditBookRequest>,
+    pub advancements: std::sync::Arc<crate::client::advancements::AdvancementTree>,
+    pub advancement_ids: std::collections::HashMap<azalea_registry::identifier::Identifier, u32>,
+    pub advancement_tab: Option<u32>,
+    pub seen_advancements: Vec<Option<azalea_registry::identifier::Identifier>>,
     pub dialog_show: Option<std::sync::Arc<crate::play::dialog::Dialog>>,
     pub dialog_clear: bool,
     pub dialog_submits: Vec<crate::play::dialog::Submit>,
@@ -437,6 +441,22 @@ pub enum ParticleEmit {
     Block(ParticleSpawn),
     Level(LevelParticle),
     Event(LevelEventEmit),
+    Explosion(ExplosionEmit),
+}
+
+pub const MAX_EXPLOSION_BLOCK_PARTICLES: usize = 16;
+
+#[derive(Clone)]
+pub struct ExplosionEmit {
+    pub center: [f64; 3],
+    pub radius: f32,
+    pub block_count: i32,
+    pub particle: azalea::entity::particle::Particle,
+    pub block_particles: Vec<
+        azalea_protocol::packets::game::c_explode::Weighted<
+            azalea_protocol::packets::game::c_explode::ExplosionParticleInfo,
+        >,
+    >,
 }
 
 #[derive(Clone, Copy)]
@@ -636,6 +656,7 @@ pub const CONTAINER_DATA_LEN: usize = 10;
 
 #[derive(Clone, Default)]
 pub struct MerchantOffers {
+    pub container_id: i32,
     pub offers: Vec<MerchantOffer>,
     pub level: u32,
     pub xp: u32,
@@ -644,6 +665,13 @@ pub struct MerchantOffers {
 }
 
 impl MerchantOffers {
+    pub fn for_window(
+        offers: &Option<std::sync::Arc<MerchantOffers>>,
+        container_id: i32,
+    ) -> Option<&std::sync::Arc<MerchantOffers>> {
+        offers.as_ref().filter(|o| o.container_id == container_id)
+    }
+
     pub fn future_xp(&self, buy_a: &SlotStack, buy_b: &SlotStack, hint: i32) -> u32 {
         self.active_offer(buy_a, buy_b, hint)
             .map_or(0, |i| self.offers[i].xp)
@@ -669,6 +697,75 @@ impl MerchantOffers {
         offer.uses = offer.uses.saturating_add(1);
         offer.out_of_stock = offer.uses >= offer.max_uses;
         self.xp = self.xp.saturating_add(offer.xp);
+    }
+
+    pub fn quick_move_trades(&mut self, slots: &[SlotStack], hint: i32) -> u32 {
+        let Some([buy_a, buy_b, result]) = slots.get(..3) else {
+            return 0;
+        };
+        let (mut buy_a, mut buy_b, mut result) = (buy_a.clone(), buy_b.clone(), result.clone());
+        let mut inventory: Vec<SlotStack> = slots.get(3..39).map_or_else(Vec::new, <[_]>::to_vec);
+        let max_stack =
+            |s: &SlotStack| crate::generated_items::item(s.item).map_or(64, |d| d.max_stack.max(1));
+        let mut trades = 0;
+        for _ in 0..256 {
+            if result.is_empty() {
+                break;
+            }
+            let before = result.count;
+            let max = max_stack(&result);
+            for slot in inventory.iter_mut().rev() {
+                if result.count == 0 {
+                    break;
+                }
+                if slot.item == result.item && slot.potion == result.potion && slot.count < max {
+                    let moved = (max - slot.count).min(result.count);
+                    slot.count += moved;
+                    result.count -= moved;
+                }
+            }
+            if result.count > 0
+                && let Some(slot) = inventory.iter_mut().rev().find(|s| s.is_empty())
+            {
+                let moved = result.count.min(max);
+                *slot = SlotStack {
+                    count: moved,
+                    ..result.clone()
+                };
+                result.count -= moved;
+            }
+            if result.count == before {
+                break;
+            }
+            let Some(i) = self.active_offer(&buy_a, &buy_b, hint) else {
+                break;
+            };
+            let offer = &self.offers[i];
+            let (cost_a, cost_b) = (offer.cost_a.count, offer.cost_b.count);
+            if offer.satisfied_by(&buy_a, &buy_b) {
+                buy_a.count -= cost_a;
+                buy_b.count = buy_b.count.saturating_sub(cost_b);
+            } else if offer.satisfied_by(&buy_b, &buy_a) {
+                buy_b.count -= cost_a;
+                buy_a.count = buy_a.count.saturating_sub(cost_b);
+            } else {
+                break;
+            }
+            for slot in [&mut buy_a, &mut buy_b] {
+                if slot.count == 0 {
+                    *slot = SlotStack::default();
+                }
+            }
+            self.notify_trade(i);
+            trades += 1;
+            if result.count > 0 {
+                break;
+            }
+            result = self
+                .active_offer(&buy_a, &buy_b, hint)
+                .map_or_else(SlotStack::default, |i| self.offers[i].result.clone());
+        }
+        trades
     }
 
     fn recipe_for(&self, buy_a: &SlotStack, buy_b: &SlotStack, hint: i32) -> Option<usize> {
@@ -940,8 +1037,14 @@ pub fn queue_toasts(
     shared: &std::sync::Arc<SharedMutex>,
     events: impl IntoIterator<Item = crate::gui::toast::ToastEvent>,
 ) {
-    let mut s = shared.lock().unwrap();
-    let queue = &mut s.session.toast_incoming;
+    push_toasts(&mut shared.lock().unwrap().session, events);
+}
+
+pub fn push_toasts(
+    session: &mut SessionState,
+    events: impl IntoIterator<Item = crate::gui::toast::ToastEvent>,
+) {
+    let queue = &mut session.toast_incoming;
     for event in events {
         if queue.len() >= TOAST_QUEUE_MAX {
             break;
@@ -1040,6 +1143,42 @@ mod merchant_tests {
             offers: list,
             ..MerchantOffers::default()
         }
+    }
+
+    fn redstone_trade(emeralds: u8) -> (MerchantOffers, Vec<SlotStack>) {
+        let mut o = offer(cost("emerald", 1), SlotStack::default(), 1);
+        o.result = cost("redstone", 2);
+        o.max_uses = 12;
+        let mut slots = vec![SlotStack::default(); 39];
+        slots[0] = cost("emerald", emeralds);
+        slots[2] = cost("redstone", 2);
+        (offers(vec![o]), slots)
+    }
+
+    #[test]
+    fn shift_click_trades_until_the_stock_runs_out() {
+        let (mut list, slots) = redstone_trade(40);
+        assert_eq!(list.quick_move_trades(&slots, -1), 12);
+        assert_eq!(list.offers[0].uses, 12);
+        assert!(list.offers[0].out_of_stock);
+        assert_eq!(list.xp, 12);
+    }
+
+    #[test]
+    fn shift_click_trades_until_the_payment_runs_out() {
+        let (mut list, slots) = redstone_trade(5);
+        assert_eq!(list.quick_move_trades(&slots, -1), 5);
+        assert!(!list.offers[0].out_of_stock);
+    }
+
+    #[test]
+    fn shift_click_into_a_full_inventory_trades_nothing() {
+        let (mut list, mut slots) = redstone_trade(40);
+        for slot in &mut slots[3..39] {
+            *slot = cost("dirt", 64);
+        }
+        assert_eq!(list.quick_move_trades(&slots, -1), 0);
+        assert_eq!(list.offers[0].uses, 0);
     }
 
     #[test]

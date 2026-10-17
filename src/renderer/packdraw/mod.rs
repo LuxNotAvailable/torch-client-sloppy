@@ -6,6 +6,7 @@ macro_rules! gpu_label {
 
 mod compile;
 mod depthcopy;
+mod endflash;
 mod entities;
 mod formats;
 mod frame;

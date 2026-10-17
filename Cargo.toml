@@ -33,6 +33,8 @@ shader_support = ["dep:flate2", "dep:naga", "dep:wgpu"]
 
 resourcepacks = ["dep:flate2"]
 
+explore_modrinth = ["resourcepacks", "dep:reqwest", "dep:rustls", "dep:sha1", "image/webp"]
+
 webgpu = ["bevy/webgpu"]
 
 online_mode = [
@@ -118,6 +120,7 @@ bevy = { version = "0.18", default-features = false, features = [
 ] }
 serde_json = "1"
 image = { version = "0.25", default-features = false, features = ["png"] }
+sha1 = { version = "0.11", optional = true }
 base64 = "0.22"
 
 azalea-auth = { path = "vendor/azalea/azalea-auth", default-features = false, optional = true }

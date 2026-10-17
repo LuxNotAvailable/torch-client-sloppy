@@ -117,6 +117,57 @@ pub(super) fn preamble(
         );
     }
 
+    if used.modf {
+        for ty in ["float", "vec2", "vec3", "vec4"] {
+            out.push_str(&format!(
+                "{ty} iris_modf({ty} x, out {ty} whole) {{ whole = trunc(x); return x - whole; }}\n"
+            ));
+        }
+    }
+    for (wanted, name, test) in [
+        (
+            used.isnan,
+            "iris_isnan",
+            "(floatBitsToUint(x) & 0x7fffffffu) > 0x7f800000u",
+        ),
+        (
+            used.isinf,
+            "iris_isinf",
+            "(floatBitsToUint(x) & 0x7fffffffu) == 0x7f800000u",
+        ),
+    ] {
+        if wanted {
+            out.push_str(&format!("bool {name}(float x) {{ return {test}; }}\n"));
+            for (ty, bvec, n) in [
+                ("vec2", "bvec2", 2),
+                ("vec3", "bvec3", 3),
+                ("vec4", "bvec4", 4),
+            ] {
+                let parts: Vec<String> = ["x", "y", "z", "w"][..n]
+                    .iter()
+                    .map(|c| format!("{name}(v.{c})"))
+                    .collect();
+                out.push_str(&format!(
+                    "{bvec} {name}({ty} v) {{ return {bvec}({}); }}\n",
+                    parts.join(", ")
+                ));
+            }
+        }
+    }
+
+    if used.fog {
+        out.push_str(
+            "struct iris_FogParameters { vec4 color; float density; float start; float end; float scale; };\n\
+             iris_FogParameters iris_gl_Fog() {\n    \
+             return iris_FogParameters(iris_FogColor, iris_FogParams.z, iris_FogParams.x, iris_FogParams.y, \
+             1.0 / (iris_FogParams.y - iris_FogParams.x));\n\
+             }\n",
+        );
+    }
+    if used.front_color {
+        out.push_str("vec4 iris_FrontColor;\n");
+    }
+
     if stage == Stage::Vertex {
         out.push_str(target.vertex_prelude);
         out.push('\n');

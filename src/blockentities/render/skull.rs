@@ -67,11 +67,11 @@ fn texture(st: &BeState) -> String {
 fn setup(model: &BakedModel, parts: &mut [PartState], st: &BeState) {
     match skull_type(&st.state.block) {
         "dragon" => {
-            let t = st.anim * PI * 0.2;
+            let t = animation(st) * PI * 0.2;
             parts[model.id("jaw")].x_rot = (t.sin() + 1.0) * 0.2;
         }
         "piglin" => {
-            let t = st.anim * PI * 0.2;
+            let t = animation(st) * PI * 0.2;
             parts[model.id("left_ear")].z_rot = -((t * 1.2).cos() + 2.5) * 0.2;
             parts[model.id("right_ear")].z_rot = (t.cos() + 2.5) * 0.2;
         }
@@ -79,45 +79,30 @@ fn setup(model: &BakedModel, parts: &mut [PartState], st: &BeState) {
     }
 }
 
-fn segment_degrees(segment: u32) -> f32 {
-    segment as f32 * (360.0 / 16.0)
-}
-
-fn facing_step(facing: Option<Direction>) -> (f32, f32) {
-    match facing {
-        Some(Direction::North) => (0.0, -1.0),
-        Some(Direction::West) => (-1.0, 0.0),
-        Some(Direction::East) => (1.0, 0.0),
-        _ => (0.0, 1.0),
-    }
-}
-
-fn opposite(facing: Option<Direction>) -> Direction {
-    match facing {
-        Some(Direction::North) => Direction::South,
-        Some(Direction::West) => Direction::East,
-        Some(Direction::East) => Direction::West,
-        _ => Direction::North,
+fn animation(st: &BeState) -> f32 {
+    match &st.anim {
+        crate::blockentities::sim::Anim::Skull(skull) => skull.at(st.partial),
+        _ => 0.0,
     }
 }
 
 fn wall_transform(st: &BeState) -> Transform {
-    let facing = st.state.facing;
-    let (step_x, step_z) = facing_step(facing);
-    let rotation =
-        Quat::from_rotation_y(-super::chest::facing_y_rot(Some(opposite(facing))).to_radians());
+    let facing = crate::direction::Direction::from(st.state.facing.unwrap_or(Direction::South));
     Transform {
-        translation: Vec3::new(0.5 - step_x * 0.25, 0.25, 0.5 - step_z * 0.25),
-        rotation,
+        translation: Vec3::new(
+            0.5 - facing.step_x() * 0.25,
+            0.25,
+            0.5 - facing.step_z() * 0.25,
+        ),
+        rotation: Quat::from_rotation_y(-facing.opposite().to_y_rot().to_radians()),
         scale: Vec3::new(-1.0, -1.0, 1.0),
     }
 }
 
 fn ground_transform(st: &BeState) -> Transform {
-    let segment: u32 = st.state.rotation;
     Transform {
         translation: Vec3::new(0.5, 0.0, 0.5),
-        rotation: Quat::from_rotation_y(-segment_degrees(segment).to_radians()),
+        rotation: Quat::from_rotation_y(-st.state.rotation_degrees().to_radians()),
         scale: Vec3::new(-1.0, -1.0, 1.0),
     }
 }
@@ -183,7 +168,11 @@ mod tests {
         setup(&model, &mut parts, &st);
         assert!((parts[model.id("jaw")].x_rot - 0.2).abs() < 1e-6);
 
-        st.anim = 2.5;
+        st.anim = crate::blockentities::sim::Anim::Skull(crate::blockentities::sim::Skull {
+            tick: 2,
+            animating: true,
+        });
+        st.partial = 0.5;
         setup(&model, &mut parts, &st);
         assert!((parts[model.id("jaw")].x_rot - 0.2).abs() > 1e-6);
     }

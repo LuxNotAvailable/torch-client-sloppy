@@ -344,6 +344,9 @@ fn constructor(name: &str) -> bool {
 fn unfoldable(tokens: &[Token], from: usize, to: usize, demoted: &[String]) -> bool {
     (from..to).any(|at| {
         let token = &tokens[at];
+        if token.is_punct('?') {
+            return true;
+        }
         if token.kind != Kind::Word {
             return false;
         }
@@ -353,12 +356,84 @@ fn unfoldable(tokens: &[Token], from: usize, to: usize, demoted: &[String]) -> b
     })
 }
 
+fn demote_macros(macros: &[(String, Vec<String>)], demoted: &mut Vec<String>) {
+    loop {
+        let before = demoted.len();
+        for (name, words) in macros {
+            if !demoted.contains(name) && words.iter().any(|w| demoted.contains(w)) {
+                demoted.push(name.clone());
+            }
+        }
+        if demoted.len() == before {
+            return;
+        }
+    }
+}
+
+fn demote_local_constants(tokens: &mut [Token], demoted: &mut Vec<String>) {
+    if demoted.is_empty() {
+        return;
+    }
+    let depths = lexer::brace_depths(tokens);
+    for at in 0..tokens.len() {
+        if !tokens[at].is_word("const") || depths[at] == 0 {
+            continue;
+        }
+        let Some(end) = (at..tokens.len()).find(|i| tokens[*i].is_punct(';')) else {
+            continue;
+        };
+        let Some(equals) = at_depth_zero(tokens, at, end, |t| t.is_punct('='))
+            .first()
+            .copied()
+        else {
+            continue;
+        };
+        if (equals..end).any(|i| tokens[i].kind == Kind::Word && demoted.contains(&tokens[i].text))
+        {
+            tokens[at].text.clear();
+            if let Some(name) = declarator_name(tokens, at + 1, equals) {
+                demoted.push(tokens[name].text.clone());
+            }
+        }
+    }
+}
+
+fn define_name(text: &str) -> Option<String> {
+    let rest = text
+        .trim_start()
+        .strip_prefix('#')?
+        .trim_start()
+        .strip_prefix("define")?;
+    let rest = rest.strip_prefix(char::is_whitespace)?.trim_start();
+    let end = rest
+        .find(|c: char| !(c == '_' || c.is_ascii_alphanumeric()))
+        .unwrap_or(rest.len());
+    (end > 0).then(|| rest[..end].to_owned())
+}
+
 pub(crate) fn hoist_initializers(tokens: &mut Vec<Token>) {
     let mut hoisted = String::new();
     let mut cuts: Vec<(usize, usize)> = Vec::new();
     let mut demoted: Vec<String> = Vec::new();
 
+    let mut scanned = 0;
+    let mut macros: Vec<(String, Vec<String>)> = Vec::new();
     for (start, end) in statements(tokens) {
+        for at in scanned..start {
+            if let (Some(body), Some(name)) = (
+                lexer::define_body(&tokens[at]),
+                define_name(&tokens[at].text),
+            ) {
+                let words = body
+                    .into_iter()
+                    .filter(|t| t.kind == Kind::Word)
+                    .map(|t| t.text)
+                    .collect();
+                macros.push((name, words));
+            }
+        }
+        demote_macros(&macros, &mut demoted);
+        scanned = scanned.max(start);
         let solid: Vec<usize> = (start..end).filter(|at| !tokens[*at].is_trivia()).collect();
         if solid.is_empty()
             || solid
@@ -378,7 +453,11 @@ pub(crate) fn hoist_initializers(tokens: &mut Vec<Token>) {
             continue;
         }
         if let Some(&qualifier) = solid[..].iter().find(|at| tokens[**at].is_word("const")) {
-            if !unfoldable(tokens, equals + 1, end, &demoted) {
+            let matrix_product = solid
+                .iter()
+                .any(|at| *at < equals && tokens[*at].text.starts_with("mat"))
+                && (equals + 1..end).any(|at| tokens[at].is_punct('*'));
+            if !matrix_product && !unfoldable(tokens, equals + 1, end, &demoted) {
                 continue;
             }
             demoted.push(tokens[name].text.clone());
@@ -395,6 +474,22 @@ pub(crate) fn hoist_initializers(tokens: &mut Vec<Token>) {
             .unwrap_or(name);
         cuts.push((kept + 1, end));
     }
+    for at in scanned..tokens.len() {
+        if let (Some(body), Some(name)) = (
+            lexer::define_body(&tokens[at]),
+            define_name(&tokens[at].text),
+        ) {
+            macros.push((
+                name,
+                body.into_iter()
+                    .filter(|t| t.kind == Kind::Word)
+                    .map(|t| t.text)
+                    .collect(),
+            ));
+        }
+    }
+    demote_macros(&macros, &mut demoted);
+    demote_local_constants(tokens, &mut demoted);
     if cuts.is_empty() {
         return;
     }

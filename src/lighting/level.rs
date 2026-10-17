@@ -562,6 +562,8 @@ pub struct LightWorker {
     map: Arc<RwLock<LightMap>>,
     level: Option<LevelLight>,
     view: Option<std::cell::RefCell<WorldView>>,
+    stats: bool,
+    changed: Option<Vec<SectionPos>>,
 }
 
 impl LightWorker {
@@ -570,7 +572,29 @@ impl LightWorker {
             map,
             level: None,
             view: None,
+            stats: true,
+            changed: None,
         }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn without_stats(mut self) -> Self {
+        self.stats = false;
+        self
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn tracking_changes(mut self) -> Self {
+        self.changed = Some(Vec::new());
+        self
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn take_changed(&mut self) -> Vec<SectionPos> {
+        self.changed
+            .as_mut()
+            .map(std::mem::take)
+            .unwrap_or_default()
     }
 
     pub fn try_take(rx: &Receiver<LightJob>, max: usize) -> Option<Vec<LightJob>> {
@@ -586,7 +610,13 @@ impl LightWorker {
     where
         F: FnMut(&[SectionPos], &[(Arc<RwLock<World>>, ColumnPos)]),
     {
-        let (level, view, map) = (&mut self.level, &mut self.view, &self.map);
+        let stats = self.stats;
+        let (level, view, map, changed) = (
+            &mut self.level,
+            &mut self.view,
+            &self.map,
+            &mut self.changed,
+        );
         if let Some(v) = view.as_ref() {
             v.borrow_mut().clear();
         }
@@ -602,6 +632,9 @@ impl LightWorker {
                     *map.write() = LightMap::default();
                     columns_added.clear();
                     to_mesh.clear();
+                    if let Some(changed) = changed.as_mut() {
+                        changed.clear();
+                    }
                     continue;
                 }
                 LightJob::Unload { col } => {
@@ -651,7 +684,7 @@ impl LightWorker {
             }
         }
 
-        if level.is_none() || view.is_none() {
+        if stats && (level.is_none() || view.is_none()) {
             use std::sync::atomic::Ordering::Relaxed;
             let (bytes, sections) = level.as_ref().map(LevelLight::bytes).unwrap_or((0, 0));
             ENGINE_BYTES.store(bytes, Relaxed);
@@ -668,9 +701,9 @@ impl LightWorker {
         }
         let dirty = {
             crate::prof_span!("light:publish");
-            publish(lv, map, &columns_added, &columns_removed)
+            publish(lv, map, &columns_added, &columns_removed, changed.as_mut())
         };
-        {
+        if stats {
             use std::sync::atomic::Ordering::Relaxed;
             let (bytes, sections) = lv.bytes();
             ENGINE_BYTES.store(bytes, Relaxed);
@@ -752,6 +785,7 @@ fn publish(
     map: &Arc<RwLock<LightMap>>,
     columns_added: &[ColumnPos],
     columns_removed: &[ColumnPos],
+    mut changed: Option<&mut Vec<SectionPos>>,
 ) -> Vec<SectionPos> {
     let mut affected = level.block.storage.take_affected();
     affected.extend(level.sky.storage.take_affected());
@@ -761,6 +795,20 @@ fn publish(
     for sec in &affected {
         let block = level.block.storage.data_layer(*sec).cloned();
         let sky = level.sky.storage.data_layer(*sec).cloned();
+        if let Some(changed) = changed.as_mut() {
+            let empty = DataLayer::empty();
+            let same = match guard.sections.get(sec) {
+                None => block.is_none() && sky.is_none(),
+                Some(old) => {
+                    (block.is_some() || sky.is_some())
+                        && old.block == *block.as_ref().unwrap_or(&empty)
+                        && old.sky == *sky.as_ref().unwrap_or(&empty)
+                }
+            };
+            if !same {
+                changed.push(*sec);
+            }
+        }
         if block.is_none() && sky.is_none() {
             guard.sections.remove(sec);
         } else {

@@ -1,6 +1,7 @@
 pub(crate) mod biome_color;
 pub(crate) mod block_model;
 pub(crate) mod datapack;
+pub(crate) mod dye;
 pub(crate) mod interp;
 pub(crate) mod javarandom;
 pub(crate) mod level_events;

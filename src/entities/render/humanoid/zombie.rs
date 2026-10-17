@@ -5,7 +5,7 @@ use crate::entities::TexturePath;
 use crate::entities::models::humanoid::zombie;
 use crate::entities::registry::Registry;
 use crate::entities::state::EntityState;
-use crate::entities::{RenderSpec, RootPose, setup_rotations};
+use crate::entities::{RenderSpec, RootPose, rotate_around, setup_rotations};
 
 use super::armor;
 
@@ -188,10 +188,12 @@ fn drowned_root(st: &EntityState) -> RootPose {
     let swim = st.extras.swim_amount;
     if swim > 0.0 {
         let degrees = swim * (-10.0 - st.x_rot);
-        let rotation = Quat::from_rotation_x(degrees.to_radians());
-        let pivot = Vec3::new(0.0, st.bounding_box_height / 2.0 / st.scale, 0.0);
-        pose.extra_offset += pivot - rotation * pivot;
-        pose.extra_rotation *= rotation;
+        let about = rotate_around(
+            Quat::from_rotation_x(degrees.to_radians()),
+            Vec3::new(0.0, st.bounding_box_height / 2.0 / st.scale, 0.0),
+        );
+        pose.extra_offset += about.translation;
+        pose.extra_rotation *= about.rotation;
     }
     pose
 }

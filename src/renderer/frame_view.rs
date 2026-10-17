@@ -33,6 +33,11 @@ pub struct FrameView {
     pub crosshair_entity: Option<i32>,
     pub main_hand_left: bool,
     pub entities: Arc<Vec<EntityAnim>>,
+    pub block_entities:
+        Arc<std::collections::HashMap<[i32; 3], crate::blockentities::feed::BlockEntityInfo>>,
+    pub block_entities_version: u64,
+    pub game_time: u64,
+    pub op_level: u8,
     pub local: AnimSample,
     pub breaking: Option<BreakingBlock>,
     pub targeted_block: Option<TargetedBlock>,
@@ -70,6 +75,8 @@ impl FrameView {
         self.crosshair_entity = session.crosshair_entity;
         self.main_hand_left = s.skin_prefs.main_hand_left;
         self.entities = session.entities.clone();
+        self.game_time = session.game_time;
+        self.op_level = session.op_level;
         #[cfg(feature = "skins")]
         {
             self.local_skin = session.local_skin.clone();
@@ -79,6 +86,10 @@ impl FrameView {
             self.esp = session.esp.clone();
         }
         if in_game {
+            if self.block_entities_version != session.block_entities_version {
+                self.block_entities_version = session.block_entities_version;
+                self.block_entities = session.block_entities.clone();
+            }
             self.local = session.local_anim.sample(partial);
             if self.breaking != session.breaking {
                 self.breaking = session.breaking.clone();

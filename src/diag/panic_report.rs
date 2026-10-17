@@ -37,8 +37,28 @@ pub(crate) fn install_panic_hook() {
             let mut err = std::io::stderr().lock();
             let _ = err.write_all(report.as_bytes());
             let _ = err.flush();
+            write_crash_log(&report);
         }
     }));
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn write_crash_log(report: &str) {
+    use std::io::Write as _;
+    let dir = crate::platform::storage::dir().join("logs");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let stamp = crate::platform::screenshot::timestamp(crate::platform::screenshot::epoch_secs())
+        .replace(['_', '.'], "-");
+    let path = dir.join(format!("{stamp}-crash-log.txt"));
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = file.write_all(report.as_bytes());
+    }
 }
 
 #[cfg(target_arch = "wasm32")]

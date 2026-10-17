@@ -149,8 +149,7 @@ pub struct TerrainShaders {
 }
 
 fn embedded_shader(assets: &AssetServer, file: &str) -> Handle<Shader> {
-    let crate_name = module_path!().split(':').next().unwrap_or("torch_client");
-    assets.load(format!("embedded://{crate_name}/renderer/{file}"))
+    assets.load(super::embedded_path(&format!("renderer/{file}")))
 }
 
 #[derive(Resource, Clone, Copy, Debug)]
@@ -228,7 +227,8 @@ fn decide_tier(world: &World) -> TerrainTier {
         && features.contains(bevy::render::render_resource::WgpuFeatures::INDIRECT_FIRST_INSTANCE);
     let count_ok =
         features.contains(bevy::render::render_resource::WgpuFeatures::MULTI_DRAW_INDIRECT_COUNT);
-    let indirect = indirect && (count_ok || !cfg!(target_os = "android"));
+    let indirect =
+        indirect && (count_ok || !(cfg!(target_os = "android") || cfg!(target_arch = "wasm32")));
     let count = indirect && count_ok;
     let base_vertex = world
         .resource::<bevy::render::renderer::RenderAdapter>()

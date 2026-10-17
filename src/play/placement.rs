@@ -119,7 +119,7 @@ pub fn predict(
         &block_at,
     )?;
 
-    if state.is_collision_shape_empty() && attachment == Attachment::None {
+    if BlockState::from(block).is_collision_shape_empty() && attachment == Attachment::None {
         return None;
     }
     if accepts(block, "half", "upper") || accepts(block, "part", "head") {
@@ -732,7 +732,7 @@ fn exceptional_facing(
     if id.ends_with("shulker_box")
         || id.ends_with("lightning_rod")
         || id.ends_with("amethyst_bud")
-        || id == "amethyst_cluster"
+        || id.ends_with("amethyst_cluster")
     {
         return Some(hit.direction);
     }

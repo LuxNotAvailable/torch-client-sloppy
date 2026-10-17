@@ -170,4 +170,39 @@ mod tests {
             assert!((back - want).length() < 1e-5, "{dir:?}: {back:?}");
         }
     }
+    #[test]
+    fn the_map_quad_lies_flat_against_the_frame() {
+        for dir in Direction::ALL {
+            let st = state(dir);
+            let root = frame_map_root(&st);
+            let composed = Transform {
+                translation: root.world_offset,
+                rotation: root.rotation,
+                scale: Vec3::splat(root.scale),
+            }
+            .mul_transform(Transform {
+                translation: root.extra_offset,
+                rotation: root.extra_rotation,
+                scale: Vec3::ONE,
+            })
+            .mul_transform(root.hook);
+            let mesh = map_mesh(&st);
+            let pos = mesh
+                .attribute(Mesh::ATTRIBUTE_POSITION)
+                .unwrap()
+                .as_float3()
+                .unwrap();
+            let normal = Vec3::from(dir.normal());
+            for p in pos {
+                let w = composed.transform_point(Vec3::from(*p));
+                let along = w.dot(normal);
+                let across = w - normal * along;
+                assert!((along - 0.039).abs() < 0.01, "{dir:?}: {w:?} along={along}");
+                assert!(
+                    (across.length() - 0.5_f32.hypot(0.5)).abs() < 1e-3,
+                    "{dir:?}: {w:?}"
+                );
+            }
+        }
+    }
 }

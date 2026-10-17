@@ -19,6 +19,7 @@ pub(crate) enum SampleKind {
     UnfilterableFloat,
     Uint,
     Sint,
+    Depth,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

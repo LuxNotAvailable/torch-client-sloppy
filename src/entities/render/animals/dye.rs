@@ -1,9 +1,5 @@
 use crate::entities::state::EntityState;
-
-pub const TEXTURE_DIFFUSE: [u32; 16] = [
-    16383998, 16351261, 13061821, 3847130, 16701501, 8439583, 15961002, 4673362, 10329495, 1481884,
-    8991416, 3949738, 8606770, 6192150, 11546150, 1908001,
-];
+use crate::util::dye::{self, DYES};
 
 pub fn tint(rgb: u32) -> [f32; 4] {
     [
@@ -15,14 +11,14 @@ pub fn tint(rgb: u32) -> [f32; 4] {
 }
 
 pub fn dye_tint(ordinal: u8) -> [f32; 4] {
-    tint(TEXTURE_DIFFUSE[(ordinal as usize) % 16])
+    tint(dye::by_id(ordinal.into()).texture_diffuse)
 }
 
 fn sheep_color(ordinal: usize) -> u32 {
     if ordinal == 0 {
         return 0xE6_E6_E6;
     }
-    let src = TEXTURE_DIFFUSE[ordinal % 16];
+    let src = DYES[ordinal % 16].texture_diffuse;
     let scale = |c: u32| ((c as f32 * 0.75).floor() as u32).min(255);
     (scale((src >> 16) & 0xFF) << 16) | (scale((src >> 8) & 0xFF) << 8) | scale(src & 0xFF)
 }

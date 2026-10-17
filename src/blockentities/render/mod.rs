@@ -1,19 +1,52 @@
 pub mod banner;
+pub mod beam;
 pub mod bed;
+pub mod bell;
+pub mod bounds;
+pub mod brushable;
+pub mod campfire;
 pub mod chest;
+pub mod conduit;
+pub mod enchant;
+pub mod end_portal;
+pub mod golem_statue;
 pub mod lectern;
+pub mod piston;
+pub mod pot;
+pub mod shelf;
+pub mod shulker;
 pub mod sign;
 pub mod skull;
+pub mod spawner;
+pub mod vault;
 
 use super::BeRegistry;
 
 pub fn register_all(registry: &mut BeRegistry) {
     banner::register(registry);
+    beam::register(registry);
     bed::register(registry);
+    bell::register(registry);
+    brushable::register(registry);
+    campfire::register(registry);
     chest::register(registry);
+    conduit::register(registry);
+    enchant::register(registry);
+    golem_statue::register(registry);
     lectern::register(registry);
+    piston::register(registry);
+    pot::register(registry);
+    shelf::register(registry);
+    shulker::register(registry);
     sign::register(registry);
     skull::register(registry);
+    spawner::register(registry);
+    vault::register(registry);
+}
+
+pub fn plugins(app: &mut bevy::prelude::App) {
+    end_portal::plugin(app);
+    bounds::plugin(app);
 }
 
 #[cfg(test)]
@@ -28,6 +61,7 @@ mod test_support {
 
     use crate::blockentities::BeState;
     use crate::blockentities::feed::{BlockEntityData, BlockStateInfo};
+    use crate::util::dye::DYES;
 
     use super::sign::WOODS;
 
@@ -45,25 +79,18 @@ mod test_support {
                     .collect::<HashMap<_, _>>(),
             )),
             data: Arc::new(BlockEntityData::None),
+            anim: crate::blockentities::sim::Anim::new(kind, &BlockEntityData::None),
+            partial: 0.0,
+            game_time: 0,
+            camera: Default::default(),
             open: 0.0,
-            anim: 0.0,
             draw_outline: false,
-            phase: 0.0,
         }
     }
 
     fn kind_for(block: &str) -> BlockEntityKind {
-        match block {
-            "ender_chest" => BlockEntityKind::EnderChest,
-            "trapped_chest" => BlockEntityKind::TrappedChest,
-            _ if block.ends_with("chest") => BlockEntityKind::Chest,
-            _ if block.ends_with("_hanging_sign") => BlockEntityKind::HangingSign,
-            _ if block.ends_with("skull") || block.ends_with("head") => BlockEntityKind::Skull,
-            _ if block.ends_with("_bed") => BlockEntityKind::Bed,
-            "lectern" => BlockEntityKind::Lectern,
-            _ if block.ends_with("_banner") => BlockEntityKind::Banner,
-            _ => BlockEntityKind::Sign,
-        }
+        crate::blockentities::feed::kind_for_block(block)
+            .unwrap_or_else(|| panic!("{block} has no block entity"))
     }
 
     const SKULLS: &[&str] = &[
@@ -163,7 +190,7 @@ mod test_support {
                 ));
             }
         }
-        for color in COLORS {
+        for color in DYES.map(|dye| dye.name) {
             for block in [format!("{color}_banner"), format!("{color}_wall_banner")] {
                 for count in [0, 1, 16] {
                     let layers: Vec<(&str, u8)> = PATTERNS
@@ -185,7 +212,7 @@ mod test_support {
                 ));
             }
         }
-        for color in COLORS {
+        for color in DYES.map(|dye| dye.name) {
             for part in ["head", "foot"] {
                 for facing in ["north", "south", "east", "west"] {
                     out.push(test_state(
@@ -195,6 +222,20 @@ mod test_support {
                 }
             }
         }
+        super::beam::test_states(&mut out);
+        super::bell::test_states(&mut out);
+        super::brushable::test_states(&mut out);
+        super::campfire::test_states(&mut out);
+        super::conduit::test_states(&mut out);
+        super::enchant::test_states(&mut out);
+        super::end_portal::test_states(&mut out);
+        super::golem_statue::test_states(&mut out);
+        super::piston::test_states(&mut out);
+        super::pot::test_states(&mut out);
+        super::shelf::test_states(&mut out);
+        super::shulker::test_states(&mut out);
+        super::spawner::test_states(&mut out);
+        super::vault::test_states(&mut out);
         out
     }
 
@@ -217,24 +258,5 @@ mod test_support {
         "rhombus",
         "skull",
         "straight_cross",
-    ];
-
-    const COLORS: &[&str] = &[
-        "white",
-        "orange",
-        "magenta",
-        "light_blue",
-        "yellow",
-        "lime",
-        "pink",
-        "gray",
-        "light_gray",
-        "cyan",
-        "purple",
-        "blue",
-        "brown",
-        "green",
-        "red",
-        "black",
     ];
 }

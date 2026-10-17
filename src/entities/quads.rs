@@ -6,7 +6,6 @@ pub struct QuadMesh {
     positions: Vec<[f32; 3]>,
     normals: Vec<[f32; 3]>,
     uvs: Vec<[f32; 2]>,
-    indices: Vec<u32>,
 }
 
 #[allow(
@@ -19,19 +18,13 @@ impl QuadMesh {
             positions: Vec::new(),
             normals: Vec::new(),
             uvs: Vec::new(),
-            indices: Vec::new(),
         }
     }
 
     pub fn quad(&mut self, corners: [[f32; 3]; 4], uvs: [[f32; 2]; 4], normal: [f32; 3]) {
-        let base = self.positions.len() as u32;
-        for i in 0..4 {
-            self.positions.push(corners[i]);
-            self.uvs.push(uvs[i]);
-            self.normals.push(normal);
-        }
-        self.indices
-            .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        self.positions.extend_from_slice(&corners);
+        self.uvs.extend_from_slice(&uvs);
+        self.normals.extend_from_slice(&[normal; 4]);
     }
 
     pub fn untextured(&mut self, corners: [[f32; 3]; 4], normal: [f32; 3]) {
@@ -48,13 +41,25 @@ impl QuadMesh {
             RenderAssetUsages::RENDER_WORLD,
         );
         let white = vec![[1.0f32; 4]; self.positions.len()];
+        let indices = quad_indices(self.positions.len() / 4);
         mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, self.positions);
         mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, self.normals);
         mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, self.uvs);
         mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, white);
-        mesh.insert_indices(Indices::U32(self.indices));
+        mesh.insert_indices(indices);
         mesh
     }
+}
+
+pub fn quad_indices(quads: usize) -> Indices {
+    Indices::U32(
+        (0..quads as u32)
+            .flat_map(|quad| {
+                let base = quad * 4;
+                [base, base + 1, base + 2, base, base + 2, base + 3]
+            })
+            .collect(),
+    )
 }
 
 impl Default for QuadMesh {

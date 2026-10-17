@@ -5,7 +5,7 @@ use crate::gui::painter::Painter;
 use crate::gui::widgets::{Button, WIDGET_HEIGHT, WIDGET_WIDTH_BIG};
 use crate::gui::{GuiState, Screen, ScreenCtx};
 use crate::platform::time::{SystemTime, UNIX_EPOCH};
-use crate::text::texts;
+use crate::text::{Span, Style, texts};
 
 const MULTIPLAYER: &str = "Multiplayer";
 const OPTIONS: &str = "Options...";
@@ -85,7 +85,12 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     );
     p.text_str(&version, 2.0, ctx.vh - 10.0, 0xFFFFFF, true);
 
-    p.text_str(DISCLAIMER, 2.0, ctx.vh - 20.0, 0xA0A0A0, true);
+    let disclaimer_y = ctx.vh - 20.0;
+    let credits_x =
+        p.text_str(DISCLAIMER, 2.0, disclaimer_y, 0xA0A0A0, true) + p.atlas.font.width_str(" ");
+    if credits_link(p, ctx, credits_x, disclaimer_y) {
+        state.nav = Some(Screen::Credits);
+    }
 
     #[cfg(all(feature = "mobile_ui", target_arch = "wasm32"))]
     {
@@ -128,7 +133,35 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     }
 }
 
-const DISCLAIMER: &str = "Unofficial. Not affiliated with Mojang or Microsoft.";
+const DISCLAIMER: &str = "Not affiliated with Mojang or Microsoft.";
+const CREDITS: &str = "(Credits)";
+
+fn credits_link(p: &mut Painter, ctx: &ScreenCtx, x: f32, y: f32) -> bool {
+    let w = p.atlas.font.width_str(CREDITS);
+    let (hx, hy, hw, hh) = (x, y - 1.0, w, crate::text::LINE_HEIGHT + 1.0);
+    let hovered = ctx.hovering(hx, hy, hw, hh);
+    let span = Span {
+        text: CREDITS.to_owned(),
+        style: Style {
+            color: 0xFFFFFF,
+            underline: hovered,
+            ..Style::default()
+        },
+    };
+    p.text(std::slice::from_ref(&span), x, y, true);
+    #[cfg(not(feature = "mobile_ui"))]
+    let clicked = hovered && ctx.input.left_click;
+    #[cfg(feature = "mobile_ui")]
+    let clicked = hovered
+        && ctx.input.left_release
+        && crate::gui::widgets::touch_tap::pressed_in(hx, hy, hw, hh)
+        && !crate::gui::widgets::touch_tap::scrolled();
+    #[cfg(feature = "audio")]
+    if clicked {
+        crate::gui::widgets::play_click();
+    }
+    clicked
+}
 
 const EAGLER_MODE: &str = "Eagler mode (wss:// enabled)";
 

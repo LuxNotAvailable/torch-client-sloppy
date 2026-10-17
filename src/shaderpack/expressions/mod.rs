@@ -3,6 +3,7 @@ mod parse;
 
 pub(crate) use eval::Smooth;
 use eval::eval;
+pub(crate) use parse::MATRIX_ELEMENT;
 use parse::{Parser, tokenize};
 
 use std::collections::HashMap;
@@ -18,6 +19,9 @@ pub(crate) enum CustomType {
     Float,
     Int,
     Bool,
+    Vec2,
+    Vec3,
+    Vec4,
 }
 
 impl CustomType {
@@ -26,7 +30,19 @@ impl CustomType {
             "float" => Some(CustomType::Float),
             "int" => Some(CustomType::Int),
             "bool" => Some(CustomType::Bool),
+            "vec2" => Some(CustomType::Vec2),
+            "vec3" => Some(CustomType::Vec3),
+            "vec4" => Some(CustomType::Vec4),
             _ => None,
+        }
+    }
+
+    pub(crate) fn components(self) -> usize {
+        match self {
+            CustomType::Vec2 => 2,
+            CustomType::Vec3 => 3,
+            CustomType::Vec4 => 4,
+            _ => 1,
         }
     }
 
@@ -35,6 +51,9 @@ impl CustomType {
             CustomType::Float => "float",
             CustomType::Int => "int",
             CustomType::Bool => "bool",
+            CustomType::Vec2 => "vec2",
+            CustomType::Vec3 => "vec3",
+            CustomType::Vec4 => "vec4",
         }
     }
 }
@@ -98,6 +117,7 @@ pub(super) enum Function {
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Expr {
     Constant(f32),
+    Vector(Vec<Expr>),
     Input(u32),
     Custom(usize),
     Unary(Unary, Box<Expr>),
@@ -132,6 +152,7 @@ pub(crate) struct Customs {
 pub(crate) struct CustomState {
     pub(super) smooth: Vec<Smooth>,
     pub(crate) values: Vec<f32>,
+    pub(crate) vectors: Vec<[f32; 4]>,
     pub(super) random: u32,
 }
 
@@ -226,15 +247,26 @@ impl Customs {
         CustomState {
             smooth: vec![Smooth::default(); self.smooth_slots],
             values: vec![0.0; self.entries.len()],
+            vectors: vec![[0.0; 4]; self.entries.len()],
             random: 0x2545_f491,
         }
     }
 
     pub(crate) fn evaluate(&self, state: &mut CustomState, delta: f32, input: &dyn Fn(u32) -> f32) {
         for &index in &self.order {
-            let value = eval(&self.entries[index].expr, state, delta, input);
-            let value = match self.entries[index].ty {
-                CustomType::Float => value,
+            let entry = &self.entries[index];
+            if let (Expr::Vector(parts), n) = (&entry.expr, entry.ty.components())
+                && n > 1
+            {
+                for (slot, part) in parts.iter().take(n).enumerate() {
+                    state.vectors[index][slot] = eval(part, state, delta, input);
+                }
+                state.values[index] = state.vectors[index][0];
+                continue;
+            }
+            let value = eval(&entry.expr, state, delta, input);
+            let value = match entry.ty {
+                CustomType::Float | CustomType::Vec2 | CustomType::Vec3 | CustomType::Vec4 => value,
                 CustomType::Int => value.trunc(),
                 CustomType::Bool => (value != 0.0) as u8 as f32,
             };
@@ -287,6 +319,7 @@ fn customs_read(expr: &Expr, out: &mut Vec<usize>) {
     match expr {
         Expr::Custom(i) => out.push(*i),
         Expr::Constant(_) | Expr::Input(_) => {}
+        Expr::Vector(parts) => parts.iter().for_each(|p| customs_read(p, out)),
         Expr::Unary(_, e) => customs_read(e, out),
         Expr::Binary(_, a, b) => {
             customs_read(a, out);
@@ -395,6 +428,29 @@ mod tests {
     }
 
     #[test]
+    fn vector_customs_and_matrix_elements_evaluate() {
+        let (customs, problems) = compile(&[
+            ("variable.float.sx", "sunAngle * 2.0"),
+            ("uniform.vec3.dir", "vec3(sx, 1.0, cameraPosition.y)"),
+            ("uniform.vec2.size", "vec2(2.0, 3.0)"),
+            ("uniform.float.element", "cameraPosition.1.2 + 1.0"),
+        ]);
+        assert!(
+            problems.iter().all(|p| p.contains("element")),
+            "{problems:?}"
+        );
+        let mut state = customs.state();
+        customs.evaluate(&mut state, 0.016, &|i| if i == 0 { 0.25 } else { 7.0 });
+        let at = |name: &str| customs.entries.iter().position(|c| c.name == name).unwrap();
+        assert_eq!(&state.vectors[at("dir")][..3], &[0.5, 1.0, 7.0]);
+        assert_eq!(&state.vectors[at("size")][..2], &[2.0, 3.0]);
+        assert_eq!(customs.entries[at("dir")].ty.components(), 3);
+        let tokens = tokenize("m.2.1 + x.y");
+        assert_eq!(tokens[1], parse::Token::Matrix(2, 1));
+        assert_eq!(tokens[4], parse::Token::Member(1));
+    }
+
+    #[test]
     fn smooth_starts_at_its_target_and_decays_by_half_life() {
         let (customs, problems) = compile(&[("uniform.float.s", "smooth(1, biome, 10, 10)")]);
         assert!(problems.is_empty(), "{problems:?}");
@@ -424,7 +480,7 @@ mod tests {
             ("uniform.vec3.v", "vec3(1, 2, 3)"),
             ("uniform.float.ok", "sunAngle"),
         ]);
-        assert_eq!(problems.len(), 5, "{problems:?}");
+        assert_eq!(problems.len(), 4, "{problems:?}");
         let mut state = customs.state();
         customs.evaluate(&mut state, 0.0, &|_| 0.5);
         assert_eq!(value(&customs, &state, "ok"), 0.5);

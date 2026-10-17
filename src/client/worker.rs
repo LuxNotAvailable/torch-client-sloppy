@@ -58,6 +58,7 @@ struct QueueInner {
     keys: HashMap<JobKey, KeyState>,
     latest_seq: HashMap<(i32, i32), ColumnSeq>,
     next_seq: u64,
+    loads_first: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -128,6 +129,7 @@ impl JobQueue {
                 keys: HashMap::new(),
                 latest_seq: HashMap::new(),
                 next_seq: 0,
+                loads_first: false,
             }),
             ready: parking_lot::Condvar::new(),
             backlog: AtomicUsize::new(0),
@@ -140,6 +142,11 @@ impl JobQueue {
             let _inner = self.inner.lock().unwrap();
             self.ready.notify_all();
         }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn prefer_loads(&self) {
+        self.inner.lock().unwrap().loads_first = true;
     }
 
     pub fn push(&self, world: Arc<RwLock<World>>, chunk_x: i32, chunk_z: i32, scope: JobScope) {
@@ -336,10 +343,17 @@ impl JobQueue {
     fn take(backlog: &AtomicUsize, inner: &mut QueueInner) -> Option<Job> {
         let job = inner.edits.pop_front().or_else(|| {
             if backlog.load(Ordering::Relaxed) < MAX_PENDING_SECTIONS {
-                inner
-                    .relights
-                    .pop_front()
-                    .or_else(|| inner.loads.pop_front())
+                if inner.loads_first {
+                    inner
+                        .loads
+                        .pop_front()
+                        .or_else(|| inner.relights.pop_front())
+                } else {
+                    inner
+                        .relights
+                        .pop_front()
+                        .or_else(|| inner.loads.pop_front())
+                }
             } else {
                 None
             }

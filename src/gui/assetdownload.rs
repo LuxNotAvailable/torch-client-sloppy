@@ -5,10 +5,38 @@ use bevy::prelude::*;
 
 use crate::client::assets::{Stage, download};
 use crate::gui::painter::Painter;
-use crate::gui::{GuiState, ScreenCtx};
+use crate::gui::{GuiState, Screen, ScreenCtx};
 use crate::{log_info, log_warn};
 
 const PROMPT: &str = "The Mojang assets must be downloaded";
+const TOP_UP_PROMPT: &str = "Some Mojang assets are missing";
+
+static TOP_UP: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn check_missing(state: &mut GuiState) -> bool {
+    if !crate::client::assets::check_missing() {
+        return false;
+    }
+    TOP_UP.store(true, Ordering::Relaxed);
+    state.nav = Some(Screen::AssetDownload);
+    true
+}
+
+fn leave_label() -> &'static str {
+    if TOP_UP.load(Ordering::Relaxed) {
+        "Back"
+    } else {
+        "Exit"
+    }
+}
+
+fn leave(state: &mut GuiState) {
+    if TOP_UP.swap(false, Ordering::Relaxed) {
+        state.nav = Some(Screen::ManageStorage);
+    } else {
+        state.quit = true;
+    }
+}
 
 const BUTTON_W: f32 = 100.0;
 const BUTTON_H: f32 = 20.0;
@@ -29,7 +57,9 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     let dl = download();
     let stage = dl.stage();
 
-    centered(p, PROMPT, cx, mid - 46.0, 0xFFFFFF);
+    let top_up = TOP_UP.load(Ordering::Relaxed);
+    let prompt = if top_up { TOP_UP_PROMPT } else { PROMPT };
+    centered(p, prompt, cx, mid - 46.0, 0xFFFFFF);
 
     match stage {
         Stage::Idle | Stage::Cancelled => {
@@ -42,13 +72,21 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
             if button(p, ctx, left, row, "Continue") {
                 dl.start(crate::ASSET_VERSION.to_string());
             }
-            if button(p, ctx, right, row, "Exit") {
-                state.quit = true;
+            if button(p, ctx, right, row, leave_label()) {
+                leave(state);
             }
         }
 
-        Stage::Asking | Stage::Downloading | Stage::Extracting | Stage::Fetching => {
-            let (done, total) = dl.progress();
+        Stage::Asking
+        | Stage::Downloading
+        | Stage::Extracting
+        | Stage::Fetching
+        | Stage::Sounds => {
+            let (done, total) = if stage == Stage::Sounds {
+                dl.sound_progress()
+            } else {
+                dl.progress()
+            };
             let frac = if total > 0 {
                 (done as f32 / total as f32).clamp(0.0, 1.0)
             } else {
@@ -61,18 +99,38 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
 
             let detail = match stage {
                 Stage::Asking => "Contacting Mojang".to_string(),
-                Stage::Downloading | Stage::Fetching => {
-                    format!("{:.1} MB of {:.1} MB", done as f64 / MB, total as f64 / MB)
-                }
+                Stage::Downloading | Stage::Fetching => megabytes(done, total),
+                Stage::Sounds => format!("Sounds {}", megabytes(done, total)),
                 _ => "Unpacking the assets".to_string(),
             };
             centered(p, &detail, cx, mid + 2.0 + LINE, 0xA0A0A8);
 
-            if button(p, ctx, (cx - BUTTON_W * 0.5).floor(), mid + 34.0, "Cancel") {
+            let sounds = dl.sounds_running();
+            if sounds && stage != Stage::Sounds {
+                let (done, total) = dl.sound_progress();
+                let line = format!("Sounds {}", megabytes(done, total));
+                centered(p, &line, cx, mid + 2.0 + LINE * 2.0, 0x70707A);
+            }
+
+            let row = mid + 40.0;
+            if sounds {
+                let left = (cx - BUTTON_W - BUTTON_GAP * 0.5).floor();
+                let right = (cx + BUTTON_GAP * 0.5).floor();
+                if button(p, ctx, left, row, "Skip audio") {
+                    dl.skip_sounds();
+                }
+                if button(p, ctx, right, row, "Cancel") {
+                    dl.cancel();
+                }
+            } else if button(p, ctx, (cx - BUTTON_W * 0.5).floor(), row, "Cancel") {
                 dl.cancel();
             }
         }
 
+        Stage::Done if top_up => {
+            crate::client::assets::adopt_sounds();
+            leave(state);
+        }
         Stage::Done => {
             prepare();
             centered(p, "The assets are ready", cx, mid - 14.0, 0x7FDF7F);
@@ -88,11 +146,15 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
             if button(p, ctx, left, row, "Try again") {
                 dl.start(crate::ASSET_VERSION.to_string());
             }
-            if button(p, ctx, right, row, "Exit") {
-                state.quit = true;
+            if button(p, ctx, right, row, leave_label()) {
+                leave(state);
             }
         }
     }
+}
+
+fn megabytes(done: u64, total: u64) -> String {
+    format!("{:.1} MB of {:.1} MB", done as f64 / MB, total as f64 / MB)
 }
 
 fn centered(p: &mut Painter, s: &str, cx: f32, y: f32, rgb: u32) {

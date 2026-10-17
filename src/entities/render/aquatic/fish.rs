@@ -212,33 +212,8 @@ fn tropical_pattern_texture(st: &EntityState) -> TexturePath {
     format!("entity/fish/tropical_{letter}_pattern_{n}").into()
 }
 
-const DYE_TEXTURE_DIFFUSE: [u32; 16] = [
-    0x00f9_fffe,
-    0x00f9_801d,
-    0x00c7_4ebd,
-    0x003a_b3da,
-    0x00fe_d83d,
-    0x0080_c71f,
-    0x00f3_8baa,
-    0x0047_4f52,
-    0x009d_9d97,
-    0x0016_9c9c,
-    0x0089_50c9,
-    0x003c_44aa,
-    0x0083_5432,
-    0x005e_7c16,
-    0x00b0_2e26,
-    0x001d_1d21,
-];
-
 fn dye_tint(ordinal: i32) -> [f32; 4] {
-    let rgb = DYE_TEXTURE_DIFFUSE[(ordinal.clamp(0, 15)) as usize];
-    [
-        crate::util::mth::srgb_byte_to_linear((rgb >> 16 & 0xff) as u8),
-        crate::util::mth::srgb_byte_to_linear((rgb >> 8 & 0xff) as u8),
-        crate::util::mth::srgb_byte_to_linear((rgb & 0xff) as u8),
-        1.0,
-    ]
+    crate::util::dye::linear_diffuse(ordinal as usize)
 }
 
 fn tropical_base_tint(st: &EntityState) -> [f32; 4] {

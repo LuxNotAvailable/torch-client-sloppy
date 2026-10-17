@@ -17,6 +17,7 @@ mod recipe;
 pub struct ContainerUi {
     pub scroll: f32,
     pub dragging: bool,
+    pub merchant_scroll: usize,
     pub selected: i16,
     pub beacon: BeaconPick,
     pub merchant_title: Option<TitleCache>,
@@ -41,6 +42,7 @@ impl Default for ContainerUi {
         ContainerUi {
             scroll: 0.0,
             dragging: false,
+            merchant_scroll: 0,
             selected: -1,
             beacon: BeaconPick::default(),
             merchant_title: None,

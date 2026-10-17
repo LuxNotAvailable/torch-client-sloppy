@@ -3,7 +3,7 @@ use bevy::math::Vec3;
 use bevy::prelude::Transform;
 
 use crate::entities::registry::Registry;
-use crate::entities::state::EntityState;
+use crate::entities::state::{Carried, EntityState};
 use crate::entities::{BlockRef, CameraView, RenderSpec, RootPose};
 
 pub fn register(registry: &mut Registry) {
@@ -18,6 +18,10 @@ pub fn register(registry: &mut Registry) {
     registry.add(
         EntityKind::BlockDisplay,
         RenderSpec::block("block_display", display_block).with_camera_root(block_display_root),
+    );
+    registry.add_carried(
+        Carried::MovingBlock,
+        RenderSpec::block("moving_block", falling_block).with_root(falling_block_root),
     );
 }
 

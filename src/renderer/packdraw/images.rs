@@ -10,6 +10,9 @@ pub(crate) struct CustomTexture {
     pub(crate) path: String,
     pub(crate) width: u32,
     pub(crate) height: u32,
+    pub(crate) depth: u32,
+    pub(crate) three_d: bool,
+    pub(crate) half: bool,
     pub(crate) rgba: Vec<u8>,
     pub(crate) blur: bool,
     pub(crate) clamp: bool,
@@ -96,15 +99,19 @@ impl CustomTextures {
                     notes.push(format!("texture.{key}: {stage} is not a stage Iris reads"));
                     continue;
                 };
-                Some((stage, sampler.to_owned()))
+                Some((
+                    stage,
+                    sampler.split('.').next().unwrap_or(sampler).to_owned(),
+                ))
             };
-            let path = match pack_path(value) {
-                Ok(path) => path,
+            let spec = match texture_spec(value) {
+                Ok(spec) => spec,
                 Err(why) => {
                     notes.push(format!("texture.{key}={value}: {why}"));
                     continue;
                 }
             };
+            let path = value.split_whitespace().collect::<Vec<_>>().join(" ");
             let index = match by_path.get(&path) {
                 Some(index) => *index,
                 None => {
@@ -119,7 +126,7 @@ impl CustomTextures {
                         ));
                         continue;
                     }
-                    let texture = match decode(source, &path, MAX_BYTES - bytes) {
+                    let texture = match decode(source, &spec, MAX_BYTES - bytes) {
                         Ok(texture) => texture,
                         Err(why) => {
                             notes.push(format!("texture.{key}={value}: {why}"));
@@ -157,7 +164,7 @@ impl CustomTextures {
 
 fn pack_path(value: &str) -> Result<String, &'static str> {
     if value.split_whitespace().nth(1).is_some() {
-        return Err("raw binary textures are not supported yet");
+        return Err("a raw texture is `path TYPE FORMAT SIZE.. PIXEL_FORMAT PIXEL_TYPE`");
     }
     if value.contains(':') {
         return Err("resource-location textures are not supported yet");
@@ -172,8 +179,136 @@ fn pack_path(value: &str) -> Result<String, &'static str> {
     Ok(format!("/{path}"))
 }
 
-fn decode(source: &Source, path: &str, budget: usize) -> Result<CustomTexture, String> {
+struct Spec {
+    path: String,
+    raw: Option<Raw>,
+}
+
+struct Raw {
+    three_d: bool,
+    size: [u32; 3],
+    channels: usize,
+    half: bool,
+}
+
+const MAX_SIDE_3D: u32 = 2048;
+
+fn texture_spec(value: &str) -> Result<Spec, &'static str> {
+    let words: Vec<&str> = value.split_whitespace().collect();
+    if words.len() < 2 {
+        return Ok(Spec {
+            path: pack_path(value)?,
+            raw: None,
+        });
+    }
+    let path = {
+        let path = words[0];
+        if path.contains(':') {
+            return Err("resource-location textures are not supported yet");
+        }
+        let path = path.trim_start_matches('/');
+        if path.split(['/', '\\']).any(|part| part == "..") {
+            return Err("the path leaves the pack");
+        }
+        format!("/{path}")
+    };
+    let (three_d, dimensions) = match words[1] {
+        "TEXTURE_2D" => (false, 2),
+        "TEXTURE_3D" => (true, 3),
+        _ => return Err("only TEXTURE_2D and TEXTURE_3D raw textures are read"),
+    };
+    if words.len() != 3 + dimensions + 2 {
+        return Err("a raw texture's value has the wrong number of words");
+    }
+    let half = match words[2] {
+        "R8" | "RG8" | "RGB8" | "RGBA8" => false,
+        "R16F" | "RG16F" | "RGB16F" | "RGBA16F" => true,
+        _ => return Err("only 8-bit and 16-bit float raw textures are read"),
+    };
+    let mut size = [1u32; 3];
+    for (slot, word) in size.iter_mut().zip(&words[3..3 + dimensions]) {
+        *slot = word
+            .parse()
+            .map_err(|_| "a raw texture's size is not a number")?;
+    }
+    let side = if three_d { MAX_SIDE_3D } else { MAX_SIDE };
+    if size.iter().any(|s| *s == 0 || *s > side) {
+        return Err("a raw texture's size is out of range");
+    }
+    let channels = match words[3 + dimensions] {
+        "RED" => 1,
+        "RG" => 2,
+        "RGB" => 3,
+        "RGBA" => 4,
+        _ => return Err("only RED, RG, RGB and RGBA pixel formats are read"),
+    };
+    if words[4 + dimensions] != if half { "HALF_FLOAT" } else { "UNSIGNED_BYTE" } {
+        return Err(
+            "a raw texture's type has to be UNSIGNED_BYTE for 8-bit formats and HALF_FLOAT for 16-bit float ones",
+        );
+    }
+    Ok(Spec {
+        path,
+        raw: Some(Raw {
+            three_d,
+            size,
+            channels,
+            half,
+        }),
+    })
+}
+
+fn decode(source: &Source, spec: &Spec, budget: usize) -> Result<CustomTexture, String> {
+    let path = spec.path.as_str();
     let file = source.read(path).ok_or("the pack has no such file")?;
+    let (blur, clamp) = source
+        .read_text(&format!("{path}.mcmeta"))
+        .map_or((false, false), |text| mcmeta(&text));
+    if let Some(raw) = &spec.raw {
+        let [width, height, depth] = raw.size;
+        let texels = width as usize * height as usize * depth as usize;
+        let bytes = if raw.half { 2 } else { 1 };
+        if texels * 4 * bytes > budget {
+            return Err("the texture is larger than the pack's budget".to_owned());
+        }
+        let wanted = texels * raw.channels * bytes;
+        if file.len() != wanted {
+            return Err(format!(
+                "the file is {} bytes, the declared size needs {wanted}",
+                file.len()
+            ));
+        }
+        let mut rgba = Vec::with_capacity(texels * 4 * bytes);
+        if raw.half {
+            const ONE: [u8; 2] = 0x3C00u16.to_le_bytes();
+            for texel in file.chunks_exact(raw.channels * 2) {
+                for channel in 0..4 {
+                    match texel.get(channel * 2..channel * 2 + 2) {
+                        Some(half) => rgba.extend_from_slice(half),
+                        None if channel == 3 => rgba.extend_from_slice(&ONE),
+                        None => rgba.extend_from_slice(&[0, 0]),
+                    }
+                }
+            }
+        } else {
+            for texel in file.chunks_exact(raw.channels) {
+                let mut out = [0, 0, 0, 255];
+                out[..raw.channels].copy_from_slice(texel);
+                rgba.extend_from_slice(&out);
+            }
+        }
+        return Ok(CustomTexture {
+            path: path.to_owned(),
+            width,
+            height,
+            depth,
+            three_d: raw.three_d,
+            half: raw.half,
+            rgba,
+            blur,
+            clamp,
+        });
+    }
     let mut reader =
         image::ImageReader::with_format(std::io::Cursor::new(&file), image::ImageFormat::Png);
     let mut limits = image::Limits::default();
@@ -182,13 +317,13 @@ fn decode(source: &Source, path: &str, budget: usize) -> Result<CustomTexture, S
     limits.max_alloc = Some(budget as u64);
     reader.limits(limits);
     let rgba = reader.decode().map_err(|e| e.to_string())?.into_rgba8();
-    let (blur, clamp) = source
-        .read_text(&format!("{path}.mcmeta"))
-        .map_or((false, false), |text| mcmeta(&text));
     Ok(CustomTexture {
         path: path.to_owned(),
         width: rgba.width(),
         height: rgba.height(),
+        depth: 1,
+        three_d: false,
+        half: false,
         rgba: rgba.into_raw(),
         blur,
         clamp,
@@ -211,8 +346,38 @@ mod tests {
         assert_eq!(pack_path("/tex/noise.png"), Ok("/tex/noise.png".into()));
         assert!(pack_path("../x.png").is_err());
         assert!(pack_path("minecraft:textures/x.png").is_err());
-        assert!(pack_path("tex/x.dat TEXTURE_3D RGBA8 32 32 32 RGBA UNSIGNED_BYTE").is_err());
         assert!(pack_path("tex/x.jpg").is_err());
+    }
+
+    #[test]
+    fn raw_values_declare_their_layout() {
+        let spec = texture_spec("/img/worley.bin TEXTURE_3D R8 64 64 64 RED UNSIGNED_BYTE")
+            .ok()
+            .expect("Mellow's");
+        assert_eq!(spec.path, "/img/worley.bin");
+        let raw = spec.raw.expect("raw");
+        assert_eq!(
+            (raw.three_d, raw.size, raw.channels),
+            (true, [64, 64, 64], 1)
+        );
+        let flat = texture_spec("a.bin TEXTURE_2D RGBA8 4 8 RGBA UNSIGNED_BYTE")
+            .ok()
+            .expect("2d");
+        assert_eq!(
+            flat.raw.map(|r| (r.three_d, r.size)),
+            Some((false, [4, 8, 1]))
+        );
+        assert!(texture_spec("a.bin TEXTURE_1D R8 4 RED UNSIGNED_BYTE").is_err());
+        assert!(texture_spec("a.bin TEXTURE_3D R16F 4 4 4 RED FLOAT").is_err());
+        let lut = texture_spec("a.dat TEXTURE_3D RGB16F 32 64 32 RGB HALF_FLOAT")
+            .ok()
+            .expect("Photon's");
+        assert_eq!(
+            lut.raw.map(|r| (r.half, r.channels, r.size)),
+            Some((true, 3, [32, 64, 32]))
+        );
+        assert!(texture_spec("a.bin TEXTURE_3D R8 4 4 RED UNSIGNED_BYTE").is_err());
+        assert!(texture_spec("tex/noise.png").is_ok_and(|s| s.raw.is_none()));
     }
 
     #[test]

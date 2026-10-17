@@ -1,8 +1,8 @@
 use bevy::prelude::*;
 use bevy::render::render_resource::{
-    AddressMode, Buffer, BufferDescriptor, BufferUsages, Extent3d, FilterMode, Sampler,
-    SamplerDescriptor, Texture, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
-    TextureView, TextureViewDescriptor,
+    AddressMode, Buffer, BufferDescriptor, BufferUsages, CompareFunction, Extent3d, FilterMode,
+    Sampler, SamplerDescriptor, Texture, TextureDescriptor, TextureDimension, TextureFormat,
+    TextureUsages, TextureView, TextureViewDescriptor,
 };
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::texture::GpuImage;
@@ -139,6 +139,10 @@ pub(super) struct Statics {
     pub(super) uint_3d: Target,
     pub(super) flat_normal: Target,
     pub(super) black_2d: Target,
+    pub(super) depth_stub: Target,
+    pub(super) compare_linear: Sampler,
+    pub(super) compare_nearest: Sampler,
+    pub(super) compare_always: Sampler,
     pub(super) linear: Sampler,
     pub(super) nearest: Sampler,
     pub(super) repeat: Sampler,
@@ -164,15 +168,35 @@ pub(super) fn custom_target(
     queue: &RenderQueue,
     image: &CustomTexture,
 ) -> Target {
-    let size = extent(image.width, image.height);
-    let target = Target::new(
+    let size = Extent3d {
+        width: image.width,
+        height: image.height,
+        depth_or_array_layers: image.depth,
+    };
+    let dimension = if image.three_d {
+        TextureDimension::D3
+    } else {
+        TextureDimension::D2
+    };
+    let target = Target::with_dimension(
         device,
         &format!("{GPU_LABEL} {}", image.path),
         size,
-        TextureFormat::Rgba8Unorm,
+        dimension,
+        if image.half {
+            TextureFormat::Rgba16Float
+        } else {
+            TextureFormat::Rgba8Unorm
+        },
         TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
     );
-    fill(queue, &target, size, &image.rgba, image.width * 4);
+    fill(
+        queue,
+        &target,
+        size,
+        &image.rgba,
+        image.width * if image.half { 8 } else { 4 },
+    );
     target
 }
 
@@ -215,6 +239,13 @@ impl Statics {
         );
         let flat_normal = Target::new(device, gpu_label!("flat normal"), one, rgba8, sampled);
         let black_2d = Target::new(device, gpu_label!("black"), one, rgba8, sampled);
+        let depth_stub = Target::new(
+            device,
+            gpu_label!("depth stub"),
+            one,
+            DEPTH_FORMAT,
+            TextureUsages::TEXTURE_BINDING,
+        );
         fill(queue, &white_2d, one, &[255; 4], 4);
         fill(queue, &flat_normal, one, &[127, 127, 255, 255], 4);
 
@@ -230,7 +261,20 @@ impl Statics {
                 ..default()
             })
         };
+        let compare = |filter: FilterMode, function: CompareFunction| {
+            device.create_sampler(&SamplerDescriptor {
+                label: Some(gpu_label!("comparison sampler")),
+                mag_filter: filter,
+                min_filter: filter,
+                compare: Some(function),
+                ..default()
+            })
+        };
         Statics {
+            compare_linear: compare(FilterMode::Linear, CompareFunction::LessEqual),
+            compare_nearest: compare(FilterMode::Nearest, CompareFunction::LessEqual),
+            compare_always: compare(FilterMode::Nearest, CompareFunction::Always),
+            depth_stub,
             white_2d,
             zero_3d,
             uint_2d,

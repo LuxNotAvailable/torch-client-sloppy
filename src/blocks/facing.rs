@@ -1,5 +1,18 @@
 use azalea_core::direction::Direction;
 
+pub const ALL: [Direction; 6] = [
+    Direction::Down,
+    Direction::Up,
+    Direction::North,
+    Direction::South,
+    Direction::West,
+    Direction::East,
+];
+
+pub fn from_3d_data_value(value: i32) -> Direction {
+    ALL[(value % 6).unsigned_abs() as usize]
+}
+
 pub fn name(direction: Direction) -> &'static str {
     match direction {
         Direction::Down => "down",
@@ -47,21 +60,19 @@ pub fn counter_clockwise(direction: Direction) -> Direction {
 mod tests {
     use super::*;
 
-    const ALL: [Direction; 6] = [
-        Direction::Down,
-        Direction::Up,
-        Direction::North,
-        Direction::South,
-        Direction::West,
-        Direction::East,
-    ];
-
     #[test]
     fn names_round_trip() {
         for direction in ALL {
             assert_eq!(from_name(name(direction)), Some(direction));
         }
         assert_eq!(from_name("sideways"), None);
+    }
+
+    #[test]
+    fn the_3d_data_value_wraps_both_ways() {
+        assert_eq!(from_3d_data_value(5), Direction::East);
+        assert_eq!(from_3d_data_value(8), Direction::North);
+        assert_eq!(from_3d_data_value(-7), Direction::Up);
     }
 
     #[test]

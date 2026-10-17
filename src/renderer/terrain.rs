@@ -5,12 +5,6 @@ use bevy::light::CascadeShadowConfigBuilder;
 use bevy::prelude::*;
 #[cfg(feature = "builtin_shaders")]
 use bevy::render::render_resource::DepthBiasState;
-use bevy::shader::ShaderRef;
-
-pub fn embedded(file: &str) -> ShaderRef {
-    let crate_name = module_path!().split(':').next().unwrap_or("torch_client");
-    ShaderRef::Path(format!("embedded://{crate_name}/renderer/{file}").into())
-}
 
 #[cfg(feature = "builtin_shaders")]
 pub fn shadow_depth_bias() -> DepthBiasState {

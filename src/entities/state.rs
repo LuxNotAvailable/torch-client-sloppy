@@ -533,6 +533,32 @@ pub struct EntityState {
     pub attack_time: f32,
     pub swing_left: bool,
     pub extras: Extras,
+    pub carrier: Option<Carrier>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Carrier {
+    pub pose: bevy::prelude::Transform,
+    pub specs: Option<Carried>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Carried {
+    FixedItem,
+    ShelfItemBottom,
+    ShelfItemCentered,
+    GroundItemCluster,
+    MovingBlock,
+}
+
+impl Carried {
+    pub const ALL: [Carried; 5] = [
+        Carried::FixedItem,
+        Carried::ShelfItemBottom,
+        Carried::ShelfItemCentered,
+        Carried::GroundItemCluster,
+        Carried::MovingBlock,
+    ];
 }
 
 impl EntityState {
@@ -540,8 +566,11 @@ impl EntityState {
         self.pose == pose
     }
 
-    #[allow(dead_code, reason = "used by the per-family registry tests")]
     pub fn new(id: i32, kind: EntityKind) -> EntityState {
+        EntityState::with_extras(id, kind, Extras::default())
+    }
+
+    pub fn with_extras(id: i32, kind: EntityKind, extras: Extras) -> EntityState {
         EntityState {
             id,
             kind,
@@ -569,7 +598,8 @@ impl EntityState {
             bed_orientation: None,
             attack_time: 0.0,
             swing_left: false,
-            extras: Extras::default(),
+            extras,
+            carrier: None,
         }
     }
 }

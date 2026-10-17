@@ -1705,6 +1705,7 @@ impl EntityAnim {
             attack_time: lerp(partial, self.attack_anim_old, self.attack_anim),
             swing_left: self.swing_left,
             extras,
+            carrier: None,
         }
     }
 }

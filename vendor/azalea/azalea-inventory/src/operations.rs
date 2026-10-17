@@ -508,10 +508,15 @@ impl Menu {
             },
             MenuLocation::Merchant(l) => match l {
                 MerchantMenuLocation::Player => {
-                    self.try_move_item_to_slots_or_toggle_hotbar(
-                        slot_index,
-                        Menu::MERCHANT_PAYMENTS_SLOTS,
-                    );
+                    let targets = if self.is_hotbar_slot(slot_index) {
+                        self.player_slots_without_hotbar_range()
+                    } else {
+                        self.hotbar_slots_range()
+                    };
+                    self.try_move_item_to_slots(slot_index, targets);
+                }
+                MerchantMenuLocation::Result => {
+                    self.quick_move_to_player_reversed(slot_index);
                 }
                 _ => {
                     self.try_move_item_to_slots(slot_index, self.player_slots_range());
@@ -601,8 +606,25 @@ impl Menu {
         }
     }
 
-    pub fn may_place(&self, _target_slot_index: usize, _item: &ItemStackData) -> bool {
-        true
+    pub fn may_place(&self, target_slot_index: usize, _item: &ItemStackData) -> bool {
+        !matches!(
+            self.location_for_slot(target_slot_index),
+            Some(MenuLocation::Merchant(MerchantMenuLocation::Result))
+        )
+    }
+
+    pub fn can_take_item_for_pick_all(&self, slot_index: usize) -> bool {
+        !matches!(
+            self.location_for_slot(slot_index),
+            Some(
+                MenuLocation::Merchant(_)
+                    | MenuLocation::Player(PlayerMenuLocation::CraftResult)
+                    | MenuLocation::Crafting(CraftingMenuLocation::Result)
+                    | MenuLocation::Smithing(SmithingMenuLocation::Result)
+                    | MenuLocation::Stonecutter(StonecutterMenuLocation::Result)
+                    | MenuLocation::CartographyTable(CartographyTableMenuLocation::Result)
+            )
+        )
     }
 
     pub fn may_pickup(&self, _source_slot_index: usize) -> bool {
@@ -682,11 +704,19 @@ impl Menu {
             if self.may_place(target_slot_index, item)
                 && target_item.is_same_item_and_components(item)
             {
-                let slot_item_limit = self.max_stack_size(target_slot_index);
-                let new_target_slot_data = item.split(i32::min(slot_item_limit, item.count) as u32);
+                let limit = i32::min(
+                    self.max_stack_size(target_slot_index),
+                    item.kind.max_stack_size(),
+                );
+                let room = limit - target_item.count;
+                if room <= 0 {
+                    return;
+                }
+                let moved = item.split(room as u32);
 
-                let target_slot = self.slot_mut(target_slot_index).unwrap();
-                *target_slot = ItemStack::from(new_target_slot_data);
+                if let Some(ItemStack::Present(target)) = self.slot_mut(target_slot_index) {
+                    target.count += moved.count;
+                }
 
                 item_slot.update_empty();
             }
@@ -703,7 +733,10 @@ impl Menu {
         };
         let target_slot = self.slot(target_slot_index).unwrap();
         if target_slot.is_empty() && self.may_place(target_slot_index, source_item_data) {
-            let slot_item_limit = self.max_stack_size(target_slot_index);
+            let slot_item_limit = i32::min(
+                self.max_stack_size(target_slot_index),
+                source_item_data.kind.max_stack_size(),
+            );
             let new_target_slot_data =
                 source_item_data.split(i32::min(slot_item_limit, source_item_data.count) as u32);
             source_item.update_empty();

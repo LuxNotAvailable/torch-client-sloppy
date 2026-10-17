@@ -117,6 +117,7 @@ pub(crate) fn textures_dir() -> PathBuf {
 #[cfg(any(
     feature = "online_mode",
     feature = "eagler",
+    explore_modrinth,
     all(feature = "asset_download", not(target_arch = "wasm32"))
 ))]
 use rustls as tls;
@@ -124,6 +125,7 @@ use rustls as tls;
 #[cfg(any(
     feature = "online_mode",
     feature = "eagler",
+    explore_modrinth,
     all(feature = "asset_download", not(target_arch = "wasm32"))
 ))]
 pub(crate) fn install_crypto_provider() {
@@ -155,6 +157,7 @@ pub(crate) fn android_tls_config() -> Option<rustls::ClientConfig> {
 #[cfg(not(any(
     feature = "online_mode",
     feature = "eagler",
+    explore_modrinth,
     all(feature = "asset_download", not(target_arch = "wasm32"))
 )))]
 pub(crate) fn install_crypto_provider() {}

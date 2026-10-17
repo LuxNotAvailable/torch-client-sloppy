@@ -45,11 +45,14 @@ pub(super) enum Token {
     Number(f32),
     Name(String),
     Member(usize),
+    Matrix(usize, usize),
     Op(&'static str),
     Open,
     Close,
     Comma,
 }
+
+pub(crate) const MATRIX_ELEMENT: usize = 16;
 
 pub(super) fn tokenize(text: &str) -> Vec<Token> {
     let mut tokens = Vec::new();
@@ -57,8 +60,23 @@ pub(super) fn tokenize(text: &str) -> Vec<Token> {
     let mut at = 0;
     while at < chars.len() {
         let c = chars[at];
+        let element = |at: usize| -> Option<(usize, usize)> {
+            let digit = |i: usize| {
+                chars
+                    .get(i)
+                    .and_then(|d| d.to_digit(10))
+                    .map(|d| d as usize)
+            };
+            (chars[at] == '.' && chars.get(at + 2) == Some(&'.')).then_some(())?;
+            Some((digit(at + 1)?, digit(at + 3)?))
+        };
         if c.is_whitespace() {
             at += 1;
+        } else if let Some((column, row)) =
+            element(at).filter(|_| matches!(tokens.last(), Some(Token::Name(_))))
+        {
+            tokens.push(Token::Matrix(column, row));
+            at += 4;
         } else if c.is_ascii_digit()
             || (c == '.' && chars.get(at + 1).is_some_and(char::is_ascii_digit))
         {
@@ -251,6 +269,11 @@ impl Parser<'_> {
                         self.at += 1;
                         Some(i)
                     }
+                    Some(Token::Matrix(column, row)) if column < &4 && row < &4 => {
+                        let element = MATRIX_ELEMENT + column * 4 + row;
+                        self.at += 1;
+                        Some(element)
+                    }
                     _ => None,
                 };
                 match name.as_str() {
@@ -284,6 +307,16 @@ impl Parser<'_> {
                     ));
                 }
                 Ok(Expr::If(args))
+            }
+            "vec2" | "vec3" | "vec4" => {
+                let wanted = usize::from(name.as_bytes()[3] - b'0');
+                if args.len() != wanted {
+                    return Err(format!(
+                        "{name} takes {wanted} arguments, not {}",
+                        args.len()
+                    ));
+                }
+                Ok(Expr::Vector(args))
             }
             "in" => {
                 if args.len() < 2 {

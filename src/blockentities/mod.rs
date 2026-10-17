@@ -2,6 +2,7 @@ pub mod banner;
 pub mod feed;
 pub mod models;
 pub mod render;
+pub mod sim;
 pub mod text;
 
 use std::collections::HashMap;
@@ -10,20 +11,27 @@ use std::sync::Arc;
 use azalea_registry::builtin::BlockEntityKind;
 use bevy::prelude::*;
 
-use crate::entities::Blend;
 use crate::entities::geom::{BakedModel, LayerDef, PartState, bake};
+use crate::entities::{Blend, CameraView, Carried, CarriedEntities, Carrier, EntityState};
 use crate::renderer::entity_material::{EntityMaterial, LightMode, Lit, diffuse_lights};
 use feed::{BlockEntityData, BlockEntityInfo, BlockStateInfo};
+use sim::Anim;
 
 pub struct BeState {
     pub pos: [i32; 3],
     pub kind: BlockEntityKind,
     pub state: Arc<BlockStateInfo>,
     pub data: Arc<BlockEntityData>,
+    pub anim: Anim,
+    pub partial: f32,
+    pub game_time: u64,
+    pub camera: CameraView,
     pub open: f32,
-    pub anim: f32,
     pub draw_outline: bool,
-    pub phase: f32,
+}
+
+fn packed_light((block, sky): (u8, u8)) -> i32 {
+    crate::renderer::lighter::coords::pack(block, sky) as i32
 }
 
 #[derive(Clone, Copy)]
@@ -73,20 +81,18 @@ pub struct BeModelGeom {
     pub layer: fn(&BeState) -> LayerDef,
     pub texture: fn(&BeState) -> String,
     pub setup: fn(&BakedModel, &mut [PartState], &BeState),
+    pub animated: bool,
 }
 
 pub struct BeBuiltGeom {
     pub key: fn(&BeState) -> Option<u64>,
     pub build: fn(&BeState, &crate::gui::atlas::GuiAtlas) -> Option<Mesh>,
     pub texture: BuiltTexture,
+    pub refresh: Option<fn(&BeState, &mut Mesh)>,
 }
 
 pub enum BuiltTexture {
-    #[allow(
-        dead_code,
-        reason = "the entity-texture arm, unused while sign text is the only built geometry"
-    )]
-    Entity(fn(&BeState) -> String),
+    Tiled(fn(&BeState) -> String),
     Font,
 }
 
@@ -113,6 +119,7 @@ pub struct BeSpec {
     pub tint: fn(&BeState) -> [f32; 4],
     pub view_distance: f32,
     pub depth_bias: i32,
+    pub light: Option<LightMode>,
 }
 
 pub const DEFAULT_VIEW_DISTANCE: f32 = 64.0;
@@ -132,6 +139,7 @@ impl BeSpec {
                 layer,
                 texture,
                 setup,
+                animated: false,
             }),
         )
     }
@@ -148,8 +156,28 @@ impl BeSpec {
                 key,
                 build,
                 texture,
+                refresh: None,
             }),
         )
+    }
+
+    pub fn with_refresh(mut self, refresh: fn(&BeState, &mut Mesh)) -> BeSpec {
+        if let BeGeom::Built(geom) = &mut self.geom {
+            geom.refresh = Some(refresh);
+        }
+        self
+    }
+
+    pub fn with_animated_texture(mut self) -> BeSpec {
+        if let BeGeom::Model(geom) = &mut self.geom {
+            geom.animated = true;
+        }
+        self
+    }
+
+    pub fn with_view_distance(mut self, view_distance: f32) -> BeSpec {
+        self.view_distance = view_distance;
+        self
     }
 
     fn new(name: &'static str, geom: BeGeom) -> BeSpec {
@@ -162,6 +190,7 @@ impl BeSpec {
             tint: untinted,
             view_distance: DEFAULT_VIEW_DISTANCE,
             depth_bias: 0,
+            light: None,
         }
     }
 
@@ -190,11 +219,16 @@ impl BeSpec {
         self
     }
 
+    pub fn with_light(mut self, light: LightMode) -> BeSpec {
+        self.light = Some(light);
+        self
+    }
+
     fn light_mode(&self) -> LightMode {
-        match &self.geom {
+        self.light.unwrap_or(match &self.geom {
             BeGeom::Model(_) => LightMode::Cardinal,
             BeGeom::Built(_) => LightMode::Flat,
-        }
+        })
     }
 }
 
@@ -206,6 +240,8 @@ fn never_full_bright(_st: &BeState) -> bool {
     false
 }
 
+pub fn no_anim(_model: &BakedModel, _parts: &mut [PartState], _st: &BeState) {}
+
 fn untinted(_st: &BeState) -> [f32; 4] {
     [1.0; 4]
 }
@@ -213,9 +249,14 @@ fn untinted(_st: &BeState) -> [f32; 4] {
 #[derive(Resource)]
 pub struct BeRegistry {
     pub specs: Vec<BeSpec>,
-    by_kind: HashMap<BlockEntityKind, Vec<usize>>,
-    empty: Vec<usize>,
-    max_view_distance: f32,
+    by_kind: HashMap<BlockEntityKind, KindEntry>,
+}
+
+#[derive(Default)]
+struct KindEntry {
+    specs: Vec<usize>,
+    submit: Option<SubmitFn>,
+    drop_sq: f32,
 }
 
 impl BeRegistry {
@@ -223,27 +264,39 @@ impl BeRegistry {
         let mut registry = BeRegistry {
             specs: Vec::new(),
             by_kind: HashMap::new(),
-            empty: Vec::new(),
-            max_view_distance: 0.0,
         };
         render::register_all(&mut registry);
-        registry.max_view_distance = registry
-            .specs
-            .iter()
-            .map(|spec| spec.view_distance)
-            .fold(0.0, f32::max);
+        for entry in registry.by_kind.values_mut() {
+            let widest = entry
+                .specs
+                .iter()
+                .map(|&idx| registry.specs[idx].view_distance)
+                .fold(DEFAULT_VIEW_DISTANCE, f32::max);
+            entry.drop_sq = (widest * DESPAWN_MARGIN).powi(2);
+        }
         registry
     }
 
     pub fn add(&mut self, kind: BlockEntityKind, spec: BeSpec) {
         let idx = self.push(spec);
-        self.by_kind.entry(kind).or_default().push(idx);
+        self.by_kind.entry(kind).or_default().specs.push(idx);
     }
 
     pub fn add_many(&mut self, kinds: &[BlockEntityKind], spec: BeSpec) {
         let idx = self.push(spec);
         for kind in kinds {
-            self.by_kind.entry(*kind).or_default().push(idx);
+            self.by_kind.entry(*kind).or_default().specs.push(idx);
+        }
+    }
+
+    pub fn add_submitter(&mut self, kind: BlockEntityKind, submit: SubmitFn) {
+        let previous = self.by_kind.entry(kind).or_default().submit.replace(submit);
+        debug_assert!(previous.is_none(), "two submitters for {kind:?}");
+    }
+
+    pub fn add_submitter_many(&mut self, kinds: &[BlockEntityKind], submit: SubmitFn) {
+        for kind in kinds {
+            self.add_submitter(*kind, submit);
         }
     }
 
@@ -258,12 +311,186 @@ impl BeRegistry {
     }
 
     pub fn specs_for(&self, kind: BlockEntityKind) -> &[usize] {
-        self.by_kind.get(&kind).unwrap_or(&self.empty)
+        self.by_kind.get(&kind).map_or(&[], |entry| &entry.specs)
     }
 
     #[allow(dead_code, reason = "read by the block entity coverage test")]
     pub fn registered_kinds(&self) -> impl Iterator<Item = BlockEntityKind> + '_ {
         self.by_kind.keys().copied()
+    }
+}
+
+pub type SubmitFn = fn(&BeState, &mut Submit);
+
+pub struct Submit<'a> {
+    pos: [i32; 3],
+    light: i32,
+    slot: u8,
+    light_map: &'a crate::lighting::level::LightMap,
+    cache: &'a mut SubmitCache,
+    states: &'a mut Vec<EntityState>,
+}
+
+impl Submit<'_> {
+    pub fn item(
+        &mut self,
+        carried: Carried,
+        item: &crate::renderer::anim::HeldItem,
+        pose: Transform,
+    ) {
+        if item.is_empty() {
+            return;
+        }
+        let shown = Shown {
+            kind: azalea_registry::builtin::EntityKind::ItemDisplay,
+            carried: Some(carried),
+            light: self.light,
+            what: What::Item(item),
+        };
+        self.place(shown, corner(self.pos), pose);
+    }
+
+    pub fn block(&mut self, state_id: u32, feet: Vec3) {
+        let shown = Shown {
+            kind: azalea_registry::builtin::EntityKind::BlockDisplay,
+            carried: Some(Carried::MovingBlock),
+            light: -1,
+            what: What::Block(state_id),
+        };
+        self.place(shown, feet.to_array(), Transform::IDENTITY);
+    }
+
+    pub fn entity(&mut self, kind: azalea_registry::builtin::EntityKind, pose: Transform) {
+        let shown = Shown {
+            kind,
+            carried: None,
+            light: self.light,
+            what: What::Entity,
+        };
+        self.place(shown, corner(self.pos), pose);
+    }
+
+    pub fn light_at(&self, pos: [i32; 3]) -> (u8, u8) {
+        crate::renderer::lightmap::resolved_levels(self.light_map.at(pos[0], pos[1], pos[2]))
+    }
+
+    pub fn set_light(&mut self, levels: (u8, u8)) {
+        self.light = packed_light(levels);
+    }
+
+    fn place(&mut self, shown: Shown, pos: [f32; 3], pose: Transform) {
+        let key = (self.pos, self.slot);
+        self.slot += 1;
+        let st = self.cache.state(self.states, key, &shown);
+        st.pos = pos;
+        st.carrier = Some(Carrier {
+            pose,
+            specs: shown.carried,
+        });
+    }
+}
+
+fn corner(pos: [i32; 3]) -> [f32; 3] {
+    [pos[0] as f32, pos[1] as f32, pos[2] as f32]
+}
+
+struct Shown<'a> {
+    kind: azalea_registry::builtin::EntityKind,
+    carried: Option<Carried>,
+    light: i32,
+    what: What<'a>,
+}
+
+enum What<'a> {
+    Item(&'a crate::renderer::anim::HeldItem),
+    Block(u32),
+    Entity,
+}
+
+impl Shown<'_> {
+    fn matches(&self, st: &EntityState) -> bool {
+        st.kind == self.kind
+            && st.carrier.and_then(|c| c.specs) == self.carried
+            && st.extras.brightness_override == self.light
+            && match self.what {
+                What::Item(item) => st.extras.item == *item,
+                What::Block(id) => st.extras.block_state == Some(id),
+                What::Entity => true,
+            }
+    }
+
+    fn build(&self, id: i32) -> EntityState {
+        let mut shared = crate::entities::state::ExtrasShared {
+            brightness_override: self.light,
+            ..Default::default()
+        };
+        match self.what {
+            What::Item(item) => shared.item = item.clone(),
+            What::Block(state) => shared.block_state = Some(state),
+            What::Entity => {}
+        }
+        let mut st = EntityState::with_extras(
+            id,
+            self.kind,
+            crate::entities::state::Extras::with_shared(Arc::new(shared)),
+        );
+        if matches!(self.what, What::Block(_)) {
+            st.bounding_box_height = 1.0;
+        }
+        st
+    }
+}
+
+#[derive(Default)]
+struct SubmitCache {
+    slots: HashMap<([i32; 3], u8), (usize, u64)>,
+    keys: Vec<([i32; 3], u8)>,
+    next_id: i32,
+    epoch: u64,
+}
+
+impl SubmitCache {
+    fn state<'s>(
+        &mut self,
+        states: &'s mut Vec<EntityState>,
+        key: ([i32; 3], u8),
+        shown: &Shown,
+    ) -> &'s mut EntityState {
+        let epoch = self.epoch;
+        match self.slots.get_mut(&key) {
+            Some((index, seen)) => {
+                *seen = epoch;
+                let st = &mut states[*index];
+                if !shown.matches(st) {
+                    *st = shown.build(st.id);
+                }
+                st
+            }
+            None => {
+                self.next_id -= 1;
+                self.slots.insert(key, (states.len(), epoch));
+                self.keys.push(key);
+                states.push(shown.build(self.next_id));
+                states.last_mut().unwrap()
+            }
+        }
+    }
+
+    fn sweep(&mut self, states: &mut Vec<EntityState>) {
+        let mut index = 0;
+        while index < states.len() {
+            let key = self.keys[index];
+            if self.slots[&key].1 == self.epoch {
+                index += 1;
+                continue;
+            }
+            self.slots.remove(&key);
+            states.swap_remove(index);
+            self.keys.swap_remove(index);
+            if let Some(moved) = self.keys.get(index) {
+                self.slots.get_mut(moved).unwrap().0 = index;
+            }
+        }
     }
 }
 
@@ -293,6 +520,7 @@ struct SharedMaterial {
 struct BeAssets {
     models: HashMap<(usize, u64), GpuModel>,
     images: HashMap<String, Option<Handle<Image>>>,
+    tiled: HashMap<String, Option<Handle<Image>>>,
     materials: HashMap<BeMaterialKey, SharedMaterial>,
     epoch: u64,
 }
@@ -319,15 +547,31 @@ impl BeAssets {
         })
     }
 
-    fn image(&mut self, path: &str, images: &mut Assets<Image>) -> Option<Handle<Image>> {
-        if let Some(cached) = self.images.get(path) {
+    fn image(
+        &mut self,
+        path: &str,
+        tiled: bool,
+        images: &mut Assets<Image>,
+    ) -> Option<Handle<Image>> {
+        let cache = if tiled {
+            &mut self.tiled
+        } else {
+            &mut self.images
+        };
+        if let Some(cached) = cache.get(path) {
             return cached.clone();
         }
         let handle = crate::entities::load_entity_image(path, images);
-        if handle.is_none() {
-            warn!("block entity texture not found: textures/{path}.png");
+        match &handle {
+            Some(handle) if tiled => {
+                if let Some(image) = images.get_mut(handle) {
+                    image.sampler = crate::entities::repeating_nearest();
+                }
+            }
+            Some(_) => {}
+            None => warn!("block entity texture not found: textures/{path}.png"),
         }
-        self.images.insert(path.to_string(), handle.clone());
+        cache.insert(path.to_string(), handle.clone());
         handle
     }
 
@@ -391,10 +635,6 @@ struct PartNodes {
 enum RigBody {
     Parts(Vec<PartNodes>),
     Built {
-        #[allow(
-            dead_code,
-            reason = "holding the handle is the whole of its job; see the field comment"
-        )]
         mesh: Option<Handle<Mesh>>,
         node: Entity,
     },
@@ -420,10 +660,9 @@ struct BeRig {
 #[derive(Resource, Default)]
 pub struct BeRigs {
     live: HashMap<[i32; 3], BeRig>,
-    snapshot: Arc<HashMap<[i32; 3], BlockEntityInfo>>,
-    version: u64,
     lights: crate::renderer::lightmap::LightCells,
     preview: Option<(u64, u64, Arc<BlockEntityData>)>,
+    submits: SubmitCache,
 }
 
 impl BeRigs {
@@ -439,12 +678,16 @@ pub struct BlockEntityPlugin;
 
 impl Plugin for BlockEntityPlugin {
     fn build(&self, app: &mut App) {
+        render::plugins(app);
         app.init_resource::<BeAssets>()
             .init_resource::<BeRigs>()
             .insert_resource(BeRegistry::build())
             .add_systems(
                 Update,
-                sync_block_entities.run_if(in_state(crate::renderer::AppState::InGame)),
+                sync_block_entities
+                    .after(crate::renderer::FrameViewSystems)
+                    .before(crate::entities::EntitySync)
+                    .run_if(in_state(crate::renderer::AppState::InGame)),
             );
     }
 }
@@ -452,7 +695,7 @@ impl Plugin for BlockEntityPlugin {
 #[allow(clippy::too_many_arguments)]
 fn sync_block_entities(
     mut commands: Commands,
-    shared: Res<crate::renderer::Shared>,
+    view: Res<crate::renderer::FrameView>,
     registry: Res<BeRegistry>,
     mut assets: ResMut<BeAssets>,
     mut rigs: ResMut<BeRigs>,
@@ -465,33 +708,28 @@ fn sync_block_entities(
     mut mats: Query<&mut MeshMaterial3d<EntityMaterial>>,
     lightmap: Res<crate::renderer::systems::LightmapState>,
     gui_state: Option<Res<crate::gui::GuiState>>,
+    mut carried: ResMut<CarriedEntities>,
     #[cfg(feature = "skins")] skins: Res<crate::renderer::skin::SkinTextures>,
 ) {
     crate::prof_span!("render:sync_block_entities");
     let Some(gui) = gui else { return };
-    let camera = camera_q
+    let camera_view = camera_q
         .iter()
         .next()
-        .map(|t| t.translation())
+        .map(|t| CameraView::new(t.rotation(), t.translation()))
         .unwrap_or_default();
+    let camera = camera_view.position;
 
-    let (partial, game_time) = {
-        let state = shared.0.lock().unwrap();
-        if state.session.block_entities_version != rigs.version {
-            rigs.version = state.session.block_entities_version;
-            rigs.snapshot = state.session.block_entities.clone();
-        }
-        (
-            crate::renderer::systems::partial_ticks(&state),
-            state.session.game_time,
-        )
-    };
-    let snapshot = rigs.snapshot.clone();
+    let (partial, game_time) = (view.partial, view.game_time);
+    let snapshot = &*view.block_entities;
 
     let rigs = &mut *rigs;
     let live = &mut rigs.live;
     let lights = &mut rigs.lights;
     let preview_cache = &mut rigs.preview;
+    let submits = &mut rigs.submits;
+    submits.epoch = submits.epoch.wrapping_add(1);
+    let carried = &mut carried.0;
     let preview = gui_state.as_deref().and_then(|gui| gui.sign_edit.preview());
     if preview.is_none() {
         *preview_cache = None;
@@ -503,8 +741,6 @@ fn sync_block_entities(
 
     let dirs = diffuse_lights(crate::renderer::dimension::current());
 
-    let drop_distance = registry.max_view_distance * DESPAWN_MARGIN;
-    let drop_sq = drop_distance * drop_distance;
     let center_of = |pos: &[i32; 3]| {
         Vec3::new(
             pos[0] as f32 + 0.5,
@@ -515,7 +751,10 @@ fn sync_block_entities(
 
     live.retain(|pos, rig| {
         let keep = snapshot.get(pos).map(|info| info.kind) == Some(rig.kind)
-            && camera.distance_squared(center_of(pos)) < drop_sq;
+            && registry
+                .by_kind
+                .get(&rig.kind)
+                .is_some_and(|entry| camera.distance_squared(center_of(pos)) < entry.drop_sq);
         if !keep {
             for layer in &rig.layers {
                 commands.entity(layer.root).despawn();
@@ -525,12 +764,12 @@ fn sync_block_entities(
     });
 
     for (pos, info) in snapshot.iter() {
-        let spec_ids = registry.specs_for(info.kind);
-        if spec_ids.is_empty() {
+        let Some(entry) = registry.by_kind.get(&info.kind) else {
             continue;
-        }
+        };
+        let spec_ids = &entry.specs;
         let distance_sq = camera.distance_squared(center_of(pos));
-        if distance_sq >= drop_sq {
+        if distance_sq >= entry.drop_sq {
             continue;
         }
         let draw_outline = distance_sq < SIGN_OUTLINE_DISTANCE * SIGN_OUTLINE_DISTANCE;
@@ -555,14 +794,30 @@ fn sync_block_entities(
             kind: info.kind,
             state: info.state.clone(),
             data,
-            open: combined_openness(info, &snapshot, partial),
-            anim: skull_anim(info, partial),
+            anim: info.anim.clone(),
+            partial,
+            game_time,
+            camera: camera_view,
+            open: combined_openness(info, snapshot, partial),
             draw_outline,
-            phase: banner_phase(info, *pos, game_time, partial),
         };
 
         let levels = block_entity_levels(&light_map, info, *pos);
         let cell = lights.get(&lightmap.current, levels.0, levels.1);
+
+        if let Some(submit) = entry.submit {
+            submit(
+                &st,
+                &mut Submit {
+                    pos: *pos,
+                    light: packed_light(levels),
+                    slot: 0,
+                    light_map: &light_map,
+                    cache: submits,
+                    states: carried,
+                },
+            );
+        }
 
         let rig = live.entry(*pos).or_insert_with(|| BeRig {
             kind: info.kind,
@@ -577,7 +832,15 @@ fn sync_block_entities(
             let spec = &registry.specs[idx];
             let key = spec.geom.key(&st);
             let existing = rig.layers.iter().position(|l| l.spec == idx);
-            if existing.map(|i| rig.layers[i].key) == key {
+            if let Some(i) = existing
+                && Some(rig.layers[i].key) == key
+            {
+                if let BeGeom::Model(geom) = &spec.geom
+                    && geom.animated
+                    && let Some(image) = assets.image(&(geom.texture)(&st), false, &mut images)
+                {
+                    rig.layers[i].texture = Some(image);
+                }
                 continue;
             }
             if let Some(old) = existing {
@@ -644,16 +907,34 @@ fn sync_block_entities(
                 set_layer_material(layer, &material, &mut mats);
             }
 
-            if let (BeGeom::Model(geom), RigBody::Parts(_)) = (&spec.geom, &layer.body) {
-                if let Some(gpu) = assets.models.get(&(layer.spec, layer.key)) {
-                    gpu.model.reset_pose(&mut layer.states);
-                    (geom.setup)(&gpu.model, &mut layer.states, &st);
+            match (&spec.geom, &layer.body) {
+                (BeGeom::Model(geom), RigBody::Parts(_)) => {
+                    if let Some(gpu) = assets.models.get(&(layer.spec, layer.key)) {
+                        gpu.model.reset_pose(&mut layer.states);
+                        (geom.setup)(&gpu.model, &mut layer.states, &st);
+                    }
                 }
+                (
+                    BeGeom::Built(BeBuiltGeom {
+                        refresh: Some(refresh),
+                        ..
+                    }),
+                    RigBody::Built {
+                        mesh: Some(mesh), ..
+                    },
+                ) => {
+                    if let Some(mesh) = meshes.get_mut(mesh) {
+                        refresh(&st, mesh);
+                    }
+                }
+                _ => {}
             }
 
             apply_layer(layer, &(spec.transform)(&st), *pos, &mut nodes);
         }
     }
+
+    submits.sweep(carried);
 }
 
 const DESPAWN_MARGIN: f32 = 1.1;
@@ -717,24 +998,10 @@ fn combined_openness(
 }
 
 fn openness(info: &BlockEntityInfo, partial: f32) -> f32 {
-    info.open_prev + (info.open - info.open_prev) * partial
-}
-
-fn skull_anim(info: &BlockEntityInfo, partial: f32) -> f32 {
-    if info.animating {
-        info.animation_tick as f32 + partial
-    } else {
-        info.animation_tick as f32
+    match &info.anim {
+        Anim::Lid(lid) => lid.at(partial),
+        _ => 0.0,
     }
-}
-
-fn banner_phase(info: &BlockEntityInfo, pos: [i32; 3], game_time: u64, partial: f32) -> f32 {
-    if info.kind != BlockEntityKind::Banner {
-        return 0.0;
-    }
-    let hash = (pos[0] as i64) * 7 + (pos[1] as i64) * 9 + (pos[2] as i64) * 13;
-    let ticks = hash.wrapping_add(game_time as i64).rem_euclid(100);
-    (ticks as f32 + partial) / 100.0
 }
 
 fn block_entity_levels(
@@ -783,7 +1050,7 @@ fn spawn_layer(
     match &spec.geom {
         BeGeom::Model(geom) => {
             let texture = (geom.texture)(st);
-            let image = assets.image(&texture, images)?;
+            let image = assets.image(&texture, false, images)?;
             let (root, node) = spawn_roots(commands, spec, st);
             let material = assets.material(spec, Some(image.clone()), levels, lit, materials);
             let gpu = assets.model((idx, key), geom, st, meshes);
@@ -838,7 +1105,7 @@ fn spawn_layer(
         BeGeom::Built(geom) => {
             let mesh = (geom.build)(st, &gui.atlas)?;
             let image = match &geom.texture {
-                BuiltTexture::Entity(path) => assets.image(&(path)(st), images)?,
+                BuiltTexture::Tiled(path) => assets.image(&(path)(st), true, images)?,
                 BuiltTexture::Font => gui.image.clone(),
             };
             let (root, node) = spawn_roots(commands, spec, st);
@@ -978,7 +1245,10 @@ mod tests {
                 if !baked_specs.contains(&spec.name) {
                     baked_specs.push(spec.name);
                 }
-                let path = (geom.texture)(&st);
+                let texture = (geom.texture)(&st);
+                let path = texture
+                    .split_once('#')
+                    .map_or(texture.as_str(), |(sheet, _)| sheet);
                 let file = crate::assets_root().join(format!("textures/{path}.png"));
                 if !file.exists() {
                     missing.push(format!("{} -> textures/{path}.png", spec.name));

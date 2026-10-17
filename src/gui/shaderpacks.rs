@@ -1,6 +1,7 @@
 use crate::gui::painter::Painter;
 use crate::gui::widgets::{Button, Slider};
 use crate::gui::{GuiState, Screen, ScreenCtx};
+use crate::platform::storage;
 use crate::shaderpack::lang::{self, Lang};
 use crate::shaderpack::options::{Kind, Opt, Options, Values};
 use crate::shaderpack::properties::{self, Element, Properties, ROOT_SCREEN};
@@ -8,8 +9,8 @@ use crate::shaderpack::{discover, features};
 use crate::util::pack::{Pack, Source};
 
 use super::options::{
-    BIG_W, COLUMN_STEP, COLUMN_W, GRID_LEFT_OFFSET, LAYOUT, ROW_H, ROW_INSET, draw_done,
-    draw_title, masked_input, scroll_input,
+    BIG_W, COLUMN_STEP, COLUMN_W, GRID_LEFT_OFFSET, LAYOUT, ROW_H, ROW_INSET, draw_title,
+    masked_input, scroll_input,
 };
 use super::widgets::WIDGET_HEIGHT;
 
@@ -20,6 +21,9 @@ const NO_PACKS: &str = "No packs in the shaders folder";
 const SETTINGS: &str = "Settings...";
 const RESET: &str = "Reset";
 const DONE: &str = "Done";
+const OPEN_FOLDER: &str = "Open Shader Pack Folder";
+const FOOTER_W: f32 = 150.0;
+const FOOTER_GAP: f32 = 8.0;
 const PROFILE: &str = "Profile";
 const CUSTOM: &str = "Custom";
 const ON: &str = "ON";
@@ -87,7 +91,6 @@ impl Loaded {
     }
 }
 
-#[derive(Default)]
 pub struct State {
     packs: Vec<Pack>,
     pub loaded: Option<Loaded>,
@@ -98,6 +101,33 @@ pub struct State {
     list_scroll_drag: Option<f32>,
     error: Option<String>,
     revision: u64,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        let saved = storage::SHADER_PACK
+            .load()
+            .map(|t| t.trim().to_owned())
+            .filter(|n| !n.is_empty());
+        let (loaded, error) = match saved {
+            None => (None, None),
+            Some(name) => match load(&name) {
+                Ok(loaded) => (Some(loaded), None),
+                Err(e) => (None, Some(format!("{name}: {e}"))),
+            },
+        };
+        State {
+            packs: Vec::new(),
+            loaded,
+            nav: Vec::new(),
+            scroll: 0.0,
+            scroll_drag: None,
+            list_scroll: 0.0,
+            list_scroll_drag: None,
+            error,
+            revision: 0,
+        }
+    }
 }
 
 impl State {
@@ -343,6 +373,7 @@ pub fn draw_packs(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
 
     if let Some(choice) = pick {
         state.shaderpacks.error = None;
+        storage::SHADER_PACK.store(choice.as_deref().unwrap_or(""));
         match choice {
             None => state.shaderpacks.loaded = None,
             Some(name) => match load(&name) {
@@ -374,17 +405,20 @@ pub fn draw_packs(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         .loaded
         .as_ref()
         .is_some_and(|l| !l.options.is_empty());
+    let count = if has_options { 3.0 } else { 2.0 };
+    let mut x = (ctx.vw / 2.0 - (count * FOOTER_W + (count - 1.0) * FOOTER_GAP) / 2.0).floor();
+    if Button::new(x, footer_y, FOOTER_W, WIDGET_HEIGHT, OPEN_FOLDER).draw(p, ctx) {
+        crate::platform::url::open_folder(&discover::dir());
+    }
+    x += FOOTER_W + FOOTER_GAP;
     if has_options {
-        let settings = Button::new(left, footer_y, COLUMN_W, WIDGET_HEIGHT, SETTINGS);
-        if settings.draw(p, ctx) {
+        if Button::new(x, footer_y, FOOTER_W, WIDGET_HEIGHT, SETTINGS).draw(p, ctx) {
             state.shaderpacks.open_options();
             state.nav = Some(Screen::ShaderOptions);
         }
-        let done = Button::new(left + COLUMN_STEP, footer_y, COLUMN_W, WIDGET_HEIGHT, DONE);
-        if done.draw(p, ctx) {
-            state.nav = Some(Screen::VideoSettings);
-        }
-    } else if draw_done(p, ctx) {
+        x += FOOTER_W + FOOTER_GAP;
+    }
+    if Button::new(x, footer_y, FOOTER_W, WIDGET_HEIGHT, DONE).draw(p, ctx) {
         state.nav = Some(Screen::VideoSettings);
     }
 }

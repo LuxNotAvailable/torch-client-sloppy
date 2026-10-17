@@ -43,6 +43,10 @@ pub(crate) const UNIFORMS: &[(&str, &str)] = &[
     ("iris_CameraPosition", "vec4"),
     ("iris_ScreenSize", "vec4"),
     ("iris_Time", "vec4"),
+    ("iris_ModelViewMatrixInverse", "mat4"),
+    ("iris_ProjectionMatrixInverse", "mat4"),
+    ("iris_FogColor", "vec4"),
+    ("iris_FogParams", "vec4"),
 ];
 
 pub(crate) const ALPHA_TEST_DEFINE: &str = "IRIS_ALPHA_TEST";
@@ -69,6 +73,7 @@ pub(crate) struct Target<'a> {
 pub(crate) struct Shared {
     pub(crate) varyings: Vec<Varying>,
     pub(crate) varying_end: u32,
+    pub(crate) fog_coord: bool,
     pub(crate) samplers: Vec<String>,
     pub(crate) uniforms: Vec<PackUniform>,
     pub(crate) images: Vec<String>,
@@ -77,12 +82,15 @@ pub(crate) struct Shared {
 
 impl Shared {
     pub(crate) fn of(vertex_source: &str, fragment_source: &str) -> Shared {
-        let vertex = normalize(vertex_source);
-        let fragment = normalize(fragment_source);
+        let fog_coord =
+            vertex_source.contains(FOG_FRAG_COORD) || fragment_source.contains(FOG_FRAG_COORD);
+        let (vertex, _) = normalize(vertex_source, fog_coord);
+        let (fragment, _) = normalize(fragment_source, fog_coord);
         let (varyings, varying_end) = interface::interface(&vertex);
         let mut shared = Shared {
             varyings,
             varying_end,
+            fog_coord,
             ..Shared::default()
         };
         for tokens in [&vertex, &fragment] {
@@ -130,10 +138,63 @@ impl Shared {
     }
 }
 
-fn normalize(source: &str) -> Vec<lexer::Token> {
+fn normalize(source: &str, fog_coord: bool) -> (Vec<lexer::Token>, Vec<interface::MatrixVarying>) {
     let mut tokens = declarations::split_declarator_tokens(lexer::lex(source));
     declarations::rename_texture_sampler_tokens(&mut tokens);
-    tokens
+    rename_reserved(&mut tokens);
+    if fog_coord {
+        legacy_fog_coord(&mut tokens);
+    }
+    let matrices = interface::split_matrix_varyings(&mut tokens);
+    (tokens, matrices)
+}
+
+fn rename_reserved(tokens: &mut [lexer::Token]) {
+    let rename = |word: &mut lexer::Token| {
+        if matches!(word.text.as_str(), "sample" | "sampler") {
+            word.text = format!("iris_renamed_{}", word.text);
+        }
+    };
+    for token in tokens.iter_mut() {
+        match token.kind {
+            lexer::Kind::Word => rename(token),
+            lexer::Kind::Directive => lexer::in_define(token, rename),
+            _ => {}
+        }
+    }
+}
+
+const FOG_FRAG_COORD: &str = "gl_FogFragCoord";
+
+fn legacy_fog_coord(tokens: &mut Vec<lexer::Token>) {
+    let rename = |word: &mut lexer::Token| {
+        if word.text == FOG_FRAG_COORD {
+            word.text = "iris_FogFragCoord".to_owned();
+        }
+    };
+    for token in tokens.iter_mut() {
+        match token.kind {
+            lexer::Kind::Word => rename(token),
+            lexer::Kind::Directive => lexer::in_define(token, rename),
+            _ => {}
+        }
+    }
+    let mut at = tokens
+        .iter()
+        .position(lexer::is_version)
+        .map_or(0, |version| version + 1);
+    while at < tokens.len()
+        && (tokens[at].is_trivia()
+            || (tokens[at].kind == lexer::Kind::Directive
+                && tokens[at]
+                    .text
+                    .trim_start_matches('#')
+                    .trim_start()
+                    .starts_with("extension")))
+    {
+        at += 1;
+    }
+    tokens.splice(at..at, lexer::lex("varying float iris_FogFragCoord;\n"));
 }
 
 #[derive(Clone, Debug, Default)]
@@ -158,7 +219,8 @@ pub(crate) fn transform(
     shared: &Shared,
     target: &Target,
 ) -> Transformed {
-    let mut tokens = normalize(source);
+    let (mut tokens, matrices) = normalize(source, shared.fog_coord);
+    interface::wrap_matrix_varyings(&mut tokens, stage, &matrices);
     let mut interface = Interface {
         uniforms: shared.uniforms.clone(),
         ..Interface::default()

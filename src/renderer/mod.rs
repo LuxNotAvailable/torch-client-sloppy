@@ -48,6 +48,15 @@ pub use systems::{Shared, run};
 pub const ATLAS_COLS: u32 = 16;
 pub const TILE_PX: u32 = 16;
 
+pub fn embedded_path(path: &str) -> String {
+    let crate_name = module_path!().split(':').next().unwrap_or("torch_client");
+    format!("embedded://{crate_name}/{path}")
+}
+
+pub fn embedded_shader(path: &str) -> bevy::shader::ShaderRef {
+    bevy::shader::ShaderRef::Path(embedded_path(path).into())
+}
+
 pub fn atlas_rows(atlas: &bevy::image::Image) -> u32 {
     (atlas.height() * ATLAS_COLS / atlas.width().max(1)).max(1)
 }

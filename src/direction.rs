@@ -92,6 +92,19 @@ impl Direction {
         self.offset().2 as f32
     }
 
+    pub fn rotation(self) -> bevy::math::Quat {
+        use bevy::math::Quat;
+        use std::f32::consts::{FRAC_PI_2, PI};
+        match self {
+            Direction::Down => Quat::from_rotation_x(PI),
+            Direction::Up => Quat::IDENTITY,
+            Direction::North => Quat::from_rotation_x(FRAC_PI_2) * Quat::from_rotation_z(PI),
+            Direction::South => Quat::from_rotation_x(FRAC_PI_2),
+            Direction::West => Quat::from_rotation_x(FRAC_PI_2) * Quat::from_rotation_z(FRAC_PI_2),
+            Direction::East => Quat::from_rotation_x(FRAC_PI_2) * Quat::from_rotation_z(-FRAC_PI_2),
+        }
+    }
+
     #[inline]
     pub const fn mirrored(self) -> Direction {
         match self {
@@ -99,6 +112,12 @@ impl Direction {
             Direction::East => Direction::West,
             other => other,
         }
+    }
+}
+
+impl From<azalea_core::direction::Direction> for Direction {
+    fn from(direction: azalea_core::direction::Direction) -> Direction {
+        Direction::from_index(direction as u8)
     }
 }
 

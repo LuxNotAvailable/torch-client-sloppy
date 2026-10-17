@@ -90,6 +90,7 @@ pub(crate) struct FrameValues {
     sun_position: Vec3,
     moon_position: Vec3,
     up_position: Vec3,
+    end_flash: crate::renderer::packdraw::endflash::EndFlash,
     is_day: bool,
     shadow_model_view: Mat4,
     shadow_projection: Mat4,
@@ -200,6 +201,13 @@ impl FrameValues {
             sun_position: celestial(inputs.sun_angle),
             moon_position: celestial(inputs.moon_angle),
             up_position: view_rotation.transform_vector3(Vec3::new(0.0, 100.0, 0.0)),
+            end_flash: if crate::renderer::dimension::current()
+                == crate::renderer::dimension::Dimension::End
+            {
+                crate::renderer::packdraw::endflash::at(inputs.day_ticks)
+            } else {
+                Default::default()
+            },
             is_day,
             shadow_model_view,
             shadow_projection,
@@ -275,6 +283,14 @@ impl FrameValues {
             B::NightVision => Value::Float(inputs.night_vision),
             B::DarknessFactor => Value::Float(inputs.darkness),
             B::HideGui => Value::Int(i32::from(inputs.hide_gui)),
+            B::EndFlashIntensity => Value::Float(self.end_flash.intensity),
+            B::PreviousEndFlashIntensity => Value::Float(self.end_flash.previous),
+            B::EndFlashPosition => Value::Vec3(
+                (self.view_rotation
+                    * Mat4::from_rotation_y((180.0 - self.end_flash.y_angle).to_radians())
+                    * Mat4::from_rotation_x((-90.0 - self.end_flash.x_angle).to_radians()))
+                .transform_vector3(Vec3::new(0.0, 100.0, 0.0)),
+            ),
             B::HeldItemId => Value::Int(inputs.held_items[0]),
             B::HeldItemId2 => Value::Int(inputs.held_items[1]),
             B::HeldBlockLightValue => Value::Int(inputs.held_light[0]),
@@ -327,7 +343,10 @@ impl FrameValues {
     }
 
     pub(crate) fn input(&self, id: u32) -> f32 {
-        let (index, slot) = (id as usize / 5, id as usize % 5);
+        let (index, slot) = (
+            id as usize / super::builtins::IDS_PER_BUILTIN,
+            id as usize % super::builtins::IDS_PER_BUILTIN,
+        );
         let member = slot.checked_sub(1);
         BUILTINS
             .get(index)
@@ -361,6 +380,10 @@ impl FrameValues {
                 self.frame_counter as f32,
                 0.0,
             ),
+            model_view_inverse: model_view.inverse(),
+            projection_inverse: projection.inverse(),
+            fog_color: self.inputs.fog_color.extend(1.0),
+            fog: Vec4::new(self.inputs.fog_range.x, self.inputs.fog_range.y, 0.0, 0.0),
         }
     }
 }

@@ -261,6 +261,7 @@ pub static BINDS: LazyLock<Vec<BindDef>> = LazyLock::new(|| {
     BindDef { action: Action::ToggleGui, id: "key.toggleGui", name: "Toggle GUI", category: MISC, default: Bound::Key(KeyCode::F1) },
     BindDef { action: Action::Fullscreen, id: "key.fullscreen", name: "Toggle Fullscreen", category: MISC, default: Bound::Key(KeyCode::F11) },
     BindDef { action: Action::Screenshot, id: "key.screenshot", name: "Take Screenshot", category: MISC, default: Bound::Key(KeyCode::F2) },
+    BindDef { action: Action::Advancements, id: "key.advancements", name: "Advancements", category: MISC, default: Bound::Key(KeyCode::KeyL) },
 
     BindDef { action: Action::Chat, id: "key.chat", name: "Open Chat", category: MULTIPLAYER, default: Bound::Key(KeyCode::KeyT) },
     BindDef { action: Action::PlayerList, id: "key.playerlist", name: "List Players", category: MULTIPLAYER, default: Bound::Key(KeyCode::Tab) },
@@ -313,6 +314,7 @@ pub enum Action {
     ToggleGui,
     Fullscreen,
     Screenshot,
+    Advancements,
     Chat,
     PlayerList,
     Command,

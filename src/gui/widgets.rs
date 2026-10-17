@@ -966,7 +966,7 @@ fn trim_to_width(font: &crate::text::Font, s: &str, max: f32) -> String {
 }
 
 #[cfg(feature = "audio")]
-fn play_click() {
+pub(in crate::gui) fn play_click() {
     crate::audio::play(
         "ui.button.click",
         crate::audio::SoundCategory::Ambient,
@@ -1026,6 +1026,71 @@ pub fn draw_title(p: &mut Painter, vw: f32, y: f32, title: &str) {
 }
 
 pub const WIDGET_HEIGHT: f32 = 20.0;
+
+pub const TAB_BAR_H: f32 = 24.0;
+
+pub fn tab_bar(p: &mut Painter, ctx: &ScreenCtx, labels: &[&str], current: usize) -> Option<usize> {
+    const MAX_W: f32 = 400.0;
+    const MARGIN: f32 = 14.0;
+    let even = |n: f32| (n / 2.0).ceil() * 2.0;
+    let tabs_w = (MAX_W.min(ctx.vw) - 2.0 * MARGIN).floor();
+    let tab_w = even((tabs_w / labels.len() as f32).floor());
+    let x0 = even(((ctx.vw - tabs_w) / 2.0).floor());
+    let right = x0 + tab_w * labels.len() as f32;
+    p.sprite("header_separator", 0.0, TAB_BAR_H - 2.0, x0, 2.0);
+    p.sprite(
+        "header_separator",
+        right,
+        TAB_BAR_H - 2.0,
+        (ctx.vw - right).max(0.0),
+        2.0,
+    );
+
+    let mut picked = None;
+    for (i, label) in labels.iter().enumerate() {
+        let x = x0 + i as f32 * tab_w;
+        let selected = i == current;
+        let hovered = ctx.hovering(x, 0.0, tab_w, TAB_BAR_H);
+        let sprite = match (selected, false) {
+            (true, false) => "widget/tab_selected",
+            (true, true) => "widget/tab_selected_highlighted",
+            (false, false) => "widget/tab",
+            (false, true) => "widget/tab_highlighted",
+        };
+        p.sprite(sprite, x, 0.0, tab_w, TAB_BAR_H);
+        let text_w = p.atlas.font.width_str(label);
+        if selected {
+            p.sprite(
+                "menu_background",
+                x + 2.0,
+                2.0,
+                tab_w - 4.0,
+                TAB_BAR_H - 2.0,
+            );
+            let line_w = text_w.min(tab_w - 4.0);
+            p.fill(
+                x + ((tab_w - line_w) / 2.0).floor(),
+                TAB_BAR_H - 2.0,
+                line_w,
+                1.0,
+                0xFFFF_FFFF,
+            );
+        }
+        let top = if selected { 0.0 } else { 3.0 };
+        let y = ((top + TAB_BAR_H - LINE_HEIGHT) / 2.0).floor() + 1.0;
+        p.text_str(
+            label,
+            x + ((tab_w - text_w) / 2.0).floor(),
+            y,
+            0xFF_FFFF,
+            true,
+        );
+        if !selected && hovered && ctx.input.left_click {
+            picked = Some(i);
+        }
+    }
+    picked
+}
 
 pub const WIDGET_WIDTH_BIG: f32 = 200.0;
 

@@ -115,17 +115,12 @@ impl EntityParams {
 }
 
 fn shader() -> ShaderRef {
-    embedded("entity.wgsl")
+    super::embedded_shader("renderer/entity.wgsl")
 }
 
 #[cfg(feature = "builtin_shaders")]
 fn prepass_shader() -> ShaderRef {
-    embedded("entity_prepass.wgsl")
-}
-
-fn embedded(file: &str) -> ShaderRef {
-    let crate_name = module_path!().split(':').next().unwrap_or("torch_client");
-    ShaderRef::Path(format!("embedded://{crate_name}/renderer/{file}").into())
+    super::embedded_shader("renderer/entity_prepass.wgsl")
 }
 
 #[derive(Asset, TypePath, AsBindGroup, Clone)]

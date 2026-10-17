@@ -142,6 +142,18 @@ impl AzBuf for Vec<u8> {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+impl AzBuf for Box<[u8]> {
+    fn azalea_read(buf: &mut Cursor<&[u8]>) -> Result<Self, BufReadError> {
+        let length = i32::azalea_read_var(buf)? as usize;
+        read_bytes(buf, length).map(Into::into)
+    }
+    fn azalea_write(&self, buf: &mut impl Write) -> io::Result<()> {
+        (self.len() as u32).azalea_write_var(buf)?;
+        buf.write_all(self)
+    }
+}
+
 impl AzBuf for String {
     fn azalea_read(buf: &mut Cursor<&[u8]>) -> Result<Self, BufReadError> {
         read_utf_with_len(buf, MAX_STRING_LENGTH).map(Into::into)

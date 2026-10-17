@@ -10,7 +10,9 @@ use azalea_protocol::packets::game::c_level_chunk_with_light::BlockEntity as Pac
 use azalea_registry::builtin::BlockEntityKind;
 use simdnbt::owned::{Nbt, NbtCompound, NbtTag};
 
+use super::sim::{self, Anim, TickCtx};
 use crate::text::{Span, Style};
+use crate::util::dye::{DYES, id_by_name};
 
 #[derive(Debug)]
 pub struct BlockStateInfo {
@@ -55,6 +57,10 @@ impl BlockStateInfo {
     pub fn prop(&self, name: &str) -> &str {
         self.props.get(name).map(String::as_str).unwrap_or("")
     }
+
+    pub fn rotation_degrees(&self) -> f32 {
+        self.rotation as f32 * (360.0 / 16.0)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -62,11 +68,8 @@ pub struct BlockEntityInfo {
     pub kind: BlockEntityKind,
     pub state: Arc<BlockStateInfo>,
     pub data: Arc<BlockEntityData>,
-    pub open: f32,
-    pub open_prev: f32,
+    pub anim: Anim,
     pub partner: Option<[i32; 3]>,
-    pub animation_tick: u32,
-    pub animating: bool,
     pub rev: u64,
 }
 
@@ -75,15 +78,12 @@ impl PartialEq for BlockEntityInfo {
         self.kind == other.kind
             && self.state.state_id == other.state.state_id
             && (Arc::ptr_eq(&self.data, &other.data) || self.data == other.data)
-            && self.open == other.open
-            && self.open_prev == other.open_prev
+            && self.anim == other.anim
             && self.partner == other.partner
-            && self.animation_tick == other.animation_tick
-            && self.animating == other.animating
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub enum BlockEntityData {
     #[default]
     None,
@@ -91,6 +91,16 @@ pub enum BlockEntityData {
     Banner(super::banner::BannerData),
     #[cfg(feature = "skins")]
     Skull(SkullData),
+    Pot(sim::pot::Decorations),
+    Conduit(sim::conduit::Data),
+    Spawner(sim::spawner::Data),
+    Vault(sim::vault::Data),
+    Gateway(sim::gateway::Data),
+    Campfire(sim::items::Campfire),
+    Shelf(sim::items::Shelf),
+    Brushable(sim::items::Brushable),
+    Piston(sim::piston::Moving),
+    Bounds(sim::bounds::Data),
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
@@ -123,51 +133,27 @@ impl Default for SignFace {
     }
 }
 
-pub fn dye_text_color(name: &str) -> u32 {
-    match name {
-        "white" => 16777215,
-        "orange" => 16738335,
-        "magenta" => 16711935,
-        "light_blue" => 10141901,
-        "yellow" => 16776960,
-        "lime" => 12582656,
-        "pink" => 16738740,
-        "gray" => 8421504,
-        "light_gray" => 13882323,
-        "cyan" => 65535,
-        "purple" => 10494192,
-        "blue" => 255,
-        "brown" => 9127187,
-        "green" => 65280,
-        "red" => 16711680,
-        _ => 0,
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-struct LidController {
-    should_be_open: bool,
-    openness: f32,
-    o_openness: f32,
-}
-
-impl LidController {
-    fn tick(&mut self) {
-        self.o_openness = self.openness;
-        if !self.should_be_open && self.openness > 0.0 {
-            self.openness = (self.openness - 0.1).max(0.0);
-        } else if self.should_be_open && self.openness < 1.0 {
-            self.openness = (self.openness + 0.1).min(1.0);
-        }
-    }
+fn dye_text_color(name: &str) -> u32 {
+    let black = DYES.len() - 1;
+    DYES[id_by_name(name).unwrap_or(black)].text_color
 }
 
 struct Entry {
     kind: BlockEntityKind,
     data: Arc<BlockEntityData>,
-    lid: LidController,
-    animation_tick: u32,
-    animating: bool,
+    anim: Anim,
+    private: sim::Private,
+}
+
+impl Entry {
+    fn new(kind: BlockEntityKind, data: Arc<BlockEntityData>) -> Entry {
+        Entry {
+            kind,
+            anim: Anim::new(kind, &data),
+            data,
+            private: sim::Private::None,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -177,6 +163,7 @@ struct Store {
     kinds: HashMap<u16, Option<BlockEntityKind>>,
     published: Arc<HashMap<[i32; 3], BlockEntityInfo>>,
     next_rev: u64,
+    game_time: u64,
 }
 
 static STORE: OnceLock<Mutex<Store>> = OnceLock::new();
@@ -203,14 +190,23 @@ pub fn on_block_entity_data(packet: &ClientboundBlockEntityData) {
     store().insert(pos, packet.block_entity_type, &packet.tag);
 }
 
-pub fn on_block_event(packet: &ClientboundBlockEvent) {
-    if packet.action_id != 1 {
-        return;
-    }
+pub fn on_block_event(packet: &ClientboundBlockEvent, world: &azalea_world::World) {
     let pos = [packet.pos.x, packet.pos.y, packet.pos.z];
     let mut store = store();
+    let game_time = store.game_time;
     if let Some(entry) = store.entries.get_mut(&pos) {
-        entry.lid.should_be_open = packet.action_parameter > 0;
+        entry
+            .anim
+            .event(packet.action_id, packet.action_parameter, game_time);
+        return;
+    }
+    for (pos, moving) in
+        sim::piston::block_event(world, pos, packet.action_id, packet.action_parameter)
+    {
+        let data = Arc::new(BlockEntityData::Piston(moving));
+        store
+            .entries
+            .insert(pos, Entry::new(BlockEntityKind::Piston, data));
     }
 }
 
@@ -221,16 +217,9 @@ pub fn on_block_change(pos: BlockPos, new: BlockState) {
         Some(kind) => match store.entries.get_mut(&key) {
             Some(entry) if entry.kind == kind => {}
             _ => {
-                store.entries.insert(
-                    key,
-                    Entry {
-                        kind,
-                        data: Arc::new(BlockEntityData::None),
-                        lid: LidController::default(),
-                        animation_tick: 0,
-                        animating: false,
-                    },
-                );
+                store
+                    .entries
+                    .insert(key, Entry::new(kind, Arc::new(BlockEntityData::None)));
             }
         },
         None => {
@@ -261,74 +250,70 @@ impl Store {
     }
 
     fn insert(&mut self, pos: [i32; 3], kind: BlockEntityKind, tag: &Nbt) {
-        let data = Arc::new(decode(kind, tag));
+        self.put(pos, kind, decode(kind, tag));
+    }
+
+    fn put(&mut self, pos: [i32; 3], kind: BlockEntityKind, data: BlockEntityData) {
         match self.entries.get_mut(&pos) {
             Some(entry) if entry.kind == kind => {
-                if *entry.data != *data {
-                    entry.data = data;
+                if *entry.data != data {
+                    entry.anim.on_data(&data);
+                    entry.data = Arc::new(data);
                 }
             }
             _ => {
-                self.entries.insert(
-                    pos,
-                    Entry {
-                        kind,
-                        data,
-                        lid: LidController::default(),
-                        animation_tick: 0,
-                        animating: false,
-                    },
-                );
+                self.entries.insert(pos, Entry::new(kind, Arc::new(data)));
             }
         }
     }
 }
 
 pub(crate) fn kind_for_block(id: &str) -> Option<BlockEntityKind> {
-    if matches!(
-        id,
+    let kind = match id {
         "skeleton_skull"
-            | "skeleton_wall_skull"
-            | "wither_skeleton_skull"
-            | "wither_skeleton_wall_skull"
-            | "player_head"
-            | "player_wall_head"
-            | "zombie_head"
-            | "zombie_wall_head"
-            | "creeper_head"
-            | "creeper_wall_head"
-            | "dragon_head"
-            | "dragon_wall_head"
-            | "piglin_head"
-            | "piglin_wall_head"
-    ) {
-        return Some(BlockEntityKind::Skull);
-    }
-    if id == "ender_chest" {
-        return Some(BlockEntityKind::EnderChest);
-    }
-    if id == "trapped_chest" {
-        return Some(BlockEntityKind::TrappedChest);
-    }
-    if id == "chest" || id.ends_with("copper_chest") {
-        return Some(BlockEntityKind::Chest);
-    }
-    if id.ends_with("_hanging_sign") {
-        return Some(BlockEntityKind::HangingSign);
-    }
-    if id.ends_with("_sign") {
-        return Some(BlockEntityKind::Sign);
-    }
-    if id.ends_with("_bed") {
-        return Some(BlockEntityKind::Bed);
-    }
-    if id == "lectern" {
-        return Some(BlockEntityKind::Lectern);
-    }
-    if id.ends_with("_banner") {
-        return Some(BlockEntityKind::Banner);
-    }
-    None
+        | "skeleton_wall_skull"
+        | "wither_skeleton_skull"
+        | "wither_skeleton_wall_skull"
+        | "player_head"
+        | "player_wall_head"
+        | "zombie_head"
+        | "zombie_wall_head"
+        | "creeper_head"
+        | "creeper_wall_head"
+        | "dragon_head"
+        | "dragon_wall_head"
+        | "piglin_head"
+        | "piglin_wall_head" => BlockEntityKind::Skull,
+        "ender_chest" => BlockEntityKind::EnderChest,
+        "trapped_chest" => BlockEntityKind::TrappedChest,
+        "chest" => BlockEntityKind::Chest,
+        "lectern" => BlockEntityKind::Lectern,
+        "spawner" => BlockEntityKind::MobSpawner,
+        "trial_spawner" => BlockEntityKind::TrialSpawner,
+        "vault" => BlockEntityKind::Vault,
+        "moving_piston" => BlockEntityKind::Piston,
+        "enchanting_table" => BlockEntityKind::EnchantingTable,
+        "end_portal" => BlockEntityKind::EndPortal,
+        "end_gateway" => BlockEntityKind::EndGateway,
+        "beacon" => BlockEntityKind::Beacon,
+        "structure_block" => BlockEntityKind::StructureBlock,
+        "test_instance_block" => BlockEntityKind::TestInstanceBlock,
+        "conduit" => BlockEntityKind::Conduit,
+        "bell" => BlockEntityKind::Bell,
+        "decorated_pot" => BlockEntityKind::DecoratedPot,
+        "suspicious_sand" | "suspicious_gravel" => BlockEntityKind::BrushableBlock,
+        _ if id.ends_with("copper_chest") => BlockEntityKind::Chest,
+        _ if id.ends_with("_hanging_sign") => BlockEntityKind::HangingSign,
+        _ if id.ends_with("_sign") => BlockEntityKind::Sign,
+        _ if id.ends_with("_bed") => BlockEntityKind::Bed,
+        _ if id.ends_with("_banner") => BlockEntityKind::Banner,
+        _ if id.ends_with("shulker_box") => BlockEntityKind::ShulkerBox,
+        _ if id.ends_with("campfire") => BlockEntityKind::Campfire,
+        _ if id.ends_with("_shelf") => BlockEntityKind::Shelf,
+        _ if id.ends_with("copper_golem_statue") => BlockEntityKind::CopperGolemStatue,
+        _ => return None,
+    };
+    Some(kind)
 }
 
 fn decode(kind: BlockEntityKind, tag: &Nbt) -> BlockEntityData {
@@ -341,6 +326,19 @@ fn decode(kind: BlockEntityKind, tag: &Nbt) -> BlockEntityData {
         }),
         #[cfg(feature = "skins")]
         BlockEntityKind::Skull => BlockEntityData::Skull(skull_data(tag)),
+        BlockEntityKind::DecoratedPot => BlockEntityData::Pot(sim::pot::decode(tag)),
+        BlockEntityKind::Conduit => BlockEntityData::Conduit(sim::conduit::decode(tag)),
+        BlockEntityKind::MobSpawner | BlockEntityKind::TrialSpawner => {
+            BlockEntityData::Spawner(sim::spawner::decode(kind, tag))
+        }
+        BlockEntityKind::Vault => BlockEntityData::Vault(sim::vault::decode(tag)),
+        BlockEntityKind::EndGateway => BlockEntityData::Gateway(sim::gateway::decode(tag)),
+        BlockEntityKind::Campfire => BlockEntityData::Campfire(sim::items::campfire(tag)),
+        BlockEntityKind::Shelf => BlockEntityData::Shelf(sim::items::shelf(tag)),
+        BlockEntityKind::BrushableBlock => BlockEntityData::Brushable(sim::items::brushable(tag)),
+        BlockEntityKind::StructureBlock | BlockEntityKind::TestInstanceBlock => {
+            BlockEntityData::Bounds(sim::bounds::decode(kind, tag))
+        }
         _ => BlockEntityData::None,
     }
 }
@@ -433,7 +431,7 @@ fn banner_layers(tag: &Nbt) -> Vec<super::banner::BannerLayer> {
             };
             Some(super::banner::BannerLayer {
                 asset,
-                color: super::banner::color_by_name(&entry.string("color")?.to_string()),
+                color: id_by_name(&entry.string("color")?.to_string()).unwrap_or(0) as u8,
             })
         })
         .take(super::banner::MAX_PATTERNS)
@@ -459,9 +457,14 @@ fn component(tag: &NbtTag) -> Option<azalea_chat::FormattedText> {
     crate::client::chat_text::from_nbt_tag(tag)
 }
 
-pub fn publish(world: &azalea_world::World) -> Option<Arc<HashMap<[i32; 3], BlockEntityInfo>>> {
+pub fn publish(
+    world: &azalea_world::World,
+    game_time: u64,
+    players: &[[f64; 3]],
+) -> Option<Arc<HashMap<[i32; 3], BlockEntityInfo>>> {
     let mut store = store();
     let store = &mut *store;
+    store.game_time = game_time;
 
     let mut snapshot: HashMap<[i32; 3], BlockEntityInfo> =
         HashMap::with_capacity(store.entries.len());
@@ -484,23 +487,24 @@ pub fn publish(world: &azalea_world::World) -> Option<Arc<HashMap<[i32; 3], Bloc
             changed = true;
             return false;
         }
-        entry.lid.tick();
         let resolved_state = resolve(states, state);
-        if entry.kind == BlockEntityKind::Skull {
-            entry.animating = resolved_state.powered;
-            if entry.animating {
-                entry.animation_tick = entry.animation_tick.wrapping_add(1);
-            }
-        }
+        entry.anim.tick(
+            &TickCtx {
+                world,
+                pos: *pos,
+                state: &resolved_state,
+                data: &entry.data,
+                game_time,
+                players,
+            },
+            &mut entry.private,
+        );
         let info = BlockEntityInfo {
             kind: entry.kind,
             state: resolved_state,
             data: entry.data.clone(),
-            open: entry.lid.openness,
-            open_prev: entry.lid.o_openness,
+            anim: entry.anim.clone(),
             partner: None,
-            animation_tick: entry.animation_tick,
-            animating: entry.animating,
             rev: 0,
         };
         snapshot.insert(*pos, info);
@@ -598,28 +602,8 @@ fn chest_partner(
 
 #[cfg(test)]
 mod tests {
-    use simdnbt::Mutf8String;
-
     use super::*;
-
-    #[test]
-    fn the_lid_takes_ten_ticks_to_open() {
-        let mut lid = LidController {
-            should_be_open: true,
-            ..Default::default()
-        };
-        for _ in 0..10 {
-            lid.tick();
-        }
-        assert!((lid.openness - 1.0).abs() < 1e-6);
-        lid.tick();
-        assert_eq!(lid.openness, 1.0);
-        lid.should_be_open = false;
-        for _ in 0..10 {
-            lid.tick();
-        }
-        assert_eq!(lid.openness, 0.0);
-    }
+    use crate::blockentities::sim::test_nbt::{compound, string};
 
     #[test]
     fn the_two_halves_of_a_double_chest_find_each_other() {
@@ -643,11 +627,8 @@ mod tests {
             kind: BlockEntityKind::Chest,
             state,
             data: Arc::new(BlockEntityData::None),
-            open: 0.0,
-            open_prev: 0.0,
+            anim: Anim::None,
             partner: None,
-            animation_tick: 0,
-            animating: false,
             rev: 0,
         };
         let all = HashMap::from([([0, 64, 0], info(left)), ([-1, 64, 0], info(right))]);
@@ -675,11 +656,8 @@ mod tests {
             kind: BlockEntityKind::Chest,
             state: single,
             data: Arc::new(BlockEntityData::None),
-            open: 0.0,
-            open_prev: 0.0,
+            anim: Anim::None,
             partner: None,
-            animation_tick: 0,
-            animating: false,
             rev: 0,
         };
         let all = HashMap::from([([0, 64, 0], info.clone())]);
@@ -696,7 +674,7 @@ mod tests {
 
     #[test]
     fn a_plain_sign_line_decodes_to_one_span() {
-        let tag = NbtTag::String(Mutf8String::from("hello"));
+        let tag = string("hello");
         let spans = component_spans(&tag);
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0].text, "hello");
@@ -705,15 +683,9 @@ mod tests {
 
     #[test]
     fn a_coloured_sign_line_keeps_its_colour() {
-        let tag = NbtTag::Compound(NbtCompound::from_values(vec![
-            (
-                Mutf8String::from("text"),
-                NbtTag::String(Mutf8String::from("hi")),
-            ),
-            (
-                Mutf8String::from("color"),
-                NbtTag::String(Mutf8String::from("red")),
-            ),
+        let tag = NbtTag::Compound(compound(vec![
+            ("text", string("hi")),
+            ("color", string("red")),
         ]));
         let spans = component_spans(&tag);
         assert_eq!(spans.len(), 1);

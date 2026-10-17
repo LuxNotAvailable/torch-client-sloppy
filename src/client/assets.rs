@@ -224,7 +224,13 @@ pub(crate) fn mount() -> bool {
         let sounds_ok = meta["index"]
             .as_str()
             .is_some_and(crate::audio::store::installed);
-        if !sounds_ok {
+        if crate::platform::storage::SOUNDS_SKIPPED
+            .load()
+            .is_some_and(|s| !s.trim().is_empty())
+        {
+            SOUNDS_SKIPPED.store(true, Ordering::Relaxed);
+        }
+        if !sounds_ok && !SOUNDS_SKIPPED.load(Ordering::Relaxed) {
             log_info!(
                 "assets",
                 "audio is enabled but no sound set is installed; the download screen will fetch it"
@@ -249,6 +255,8 @@ pub(crate) fn mount() -> bool {
         }
         #[cfg(feature = "audio")]
         crate::audio::init(id);
+        #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+        MOUNTED_INDEX.set(id.to_owned()).ok();
     }
     log_info!("assets", "jar layer {version}: {} entries", jar_layer.len());
     layers.push(jar_layer);
@@ -310,6 +318,7 @@ pub(crate) enum Stage {
     Downloading,
     Extracting,
     Fetching,
+    Sounds,
     Done,
     Cancelled,
     Failed,
@@ -326,6 +335,7 @@ impl Stage {
             Stage::Done => 5,
             Stage::Cancelled => 6,
             Stage::Failed => 7,
+            Stage::Sounds => 8,
         }
     }
 
@@ -338,6 +348,7 @@ impl Stage {
             5 => Stage::Done,
             6 => Stage::Cancelled,
             7 => Stage::Failed,
+            8 => Stage::Sounds,
             _ => Stage::Idle,
         }
     }
@@ -349,6 +360,10 @@ pub(crate) struct Download {
     total: AtomicU64,
     cancel: AtomicBool,
     error: Mutex<&'static str>,
+    sound_done: AtomicU64,
+    sound_total: AtomicU64,
+    sound_active: AtomicBool,
+    sound_skip: AtomicBool,
 }
 
 pub(crate) fn download() -> &'static Download {
@@ -359,11 +374,51 @@ pub(crate) fn download() -> &'static Download {
         total: AtomicU64::new(0),
         cancel: AtomicBool::new(false),
         error: Mutex::new(""),
+        sound_done: AtomicU64::new(0),
+        sound_total: AtomicU64::new(0),
+        sound_active: AtomicBool::new(false),
+        sound_skip: AtomicBool::new(false),
     })
 }
 
 #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
 static SOUNDS_ONLY: AtomicBool = AtomicBool::new(false);
+
+#[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+static SOUNDS_SKIPPED: AtomicBool = AtomicBool::new(false);
+
+#[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+static MOUNTED_INDEX: OnceLock<String> = OnceLock::new();
+
+#[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+pub(crate) fn check_missing() -> bool {
+    SOUNDS_SKIPPED.store(false, Ordering::Relaxed);
+    crate::platform::storage::SOUNDS_SKIPPED.store("");
+    let missing = MOUNTED_INDEX
+        .get()
+        .is_some_and(|id| !crate::audio::store::installed(id));
+    if missing {
+        log_info!("assets", "the sound set is missing; offering it again");
+        SOUNDS_ONLY.store(true, Ordering::Relaxed);
+        download().rewind();
+    }
+    missing
+}
+
+#[cfg(not(all(feature = "audio", not(target_arch = "wasm32"))))]
+pub(crate) fn check_missing() -> bool {
+    false
+}
+
+pub(crate) fn adopt_sounds() {
+    #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+    {
+        SOUNDS_ONLY.store(false, Ordering::Relaxed);
+        if let Some(id) = MOUNTED_INDEX.get() {
+            crate::audio::init(id);
+        }
+    }
+}
 
 impl Download {
     pub(crate) fn stage(&self) -> Stage {
@@ -379,6 +434,23 @@ impl Download {
 
     pub(crate) fn error(&self) -> &'static str {
         *self.error.lock().unwrap()
+    }
+
+    pub(crate) fn sound_progress(&self) -> (u64, u64) {
+        (
+            self.sound_done.load(Ordering::Relaxed),
+            self.sound_total.load(Ordering::Relaxed),
+        )
+    }
+
+    pub(crate) fn sounds_running(&self) -> bool {
+        cfg!(all(feature = "audio", not(target_arch = "wasm32")))
+            && self.sound_active.load(Ordering::Relaxed)
+            && !self.sound_skip.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn skip_sounds(&self) {
+        self.sound_skip.store(true, Ordering::Relaxed);
     }
 
     fn set(&self, stage: Stage) {
@@ -398,13 +470,20 @@ impl Download {
     pub(crate) fn start(&'static self, version: String) {
         if matches!(
             self.stage(),
-            Stage::Asking | Stage::Downloading | Stage::Extracting | Stage::Fetching
+            Stage::Asking
+                | Stage::Downloading
+                | Stage::Extracting
+                | Stage::Fetching
+                | Stage::Sounds
         ) {
             return;
         }
         self.cancel.store(false, Ordering::Relaxed);
         self.done.store(0, Ordering::Relaxed);
         self.total.store(0, Ordering::Relaxed);
+        self.sound_done.store(0, Ordering::Relaxed);
+        self.sound_total.store(0, Ordering::Relaxed);
+        self.sound_skip.store(false, Ordering::Relaxed);
         *self.error.lock().unwrap() = "";
         self.set(Stage::Asking);
 
@@ -418,6 +497,13 @@ impl Download {
             .ok();
     }
 
+    #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+    fn rewind(&self) {
+        if matches!(self.stage(), Stage::Done | Stage::Cancelled | Stage::Failed) {
+            self.set(Stage::Idle);
+        }
+    }
+
     pub(crate) fn cancel(&self) {
         self.cancel.store(true, Ordering::Relaxed);
     }
@@ -426,10 +512,11 @@ impl Download {
         self.cancel.load(Ordering::Relaxed)
     }
 
-    async fn run(&self, version: &str) {
+    async fn run(&'static self, version: &str) {
         #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
         if SOUNDS_ONLY.load(Ordering::Relaxed) {
-            match self.install_sounds_only(version).await {
+            let result = self.install_sounds_only(version).await;
+            match self.settle_sounds(result) {
                 Ok(true) => {
                     log_info!("assets", "sound set installed");
                     self.set(Stage::Done);
@@ -459,11 +546,14 @@ impl Download {
         }
     }
 
-    async fn install(&self, version: &str) -> Result<bool, Failure> {
+    async fn install(&'static self, version: &str) -> Result<bool, Failure> {
         log_info!("assets", "asking Mojang about {version}");
         self.set(Stage::Asking);
         let manifest = get_json(VERSION_MANIFEST).await?;
         let meta = get_json(&pick_version(&manifest, version)?).await?;
+
+        #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+        let sounds = SoundTask::spawn(self, &meta)?;
 
         let client = &meta["downloads"]["client"];
         let url = client["url"]
@@ -535,11 +625,12 @@ impl Download {
                     }
                 }
             }
-            #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
-            if !self.install_sounds(index_url, id).await? {
-                return Ok(false);
-            }
             index_id = (!cfg!(target_arch = "wasm32")).then(|| id.to_owned());
+        }
+
+        #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+        if !sounds.finish()? {
+            return Ok(false);
         }
 
         entries.push((META_KEY.to_owned(), meta_blob(version, index_id.as_deref())));
@@ -717,21 +808,44 @@ impl Download {
         let index_id = meta["assetIndex"]["id"]
             .as_str()
             .ok_or_else(|| Failure::plain("Mojang sent no asset index"))?;
+        self.set(Stage::Sounds);
         self.install_sounds(index_url, index_id).await
     }
 
     #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
-    async fn install_sounds(&self, index_url: &str, index_id: &str) -> Result<bool, Failure> {
-        use std::sync::atomic::AtomicUsize;
+    fn settle_sounds(&self, result: Result<bool, Failure>) -> Result<bool, Failure> {
+        match result {
+            Ok(false) if !self.cancelled() => {
+                log_info!(
+                    "assets",
+                    "sounds skipped; the client will be silent until asked again"
+                );
+                SOUNDS_SKIPPED.store(true, Ordering::Relaxed);
+                crate::platform::storage::SOUNDS_SKIPPED.store("1");
+                Ok(true)
+            }
+            other => other,
+        }
+    }
 
+    #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+    async fn install_sounds(&self, index_url: &str, index_id: &str) -> Result<bool, Failure> {
         if crate::audio::store::installed(index_id) {
             log_info!("assets", "the sound set for index {index_id} is installed");
             return Ok(true);
         }
+        self.sound_active.store(true, Ordering::Relaxed);
+        let result = self.fetch_sounds(index_url, index_id).await;
+        self.sound_active.store(false, Ordering::Relaxed);
+        result
+    }
 
-        self.set(Stage::Fetching);
-        self.done.store(0, Ordering::Relaxed);
-        self.total.store(0, Ordering::Relaxed);
+    #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+    async fn fetch_sounds(&self, index_url: &str, index_id: &str) -> Result<bool, Failure> {
+        use std::sync::atomic::AtomicUsize;
+
+        self.sound_done.store(0, Ordering::Relaxed);
+        self.sound_total.store(0, Ordering::Relaxed);
         let index = get_json(index_url).await?;
         let objects = index["objects"]
             .as_object()
@@ -761,7 +875,7 @@ impl Download {
             })
             .collect();
         let total: u64 = wanted.iter().map(|(_, _, size)| size).sum();
-        self.total.store(total, Ordering::Relaxed);
+        self.sound_total.store(total, Ordering::Relaxed);
         log_info!(
             "assets",
             "{} sound events, {} files, {total} bytes",
@@ -781,7 +895,10 @@ impl Download {
             for _ in 0..workers.min(wanted.len().max(1)) {
                 scope.spawn(|| {
                     loop {
-                        if self.cancelled() || failed.lock().is_ok_and(|f| f.is_some()) {
+                        if self.cancelled()
+                            || self.sound_skip.load(Ordering::Relaxed)
+                            || failed.lock().is_ok_and(|f| f.is_some())
+                        {
                             return;
                         }
                         let at = next.fetch_add(1, Ordering::Relaxed);
@@ -807,7 +924,7 @@ impl Download {
                         }
                         let so_far = done.fetch_add(bytes.len() as u64, Ordering::Relaxed)
                             + bytes.len() as u64;
-                        self.done.store(so_far, Ordering::Relaxed);
+                        self.sound_done.store(so_far, Ordering::Relaxed);
                         collected.lock().unwrap().push((key.clone(), bytes));
                     }
                 });
@@ -817,7 +934,7 @@ impl Download {
         if let Some(failure) = failed.lock().unwrap().take() {
             return Err(failure);
         }
-        if self.cancelled() {
+        if self.cancelled() || self.sound_skip.load(Ordering::Relaxed) {
             return Ok(false);
         }
 
@@ -847,6 +964,52 @@ impl Download {
             ));
         }
         Ok(Some(bytes))
+    }
+}
+
+#[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+struct SoundTask {
+    dl: &'static Download,
+    handle: Option<std::thread::JoinHandle<Result<bool, Failure>>>,
+}
+
+#[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+impl SoundTask {
+    fn spawn(dl: &'static Download, meta: &serde_json::Value) -> Result<SoundTask, Failure> {
+        let index = &meta["assetIndex"];
+        let (Some(url), Some(id)) = (index["url"].as_str(), index["id"].as_str()) else {
+            return Err(Failure::plain("Mojang sent no asset index"));
+        };
+        let (url, id) = (url.to_owned(), id.to_owned());
+        let handle = std::thread::Builder::new()
+            .name("sound-download".into())
+            .spawn(move || crate::platform::executor::block_on(dl.install_sounds(&url, &id)))
+            .map_err(|e| Failure::new("A sound could not be fetched", e))?;
+        Ok(SoundTask {
+            dl,
+            handle: Some(handle),
+        })
+    }
+
+    fn finish(mut self) -> Result<bool, Failure> {
+        let handle = self.handle.take().expect("finished once");
+        if !handle.is_finished() {
+            self.dl.set(Stage::Sounds);
+        }
+        let result = handle
+            .join()
+            .unwrap_or_else(|_| Err(Failure::plain("A sound could not be fetched")));
+        self.dl.settle_sounds(result)
+    }
+}
+
+#[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+impl Drop for SoundTask {
+    fn drop(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            self.dl.skip_sounds();
+            let _ = handle.join();
+        }
     }
 }
 

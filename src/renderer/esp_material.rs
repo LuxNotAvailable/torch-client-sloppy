@@ -76,8 +76,7 @@ impl Material for EspMaterial {
 }
 
 fn shader() -> ShaderRef {
-    let crate_name = module_path!().split(':').next().unwrap_or("torch_client");
-    ShaderRef::Path(format!("embedded://{crate_name}/renderer/esp.wgsl").into())
+    super::embedded_shader("renderer/esp.wgsl")
 }
 
 pub struct EspMaterialPlugin;

@@ -56,28 +56,9 @@ fn sprite_key<'a>(buf: &'a mut [u8; 64], pattern: &str) -> Option<&'a str> {
 }
 
 fn base_color(item: &str) -> u32 {
-    use crate::entities::render::animals::dye::TEXTURE_DIFFUSE;
-    const NAMES: [&str; 16] = [
-        "white",
-        "orange",
-        "magenta",
-        "light_blue",
-        "yellow",
-        "lime",
-        "pink",
-        "gray",
-        "light_gray",
-        "cyan",
-        "purple",
-        "blue",
-        "brown",
-        "green",
-        "red",
-        "black",
-    ];
     let colour = item.strip_suffix("_banner").unwrap_or("white");
-    let idx = NAMES.iter().position(|n| *n == colour).unwrap_or(0);
-    0xFF00_0000 | TEXTURE_DIFFUSE[idx]
+    let id = crate::util::dye::id_by_name(colour).unwrap_or(0);
+    0xFF00_0000 | crate::util::dye::DYES[id].texture_diffuse
 }
 
 #[cfg(test)]

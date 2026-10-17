@@ -86,6 +86,14 @@ const RESET_GAME: &str = "Reset Game Settings";
 
 const RESET_ALL: &str = "Reset All Options";
 
+const MANAGE_STORAGE: &str = "Manage Storage...";
+const MANAGE_STORAGE_TITLE: &str = "Manage Storage";
+const OPEN_CLIENT_FOLDER: &str = "Open torch-client Folder";
+#[cfg(feature = "asset_download")]
+const CHECK_ASSETS: &str = "Install missing assets";
+#[cfg(feature = "asset_download")]
+const NOTHING_MISSING: &str = "Nothing is missing";
+
 const AUTO_JUMP: &str = "Auto-Jump";
 
 const MAIN_HAND: &str = "Main Hand";
@@ -167,24 +175,10 @@ const VOLUME_SLIDER_ID_BASE: u32 = 7;
 
 const ROW_SPACING: f32 = 4.0;
 
-#[cfg(not(feature = "audio"))]
-const MENU_CONTENT_H: f32 =
-    4.0 * WIDGET_HEIGHT + 3.0 * ROW_SPACING + EDIT_HUD_ROW + RESOURCE_PACKS_ROW;
-#[cfg(feature = "audio")]
-const MENU_CONTENT_H: f32 =
-    5.0 * WIDGET_HEIGHT + 4.0 * ROW_SPACING + EDIT_HUD_ROW + RESOURCE_PACKS_ROW;
-
-const EDIT_HUD_ROW: f32 = if cfg!(feature = "hud_editor") {
-    WIDGET_HEIGHT + ROW_SPACING
-} else {
-    0.0
-};
-
-const RESOURCE_PACKS_ROW: f32 = if cfg!(resource_packs) {
-    WIDGET_HEIGHT + ROW_SPACING
-} else {
-    0.0
-};
+fn menu_content_h(entries: usize) -> f32 {
+    let rows = entries.div_ceil(2) as f32;
+    rows * WIDGET_HEIGHT + (rows - 1.0) * ROW_SPACING
+}
 
 pub(in crate::gui) const ROW_H: f32 = 25.0;
 
@@ -602,88 +596,98 @@ fn reset_audio_options(o: &mut crate::gui::GuiOptions) {
 pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     draw_title(p, ctx, TITLE);
 
-    let x = centered_x(ctx.vw);
-    let top = LAYOUT.content_y(ctx.vh, MENU_CONTENT_H);
-    let row = |i: f32| top + i * (WIDGET_HEIGHT + ROW_SPACING);
+    enum Entry {
+        Screen(Screen),
+        #[cfg(resource_packs)]
+        Packs,
+        #[cfg(feature = "hud_editor")]
+        Hud,
+    }
 
+    let mut entries = vec![
+        (VIDEO, Entry::Screen(Screen::VideoSettings)),
+        (CONTROLS, Entry::Screen(Screen::Controls)),
+        (GAME, Entry::Screen(Screen::GameSettings)),
+    ];
     #[cfg(feature = "audio")]
-    let entries = [
-        (VIDEO, Screen::VideoSettings),
-        (CONTROLS, Screen::Controls),
-        (GAME, Screen::GameSettings),
-        (AUDIO, Screen::AudioSettings),
-    ];
-    #[cfg(not(feature = "audio"))]
-    let entries = [
-        (VIDEO, Screen::VideoSettings),
-        (CONTROLS, Screen::Controls),
-        (GAME, Screen::GameSettings),
-    ];
-
-    for (i, (label, screen)) in entries.into_iter().enumerate() {
-        let button = Button::new(x, row(i as f32), WIDGET_WIDTH_BIG, WIDGET_HEIGHT, label);
-        if button.draw(p, ctx) {
-            state.video_scroll = 0.0;
-            state.video_scroll_drag = None;
-            state.game_scroll = 0.0;
-            state.game_scroll_drag = None;
-            #[cfg(all(target_arch = "wasm32", feature = "asset_download"))]
-            {
-                state.confirm_clear_assets = false;
-            }
-            state.controls_scroll = 0.0;
-            state.controls_scroll_drag = None;
-            state.keybinds.capturing = None;
-            state.nav = Some(screen);
-        }
-    }
-
+    entries.push((AUDIO, Entry::Screen(Screen::AudioSettings)));
     #[cfg(resource_packs)]
-    {
-        let packs = Button::new(
-            x,
-            row(entries.len() as f32),
-            WIDGET_WIDTH_BIG,
-            WIDGET_HEIGHT,
-            crate::gui::resourcepacks::RESOURCE_PACKS,
-        );
-        if packs.draw(p, ctx) {
-            state.resourcepacks.open();
-            state.nav = Some(Screen::ResourcePacks);
-        }
-    }
-    let after_categories = entries.len() as f32 + if cfg!(resource_packs) { 1.0 } else { 0.0 };
-
+    entries.push((crate::gui::resourcepacks::RESOURCE_PACKS, Entry::Packs));
     #[cfg(feature = "hud_editor")]
-    {
-        let edit = Button::new(
-            x,
-            row(after_categories),
-            WIDGET_WIDTH_BIG,
-            WIDGET_HEIGHT,
-            "Edit HUD...",
-        );
-        if edit.draw(p, ctx) {
-            state.hud_state.parent = Screen::Options;
-            state.hud_state.over_menu = state.in_menu();
-            state.nav = Some(Screen::HudEditor);
+    entries.push(("Edit HUD...", Entry::Hud));
+    entries.push((MANAGE_STORAGE, Entry::Screen(Screen::ManageStorage)));
+
+    let left = (ctx.vw / 2.0 - GRID_LEFT_OFFSET).floor();
+    let top = LAYOUT.content_y(ctx.vh, menu_content_h(entries.len()));
+    let row = |i: usize| top + i as f32 * (WIDGET_HEIGHT + ROW_SPACING);
+
+    for (i, (label, entry)) in entries.iter().enumerate() {
+        let x = left + (i % 2) as f32 * COLUMN_STEP;
+        let button = Button::new(x, row(i / 2), COLUMN_W, WIDGET_HEIGHT, label);
+        if !button.draw(p, ctx) {
+            continue;
+        }
+        match entry {
+            Entry::Screen(screen) => {
+                state.video_scroll = 0.0;
+                state.video_scroll_drag = None;
+                state.game_scroll = 0.0;
+                state.game_scroll_drag = None;
+                #[cfg(all(target_arch = "wasm32", feature = "asset_download"))]
+                {
+                    state.confirm_clear_assets = false;
+                }
+                #[cfg(feature = "asset_download")]
+                {
+                    state.storage_nothing_missing = false;
+                }
+                state.controls_scroll = 0.0;
+                state.controls_scroll_drag = None;
+                state.keybinds.capturing = None;
+                state.nav = Some(*screen);
+            }
+            #[cfg(resource_packs)]
+            Entry::Packs => {
+                state.resourcepacks.open();
+                state.nav = Some(Screen::ResourcePacks);
+            }
+            #[cfg(feature = "hud_editor")]
+            Entry::Hud => {
+                state.hud_state.parent = Screen::Options;
+                state.hud_state.over_menu = state.in_menu();
+                state.nav = Some(Screen::HudEditor);
+            }
         }
     }
 
-    let reset_row = after_categories
-        + if cfg!(feature = "hud_editor") {
-            1.0
-        } else {
-            0.0
-        };
-    let reset_all = Button::new(
-        x,
-        row(reset_row),
-        WIDGET_WIDTH_BIG,
-        WIDGET_HEIGHT,
-        RESET_ALL,
-    );
-    if reset_all.draw(p, ctx) {
+    if draw_done(p, ctx) {
+        state.nav = Some(state.options_parent);
+    }
+}
+
+pub fn draw_manage_storage(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
+    draw_title(p, ctx, MANAGE_STORAGE_TITLE);
+
+    let mut count = 1;
+    if cfg!(not(any(target_arch = "wasm32", target_os = "android"))) {
+        count += 1;
+    }
+    if cfg!(feature = "asset_download") {
+        count += 1;
+    }
+    let left = (ctx.vw / 2.0 - GRID_LEFT_OFFSET).floor();
+    let top = LAYOUT.content_y(ctx.vh, menu_content_h(count));
+    #[allow(unused)]
+    let cell = |i: usize| {
+        (
+            left + (i % 2) as f32 * COLUMN_STEP,
+            top + (i / 2) as f32 * (WIDGET_HEIGHT + ROW_SPACING),
+        )
+    };
+    #[allow(unused)]
+    let mut next = 1;
+
+    if Button::new(left, top, COLUMN_W, WIDGET_HEIGHT, RESET_ALL).draw(p, ctx) {
         reset_video_options(&mut state.options);
         reset_game_options(&mut state.options);
         #[cfg(feature = "audio")]
@@ -695,8 +699,30 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         crate::gui::save_options(&state.options);
     }
 
+    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+    {
+        let (x, y) = cell(next);
+        next += 1;
+        if Button::new(x, y, COLUMN_W, WIDGET_HEIGHT, OPEN_CLIENT_FOLDER).draw(p, ctx) {
+            crate::platform::url::open_folder(&crate::platform::storage::dir());
+        }
+    }
+
+    #[cfg(feature = "asset_download")]
+    {
+        let (x, y) = cell(next);
+        let label = if state.storage_nothing_missing {
+            NOTHING_MISSING
+        } else {
+            CHECK_ASSETS
+        };
+        if Button::new(x, y, COLUMN_W, WIDGET_HEIGHT, label).draw(p, ctx) {
+            state.storage_nothing_missing = !crate::gui::assetdownload::check_missing(state);
+        }
+    }
+
     if draw_done(p, ctx) {
-        state.nav = Some(state.options_parent);
+        state.nav = Some(Screen::Options);
     }
 }
 

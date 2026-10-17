@@ -42,7 +42,8 @@ struct Mirror {
     added: Vec<ColumnPos>,
     removed: Vec<ColumnPos>,
     page_backlog: usize,
-    posted: usize,
+    posted: u32,
+    acked: u32,
 }
 
 thread_local! {
@@ -91,7 +92,10 @@ pub fn start(assets: Vec<u8>) {
 
     let shared = Arc::new(SharedMutex::default());
     let queue = crate::client::worker::spawn_chunk_workers(shared.clone());
-    let light = LightWorker::new(crate::client::worldsync::light_map().clone());
+    queue.prefer_loads();
+    let light = LightWorker::new(crate::client::worldsync::light_map().clone())
+        .without_stats()
+        .tracking_changes();
     MIRROR.with(|slot| {
         *slot.borrow_mut() = Some(Mirror {
             shared,
@@ -106,6 +110,7 @@ pub fn start(assets: Vec<u8>) {
             removed: Vec::new(),
             page_backlog: 0,
             posted: 0,
+            acked: 0,
         });
     });
 
@@ -124,7 +129,11 @@ fn on_message(event: web_sys::MessageEvent) {
         return;
     };
     let bytes = js_sys::Uint8Array::new(buffer).to_vec();
-    let Some(message) = ToWorker::decode(&bytes) else {
+    let Some(message) = super::tally::time(
+        "decode",
+        || ToWorker::decode(&bytes),
+        |_| bytes.len() as u64,
+    ) else {
         log_error!("mesh", "the page sent a message this worker cannot read");
         return;
     };
@@ -140,21 +149,23 @@ fn on_message(event: web_sys::MessageEvent) {
             mirror.handle(message);
         }
     });
+    super::tally::flush("worker");
 }
 
 impl Mirror {
     fn handle(&mut self, message: ToWorker) {
-        self.apply(message);
+        super::tally::time(message.name(), || self.apply(message), |_| 0);
         let changed: Vec<BlockPos> = CHANGED.with(|c| std::mem::take(&mut *c.borrow_mut()));
         for pos in changed {
             self.on_block_changed(pos);
         }
         if !self.batch.is_empty() {
             let batch = std::mem::take(&mut self.batch);
-            self.run_light(batch);
+            let jobs = batch.len() as u64;
+            super::tally::time("light", || self.run_light(batch), |_| jobs);
         }
-        self.publish_light();
-        self.mesh();
+        super::tally::time("publish", || self.publish_light(), |&n| n as u64);
+        super::tally::time("mesh", || self.mesh(), |&n| n as u64);
     }
 
     fn apply(&mut self, message: ToWorker) {
@@ -192,32 +203,30 @@ impl Mirror {
                     light: crate::client::packets::server_light(&data),
                 });
             }
-            ToWorker::BlockChange { x, y, z, state } => {
+            ToWorker::Blocks(blocks) => {
                 let Some(level) = self.level.as_ref() else {
                     return;
                 };
-                let state = azalea::block::BlockState::try_from(state)
-                    .unwrap_or(azalea::block::BlockState::AIR);
-                level
-                    .world
-                    .read()
-                    .set_block_state(BlockPos { x, y, z }, state);
+                let world = level.world.read();
+                for (x, y, z, state) in blocks {
+                    let state = azalea::block::BlockState::try_from(state)
+                        .unwrap_or(azalea::block::BlockState::AIR);
+                    world.set_block_state(BlockPos { x, y, z }, state);
+                }
             }
             ToWorker::Unload { cx, cz } => self.unload(cx, cz),
-            ToWorker::Backlog(sections) => {
-                self.page_backlog = sections as usize;
-                self.posted = 0;
+            ToWorker::Backlog { pending, received } => {
+                self.page_backlog = pending as usize;
+                self.acked = received;
             }
             ToWorker::ResetLight => {
                 self.queue.reset();
-                self.posted = 0;
                 self.meshed.clear();
                 self.clear_light_delta();
                 self.batch.push(LightJob::Reset);
             }
             ToWorker::ResetLevel => {
                 self.queue.reset();
-                self.posted = 0;
                 self.meshed.clear();
                 self.level = None;
                 self.clear_light_delta();
@@ -235,6 +244,7 @@ impl Mirror {
         self.dirty.clear();
         self.added.clear();
         self.removed.clear();
+        self.light.take_changed();
     }
 
     fn new_level(&mut self, min_y: i32, height: u32) {
@@ -348,24 +358,37 @@ impl Mirror {
                     whole.insert((col.x, col.z));
                     queue.push(world.clone(), col.x, col.z, JobScope::Column);
                 }
+                super::tally::count("columns queued", to_mesh.len() as u64);
+                let mut relights = 0u64;
                 if let Some(world) = level_world.as_ref() {
+                    let w = world.read();
+                    let bottom = w.chunks.min_y() >> 4;
                     for sec in sections {
-                        if whole.contains(&(sec.x, sec.z)) {
+                        if whole.contains(&(sec.x, sec.z)) || !meshed.contains(&(sec.x, sec.z)) {
                             continue;
                         }
-                        if meshed.contains(&(sec.x, sec.z)) {
+                        let has_blocks = usize::try_from(sec.y - bottom).ok().is_some_and(|i| {
+                            w.chunks
+                                .get(&AzChunkPos { x: sec.x, z: sec.z })
+                                .is_some_and(|c| {
+                                    c.read().sections.get(i).is_some_and(|s| s.block_count != 0)
+                                })
+                        });
+                        if has_blocks {
                             queue.push_relight(world.clone(), sec.x, sec.z, sec.y);
+                            relights += 1;
                         }
                     }
                 }
+                super::tally::count("relights queued", relights);
                 dirty.extend_from_slice(sections);
             };
         light.run_batch(batch, &mut on_dirty);
     }
 
-    fn publish_light(&mut self) {
+    fn publish_light(&mut self) -> usize {
         if self.dirty.is_empty() && self.added.is_empty() && self.removed.is_empty() {
-            return;
+            return 0;
         }
         let dirty = std::mem::take(&mut self.dirty);
         let mut columns = std::mem::take(&mut self.added);
@@ -376,12 +399,17 @@ impl Mirror {
                 columns.push(ColumnPos { x: sec.x, z: sec.z });
             }
         }
+        let mut once = HashSet::new();
+        let mut changed = self.light.take_changed();
+        changed.retain(|sec| once.insert(*sec));
         let map = crate::client::worldsync::light_map().read();
-        post(msg::light(&map, &dirty, &columns, &removed));
+        post(msg::light(&map, &changed, &columns, &removed));
+        changed.len()
     }
 
-    fn mesh(&mut self) {
-        self.queue.set_backlog(self.page_backlog + self.posted);
+    fn mesh(&mut self) -> usize {
+        let in_transit = self.posted.wrapping_sub(self.acked) as usize;
+        self.queue.set_backlog(self.page_backlog + in_transit);
         crate::client::worker::drain_all(
             &self.queue,
             &self.shared,
@@ -396,9 +424,11 @@ impl Mirror {
             )
         };
         if chunks.is_empty() && edits.is_empty() {
-            return;
+            return 0;
         }
-        self.posted += chunks.len() + edits.len();
+        let n = chunks.len() + edits.len();
+        self.posted = self.posted.wrapping_add(n as u32);
         post(msg::sections(&chunks, &edits));
+        n
     }
 }

@@ -61,6 +61,7 @@ fn reset_session_gui(
     state.hud = Default::default();
     state.hud_overlays = Default::default();
     state.toasts = Default::default();
+    state.advancements = Default::default();
     #[cfg(feature = "skins")]
     faces.reset();
 }
@@ -109,7 +110,9 @@ pub(super) fn apply_gui_nav(
             .then(|| s.disconnect_reason.take());
         let dead = s.session.dead;
         let death_opening = dead
-            && (state.screen == Screen::None || state.screen.is_modal())
+            && (state.screen == Screen::None
+                || state.screen.is_modal()
+                || state.screen == Screen::Advancements)
             && s.session.show_death_screen;
         NavPoll {
             ended,
@@ -960,6 +963,8 @@ pub(super) fn toggle_screen(
                     Screen::ShaderPacks => Screen::VideoSettings,
                     #[cfg(feature = "shader_support")]
                     Screen::ShaderOptions => Screen::ShaderPacks,
+                    #[cfg(explore_modrinth)]
+                    Screen::ExplorePacks => Screen::ResourcePacks,
                     s if s.is_options() => Screen::Options,
                     _ => Screen::None,
                 })
@@ -1013,6 +1018,14 @@ pub(super) fn toggle_screen(
         None
     } else if state.screen == Screen::Death {
         None
+    } else if state.screen == Screen::Advancements {
+        if close_key {
+            Some(state.advancements.parent)
+        } else if state.keybinds.just(Action::Advancements, &keys, &buttons) {
+            Some(Screen::None)
+        } else {
+            None
+        }
     } else if state.screen.is_open() {
         if toggle_key || close_key {
             Some(Screen::None)
@@ -1029,6 +1042,9 @@ pub(super) fn toggle_screen(
         } else {
             Screen::Inventory
         })
+    } else if state.keybinds.just(Action::Advancements, &keys, &buttons) {
+        state.advancements.parent = Screen::None;
+        Some(Screen::Advancements)
     } else if state.keybinds.just(Action::Chat, &keys, &buttons) {
         state.chat.open("");
         Some(Screen::Chat)

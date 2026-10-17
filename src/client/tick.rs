@@ -9,6 +9,7 @@ use azalea_protocol::packets::game::{
     s_edit_book::ServerboundEditBook,
     s_player_action::{Action, ServerboundPlayerAction},
     s_player_command::{Action as PlayerCommand, ServerboundPlayerCommand},
+    s_seen_advancements::{Action as SeenAction, ServerboundSeenAdvancements},
     s_set_command_block::ServerboundSetCommandBlock,
     s_sign_update::ServerboundSignUpdate,
     s_teleport_to_entity::ServerboundTeleportToEntity,
@@ -223,9 +224,22 @@ fn read_tick_snapshot(bot: &Client, shared: &Arc<SharedMutex>) -> Option<TickSna
     };
 
     if let Some(world) = &world {
+        let (game_time, players) = {
+            let s = shared.lock().unwrap();
+            let own = s.session.player_pos.map(f64::from);
+            let others = s
+                .session
+                .other_players
+                .iter()
+                .map(|p| p.anim.position(1.0).map(f64::from));
+            (
+                s.session.game_time,
+                std::iter::once(own).chain(others).collect::<Vec<_>>(),
+            )
+        };
         let snapshot = {
             let world = world.read();
-            blockentities::feed::publish(&world)
+            blockentities::feed::publish(&world, game_time, &players)
         };
         if let Some(snapshot) = snapshot {
             let mut s = shared.lock().unwrap();
@@ -551,8 +565,10 @@ fn apply_local_trades(session: &mut crate::session::SessionState, actions: &[Inv
                 trace_trade("result slot empty at click time");
                 return;
             }
-            let Some(offers) = session.merchant.as_ref() else {
-                trace_trade("no offers");
+            let Some(offers) =
+                crate::session::MerchantOffers::for_window(&session.merchant, session.container_id)
+            else {
+                trace_trade("no offers for this window");
                 return;
             };
             let found = offers.active_offer(buy_a, buy_b, session.merchant_hint);
@@ -565,7 +581,16 @@ fn apply_local_trades(session: &mut crate::session::SessionState, actions: &[Inv
         if let Some(i) = index
             && let Some(offers) = session.merchant.as_mut()
         {
-            Arc::make_mut(offers).notify_trade(i);
+            let offers = Arc::make_mut(offers);
+            if matches!(
+                op,
+                azalea_inventory::operations::ClickOperation::QuickMove(_)
+            ) {
+                let n = offers.quick_move_trades(&session.menu_slots, session.merchant_hint);
+                trace_trade(&format!("shift-click took {n} trades"));
+            } else {
+                offers.notify_trade(i);
+            }
         }
     }
 }
@@ -680,6 +705,7 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
         command_block_pos,
         sign_edit_open_pos,
         edit_book,
+        seen_advancements,
         outgoing_chat,
         signing_state,
         swap_hands,
@@ -787,7 +813,7 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
         }
         let future_xp = match (
             container_kind,
-            &s.session.merchant,
+            crate::session::MerchantOffers::for_window(&s.session.merchant, container_id),
             s.session.menu_slots.get(..3),
         ) {
             (ContainerKind::Merchant, Some(offers), Some([a, b, result])) if !result.is_empty() => {
@@ -849,6 +875,7 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
             s.session.command_block_pos,
             s.session.sign_edit_open_pos,
             s.session.edit_book.take(),
+            std::mem::take(&mut s.session.seen_advancements),
             std::mem::take(&mut s.session.outgoing_chat),
             (
                 s.chat_signing_allowed || s.session.chat_signing_session,
@@ -973,6 +1000,17 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
             slot: book.slot,
             pages: book.pages,
             title: book.title,
+        });
+    }
+
+    for tab in seen_advancements {
+        bot.write_packet(ServerboundSeenAdvancements {
+            action: if tab.is_some() {
+                SeenAction::OpenedTab
+            } else {
+                SeenAction::ClosedScreen
+            },
+            tab,
         });
     }
 

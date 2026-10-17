@@ -91,6 +91,10 @@ impl LightStorage {
                 if !self.storing_light_for_section(sec) {
                     continue;
                 }
+                #[cfg(target_arch = "wasm32")]
+                if self.sections.get(&sec) == Some(&data) {
+                    continue;
+                }
                 self.sections.insert(sec, data);
                 self.mark_section_and_neighbors_affected(sec);
             }

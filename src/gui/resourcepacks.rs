@@ -14,6 +14,7 @@ const AVAILABLE: &str = "Available";
 const SELECTED: &str = "Selected";
 const OPEN_FOLDER: &str = "Open Pack Folder";
 const DONE: &str = "Done";
+const RESTART: &str = "Restart and apply";
 const VANILLA_NAME: &str = "Default";
 const VANILLA_DESCRIPTION: &str = "The default look and feel of Minecraft";
 const INCOMPATIBLE: &str = "Incompatible";
@@ -21,23 +22,25 @@ const TOO_OLD: &str = "(Made for an older version of Minecraft)";
 const TOO_NEW: &str = "(Made for a newer version of Minecraft)";
 const UNKNOWN: &str = "(Broken or incompatible)";
 
-const LIST_W: f32 = 200.0;
-const LIST_GAP: f32 = 15.0;
-const ROW_H: f32 = 36.0;
-const HEADER_H: f32 = 13.0;
-const ROW_W: f32 = LIST_W - 4.0;
-const PADDING: f32 = 2.0;
-const ICON: f32 = 32.0;
-const TEXT_W: f32 = 157.0;
-const BAR_ROW_W: f32 = LIST_W - SCROLLBAR_W - SCROLLBAR_GAP;
+pub(in crate::gui) const LIST_W: f32 = 200.0;
+pub(in crate::gui) const LIST_GAP: f32 = 15.0;
+pub(in crate::gui) const ROW_H: f32 = 36.0;
+pub(in crate::gui) const HEADER_H: f32 = 13.0;
+pub(in crate::gui) const ROW_W: f32 = LIST_W - 4.0;
+pub(in crate::gui) const PADDING: f32 = 2.0;
+pub(in crate::gui) const ICON: f32 = 32.0;
+pub(in crate::gui) const TEXT_W: f32 = 157.0;
+pub(in crate::gui) const BAR_ROW_W: f32 = LIST_W - SCROLLBAR_W - SCROLLBAR_GAP;
 const FOOTER_W: f32 = 150.0;
 const FOOTER_GAP: f32 = 8.0;
+#[cfg(explore_modrinth)]
+const FOOTER3_W: f32 = 120.0;
 
 const INCOMPATIBLE_FILL: u32 = 0xFF77_0000;
 const HOVER_FILL: u32 = 0xA090_9090;
-const DESCRIPTION: u32 = 0x80_8080;
+pub(in crate::gui) const DESCRIPTION: u32 = 0x80_8080;
 
-fn icon_key(name: &str) -> String {
+pub(in crate::gui) fn icon_key(name: &str) -> String {
     format!("\u{0}resourcepack/{name}")
 }
 
@@ -57,6 +60,19 @@ pub struct State {
 
 impl State {
     pub fn open(&mut self) {
+        self.saved = resourcepacks::selected();
+        self.load(&self.saved.clone());
+    }
+
+    #[cfg(explore_modrinth)]
+    fn rescan(&mut self) {
+        let selection = self.selected_names();
+        let scroll = self.scroll;
+        self.load(&selection);
+        self.scroll = scroll;
+    }
+
+    fn load(&mut self, selection: &[String]) {
         self.rows = resourcepacks::list()
             .into_iter()
             .map(|pack| {
@@ -72,9 +88,7 @@ impl State {
                 crate::gui::ping::note_icon(&icon_key(&row.name), std::sync::Arc::new(pixels));
             }
         }
-        self.saved = resourcepacks::selected();
-        self.selected = self
-            .saved
+        self.selected = selection
             .iter()
             .filter_map(|name| self.rows.iter().position(|row| &row.name == name))
             .collect();
@@ -98,6 +112,10 @@ enum Action {
 }
 
 pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
+    #[cfg(explore_modrinth)]
+    if state.explore_packs.take_changed() {
+        state.resourcepacks.rescan();
+    }
     draw_title(p, ctx, TITLE);
     let (_, list_y, _, list_h) = LAYOUT.content_rect(ctx.vw, ctx.vh);
     let lefts = [
@@ -247,20 +265,37 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     }
 
     let footer_y = LAYOUT.footer_y(ctx.vh);
-    let x = (ctx.vw / 2.0 - FOOTER_W - FOOTER_GAP / 2.0).floor();
-    if Button::new(x, footer_y, FOOTER_W, WIDGET_HEIGHT, OPEN_FOLDER).draw(p, ctx) {
+    #[cfg(explore_modrinth)]
+    let (mut x, w) = {
+        let w = FOOTER3_W;
+        let x = (ctx.vw / 2.0 - 1.5 * w - FOOTER_GAP).floor();
+        let explore = crate::gui::explore_packs::EXPLORE;
+        if Button::new(x, footer_y, w, WIDGET_HEIGHT, explore).draw(p, ctx) {
+            state.explore_packs.open();
+            state.nav = Some(Screen::ExplorePacks);
+        }
+        (x + w + FOOTER_GAP, w)
+    };
+    #[cfg(not(explore_modrinth))]
+    let (mut x, w) = (
+        (ctx.vw / 2.0 - FOOTER_W - FOOTER_GAP / 2.0).floor(),
+        FOOTER_W,
+    );
+    if Button::new(x, footer_y, w, WIDGET_HEIGHT, OPEN_FOLDER).draw(p, ctx) {
         crate::platform::url::open_folder(&resourcepacks::dir());
     }
+    x += w + FOOTER_GAP;
+    let chosen = state.resourcepacks.selected_names();
+    let changed = chosen != state.resourcepacks.saved;
     let done = Button::new(
-        x + FOOTER_W + FOOTER_GAP,
+        x,
         footer_y,
-        FOOTER_W,
+        w,
         WIDGET_HEIGHT,
-        DONE,
+        if changed { RESTART } else { DONE },
     );
     if done.draw(p, ctx) {
-        let chosen = state.resourcepacks.selected_names();
-        if chosen != state.resourcepacks.saved {
+        if changed {
             resourcepacks::save_selected(&chosen);
             resourcepacks::request_restart();
             state.quit = true;
@@ -269,7 +304,7 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     }
 }
 
-fn header(p: &mut Painter, title: &str, left: f32, top: f32) {
+pub(in crate::gui) fn header(p: &mut Painter, title: &str, left: f32, top: f32) {
     let spans = [Span {
         text: title.to_owned(),
         style: Style {
@@ -287,7 +322,14 @@ fn header(p: &mut Painter, title: &str, left: f32, top: f32) {
     );
 }
 
-fn entry_text(p: &mut Painter, name: &str, description: &[Span], cx: f32, cy: f32, w: f32) {
+pub(in crate::gui) fn entry_text(
+    p: &mut Painter,
+    name: &str,
+    description: &[Span],
+    cx: f32,
+    cy: f32,
+    w: f32,
+) {
     let x = cx + ICON + PADDING;
     let name = p.atlas.font.trim_to_width(&plain_white(name), w);
     p.text(&name, x, cy + 1.0, true);
@@ -311,7 +353,7 @@ fn control(p: &mut Painter, name: &str, highlighted: bool, x: f32, y: f32) {
     p.sprite(&sprite, x, y, ICON, ICON);
 }
 
-fn plain(text: &str) -> Vec<Span> {
+pub(in crate::gui) fn plain(text: &str) -> Vec<Span> {
     vec![Span {
         text: text.to_owned(),
         style: Style::colored(DESCRIPTION),

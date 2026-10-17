@@ -63,6 +63,23 @@ impl AdvancementFrame {
             AdvancementFrame::Goal => "advancements.toast.goal",
         }
     }
+    pub fn chat_color(self) -> u32 {
+        match self {
+            AdvancementFrame::Challenge => 0xAA00AA,
+            AdvancementFrame::Task | AdvancementFrame::Goal => 0x55FF55,
+        }
+    }
+
+    pub fn frame_sprite(self, obtained: bool) -> &'static str {
+        match (self, obtained) {
+            (AdvancementFrame::Task, true) => "advancements/task_frame_obtained",
+            (AdvancementFrame::Task, false) => "advancements/task_frame_unobtained",
+            (AdvancementFrame::Challenge, true) => "advancements/challenge_frame_obtained",
+            (AdvancementFrame::Challenge, false) => "advancements/challenge_frame_unobtained",
+            (AdvancementFrame::Goal, true) => "advancements/goal_frame_obtained",
+            (AdvancementFrame::Goal, false) => "advancements/goal_frame_unobtained",
+        }
+    }
 }
 
 #[allow(dead_code)]

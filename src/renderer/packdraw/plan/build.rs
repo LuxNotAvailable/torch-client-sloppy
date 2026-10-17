@@ -245,6 +245,11 @@ impl PlanResources<'_> {
                 },
                 None => &self.statics.white_2d.view,
             },
+            TextureSource::ShadowCompare(depth) => match (shadow, depth) {
+                (Some(shadow), Depth::All) => &shadow.depth.view,
+                (Some(shadow), Depth::Opaque) => &shadow.depth_opaque.view,
+                (None, _) => &self.statics.depth_stub.view,
+            },
             TextureSource::ShadowColor(index) => shadow
                 .and_then(|shadow| shadow.color[usize::from(index)].as_ref())
                 .map_or(&self.statics.white_2d.view, |target| &target.view),
@@ -266,7 +271,9 @@ impl PlanResources<'_> {
             TextureSource::Noise => &self.noise.view,
             TextureSource::EntityTexture => &self.statics.white_2d.view,
             TextureSource::Image { index, .. } => &self.custom_images[usize::from(index)].view,
-            TextureSource::Custom(index) => &self.images[usize::from(index)].view,
+            TextureSource::Custom(index) | TextureSource::Custom3d(index) => {
+                &self.images[usize::from(index)].view
+            }
             TextureSource::Atlas => &self.atlas,
             TextureSource::Lightmap => &self.lightmap,
             TextureSource::Stub(Stub::White2d) => &self.statics.white_2d.view,
@@ -278,8 +285,17 @@ impl PlanResources<'_> {
         }
     }
 
-    fn sampler(&self, source: TextureSource, mipmapped: u16) -> &Sampler {
+    fn sampler(&self, source: TextureSource, mipmapped: u16, shadow_pass: bool) -> &Sampler {
         match source {
+            TextureSource::ShadowCompare(_) if self.shadow.is_none() || shadow_pass => {
+                &self.statics.compare_always
+            }
+            TextureSource::ShadowCompare(depth)
+                if self.installed.constants.shadow_nearest[depth_index(depth)] =>
+            {
+                &self.statics.compare_nearest
+            }
+            TextureSource::ShadowCompare(_) => &self.statics.compare_linear,
             TextureSource::Color(index) if mipmapped & (1u16 << index) != 0 => {
                 &self.statics.mip_linear
             }
@@ -294,7 +310,7 @@ impl PlanResources<'_> {
             TextureSource::Lightmap => &self.lightmap_sampler,
             TextureSource::EntityTexture => &self.statics.nearest,
             TextureSource::Noise => &self.statics.repeat,
-            TextureSource::Custom(index) => {
+            TextureSource::Custom(index) | TextureSource::Custom3d(index) => {
                 let image = &self.installed.images[usize::from(index)];
                 match (image.blur, image.clamp) {
                     (true, true) => &self.statics.linear,
@@ -366,7 +382,7 @@ impl PlanResources<'_> {
                         })
                     }
                     Binding::Sampler { binding, .. } => Owned::Sampler(
-                        self.sampler(program.texture_source(binding - 1), mipmapped)
+                        self.sampler(program.texture_source(binding - 1), mipmapped, shadow_pass)
                             .clone(),
                     ),
                     Binding::Image { name, binding, .. } => {

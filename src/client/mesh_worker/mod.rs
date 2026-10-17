@@ -4,6 +4,8 @@ mod host;
 pub(crate) mod mirror;
 #[cfg(target_arch = "wasm32")]
 mod msg;
+#[cfg(target_arch = "wasm32")]
+pub(crate) mod tally;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod seam {
@@ -82,7 +84,11 @@ mod seam {
         static SENT_LEVEL: RefCell<Option<(u8, i32, u32)>> = const { RefCell::new(None) };
         static SENT_BIOMES: RefCell<Option<std::sync::Arc<Vec<u8>>>> =
             const { RefCell::new(None) };
-        static SENT_BACKLOG: RefCell<u32> = const { RefCell::new(u32::MAX) };
+        static SENT_BACKLOG: std::cell::Cell<Option<(u32, u32)>> =
+            const { std::cell::Cell::new(None) };
+        static RECEIVED: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+        static BLOCKS: RefCell<(Vec<(i32, i32, i32, u32)>, HashMap<(i32, i32, i32), usize>)> =
+            RefCell::new((Vec::new(), HashMap::new()));
     }
 
     pub(crate) fn offer_chunk_packet(p: &ChunkPacket) -> bool {
@@ -90,7 +96,8 @@ mod seam {
             return false;
         }
         let mut bytes = Vec::new();
-        if p.azalea_write(&mut bytes).is_err() {
+        let written = super::tally::time("re-encode", || p.azalea_write(&mut bytes), |_| 0);
+        if written.is_err() {
             crate::log_error!(
                 "mesh",
                 "the chunk packet for {},{} would not encode",
@@ -112,7 +119,7 @@ mod seam {
         if data.azalea_write(&mut bytes).is_err() {
             return false;
         }
-        host::send(&ToWorker::LightUpdate {
+        send(&ToWorker::LightUpdate {
             cx,
             cz,
             data: bytes,
@@ -134,7 +141,7 @@ mod seam {
             .with(|parked| parked.borrow_mut().remove(&(cx, cz)))
             .map(|(bytes, _)| bytes)
             .unwrap_or_default();
-        host::send(&ToWorker::Chunk {
+        send(&ToWorker::Chunk {
             cx,
             cz,
             mesh: mesh.iter().map(|c| (c.x, c.z)).collect(),
@@ -155,7 +162,7 @@ mod seam {
                 return;
             }
             *sent = Some((dim, min_y, height));
-            host::send(&ToWorker::Level { dim, min_y, height });
+            send(&ToWorker::Level { dim, min_y, height });
         });
     }
 
@@ -173,7 +180,7 @@ mod seam {
                 return;
             }
             *sent = Some(table.clone());
-            host::send(&ToWorker::BiomeTable((*table).clone()));
+            send(&ToWorker::BiomeTable((*table).clone()));
         });
     }
 
@@ -181,13 +188,35 @@ mod seam {
         if !active() {
             return false;
         }
-        host::send(&ToWorker::BlockChange {
-            x: pos.x,
-            y: pos.y,
-            z: pos.z,
-            state: new.id() as u32,
+        let state = new.id() as u32;
+        BLOCKS.with(|blocks| {
+            let (list, at) = &mut *blocks.borrow_mut();
+            match at.get(&(pos.x, pos.y, pos.z)) {
+                Some(&i) => list[i].3 = state,
+                None => {
+                    at.insert((pos.x, pos.y, pos.z), list.len());
+                    list.push((pos.x, pos.y, pos.z, state));
+                }
+            }
         });
         true
+    }
+
+    fn flush_blocks() {
+        let batch = BLOCKS.with(|blocks| {
+            let (list, at) = &mut *blocks.borrow_mut();
+            at.clear();
+            std::mem::take(list)
+        });
+        if !batch.is_empty() {
+            super::tally::count("block writes", batch.len() as u64);
+            host::send(&ToWorker::Blocks(batch));
+        }
+    }
+
+    fn send(msg: &ToWorker) {
+        flush_blocks();
+        host::send(msg);
     }
 
     pub(crate) fn forward_unload(cx: i32, cz: i32) -> bool {
@@ -195,7 +224,7 @@ mod seam {
             return false;
         }
         drop_chunk_packet(cx, cz);
-        host::send(&ToWorker::Unload { cx, cz });
+        send(&ToWorker::Unload { cx, cz });
         true
     }
 
@@ -204,7 +233,7 @@ mod seam {
             return false;
         }
         clear_light();
-        host::send(&ToWorker::ResetLight);
+        send(&ToWorker::ResetLight);
         true
     }
 
@@ -213,10 +242,15 @@ mod seam {
             return false;
         }
         clear_light();
+        BLOCKS.with(|blocks| {
+            let (list, at) = &mut *blocks.borrow_mut();
+            list.clear();
+            at.clear();
+        });
         PARKED.with(|parked| parked.borrow_mut().clear());
         SENT_LEVEL.with(|sent| *sent.borrow_mut() = None);
         SENT_BIOMES.with(|sent| *sent.borrow_mut() = None);
-        host::send(&ToWorker::ResetLevel);
+        send(&ToWorker::ResetLevel);
         true
     }
 
@@ -228,14 +262,15 @@ mod seam {
         if !active() {
             return;
         }
-        let sections = sections.min(u32::MAX as usize) as u32;
+        flush_blocks();
+        let pending = sections.min(u32::MAX as usize) as u32;
+        let received = RECEIVED.with(std::cell::Cell::get);
         SENT_BACKLOG.with(|sent| {
-            let mut sent = sent.borrow_mut();
-            if *sent == sections {
+            if sent.get() == Some((pending, received)) {
                 return;
             }
-            *sent = sections;
-            host::send(&ToWorker::Backlog(sections));
+            sent.set(Some((pending, received)));
+            send(&ToWorker::Backlog { pending, received });
         });
     }
 
@@ -262,15 +297,15 @@ mod seam {
         });
     }
 
-    pub(crate) fn resend_backlog() {
-        SENT_BACKLOG.with(|sent| *sent.borrow_mut() = u32::MAX);
+    pub(crate) fn note_received(n: usize) {
+        RECEIVED.with(|r| r.set(r.get().wrapping_add(n as u32)));
     }
 
     pub(crate) fn sync_options(lighting: bool, smooth: bool) {
         if !active() {
             return;
         }
-        host::send(&ToWorker::Options { lighting, smooth });
+        send(&ToWorker::Options { lighting, smooth });
     }
 }
 

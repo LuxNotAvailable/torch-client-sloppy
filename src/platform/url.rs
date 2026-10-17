@@ -10,27 +10,48 @@ pub(crate) fn open(url: &str) {
     }
     #[cfg(target_arch = "wasm32")]
     {
-        if let Some(window) = web_sys::window() {
-            let _ = window.open_with_url_and_target(url, "_blank");
+        let opened = web_sys::window()
+            .and_then(|w| w.open_with_url_and_target(url, "_blank").ok())
+            .flatten()
+            .is_some();
+        if !opened {
+            crate::platform::clipboard::set(url);
         }
     }
     #[cfg(target_os = "android")]
-    let _ = url;
+    crate::platform::clipboard::set(url);
     #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
-    native(url);
+    match native(url) {
+        Ok(mut child) => {
+            let url = url.to_owned();
+            std::thread::spawn(move || {
+                if !child.wait().is_ok_and(|s| s.success()) {
+                    crate::platform::clipboard::set(&url);
+                }
+            });
+        }
+        Err(_) => crate::platform::clipboard::set(url),
+    }
 }
 
-#[cfg(resource_packs)]
 pub(crate) fn open_folder(path: &std::path::Path) {
+    #[cfg(any(target_arch = "wasm32", target_os = "android"))]
+    let _ = path;
+    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+    open_folder_native(path);
+}
+
+#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+fn open_folder_native(path: &std::path::Path) {
     if let Err(e) = std::fs::create_dir_all(path) {
         crate::log_warn!("url", "could not create {}: {e}", path.display());
         return;
     }
-    native(path.as_os_str());
+    let _ = native(path.as_os_str());
 }
 
 #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
-fn native(url: impl AsRef<std::ffi::OsStr>) {
+fn native(url: impl AsRef<std::ffi::OsStr>) -> std::io::Result<std::process::Child> {
     let (program, args): (&str, &[&str]) = if cfg!(target_os = "macos") {
         ("open", &[])
     } else if cfg!(target_os = "windows") {
@@ -38,12 +59,12 @@ fn native(url: impl AsRef<std::ffi::OsStr>) {
     } else {
         ("xdg-open", &[])
     };
-    let _ = std::process::Command::new(program)
+    std::process::Command::new(program)
         .args(args)
         .arg(url)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .spawn();
+        .spawn()
 }
 
 #[cfg(test)]

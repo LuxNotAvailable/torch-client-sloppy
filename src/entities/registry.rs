@@ -3,11 +3,13 @@ use azalea_registry::builtin::EntityKind;
 use bevy::prelude::Resource;
 
 use super::RenderSpec;
+use super::state::{Carried, EntityState};
 
 #[derive(Resource)]
 pub struct Registry {
     pub specs: Vec<RenderSpec>,
     by_kind: Vec<Vec<usize>>,
+    by_carried: [Vec<usize>; Carried::ALL.len()],
 }
 
 impl Registry {
@@ -15,6 +17,7 @@ impl Registry {
         let mut registry = Registry {
             specs: Vec::new(),
             by_kind: Vec::new(),
+            by_carried: Default::default(),
         };
         super::render::register_all(&mut registry);
         registry
@@ -30,6 +33,11 @@ impl Registry {
         for kind in kinds {
             self.slot(*kind).push(idx);
         }
+    }
+
+    pub fn add_carried(&mut self, carried: Carried, spec: RenderSpec) {
+        let idx = self.push(spec);
+        self.by_carried[carried as usize].push(idx);
     }
 
     fn slot(&mut self, kind: EntityKind) -> &mut Vec<usize> {
@@ -55,6 +63,13 @@ impl Registry {
             .get(kind.to_u32() as usize)
             .map(Vec::as_slice)
             .unwrap_or(&[])
+    }
+
+    pub fn specs_for_state(&self, st: &EntityState) -> &[usize] {
+        match st.carrier.and_then(|carrier| carrier.specs) {
+            Some(carried) => &self.by_carried[carried as usize],
+            None => self.specs_for(st.kind),
+        }
     }
 
     #[allow(dead_code, reason = "read by the entity coverage test")]

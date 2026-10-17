@@ -166,12 +166,15 @@ pub(super) fn pack_attributes(
         let known = PACK_ATTRIBUTES
             .iter()
             .find(|(known, _, _)| *known == tokens[name].text);
-        if target.attribute_defaults
-            && known.is_some()
-            && let Some(default) = attribute_default(&tokens[name].text, &tokens[ty].text)
-        {
-            defaulted.push((at, end, default));
-            continue;
+        if target.attribute_defaults {
+            let default = match known {
+                Some(_) => attribute_default(&tokens[name].text, &tokens[ty].text),
+                None => generic_default(&tokens[ty].text),
+            };
+            if let Some(default) = default {
+                defaulted.push((at, end, default));
+                continue;
+            }
         }
         let location = match known {
             Some((_, location, _)) => *location,
@@ -193,6 +196,21 @@ pub(super) fn pack_attributes(
     interface.attributes.dedup();
 }
 
+fn generic_default(ty: &str) -> Option<String> {
+    Some(match ty {
+        "float" => "0.0".to_owned(),
+        "int" => "0".to_owned(),
+        "uint" => "0u".to_owned(),
+        "vec2" => "vec2(0.0)".to_owned(),
+        "vec3" => "vec3(0.0)".to_owned(),
+        "vec4" => "vec4(0.0, 0.0, 0.0, 1.0)".to_owned(),
+        "ivec2" | "ivec3" | "uvec2" | "uvec3" => format!("{ty}(0)"),
+        "ivec4" => "ivec4(0, 0, 0, 1)".to_owned(),
+        "uvec4" => "uvec4(0u, 0u, 0u, 1u)".to_owned(),
+        _ => return None,
+    })
+}
+
 fn attribute_default(name: &str, ty: &str) -> Option<String> {
     let call = match name {
         "mc_Entity" => "iris_entity()",
@@ -209,4 +227,114 @@ fn attribute_default(name: &str, ty: &str) -> Option<String> {
         _ => return None,
     };
     Some(format!("{ty}({call}{swizzle})"))
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct MatrixVarying {
+    pub(super) name: String,
+    pub(super) size: usize,
+}
+
+fn column(name: &str, index: usize) -> String {
+    format!("iris_mv_{name}_{index}")
+}
+
+pub(super) fn split_matrix_varyings(tokens: &mut Vec<Token>) -> Vec<MatrixVarying> {
+    let depths = lexer::brace_depths(tokens);
+    let mut found: Vec<(usize, usize, usize, usize, usize)> = Vec::new();
+    for at in 0..tokens.len() {
+        if depths[at] != 0
+            || !["varying", "in", "out"]
+                .iter()
+                .any(|k| tokens[at].is_word(k))
+        {
+            continue;
+        }
+        let Some([ty, name, end]) = lexer::solid_run::<3>(tokens, at + 1) else {
+            continue;
+        };
+        let size = match tokens[ty].text.as_str() {
+            "mat2" => 2,
+            "mat3" => 3,
+            "mat4" => 4,
+            _ => continue,
+        };
+        if tokens[name].kind != Kind::Word || !tokens[end].is_punct(';') {
+            continue;
+        }
+        let mut first = at;
+        while let Some(before) = lexer::prev_solid(tokens, first)
+            && tokens[before].kind == Kind::Word
+            && (INTERPOLATION.contains(&tokens[before].text.as_str())
+                || tokens[before].text == "invariant")
+        {
+            first = before;
+        }
+        found.push((first, at, name, end, size));
+    }
+    let mut out = Vec::new();
+    for (first, keyword, name, end, size) in found.into_iter().rev() {
+        let qualifiers: String = tokens[first..keyword]
+            .iter()
+            .map(|t| t.text.as_str())
+            .collect();
+        let keyword_text = tokens[keyword].text.clone();
+        let name = tokens[name].text.clone();
+        let mut text = String::new();
+        for index in 0..size {
+            text.push_str(&format!(
+                "{qualifiers}{keyword_text} vec{size} {};\n",
+                column(&name, index)
+            ));
+        }
+        text.push_str(&format!("mat{size} {name};"));
+        tokens.splice(first..=end, lexer::lex(&text));
+        out.push(MatrixVarying { name, size });
+    }
+    out.reverse();
+    out
+}
+
+pub(super) fn wrap_matrix_varyings(
+    tokens: &mut Vec<Token>,
+    stage: Stage,
+    matrices: &[MatrixVarying],
+) {
+    if matrices.is_empty() || stage == Stage::Compute {
+        return;
+    }
+    let mut body = String::new();
+    for matrix in matrices {
+        let columns: Vec<String> = (0..matrix.size).map(|i| column(&matrix.name, i)).collect();
+        match stage {
+            Stage::Fragment => {
+                body.push_str(&format!(
+                    "    {} = mat{}({});\n",
+                    matrix.name,
+                    matrix.size,
+                    columns.join(", ")
+                ));
+            }
+            _ => {
+                for (index, column) in columns.iter().enumerate() {
+                    body.push_str(&format!("    {column} = {}[{index}];\n", matrix.name));
+                }
+            }
+        }
+    }
+    for at in 0..tokens.len() {
+        if tokens[at].is_word("main")
+            && lexer::next_solid(tokens, at + 1).is_some_and(|next| tokens[next].is_punct('('))
+        {
+            tokens[at].text = "iris_matrix_main".to_owned();
+        }
+    }
+    let (before, after) = if stage == Stage::Fragment {
+        (body.as_str(), "")
+    } else {
+        ("", body.as_str())
+    };
+    tokens.extend(lexer::lex(&format!(
+        "\n// Inserted by shaderpack::transform.\nvoid main() {{\n{before}    iris_matrix_main();\n{after}}}\n"
+    )));
 }

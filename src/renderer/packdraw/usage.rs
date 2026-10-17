@@ -84,7 +84,12 @@ impl Usage {
             }),
             shadow_copy_opaque: !shadow_filtered[1]
                 && reads(&|kind, source| {
-                    !kind.is_shadow() && source == TextureSource::ShadowDepth(Depth::Opaque)
+                    !kind.is_shadow()
+                        && matches!(
+                            source,
+                            TextureSource::ShadowDepth(Depth::Opaque)
+                                | TextureSource::ShadowCompare(Depth::Opaque)
+                        )
                 }),
             kind_blocks: {
                 let mut extra = installed.programs.len();

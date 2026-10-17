@@ -391,7 +391,49 @@ const SHEETS: &[Sheet] = &[
         w: 192,
         h: 192,
     },
+    Sheet {
+        key: "advancements/window",
+        w: 252,
+        h: 140,
+    },
+    Sheet {
+        key: "advancements/backgrounds/stone",
+        w: 16,
+        h: 16,
+    },
+    Sheet {
+        key: "advancements/backgrounds/nether",
+        w: 16,
+        h: 16,
+    },
+    Sheet {
+        key: "advancements/backgrounds/end",
+        w: 16,
+        h: 16,
+    },
+    Sheet {
+        key: "advancements/backgrounds/adventure",
+        w: 16,
+        h: 16,
+    },
+    Sheet {
+        key: "advancements/backgrounds/husbandry",
+        w: 16,
+        h: 16,
+    },
 ];
+
+pub const MISSING_TEXTURE: &str = "missingno";
+
+fn missing_texture() -> image::RgbaImage {
+    image::RgbaImage::from_fn(16, 16, |x, y| {
+        if (y < 8) ^ (x < 8) {
+            image::Rgba([0xF8, 0x00, 0xF8, 0xFF])
+        } else {
+            image::Rgba([0x00, 0x00, 0x00, 0xFF])
+        }
+    })
+}
 
 struct Extra {
     key: &'static str,
@@ -769,6 +811,12 @@ pub fn build_gui_atlas(assets: &Path) -> GuiAtlas {
             scaling: Scaling::Stretch,
         });
     }
+    entries.push(Entry {
+        kind: Kind::Sheet,
+        key: MISSING_TEXTURE.to_string(),
+        image: missing_texture(),
+        scaling: Scaling::Stretch,
+    });
 
     entries.extend(bake_banner_layers(assets));
 

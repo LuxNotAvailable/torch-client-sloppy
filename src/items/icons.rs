@@ -281,7 +281,10 @@ pub(super) fn collect_parts(
                         .and_then(|m| m.get("color"))
                         .and_then(Json::as_str)
                         .unwrap_or("white");
-                    Synthetic::Banner(crate::blockentities::banner::color_by_name(color), local)
+                    Synthetic::Banner(
+                        crate::util::dye::id_by_name(color).unwrap_or(0) as u8,
+                        local,
+                    )
                 }
                 "head" => {
                     let kind = inner
@@ -689,7 +692,7 @@ fn pattern_tex<'a>(
         if mask.w != base.w || mask.h != base.h {
             return;
         }
-        let dye = crate::blockentities::banner::tint(color);
+        let dye = crate::util::dye::linear_diffuse(color.into());
         for (i, dst) in px.iter_mut().enumerate() {
             let src = mask.get(i as u32 % base.w, i as u32 / base.w);
             if src[3] == 0 {
@@ -1174,7 +1177,11 @@ mod tests {
             return;
         }
         let cache = Assets::new(assets);
-        for (index, name) in crate::blockentities::banner::NAMES.iter().enumerate() {
+        for (index, name) in crate::util::dye::DYES
+            .iter()
+            .map(|dye| dye.name)
+            .enumerate()
+        {
             let root = cache
                 .json(&format!("items/{name}_banner.json"))
                 .and_then(|doc| doc.get("model").cloned())

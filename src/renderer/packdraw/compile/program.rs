@@ -294,7 +294,12 @@ fn texture_sources(
                 name: sampler,
             } => Some(
                 if let Some(index) = pack.images.lookup(name, sampler) {
-                    TextureSource::custom(index, sampler, ty)
+                    TextureSource::custom(
+                        index,
+                        pack.images.textures[usize::from(index)].three_d,
+                        sampler,
+                        ty,
+                    )
                 } else if kind.draws_entities()
                     && matches!(sampler.as_str(), "gtexture" | "tex" | "texture")
                 {

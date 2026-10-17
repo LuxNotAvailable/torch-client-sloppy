@@ -23,8 +23,8 @@ use super::input::{
 };
 use super::overlays::{
     BlockOutline, BlockOutlineMarker, BreakOverlay, BreakOverlayMarker, ChunkBorderMarker,
-    ChunkBorderOverlay, chunk_border_mesh, crumbling_mesh, outline_mesh, update_block_outline,
-    update_break_overlay, update_chunk_borders,
+    ChunkBorderOverlay, LineMaterial, chunk_border_mesh, crumbling_mesh, outline_mesh,
+    update_block_outline, update_break_overlay, update_chunk_borders,
 };
 
 const SKY_COLOR: Color = Color::srgb(0.753, 0.847, 1.0);
@@ -308,6 +308,9 @@ struct FpsWindow {
     shown: f32,
 }
 
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct RendererSetup;
+
 fn setup(
     mut commands: Commands,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -411,9 +414,10 @@ fn setup(
         &mut commands,
         &mut meshes,
         chunk_border_mesh(-64.0, 320.0, -64.0),
-        chunk_border_mat,
+        chunk_border_mat.clone(),
         ChunkBorderMarker,
     );
+    commands.insert_resource(LineMaterial(chunk_border_mat));
     commands.insert_resource(ChunkBorderOverlay {
         entity,
         mesh,
@@ -1053,7 +1057,11 @@ fn collect_hud_info(
     crate::diag::budget::note_drawn_entities(rig_node_q.iter().count());
     #[cfg(feature = "budget")]
     if let Some(sampled) = crate::diag::budget::sample() {
-        crate::log_debug!("render", "frame budget: {}", sampled.line());
+        if cfg!(target_arch = "wasm32") {
+            crate::log_info!("budget", "frame: {}", sampled.line());
+        } else {
+            crate::log_debug!("render", "frame budget: {}", sampled.line());
+        }
     }
 
     *gated_ms += time.delta_secs() * 1000.0;
@@ -1414,11 +1422,22 @@ pub(super) fn enter_screen(
     if next == crate::gui::Screen::HudEditor && state.screen != next {
         state.hud_state.opened();
     }
+    let advancements_closed =
+        state.screen == crate::gui::Screen::Advancements && next != state.screen && !next.is_menu();
+    if state.screen == crate::gui::Screen::Advancements && next != state.screen {
+        state.advancements.close();
+    }
+    if next == crate::gui::Screen::Advancements && state.screen != next {
+        state.advancements.opened();
+    }
     state.screen = next;
     let open = next.is_open();
     {
         let mut s = shared.0.lock().unwrap();
         s.screen_open = open;
+        if advancements_closed {
+            s.session.seen_advancements.push(None);
+        }
         s.session.attack_held = false;
         s.session.use_held = false;
         s.session.attack_clicked = false;
@@ -2163,7 +2182,7 @@ pub fn run(
     .init_resource::<FrameGate>()
     .insert_resource(crate::renderer::item_assets::ItemAssets::new())
     .init_state::<AppState>()
-    .add_systems(Startup, setup)
+    .add_systems(Startup, setup.in_set(RendererSetup))
     .init_resource::<LightmapState>()
     .init_resource::<super::environment::Environment>()
     .init_resource::<FrameView>()

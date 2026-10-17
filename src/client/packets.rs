@@ -57,10 +57,21 @@ pub(crate) fn handle_packet(
     }
 
     trace(packet);
+    #[cfg(target_arch = "wasm32")]
+    match packet {
+        ClientboundGamePacket::BlockUpdate(_) => {
+            crate::client::mesh_worker::tally::count("server block updates", 1)
+        }
+        ClientboundGamePacket::SectionBlocksUpdate(p) => crate::client::mesh_worker::tally::count(
+            "server section updates",
+            p.states.len() as u64,
+        ),
+        _ => {}
+    }
     weather(packet);
     chunk_accounting(world, packet);
     server_lighting(world, packet);
-    block_entities(shared, packet);
+    block_entities(world, shared, packet);
     animations(packet);
     entity_state(packet);
     maps(shared, packet);
@@ -69,7 +80,7 @@ pub(crate) fn handle_packet(
     crate::client::tablist::packet(shared, packet);
     crate::client::bossbar::packet(shared, packet);
     crate::client::cooldowns::packet(packet);
-    crate::client::advancements::packet(shared, packet);
+    crate::client::advancements::packet(world, shared, packet);
     crate::client::recipes::packet(shared, packet);
 }
 
@@ -292,7 +303,8 @@ fn merchant_offers(
             let mut cost_a = stack(&azalea_inventory::ItemStack::Present(
                 o.base_cost_a.clone().into_item_stack(),
             ));
-            cost_a.count = charged.clamp(1, 255) as u8;
+            let max_stack = crate::generated_items::item(cost_a.item).map_or(64, |d| d.max_stack);
+            cost_a.count = charged.clamp(1, max_stack.max(1) as i32) as u8;
             let mut base_cost_a = cost_a.clone();
             base_cost_a.count = base.clamp(1, 255) as u8;
 
@@ -314,6 +326,7 @@ fn merchant_offers(
         .collect();
 
     crate::session::MerchantOffers {
+        container_id: p.container_id,
         offers,
         level: p.villager_level,
         xp: p.villager_xp,
@@ -414,7 +427,7 @@ fn server_lighting(world: &WorldHolder, packet: &ClientboundGamePacket) {
     }
 }
 
-fn block_entities(shared: &Arc<SharedMutex>, packet: &ClientboundGamePacket) {
+fn block_entities(world: &WorldHolder, shared: &Arc<SharedMutex>, packet: &ClientboundGamePacket) {
     match packet {
         ClientboundGamePacket::LevelChunkWithLight(p) => {
             blockentities::feed::on_chunk(p.x, p.z, &p.chunk_data.block_entities);
@@ -424,7 +437,7 @@ fn block_entities(shared: &Arc<SharedMutex>, packet: &ClientboundGamePacket) {
             command_block_data(shared, p);
         }
         ClientboundGamePacket::BlockEvent(p) => {
-            blockentities::feed::on_block_event(p);
+            blockentities::feed::on_block_event(p, &world.shared.read());
         }
         _ => {}
     }
@@ -653,8 +666,24 @@ fn entity_state(packet: &ClientboundGamePacket) {
         }
         ClientboundGamePacket::AddEntity(p) => {
             mark_meta_dirty(p.id.0);
-            if p.entity_type == azalea_registry::builtin::EntityKind::FallingBlock {
-                add_entity_data().lock().unwrap().insert(p.id.0, p.data);
+            use azalea_registry::builtin::EntityKind;
+            match p.entity_type {
+                EntityKind::FallingBlock => {
+                    add_entity_data().lock().unwrap().insert(p.id.0, p.data);
+                }
+                EntityKind::ItemFrame | EntityKind::GlowItemFrame | EntityKind::Painting => {
+                    crate::log_debug!(
+                        "itemframe",
+                        "add_entity id={} kind={:?} data={} x_rot={} y_rot={}",
+                        p.id.0,
+                        p.entity_type,
+                        p.data,
+                        p.x_rot,
+                        p.y_rot
+                    );
+                    add_entity_data().lock().unwrap().insert(p.id.0, p.data);
+                }
+                _ => {}
             }
             record_velocity(p.id.0, p.movement.to_vec3());
         }
@@ -664,6 +693,18 @@ fn entity_state(packet: &ClientboundGamePacket) {
         ClientboundGamePacket::SetEntityData(p) => {
             use azalea::entity::EntityDataValue;
             mark_meta_dirty(p.id.0);
+            if p.packed_items
+                .0
+                .iter()
+                .any(|item| matches!(item.value, EntityDataValue::Direction(_)))
+            {
+                crate::log_debug!(
+                    "itemframe",
+                    "set_entity_data id={} items={:?}",
+                    p.id.0,
+                    p.packed_items.0
+                );
+            }
             for item in &p.packed_items.0 {
                 if item.index == METADATA_INDEX_18
                     && let EntityDataValue::Byte(bits) = item.value
@@ -742,9 +783,7 @@ fn session_state(world: &WorldHolder, shared: &Arc<SharedMutex>, packet: &Client
                     } else {
                         sign.back.clone()
                     }),
-                    #[cfg(feature = "skins")]
-                    BlockEntityData::Skull(_) => None,
-                    BlockEntityData::Banner(_) | BlockEntityData::None => None,
+                    _ => None,
                 })
                 .unwrap_or_else(SignFace::default);
             s.session.sign_editor_open = Some(crate::session::SignEditRequest {
@@ -923,6 +962,23 @@ fn session_state(world: &WorldHolder, shared: &Arc<SharedMutex>, packet: &Client
         }
         ClientboundGamePacket::Waypoint(p) => waypoint(shared, p),
         ClientboundGamePacket::LevelParticles(p) => level_particles(shared, p),
+        ClientboundGamePacket::Explode(p) => {
+            let mut s = shared.lock().unwrap();
+            crate::session::push_particle_emit(
+                &mut s.session.particle_emits,
+                crate::session::ParticleEmit::Explosion(crate::session::ExplosionEmit {
+                    center: [p.center.x, p.center.y, p.center.z],
+                    radius: p.radius,
+                    block_count: p.block_count,
+                    particle: p.explosion_particle.clone(),
+                    block_particles: p.block_particles[..p
+                        .block_particles
+                        .len()
+                        .min(crate::session::MAX_EXPLOSION_BLOCK_PARTICLES)]
+                        .to_vec(),
+                }),
+            );
+        }
         ClientboundGamePacket::LevelEvent(p) => {
             let mut s = shared.lock().unwrap();
             crate::session::push_particle_emit(

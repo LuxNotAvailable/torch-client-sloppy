@@ -307,6 +307,7 @@ pub(crate) fn take_over_view(
         Option<ResMut<ViewBinnedRenderPhases<bevy::core_pipeline::prepass::Opaque3dPrepass>>>,
         Option<ResMut<ViewBinnedRenderPhases<bevy::core_pipeline::prepass::AlphaMask3dPrepass>>>,
     ),
+    gpu_preprocessing: Res<bevy::render::batching::gpu_preprocessing::GpuPreprocessingSupport>,
 ) {
     let Some(mut takeover) = takeover else { return };
     let mut taken_over = false;
@@ -332,8 +333,21 @@ pub(crate) fn take_over_view(
             }
         }
         if taken_over && render.draws_hand() {
-            for view in &hand_views {
-                hide(&view.retained_view_entity);
+            let mode = gpu_preprocessing.min(
+                bevy::render::batching::gpu_preprocessing::GpuPreprocessingMode::PreprocessingOnly,
+            );
+            let keys: Vec<_> = hand_views
+                .iter()
+                .map(|view| view.retained_view_entity)
+                .collect();
+            for key in &keys {
+                hide(key);
+            }
+            for key in keys {
+                opaque.prepare_for_new_frame(key, mode);
+                alpha_mask.prepare_for_new_frame(key, mode);
+                transmissive.insert_or_clear(key);
+                transparent.insert_or_clear(key);
             }
         }
     }
@@ -419,5 +433,5 @@ pub(crate) fn prepare_uniforms(
     install
         .gpu
         .uniforms
-        .write(&values, &install.customs.values, &queue);
+        .write(&values, &install.customs, &queue);
 }

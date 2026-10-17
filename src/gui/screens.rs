@@ -77,7 +77,13 @@ pub fn draw(
                 _ => Default::default(),
             },
             merchant: match state.screen {
-                Screen::Container(ContainerKind::Merchant) => s.session.merchant.clone(),
+                Screen::Container(ContainerKind::Merchant) => {
+                    crate::session::MerchantOffers::for_window(
+                        &s.session.merchant,
+                        s.session.container_id,
+                    )
+                    .cloned()
+                }
                 _ => None,
             },
             merchant_future_xp: s.session.merchant_future_xp,
@@ -87,6 +93,9 @@ pub fn draw(
                 }
                 _ => Default::default(),
             },
+            advancements: (state.screen == Screen::Advancements)
+                .then(|| s.session.advancements.clone()),
+            advancement_tab: s.session.advancement_tab,
             active_effects: if matches!(state.screen, Screen::Inventory | Screen::Creative) {
                 s.session.active_effects.clone()
             } else {
@@ -362,7 +371,11 @@ pub fn draw(
             );
             None
         }
-        Screen::Options | Screen::VideoSettings | Screen::Controls | Screen::GameSettings => {
+        Screen::Options
+        | Screen::VideoSettings
+        | Screen::Controls
+        | Screen::GameSettings
+        | Screen::ManageStorage => {
             if state.in_menu() {
                 crate::gui::menu::background(p, ctx.vw, ctx.vh);
             } else {
@@ -372,6 +385,7 @@ pub fn draw(
                 Screen::VideoSettings => options::draw_video(p, state, &ctx),
                 Screen::Controls => options::draw_controls(p, state, &ctx),
                 Screen::GameSettings => options::draw_game(p, state, &ctx),
+                Screen::ManageStorage => options::draw_manage_storage(p, state, &ctx),
                 _ => options::draw(p, state, &ctx),
             }
             None
@@ -394,6 +408,16 @@ pub fn draw(
                 dim_background(p, ctx.vw, ctx.vh);
             }
             crate::gui::resourcepacks::draw(p, state, &ctx);
+            None
+        }
+        #[cfg(explore_modrinth)]
+        Screen::ExplorePacks => {
+            if state.in_menu() {
+                crate::gui::menu::background(p, ctx.vw, ctx.vh);
+            } else {
+                dim_background(p, ctx.vw, ctx.vh);
+            }
+            crate::gui::explore_packs::draw(p, state, &ctx);
             None
         }
         #[cfg(feature = "shader_support")]
@@ -448,6 +472,12 @@ pub fn draw(
             profile::draw_microsoft(p, state, &ctx);
             None
         }
+        Screen::Credits => {
+            if let Some(next) = crate::gui::credits::draw(p, &ctx) {
+                state.nav = Some(next);
+            }
+            None
+        }
         Screen::Disconnected => {
             if let Some(next) = crate::gui::disconnected::draw(p, state, &ctx) {
                 state.nav = Some(next);
@@ -486,6 +516,15 @@ pub fn draw(
             dim_background(p, ctx.vw, ctx.vh);
             if let Some(next) = crate::gui::signedchat::draw(p, &ctx, shared) {
                 state.nav = Some(next);
+            }
+            None
+        }
+        Screen::Advancements => {
+            if let Some(next) =
+                crate::gui::advancements::draw(p, &mut state.advancements, &ctx, &snap, shared)
+            {
+                state.nav = Some(next);
+                clear_world_clicks(shared);
             }
             None
         }

@@ -2,13 +2,14 @@ use bevy::prelude::*;
 
 use crate::blockentities::models;
 use crate::blockentities::render::chest::facing_y_rot;
-use crate::blockentities::{BeRegistry, BeSpec, BeState, GeomKey};
-use crate::entities::geom::{BakedModel, LayerDef, PartState};
+use crate::blockentities::{BeRegistry, BeSpec, BeState, GeomKey, no_anim};
+use crate::entities::geom::LayerDef;
+use crate::entities::rotate_around;
 
 pub fn register(registry: &mut BeRegistry) {
     registry.add(
         azalea_registry::builtin::BlockEntityKind::Bed,
-        BeSpec::model("bed", key, layer, texture, setup).with_transform(transform),
+        BeSpec::model("bed", key, layer, texture, no_anim).with_transform(transform),
     );
 }
 
@@ -42,16 +43,9 @@ fn texture(st: &BeState) -> String {
 fn transform(st: &BeState) -> Transform {
     let facing = Quat::from_rotation_z((180.0 + facing_y_rot(st.state.facing)).to_radians());
     let lie_flat = Quat::from_rotation_x(90.0_f32.to_radians());
-    let pivot = Vec3::new(0.5, 0.5, 0.5);
-    let base = Vec3::new(0.0, 0.5625, 0.0);
-    Transform {
-        translation: lie_flat * (pivot - facing * pivot) + base,
-        rotation: lie_flat * facing,
-        scale: Vec3::ONE,
-    }
+    Transform::from_xyz(0.0, 0.5625, 0.0).with_rotation(lie_flat)
+        * rotate_around(facing, Vec3::splat(0.5))
 }
-
-fn setup(_model: &BakedModel, _parts: &mut [PartState], _st: &BeState) {}
 
 #[cfg(test)]
 mod tests {

@@ -38,6 +38,9 @@ pub(super) struct ChunkBorderOverlay {
 #[derive(Component)]
 pub(super) struct ChunkBorderMarker;
 
+#[derive(Resource, Clone)]
+pub(crate) struct LineMaterial(pub(crate) Handle<StandardMaterial>);
+
 #[cfg(feature = "click_gui")]
 #[derive(Resource)]
 pub(super) struct EspOverlay {
@@ -81,7 +84,7 @@ const BOX_EDGES: [(usize, usize); 12] = [
     (3, 7),
 ];
 
-fn line_mesh(positions: Vec<[f32; 3]>, colors: Option<Vec<[f32; 4]>>) -> Mesh {
+pub(crate) fn line_mesh(positions: Vec<[f32; 3]>, colors: Option<Vec<[f32; 4]>>) -> Mesh {
     let n = positions.len();
     let mut mesh = Mesh::new(
         PrimitiveTopology::LineList,
@@ -183,7 +186,12 @@ pub(super) fn chunk_border_mesh(ymin: f32, ymax: f32, sec_y0: f32) -> Mesh {
 }
 
 pub(super) fn outline_mesh(boxes: &[[f32; 6]]) -> Mesh {
-    let mut positions: Vec<[f32; 3]> = Vec::with_capacity(boxes.len() * 24);
+    let mut positions = Vec::with_capacity(boxes.len() * 24);
+    outline_edges(boxes.iter().copied(), &mut positions);
+    line_mesh(positions, None)
+}
+
+pub(crate) fn outline_edges(boxes: impl IntoIterator<Item = [f32; 6]>, out: &mut Vec<[f32; 3]>) {
     for b in boxes {
         let e = OUTLINE_INFLATE;
         let c = box_corners(
@@ -191,16 +199,13 @@ pub(super) fn outline_mesh(boxes: &[[f32; 6]]) -> Mesh {
             [b[3] + e, b[4] + e, b[5] + e],
         );
         for (a, b) in BOX_EDGES {
-            positions.push(c[a]);
-            positions.push(c[b]);
+            out.push(c[a]);
+            out.push(c[b]);
         }
     }
-
-    line_mesh(positions, None)
 }
 
 pub(super) fn crumbling_mesh(boxes: &[[f32; 6]], tile: u32, atlas_rows: u32) -> Mesh {
-    const EPS: f32 = 0.002;
     let col = tile % ATLAS_COLS;
     let row = tile / ATLAS_COLS;
     let tw = 1.0 / ATLAS_COLS as f32;
@@ -209,16 +214,18 @@ pub(super) fn crumbling_mesh(boxes: &[[f32; 6]], tile: u32, atlas_rows: u32) -> 
     let iv = 0.02 / (atlas_rows * TILE_PX) as f32;
     let (u0, v0) = (col as f32 * tw + iu, row as f32 * th + iv);
     let (u1, v1) = ((col + 1) as f32 * tw - iu, (row + 1) as f32 * th - iv);
-    let face_uv = [[u0, v1], [u1, v1], [u1, v0], [u0, v0]];
+    box_faces_mesh(boxes, 0.002, [[u0, v1], [u1, v1], [u1, v0], [u0, v0]])
+}
 
+pub(crate) fn box_faces_mesh(boxes: &[[f32; 6]], inflate: f32, face_uv: [[f32; 2]; 4]) -> Mesh {
     let mut pos: Vec<[f32; 3]> = Vec::new();
     let mut nrm: Vec<[f32; 3]> = Vec::new();
     let mut uvs: Vec<[f32; 2]> = Vec::new();
     let mut idx: Vec<u32> = Vec::new();
 
     for b in boxes {
-        let (x0, y0, z0) = (b[0] - EPS, b[1] - EPS, b[2] - EPS);
-        let (x1, y1, z1) = (b[3] + EPS, b[4] + EPS, b[5] + EPS);
+        let (x0, y0, z0) = (b[0] - inflate, b[1] - inflate, b[2] - inflate);
+        let (x1, y1, z1) = (b[3] + inflate, b[4] + inflate, b[5] + inflate);
         let faces: [([[f32; 3]; 4], [f32; 3]); 6] = [
             (
                 [[x0, y1, z0], [x1, y1, z0], [x1, y1, z1], [x0, y1, z1]],

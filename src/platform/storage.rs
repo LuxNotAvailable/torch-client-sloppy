@@ -25,6 +25,12 @@ slots! {
     HUD = "hud.json";
     #[cfg(resource_packs)]
     RESOURCE_PACKS = "resourcepacks.json";
+    #[cfg(explore_modrinth)]
+    MODRINTH_PACKS = "modrinth_packs.json";
+    #[cfg(feature = "shader_support")]
+    SHADER_PACK = "shaderpack.txt";
+    #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+    SOUNDS_SKIPPED = "sounds_skipped.txt";
 }
 
 impl Slot {

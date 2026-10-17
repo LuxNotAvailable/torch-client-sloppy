@@ -60,8 +60,7 @@ pub struct SkyMaterial {
 #[cfg(feature = "builtin_shaders")]
 impl Material for SkyMaterial {
     fn fragment_shader() -> ShaderRef {
-        let crate_name = module_path!().split(':').next().unwrap_or("torch_client");
-        ShaderRef::Path(format!("embedded://{crate_name}/renderer/sky.wgsl").into())
+        super::embedded_shader("renderer/sky.wgsl")
     }
 
     fn alpha_mode(&self) -> AlphaMode {
@@ -381,13 +380,8 @@ fn load_celestial(path: &std::path::Path) -> Image {
 }
 
 fn load_tiled(path: &std::path::Path) -> Image {
-    use bevy::image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor};
-
     let mut image = load_celestial(path);
-    let mut descriptor = ImageSamplerDescriptor::nearest();
-    descriptor.address_mode_u = ImageAddressMode::Repeat;
-    descriptor.address_mode_v = ImageAddressMode::Repeat;
-    image.sampler = ImageSampler::Descriptor(descriptor);
+    image.sampler = crate::entities::repeating_nearest();
     image
 }
 

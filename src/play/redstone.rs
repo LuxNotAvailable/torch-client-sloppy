@@ -281,10 +281,10 @@ mod tests {
         let _ = repeater.set_property("facing", "north");
         let repeater = repeater.as_block_state();
 
-        let w = world(vec![(BlockPos { x: 0, y: 0, z: 1 }, repeater)]);
+        let w = world(vec![(BlockPos { x: 0, y: 0, z: -1 }, repeater)]);
         assert!(has_neighbor_signal(ORIGIN, &w));
 
-        let w = world(vec![(BlockPos { x: 0, y: 0, z: -1 }, repeater)]);
+        let w = world(vec![(BlockPos { x: 0, y: 0, z: 1 }, repeater)]);
         assert!(!has_neighbor_signal(ORIGIN, &w));
     }
 }

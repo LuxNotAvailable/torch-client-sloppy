@@ -8,9 +8,9 @@ use bevy::prelude::*;
 use crate::blockentities::feed::{BlockEntityData, SignData, SignFace};
 use crate::blockentities::models::{self, HangingAttachment};
 use crate::blockentities::text;
-use crate::blockentities::{BeRegistry, BeSpec, BeState, BuiltTexture, GeomKey};
+use crate::blockentities::{BeRegistry, BeSpec, BeState, BuiltTexture, GeomKey, no_anim};
 use crate::entities::Blend;
-use crate::entities::geom::{BakedModel, LayerDef, PartState};
+use crate::entities::geom::LayerDef;
 use crate::gui::atlas::GuiAtlas;
 
 pub fn register(registry: &mut BeRegistry) {
@@ -51,8 +51,6 @@ pub fn register(registry: &mut BeRegistry) {
     );
 }
 
-fn no_anim(_model: &BakedModel, _parts: &mut [PartState], _st: &BeState) {}
-
 pub const WOODS: &[&str] = &[
     "oak", "spruce", "birch", "acacia", "cherry", "jungle", "dark_oak", "pale_oak", "crimson",
     "warped", "mangrove", "bamboo",
@@ -76,15 +74,11 @@ pub(crate) fn is_wall(block: &str) -> bool {
     block.ends_with("_wall_sign") || block.ends_with("_wall_hanging_sign")
 }
 
-fn segment_degrees(segment: u32) -> f32 {
-    segment as f32 * (360.0 / 16.0)
-}
-
 fn sign_angle(st: &BeState) -> f32 {
     if is_wall(&st.state.block) {
         super::chest::facing_y_rot(st.state.facing)
     } else {
-        segment_degrees(st.state.rotation)
+        st.state.rotation_degrees()
     }
 }
 
@@ -192,9 +186,7 @@ fn hanging_body_transform(st: &BeState) -> Transform {
 fn sign_data(st: &BeState) -> Option<&SignData> {
     match &*st.data {
         BlockEntityData::Sign(sign) => Some(sign),
-        #[cfg(feature = "skins")]
-        BlockEntityData::Skull(_) => None,
-        BlockEntityData::Banner(_) | BlockEntityData::None => None,
+        _ => None,
     }
 }
 
@@ -308,9 +300,10 @@ mod tests {
 
     #[test]
     fn rotation_segments_are_sixteenths_of_a_turn() {
-        assert_eq!(segment_degrees(0), 0.0);
-        assert_eq!(segment_degrees(4), 90.0);
-        assert_eq!(segment_degrees(15), 337.5);
+        for (rotation, degrees) in [("0", 0.0), ("4", 90.0), ("15", 337.5)] {
+            let st = super::super::test_state("oak_sign", &[("rotation", rotation)]);
+            assert_eq!(st.state.rotation_degrees(), degrees);
+        }
     }
 
     #[test]

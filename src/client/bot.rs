@@ -592,7 +592,6 @@ fn reset_session_side_tables(blocking: bool) {
     cooldowns::reset();
     blockentities::feed::reset();
     crate::play::dialog::clear_tags();
-    crate::client::advancements::reset();
     crate::client::packets::reset_unsecure_warning();
     crate::client::packets::reset_bad_light_layers();
     tick::reset_movement_warning();

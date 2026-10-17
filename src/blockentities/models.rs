@@ -116,6 +116,49 @@ pub fn conduit_shell() -> LayerDef {
     LayerDef::create(mesh, 32, 16)
 }
 
+pub fn conduit_cage() -> LayerDef {
+    let mut mesh = MeshDef::new();
+    mesh.root().child(
+        "shell",
+        CubeList::new()
+            .tex_offs(0, 0)
+            .add_box(-4.0, -4.0, -4.0, 8.0, 8.0, 8.0),
+        PartPose::ZERO,
+    );
+    LayerDef::create(mesh, 32, 16)
+}
+
+pub fn conduit_wind() -> LayerDef {
+    let mut mesh = MeshDef::new();
+    mesh.root().child(
+        "wind",
+        CubeList::new()
+            .tex_offs(0, 0)
+            .add_box(-8.0, -8.0, -8.0, 16.0, 16.0, 16.0),
+        PartPose::ZERO,
+    );
+    LayerDef::create(mesh, 64, 32)
+}
+
+pub fn conduit_eye() -> LayerDef {
+    use crate::entities::geom::Grow;
+    let mut mesh = MeshDef::new();
+    mesh.root().child(
+        "eye",
+        CubeList::new().tex_offs(0, 0).add_box_grow(
+            -4.0,
+            -4.0,
+            0.0,
+            8.0,
+            8.0,
+            0.0,
+            Grow::all(0.01),
+        ),
+        PartPose::ZERO,
+    );
+    LayerDef::create(mesh, 16, 16)
+}
+
 pub fn standing_sign() -> LayerDef {
     sign_layer(true)
 }
@@ -569,6 +612,341 @@ pub fn book() -> LayerDef {
         }
     }
     LayerDef::create(mesh, 64, 32)
+}
+
+pub fn bell() -> LayerDef {
+    let mut mesh = MeshDef::new();
+    mesh.root()
+        .child(
+            "bell_body",
+            CubeList::new()
+                .tex_offs(0, 0)
+                .add_box(-3.0, -6.0, -3.0, 6.0, 7.0, 6.0),
+            PartPose::offset(8.0, 12.0, 8.0),
+        )
+        .child(
+            "bell_base",
+            CubeList::new()
+                .tex_offs(0, 13)
+                .add_box(4.0, 4.0, 4.0, 8.0, 2.0, 8.0),
+            PartPose::offset(-8.0, -12.0, -8.0),
+        );
+    LayerDef::create(mesh, 32, 32)
+}
+
+pub fn decorated_pot_base() -> LayerDef {
+    let plane = CubeList::new()
+        .tex_offs(-14, 13)
+        .add_box(0.0, 0.0, 0.0, 14.0, 0.0, 14.0);
+    let mut mesh = MeshDef::new();
+    let root = mesh.root();
+    root.child(
+        "neck",
+        CubeList::new()
+            .tex_offs(0, 0)
+            .add_box_grow(
+                4.0,
+                17.0,
+                4.0,
+                8.0,
+                3.0,
+                8.0,
+                crate::entities::geom::Grow::all(-0.1),
+            )
+            .tex_offs(0, 5)
+            .add_box_grow(
+                5.0,
+                20.0,
+                5.0,
+                6.0,
+                1.0,
+                6.0,
+                crate::entities::geom::Grow::all(0.2),
+            ),
+        PartPose::offset_rotation(0.0, 37.0, 16.0, PI, 0.0, 0.0),
+    );
+    root.child("top", plane.clone(), PartPose::offset(1.0, 16.0, 1.0));
+    root.child("bottom", plane, PartPose::offset(1.0, 0.0, 1.0));
+    LayerDef::create(mesh, 32, 32)
+}
+
+pub fn decorated_pot_side(side: usize) -> LayerDef {
+    let (name, pose) = match side {
+        0 => (
+            "back",
+            PartPose::offset_rotation(15.0, 16.0, 1.0, 0.0, 0.0, PI),
+        ),
+        1 => (
+            "left",
+            PartPose::offset_rotation(1.0, 16.0, 1.0, 0.0, -FRAC_PI_2, PI),
+        ),
+        2 => (
+            "right",
+            PartPose::offset_rotation(15.0, 16.0, 15.0, 0.0, FRAC_PI_2, PI),
+        ),
+        _ => (
+            "front",
+            PartPose::offset_rotation(1.0, 16.0, 15.0, PI, 0.0, 0.0),
+        ),
+    };
+    let mut mesh = MeshDef::new();
+    mesh.root().child(
+        name,
+        CubeList::new().tex_offs(1, 0).add_box_faces(
+            0.0,
+            0.0,
+            0.0,
+            14.0,
+            16.0,
+            0.0,
+            Faces::of(&[Direction::North]),
+        ),
+        pose,
+    );
+    LayerDef::create(mesh, 16, 16)
+}
+
+#[allow(clippy::approx_constant)]
+pub fn copper_golem_running() -> LayerDef {
+    use crate::entities::geom::Grow;
+    let mut mesh = MeshDef::new();
+    let root = mesh.root();
+    let body = root.child("body", CubeList::new(), PartPose::offset(-1.064, -5.0, 0.0));
+    body.child(
+        "body_r1",
+        CubeList::new()
+            .tex_offs(0, 15)
+            .add_box(-4.02, -6.116, -3.5, 8.0, 6.0, 6.0),
+        PartPose::offset_rotation(1.1, 0.1, 0.7, 0.1204, -0.0064, -0.0779),
+    );
+    body.child(
+        "head",
+        CubeList::new()
+            .tex_offs(0, 0)
+            .add_box(-4.0, -5.1, -5.0, 8.0, 5.0, 10.0)
+            .tex_offs(56, 0)
+            .add_box(-1.02, -2.1, -6.0, 2.0, 3.0, 2.0)
+            .tex_offs(37, 8)
+            .add_box_grow(-1.02, -9.1, -1.0, 2.0, 4.0, 2.0, Grow::all(-0.015))
+            .tex_offs(37, 0)
+            .add_box_grow(-2.0, -13.1, -2.0, 4.0, 4.0, 4.0, Grow::all(-0.015)),
+        PartPose::offset(0.7, -5.6, -1.8),
+    );
+    body.child(
+        "right_arm",
+        CubeList::new(),
+        PartPose::offset(-4.0, -6.0, 0.0),
+    )
+    .child(
+        "right_arm_r1",
+        CubeList::new()
+            .tex_offs(36, 16)
+            .add_box(-3.052, -1.11, -2.036, 3.0, 10.0, 4.0),
+        PartPose::offset_rotation(0.7, -0.248, -1.62, 1.0036, 0.0, 0.0),
+    );
+    body.child(
+        "left_arm",
+        CubeList::new(),
+        PartPose::offset(4.0, -6.0, 0.0),
+    )
+    .child(
+        "left_arm_r1",
+        CubeList::new()
+            .tex_offs(50, 16)
+            .add_box(0.032, -1.1, -2.0, 3.0, 10.0, 4.0),
+        PartPose::offset_rotation(0.732, 0.0, 0.0, -0.8715, -0.0535, -0.0449),
+    );
+    root.child(
+        "right_leg",
+        CubeList::new(),
+        PartPose::offset(-3.064, -5.0, 0.0),
+    )
+    .child(
+        "right_leg_r1",
+        CubeList::new()
+            .tex_offs(0, 27)
+            .add_box(-1.856, -0.1, -1.09, 4.0, 5.0, 4.0),
+        PartPose::offset_rotation(1.048, 0.0, -0.9, -0.8727, 0.0, 0.0),
+    );
+    root.child(
+        "left_leg",
+        CubeList::new(),
+        PartPose::offset(0.936, -5.0, 0.0),
+    )
+    .child(
+        "left_leg_r1",
+        CubeList::new()
+            .tex_offs(16, 27)
+            .add_box(-2.088, -0.1, -2.0, 4.0, 5.0, 4.0),
+        PartPose::offset_rotation(1.0, 0.0, 0.0, 0.7854, 0.0, 0.0),
+    );
+    LayerDef::create(mesh, 64, 64)
+}
+
+#[allow(clippy::approx_constant)]
+pub fn copper_golem_sitting() -> LayerDef {
+    use crate::entities::geom::Grow;
+    let mut mesh = MeshDef::new();
+    let root = mesh.root();
+    let body = root.child(
+        "body",
+        CubeList::new()
+            .tex_offs(3, 19)
+            .add_box(-3.0, -4.0, -4.525, 6.0, 1.0, 6.0)
+            .tex_offs(0, 15)
+            .add_box(-4.0, -3.0, -3.525, 8.0, 6.0, 6.0),
+        PartPose::offset(0.0, -3.0, 2.325),
+    );
+    body.child(
+        "body_r1",
+        CubeList::new()
+            .tex_offs(3, 18)
+            .add_box(-4.0, -3.0, -2.2, 8.0, 6.0, 3.0),
+        PartPose::offset_rotation(0.0, -1.0, -4.325, 0.0, 0.0, -3.1416),
+    );
+    body.child(
+        "head",
+        CubeList::new()
+            .tex_offs(37, 8)
+            .add_box_grow(-1.0, -7.0, -3.3, 2.0, 4.0, 2.0, Grow::all(-0.015))
+            .tex_offs(37, 0)
+            .add_box_grow(-2.0, -11.0, -4.3, 4.0, 4.0, 4.0, Grow::all(-0.015))
+            .tex_offs(0, 0)
+            .add_box(-4.0, -3.0, -7.325, 8.0, 5.0, 10.0)
+            .tex_offs(56, 0)
+            .add_box(-1.0, 0.0, -8.325, 2.0, 3.0, 2.0),
+        PartPose::offset(0.0, -6.0, -0.2),
+    );
+    body.child(
+        "right_arm",
+        CubeList::new(),
+        PartPose::offset_rotation(-4.0, -5.6, -1.8, 0.4363, 0.0, 0.0),
+    )
+    .child(
+        "right_arm_r1",
+        CubeList::new()
+            .tex_offs(36, 16)
+            .add_box(-3.075, -0.9733, -1.9966, 3.0, 10.0, 4.0),
+        PartPose::offset_rotation(0.0, 0.0893, 0.1198, -1.0472, 0.0, 0.0),
+    );
+    body.child(
+        "left_arm",
+        CubeList::new(),
+        PartPose::offset_rotation(4.0, -5.6, -1.7, 0.4363, 0.0, 0.0),
+    )
+    .child(
+        "left_arm_r1",
+        CubeList::new()
+            .tex_offs(50, 16)
+            .add_box(0.075, -1.0443, -1.8997, 3.0, 10.0, 4.0),
+        PartPose::offset_rotation(0.0, -0.0015, -0.0808, -1.0472, 0.0, 0.0),
+    );
+    root.child(
+        "right_leg",
+        CubeList::new(),
+        PartPose::offset(-2.1, -2.1, -2.075),
+    )
+    .child(
+        "right_leg_r1",
+        CubeList::new()
+            .tex_offs(0, 27)
+            .add_box(-2.0, 0.975, 0.0, 4.0, 5.0, 4.0),
+        PartPose::offset_rotation(0.05, -1.9, 1.075, -1.5708, 0.0, 0.0),
+    );
+    root.child(
+        "left_leg",
+        CubeList::new(),
+        PartPose::offset(2.0, -2.0, -2.075),
+    )
+    .child(
+        "left_leg_r1",
+        CubeList::new()
+            .tex_offs(16, 27)
+            .add_box(-2.0, 0.975, 0.0, 4.0, 5.0, 4.0),
+        PartPose::offset_rotation(0.05, -2.0, 1.075, -1.5708, 0.0, 0.0),
+    );
+    LayerDef::create(mesh, 64, 64)
+}
+
+#[allow(clippy::approx_constant)]
+pub fn copper_golem_star() -> LayerDef {
+    use crate::entities::geom::Grow;
+    let mut mesh = MeshDef::new();
+    let root = mesh.root();
+    let body = root.child(
+        "body",
+        CubeList::new()
+            .tex_offs(0, 15)
+            .add_box(-4.0, -6.0, -3.0, 8.0, 6.0, 6.0),
+        PartPose::offset(0.0, -5.0, 0.0),
+    );
+    body.child(
+        "head",
+        CubeList::new()
+            .tex_offs(0, 0)
+            .add_box(-4.0, -5.0, -5.0, 8.0, 5.0, 10.0)
+            .tex_offs(56, 0)
+            .add_box(-1.0, -2.0, -6.0, 2.0, 3.0, 2.0)
+            .tex_offs(37, 8)
+            .add_box_grow(-1.0, -9.0, -1.0, 2.0, 4.0, 2.0, Grow::all(-0.015))
+            .tex_offs(37, 0)
+            .add_box_grow(-2.0, -13.0, -2.0, 4.0, 4.0, 4.0, Grow::all(-0.015)),
+        PartPose::offset(0.0, -6.0, 0.0),
+    );
+    let right_arm = body.child(
+        "right_arm",
+        CubeList::new(),
+        PartPose::offset(-4.0, -6.0, 0.0),
+    );
+    right_arm.child(
+        "right_arm_r1",
+        CubeList::new()
+            .tex_offs(36, 16)
+            .add_box(-1.5, -5.0, -2.0, 3.0, 10.0, 4.0),
+        PartPose::offset_rotation(1.0, 1.0, 0.0, 0.0, 0.0, 1.9199),
+    );
+    right_arm.child(
+        "rightItem",
+        CubeList::new(),
+        PartPose::offset(-1.0, 7.4, -1.0),
+    );
+    body.child(
+        "left_arm",
+        CubeList::new(),
+        PartPose::offset(4.0, -6.0, 0.0),
+    )
+    .child(
+        "left_arm_r1",
+        CubeList::new()
+            .tex_offs(50, 16)
+            .add_box(-1.5, -5.0, -2.0, 3.0, 10.0, 4.0),
+        PartPose::offset_rotation(-1.0, 1.0, 0.0, 0.0, 0.0, -1.9199),
+    );
+    root.child(
+        "right_leg",
+        CubeList::new(),
+        PartPose::offset(-3.0, -5.0, 0.0),
+    )
+    .child(
+        "right_leg_r1",
+        CubeList::new()
+            .tex_offs(0, 27)
+            .add_box(-2.0, -2.5, -2.0, 4.0, 5.0, 4.0),
+        PartPose::offset_rotation(0.35, 2.0, 0.01, 0.0, 0.0, 0.2618),
+    );
+    root.child(
+        "left_leg",
+        CubeList::new(),
+        PartPose::offset(1.0, -5.0, 0.0),
+    )
+    .child(
+        "left_leg_r1",
+        CubeList::new()
+            .tex_offs(16, 27)
+            .add_box(-2.0, -2.5, -2.0, 4.0, 5.0, 4.0),
+        PartPose::offset_rotation(1.65, 2.0, 0.0, 0.0, 0.0, -0.2618),
+    );
+    LayerDef::create(mesh, 64, 64)
 }
 
 #[cfg(test)]

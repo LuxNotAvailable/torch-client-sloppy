@@ -79,8 +79,9 @@ pub(crate) fn supported(feature: Feature) -> bool {
 
         Feature::ComputeShaders | Feature::CustomImages | Feature::Ssbo => COMPUTE,
 
-        Feature::SeparateHardwareSamplers
-        | Feature::HigherShadowcolor
+        Feature::SeparateHardwareSamplers => true,
+
+        Feature::HigherShadowcolor
         | Feature::PerBufferBlending
         | Feature::EntityTranslucent
         | Feature::ReversedCulling
@@ -144,6 +145,8 @@ pub(crate) fn base_defines() -> Defines {
     defines.define("MC_GLSL_VERSION", GL_VERSION.to_string());
     defines.define(OS_DEFINE, "");
     defines.define("IS_IRIS", "");
+    defines.define("MC_NORMAL_MAP", "");
+    defines.define("MC_SPECULAR_MAP", "");
     defines.define("MC_RENDER_QUALITY", "1.0");
     defines.define("MC_SHADOW_QUALITY", "1.0");
     defines.define("MC_HAND_DEPTH", "0.125");

@@ -4,7 +4,6 @@ use azalea::ecs::entity::Entity as AzEntity;
 use azalea::prelude::*;
 use azalea_core::{
     aabb::Aabb,
-    direction::Direction as AzDirection,
     position::{BlockPos as AzBlockPos, Vec3 as AzVec3},
 };
 
@@ -127,6 +126,27 @@ impl EntityView<'_> {
     }
 }
 
+fn hanging_position(
+    kind: azalea_registry::builtin::EntityKind,
+    pos: [f64; 3],
+    direction: entities::Direction,
+) -> [f64; 3] {
+    if !matches!(
+        kind,
+        azalea_registry::builtin::EntityKind::ItemFrame
+            | azalea_registry::builtin::EntityKind::GlowItemFrame
+    ) {
+        return pos;
+    }
+    const SHIFT_TO_BLOCK_WALL: f64 = 0.46875;
+    let normal = direction.normal();
+    [
+        pos[0].floor() + 0.5 - normal[0] as f64 * SHIFT_TO_BLOCK_WALL,
+        pos[1].floor() + 0.5 - normal[1] as f64 * SHIFT_TO_BLOCK_WALL,
+        pos[2].floor() + 0.5 - normal[2] as f64 * SHIFT_TO_BLOCK_WALL,
+    ]
+}
+
 fn instance_of<C: azalea::ecs::component::Component>(eref: &EntityView) -> bool {
     eref.get_component::<C>().is_some()
 }
@@ -194,10 +214,6 @@ fn entity_pose(pose: azalea::entity::Pose) -> entities::Pose {
         A::Shooting => P::Shooting,
         A::Inhaling => P::Inhaling,
     }
-}
-
-fn entity_facing(dir: AzDirection) -> entities::Direction {
-    entities::Direction::from_index(dir as u8)
 }
 
 struct MetaCache {
@@ -466,7 +482,11 @@ pub(crate) fn collect_entities(
         {
             let mut input = c.input.clone();
             input.simulate = true;
-            input.pos = [pos.x, pos.y, pos.z];
+            input.pos = hanging_position(
+                kind,
+                [pos.x, pos.y, pos.z],
+                input.shared.item_frame_direction,
+            );
             input.y_rot = y_rot;
             input.x_rot = x_rot;
             input.head_rot = heads.get(&id).copied();
@@ -549,7 +569,7 @@ pub(crate) fn collect_entities(
                 .unwrap_or(0);
 
             shared.attach_face = meta::<metadata::AttachFace>(eref)
-                .map(entity_facing)
+                .map(entities::Direction::from)
                 .unwrap_or(entities::Direction::Down);
             shared.color = meta::<metadata::Color>(eref).unwrap_or(16);
         }
@@ -588,14 +608,21 @@ pub(crate) fn collect_entities(
 
         if matches!(kind, EntityKind::ItemFrame | EntityKind::GlowItemFrame) {
             let raw = meta::<metadata::ItemFrameDirection>(eref);
+            let spawned = add_entity_data_map
+                .get(&id)
+                .and_then(|&data| u8::try_from(data).ok())
+                .filter(|&data| data < 6)
+                .map(entities::Direction::from_index);
             crate::log_debug!(
                 "itemframe",
-                "id={id} kind={kind:?} raw_direction={raw:?} item={:?} item_rotation={:?}",
+                "id={id} kind={kind:?} raw_direction={raw:?} spawn_direction={spawned:?} item={:?} item_rotation={:?}",
                 meta::<metadata::ItemFrameItem>(eref),
                 meta::<metadata::Rotation>(eref)
             );
-            shared.item_frame_direction =
-                raw.map(entity_facing).unwrap_or(entities::Direction::South);
+            shared.item_frame_direction = match raw.map(entities::Direction::from) {
+                Some(dir) if dir != entities::Direction::South => dir,
+                _ => spawned.unwrap_or(entities::Direction::South),
+            };
         }
 
         if let Some(map) = shared.item.map_id
@@ -909,7 +936,7 @@ pub(crate) fn collect_entities(
                 (d.width, d.height, d.eye_height)
             });
 
-        let now_pos = [pos.x, pos.y, pos.z];
+        let now_pos = hanging_position(kind, [pos.x, pos.y, pos.z], shared.item_frame_direction);
         let halted = matches!(kind, EntityKind::Camel | EntityKind::CamelHusk)
             && (pose != Pose::Standing || shared.dash);
 

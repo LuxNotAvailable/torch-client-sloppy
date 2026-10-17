@@ -1595,9 +1595,10 @@ mod tests {
                 format!("creative_drop({}x{})", stack.item, stack.count)
             }
             InvAction::Close => "close".into(),
-            InvAction::ButtonClick(_) | InvAction::SelectTrade(_) | InvAction::SetBeacon { .. } => {
-                "other".into()
-            }
+            InvAction::ButtonClick(_)
+            | InvAction::SelectTrade(_)
+            | InvAction::SetBeacon { .. }
+            | InvAction::RenameItem(_) => "other".into(),
         }
     }
 

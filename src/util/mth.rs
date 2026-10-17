@@ -4,6 +4,10 @@ pub const DEG_TO_RAD: f32 = 0.017_453_292;
 
 pub const RAD_TO_DEG: f32 = 57.295_776;
 
+pub fn clamp(value: f32, min: f32, max: f32) -> f32 {
+    if value < min { min } else { value.min(max) }
+}
+
 pub fn lerp(t: f32, a: f32, b: f32) -> f32 {
     a + t * (b - a)
 }
@@ -51,6 +55,16 @@ pub fn rot_lerp_rad(t: f32, from: f32, to: f32) -> f32 {
         diff -= TAU;
     }
     from + t * diff
+}
+
+pub fn wrap_rad(mut angle: f32) -> f32 {
+    while angle >= PI {
+        angle -= TAU;
+    }
+    while angle < -PI {
+        angle += TAU;
+    }
+    angle
 }
 
 pub fn rot_lerp_capped(from: f32, to: f32, max: f32) -> f32 {
@@ -110,6 +124,11 @@ pub fn srgb_byte_to_linear(c: u8) -> f32 {
     srgb_to_linear(c as f32 / 255.0)
 }
 
+pub fn rgb_to_linear(rgb: u32) -> [f32; 4] {
+    let channel = |shift: u32| srgb_byte_to_linear((rgb >> shift) as u8);
+    [channel(16), channel(8), channel(0), 1.0]
+}
+
 pub fn linear_to_srgb(c: f32) -> f32 {
     if c <= 0.003_130_8 {
         c * 12.92
@@ -122,6 +141,13 @@ pub fn linear_to_srgb(c: f32) -> f32 {
 mod tests {
     use super::ease::*;
     use super::*;
+
+    #[test]
+    fn radians_wrap_into_half_open_pi_range() {
+        assert_eq!(wrap_rad(0.5), 0.5);
+        assert!((wrap_rad(PI + 0.25) - (0.25 - PI)).abs() < 1e-5);
+        assert!((wrap_rad(-PI - 0.25) - (PI - 0.25)).abs() < 1e-5);
+    }
 
     #[test]
     fn the_two_conversion_constants_round_trip() {

@@ -12,7 +12,7 @@ use azalea_inventory::{
     PlayerMenuLocation,
 };
 
-use azalea_inventory::CraftingMenuLocation;
+use azalea_inventory::{CraftingMenuLocation, MerchantMenuLocation};
 
 use crate::PlayerAbilities;
 
@@ -176,6 +176,7 @@ impl Inventory {
                     && let ItemStack::Present(carried) = &self.carried
                 {
                     if can_item_quick_replace(slot_item, &self.carried, true)
+                        && self.menu().may_place(slot as usize, carried)
                         && (self.quick_craft_kind == QuickCraftKind::Right
                             || carried.count as usize > self.quick_craft_slots.len())
                     {
@@ -362,7 +363,11 @@ impl Inventory {
                 QuickMoveClick::Left { slot } | QuickMoveClick::Right { slot },
             ) => {
                 let slot = slot as usize;
-                if self.craft_grid_range_for_result(slot).is_none() {
+                let merchant_result = matches!(
+                    self.menu().location_for_slot(slot),
+                    Some(MenuLocation::Merchant(MerchantMenuLocation::Result))
+                );
+                if self.craft_grid_range_for_result(slot).is_none() && !merchant_result {
                     loop {
                         let new_slot_item = self.menu_mut().quick_move_stack(slot);
                         let slot_item = self.menu().slot(slot).unwrap();
@@ -488,6 +493,7 @@ impl Inventory {
                     unreachable!("target slot is not empty but is not present");
                 };
 
+                let max = target_slot_item.kind.max_stack_size();
                 for round in 0..2 {
                     let iterator: Box<dyn Iterator<Item = usize>> = if *reversed {
                         Box::new((0..self.menu().len()).rev())
@@ -496,24 +502,26 @@ impl Inventory {
                     };
 
                     for i in iterator {
-                        if target_slot_item.count < target_slot_item.kind.max_stack_size() {
-                            let checking_slot = self.menu().slot(i).unwrap();
-                            if let ItemStack::Present(checking_item) = checking_slot
-                                && can_item_quick_replace(checking_slot, &target_slot, true)
-                                && self.menu().may_pickup(i)
-                                && (round != 0
-                                    || checking_item.count != checking_item.kind.max_stack_size())
-                            {
-                                let checking_slot = self.menu_mut().slot_mut(i).unwrap();
+                        let carried = self.carried.count();
+                        if carried >= max {
+                            break;
+                        }
+                        let checking_slot = self.menu().slot(i).unwrap();
+                        if let ItemStack::Present(checking_item) = checking_slot
+                            && can_item_quick_replace(checking_slot, &target_slot, true)
+                            && self.menu().may_pickup(i)
+                            && self.menu().can_take_item_for_pick_all(i)
+                            && (round != 0
+                                || checking_item.count != checking_item.kind.max_stack_size())
+                        {
+                            let take = cmp::min(checking_item.count, max - carried);
+                            let checking_slot = self.menu_mut().slot_mut(i).unwrap();
+                            let taken_item = checking_slot.split(take as u32);
 
-                                let taken_item = checking_slot.split(checking_slot.count() as u32);
-
-                                let target_slot = &mut self.carried;
-                                let ItemStack::Present(target_slot_item) = target_slot else {
-                                    unreachable!("target slot is not empty but is not present");
-                                };
-                                target_slot_item.count += taken_item.count();
-                            }
+                            let ItemStack::Present(carried_item) = &mut self.carried else {
+                                unreachable!("target slot is not empty but is not present");
+                            };
+                            carried_item.count += taken_item.count();
                         }
                     }
                 }
@@ -541,11 +549,14 @@ impl Inventory {
     }
 
     fn safe_insert(&mut self, slot: usize, src_item: ItemStack, take_count: i32) -> ItemStack {
-        let Some(slot_item) = self.menu_mut().slot_mut(slot) else {
-            return src_item;
-        };
         let ItemStack::Present(mut src_item) = src_item else {
             return src_item;
+        };
+        if !self.menu().may_place(slot, &src_item) {
+            return src_item.into();
+        }
+        let Some(slot_item) = self.menu_mut().slot_mut(slot) else {
+            return src_item.into();
         };
 
         let take_count = cmp::min(

@@ -79,6 +79,18 @@ mod imp {
             .map(|b| b.to_vec())
             .map_err(|e| e.to_string())
     }
+
+    #[cfg(explore_modrinth)]
+    pub(super) fn get_as_blocking(url: &str, user_agent: &str) -> Result<Vec<u8>, String> {
+        client()
+            .get(url)
+            .header(reqwest::header::USER_AGENT, user_agent)
+            .send()
+            .and_then(|r| r.error_for_status())
+            .and_then(|r| r.bytes())
+            .map(|b| b.to_vec())
+            .map_err(|e| e.to_string())
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -175,4 +187,9 @@ pub(crate) async fn get_bytes(
 #[cfg(all(not(target_arch = "wasm32"), feature = "audio"))]
 pub(crate) fn get_bytes_blocking(url: &str) -> Result<Vec<u8>, String> {
     imp::get_bytes_blocking(url)
+}
+
+#[cfg(explore_modrinth)]
+pub(crate) fn get_as_blocking(url: &str, user_agent: &str) -> Result<Vec<u8>, String> {
+    imp::get_as_blocking(url, user_agent)
 }

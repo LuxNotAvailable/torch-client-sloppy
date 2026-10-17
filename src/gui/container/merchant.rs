@@ -2,9 +2,9 @@ use crate::gui::{tooltip, widgets};
 use crate::session::{MerchantOffer, MerchantOffers};
 
 use super::{
-    ContainerUi, Digits, GuiState, InvAction, Layout, Painter, ScreenCtx, Scroller, SlotStack,
-    Snapshot, TitleCache, dim_background, draw_inventory_label_at, draw_title, first_row, hovering,
-    scroll_rows, slots, window_origin,
+    ContainerUi, Digits, GuiState, InvAction, Layout, Painter, ScreenCtx, SlotStack, Snapshot,
+    TitleCache, dim_background, draw_inventory_label_at, draw_title, hovering, slots,
+    window_origin,
 };
 
 const INVENTORY_LABEL_X: f32 = 107.0;
@@ -35,31 +35,7 @@ pub fn draw(
     };
 
     let ui = &mut state.container;
-    let count = offers.offers.len();
-    let active = count > VISIBLE_ROWS;
-
-    if hovering(
-        ctx,
-        left + 5.0,
-        top + 18.0,
-        ROW_W,
-        VISIBLE_ROWS as f32 * ROW_H,
-    ) {
-        ui.scroll = scroll_rows(ui.scroll, ctx.input.scroll, count, VISIBLE_ROWS);
-    }
-
-    Scroller {
-        x: left + 94.0,
-        y: top + 18.0,
-        w: 6.0,
-        h: 27.0,
-        travel: 113.0,
-        sprite: "container/villager/scroller",
-        disabled: "container/villager/scroller_disabled",
-    }
-    .run(p, ctx, ui, active);
-
-    let start = first_row(ui.scroll, count, VISIBLE_ROWS);
+    let start = run_scroller(p, ctx, ui, left, top, offers.offers.len());
     let selected = ui.selected.max(0) as usize;
     let mut hovered_stack = None;
 
@@ -153,6 +129,75 @@ pub fn draw(
     }
 
     slot_hovered.or(hovered_stack)
+}
+
+fn run_scroller(
+    p: &mut Painter,
+    ctx: &ScreenCtx,
+    ui: &mut ContainerUi,
+    left: f32,
+    top: f32,
+    count: usize,
+) -> usize {
+    let (track_x, track_y) = (left + 94.0, top + 18.0);
+    let max_off = count.saturating_sub(VISIBLE_ROWS);
+    if max_off == 0 {
+        ui.merchant_scroll = 0;
+        ui.dragging = false;
+        p.sprite(
+            "container/villager/scroller_disabled",
+            track_x,
+            track_y,
+            6.0,
+            27.0,
+        );
+        return 0;
+    }
+
+    if ctx.input.scroll != 0.0 {
+        let off = (ui.merchant_scroll as f64 - ctx.input.scroll as f64) as i64;
+        ui.merchant_scroll = off.clamp(0, max_off as i64) as usize;
+    }
+
+    if ctx.input.left_click
+        && let Some(m) = ctx.mouse()
+        && m.x > track_x
+        && m.x < track_x + 6.0
+        && m.y > track_y
+        && m.y <= track_y + 140.0
+    {
+        ui.dragging = true;
+    }
+    if !ctx.input.left_down {
+        ui.dragging = false;
+    }
+    if ui.dragging
+        && let Some(m) = ctx.mouse()
+    {
+        let scrolling = (m.y - track_y - 13.5) / (139.0 - 27.0) * max_off as f32 + 0.5;
+        ui.merchant_scroll = (scrolling as i64).clamp(0, max_off as i64) as usize;
+    }
+    ui.merchant_scroll = ui.merchant_scroll.min(max_off);
+
+    let y_off = scroller_offset(ui.merchant_scroll, max_off + 1);
+    p.sprite(
+        "container/villager/scroller",
+        track_x,
+        track_y + y_off as f32,
+        6.0,
+        27.0,
+    );
+    ui.merchant_scroll
+}
+
+fn scroller_offset(off: usize, steps: usize) -> i32 {
+    let (off, steps) = (off as i32, steps as i32);
+    if off == steps - 1 {
+        return 113;
+    }
+    let left_over = 139 - (27 + (steps - 1) * 139 / steps);
+    let step_height = 1 + left_over / steps + 139 / steps;
+    (off * step_height).min(113)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -348,6 +393,15 @@ mod tests {
         );
         assert_eq!(future_bar_width(500, 10, 70, earned), 102.0 - earned);
         assert_eq!(future_bar_width(10, 10, 70, 102.0), 0.0);
+    }
+
+    #[test]
+    fn scroller_steps_match_vanilla() {
+        assert_eq!(scroller_offset(0, 2), 0);
+        assert_eq!(scroller_offset(1, 2), 113);
+        assert_eq!(scroller_offset(1, 14), 9);
+        assert_eq!(scroller_offset(12, 14), 108);
+        assert_eq!(scroller_offset(13, 14), 113);
     }
 
     #[test]

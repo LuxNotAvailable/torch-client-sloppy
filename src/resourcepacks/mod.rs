@@ -1,3 +1,6 @@
+#[cfg(explore_modrinth)]
+pub(crate) mod modrinth;
+
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -20,6 +23,23 @@ pub(crate) fn dir() -> PathBuf {
 
 pub(crate) fn list() -> Vec<Pack> {
     crate::util::pack::scan(&dir())
+}
+
+#[cfg(explore_modrinth)]
+pub(crate) fn size(name: &str) -> u64 {
+    fn walk(path: &std::path::Path, meta: std::fs::Metadata) -> u64 {
+        if !meta.is_dir() {
+            return meta.len();
+        }
+        std::fs::read_dir(path)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.metadata().map_or(0, |meta| walk(&entry.path(), meta)))
+            .sum()
+    }
+    let path = dir().join(name);
+    std::fs::metadata(&path).map_or(0, |meta| walk(&path, meta))
 }
 
 pub(crate) fn selected() -> Vec<String> {
@@ -91,7 +111,7 @@ pub(crate) fn info(pack: &Pack) -> Info {
     }
 }
 
-fn icon_pixels(png: &[u8]) -> Option<Vec<u8>> {
+pub(crate) fn icon_pixels(png: &[u8]) -> Option<Vec<u8>> {
     let side = crate::gui::atlas::SERVER_ICON_PX;
     let image = image::load_from_memory(png).ok()?.to_rgba8();
     let image = image::imageops::resize(&image, side, side, image::imageops::FilterType::Triangle);

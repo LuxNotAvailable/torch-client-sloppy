@@ -3,7 +3,7 @@ use bevy::render::render_resource::{Buffer, BufferDescriptor, BufferUsages};
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bytemuck::{Pod, Zeroable};
 
-use crate::shaderpack::expressions::{CustomType, Customs};
+use crate::shaderpack::expressions::{CustomState, CustomType, Customs};
 use crate::shaderpack::pipeline::UniformLayout;
 
 mod builtins;
@@ -22,6 +22,10 @@ pub(crate) struct BlockHead {
     pub(crate) camera: Vec4,
     pub(crate) screen: Vec4,
     pub(crate) time: Vec4,
+    pub(crate) model_view_inverse: Mat4,
+    pub(crate) projection_inverse: Mat4,
+    pub(crate) fog_color: Vec4,
+    pub(crate) fog: Vec4,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -142,7 +146,12 @@ impl PackUniforms {
         (u64::from(block.offset), u64::from(block.size))
     }
 
-    pub(crate) fn write(&mut self, values: &FrameValues, customs: &[f32], queue: &RenderQueue) {
+    pub(crate) fn write(
+        &mut self,
+        values: &FrameValues,
+        customs: &CustomState,
+        queue: &RenderQueue,
+    ) {
         for block in &self.blocks {
             let head = values.head(block.set);
             let head = bytemuck::bytes_of(&head);
@@ -150,14 +159,20 @@ impl PackUniforms {
             self.bytes[at..at + head.len()].copy_from_slice(head);
         }
         for (offset, source) in &self.sources {
+            let out = &mut self.bytes[*offset as usize..];
             let value = match *source {
                 Source::Builtin(b) => values.get(b),
-                Source::Custom(i, CustomType::Float) => Value::Float(customs[i]),
+                Source::Custom(i, CustomType::Float) => Value::Float(customs.values[i]),
                 Source::Custom(i, CustomType::Int | CustomType::Bool) => {
-                    Value::Int(customs[i] as i32)
+                    Value::Int(customs.values[i] as i32)
+                }
+                Source::Custom(i, vector) => {
+                    let components = &customs.vectors[i][..vector.components()];
+                    out[..components.len() * 4].copy_from_slice(bytemuck::cast_slice(components));
+                    continue;
                 }
             };
-            value.write(&mut self.bytes[*offset as usize..]);
+            value.write(out);
         }
         queue.write_buffer(&self.buffer, 0, &self.bytes);
     }
@@ -182,6 +197,10 @@ mod tests {
                 "iris_CameraPosition",
                 "iris_ScreenSize",
                 "iris_Time",
+                "iris_ModelViewMatrixInverse",
+                "iris_ProjectionMatrixInverse",
+                "iris_FogColor",
+                "iris_FogParams",
             ]
         );
         assert_eq!(std::mem::size_of::<BlockHead>() as u32, layout.size);

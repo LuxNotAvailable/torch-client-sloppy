@@ -7,13 +7,14 @@ use crate::blockentities::banner::{self, BannerLayer, MAX_PATTERNS};
 use crate::blockentities::feed::BlockEntityData;
 use crate::blockentities::models;
 use crate::blockentities::render::chest::facing_y_rot;
-use crate::blockentities::{BeRegistry, BeSpec, BeState, GeomKey};
+use crate::blockentities::{BeRegistry, BeSpec, BeState, GeomKey, no_anim};
 use crate::entities::geom::{BakedModel, LayerDef, PartState};
+use crate::util::dye::linear_diffuse;
 
 pub fn register(registry: &mut BeRegistry) {
     registry.add(
         BlockEntityKind::Banner,
-        BeSpec::model("banner_body", body_key, body_layer, base_texture, no_wave)
+        BeSpec::model("banner_body", body_key, body_layer, base_texture, no_anim)
             .with_transform(transform),
     );
     registry.add(
@@ -83,7 +84,7 @@ fn mask_texture(_st: &BeState) -> String {
 }
 
 fn base_tint(st: &BeState) -> [f32; 4] {
-    banner::tint(banner::base_color_of(&st.state.block))
+    linear_diffuse(banner::base_color_of(&st.state.block).into())
 }
 
 macro_rules! pattern_layers {
@@ -142,26 +143,28 @@ fn pattern_texture<const SLOT: usize>(st: &BeState) -> String {
 
 fn pattern_tint<const SLOT: usize>(st: &BeState) -> [f32; 4] {
     match slot(st, SLOT) {
-        Some(layer) => banner::tint(layer.color),
+        Some(layer) => linear_diffuse(layer.color.into()),
         None => [1.0; 4],
     }
 }
 
 fn wave(model: &BakedModel, parts: &mut [PartState], st: &BeState) {
-    parts[model.id("flag")].x_rot = (-0.012_5 + 0.01 * (2.0 * PI * st.phase).cos()) * PI;
+    parts[model.id("flag")].x_rot = (-0.012_5 + 0.01 * (2.0 * PI * phase(st)).cos()) * PI;
 }
 
-fn no_wave(_model: &BakedModel, _parts: &mut [PartState], _st: &BeState) {}
-
-fn segment_degrees(segment: u32) -> f32 {
-    segment as f32 * (360.0 / 16.0)
+fn phase(st: &BeState) -> f32 {
+    let [x, y, z] = st.pos.map(i64::from);
+    let ticks = (x * 7 + y * 9 + z * 13)
+        .wrapping_add(st.game_time as i64)
+        .rem_euclid(100);
+    (ticks as f32 + st.partial) / 100.0
 }
 
 fn transform(st: &BeState) -> Transform {
     let angle = if banner::is_wall(&st.state.block) {
         facing_y_rot(st.state.facing)
     } else {
-        segment_degrees(st.state.rotation)
+        st.state.rotation_degrees()
     };
     Transform {
         translation: Vec3::new(0.5, 0.0, 0.5),
@@ -192,7 +195,7 @@ mod tests {
         assert!(flag_key(&st).is_some());
         assert!(pattern_key::<0>(&st).is_none());
         assert!(pattern_key::<15>(&st).is_none());
-        assert_eq!(base_tint(&st), banner::tint(14));
+        assert_eq!(base_tint(&st), linear_diffuse(14));
     }
 
     #[test]
@@ -207,8 +210,8 @@ mod tests {
         assert_ne!(pattern_key::<0>(&st), pattern_key::<1>(&st));
         assert_eq!(pattern_texture::<0>(&st), "entity/banner/creeper");
         assert_eq!(pattern_texture::<1>(&st), "entity/banner/border");
-        assert_eq!(pattern_tint::<0>(&st), banner::tint(15));
-        assert_eq!(pattern_tint::<1>(&st), banner::tint(4));
+        assert_eq!(pattern_tint::<0>(&st), linear_diffuse(15));
+        assert_eq!(pattern_tint::<1>(&st), linear_diffuse(4));
     }
 
     #[test]

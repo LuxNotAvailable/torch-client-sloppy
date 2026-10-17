@@ -18,7 +18,7 @@ use bevy::mesh::PrimitiveTopology;
 use bevy::prelude::*;
 
 pub use registry::Registry;
-pub use state::{Billboard, Direction, EntityState, Pose};
+pub use state::{Billboard, Carried, Carrier, Direction, EntityState, Pose};
 
 pub use crate::renderer::entity_material::LightMode;
 use crate::renderer::entity_material::{EntityMaterial, Lit, diffuse_lights};
@@ -54,6 +54,14 @@ pub fn hook_scale_then_translate(scale: Vec3, translate: Vec3) -> Transform {
         translation: scale * translate,
         rotation: Quat::IDENTITY,
         scale,
+    }
+}
+
+pub fn rotate_around(rotation: Quat, pivot: Vec3) -> Transform {
+    Transform {
+        translation: pivot - rotation * pivot,
+        rotation,
+        scale: Vec3::ONE,
     }
 }
 
@@ -273,7 +281,26 @@ pub struct ItemGeom {
     pub display: &'static str,
     pub inner: fn(&EntityState) -> Transform,
     pub cluster: Option<ItemCluster>,
-    pub hover: bool,
+    pub lift: ItemLift,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ItemLift {
+    None,
+    Hover,
+    Bottom,
+    Center,
+}
+
+impl ItemLift {
+    fn offset(self, min_y: f32, max_y: f32) -> f32 {
+        match self {
+            ItemLift::None => 0.0,
+            ItemLift::Hover => -min_y + ITEM_MIN_HOVER_HEIGHT,
+            ItemLift::Bottom => -min_y,
+            ItemLift::Center => -min_y - (max_y - min_y) / 2.0,
+        }
+    }
 }
 
 pub struct ItemCluster {
@@ -424,19 +451,25 @@ impl RenderSpec {
                 display,
                 inner,
                 cluster: None,
-                hover: false,
+                lift: ItemLift::None,
             }),
         )
     }
 
-    pub fn as_item_cluster(
+    pub fn with_item_cluster(
         mut self,
         count: fn(&EntityState) -> u32,
         seed: fn(&EntityState) -> i64,
     ) -> RenderSpec {
         if let Geom::Item(geom) = &mut self.geom {
             geom.cluster = Some(ItemCluster { count, seed });
-            geom.hover = true;
+        }
+        self
+    }
+
+    pub fn with_item_lift(mut self, lift: ItemLift) -> RenderSpec {
+        if let Geom::Item(geom) = &mut self.geom {
+            geom.lift = lift;
         }
         self
     }
@@ -738,18 +771,76 @@ impl EntityAssets {
     }
 }
 
+pub(crate) fn repeating_nearest() -> bevy::image::ImageSampler {
+    use bevy::image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor};
+    ImageSampler::Descriptor(ImageSamplerDescriptor {
+        address_mode_u: ImageAddressMode::Repeat,
+        address_mode_v: ImageAddressMode::Repeat,
+        ..ImageSamplerDescriptor::nearest()
+    })
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SheetAnimation {
+    pub frames: u32,
+    pub height: u32,
+    pub frametime: u32,
+}
+
+pub(crate) fn sheet_animation(path: &str) -> Option<SheetAnimation> {
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<HashMap<String, Option<SheetAnimation>>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(Default::default);
+    if let Some(known) = cache.lock().unwrap().get(path) {
+        return *known;
+    }
+    let read = || {
+        let png = crate::assets_root().join(format!("textures/{path}.png"));
+        let meta = crate::platform::assets::read_to_string(png.with_extension("png.mcmeta"))?;
+        let json: serde_json::Value = serde_json::from_str(&meta).ok()?;
+        let anim = json.get("animation")?;
+        let sheet = crate::platform::assets::open_image(&png).ok()?;
+        let (width, sheet_height) = (sheet.width(), sheet.height());
+        let num = |key: &str| {
+            anim.get(key)
+                .and_then(serde_json::Value::as_u64)
+                .map(|v| v as u32)
+        };
+        let height = num("height").unwrap_or(width).max(1);
+        Some(SheetAnimation {
+            frames: (sheet_height / height).max(1),
+            height,
+            frametime: num("frametime").unwrap_or(1).max(1),
+        })
+    };
+    let found = read();
+    cache.lock().unwrap().insert(path.to_string(), found);
+    found
+}
+
 pub(crate) fn load_entity_image(path: &str, images: &mut Assets<Image>) -> Option<Handle<Image>> {
     use bevy::asset::RenderAssetUsages;
     use bevy::image::ImageSampler;
     use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
-    let decoded = match path.strip_prefix(crate::entities::render::humanoid::armor::STACK_PREFIX) {
-        Some(rest) => crate::entities::render::humanoid::armor::stack(rest)?,
-        None => {
-            let file = crate::assets_root().join(format!("textures/{path}.png"));
-            crate::platform::assets::open_image(&file).ok()?.to_rgba8()
-        }
+    let (path, frame) = match path.rsplit_once('#') {
+        Some((sheet, frame)) => (sheet, frame.parse::<u32>().ok()),
+        None => (path, None),
     };
+    let mut decoded =
+        match path.strip_prefix(crate::entities::render::humanoid::armor::STACK_PREFIX) {
+            Some(rest) => crate::entities::render::humanoid::armor::stack(rest)?,
+            None => {
+                let file = crate::assets_root().join(format!("textures/{path}.png"));
+                crate::platform::assets::open_image(&file).ok()?.to_rgba8()
+            }
+        };
+    if let Some(frame) = frame {
+        let anim = sheet_animation(path)?;
+        let y = (frame % anim.frames) * anim.height;
+        decoded =
+            image::imageops::crop_imm(&decoded, 0, y, decoded.width(), anim.height).to_image();
+    }
     let (w, h) = decoded.dimensions();
     let mut image = Image::new(
         Extent3d {
@@ -794,15 +885,15 @@ fn entity_levels(light: &crate::lighting::level::LightMap, st: &EntityState) -> 
     {
         return block_model_levels(light, st);
     }
+    if st.extras.brightness_override != -1 {
+        let packed = st.extras.brightness_override;
+        return (((packed >> 4) & 15) as u8, ((packed >> 20) & 15) as u8);
+    }
     let (block, sky) = crate::renderer::lightmap::resolved_levels(light.at(
         st.pos[0].floor() as i32,
         (st.pos[1] + st.eye_height).floor() as i32,
         st.pos[2].floor() as i32,
     ));
-    if st.extras.brightness_override != -1 {
-        let packed = st.extras.brightness_override;
-        return (((packed >> 4) & 15) as u8, ((packed >> 20) & 15) as u8);
-    }
     (block_light_level(st, block), sky)
 }
 
@@ -1041,6 +1132,7 @@ struct LayerRig {
 
 struct EntityRig {
     kind: EntityKind,
+    carried: Option<Carried>,
     layers: Vec<Option<LayerRig>>,
 }
 
@@ -1068,17 +1160,27 @@ impl EntityRigs {
 #[derive(Component)]
 pub struct EntityRigNode;
 
+#[derive(Resource, Default)]
+pub struct CarriedEntities(pub Vec<EntityState>);
+
+#[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct EntitySync;
+
 pub struct EntityPlugin;
 
 impl Plugin for EntityPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<EntityAssets>()
             .init_resource::<EntityRigs>()
+            .init_resource::<CarriedEntities>()
             .init_resource::<crate::renderer::maps::MapTextures>()
             .insert_resource(Registry::build())
             .add_systems(
                 Update,
-                (crate::renderer::maps::upload_maps, sync_entities)
+                (
+                    crate::renderer::maps::upload_maps,
+                    sync_entities.in_set(EntitySync),
+                )
                     .chain()
                     .after(crate::renderer::FrameViewSystems)
                     .run_if(in_state(crate::renderer::AppState::InGame)),
@@ -1098,10 +1200,11 @@ fn sync_entities(
     mut materials: ResMut<Assets<EntityMaterial>>,
     mut standard_materials: ResMut<Assets<StandardMaterial>>,
     mut item_assets: ResMut<crate::renderer::item_assets::ItemAssets>,
-    (map_textures, chunk_material, lightmap): (
+    (map_textures, chunk_material, lightmap, carried): (
         Res<crate::renderer::maps::MapTextures>,
         Res<crate::renderer::systems::ChunkMaterial>,
         Res<crate::renderer::systems::LightmapState>,
+        Res<CarriedEntities>,
     ),
     camera_q: Query<
         &GlobalTransform,
@@ -1116,7 +1219,7 @@ fn sync_entities(
     (mut variant_tick, mut frame, mut seen, mut idx): (
         Local<u32>,
         Local<Vec<EntityState>>,
-        Local<HashMap<i32, EntityKind>>,
+        Local<HashMap<i32, (EntityKind, Option<Carried>)>>,
         Local<Vec<usize>>,
     ),
 ) {
@@ -1153,11 +1256,11 @@ fn sync_entities(
     let seen = &mut *seen;
     seen.clear();
     seen.reserve(frame.len());
-    for st in frame.iter() {
-        seen.insert(st.id, st.kind);
+    for st in frame.iter().chain(&carried.0) {
+        seen.insert(st.id, (st.kind, st.carrier.and_then(|c| c.specs)));
     }
     rigs.live.retain(|id, rig| {
-        let keep = seen.get(id) == Some(&rig.kind);
+        let keep = seen.get(id) == Some(&(rig.kind, rig.carried));
         if !keep {
             for layer in rig.layers.iter().flatten() {
                 commands.entity(layer.pose_root).despawn();
@@ -1174,8 +1277,8 @@ fn sync_entities(
     let mut copy_locals: Vec<Transform> = Vec::new();
     let mut posed: Vec<PosedPart> = Vec::new();
 
-    for st in frame.iter() {
-        let spec_ids = registry.specs_for(st.kind);
+    for st in frame.iter().chain(&carried.0) {
+        let spec_ids = registry.specs_for_state(st);
         if spec_ids.is_empty() {
             continue;
         }
@@ -1192,6 +1295,7 @@ fn sync_entities(
 
         let rig = rigs.live.entry(st.id).or_insert_with(|| EntityRig {
             kind: st.kind,
+            carried: st.carrier.and_then(|c| c.specs),
             layers: spec_ids.iter().map(|_| None).collect(),
         });
 
@@ -1337,9 +1441,7 @@ fn sync_entities(
                     }
                     placement = (geom.inner)(st);
                     if let Some((min, max)) = single.bounds {
-                        if geom.hover {
-                            placement.translation.y += -min.y + ITEM_MIN_HOVER_HEIGHT;
-                        }
+                        placement.translation.y += geom.lift.offset(min.y, max.y);
                         let (count, seed) = match &geom.cluster {
                             Some(cluster) => {
                                 (rendered_amount((cluster.count)(st)), (cluster.seed)(st))
@@ -1770,6 +1872,19 @@ fn shown(show: bool) -> Visibility {
     }
 }
 
+fn pose_root(st: &EntityState, root: &RootPose) -> Transform {
+    let own = Transform {
+        translation: root.world_offset,
+        rotation: root.rotation,
+        scale: Vec3::splat(root.scale),
+    };
+    let anchor = Transform::from_translation(Vec3::from(st.pos));
+    match st.carrier {
+        Some(carrier) => anchor.mul_transform(carrier.pose).mul_transform(own),
+        None => anchor.mul_transform(own),
+    }
+}
+
 fn apply_layer(
     layer: &LayerRig,
     root: &RootPose,
@@ -1781,12 +1896,7 @@ fn apply_layer(
 ) {
     if let RigBody::Baked(baked) = &layer.body {
         if let Ok((mut t, _)) = nodes.get_mut(baked.node) {
-            let composed = Transform {
-                translation: Vec3::from(st.pos) + root.world_offset,
-                rotation: root.rotation,
-                scale: Vec3::splat(root.scale),
-            }
-            .mul_transform(Transform {
+            let composed = pose_root(st, root).mul_transform(Transform {
                 translation: root.extra_offset,
                 rotation: root.extra_rotation,
                 scale: Vec3::ONE,
@@ -1804,19 +1914,15 @@ fn apply_layer(
         };
         let want = match copy_locals.first() {
             Some(local) => {
-                let composed = Transform {
-                    translation: Vec3::from(st.pos) + root.world_offset,
-                    rotation: root.rotation,
-                    scale: Vec3::splat(root.scale),
-                }
-                .mul_transform(Transform {
-                    translation: root.extra_offset,
-                    rotation: root.extra_rotation,
-                    scale: Vec3::ONE,
-                })
-                .mul_transform(root.hook)
-                .mul_transform(*placement)
-                .mul_transform(*local);
+                let composed = pose_root(st, root)
+                    .mul_transform(Transform {
+                        translation: root.extra_offset,
+                        rotation: root.extra_rotation,
+                        scale: Vec3::ONE,
+                    })
+                    .mul_transform(root.hook)
+                    .mul_transform(*placement)
+                    .mul_transform(*local);
                 match display_leftover(st) {
                     None => set_transform(&mut t, composed),
                     Some(right) => write_sheared(globals, single.node, composed, right),
@@ -1830,15 +1936,7 @@ fn apply_layer(
     }
 
     if let Ok((mut t, _)) = nodes.get_mut(layer.pose_root) {
-        let scale = Vec3::splat(root.scale);
-        set_transform(
-            &mut t,
-            Transform {
-                translation: Vec3::from(st.pos) + root.world_offset,
-                rotation: root.rotation,
-                scale,
-            },
-        );
+        set_transform(&mut t, pose_root(st, root));
     }
     if let Ok((mut t, _)) = nodes.get_mut(layer.extra) {
         let scale = t.scale;

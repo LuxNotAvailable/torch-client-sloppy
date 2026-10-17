@@ -14,50 +14,12 @@ pub struct BannerData {
     pub layers: Vec<BannerLayer>,
 }
 
-pub const TEXTURE_DIFFUSE: [u32; 16] = [
-    16383998, 16351261, 13061821, 3847130, 16701501, 8439583, 15961002, 4673362, 10329495, 1481884,
-    8991416, 3949738, 8606770, 6192150, 11546150, 1908001,
-];
-
-pub const NAMES: [&str; 16] = [
-    "white",
-    "orange",
-    "magenta",
-    "light_blue",
-    "yellow",
-    "lime",
-    "pink",
-    "gray",
-    "light_gray",
-    "cyan",
-    "purple",
-    "blue",
-    "brown",
-    "green",
-    "red",
-    "black",
-];
-
-pub fn color_by_name(name: &str) -> u8 {
-    NAMES.iter().position(|n| *n == name).unwrap_or(0) as u8
-}
-
-pub fn tint(color: u8) -> [f32; 4] {
-    let packed = TEXTURE_DIFFUSE[(color as usize).min(15)];
-    [
-        crate::util::mth::srgb_to_linear(((packed >> 16) & 0xff) as f32 / 255.0),
-        crate::util::mth::srgb_to_linear(((packed >> 8) & 0xff) as f32 / 255.0),
-        crate::util::mth::srgb_to_linear((packed & 0xff) as f32 / 255.0),
-        1.0,
-    ]
-}
-
 pub fn base_color_of(block: &str) -> u8 {
     let name = block
         .strip_suffix("_wall_banner")
         .or_else(|| block.strip_suffix("_banner"))
         .unwrap_or("white");
-    color_by_name(name)
+    crate::util::dye::id_by_name(name).unwrap_or(0) as u8
 }
 
 pub fn is_wall(block: &str) -> bool {
@@ -174,17 +136,5 @@ mod tests {
         assert!(is_wall("cyan_wall_banner"));
         assert!(!is_wall("cyan_banner"));
         assert_eq!(base_color_of("cyan_wall_banner"), 9);
-    }
-
-    #[test]
-    fn the_diffuse_column_is_not_the_text_column() {
-        assert_eq!(TEXTURE_DIFFUSE[14], 11546150);
-        assert_eq!(crate::blockentities::feed::dye_text_color("red"), 16711680);
-    }
-
-    #[test]
-    fn a_dye_index_tints_its_own_colour() {
-        assert_eq!(tint(15), [29.0 / 255.0, 29.0 / 255.0, 33.0 / 255.0, 1.0]);
-        assert_eq!(tint(0)[0], 249.0 / 255.0);
     }
 }

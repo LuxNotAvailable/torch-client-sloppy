@@ -28,7 +28,9 @@ pub(crate) enum TextureSource {
     Lightmap,
     Stub(Stub),
     Custom(u8),
+    Custom3d(u8),
     ShadowDepth(Depth),
+    ShadowCompare(Depth),
     ShadowColor(u8),
     EntityTexture,
     Image {
@@ -39,7 +41,19 @@ pub(crate) enum TextureSource {
 
 impl TextureSource {
     pub(crate) fn resolve(name: &str, ty: &str) -> Result<TextureSource, String> {
+        let shadow_ty = ty == "sampler2DShadow";
         let source = match name {
+            "shadowtex0HW" if shadow_ty => TextureSource::ShadowCompare(Depth::All),
+            "shadowtex1HW" if shadow_ty => TextureSource::ShadowCompare(Depth::Opaque),
+            "shadowtex0HW" | "shadowtex1HW" => {
+                return Err(format!(
+                    "{ty} {name}: a hardware sampler is a sampler2DShadow"
+                ));
+            }
+            "shadowtex0" | "shadow" | "watershadow" if shadow_ty => {
+                TextureSource::ShadowCompare(Depth::All)
+            }
+            "shadowtex1" if shadow_ty => TextureSource::ShadowCompare(Depth::Opaque),
             "depthtex0" | "gdepthtex" => TextureSource::Depth(Depth::All),
             "depthtex1" => TextureSource::Depth(Depth::Opaque),
             "depthtex2" => TextureSource::DepthNoHand,
@@ -65,7 +79,15 @@ impl TextureSource {
             },
         };
         let expects_2d = !source.is_3d();
-        let is_2d = matches!(ty, "sampler2D" | "usampler2D" | "isampler2D");
+        let is_2d = matches!(
+            ty,
+            "sampler2D" | "usampler2D" | "isampler2D" | "sampler2DShadow"
+        );
+        if shadow_ty && !matches!(source, TextureSource::ShadowCompare(_)) {
+            return Err(format!(
+                "{ty} {name}: only the shadow depth maps have a comparison sampler"
+            ));
+        }
         if expects_2d != is_2d {
             return Err(format!(
                 "{ty} {name}: this client supplies it as a different kind of texture"
@@ -107,11 +129,17 @@ impl TextureSource {
         }
     }
 
-    pub(crate) fn custom(index: u8, name: &str, ty: &str) -> Result<TextureSource, String> {
-        if ty == "sampler2D" {
-            Ok(TextureSource::Custom(index))
-        } else {
-            Err(format!("{ty} {name}: the pack supplies a 2D image for it"))
+    pub(crate) fn custom(
+        index: u8,
+        three_d: bool,
+        name: &str,
+        ty: &str,
+    ) -> Result<TextureSource, String> {
+        match (three_d, ty) {
+            (false, "sampler2D") => Ok(TextureSource::Custom(index)),
+            (true, "sampler3D") => Ok(TextureSource::Custom3d(index)),
+            (false, _) => Err(format!("{ty} {name}: the pack supplies a 2D image for it")),
+            (true, _) => Err(format!("{ty} {name}: the pack supplies a 3D image for it")),
         }
     }
 
@@ -125,12 +153,14 @@ impl TextureSource {
             TextureSource::Depth(_)
             | TextureSource::DepthNoHand
             | TextureSource::ShadowDepth(_) => SampleKind::UnfilterableFloat,
+            TextureSource::ShadowCompare(_) => SampleKind::Depth,
             TextureSource::Stub(Stub::Uint3d | Stub::Uint2d) => SampleKind::Uint,
             TextureSource::Image { .. } => SampleKind::UnfilterableFloat,
             TextureSource::Noise
             | TextureSource::Atlas
             | TextureSource::Lightmap
             | TextureSource::Custom(_)
+            | TextureSource::Custom3d(_)
             | TextureSource::EntityTexture
             | TextureSource::Stub(
                 Stub::White2d | Stub::Zero3d | Stub::FlatNormal | Stub::Black2d,
@@ -141,7 +171,9 @@ impl TextureSource {
     pub(crate) fn view_dimension(self) -> TextureViewDimension {
         match self {
             TextureSource::Image { dimension, .. } => dimension,
-            TextureSource::Stub(Stub::Zero3d | Stub::Uint3d) => TextureViewDimension::D3,
+            TextureSource::Stub(Stub::Zero3d | Stub::Uint3d) | TextureSource::Custom3d(_) => {
+                TextureViewDimension::D3
+            }
             _ => TextureViewDimension::D2,
         }
     }
@@ -186,6 +218,15 @@ mod tests {
             Ok(TextureSource::Stub(Stub::Uint3d))
         );
         assert!(TextureSource::resolve("colortex4", "sampler3D").is_err());
-        assert!(TextureSource::resolve("shadow", "sampler2DShadow").is_err());
+        assert_eq!(
+            TextureSource::resolve("shadow", "sampler2DShadow"),
+            Ok(TextureSource::ShadowCompare(Depth::All))
+        );
+        assert_eq!(
+            TextureSource::resolve("shadowtex1HW", "sampler2DShadow"),
+            Ok(TextureSource::ShadowCompare(Depth::Opaque))
+        );
+        assert!(TextureSource::resolve("shadowtex0HW", "sampler2D").is_err());
+        assert!(TextureSource::resolve("colortex0", "sampler2DShadow").is_err());
     }
 }
