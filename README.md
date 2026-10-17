@@ -25,7 +25,7 @@ Builds for Linux and Windows are on the [releases page](https://github.com/torch
 ## Build from source
 
 ```sh
-git clone https://github.com/torch-client/client.git
+git clone https://github.com/torch-client/torch-client.git
 cd client
 cargo build --release
 ```
