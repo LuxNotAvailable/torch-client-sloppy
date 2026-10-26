@@ -84,11 +84,7 @@ async fn pump(
                 tx.send_binary(body).await?;
             }
             message = rx.recv() => {
-                let Some(message) = message? else {
-                    log_info!("net", "eagler: the server closed the websocket");
-                    return Ok(());
-                };
-                match message {
+                match message?.unwrap_or(Frame::Close(None)) {
                     Frame::Binary(payload) if is_injected(&payload) => {
                         note_injected(&payload);
                     }

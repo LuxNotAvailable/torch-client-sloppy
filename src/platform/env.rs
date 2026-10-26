@@ -61,6 +61,24 @@ const ALL: &[Var] = &[
         enabled: true,
     },
     Var {
+        name: "MC_PRESENT",
+        what: "`immediate`, `mailbox`, `fifo` or `fifo_relaxed`, over the VSync option",
+        default: "from the VSync option",
+        enabled: cfg!(not(target_arch = "wasm32")),
+    },
+    Var {
+        name: "MC_FRAME_LATENCY",
+        what: "frames the swapchain may queue ahead",
+        default: "3",
+        enabled: cfg!(not(target_arch = "wasm32")),
+    },
+    Var {
+        name: "MC_NO_HAND",
+        what: "`1` hides the first-person hand, to measure what it costs",
+        default: "off",
+        enabled: true,
+    },
+    Var {
         name: "MC_EXEC",
         what: "`mt` puts bevy's multi-threaded executor back",
         default: "single-threaded",
@@ -108,6 +126,18 @@ const ALL: &[Var] = &[
         what: "draw every loaded section instead of culling occluded ones",
         default: "off",
         enabled: true,
+    },
+    Var {
+        name: "MC_SHADERPACK_CHECKED",
+        what: "`1` turns wgpu's runtime checks on for shader-pack pipelines",
+        default: "off",
+        enabled: cfg!(feature = "shader_support"),
+    },
+    Var {
+        name: "MC_SHADERPACK_TIMING",
+        what: "`1` times each stage of a shader pack's frame",
+        default: "off",
+        enabled: cfg!(feature = "shader_support"),
     },
     Var {
         name: "MC_NO_CUTOUT",
@@ -189,19 +219,19 @@ const ALL: &[Var] = &[
     },
     Var {
         name: "MC_DEBUG_CHUNKS",
-        what: "older spelling of MC_DEBUG=chunks, on if set to anything",
+        what: "older spelling of MC_DEBUG=chunks",
         default: "off",
         enabled: true,
     },
     Var {
         name: "MC_DEBUG_LIGHT",
-        what: "older spelling of MC_DEBUG=light, on if set to anything",
+        what: "older spelling of MC_DEBUG=light",
         default: "off",
         enabled: true,
     },
     Var {
         name: "MC_TRACE",
-        what: "log every packet that crosses the connection",
+        what: "older spelling of MC_DEBUG=packet: log the opening packet exchange",
         default: "off",
         enabled: true,
     },
@@ -210,6 +240,13 @@ const ALL: &[Var] = &[
         what: "log every inventory menu change",
         default: "off",
         enabled: true,
+    },
+    Var {
+        name: "MC_FAKE_BAN_ATTRIBUTES",
+        what: "JSON used in place of the player/attributes reply when checking for a multiplayer \
+               ban, for testing the ban notice",
+        default: "ask api.minecraftservices.com",
+        enabled: cfg!(all(feature = "online_mode", not(target_arch = "wasm32"))),
     },
     Var {
         name: "MC_BOT_KILL_SECS",
@@ -260,6 +297,10 @@ pub(crate) fn table() -> impl Iterator<Item = &'static Var> {
     ALL.iter().filter(|v| v.enabled)
 }
 
+pub(crate) fn flag(name: &str) -> bool {
+    std::env::var(name).is_ok_and(|v| !matches!(v.trim(), "" | "0" | "false"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::ALL;
@@ -290,7 +331,7 @@ mod tests {
 
     fn read_names(text: &str) -> Vec<String> {
         let mut names = Vec::new();
-        for call in ["env::var(\"", "env::var_os(\""] {
+        for call in ["env::var(\"", "env::var_os(\"", "env::flag(\""] {
             let mut rest = text;
             while let Some(at) = rest.find(call) {
                 rest = &rest[at + call.len()..];

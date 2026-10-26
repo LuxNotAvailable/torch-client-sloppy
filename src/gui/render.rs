@@ -71,6 +71,8 @@ pub struct GuiInput {
     pub end: bool,
     pub ctrl: bool,
     pub shift: bool,
+    pub space_down: bool,
+    pub up_down: bool,
     pub hotbar_keys: [bool; 9],
     pub drop_key: bool,
     pub swap_key: bool,
@@ -102,6 +104,7 @@ pub struct GuiInput {
     pub pressed_mouse: Option<MouseButton>,
     pub double_click: bool,
     pub triple_click: bool,
+    pub hold_progress: Option<f32>,
 }
 
 #[derive(Resource)]
@@ -125,10 +128,6 @@ pub struct StartupState {
 pub struct StartScreen(pub crate::gui::Screen);
 
 #[derive(Resource, Clone, Copy)]
-#[allow(
-    dead_code,
-    reason = "read only by gui::assetdownload, which is one feature's screen"
-)]
 pub struct AfterDownloadScreen(pub crate::gui::Screen);
 
 impl Plugin for GuiPlugin {
@@ -164,6 +163,11 @@ impl Plugin for GuiPlugin {
                 Update,
                 (collect_input, draw_gui, upload_banner_icons).chain(),
             );
+        #[cfg(resource_packs)]
+        app.add_systems(
+            Update,
+            crate::gui::resourcepacks::collect_drops.before(draw_gui),
+        );
 
         if let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) {
             render_app
@@ -185,14 +189,6 @@ impl Plugin for GuiPlugin {
                 Update,
                 crate::gui::player_faces::update_player_faces.before(draw_gui),
             );
-
-        #[cfg(feature = "asset_download")]
-        app.add_systems(
-            Update,
-            crate::gui::assetdownload::adopt_downloaded_assets.run_if(bevy::prelude::not(
-                bevy::prelude::resource_exists::<crate::renderer::systems::AssetsReady>,
-            )),
-        );
     }
 
     fn finish(&self, app: &mut App) {
@@ -370,14 +366,100 @@ pub fn effective_gui_scale(width: f32, height: f32, option: u32) -> f32 {
 }
 
 #[cfg(feature = "mobile_ui")]
-fn touch_pointer(touches: &Touches) -> Option<(Vec2, bool, bool, bool)> {
-    if let Some(t) = touches.iter().next() {
-        return Some((t.position(), touches.just_pressed(t.id()), true, false));
+const LONG_PRESS_SECS: f32 = 0.35;
+
+#[cfg(feature = "mobile_ui")]
+const TOUCH_SLOP: f32 = 6.0;
+
+#[cfg(feature = "mobile_ui")]
+#[derive(Default, Clone, Copy, PartialEq, Debug)]
+pub(crate) enum TouchGesture {
+    #[default]
+    Idle,
+    Pending {
+        at: Vec2,
+        since: f32,
+    },
+    Left,
+    Right,
+}
+
+#[cfg(feature = "mobile_ui")]
+pub(crate) fn shape_touch(
+    gesture: &mut TouchGesture,
+    input: &mut GuiInput,
+    now: f32,
+    on_slot: impl Fn(Vec2) -> bool,
+) -> Option<f32> {
+    let (down, release) = (input.left_down, input.left_release);
+    if input.left_click {
+        *gesture = match input.mouse {
+            Some(at) if on_slot(at) => TouchGesture::Pending { at, since: now },
+            _ => TouchGesture::Left,
+        };
+    }
+    let ended = release || !down;
+    match *gesture {
+        TouchGesture::Idle => {}
+        TouchGesture::Left => {
+            if ended {
+                *gesture = TouchGesture::Idle;
+            }
+        }
+        TouchGesture::Right => {
+            input.right_down = down;
+            input.right_release = release;
+            input.left_down = false;
+            input.left_release = false;
+            if ended {
+                *gesture = TouchGesture::Idle;
+            }
+        }
+        TouchGesture::Pending { at, since } => {
+            input.left_click = false;
+            input.left_down = false;
+            input.left_release = false;
+            if ended {
+                input.left_click = release;
+                input.left_release = release;
+                input.mouse = Some(at);
+                *gesture = TouchGesture::Idle;
+            } else if input.mouse.is_some_and(|m| m.distance(at) > TOUCH_SLOP) {
+                input.left_click = true;
+                input.left_down = true;
+                input.mouse = Some(at);
+                *gesture = TouchGesture::Left;
+            } else if now - since >= LONG_PRESS_SECS {
+                input.right_click = true;
+                input.right_down = true;
+                *gesture = TouchGesture::Right;
+            } else {
+                return Some((now - since) / LONG_PRESS_SECS);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(feature = "mobile_ui")]
+fn touch_pointer(touches: &Touches, active: &mut Option<u64>) -> Option<(Vec2, bool, bool, bool)> {
+    if let Some(id) = *active {
+        if let Some(t) = touches.get_pressed(id) {
+            return Some((t.position(), touches.just_pressed(id), true, false));
+        }
+        *active = None;
+        if let Some(t) = touches.get_released(id) {
+            return Some((t.position(), false, false, true));
+        }
+    }
+    let id = touches.iter_just_pressed().next()?.id();
+    if let Some(t) = touches.get_pressed(id) {
+        *active = Some(id);
+        return Some((t.position(), true, true, false));
     }
     touches
-        .iter_just_released()
-        .next()
-        .map(|t| (t.position(), false, false, true))
+        .get_released(id)
+        .map(|t| (t.position(), true, false, true))
 }
 
 pub(crate) fn collect_input(
@@ -386,13 +468,15 @@ pub(crate) fn collect_input(
     cursor_opts: Query<&bevy::window::CursorOptions, With<PrimaryWindow>>,
     buttons: Res<ButtonInput<MouseButton>>,
     #[cfg(feature = "mobile_ui")] touches: Res<Touches>,
+    #[cfg(feature = "mobile_ui")] mut active_touch: Local<Option<u64>>,
+    #[cfg(feature = "mobile_ui")] mut gesture: Local<TouchGesture>,
+    #[cfg(feature = "mobile_ui")] mut touch_cursor: Local<Option<Option<Vec2>>>,
     keys: Res<ButtonInput<KeyCode>>,
     mut key_events: MessageReader<KeyboardInput>,
     wheel: Res<AccumulatedMouseScroll>,
     state: Res<GuiState>,
     time: Res<Time>,
-    mut last_left_press: Local<Option<f32>>,
-    mut click_run: Local<u32>,
+    mut click_chain: Local<(Option<f32>, u32)>,
     mut wheel_acc: Local<(f64, f64)>,
     #[cfg(target_os = "android")] mut keyboard_seen: Local<bool>,
 ) {
@@ -415,20 +499,37 @@ pub(crate) fn collect_input(
     let elsewhere = crate::gui::keyboard_elsewhere();
 
     #[cfg(feature = "mobile_ui")]
-    let touch = state
-        .screen
-        .is_open()
-        .then(|| touch_pointer(&touches))
-        .flatten();
+    let touch = if state.screen.is_open() {
+        touch_pointer(&touches, &mut active_touch)
+    } else {
+        *active_touch = None;
+        None
+    };
     #[cfg(not(feature = "mobile_ui"))]
     let touch: Option<(Vec2, bool, bool, bool)> = None;
 
-    input.mouse = if grabbed || !state.screen.is_open() {
+    let cursor = window.physical_cursor_position();
+    #[cfg(feature = "mobile_ui")]
+    {
+        if touch.is_some() {
+            *touch_cursor = Some(cursor);
+        } else if touch_cursor.is_some_and(|at| at != cursor)
+            || buttons.get_pressed().next().is_some()
+        {
+            *touch_cursor = None;
+        }
+    }
+    #[cfg(feature = "mobile_ui")]
+    let finger_lifted = touch.is_none() && touch_cursor.is_some();
+    #[cfg(not(feature = "mobile_ui"))]
+    let finger_lifted = false;
+
+    input.mouse = if grabbed || !state.screen.is_open() || finger_lifted {
         None
     } else if let Some((pos, ..)) = touch {
         Some(pos * window.scale_factor() / scale)
     } else {
-        window.physical_cursor_position().map(|p| p / scale)
+        cursor.map(|p| p / scale)
     };
 
     let (touch_click, touch_down, touch_release) =
@@ -442,6 +543,14 @@ pub(crate) fn collect_input(
     input.middle_down = buttons.pressed(MouseButton::Middle);
     input.left_release = buttons.just_released(MouseButton::Left) || touch_release;
     input.right_release = buttons.just_released(MouseButton::Right);
+    input.hold_progress = None;
+    #[cfg(feature = "mobile_ui")]
+    if touch.is_some() || !matches!(*gesture, TouchGesture::Idle) {
+        let slots = &state.slots;
+        input.hold_progress = shape_touch(&mut gesture, &mut input, time.elapsed_secs(), |m| {
+            slots.touch_slot_at(m)
+        });
+    }
     let notches = crate::renderer::input::wheel_notches(&wheel);
     let (_, wy) = crate::renderer::input::accumulate_scroll(
         &mut wheel_acc,
@@ -453,6 +562,8 @@ pub(crate) fn collect_input(
     input.ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
     input.shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
     input.alt = keys.pressed(KeyCode::AltLeft) || keys.pressed(KeyCode::AltRight);
+    input.space_down = !elsewhere && keys.pressed(KeyCode::Space);
+    input.up_down = !elsewhere && keys.pressed(KeyCode::ArrowUp);
     input.backspace = false;
     input.delete = false;
     input.left_arrow = false;
@@ -510,6 +621,7 @@ pub(crate) fn collect_input(
     input.triple_click = false;
     if input.left_click {
         let now = time.elapsed_secs();
+        let (last_left_press, click_run) = &mut *click_chain;
         let chained = last_left_press.is_some_and(|prev| now - prev <= 0.25);
         *click_run = if chained { (*click_run % 3) + 1 } else { 1 };
         *last_left_press = Some(now);
@@ -692,6 +804,9 @@ pub(crate) fn draw_gui(
     frames: Res<GuiFrames>,
     mut scratch: Local<crate::gui::painter::PainterBuffers>,
     #[cfg(feature = "skins")] mut faces: ResMut<crate::gui::player_faces::PlayerFaces>,
+    view: Option<Res<crate::renderer::FrameView>>,
+    third_person: Option<Res<crate::renderer::input::ThirdPersonState>>,
+    freecam: Option<Res<crate::renderer::input::FreecamState>>,
 ) {
     #[cfg(feature = "budget")]
     let _t = crate::diag::budget::timed(crate::diag::budget::Slot::Gui);
@@ -705,6 +820,19 @@ pub(crate) fn draw_gui(
     let frame = (time.elapsed_secs() * 20.0) as u32;
 
     let bufs = std::mem::take(&mut *scratch);
+
+    state.screen_effects = match view {
+        Some(view) => {
+            let detached =
+                third_person.is_some_and(|t| t.active) || freecam.is_some_and(|f| f.active);
+            crate::gui::screen_effects::ScreenEffects::read(
+                &view,
+                detached,
+                state.options.screen_effects,
+            )
+        }
+        None => Default::default(),
+    };
 
     let mut painter = Painter::with_buffers(&assets.atlas, frame, bufs);
     painter.scale = input.device_scale;
@@ -818,5 +946,108 @@ fn draw_keyboard_probe(p: &mut Painter, input: &GuiInput, vw: f32, vh: f32) {
     p.outline(PAD, PAD, side, side, RED);
     for (i, line) in lines.iter().enumerate() {
         p.text_plain(line, PAD * 2.0, PAD * 2.0 + i as f32 * 10.0, 0xFFFFFF, true);
+    }
+}
+
+#[cfg(all(test, feature = "mobile_ui"))]
+mod tests {
+    use super::*;
+
+    const SLOT: Vec2 = Vec2::new(10.0, 10.0);
+
+    struct Touch {
+        gesture: TouchGesture,
+    }
+
+    impl Touch {
+        fn new() -> Touch {
+            Touch {
+                gesture: TouchGesture::Idle,
+            }
+        }
+
+        fn frame(
+            &mut self,
+            at: Vec2,
+            click: bool,
+            down: bool,
+            release: bool,
+            now: f32,
+        ) -> GuiInput {
+            let mut input = GuiInput {
+                mouse: Some(at),
+                left_click: click,
+                left_down: down,
+                left_release: release,
+                ..Default::default()
+            };
+            input.hold_progress = shape_touch(&mut self.gesture, &mut input, now, |m| {
+                m.distance(SLOT) < 9.0
+            });
+            input
+        }
+    }
+
+    #[test]
+    fn a_tap_on_a_slot_clicks_on_release() {
+        let mut t = Touch::new();
+        let press = t.frame(SLOT, true, true, false, 0.0);
+        assert!(
+            !press.left_click && !press.left_down,
+            "the press is held back"
+        );
+        assert!(press.hold_progress.is_some());
+        let up = t.frame(SLOT, false, false, true, 0.1);
+        assert!(up.left_click && up.left_release && !up.left_down);
+        assert!(!up.right_click);
+    }
+
+    #[test]
+    fn a_tap_inside_one_frame_still_clicks() {
+        let mut t = Touch::new();
+        let tap = t.frame(SLOT, true, false, true, 0.0);
+        assert!(tap.left_click && tap.left_release);
+    }
+
+    #[test]
+    fn a_hold_becomes_a_right_click() {
+        let mut t = Touch::new();
+        t.frame(SLOT, true, true, false, 0.0);
+        let held = t.frame(SLOT, false, true, false, LONG_PRESS_SECS);
+        assert!(held.right_click && held.right_down && !held.left_click);
+        let still = t.frame(SLOT, false, true, false, LONG_PRESS_SECS + 0.1);
+        assert!(!still.right_click && still.right_down && !still.left_down);
+        let up = t.frame(SLOT, false, false, true, LONG_PRESS_SECS + 0.2);
+        assert!(up.right_release && !up.left_release);
+    }
+
+    #[test]
+    fn moving_off_the_press_starts_a_left_drag_at_the_origin() {
+        let mut t = Touch::new();
+        t.frame(SLOT, true, true, false, 0.0);
+        let moved = t.frame(
+            SLOT + Vec2::new(TOUCH_SLOP + 1.0, 0.0),
+            false,
+            true,
+            false,
+            0.05,
+        );
+        assert!(moved.left_click && moved.left_down);
+        assert_eq!(
+            moved.mouse,
+            Some(SLOT),
+            "the press lands where the finger went down"
+        );
+        let later = t.frame(Vec2::new(40.0, 10.0), false, true, false, LONG_PRESS_SECS);
+        assert!(!later.right_click, "a drag never turns into a hold");
+        assert_eq!(later.mouse, Some(Vec2::new(40.0, 10.0)));
+    }
+
+    #[test]
+    fn a_press_off_any_slot_passes_straight_through() {
+        let mut t = Touch::new();
+        let press = t.frame(Vec2::new(100.0, 100.0), true, true, false, 0.0);
+        assert!(press.left_click && press.left_down);
+        assert!(press.hold_progress.is_none());
     }
 }

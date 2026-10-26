@@ -9,8 +9,8 @@ use azalea_core::{
 
 use crate::client::tick::held_item;
 use crate::client::tracking::{
-    add_entity_data, anim_states, entity_anims, equipment, game_time, has_map, head_yaws,
-    meta_index_18, on_grounds, passengers, velocities,
+    EntityAttributes, add_entity_data, anim_states, entity_anims, equipment, flag, game_time,
+    has_map, head_yaws, meta_index_18, on_grounds, passengers, velocities,
 };
 use crate::entities;
 
@@ -37,13 +37,6 @@ pub(crate) const TICKS_REQUIRED_TO_FREEZE: i32 = 140;
 pub(crate) const METADATA_INDEX_18: u8 = 18;
 
 const ENTITY_RANGE: f64 = 64.0;
-
-fn flag<C>(eref: &EntityView) -> bool
-where
-    C: azalea::ecs::component::Component + std::ops::Deref<Target = bool>,
-{
-    meta::<C>(eref).unwrap_or(false)
-}
 
 fn is_living(kind: azalea_registry::builtin::EntityKind) -> bool {
     use azalea_registry::builtin::EntityKind;
@@ -123,6 +116,12 @@ struct EntityView<'w>(azalea::ecs::world::EntityRef<'w>);
 impl EntityView<'_> {
     fn get_component<T: azalea::ecs::component::Component>(&self) -> Option<&T> {
         self.0.get::<T>()
+    }
+}
+
+impl crate::client::tracking::Components for EntityView<'_> {
+    fn read<C: azalea::ecs::component::Component, R>(&self, f: impl FnOnce(&C) -> R) -> Option<R> {
+        self.get_component::<C>().map(f)
     }
 }
 
@@ -411,12 +410,14 @@ pub(crate) fn collect_entities(
     let grounded_guard = on_grounds().lock().unwrap();
     let add_entity_data_guard = add_entity_data().lock().unwrap();
     let velocity_guard = velocities().lock().unwrap();
+    let attributes_guard = crate::client::tracking::attributes().lock().unwrap();
     let heads = &*heads_guard;
     let equip = &*equip_guard;
     let meta18 = &*meta18_guard;
     let grounded = &*grounded_guard;
     let add_entity_data_map = &*add_entity_data_guard;
     let velocity_map = &*velocity_guard;
+    let attributes_map = &*attributes_guard;
     let (riders, vehicles, mounts): (HashSet<i32>, HashSet<i32>, HashMap<i32, i32>) = {
         let map = passengers().lock().unwrap();
         (
@@ -482,11 +483,8 @@ pub(crate) fn collect_entities(
         {
             let mut input = c.input.clone();
             input.simulate = true;
-            input.pos = hanging_position(
-                kind,
-                [pos.x, pos.y, pos.z],
-                input.shared.item_frame_direction,
-            );
+            input.pos =
+                hanging_position(kind, [pos.x, pos.y, pos.z], input.shared.hanging_direction);
             input.y_rot = y_rot;
             input.x_rot = x_rot;
             input.head_rot = heads.get(&id).copied();
@@ -606,23 +604,29 @@ pub(crate) fn collect_entities(
             shared.item_rotation = meta::<metadata::Rotation>(eref).unwrap_or(0);
         }
 
-        if matches!(kind, EntityKind::ItemFrame | EntityKind::GlowItemFrame) {
-            let raw = meta::<metadata::ItemFrameDirection>(eref);
-            let spawned = add_entity_data_map
-                .get(&id)
-                .and_then(|&data| u8::try_from(data).ok())
+        let spawn_data = add_entity_data_map.get(&id).copied();
+        let spawned_direction = || {
+            spawn_data
+                .and_then(|data| u8::try_from(data).ok())
                 .filter(|&data| data < 6)
-                .map(entities::Direction::from_index);
-            crate::log_debug!(
-                "itemframe",
-                "id={id} kind={kind:?} raw_direction={raw:?} spawn_direction={spawned:?} item={:?} item_rotation={:?}",
-                meta::<metadata::ItemFrameItem>(eref),
-                meta::<metadata::Rotation>(eref)
-            );
-            shared.item_frame_direction = match raw.map(entities::Direction::from) {
-                Some(dir) if dir != entities::Direction::South => dir,
-                _ => spawned.unwrap_or(entities::Direction::South),
-            };
+                .map(entities::Direction::from_index)
+                .unwrap_or(entities::Direction::South)
+        };
+        match kind {
+            EntityKind::ItemFrame | EntityKind::GlowItemFrame => {
+                shared.hanging_direction = match meta::<metadata::ItemFrameDirection>(eref)
+                    .map(entities::Direction::from)
+                {
+                    Some(dir) if dir != entities::Direction::South => dir,
+                    _ => spawned_direction(),
+                };
+            }
+            EntityKind::Painting => shared.hanging_direction = spawned_direction(),
+            EntityKind::FishingBobber => shared.hook_owner = spawn_data,
+            EntityKind::ExperienceOrb => {
+                shared.xp_value = meta::<metadata::Value>(eref).unwrap_or(0);
+            }
+            _ => {}
         }
 
         if let Some(map) = shared.item.map_id
@@ -935,8 +939,9 @@ pub(crate) fn collect_entities(
                 let d = EntityDimensions::from(kind);
                 (d.width, d.height, d.eye_height)
             });
+        let scale = EntityAttributes::of(attributes_map, id).scale();
 
-        let now_pos = hanging_position(kind, [pos.x, pos.y, pos.z], shared.item_frame_direction);
+        let now_pos = hanging_position(kind, [pos.x, pos.y, pos.z], shared.hanging_direction);
         let halted = matches!(kind, EntityKind::Camel | EntityKind::CamelHusk)
             && (pose != Pose::Standing || shared.dash);
 
@@ -966,10 +971,10 @@ pub(crate) fn collect_entities(
             is_auto_spin_attack,
             is_invisible: flag::<metadata::Invisible>(eref),
             display_fire: flag::<metadata::OnFire>(eref),
-            scale: 1.0,
-            bounding_box_width: dimensions.0,
-            bounding_box_height: dimensions.1,
-            eye_height: dimensions.2,
+            scale,
+            bounding_box_width: dimensions.0 * scale,
+            bounding_box_height: dimensions.1 * scale,
+            eye_height: dimensions.2 * scale,
             bed_orientation: None,
             walk_factor: walk_factor(kind),
             walk_halted: halted,
@@ -1009,7 +1014,7 @@ pub(crate) fn collect_entities(
                 None
             },
             block_pos: AzBlockPos::from(pos),
-            eye_pos: AzBlockPos::from(pos.up(dimensions.2 as f64)),
+            eye_pos: AzBlockPos::from(pos.up((dimensions.2 * scale) as f64)),
         };
         Pending {
             id,
@@ -1027,6 +1032,7 @@ pub(crate) fn collect_entities(
     drop(grounded_guard);
     drop(add_entity_data_guard);
     drop(velocity_guard);
+    drop(attributes_guard);
 
     let cap = max_simulated_entities();
     if pending.len() > cap {
@@ -1055,23 +1061,26 @@ pub(crate) fn collect_entities(
                 ],
             );
         }
-        for eref in bot
+        let players = bot
             .nearest_entities::<With<metadata::Player>>()
-            .unwrap_or_default()
-            .iter()
-        {
+            .unwrap_or_default();
+        let attributes = crate::client::tracking::attributes().lock().unwrap();
+        for eref in players.iter() {
             let Some(pos) = eref.get_component::<Position>().map(|p| **p) else {
                 continue;
             };
             let Some(pid) = eref.get_component::<MinecraftEntityId>().map(|i| i.0) else {
                 continue;
             };
-            let eye = eref
-                .get_component::<EntityDimensions>()
-                .map(|d| d.eye_height)
-                .unwrap_or(EntityDimensions::from(EntityKind::Player).eye_height);
+            let pose = eref
+                .get_component::<azalea::entity::Pose>()
+                .map(|p| *p)
+                .unwrap_or_default();
+            let scale = EntityAttributes::of(&attributes, pid).scale();
+            let eye = crate::session::player_dimensions(pose, scale).eye_height;
             eyes.insert(pid, [pos.x, pos.y + eye as f64, pos.z]);
         }
+        drop(attributes);
         for Pending {
             input,
             deferred: extra,
@@ -1123,7 +1132,7 @@ pub(crate) fn collect_entities(
 
             input.bed_orientation = bed;
             if bed.is_some() {
-                input.eye_height = EntityDimensions::from(*kind).eye_height;
+                input.eye_height = EntityDimensions::from(*kind).eye_height * input.scale;
             }
             input.is_in_water = matches!(feet, Some(FluidKind::Water));
             input.is_in_lava = matches!(feet, Some(FluidKind::Lava));
@@ -1277,15 +1286,11 @@ pub(crate) fn collect_entities(
         .retain(|id, _| live_ids.contains(id));
     {
         let local = crate::client::tracking::local_entity_id();
-        crate::client::tracking::max_healths()
+        crate::client::tracking::attributes()
             .lock()
             .unwrap()
             .retain(|id, _| live_ids.contains(id) || seen_players.contains(id) || *id == local);
     }
-    crate::client::tracking::mount_attributes()
-        .lock()
-        .unwrap()
-        .retain(|id, _| live_ids.contains(id));
     on_grounds()
         .lock()
         .unwrap()
@@ -1312,7 +1317,7 @@ const MAX_FAST_CELLS: usize = 64;
 
 fn collide_check() -> bool {
     static CHECK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *CHECK.get_or_init(|| std::env::var("MC_COLLIDE_CHECK").as_deref() == Ok("1"))
+    *CHECK.get_or_init(|| crate::platform::env::flag("MC_COLLIDE_CHECK"))
 }
 
 fn comp(v: AzVec3, axis: usize) -> f64 {

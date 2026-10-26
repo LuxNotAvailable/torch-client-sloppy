@@ -289,6 +289,7 @@ pub static BINDS: LazyLock<Vec<BindDef>> = LazyLock::new(|| {
     BindDef { action: Action::ReloadChunks, id: "key.debug.reloadChunk", name: "Reload Chunks", category: DEBUG, default: Bound::Key(KeyCode::KeyA) },
     BindDef { action: Action::ChunkBorders, id: "key.debug.showChunkBorders", name: "Show Chunk Boundaries", category: DEBUG, default: Bound::Key(KeyCode::KeyG) },
     BindDef { action: Action::AdvancedTooltips, id: "key.debug.showAdvancedTooltips", name: "Show Advanced Tooltips", category: DEBUG, default: Bound::Key(KeyCode::KeyH) },
+    BindDef { action: Action::ReloadResourcePacks, id: "key.debug.reloadResourcePacks", name: "Reload Resource Packs", category: DEBUG, default: Bound::Key(KeyCode::KeyT) },
 
     BindDef { action: Action::Freecam, id: "key.client.freecam", name: "Detached Camera", category: CLIENT, default: Bound::Key(KeyCode::KeyC) },
     ];
@@ -338,6 +339,7 @@ pub enum Action {
     ReloadChunks,
     ChunkBorders,
     AdvancedTooltips,
+    ReloadResourcePacks,
     Freecam,
     #[cfg(target_arch = "wasm32")]
     Pause,

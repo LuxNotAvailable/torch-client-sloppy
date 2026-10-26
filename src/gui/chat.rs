@@ -7,7 +7,7 @@ use crate::gui::confirmlink;
 use crate::gui::painter::Painter;
 use crate::gui::render::{GuiInput, clipboard_set};
 use crate::gui::suggestions::{self, GHOST_COLOR};
-use crate::gui::widgets::TextBox;
+use crate::gui::widgets::{TextBox, blink_on, byte_at, char_slice, draw_caret};
 use crate::session::{ChatEntry, ChatTag, SharedMutex};
 use crate::text::events::{self, Events, Hover, SpanEvent};
 use crate::text::{Font, Span, Style};
@@ -110,6 +110,7 @@ pub struct ChatState {
     selection: Option<(Caret, Caret)>,
     dragging: bool,
     wrapped_at: f32,
+    wrapped_fonts: u32,
     next_id: u64,
     just_opened: bool,
     warning: Option<(String, u32)>,
@@ -143,6 +144,7 @@ impl Default for ChatState {
             selection: None,
             dragging: false,
             wrapped_at: 0.0,
+            wrapped_fonts: 0,
             next_id: 0,
             just_opened: false,
             warning: None,
@@ -226,12 +228,7 @@ impl ChatState {
     }
 
     fn add_recent(&mut self, msg: &str) {
-        if self.history.back().map(String::as_str) != Some(msg) {
-            if self.history.len() >= MAX_HISTORY {
-                self.history.pop_front();
-            }
-            self.history.push_back(msg.to_string());
-        }
+        crate::gui::command_history::push_capped(&mut self.history, msg, MAX_HISTORY);
         self.history_pos = self.history.len();
         if msg.starts_with('/') {
             crate::gui::command_history::record(msg);
@@ -293,13 +290,7 @@ impl ChatState {
         let count = wrapped.len();
         for (i, mut spans) in wrapped.into_iter().enumerate() {
             if i > 0 {
-                spans.insert(
-                    0,
-                    Span {
-                        text: " ".to_string(),
-                        style: Style::default(),
-                    },
-                );
+                spans.insert(0, Span::new(" "));
             }
             if self.field.input.focused && self.scroll > 0 {
                 self.new_message_since_scroll = true;
@@ -398,7 +389,7 @@ impl ChatState {
             let Some(line) = self.lines.get(idx) else {
                 continue;
             };
-            let text: String = plain(&line.spans);
+            let text: String = plain_text(&line.spans);
             let chars: Vec<char> = text.chars().collect();
             let from = if rank == rs {
                 start.ch.min(chars.len())
@@ -497,7 +488,7 @@ fn normalize(s: &str) -> String {
         .collect()
 }
 
-fn plain(spans: &[Span]) -> String {
+pub(in crate::gui) fn plain_text(spans: &[Span]) -> String {
     spans.iter().map(|s| s.text.as_str()).collect()
 }
 
@@ -526,7 +517,7 @@ fn line_alpha(added: u32, now: u32, focused: bool) -> f32 {
     t * t
 }
 
-fn argb(alpha: f32, rgb: u32) -> u32 {
+pub(in crate::gui) fn argb(alpha: f32, rgb: u32) -> u32 {
     let a = (alpha.clamp(0.0, 1.0) * 255.0).round() as u32;
     (a << 24) | (rgb & 0x00FF_FFFF)
 }
@@ -623,8 +614,10 @@ pub fn draw(
     chat.signing = signing;
 
     let width = chat_width(ctx.vw);
-    if chat.wrapped_at != width {
+    let fonts = crate::renderer::reload::generation();
+    if chat.wrapped_at != width || chat.wrapped_fonts != fonts {
         chat.wrapped_at = width;
+        chat.wrapped_fonts = fonts;
         if !chat.messages.is_empty() {
             let font = &p.atlas.font;
             chat.rewrap(font);
@@ -711,12 +704,7 @@ fn draw_tag_tooltip(p: &mut Painter, chat: &mut ChatState, ctx: &ScreenCtx) {
     const BAR_X: std::ops::Range<f32> = 0.0..2.0;
 
     let Some(m) = ctx.mouse() else { return };
-    if let Some(list) = &chat.field.suggest.list
-        && m.x >= list.x
-        && m.x < list.x + list.w
-        && m.y >= list.y
-        && m.y < list.y + list.h
-    {
+    if chat.field.contains(m.x, m.y) {
         return;
     }
 
@@ -738,15 +726,10 @@ fn draw_tag_tooltip(p: &mut Painter, chat: &mut ChatState, ctx: &ScreenCtx) {
     };
 
     if let Some(signed) = rebuild {
-        let mut rows: Vec<Vec<Span>> = vec![vec![Span {
-            text: title.to_string(),
-            style: Style::colored(indicator_color(tag, true).unwrap_or(SECURE_INDICATOR)),
-        }]];
+        let color = indicator_color(tag, true).unwrap_or(SECURE_INDICATOR);
+        let mut rows: Vec<Vec<Span>> = vec![vec![Span::colored(title, color)]];
         if let Some(signed) = signed {
-            let quoted = vec![Span {
-                text: format!("\"{signed}\""),
-                style: Style::colored(QUOTE),
-            }];
+            let quoted = vec![Span::colored(format!("\"{signed}\""), QUOTE)];
             rows.extend(p.atlas.font.wrap(&quoted, TOOLTIP_WRAP));
         }
         chat.tag_tooltip = Some((id, rows));
@@ -849,7 +832,7 @@ fn handle_input(p: &mut Painter, chat: &mut ChatState, ctx: &ScreenCtx, shared: 
                 });
                 if doubled && let Some(caret) = hit {
                     if let Some(line) = chat.lines.iter().find(|l| l.id == caret.line) {
-                        clipboard_set(&plain(&line.spans));
+                        clipboard_set(&plain_text(&line.spans));
                     }
                     chat.mobile_flash = Some((caret.line, p.frame + MOBILE_FLASH_FRAMES));
                     chat.mobile_last_tap = None;
@@ -923,8 +906,8 @@ fn handle_input(p: &mut Painter, chat: &mut ChatState, ctx: &ScreenCtx, shared: 
     if chat.just_opened {
         chat.just_opened = false;
         chat.field.input.sync_keyboard();
-    } else if chat.field.input.handle_input(input) {
-        chat.field.suggest.allow = true;
+    } else {
+        chat.field.handle_edit(input);
     }
 
     if input.copy && chat.has_selection() {
@@ -948,10 +931,9 @@ fn move_in_history(chat: &mut ChatState, dir: i32) {
         chat.field.input.set_text(&buffer);
     } else {
         if chat.history_pos == max {
-            chat.history_buffer = chat.field.input.text.clone();
+            chat.history_buffer.clone_from(&chat.field.input.text);
         }
-        let text = chat.history[next].clone();
-        chat.field.input.set_text(&text);
+        chat.field.input.set_text(&chat.history[next]);
     }
     chat.field.input.push_keyboard();
     chat.history_pos = next;
@@ -1160,10 +1142,7 @@ fn draw_input(p: &mut Painter, chat: &mut ChatState, ctx: &ScreenCtx) {
 
     let font = &p.atlas.font;
     let max = (ctx.vw - 8.0).max(64.0);
-    let spans = vec![Span {
-        text,
-        style: Style::colored(0xFF5555),
-    }];
+    let spans = vec![Span::colored(text, 0xFF5555)];
     let wrapped = font.wrap(&spans, max);
     let h = wrapped.len() as f32 * LINE_HEIGHT + 2.0;
     let top = chat_base(ctx) - 14.0 - h - 1.0;
@@ -1179,28 +1158,13 @@ fn draw_input_line(p: &mut Painter, chat: &mut ChatState, ctx: &ScreenCtx, tick:
     let count = chat.field.input.text.chars().count();
     let cursor = chat.field.input.cursor.min(count);
 
-    if cursor < chat.field.input.scroll {
-        chat.field.input.scroll = cursor;
-    }
-    loop {
-        let upto: String = chat
-            .field
-            .input
-            .text
-            .chars()
-            .skip(chat.field.input.scroll)
-            .take(cursor - chat.field.input.scroll)
-            .collect();
-        if p.atlas.font.width_str(&upto) <= w || chat.field.input.scroll >= cursor {
-            break;
-        }
-        chat.field.input.scroll += 1;
-    }
+    let start = chat.field.input.scroll_to_caret(&p.atlas.font, w);
     let scroll = chat.field.input.scroll;
+    let tail = &chat.field.input.text[start..];
 
     let mut shown = 0usize;
     let mut width = 0.0f32;
-    for c in chat.field.input.text.chars().skip(scroll) {
+    for c in tail.chars() {
         let advance = p.atlas.font.advance(c, false);
         if width + advance > w {
             break;
@@ -1208,6 +1172,7 @@ fn draw_input_line(p: &mut Painter, chat: &mut ChatState, ctx: &ScreenCtx, tick:
         width += advance;
         shown += 1;
     }
+    let visible = &tail[..byte_at(tail, shown)];
 
     let spans: Vec<Span> = {
         let info = &chat.field.suggest.info;
@@ -1215,18 +1180,7 @@ fn draw_input_line(p: &mut Painter, chat: &mut ChatState, ctx: &ScreenCtx, tick:
         if info.is_command && total == count {
             slice_spans(&info.spans, scroll, scroll + shown)
         } else {
-            let text: String = chat
-                .field
-                .input
-                .text
-                .chars()
-                .skip(scroll)
-                .take(shown)
-                .collect();
-            vec![Span {
-                text,
-                style: Style::colored(chat.field.input.color),
-            }]
+            vec![Span::colored(visible, chat.field.input.color)]
         }
     };
     p.text(&spans, x, text_y, true);
@@ -1243,54 +1197,21 @@ fn draw_input_line(p: &mut Painter, chat: &mut ChatState, ctx: &ScreenCtx, tick:
         chat.field.input.cursor.max(chat.field.input.anchor),
     );
     if sa != sb {
-        let visible: String = chat
-            .field
-            .input
-            .text
-            .chars()
-            .skip(scroll)
-            .take(shown)
-            .collect();
         let a = sa.max(scroll) - scroll;
         let b = sb.max(scroll) - scroll;
-        let pre: String = visible.chars().take(a).collect();
-        let mid: String = visible.chars().skip(a).take(b.saturating_sub(a)).collect();
-        let x0 = x + p.atlas.font.width_str(&pre);
-        let x1 = (x0 + p.atlas.font.width_str(&mid)).min(x + w);
+        let pre = char_slice(visible, 0..a);
+        let mid = char_slice(visible, a..b);
+        let x0 = x + p.atlas.font.width_str(pre);
+        let x1 = (x0 + p.atlas.font.width_str(mid)).min(x + w);
         p.fill(x0, text_y - 1.0, (x1 - x0).max(1.0), 11.0, SELECTION_BG);
-        p.text(
-            &[Span {
-                text: mid,
-                style: Style::colored(0x000000),
-            }],
-            x0,
-            text_y,
-            false,
-        );
+        p.text(&[Span::colored(mid, 0x000000)], x0, text_y, false);
     }
 
-    if (tick / 6) % 2 == 0 {
-        let pre: String = chat
-            .field
-            .input
-            .text
-            .chars()
-            .skip(scroll)
-            .take(cursor - scroll)
-            .collect();
-        let mut cx = x + p.atlas.font.width_str(&pre);
-        if cursor >= count {
-            p.text_str("_", cx, text_y, chat.field.input.color, true);
-        } else {
-            cx -= 1.0;
-            p.fill(
-                cx,
-                text_y - 1.0,
-                1.0,
-                11.0,
-                chat.field.input.color | 0xFF00_0000,
-            );
-        }
+    if blink_on(tick) {
+        let pre = &tail[..byte_at(tail, cursor.saturating_sub(scroll))];
+        let cx = x + p.atlas.font.width_str(pre);
+        let color = chat.field.input.color;
+        draw_caret(p, cx, text_y, cursor >= count, color, true, (-1.0, 10.0));
     }
 }
 
@@ -1299,6 +1220,7 @@ pub(crate) mod tests {
     use super::*;
 
     pub(crate) fn preview_tree() -> crate::play::commands::CommandTree {
+        use crate::play::commands::tests::{argument, literal};
         use azalea_protocol::packets::game::c_commands::{
             BrigadierNodeStub, BrigadierParser, NodeType,
         };
@@ -1319,36 +1241,10 @@ pub(crate) mod tests {
             } else {
                 vec![]
             };
-            stubs.push(BrigadierNodeStub {
-                is_executable: true,
-                children,
-                redirect_node: None,
-                node_type: NodeType::Literal {
-                    name: name.to_string(),
-                },
-                is_restricted: false,
-            });
+            stubs.push(literal(name, children, true));
         }
-        stubs.push(BrigadierNodeStub {
-            is_executable: true,
-            children: vec![],
-            redirect_node: None,
-            node_type: NodeType::Literal {
-                name: "team".to_string(),
-            },
-            is_restricted: false,
-        });
-        stubs.push(BrigadierNodeStub {
-            is_executable: true,
-            children: vec![],
-            redirect_node: None,
-            node_type: NodeType::Argument {
-                name: "mode".to_string(),
-                parser: BrigadierParser::GameMode,
-                suggestions_type: None,
-            },
-            is_restricted: false,
-        });
+        stubs.push(literal("team", vec![], true));
+        stubs.push(argument("mode", BrigadierParser::GameMode, vec![], true));
         crate::play::commands::CommandTree::from_stubs(&stubs, 0)
     }
 
@@ -1441,10 +1337,7 @@ pub(crate) mod tests {
     fn line(id: u64, text: &str) -> Line {
         Line {
             id,
-            spans: vec![Span {
-                text: text.to_string(),
-                style: Style::default(),
-            }],
+            spans: vec![Span::new(text)],
             events: None,
             tag: ChatTag::Secure,
             original: None,
@@ -1482,10 +1375,7 @@ pub(crate) mod tests {
             ["first line", "second line", "third line"]
                 .iter()
                 .map(|t| ChatEntry {
-                    spans: vec![Span {
-                        text: t.to_string(),
-                        style: Style::default(),
-                    }],
+                    spans: vec![Span::new(*t)],
                     events: None,
                     tag: ChatTag::Secure,
                     original: None,
@@ -1707,10 +1597,12 @@ pub(crate) mod tests {
             .take()
             .expect("a request");
         assert_eq!(command, "/team re");
+        assert!(chat.field.suggest.info.usage.is_empty());
         shared.lock().unwrap().session.suggestion_reply =
             Some((id.wrapping_add(7), Suggestions::default()));
         press(&mut chat, &shared, &atlas, idle_input());
         assert!(chat.field.suggest.list.is_none());
+        assert!(chat.field.suggest.info.usage.is_empty());
 
         let answer = Suggestions::create(
             &"/team re".chars().collect::<Vec<_>>(),
@@ -1789,17 +1681,14 @@ mod visual {
 
     use super::*;
     use crate::gui::atlas::build_gui_atlas;
-    use crate::gui::preview::{output_dir, rasterize, upscale};
+    use crate::gui::preview::save_upscaled;
     use crate::gui::render::GuiInput;
     use crate::gui::{GuiState, Screen};
     use bevy::prelude::Vec2;
 
     fn entry(text: &str, color: u32, tag: ChatTag) -> ChatEntry {
         ChatEntry {
-            spans: vec![Span {
-                text: text.to_string(),
-                style: Style::colored(color),
-            }],
+            spans: vec![Span::colored(text, color)],
             events: None,
             tag,
             original: None,
@@ -1853,8 +1742,7 @@ mod visual {
             #[cfg(feature = "skins")]
             &mut Default::default(),
         );
-        let img = rasterize(&p, vw as u32, vh as u32, [70, 110, 170, 255]);
-        upscale(&img, 2).save(output_dir().join(name)).unwrap();
+        save_upscaled(&p, vw as u32, vh as u32, name);
     }
 
     #[test]

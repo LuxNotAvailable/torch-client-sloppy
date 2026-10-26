@@ -21,7 +21,7 @@ use bevy_ecs::{
 };
 use parking_lot::RwLock;
 use tokio::sync::oneshot;
-use tracing::{info, warn};
+use tracing::warn;
 
 use crate::{
     attack,
@@ -98,7 +98,6 @@ pub fn start_ecs_runner(
 ) {
     if app.plugins_state() != PluginsState::Cleaned {
         if app.plugins_state() == PluginsState::Adding {
-            info!("Waiting for plugins to load ...");
             while app.plugins_state() == PluginsState::Adding {
                 thread::yield_now();
             }

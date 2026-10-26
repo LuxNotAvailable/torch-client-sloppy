@@ -1,6 +1,6 @@
 use bevy::math::Vec2;
 
-use crate::gui::hud_layout::{ElementId, Transforms};
+use crate::gui::hud_layout::{Area, ElementId, Transforms};
 use crate::gui::screens::HotbarGeom;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -57,39 +57,12 @@ pub enum Control {
     Use,
     Hotbar(u8),
     Chat,
+    #[cfg(feature = "module_panel")]
+    Modules,
+    Zoom,
     Look,
     LookOnly,
 }
-
-#[derive(Clone, Copy, Debug)]
-pub struct NoAttackZone {
-    pub lower: (Vec2, f32),
-    pub upper: (Vec2, f32),
-}
-
-impl NoAttackZone {
-    fn around(use_button: Rect) -> Self {
-        let centre = use_button.center();
-        let r = use_button.w * NO_ATTACK_RADIUS;
-        NoAttackZone {
-            lower: (centre, r),
-            upper: (
-                centre - Vec2::new(0.0, use_button.h * NO_ATTACK_UPPER_OFFSET),
-                r * NO_ATTACK_UPPER_WEIGHT,
-            ),
-        }
-    }
-
-    pub fn contains(&self, p: Vec2) -> bool {
-        [self.lower, self.upper]
-            .iter()
-            .any(|&(c, r)| p.distance(c) <= r)
-    }
-}
-
-const NO_ATTACK_RADIUS: f32 = 1.0;
-const NO_ATTACK_UPPER_OFFSET: f32 = 1.5;
-const NO_ATTACK_UPPER_WEIGHT: f32 = 0.75;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Rect {
@@ -163,8 +136,8 @@ pub struct Layout {
     pub use_button: Rect,
     pub close_button: Rect,
     pub texting_button: Rect,
-    pub no_attack: NoAttackZone,
     hotbar: HotbarGeom,
+    vw: f32,
     vh: f32,
 }
 
@@ -247,8 +220,8 @@ impl Layout {
                 w: cell,
                 h: cell,
             },
-            no_attack: NoAttackZone::around(use_button),
             hotbar: HotbarGeom::new(vw, vh),
+            vw,
             vh,
         }
     }
@@ -274,10 +247,10 @@ impl Layout {
 
     #[cfg(test)]
     pub fn hit(&self, p: Vec2) -> Control {
-        self.hit_in(p, &Transforms::IDENTITY)
+        self.hit_in(p, &Transforms::IDENTITY, &[])
     }
 
-    pub fn hit_in(&self, screen: Vec2, xf: &Transforms) -> Control {
+    pub fn hit_in(&self, screen: Vec2, xf: &Transforms, areas: &[Area]) -> Control {
         if let Some(jump) = self.jump_button
             && jump.contains(xf.to_local(ElementId::JumpButton, screen))
         {
@@ -325,19 +298,29 @@ impl Layout {
         {
             return Control::Chat;
         }
+        #[cfg(feature = "module_panel")]
+        if self
+            .texting_button
+            .contains(xf.to_local(ElementId::ModButton, screen))
+        {
+            return Control::Modules;
+        }
         let p = xf.to_local(ElementId::Hotbar, screen);
         for i in (0..9).filter(|_| xf.drawn(ElementId::Hotbar)) {
             if self.hotbar_rect(i).contains(p) {
                 return Control::Hotbar(i as u8);
             }
         }
-        if self
-            .no_attack
-            .contains(xf.to_local(ElementId::UseButton, screen))
+        match areas
+            .iter()
+            .filter(|a| a.rect(self.vw, self.vh).contains(screen))
+            .map(|a| a.zoom)
+            .max()
         {
-            return Control::LookOnly;
+            Some(true) => Control::Zoom,
+            Some(false) => Control::LookOnly,
+            None => Control::Look,
         }
-        Control::Look
     }
 }
 
@@ -441,22 +424,45 @@ mod tests {
     }
 
     #[test]
-    fn the_teardrop_round_use_looks_without_attacking() {
-        for movement in [Movement::Buttons, Movement::Joystick, Movement::PadStick] {
-            let l = Layout::new(VW, VH, 0.0, movement);
-            let u = l.use_button;
-            let c = u.center();
-            assert_eq!(l.hit(Vec2::new(c.x, u.y - 2.0)), Control::LookOnly);
-            let (upper, r) = l.no_attack.upper;
-            assert_eq!(l.hit(upper), Control::LookOnly);
-            assert_eq!(l.hit(upper - Vec2::new(0.0, r - 1.0)), Control::LookOnly);
-            assert_eq!(l.hit(upper - Vec2::new(0.0, r + 1.0)), Control::Look);
-            assert_eq!(l.hit(Vec2::new(VW / 2.0, VH / 3.0)), Control::Look);
-            assert_eq!(l.hit(u.center()), Control::Use);
-            if let Some(j) = l.jump_button {
-                assert_eq!(l.hit(j.center()), Control::Pad(Cell::Jump));
-            }
-        }
+    fn an_area_looks_without_attacking_and_controls_still_win() {
+        let l = layout();
+        let u = l.use_button;
+        let area = Area {
+            anchor: crate::gui::hud_layout::Anchor::TopLeft,
+            offset: Vec2::new(u.x - 20.0, u.y - 40.0),
+            size: Vec2::new(u.w + 40.0, u.h + 40.0),
+            zoom: false,
+        };
+        let areas = [area];
+        let xf = Transforms::IDENTITY;
+        assert_eq!(
+            l.hit_in(Vec2::new(u.x - 10.0, u.y - 10.0), &xf, &areas),
+            Control::LookOnly
+        );
+        assert_eq!(l.hit_in(u.center(), &xf, &areas), Control::Use);
+        assert_eq!(
+            l.hit_in(Vec2::new(VW / 2.0, VH / 3.0), &xf, &areas),
+            Control::Look
+        );
+    }
+
+    #[test]
+    fn zoom_area_answers_on_the_crosshair() {
+        let l = layout();
+        let xf = Transforms::IDENTITY;
+        let centre = Vec2::new(VW / 2.0, VH / 2.0);
+        let mut areas = crate::gui::hud_layout::default_areas();
+        assert_eq!(l.hit_in(centre, &xf, &areas), Control::Zoom);
+        areas.push(Area::at(
+            crate::gui::hud_layout::Rect::new(0.0, 0.0, VW, VH),
+            VW,
+            VH,
+        ));
+        assert_eq!(l.hit_in(centre, &xf, &areas), Control::Zoom);
+        assert_eq!(
+            l.hit_in(Vec2::new(VW / 2.0, 10.0), &xf, &areas),
+            Control::LookOnly
+        );
     }
 
     #[test]

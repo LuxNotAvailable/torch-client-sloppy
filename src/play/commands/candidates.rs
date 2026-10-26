@@ -23,9 +23,6 @@ pub struct Source {
 
 impl Source {
     pub(super) fn custom_tab_suggestions(&self) -> Vec<String> {
-        if self.custom_completions.is_empty() {
-            return self.player_names.clone();
-        }
         let mut out = self.player_names.clone();
         for e in &self.custom_completions {
             if !out.contains(e) {
@@ -123,14 +120,6 @@ fn argument_candidates(
     lower: &str,
     source: &Source,
 ) -> Candidates {
-    let suggest = |values: Vec<String>| {
-        Candidates::Values(
-            values
-                .into_iter()
-                .filter(|v| matches_sub_str(lower, &v.to_lowercase()))
-                .collect(),
-        )
-    };
     match parser {
         BrigadierParser::Bool => Candidates::Values(
             ["false", "true"]
@@ -139,55 +128,44 @@ fn argument_candidates(
                 .map(str::to_string)
                 .collect(),
         ),
-        BrigadierParser::GameMode => suggest(
-            ["survival", "creative", "adventure", "spectator"]
-                .map(str::to_string)
-                .into(),
-        ),
-        BrigadierParser::EntityAnchor => suggest(["eyes", "feet"].map(str::to_string).into()),
-        BrigadierParser::Operation => suggest(
-            ["=", "+=", "-=", "*=", "/=", "%=", "><", "<", ">"]
-                .map(str::to_string)
-                .into(),
-        ),
-        BrigadierParser::TemplateMirror => suggest(
-            ["none", "left_right", "front_back"]
-                .map(str::to_string)
-                .into(),
-        ),
+        BrigadierParser::GameMode => {
+            suggest(lower, ["survival", "creative", "adventure", "spectator"])
+        }
+        BrigadierParser::EntityAnchor => suggest(lower, ["eyes", "feet"]),
+        BrigadierParser::Operation => {
+            suggest(lower, ["=", "+=", "-=", "*=", "/=", "%=", "><", "<", ">"])
+        }
+        BrigadierParser::TemplateMirror => suggest(lower, ["none", "left_right", "front_back"]),
         BrigadierParser::TemplateRotation => suggest(
-            ["none", "clockwise_90", "180", "counterclockwise_90"]
-                .map(str::to_string)
-                .into(),
+            lower,
+            ["none", "clockwise_90", "180", "counterclockwise_90"],
         ),
         BrigadierParser::Heightmap => suggest(
+            lower,
             [
                 "world_surface",
                 "motion_blocking",
                 "motion_blocking_no_leaves",
                 "ocean_floor",
-            ]
-            .map(str::to_string)
-            .into(),
+            ],
         ),
-        BrigadierParser::Color => suggest(CHAT_FORMATTING_COLORS.map(str::to_string).into()),
-        BrigadierParser::ScoreboardSlot => suggest(display_slots()),
+        BrigadierParser::Color => suggest(lower, CHAT_FORMATTING_COLORS),
+        BrigadierParser::ScoreboardSlot => suggest(lower, display_slots()),
         BrigadierParser::Entity(_)
         | BrigadierParser::GameProfile
         | BrigadierParser::ScoreHolder { .. } => {
             if remaining.starts_with('@') && remaining.contains('[') {
                 Candidates::AskServer
             } else {
-                let mut values = source.player_names.clone();
-                values.extend(SELECTORS.iter().map(|s| s.to_string()));
-                suggest(values)
+                let players = source.player_names.iter().map(String::as_str);
+                suggest(lower, players.chain(SELECTORS))
             }
         }
         BrigadierParser::Vec3 | BrigadierParser::BlockPos => {
-            suggest(coordinate_candidates(parser, remaining, 3))
+            suggest(lower, coordinate_candidates(parser, remaining, 3))
         }
         BrigadierParser::ColumnPos | BrigadierParser::Vec2 => {
-            suggest(coordinate_candidates(parser, remaining, 2))
+            suggest(lower, coordinate_candidates(parser, remaining, 2))
         }
         BrigadierParser::ItemStack => Candidates::Values(suggest_resource(lower, item_ids())),
         BrigadierParser::ItemPredicate => tag_or(lower, remaining, item_ids()),
@@ -196,8 +174,8 @@ fn argument_candidates(
         BrigadierParser::Particle => {
             Candidates::Values(suggest_resource(lower, registry_ids!(ParticleKind)))
         }
-        BrigadierParser::ItemSlot => suggest(slot_names(false)),
-        BrigadierParser::ItemSlots => suggest(slot_names(true)),
+        BrigadierParser::ItemSlot => suggest(lower, slot_names(false)),
+        BrigadierParser::ItemSlots => suggest(lower, slot_names(true)),
         BrigadierParser::Time { .. } => {
             let number = !remaining.is_empty()
                 && remaining
@@ -205,9 +183,8 @@ fn argument_candidates(
                     .all(|c| matches!(c, '0'..='9' | '.' | '-'));
             if number {
                 suggest(
-                    ["d", "s", "t"]
-                        .map(|unit| format!("{remaining}{unit}"))
-                        .into(),
+                    lower,
+                    ["d", "s", "t"].map(|unit| format!("{remaining}{unit}")),
                 )
             } else {
                 Candidates::None
@@ -241,6 +218,19 @@ fn argument_candidates(
         | BrigadierParser::HexColor => Candidates::None,
         _ => Candidates::AskServer,
     }
+}
+
+fn suggest<S: AsRef<str> + Into<String>>(
+    lower: &str,
+    values: impl IntoIterator<Item = S>,
+) -> Candidates {
+    Candidates::Values(
+        values
+            .into_iter()
+            .filter(|v| matches_sub_str(lower, &v.as_ref().to_lowercase()))
+            .map(Into::into)
+            .collect(),
+    )
 }
 
 fn block_ids() -> impl Iterator<Item = &'static str> {
@@ -309,28 +299,23 @@ fn slot_names(ranges: bool) -> Vec<String> {
     numbered("horse", 15);
     numbered("player.crafting", 4);
     out.extend(
-        ["weapon", "weapon.mainhand", "weapon.offhand"]
-            .iter()
-            .map(|s| s.to_string()),
-    );
-    out.extend(
         [
+            "weapon",
+            "weapon.mainhand",
+            "weapon.offhand",
             "armor.head",
             "armor.chest",
             "armor.legs",
             "armor.feet",
             "armor.body",
+            "saddle",
+            "horse.chest",
+            "player.cursor",
         ]
-        .iter()
-        .map(|s| s.to_string()),
-    );
-    out.extend(
-        ["saddle", "horse.chest", "player.cursor"]
-            .iter()
-            .map(|s| s.to_string()),
+        .map(str::to_string),
     );
     if ranges {
-        out.extend(["weapon.*", "armor.*"].iter().map(|s| s.to_string()));
+        out.extend(["weapon.*", "armor.*"].map(str::to_string));
     }
     out
 }
@@ -400,34 +385,41 @@ fn find_in(chain: &[Context], i: usize, cursor: usize) -> (usize, usize) {
     (prev, c.range.start)
 }
 
+pub(super) fn local_suggestions(
+    values: impl IntoIterator<Item = String>,
+    remaining: &str,
+    range: Range,
+) -> impl Iterator<Item = Suggestion> {
+    values
+        .into_iter()
+        .filter(move |text| text != remaining)
+        .map(move |text| Suggestion {
+            range,
+            text,
+            tooltip: None,
+        })
+}
+
 pub fn completion_suggestions(
     tree: &CommandTree,
-    parse: &Parse,
+    parent: usize,
+    start_pos: usize,
     input: &[char],
     cursor: usize,
     source: &Source,
 ) -> (Suggestions, bool) {
-    let (parent, start_pos) = find_suggestion_context(parse, cursor);
     let start = start_pos.min(cursor);
     let remaining: String = input[start..cursor].iter().collect();
+    let range = Range::between(start, cursor);
 
     let mut all: Vec<Suggestion> = Vec::new();
     let mut ask_server = false;
-    for child in tree.node(parent).children.clone() {
+    for &child in &tree.node(parent).children {
         match candidates(tree, child, &remaining, source) {
             Candidates::AskServer => ask_server = true,
             Candidates::None => {}
             Candidates::Values(values) => {
-                for text in values {
-                    if text == remaining {
-                        continue;
-                    }
-                    all.push(Suggestion {
-                        range: Range::between(start, cursor),
-                        text,
-                        tooltip: None,
-                    });
-                }
+                all.extend(local_suggestions(values, &remaining, range));
             }
         }
     }

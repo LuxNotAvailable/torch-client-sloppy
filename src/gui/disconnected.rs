@@ -9,7 +9,13 @@ const WRAP_W: f32 = 300.0;
 
 pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) -> Option<Screen> {
     crate::gui::menu::background(p, ctx.vw, ctx.vh);
-    widgets::draw_title(p, ctx.vw, LAYOUT.title_y(), "Disconnected");
+    p.text_centered(
+        "Disconnected",
+        ctx.vw / 2.0,
+        LAYOUT.title_y(),
+        0xFFFFFF,
+        true,
+    );
 
     let width = WRAP_W.min(ctx.vw - 40.0).max(80.0);
     let lines: Vec<Vec<Span>> = match &state.disconnect_reason {

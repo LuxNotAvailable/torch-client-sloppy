@@ -23,6 +23,8 @@ slots! {
     COMMAND_HISTORY = "command_history.txt";
     #[cfg(feature = "hud_editor")]
     HUD = "hud.json";
+    #[cfg(feature = "tutorial")]
+    TUTORIAL = "tutorial.txt";
     #[cfg(resource_packs)]
     RESOURCE_PACKS = "resourcepacks.json";
     #[cfg(explore_modrinth)]
@@ -31,6 +33,8 @@ slots! {
     SHADER_PACK = "shaderpack.txt";
     #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
     SOUNDS_SKIPPED = "sounds_skipped.txt";
+    #[cfg(all(feature = "update_checker", not(target_arch = "wasm32")))]
+    UPDATE_CHECK = "update_check.json";
 }
 
 impl Slot {

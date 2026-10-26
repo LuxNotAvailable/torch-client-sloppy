@@ -23,7 +23,7 @@ const HALF_WIDTH: f32 = 98.0;
 
 pub fn draw(p: &mut Painter, ctx: &ScreenCtx) -> Option<Screen> {
     crate::gui::menu::background(p, ctx.vw, ctx.vh);
-    widgets::draw_title(p, ctx.vw, LAYOUT.title_y(), "Credits");
+    p.text_centered("Credits", ctx.vw / 2.0, LAYOUT.title_y(), 0xFFFFFF, true);
 
     let block_h = LINES.len() as f32 * LINE_HEIGHT + BUTTON_GAP_Y + WIDGET_HEIGHT;
     let (_, content_y, _, content_h) = LAYOUT.content_rect(ctx.vw, ctx.vh);

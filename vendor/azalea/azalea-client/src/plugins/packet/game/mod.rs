@@ -686,7 +686,23 @@ impl GamePacketHandler<'_> {
         });
     }
 
-    pub fn update_attributes(&mut self, _p: &ClientboundUpdateAttributes) {
+    pub fn update_attributes(&mut self, p: &ClientboundUpdateAttributes) {
+        as_system::<Query<(&MinecraftEntityId, &mut azalea_entity::Attributes)>>(
+            self.ecs,
+            |mut query| {
+                let Ok((id, mut attributes)) = query.get_mut(self.player) else {
+                    return;
+                };
+                if *id != p.entity_id {
+                    return;
+                }
+                for value in &p.values {
+                    if let Some(instance) = attributes.get_mut(value.attribute) {
+                        instance.apply_snapshot(value.base, &value.modifiers);
+                    }
+                }
+            },
+        );
     }
 
     pub fn set_entity_motion(&mut self, p: &ClientboundSetEntityMotion) {
@@ -1111,6 +1127,12 @@ impl GamePacketHandler<'_> {
     pub fn container_set_data(&mut self, p: &ClientboundContainerSetData) {
         debug!("Got container set data packet {p:?}");
 
+        as_system::<Query<&mut Inventory>>(self.ecs, |mut query| {
+            let mut inventory = query.get_mut(self.player).unwrap();
+            if p.container_id == inventory.id {
+                inventory.set_crafter_slot_disabled(p.id as usize, p.value == 1);
+            }
+        });
     }
 
     pub fn container_set_slot(&mut self, p: &ClientboundContainerSetSlot) {

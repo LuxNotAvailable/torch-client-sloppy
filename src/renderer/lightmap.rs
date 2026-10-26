@@ -1,5 +1,6 @@
 use super::dimension::Dimension;
 use super::timeline::Argb;
+use crate::lighting::level::LightMap;
 
 #[derive(Clone, Copy, Default)]
 pub struct State {
@@ -45,12 +46,21 @@ impl State {
 }
 
 pub fn levels_at(eye: [f32; 3]) -> (u8, u8) {
-    let (x, y, z) = (
-        eye[0].floor() as i32,
-        eye[1].floor() as i32,
-        eye[2].floor() as i32,
-    );
-    resolved_levels(crate::client::worldsync::light_map().read().at(x, y, z))
+    levels_in(&crate::client::worldsync::light_map().read(), cell_of(eye))
+}
+
+pub fn levels_in(light: &LightMap, pos: [i32; 3]) -> (u8, u8) {
+    resolved_levels(light.at(pos[0], pos[1], pos[2]))
+}
+
+pub fn cell_of(p: [f32; 3]) -> [i32; 3] {
+    p.map(|c| c.floor() as i32)
+}
+
+pub const FIRE_BLOCK_LIGHT: u8 = 15;
+
+pub fn fire_block_light(block: u8, on_fire: bool) -> u8 {
+    if on_fire { FIRE_BLOCK_LIGHT } else { block }
 }
 
 pub fn resolved_levels(levels: (u8, u8)) -> (u8, u8) {
@@ -146,8 +156,17 @@ impl LightCells {
 }
 
 pub fn entity_light(state: &State, eye: [f32; 3], on_fire: bool) -> CellLight {
-    let (block, sky) = levels_at(eye);
-    cell_light(state, if on_fire { 15 } else { block }, sky)
+    entity_light_in(
+        state,
+        &crate::client::worldsync::light_map().read(),
+        eye,
+        on_fire,
+    )
+}
+
+pub fn entity_light_in(state: &State, light: &LightMap, eye: [f32; 3], on_fire: bool) -> CellLight {
+    let (block, sky) = levels_in(light, cell_of(eye));
+    cell_light(state, fire_block_light(block, on_fire), sky)
 }
 
 fn to_linear(c: f32) -> f32 {

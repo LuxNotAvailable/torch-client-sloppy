@@ -65,7 +65,11 @@ impl Source {
             return Ok(Source::Directory { root });
         }
 
-        let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+        Source::from_zip(std::fs::read(path).map_err(|e| e.to_string())?, root)
+    }
+
+    pub(crate) fn from_zip(bytes: Vec<u8>, root: &str) -> Result<Source, String> {
+        let missing = || format!("the pack has no {root} directory");
         let entries = zip::entries(&bytes)?;
         let prefix = if root.is_empty() {
             String::new()
@@ -129,6 +133,14 @@ impl Source {
         match self {
             Source::Directory { root } => confined(root, path).is_some_and(|at| at.is_file()),
             Source::Archive { index, .. } => index.contains_key(path),
+        }
+    }
+
+    #[cfg(resource_packs)]
+    pub(crate) fn into_zip(self) -> Option<Vec<u8>> {
+        match self {
+            Source::Directory { .. } => None,
+            Source::Archive { bytes, .. } => Some(bytes),
         }
     }
 }

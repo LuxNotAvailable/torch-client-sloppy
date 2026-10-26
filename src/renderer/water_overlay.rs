@@ -1,10 +1,8 @@
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::visibility::RenderLayers;
 use bevy::camera::{Camera, ClearColorConfig, OrthographicProjection, Projection, ScalingMode};
-use bevy::image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
-use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
 use super::systems::Shared;
 use super::timeline;
@@ -52,26 +50,12 @@ fn setup(
             (rgba.width(), rgba.height(), rgba.into_raw())
         }
         Err(e) => {
-            eprintln!("water_overlay: {} could not be read ({e})", path.display());
+            crate::log_warn!("assets", "water overlay: {} could not be read ({e})", path.display());
             (1, 1, vec![0u8; 4])
         }
     };
-    let mut texture = Image::new(
-        Extent3d {
-            width: w,
-            height: h,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        data,
-        TextureFormat::Rgba8UnormSrgb,
-        RenderAssetUsages::RENDER_WORLD,
-    );
-    texture.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
-        address_mode_u: ImageAddressMode::Repeat,
-        address_mode_v: ImageAddressMode::Repeat,
-        ..ImageSamplerDescriptor::nearest()
-    });
+    let mut texture = super::rgba_image(w, h, data, RenderAssetUsages::RENDER_WORLD);
+    texture.sampler = crate::entities::repeating_nearest();
 
     let material = materials.add(StandardMaterial {
         base_color_texture: Some(images.add(texture)),

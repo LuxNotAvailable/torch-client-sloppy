@@ -2,16 +2,9 @@ use std::collections::HashMap;
 
 use azalea::block::BlockTrait;
 
-use crate::TEXTURE_MAP;
+use crate::blocks::Blocks;
 use crate::blocks::rand::ShapeOffset;
 use crate::renderer::{BlockGeom, RenderedBlock, TintKind};
-
-fn tex(name: &str) -> u32 {
-    TEXTURE_MAP
-        .get()
-        .and_then(|m| m.get(name).copied())
-        .unwrap_or(0)
-}
 
 fn bool_prop(props: &HashMap<&str, &str>, key: &str) -> bool {
     props.get(key).map(|v| *v == "true").unwrap_or(false)
@@ -175,6 +168,11 @@ mod sound_group_tests {
 }
 
 pub fn block_visual(state: azalea::block::BlockState) -> RenderedBlock {
+    block_visual_in(state, &crate::blocks::registry())
+}
+
+pub fn block_visual_in(state: azalea::block::BlockState, blocks: &Blocks) -> RenderedBlock {
+    let tex = |name: &str| blocks.sprites().tile(name).unwrap_or(0);
     let block: Box<dyn BlockTrait> = Box::<dyn BlockTrait>::from(state);
     let name = block.id();
     let props = block.property_map();
@@ -227,7 +225,6 @@ pub fn block_visual(state: azalea::block::BlockState) -> RenderedBlock {
             sways: false,
             #[cfg(feature = "shader_support")]
             state: state.id(),
-            #[cfg(feature = "shader_support")]
             translucent: false,
         };
     }
@@ -262,12 +259,11 @@ pub fn block_visual(state: azalea::block::BlockState) -> RenderedBlock {
             sways: false,
             #[cfg(feature = "shader_support")]
             state: state.id(),
-            #[cfg(feature = "shader_support")]
             translucent: false,
         };
     }
 
-    let baked = crate::blocks::registry().baked(state.id(), name, &props);
+    let baked = blocks.baked(state.id(), name, &props);
     let is_solid = baked.is_solid;
     let full_cube = baked.full_cube;
     #[cfg(feature = "builtin_shaders")]
@@ -288,12 +284,10 @@ pub fn block_visual(state: azalea::block::BlockState) -> RenderedBlock {
         sways,
         #[cfg(feature = "shader_support")]
         state: state.id(),
-        #[cfg(feature = "shader_support")]
         translucent: translucent_layer(name),
     }
 }
 
-#[cfg(feature = "shader_support")]
 fn translucent_layer(name: &str) -> bool {
     matches!(
         name,

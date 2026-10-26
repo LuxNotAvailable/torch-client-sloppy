@@ -2,8 +2,10 @@ use bevy::asset::embedded_asset;
 use bevy::camera::{ClearColor, NormalizedRenderTarget};
 use bevy::color::LinearRgba;
 use bevy::mesh::VertexBufferLayout;
+use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
-use bevy::render::camera::ExtractedCamera;
+use bevy::render::camera::{ExtractedCamera, SortedCameras};
+use bevy::render::diagnostic::RecordDiagnostics;
 use bevy::render::render_asset::RenderAssets;
 use bevy::render::render_graph::{
     Node, NodeRunError, RenderGraph, RenderGraphContext, RenderLabel,
@@ -11,10 +13,11 @@ use bevy::render::render_graph::{
 use bevy::render::render_resource::binding_types::{sampler, texture_2d};
 use bevy::render::render_resource::{
     BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, BlendState,
-    CachedRenderPipelineId, ColorTargetState, ColorWrites, FragmentState, IndexFormat,
-    PipelineCache, RenderPassDescriptor, RenderPipelineDescriptor, SamplerBindingType,
-    ShaderStages, SpecializedRenderPipeline, SpecializedRenderPipelines, TextureFormat,
-    TextureSampleType, TextureViewId, VertexAttribute, VertexFormat, VertexState, VertexStepMode,
+    CachedRenderPipelineId, ColorTargetState, ColorWrites, FragmentState, IndexFormat, LoadOp,
+    Operations, PipelineCache, RenderPassColorAttachment, RenderPassDescriptor,
+    RenderPipelineDescriptor, SamplerBindingType, ShaderStages, SpecializedRenderPipeline,
+    SpecializedRenderPipelines, StoreOp, TextureFormat, TextureSampleType, TextureViewId,
+    VertexAttribute, VertexFormat, VertexState, VertexStepMode,
 };
 use bevy::render::renderer::{RenderContext, RenderDevice};
 use bevy::render::texture::{GpuImage, OutputColorAttachment};
@@ -116,7 +119,7 @@ impl SpecializedRenderPipeline for GuiPipeline {
                 "vertex",
                 "fragment",
                 vec![gui_vertex_layout()],
-                Some(BlendState::ALPHA_BLENDING),
+                Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING),
             ),
             GuiPipelineKind::Blit => (
                 "gui_scene_blit",
@@ -307,6 +310,80 @@ fn plan_gui_passes(
     }
 }
 
+struct GuiCameraDriverNode {
+    cameras: QueryState<&'static ExtractedCamera>,
+}
+
+impl Node for GuiCameraDriverNode {
+    fn update(&mut self, world: &mut World) {
+        self.cameras.update_archetypes(world);
+    }
+
+    fn run(
+        &self,
+        graph: &mut RenderGraphContext,
+        render_context: &mut RenderContext,
+        world: &World,
+    ) -> Result<(), NodeRunError> {
+        let sorted = world.resource::<SortedCameras>();
+        let windows = world.resource::<ExtractedWindows>();
+        let mut camera_windows = HashSet::<Entity>::default();
+        for sorted_camera in &sorted.0 {
+            let Ok(camera) = self.cameras.get_manual(world, sorted_camera.entity) else {
+                continue;
+            };
+            if let Some(NormalizedRenderTarget::Window(window_ref)) = camera.target {
+                let window = window_ref.entity();
+                if !windows
+                    .get(&window)
+                    .is_some_and(|w| w.physical_width > 0 && w.physical_height > 0)
+                {
+                    continue;
+                }
+                camera_windows.insert(window);
+            }
+            graph.run_sub_graph(
+                camera.render_graph,
+                vec![],
+                Some(sorted_camera.entity),
+                Some(format!(
+                    "Camera {} ({})",
+                    sorted_camera.order, sorted_camera.entity
+                )),
+            )?;
+        }
+
+        let plan = world.resource::<GuiPlan>();
+        let clear = world.resource::<ClearColor>();
+        for (id, window) in windows.iter() {
+            if camera_windows.contains(id) || plan.0.iter().any(|pass| pass.window == *id) {
+                continue;
+            }
+            let Some(view) = &window.swap_chain_texture_view else {
+                continue;
+            };
+            render_context
+                .command_encoder()
+                .begin_render_pass(&RenderPassDescriptor {
+                    label: Some("no_camera_clear_pass"),
+                    color_attachments: &[Some(RenderPassColorAttachment {
+                        view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: Operations {
+                            load: LoadOp::Clear(clear.to_linear().into()),
+                            store: StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+        }
+        Ok(())
+    }
+}
+
 #[derive(RenderLabel, Debug, Hash, PartialEq, Eq, Clone)]
 struct GuiLabel;
 
@@ -333,6 +410,7 @@ impl Node for GuiNode {
             .as_ref()
             .map(|(_, group)| group);
 
+        let recorder = render_context.diagnostic_recorder();
         for pass in &plan.0 {
             let Some(attachment) = attachments.get(&pass.target) else {
                 continue;
@@ -344,6 +422,7 @@ impl Node for GuiNode {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
+            let span = recorder.pass_span(&mut render_pass, "gui");
 
             if let (Some(id), Some(group)) = (pass.blit, blit_group)
                 && let Some(pipeline) = pipeline_cache.get_render_pipeline(id)
@@ -372,6 +451,7 @@ impl Node for GuiNode {
                     );
                 }
             }
+            span.end(&mut render_pass);
         }
         Ok(())
     }
@@ -426,7 +506,14 @@ pub fn build(app: &mut App) {
             ),
         );
 
+    let driver = GuiCameraDriverNode {
+        cameras: render_app.world_mut().query(),
+    };
     let mut graph = render_app.world_mut().resource_mut::<RenderGraph>();
+    graph
+        .remove_node(bevy::render::graph::CameraDriverLabel)
+        .expect("CameraPlugin adds the camera driver before the gui plugin builds");
+    graph.add_node(bevy::render::graph::CameraDriverLabel, driver);
     graph.add_node(GuiLabel, GuiNode);
     graph.add_node_edge(bevy::render::graph::CameraDriverLabel, GuiLabel);
 }

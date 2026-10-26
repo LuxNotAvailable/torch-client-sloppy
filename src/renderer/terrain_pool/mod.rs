@@ -12,7 +12,7 @@ use bevy::shader::Shader;
 use bytemuck::{Pod, Zeroable};
 use parking_lot::Mutex;
 
-use super::mesh::MeshBuf;
+use super::mesh::{FACE_GROUPS, MeshBuf};
 
 pub const STREAM_SOLID: u32 = 0;
 pub const STREAM_CUTOUT: u32 = 1;
@@ -38,6 +38,10 @@ pub const MAX_VIEWS: u32 = 5;
 pub const META_LIVE: u32 = 1;
 pub const META_WATER: u32 = 2;
 
+pub const FACE_RUNS: u32 = 4;
+
+pub const FACE_FILL_QUADS: u32 = 32;
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
 pub struct SlotMeta {
@@ -51,6 +55,7 @@ pub struct SlotMeta {
     pub flags: u32,
     pub pool: u32,
     pub cutout_first: u32,
+    pub faces: [u32; 8],
 }
 
 impl SlotMeta {
@@ -60,6 +65,19 @@ impl SlotMeta {
             STREAM_CUTOUT => (self.cutout_first, self.index_count - self.solid_count),
             _ => (self.first_index, self.index_count),
         }
+    }
+
+    pub fn pack_faces(faces: &[[u16; FACE_GROUPS]; 2]) -> [u32; 8] {
+        let mut out = [0u32; 8];
+        for (k, &count) in faces.as_flattened().iter().enumerate() {
+            out[k / 2] |= u32::from(count) << ((k % 2) * 16);
+        }
+        out
+    }
+
+    pub fn face_count(&self, stream: u32, group: usize) -> u32 {
+        let k = stream as usize * FACE_GROUPS + group;
+        (self.faces[k / 2] >> ((k % 2) * 16)) & 0xFFFF
     }
 
     pub fn world_box(&self) -> ([f32; 3], [f32; 3]) {
@@ -211,10 +229,7 @@ fn decide_tier(world: &World) -> TerrainTier {
     use bevy::render::renderer::RenderDevice;
     let device = world.resource::<RenderDevice>();
     let features = device.features();
-    let forced_direct = matches!(
-        std::env::var("MC_TERRAIN_DIRECT").as_deref(),
-        Ok("1") | Ok("true")
-    );
+    let forced_direct = crate::platform::env::flag("MC_TERRAIN_DIRECT");
     let storage_ok = device.limits().max_storage_buffers_per_shader_stage >= 4;
     let indirect_ok = world
         .resource::<bevy::render::renderer::RenderAdapter>()
@@ -239,5 +254,234 @@ fn decide_tier(world: &World) -> TerrainTier {
         indirect,
         count,
         base_vertex,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::renderer::mesh::FACE_STORAGE_ORDER;
+
+    fn face_mask(lo: [f32; 3], hi: [f32; 3], eye: [f32; 3]) -> u32 {
+        let mut mask = 1 << crate::renderer::mesh::FACE_UNALIGNED;
+        for a in 0..3 {
+            if eye[a] < hi[a] + 1.0 {
+                mask |= 1 << (a * 2);
+            }
+            if eye[a] > lo[a] - 1.0 {
+                mask |= 1 << (a * 2 + 1);
+            }
+        }
+        mask
+    }
+
+    fn face_runs(meta: &SlotMeta, stream: u32, mask: u32) -> Vec<(u32, u32)> {
+        let (first, count) = meta.stream_range(stream);
+        let mut runs = Vec::new();
+        if count == 0 {
+            return runs;
+        }
+        let fill = FACE_FILL_QUADS * 6;
+        let total: u32 = (0..FACE_GROUPS)
+            .map(|g| meta.face_count(stream, g) * 6)
+            .sum();
+        if total != count || total < fill {
+            runs.push((first, count));
+            return runs;
+        }
+        let mut at = first;
+        let mut run: Option<(u32, u32)> = None;
+        let mut gap = 0;
+        for g in FACE_STORAGE_ORDER {
+            let n = meta.face_count(stream, g) * 6;
+            if n == 0 {
+                continue;
+            }
+            if mask & (1 << g) != 0 {
+                let (start, len) = run.unwrap_or((at, 0));
+                run = Some((start, len + gap + n));
+                gap = 0;
+            } else if run.is_some() {
+                if gap + n <= fill {
+                    gap += n;
+                } else {
+                    runs.extend(run.take());
+                    gap = 0;
+                }
+            }
+            at += n;
+        }
+        runs.extend(run);
+        runs
+    }
+
+    fn covered(meta: &SlotMeta, stream: u32, runs: &[(u32, u32)]) -> u32 {
+        let (first, _) = meta.stream_range(stream);
+        let mut at = first;
+        let mut out = 0;
+        for g in FACE_STORAGE_ORDER {
+            let n = meta.face_count(stream, g) * 6;
+            if n != 0 && runs.iter().any(|&(s, l)| s <= at && at + n <= s + l) {
+                out |= 1 << g;
+            }
+            at += n;
+        }
+        out
+    }
+
+    fn meta(solid: [u16; FACE_GROUPS], cutout: [u16; FACE_GROUPS]) -> SlotMeta {
+        let quads = |c: [u16; FACE_GROUPS]| c.iter().map(|&n| u32::from(n) * 6).sum::<u32>();
+        SlotMeta {
+            min: [0.0; 3],
+            max: [16.0; 3],
+            first_index: 1000,
+            solid_count: quads(solid),
+            index_count: quads(solid) + quads(cutout),
+            cutout_first: 5000,
+            flags: META_LIVE,
+            faces: SlotMeta::pack_faces(&[solid, cutout]),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn the_slot_meta_is_96_bytes() {
+        assert_eq!(std::mem::size_of::<SlotMeta>(), 96);
+    }
+
+    #[test]
+    fn face_counts_round_trip_through_the_packing() {
+        let solid = [1, 2, 3, 4, 5, 6, 65535];
+        let cutout = [7, 8, 9, 10, 11, 12, 13];
+        let m = meta(solid, cutout);
+        for g in 0..FACE_GROUPS {
+            assert_eq!(m.face_count(STREAM_SOLID, g), u32::from(solid[g]));
+            assert_eq!(m.face_count(STREAM_CUTOUT, g), u32::from(cutout[g]));
+        }
+        assert_eq!(m.faces[7], 0);
+    }
+
+    fn even(n: u16) -> SlotMeta {
+        meta([n; FACE_GROUPS], [0; FACE_GROUPS])
+    }
+
+    #[test]
+    fn an_eye_inside_draws_the_stream_whole() {
+        let m = meta([1, 1, 1, 1, 1, 1, 1], [0, 2, 0, 0, 0, 0, 3]);
+        let mask = face_mask([0.0; 3], [16.0; 3], [8.0; 3]);
+        assert_eq!(mask, 0x7F);
+        assert_eq!(face_runs(&m, STREAM_SOLID, mask), [(1000, 42)]);
+        assert_eq!(face_runs(&m, STREAM_CUTOUT, mask), [(5000, 30)]);
+    }
+
+    #[test]
+    fn an_eye_past_a_corner_is_one_run() {
+        let m = even(40);
+        let mask = face_mask([0.0; 3], [16.0; 3], [-10.0; 3]);
+        assert_eq!(mask, 0b1010101);
+        assert_eq!(face_runs(&m, STREAM_SOLID, mask), [(1000, 4 * 240)]);
+        let mask = face_mask([0.0; 3], [16.0; 3], [30.0; 3]);
+        assert_eq!(
+            face_runs(&m, STREAM_SOLID, mask),
+            [(1000 + 3 * 240, 4 * 240)]
+        );
+    }
+
+    #[test]
+    fn a_mixed_eye_makes_three_runs() {
+        let m = even(40);
+        let mask = face_mask([0.0; 3], [16.0; 3], [-10.0, -10.0, 30.0]);
+        assert_eq!(mask, 0b110_0101);
+        assert_eq!(
+            face_runs(&m, STREAM_SOLID, mask),
+            [
+                (1000, 240),
+                (1000 + 2 * 240, 2 * 240),
+                (1000 + 5 * 240, 240)
+            ],
+        );
+    }
+
+    #[test]
+    fn an_empty_group_does_not_break_a_run() {
+        let m = meta([40, 0, 0, 40, 0, 0, 0], [0; FACE_GROUPS]);
+        let mask = face_mask([0.0; 3], [16.0; 3], [-10.0, 30.0, 8.0]);
+        assert_eq!(face_runs(&m, STREAM_SOLID, mask), [(1000, 480)]);
+    }
+
+    #[test]
+    fn a_small_hidden_group_is_filled_in() {
+        let m = meta([40, 0, 40, 0, 10, 0, 40], [0; FACE_GROUPS]);
+        let mask = 0b100_0101;
+        assert_eq!(face_runs(&m, STREAM_SOLID, mask), [(1000, 130 * 6)]);
+        let m = meta(
+            [40, 0, 40, 0, FACE_FILL_QUADS as u16 + 1, 0, 40],
+            [0; FACE_GROUPS],
+        );
+        assert_eq!(
+            face_runs(&m, STREAM_SOLID, mask),
+            [(1000, 240), (1000 + (40 + 33) * 6, 80 * 6)],
+        );
+        let m = meta([40, 5, 0, 0, 0, 0, 40], [0; FACE_GROUPS]);
+        assert_eq!(face_runs(&m, STREAM_SOLID, 0b100_0001), [(1000, 480)]);
+    }
+
+    #[test]
+    fn a_small_stream_is_one_command() {
+        let m = meta([5, 5, 5, 5, 5, 5, 1], [0; FACE_GROUPS]);
+        assert_eq!(face_runs(&m, STREAM_SOLID, 0b100_0000), [(1000, 31 * 6)]);
+    }
+
+    #[test]
+    fn every_axis_mask_covers_its_groups_within_the_run_limit() {
+        let shapes: [[u16; FACE_GROUPS]; 5] = [
+            [100; FACE_GROUPS],
+            [100, 3, 100, 3, 100, 3, 100],
+            [3, 100, 3, 100, 3, 100, 100],
+            [100, 100, 0, 100, 0, 100, 0],
+            [0, 0, 0, 0, 0, 0, 100],
+        ];
+        for counts in shapes {
+            let m = meta(counts, [0; FACE_GROUPS]);
+            for axes in 0..64u32 {
+                let mask = axes | 1 << crate::renderer::mesh::FACE_UNALIGNED;
+                let runs = face_runs(&m, STREAM_SOLID, mask);
+                assert!(
+                    runs.len() <= FACE_RUNS as usize,
+                    "{counts:?} {mask:#09b}: {runs:?}"
+                );
+                let visible = (0..FACE_GROUPS)
+                    .filter(|&g| mask & (1 << g) != 0 && counts[g] != 0)
+                    .fold(0u32, |bits, g| bits | 1 << g);
+                assert_eq!(
+                    covered(&m, STREAM_SOLID, &runs) & visible,
+                    visible,
+                    "{counts:?} {mask:#09b}"
+                );
+                let (first, count) = m.stream_range(STREAM_SOLID);
+                let mut end = first;
+                for &(s, l) in &runs {
+                    assert!(s >= end && l > 0 && s + l <= first + count);
+                    end = s + l;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn an_ungrouped_stream_is_drawn_whole() {
+        let mut m = meta([0; FACE_GROUPS], [0; FACE_GROUPS]);
+        m.solid_count = 60;
+        m.index_count = 60;
+        let mask = face_mask([0.0; 3], [16.0; 3], [-10.0; 3]);
+        assert_eq!(face_runs(&m, STREAM_SOLID, mask), [(1000, 60)]);
+    }
+
+    #[test]
+    fn the_margin_keeps_faces_a_block_past_the_box() {
+        let mask = face_mask([0.0; 3], [16.0; 3], [-0.5, 8.0, 8.0]);
+        assert_ne!(mask & 0b10, 0, "+X within a block of the -X side");
+        let mask = face_mask([0.0; 3], [16.0; 3], [-1.5, 8.0, 8.0]);
+        assert_eq!(mask & 0b10, 0, "+X more than a block past the -X side");
     }
 }

@@ -24,6 +24,7 @@ pub mod packvertex;
 pub mod panorama;
 pub mod player_model;
 pub mod post;
+pub mod reload;
 mod screenshot;
 pub mod skin;
 pub mod sky;
@@ -36,7 +37,9 @@ pub mod visgraph;
 pub mod world_text;
 
 pub use anim::{AnimInput, Armor, HeldItem, HumanoidAnim};
-pub use atlas::{Textures, build_block_atlas, placeholder_atlas, texture_is_opaque};
+pub use atlas::{
+    AtlasTables, BlockAtlas, MeshTiles, Sprites, Textures, build_block_atlas, placeholder_atlas,
+};
 pub use frame_view::{FrameView, FrameViewSystems};
 pub use mesh::{
     MeshBuf, build_section_mesh, lighting_enabled, set_lighting_enabled, set_smooth_lighting,
@@ -125,7 +128,6 @@ pub struct RenderedBlock {
     pub sways: bool,
     #[cfg(feature = "shader_support")]
     pub state: u16,
-    #[cfg(feature = "shader_support")]
     pub translucent: bool,
 }
 

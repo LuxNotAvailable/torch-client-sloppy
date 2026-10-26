@@ -7,7 +7,8 @@ use crate::gui::painter::Painter;
 use crate::items::potions;
 use crate::play::mob_effects;
 use crate::session::SlotStack;
-use crate::text::{Span, Style};
+use crate::text::Span;
+use crate::util::reload::Reloadable;
 
 const MOUSE_OFFSET: f32 = 12.0;
 const PADDING: f32 = 3.0;
@@ -22,7 +23,9 @@ const RED: u32 = 0xFF5555;
 const DARK_PURPLE: u32 = 0xAA00AA;
 const WHITE: u32 = 0xFFFFFF;
 
-static LANG: LazyLock<HashMap<String, String>> = LazyLock::new(|| {
+static LANG: Reloadable<HashMap<String, String>> = Reloadable::new(load_lang);
+
+fn load_lang() -> HashMap<String, String> {
     let mut out = HashMap::new();
     for text in crate::platform::assets::read_stack(crate::assets_root().join("lang/en_us.json")) {
         let Ok(serde_json::Value::Object(map)) = serde_json::from_str(&text) else {
@@ -34,7 +37,11 @@ static LANG: LazyLock<HashMap<String, String>> = LazyLock::new(|| {
         );
     }
     out
-});
+}
+
+pub(crate) fn reset_lang() {
+    LANG.reset();
+}
 
 fn tag_values(name: &str) -> Vec<String> {
     crate::util::datapack::entry("tags/enchantment", name)
@@ -73,23 +80,24 @@ pub(crate) fn all_enchantments() -> Vec<(&'static str, i32)> {
         .collect()
 }
 
-pub(crate) fn translate_once(
+pub(crate) fn resolve_label(
     key: &'static str,
-    cell: &'static std::sync::OnceLock<String>,
+    cell: &'static crate::util::reload::Label,
 ) -> &'static str {
-    cell.get_or_init(|| translate(key, &[]))
+    cell.get(LANG.epoch(), || translate(key, &[]))
 }
 
 macro_rules! label {
     ($key:literal) => {{
-        static CELL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-        $crate::gui::tooltip::translate_once($key, &CELL)
+        static CELL: $crate::util::reload::Label = $crate::util::reload::Label::new();
+        $crate::gui::tooltip::resolve_label($key, &CELL)
     }};
 }
 pub(crate) use label;
 
 pub(crate) fn translate(key: &str, args: &[String]) -> String {
-    let template: &str = LANG.get(key).map_or(key, String::as_str);
+    let lang = LANG.get();
+    let template: &str = lang.get(key).map_or(key, String::as_str);
     let mut out = String::with_capacity(template.len());
     let mut rest = template;
     let mut next = args.iter();
@@ -158,19 +166,6 @@ fn roman(n: i32) -> String {
     out
 }
 
-fn format_bytes(bytes: usize) -> String {
-    const KB: f64 = 1024.0;
-    const MB: f64 = 1024.0 * 1024.0;
-    let b = bytes as f64;
-    if b < KB {
-        format!("{bytes} B")
-    } else if b < MB {
-        format!("{:.1} KB", b / KB)
-    } else {
-        format!("{:.1} MB", b / MB)
-    }
-}
-
 fn inherit(spans: &[Span], color: u32, italic: bool) -> Vec<Span> {
     spans
         .iter()
@@ -189,10 +184,7 @@ fn inherit(spans: &[Span], color: u32, italic: bool) -> Vec<Span> {
 }
 
 fn plain(text: String, color: u32) -> Vec<Span> {
-    vec![Span {
-        text,
-        style: Style::colored(color),
-    }]
+    vec![Span::colored(text, color)]
 }
 
 fn ordered_enchantments(list: &[(String, i32)]) -> Vec<(String, i32)> {
@@ -377,7 +369,10 @@ fn build_lines(stack: &SlotStack, advanced: bool) -> Vec<Vec<Span>> {
             out.push(plain(text, DARK_GRAY));
         }
         out.push(plain(
-            format!("Size: {}", format_bytes(stack.nbt_bytes)),
+            format!(
+                "Size: {}",
+                crate::util::bytes::Bytes(stack.nbt_bytes as u64)
+            ),
             DARK_GRAY,
         ));
     }
@@ -404,6 +399,26 @@ fn position(mx: f32, my: f32, vw: f32, vh: f32, w: f32, h: f32) -> (f32, f32) {
     (x, y)
 }
 
+const SLOT_SIZE: f32 = 16.0;
+const SLOT_GAP: f32 = 6.0;
+
+fn position_over_slot(sx: f32, sy: f32, vw: f32, vh: f32, w: f32, h: f32) -> (f32, f32) {
+    let pad = PADDING + 1.0;
+    let x = if sx + SLOT_SIZE / 2.0 > vw / 2.0 {
+        sx + SLOT_SIZE - w
+    } else {
+        sx
+    };
+    let x = x.min(vw - pad - w).max(pad);
+    let above = sy - SLOT_GAP - pad - h;
+    let y = if above >= pad {
+        above
+    } else {
+        (sy + SLOT_SIZE + SLOT_GAP + pad).min(vh - pad - h).max(0.0)
+    };
+    (x.floor(), y.floor())
+}
+
 pub(in crate::gui) fn position_flat(mx: f32, my: f32, vw: f32, w: f32) -> (f32, f32) {
     let padded = w + 2.0 * PADDING;
     let x = if mx + MOUSE_OFFSET + padded > vw {
@@ -417,6 +432,7 @@ pub(in crate::gui) fn position_flat(mx: f32, my: f32, vw: f32, w: f32) -> (f32, 
 struct LineCache {
     stack: SlotStack,
     advanced: bool,
+    lang_epoch: u32,
     lines: Vec<Vec<Span>>,
 }
 
@@ -433,27 +449,72 @@ pub fn draw(
     vh: f32,
     advanced: bool,
 ) {
+    with_lines(stack, advanced, |lines| {
+        draw_lines(p, lines, mx, my, vw, vh)
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn draw_with_line(
+    p: &mut Painter,
+    stack: &SlotStack,
+    extra: Option<String>,
+    mx: f32,
+    my: f32,
+    vw: f32,
+    vh: f32,
+    advanced: bool,
+) {
+    with_lines(stack, advanced, |lines| {
+        let mut all = lines.to_vec();
+        all.extend(extra.map(|text| plain(text, WHITE)));
+        draw_lines(p, &all, mx, my, vw, vh);
+    });
+}
+
+pub fn draw_over_slot(
+    p: &mut Painter,
+    stack: &SlotStack,
+    slot: (f32, f32),
+    vw: f32,
+    vh: f32,
+    advanced: bool,
+) {
+    with_lines(stack, advanced, |lines| {
+        place_lines(p, lines, |w, h| {
+            position_over_slot(slot.0, slot.1, vw, vh, w, h)
+        })
+    });
+}
+
+fn with_lines(stack: &SlotStack, advanced: bool, draw: impl FnOnce(&[Vec<Span>])) {
     if stack.is_empty() {
         return;
     }
+    let lang_epoch = LANG.epoch();
     LINES.with_borrow_mut(|cache| {
-        let hit = cache
-            .as_ref()
-            .is_some_and(|c| c.advanced == advanced && c.stack == *stack);
+        let hit = cache.as_ref().is_some_and(|c| {
+            c.advanced == advanced && c.lang_epoch == lang_epoch && c.stack == *stack
+        });
         if !hit {
             *cache = Some(LineCache {
                 stack: stack.clone(),
                 advanced,
+                lang_epoch,
                 lines: build_lines(stack, advanced),
             });
         }
         if let Some(c) = cache.as_ref() {
-            draw_lines(p, &c.lines, mx, my, vw, vh);
+            draw(&c.lines);
         }
     });
 }
 
 pub(crate) fn draw_lines(p: &mut Painter, lines: &[Vec<Span>], mx: f32, my: f32, vw: f32, vh: f32) {
+    place_lines(p, lines, |w, h| position(mx, my, vw, vh, w, h));
+}
+
+fn place_lines(p: &mut Painter, lines: &[Vec<Span>], place: impl FnOnce(f32, f32) -> (f32, f32)) {
     if lines.is_empty() {
         return;
     }
@@ -463,7 +524,7 @@ pub(crate) fn draw_lines(p: &mut Painter, lines: &[Vec<Span>], mx: f32, my: f32,
         .map(|l| p.atlas.font.width(l).ceil())
         .fold(0.0f32, f32::max);
     let h = box_height(lines.len());
-    let (x, y) = position(mx, my, vw, vh, w, h);
+    let (x, y) = place(w, h);
 
     let (bx, by) = (x - PADDING - MARGIN, y - PADDING - MARGIN);
     let (bw, bh) = (w + 2.0 * (PADDING + MARGIN), h + 2.0 * (PADDING + MARGIN));
@@ -480,6 +541,7 @@ pub(crate) fn draw_lines(p: &mut Painter, lines: &[Vec<Span>], mx: f32, my: f32,
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::text::Style;
 
     fn text_of(line: &[Span]) -> String {
         line.iter().map(|s| s.text.as_str()).collect()
@@ -537,18 +599,6 @@ mod tests {
     }
 
     #[test]
-    fn bytes_across_unit_boundaries() {
-        assert_eq!(format_bytes(0), "0 B");
-        assert_eq!(format_bytes(18), "18 B");
-        assert_eq!(format_bytes(1023), "1023 B");
-        assert_eq!(format_bytes(1024), "1.0 KB");
-        assert_eq!(format_bytes(1434), "1.4 KB");
-        assert_eq!(format_bytes(1024 * 1024 - 1), "1024.0 KB");
-        assert_eq!(format_bytes(1024 * 1024), "1.0 MB");
-        assert_eq!(format_bytes(2202009), "2.1 MB");
-    }
-
-    #[test]
     fn roman_one_to_ten() {
         let want = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"];
         for (i, w) in want.iter().enumerate() {
@@ -560,7 +610,7 @@ mod tests {
     fn roman_agrees_with_lang() {
         for n in 1..=10 {
             let key = format!("enchantment.level.{n}");
-            if let Some(v) = LANG.get(&key) {
+            if let Some(v) = LANG.get().get(&key) {
                 assert_eq!(&roman(n), v, "level {n}");
             }
         }
@@ -830,6 +880,36 @@ mod tests {
     }
 
     #[test]
+    fn a_slot_tooltip_sits_above_and_leans_toward_the_middle() {
+        assert_eq!(
+            position_over_slot(40.0, 100.0, 320.0, 240.0, 60.0, 20.0),
+            (40.0, 70.0),
+            "a left-half slot: the box starts at the slot and grows right"
+        );
+        assert_eq!(
+            position_over_slot(260.0, 100.0, 320.0, 240.0, 60.0, 20.0),
+            (216.0, 70.0),
+            "a right-half slot: the box ends at the slot and grows left"
+        );
+    }
+
+    #[test]
+    fn a_slot_tooltip_flips_below_without_room_above() {
+        assert_eq!(
+            position_over_slot(40.0, 10.0, 320.0, 240.0, 60.0, 20.0).1,
+            36.0
+        );
+    }
+
+    #[test]
+    fn a_slot_tooltip_stays_on_screen() {
+        let (x, _) = position_over_slot(2.0, 100.0, 320.0, 240.0, 400.0, 20.0);
+        assert_eq!(x, 4.0);
+        let (x, _) = position_over_slot(300.0, 100.0, 320.0, 240.0, 100.0, 20.0);
+        assert_eq!(x, 216.0);
+    }
+
+    #[test]
     fn positioner_flips_left_at_right_edge() {
         assert_eq!(position(300.0, 100.0, 320.0, 240.0, 60.0, 20.0).0, 228.0);
     }
@@ -879,9 +959,6 @@ mod tests {
         let mut p = Painter::new(&atlas, 0);
         draw(&mut p, &stack, 40.0, 60.0, 320.0, 240.0, true);
         assert!(!p.positions.is_empty());
-        let img = crate::gui::preview::rasterize(&p, 320, 240, [70, 110, 170, 255]);
-        let path = crate::gui::preview::output_dir().join("gui_tooltip.png");
-        crate::gui::preview::upscale(&img, 2).save(&path).unwrap();
-        println!("[preview] wrote {}", path.display());
+        crate::gui::preview::save_upscaled(&p, 320, 240, "gui_tooltip.png");
     }
 }

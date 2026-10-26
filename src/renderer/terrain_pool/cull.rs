@@ -6,7 +6,9 @@ use bevy::app::App;
 use bevy::asset::embedded_asset;
 use bevy::camera::primitives::Frustum;
 use bevy::ecs::query::{Has, QueryItem};
+use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::prelude::*;
+use bevy::render::diagnostic::RecordDiagnostics;
 use bevy::render::render_graph::{
     NodeRunError, RenderGraphContext, RenderGraphExt, RenderLabel, ViewNode, ViewNodeRunner,
 };
@@ -24,7 +26,7 @@ use bevy::render::{Render, RenderApp, RenderSystems};
 use bytemuck::{Pod, Zeroable};
 
 use super::pools::{SlotTable, TerrainPools};
-use super::{MAX_VIEWS, SLOTS_INITIAL, STREAMS, TerrainTier, TerrainView};
+use super::{FACE_RUNS, MAX_VIEWS, SLOTS_INITIAL, STREAMS, SlotMeta, TerrainTier, TerrainView};
 
 #[cfg(feature = "builtin_shaders")]
 use bevy::pbr::{LightEntity, ViewLightEntities};
@@ -39,6 +41,8 @@ pub struct CullView {
     pub within_max: [f32; 4],
     pub always_min: [f32; 4],
     pub always_max: [f32; 4],
+    pub fog: [f32; 4],
+    pub eye: [f32; 4],
     pub slot_cap: u32,
     pub view_index: u32,
     pub pool_count: u32,
@@ -52,6 +56,12 @@ pub const VIEW_WATER: u32 = 1;
 pub const VIEW_UNOCCLUDED: u32 = 2;
 pub const VIEW_WITHIN: u32 = 4;
 pub const VIEW_ALWAYS: u32 = 8;
+pub const VIEW_FOG: u32 = 16;
+pub const VIEW_FACES: u32 = 32;
+
+const FOG_CULL_MARGIN: f32 = 1.0;
+
+const WATER_RESORT_DISTANCE_SQ: f32 = 1.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CullShape {
@@ -59,6 +69,7 @@ pub struct CullShape {
     pub plane_count: usize,
     pub within: Option<[[f32; 3]; 2]>,
     pub always: Option<[[f32; 3]; 2]>,
+    pub fog: Option<[f32; 4]>,
 }
 
 impl CullShape {
@@ -70,6 +81,7 @@ impl CullShape {
             plane_count: 6,
             within: None,
             always: None,
+            fog: None,
         }
     }
 
@@ -78,6 +90,13 @@ impl CullShape {
             && (0..3).any(|a| hi[a] < min[a] || lo[a] > max[a])
         {
             return false;
+        }
+        if let Some([x, y, z, far]) = self.fog {
+            let eye = [x, y, z];
+            let d = [0, 1, 2].map(|a| eye[a].max(lo[a]).min(hi[a]) - eye[a]);
+            if (d[0] * d[0] + d[2] * d[2]).sqrt().max(d[1].abs()) > far {
+                return false;
+            }
         }
         if let Some([min, max]) = self.always
             && (0..3).all(|a| hi[a] >= min[a] && lo[a] <= max[a])
@@ -92,6 +111,7 @@ impl CullShape {
 
     fn view(
         &self,
+        eye: Vec3,
         slot_cap: u32,
         view_index: u32,
         pool_count: u32,
@@ -107,6 +127,8 @@ impl CullShape {
             within_max: corner(self.within, 1),
             always_min: corner(self.always, 0),
             always_max: corner(self.always, 1),
+            fog: self.fog.unwrap_or([0.0; 4]),
+            eye: eye.extend(0.0).to_array(),
             slot_cap,
             view_index,
             pool_count,
@@ -121,14 +143,36 @@ impl CullShape {
                     VIEW_ALWAYS
                 } else {
                     0
-                },
+                }
+                | if self.fog.is_some() { VIEW_FOG } else { 0 },
             plane_count: self.plane_count as u32,
             pad: [0; 2],
         }
     }
+
+    fn same(&self, other: &CullShape) -> bool {
+        let bits = |s: &CullShape| {
+            (
+                s.planes.map(|p| p.map(f32::to_bits)),
+                s.plane_count,
+                s.within.map(|b| b.map(|c| c.map(f32::to_bits))),
+                s.always.map(|b| b.map(|c| c.map(f32::to_bits))),
+                s.fog.map(|f| f.map(f32::to_bits)),
+            )
+        };
+        bits(self) == bits(other)
+    }
 }
 
-const CAMERA_FLAGS: u32 = VIEW_WATER;
+fn fog_cull(fog: Option<&DistanceFog>, eye: Vec3) -> Option<[f32; 4]> {
+    let fog = fog?;
+    let FogFalloff::Linear { end, .. } = fog.falloff else {
+        return None;
+    };
+    (fog.color.alpha() >= 1.0 && end > 0.0).then_some([eye.x, eye.y, eye.z, end + FOG_CULL_MARGIN])
+}
+
+const CAMERA_FLAGS: u32 = VIEW_WATER | VIEW_FACES;
 #[cfg(feature = "shader_support")]
 const PACK_SHADOW_FLAGS: u32 = VIEW_WATER | VIEW_UNOCCLUDED;
 
@@ -147,11 +191,20 @@ pub struct CullBuffers {
     pub pool_count: u32,
     pub view_count: u32,
     pub generation: u64,
-    zero_counts: Vec<u8>,
     view_scratch: [u8; CULL_VIEW_STRIDE as usize],
     water_counts: Vec<u32>,
-    water_order: Vec<(u32, f32, u32)>,
+    water_cache: [Option<WaterCache>; MAX_VIEWS as usize],
     water_args: Vec<[u32; 5]>,
+}
+
+struct WaterCache {
+    key: bevy::render::view::RetainedViewEntity,
+    flags: u32,
+    eye: Vec3,
+    water_generation: u64,
+    vis_generation: u64,
+    order: Vec<(u32, f32, u32)>,
+    shape: Option<CullShape>,
 }
 
 impl CullBuffers {
@@ -161,7 +214,7 @@ impl CullBuffers {
         let regions = view_count * pool_count * STREAMS;
         let commands = device.create_buffer(&BufferDescriptor {
             label: Some("terrain_cull_commands"),
-            size: (regions as u64) * (slot_cap as u64) * INDIRECT_ARGS_SIZE,
+            size: (regions as u64) * (slot_cap as u64) * (FACE_RUNS as u64) * INDIRECT_ARGS_SIZE,
             usage: BufferUsages::INDIRECT | BufferUsages::STORAGE | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -186,10 +239,9 @@ impl CullBuffers {
             pool_count,
             view_count,
             generation: 0,
-            zero_counts: vec![0u8; (regions as usize) * 4],
             view_scratch: [0u8; CULL_VIEW_STRIDE as usize],
-            water_counts: Vec::new(),
-            water_order: Vec::new(),
+            water_counts: vec![0; (view_count * pool_count) as usize],
+            water_cache: Default::default(),
             water_args: Vec::new(),
         }
     }
@@ -212,12 +264,15 @@ impl CullBuffers {
             pool_count: 0,
             view_count: 0,
             generation: 0,
-            zero_counts: Vec::new(),
             view_scratch: [0u8; CULL_VIEW_STRIDE as usize],
             water_counts: Vec::new(),
-            water_order: Vec::new(),
+            water_cache: Default::default(),
             water_args: Vec::new(),
         }
+    }
+
+    pub fn region_commands(&self) -> u64 {
+        self.slot_cap as u64 * FACE_RUNS as u64
     }
 
     fn fits(&self, view_count: u32, pool_count: u32, slot_cap: u32) -> bool {
@@ -227,43 +282,89 @@ impl CullBuffers {
     }
 
     fn write_water(&mut self, queue: &RenderQueue, pools: &TerrainPools, view: &AssignedView) {
-        self.water_order.clear();
-        for &slot in &pools.water_slots {
-            if view.flags & VIEW_UNOCCLUDED == 0 && !pools.is_visible(slot) {
-                continue;
+        let occluded = view.flags & VIEW_UNOCCLUDED == 0;
+        let region_commands = self.region_commands();
+        let cache = &mut self.water_cache[view.slot as usize];
+        let sorted = cache.as_ref().is_some_and(|c| {
+            c.key == view.key
+                && c.flags == view.flags
+                && c.water_generation == pools.water_generation
+                && c.vis_generation == pools.vis_generation
+                && c.eye.distance_squared(view.eye) < WATER_RESORT_DISTANCE_SQ
+        });
+        let cache = cache.get_or_insert_with(|| WaterCache {
+            key: view.key,
+            flags: view.flags,
+            eye: view.eye,
+            water_generation: 0,
+            vis_generation: 0,
+            order: Vec::new(),
+            shape: None,
+        });
+        if !sorted {
+            cache.key = view.key;
+            cache.flags = view.flags;
+            cache.eye = view.eye;
+            cache.water_generation = pools.water_generation;
+            cache.vis_generation = pools.vis_generation;
+            cache.shape = None;
+            cache.order.clear();
+            for &slot in &pools.water_slots {
+                if occluded && !pools.is_visible(slot) {
+                    continue;
+                }
+                let meta = &pools.meta_cpu[slot as usize];
+                let (lo, hi) = meta.world_box();
+                let centre = (Vec3::from(lo) + Vec3::from(hi)) * 0.5;
+                cache
+                    .order
+                    .push((meta.pool, centre.distance_squared(view.eye), slot));
             }
-            let meta = &pools.meta_cpu[slot as usize];
-            let (lo, hi) = meta.world_box();
-            if !view.shape.keeps(lo, hi) {
-                continue;
-            }
-            let centre = (Vec3::from(lo) + Vec3::from(hi)) * 0.5;
-            self.water_order
-                .push((meta.pool, centre.distance_squared(view.eye), slot));
+            cache
+                .order
+                .sort_unstable_by(|a, b| a.0.cmp(&b.0).then(b.1.total_cmp(&a.1)));
         }
-        self.water_order
-            .sort_unstable_by(|a, b| a.0.cmp(&b.0).then(b.1.total_cmp(&a.1)));
-        for run in self.water_order.chunk_by(|a, b| a.0 == b.0) {
+        if cache.shape.is_some_and(|shape| shape.same(&view.shape)) {
+            return;
+        }
+        cache.shape = Some(view.shape);
+
+        let row = (view.slot * self.pool_count) as usize;
+        self.water_counts[row..row + self.pool_count as usize].fill(0);
+        for run in cache.order.chunk_by(|a, b| a.0 == b.0) {
             let pool = run[0].0;
             self.water_args.clear();
-            self.water_args.extend(run.iter().map(|&(_, _, slot)| {
+            for &(_, _, slot) in run {
                 let meta = &pools.meta_cpu[slot as usize];
-                [
+                let (lo, hi) = meta.world_box();
+                if !view.shape.keeps(lo, hi) {
+                    continue;
+                }
+                self.water_args.push([
                     meta.index_count,
                     1,
                     meta.first_index,
                     meta.base_vertex,
                     slot,
-                ]
-            }));
+                ]);
+            }
+            if self.water_args.is_empty() {
+                continue;
+            }
             let region = (view.slot * self.pool_count + pool) * STREAMS + super::STREAM_WATER;
             queue.write_buffer(
                 &self.commands,
-                region as u64 * self.slot_cap as u64 * INDIRECT_ARGS_SIZE,
+                region as u64 * region_commands * INDIRECT_ARGS_SIZE,
                 bytemuck::cast_slice(&self.water_args),
             );
-            self.water_counts[(view.slot * self.pool_count + pool) as usize] = run.len() as u32;
+            self.water_counts[row + pool as usize] = self.water_args.len() as u32;
         }
+    }
+
+    fn forget_water(&mut self, slot: u32) {
+        self.water_cache[slot as usize] = None;
+        let row = (slot * self.pool_count) as usize;
+        self.water_counts[row..row + self.pool_count as usize].fill(0);
     }
 
     pub fn water_count(&self, view_index: u32, pool: u32) -> u32 {
@@ -351,6 +452,7 @@ pub fn shadow_cull_shape(input: &ShadowCullInput) -> CullShape {
         plane_count: 0,
         within: None,
         always: None,
+        fog: None,
     };
     let render_distance = f64::from(input.render_distance);
     if input.mode == ShadowCullMode::Distance {
@@ -535,7 +637,10 @@ pub fn finish(app: &mut App) {
     let layout_entries = BindGroupLayoutEntries::sequential(
         ShaderStages::COMPUTE,
         (
-            storage_buffer_read_only_sized(false, NonZeroU64::new(64)),
+            storage_buffer_read_only_sized(
+                false,
+                NonZeroU64::new(std::mem::size_of::<SlotMeta>() as u64),
+            ),
             storage_buffer_read_only_sized(false, NonZeroU64::new(4)),
             storage_buffer_sized(false, NonZeroU64::new(INDIRECT_ARGS_SIZE)),
             storage_buffer_sized(false, NonZeroU64::new(4)),
@@ -574,21 +679,27 @@ pub fn prepare_cull(
     mut cull: ResMut<CullBuffers>,
     mut views: ResMut<TerrainViews>,
     mut lists: ResMut<DirectLists>,
-    cameras: Query<(Entity, &ExtractedView, Has<TerrainView>)>,
+    cameras: Query<(
+        Entity,
+        &ExtractedView,
+        Has<TerrainView>,
+        Option<&DistanceFog>,
+    )>,
     #[cfg(feature = "builtin_shaders")] view_lights: Query<&ViewLightEntities>,
     #[cfg(feature = "builtin_shaders")] lights: Query<(&ExtractedView, &LightEntity)>,
     #[cfg(feature = "shader_support")] pack_view: Option<Res<PackCullView>>,
-    #[cfg(feature = "builtin_shaders")] takeover: Option<Res<super::draw::PackTakeover>>,
+    takeover: Option<Res<super::draw::PackTakeover>>,
     mut assigned: Local<Vec<AssignedView>>,
 ) {
+    let pack_draws = takeover.is_some_and(|t| t.0);
     #[cfg(feature = "builtin_shaders")]
-    let cascades = !takeover.is_some_and(|t| t.0);
+    let cascades = !pack_draws;
     views.index.clear();
     views.count = 0;
 
     assigned.clear();
 
-    for (entity, view, is_terrain) in cameras.iter() {
+    for (entity, view, is_terrain, fog) in cameras.iter() {
         #[cfg(not(feature = "builtin_shaders"))]
         let _ = entity;
         if !is_terrain || views.count >= MAX_VIEWS {
@@ -598,10 +709,14 @@ pub fn prepare_cull(
         views.count += 1;
         views.index.insert(view.retained_view_entity, slot);
         let eye = view.world_from_view.translation();
+        let mut shape = CullShape::frustum(frustum_planes(view));
+        if !pack_draws {
+            shape.fog = fog_cull(fog, eye);
+        }
         assigned.push(AssignedView {
             slot,
             key: view.retained_view_entity,
-            shape: CullShape::frustum(frustum_planes(view)),
+            shape,
             flags: CAMERA_FLAGS,
             eye,
         });
@@ -658,6 +773,7 @@ pub fn prepare_cull(
         }
         for view in assigned.iter() {
             let cull_view = view.shape.view(
+                view.eye,
                 cull.slot_cap,
                 view.slot,
                 cull.pool_count,
@@ -672,15 +788,13 @@ pub fn prepare_cull(
                 &cull.view_scratch,
             );
         }
-        let live_regions = (cull.regions as usize) * 4;
-        queue.write_buffer(&cull.counts, 0, &cull.zero_counts[..live_regions]);
 
-        let cull = &mut *cull;
-        cull.water_counts.clear();
-        cull.water_counts
-            .resize((cull.view_count * cull.pool_count) as usize, 0);
-        for view in assigned.iter().filter(|view| view.flags & VIEW_WATER != 0) {
-            cull.write_water(&queue, &pools, view);
+        for view in assigned.iter() {
+            if view.flags & VIEW_WATER != 0 {
+                cull.write_water(&queue, &pools, view);
+            } else {
+                cull.forget_water(view.slot);
+            }
         }
         return;
     }
@@ -810,6 +924,12 @@ impl ViewNode for TerrainCullNode {
         if !terrain_views.index.contains_key(&view.retained_view_entity) {
             return Ok(());
         }
+        let cull = world.resource::<CullBuffers>();
+        render_context.command_encoder().clear_buffer(
+            &cull.counts,
+            0,
+            Some(cull.regions as u64 * 4),
+        );
         let pipeline_cache = world.resource::<PipelineCache>();
         let Some(cull_pipeline) = world.get_resource::<CullPipeline>() else {
             return Ok(());
@@ -820,13 +940,13 @@ impl ViewNode for TerrainCullNode {
         let Some(bind_group) = world.resource::<CullBindGroup>().group.as_ref() else {
             return Ok(());
         };
-        let cull = world.resource::<CullBuffers>();
 
         let draw_end = world.resource::<TerrainPools>().draw_end.min(cull.slot_cap);
         if draw_end == 0 {
             return Ok(());
         }
         let workgroups = draw_end.div_ceil(64);
+        let recorder = render_context.diagnostic_recorder();
         let mut pass =
             render_context
                 .command_encoder()
@@ -834,11 +954,13 @@ impl ViewNode for TerrainCullNode {
                     label: Some("terrain_cull"),
                     timestamp_writes: None,
                 });
+        let span = recorder.pass_span(&mut pass, "terrain_cull");
         pass.set_pipeline(pipeline);
         for view_index in 0..terrain_views.count {
             pass.set_bind_group(0, bind_group, &[view_index * (CULL_VIEW_STRIDE as u32)]);
             pass.dispatch_workgroups(workgroups, 1, 1);
         }
+        span.end(&mut pass);
         Ok(())
     }
 }
@@ -847,6 +969,33 @@ impl ViewNode for TerrainCullNode {
 mod tests {
     use super::*;
     use bevy::math::Vec3;
+
+    fn wgsl_size(module: &naga::Module, name: &str) -> usize {
+        let handle = module
+            .types
+            .iter()
+            .find(|(_, t)| t.name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("{name} declared"))
+            .0;
+        let mut layouter = naga::proc::Layouter::default();
+        layouter.update(module.to_ctx()).expect("lays out");
+        layouter[handle].size as usize
+    }
+
+    fn wgsl_offsets(module: &naga::Module, name: &str) -> Vec<(String, u32)> {
+        let (_, ty) = module
+            .types
+            .iter()
+            .find(|(_, t)| t.name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("{name} declared"));
+        let naga::TypeInner::Struct { members, .. } = &ty.inner else {
+            panic!("{name} is a struct")
+        };
+        members
+            .iter()
+            .map(|m| (m.name.clone().unwrap_or_default(), m.offset))
+            .collect()
+    }
 
     #[test]
     fn the_cull_shader_validates_and_its_view_matches() {
@@ -857,17 +1006,55 @@ mod tests {
         )
         .validate(&module)
         .expect("validates");
-        let handle = module
-            .types
-            .iter()
-            .find(|(_, t)| t.name.as_deref() == Some("CullView"))
-            .expect("declared")
-            .0;
-        let mut layouter = naga::proc::Layouter::default();
-        layouter.update(module.to_ctx()).expect("lays out");
         assert_eq!(
-            layouter[handle].size as usize,
+            wgsl_size(&module, "CullView"),
             std::mem::size_of::<CullView>()
+        );
+        let offset = |name: &str| {
+            wgsl_offsets(&module, "CullView")
+                .into_iter()
+                .find(|(n, _)| n == name)
+                .expect("member")
+                .1 as usize
+        };
+        assert_eq!(offset("eye"), std::mem::offset_of!(CullView, eye));
+        assert_eq!(offset("slot_cap"), std::mem::offset_of!(CullView, slot_cap));
+        assert_eq!(
+            offset("plane_count"),
+            std::mem::offset_of!(CullView, plane_count)
+        );
+    }
+
+    #[test]
+    fn every_slot_meta_matches() {
+        let module = naga::front::wgsl::parse_str(include_str!("cull.wgsl")).expect("parses");
+        assert_eq!(
+            wgsl_size(&module, "SlotMeta"),
+            std::mem::size_of::<SlotMeta>()
+        );
+        let offsets = wgsl_offsets(&module, "SlotMeta");
+        let at = |name: &str| offsets.iter().find(|(n, _)| n == name).expect("member").1 as usize;
+        assert_eq!(at("origin"), std::mem::offset_of!(SlotMeta, origin));
+        assert_eq!(
+            at("cutout_first"),
+            std::mem::offset_of!(SlotMeta, cutout_first)
+        );
+        assert_eq!(at("faces"), std::mem::offset_of!(SlotMeta, faces));
+        let declaration = |source: &str| {
+            let start = source.find("struct SlotMeta {").expect("declared");
+            let end = start + source[start..].find('}').expect("closed");
+            source[start..=end].split_whitespace().collect::<String>()
+        };
+        let cull = declaration(include_str!("cull.wgsl"));
+        assert_eq!(
+            declaration(include_str!("../terrain.wgsl")),
+            cull,
+            "terrain.wgsl"
+        );
+        assert_eq!(
+            declaration(include_str!("../terrain_prepass.wgsl")),
+            cull,
+            "terrain_prepass.wgsl"
         );
     }
 

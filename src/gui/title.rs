@@ -2,7 +2,7 @@ use std::sync::OnceLock;
 
 use crate::gui::menu;
 use crate::gui::painter::Painter;
-use crate::gui::widgets::{Button, WIDGET_HEIGHT, WIDGET_WIDTH_BIG};
+use crate::gui::widgets::{Button, WIDGET_HEIGHT, WIDGET_WIDTH_BIG, centered_x};
 use crate::gui::{GuiState, Screen, ScreenCtx};
 use crate::platform::time::{SystemTime, UNIX_EPOCH};
 use crate::text::{Span, Style, texts};
@@ -32,20 +32,30 @@ fn first_row_y(vh: f32) -> f32 {
     (vh / 4.0).floor() + 48.0
 }
 
+pub(crate) fn logo(p: &mut Painter, vw: f32, y: f32) {
+    p.sprite(
+        "title/minecraft",
+        (vw / 2.0 - LOGO_W / 2.0).floor(),
+        y,
+        LOGO_W,
+        LOGO_H,
+    );
+    p.sprite(
+        "title/edition",
+        (vw / 2.0 - EDITION_W / 2.0).floor(),
+        y + LOGO_H - EDITION_OVERLAP,
+        EDITION_W,
+        EDITION_H,
+    );
+}
+
 pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     if crate::renderer::panorama::absent() {
         menu::background(p, ctx.vw, ctx.vh);
     }
 
     let logo_x = (ctx.vw / 2.0 - LOGO_W / 2.0).floor();
-    p.sprite("title/minecraft", logo_x, LOGO_Y, LOGO_W, LOGO_H);
-    p.sprite(
-        "title/edition",
-        (ctx.vw / 2.0 - EDITION_W / 2.0).floor(),
-        LOGO_Y + LOGO_H - EDITION_OVERLAP,
-        EDITION_W,
-        EDITION_H,
-    );
+    logo(p, ctx.vw, LOGO_Y);
 
     if let Some(splash) = session_splash() {
         let splash_x = logo_x + LOGO_W * 0.7;
@@ -55,11 +65,15 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         });
     }
 
-    let x = ((ctx.vw - WIDGET_WIDTH_BIG) / 2.0).floor();
+    let x = centered_x(ctx.vw);
     let top = first_row_y(ctx.vh);
 
+    #[cfg(feature = "online_mode")]
+    crate::client::ban::check_once();
     if Button::new(x, top, WIDGET_WIDTH_BIG, WIDGET_HEIGHT, MULTIPLAYER).draw(p, ctx) {
         state.nav = Some(Screen::Multiplayer);
+        #[cfg(feature = "online_mode")]
+        crate::gui::bannotice::before_multiplayer(state);
     }
 
     let bottom = top + BOTTOM_ROW_STEP;
@@ -92,6 +106,14 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         state.nav = Some(Screen::Credits);
     }
 
+    #[cfg(all(feature = "update_checker", not(target_arch = "wasm32")))]
+    if let Some(tag) = crate::client::update_checker::available() {
+        let label = format!("Update available: {tag}");
+        if link(p, ctx, &label, 0xFFFF00, 2.0, ctx.vh - 30.0) {
+            crate::platform::url::open(crate::client::update_checker::RELEASES_URL);
+        }
+    }
+
     #[cfg(all(feature = "mobile_ui", target_arch = "wasm32"))]
     {
         const W: f32 = 90.0;
@@ -107,6 +129,16 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
 
     {
         let w = p.atlas.font.width_str(EDIT_PROFILE) + 2.0 * PROFILE_LABEL_PAD;
+        #[cfg(feature = "tutorial")]
+        crate::gui::tutorial::mark(
+            crate::gui::tutorial::Spot::EditProfile,
+            crate::gui::hud_layout::Rect::new(
+                (ctx.vw - w - 4.0).floor(),
+                ctx.vh - WIDGET_HEIGHT - 14.0,
+                w,
+                WIDGET_HEIGHT,
+            ),
+        );
         if Button::new(
             (ctx.vw - w - 4.0).floor(),
             ctx.vh - WIDGET_HEIGHT - 14.0,
@@ -134,28 +166,36 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
 }
 
 const DISCLAIMER: &str = "Not affiliated with Mojang or Microsoft.";
-const CREDITS: &str = "(Credits)";
+const CREDITS: &str = "(Open Credits)";
 
 fn credits_link(p: &mut Painter, ctx: &ScreenCtx, x: f32, y: f32) -> bool {
-    let w = p.atlas.font.width_str(CREDITS);
+    #[cfg(feature = "tutorial")]
+    crate::gui::tutorial::mark(
+        crate::gui::tutorial::Spot::Credits,
+        crate::gui::hud_layout::Rect::new(
+            x,
+            y - 1.0,
+            p.atlas.font.width_str(CREDITS),
+            crate::text::LINE_HEIGHT + 1.0,
+        ),
+    );
+    link(p, ctx, CREDITS, 0xFFFFFF, x, y)
+}
+
+fn link(p: &mut Painter, ctx: &ScreenCtx, text: &str, color: u32, x: f32, y: f32) -> bool {
+    let w = p.atlas.font.width_str(text);
     let (hx, hy, hw, hh) = (x, y - 1.0, w, crate::text::LINE_HEIGHT + 1.0);
     let hovered = ctx.hovering(hx, hy, hw, hh);
     let span = Span {
-        text: CREDITS.to_owned(),
+        text: text.to_owned(),
         style: Style {
-            color: 0xFFFFFF,
+            color,
             underline: hovered,
             ..Style::default()
         },
     };
     p.text(std::slice::from_ref(&span), x, y, true);
-    #[cfg(not(feature = "mobile_ui"))]
-    let clicked = hovered && ctx.input.left_click;
-    #[cfg(feature = "mobile_ui")]
-    let clicked = hovered
-        && ctx.input.left_release
-        && crate::gui::widgets::touch_tap::pressed_in(hx, hy, hw, hh)
-        && !crate::gui::widgets::touch_tap::scrolled();
+    let clicked = crate::gui::widgets::click_in(ctx, hx, hy, hw, hh);
     #[cfg(feature = "audio")]
     if clicked {
         crate::gui::widgets::play_click();
@@ -166,14 +206,16 @@ fn credits_link(p: &mut Painter, ctx: &ScreenCtx, x: f32, y: f32) -> bool {
 const EAGLER_MODE: &str = "Eagler mode (wss:// enabled)";
 
 fn session_splash() -> Option<&'static str> {
-    static SPLASH: OnceLock<Option<&'static str>> = OnceLock::new();
-    *SPLASH.get_or_init(|| {
-        let seed = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_nanos() as u64)
-            .unwrap_or(0);
-        texts::splash_for(seed)
-    })
+    static SPLASH: OnceLock<Option<String>> = OnceLock::new();
+    SPLASH
+        .get_or_init(|| {
+            let seed = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(0);
+            texts::splash_for(seed)
+        })
+        .as_deref()
 }
 
 #[cfg(test)]
@@ -189,7 +231,7 @@ mod tests {
     #[test]
     fn the_bottom_row_lines_up_with_the_column() {
         let vw = 854.0;
-        let left = ((vw - WIDGET_WIDTH_BIG) / 2.0).floor();
+        let left = centered_x(vw);
         let right = (vw / 2.0).floor() + 2.0;
         assert_eq!(left + HALF_WIDTH + BUTTON_GAP, right);
         assert_eq!(right + HALF_WIDTH, left + WIDGET_WIDTH_BIG);

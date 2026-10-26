@@ -84,7 +84,10 @@ struct Team {
     suffix: Vec<Span>,
     members: Vec<String>,
     nametag_visibility: NameTagVisibility,
+    see_friendly_invisibles: bool,
 }
+
+const SEE_FRIENDLY_INVISIBLES: u8 = 2;
 
 struct Objective {
     hearts: bool,
@@ -351,6 +354,7 @@ fn apply_team(s: &mut State, name: &str, method: &TeamMethod) {
                 suffix: to_spans_styled(&params.player_suffix, root),
                 members: members.clone(),
                 nametag_visibility: params.nametag_visibility,
+                see_friendly_invisibles: params.options & SEE_FRIENDLY_INVISIBLES != 0,
             };
             for m in &team.members {
                 s.team_of.insert(m.clone(), name.to_string());
@@ -366,6 +370,7 @@ fn apply_team(s: &mut State, name: &str, method: &TeamMethod) {
                 team.prefix = to_spans_styled(&params.player_prefix, root);
                 team.suffix = to_spans_styled(&params.player_suffix, root);
                 team.nametag_visibility = params.nametag_visibility;
+                team.see_friendly_invisibles = params.options & SEE_FRIENDLY_INVISIBLES != 0;
             }
         }
         TeamMethod::Remove => {
@@ -642,15 +647,29 @@ impl Lookup<'_> {
     ) -> NameTagText {
         name_tag(self.0, scoreboard_name, base, viewer)
     }
+
+    pub(crate) fn sees_friendly_invisible(&self, scoreboard_name: &str, viewer: &str) -> bool {
+        self.0
+            .allied(scoreboard_name, viewer)
+            .is_some_and(|team| team.see_friendly_invisibles)
+    }
+}
+
+impl State {
+    fn allied(&self, a: &str, b: &str) -> Option<&Team> {
+        let team_name = self.team_of.get(a)?;
+        (self.team_of.get(b) == Some(team_name))
+            .then(|| self.teams.get(team_name))
+            .flatten()
+    }
 }
 
 fn name_tag(s: &State, scoreboard_name: &str, base: Vec<Span>, viewer: &str) -> NameTagText {
     let mut hidden_by_team = false;
-    let team_name = s.team_of.get(scoreboard_name);
-    let team = team_name.and_then(|t| s.teams.get(t));
+    let team = s.team_of.get(scoreboard_name).and_then(|t| s.teams.get(t));
     if let Some(team) = team {
         let viewer_team = s.team_of.get(viewer);
-        let allied = viewer_team.is_some() && viewer_team == team_name;
+        let allied = s.allied(scoreboard_name, viewer).is_some();
         match team.nametag_visibility {
             NameTagVisibility::Always => {}
             NameTagVisibility::Never => hidden_by_team = true,
@@ -731,6 +750,7 @@ mod tests {
                 suffix: Vec::new(),
                 members: vec!["Alice".into()],
                 nametag_visibility: NameTagVisibility::Always,
+                see_friendly_invisibles: false,
             },
         );
         s.team_of.insert("Alice".into(), "red".into());
@@ -848,6 +868,7 @@ mod tests {
                 suffix: Vec::new(),
                 members: Vec::new(),
                 nametag_visibility: NameTagVisibility::Always,
+                see_friendly_invisibles: false,
             },
         );
         s.team_of

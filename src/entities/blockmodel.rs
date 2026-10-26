@@ -1,40 +1,45 @@
-use bevy::asset::RenderAssetUsages;
-use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::Mesh;
 
 use crate::blocks::BakedQuad;
 use crate::blocks::state::Rot;
 use crate::entities::BlockRef;
+use crate::entities::quads::QuadMesh;
 
 pub fn mesh(block: BlockRef) -> Option<Mesh> {
-    let mut out = QuadBuf::default();
+    mesh_in(&crate::blocks::registry(), block)
+}
+
+pub fn mesh_in(blocks: &crate::blocks::Blocks, block: BlockRef) -> Option<Mesh> {
+    let mut out = QuadMesh::new();
     match block {
         BlockRef::State(id) => {
-            let baked = state_model(id)?;
+            let baked = state_model(blocks, id)?;
             for part in &baked.parts {
                 let model = part.choices.first()?;
                 for quad in &model.quads {
-                    out.push(quad);
+                    push(&mut out, quad);
                 }
             }
         }
         BlockRef::Model(model) => {
-            let atlas_rows = crate::ATLAS_ROWS.get().copied()?;
             let baked = crate::blocks::bake::bake_model(
-                crate::items::model::shared(),
+                blocks.assets(),
                 model.path(),
                 Rot::default(),
-                atlas_rows,
+                blocks.sprites(),
             );
             for quad in &baked.quads {
-                out.push(quad);
+                push(&mut out, quad);
             }
         }
     }
-    out.finish()
+    (!out.is_empty()).then(|| out.finish())
 }
 
-fn state_model(id: u32) -> Option<std::sync::Arc<crate::blocks::BakedBlock>> {
+fn state_model(
+    blocks: &crate::blocks::Blocks,
+    id: u32,
+) -> Option<std::sync::Arc<crate::blocks::BakedBlock>> {
     use azalea::block::{BlockState, BlockTrait};
 
     let state = BlockState::try_from(id).ok()?;
@@ -42,49 +47,12 @@ fn state_model(id: u32) -> Option<std::sync::Arc<crate::blocks::BakedBlock>> {
         return None;
     }
     let block: Box<dyn BlockTrait> = Box::<dyn BlockTrait>::from(state);
-    let baked = crate::blocks::registry().baked(state.id(), block.id(), &block.property_map());
-    Some(baked)
+    Some(blocks.baked(state.id(), block.id(), &block.property_map()))
 }
 
-#[derive(Default)]
-struct QuadBuf {
-    positions: Vec<[f32; 3]>,
-    normals: Vec<[f32; 3]>,
-    uvs: Vec<[f32; 2]>,
-    colors: Vec<[f32; 4]>,
-    indices: Vec<u32>,
-}
-
-impl QuadBuf {
-    fn push(&mut self, quad: &BakedQuad) {
-        let base = self.positions.len() as u32;
-        let normal = quad.normal;
-        let shade = quad.shade(crate::renderer::dimension::current().cardinal());
-        for i in 0..4 {
-            self.positions.push(quad.pos[i]);
-            self.uvs.push(quad.uv[i]);
-            self.normals.push(normal);
-            self.colors.push([1.0, 1.0, 1.0, shade]);
-        }
-        self.indices
-            .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
-    }
-
-    fn finish(self) -> Option<Mesh> {
-        if self.positions.is_empty() {
-            return None;
-        }
-        let mut mesh = Mesh::new(
-            PrimitiveTopology::TriangleList,
-            RenderAssetUsages::RENDER_WORLD,
-        );
-        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, self.positions);
-        mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, self.normals);
-        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, self.uvs);
-        mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, self.colors);
-        mesh.insert_indices(Indices::U32(self.indices));
-        Some(mesh)
-    }
+fn push(out: &mut QuadMesh, quad: &BakedQuad) {
+    let shade = quad.shade(crate::renderer::dimension::current().cardinal());
+    out.colored(quad.pos, quad.uv, quad.normal, [1.0, 1.0, 1.0, shade]);
 }
 
 #[cfg(test)]
@@ -103,12 +71,16 @@ mod tests {
             "block/item_frame_map",
             "block/glow_item_frame",
         ] {
-            let resolved = crate::items::model::shared().model(path);
+            let resolved = crate::blocks::registry().assets().model(path);
             assert!(
                 !resolved.elements.is_empty(),
                 "{path} resolved to no elements"
             );
-            let baked = crate::blocks::bake::bake_resolved(&resolved, Rot::default(), 64);
+            let baked = crate::blocks::bake::bake_resolved(
+                &resolved,
+                Rot::default(),
+                &crate::renderer::Sprites::default(),
+            );
             assert!(
                 quad_count(&baked) > 0 || baked.missing_textures > 0,
                 "{path} baked to nothing at all"

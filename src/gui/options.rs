@@ -2,7 +2,8 @@ use crate::gui::focus;
 use crate::gui::painter::Painter;
 use crate::gui::render::{GuiInput, auto_gui_scale};
 use crate::gui::widgets::{
-    self, Button, HeaderFooter, Slider, WIDGET_HEIGHT, WIDGET_WIDTH_BIG, centered_x,
+    self, Button, FOOTER_GAP, FOOTER_W, HeaderFooter, Slider, WIDGET_HEIGHT, WIDGET_WIDTH_BIG,
+    centered_row_x, centered_x,
 };
 use crate::gui::{GAMMA_MAX, GuiState, Screen, ScreenCtx, keybinds};
 use crate::text::LINE_HEIGHT;
@@ -33,7 +34,7 @@ const CLEAR_ASSETS_TITLE: &str = "Clear cached assets?";
 #[cfg(all(target_arch = "wasm32", feature = "asset_download"))]
 const CLEAR_ASSETS_MESSAGE: &str = concat!(
     "The stored copy of the game's assets will be deleted.\n",
-    "The client downloads about 44 MB from Mojang again\n",
+    "The client downloads about 44 MiB from Mojang again\n",
     "the next time this page is opened.",
 );
 #[cfg(all(target_arch = "wasm32", feature = "asset_download"))]
@@ -151,12 +152,17 @@ const FOV_EFFECTS: &str = "FOV Effects";
 
 const FOV_EFFECTS_MAX: i32 = 100;
 
+const SCREEN_EFFECTS: &str = "Distortion Effects";
+
+const SCREEN_EFFECTS_MAX: i32 = 100;
+
 pub(crate) const RENDER_DISTANCE_MIN: i32 = 2;
 pub(crate) const RENDER_DISTANCE_MAX: i32 = 32;
 
 const GUI_SCALE_AUTO: &str = "Auto";
 
-pub(in crate::gui) const LAYOUT: HeaderFooter = HeaderFooter::default_heights();
+pub(in crate::gui) const LAYOUT: HeaderFooter =
+    HeaderFooter::new(HeaderFooter::DEFAULT_H, HeaderFooter::DEFAULT_H);
 
 const GUI_SCALE_SLIDER_ID: u32 = 1;
 
@@ -172,6 +178,8 @@ const FOV_EFFECTS_SLIDER_ID: u32 = 6;
 
 #[cfg(feature = "audio")]
 const VOLUME_SLIDER_ID_BASE: u32 = 7;
+
+const SCREEN_EFFECTS_SLIDER_ID: u32 = 30;
 
 const ROW_SPACING: f32 = 4.0;
 
@@ -308,22 +316,49 @@ pub(in crate::gui) fn scroll_input(
     *scroll = scroll.clamp(0.0, max_scroll);
 }
 
-#[cfg_attr(not(any(feature = "shader_support", resource_packs)), allow(dead_code))]
 pub(in crate::gui) fn masked_input(
     ctx: &ScreenCtx,
     rect: (f32, f32, f32, f32),
     dragging: bool,
 ) -> GuiInput {
+    mask_input(ctx, rect, dragging, true)
+}
+
+pub(in crate::gui) fn mask_input(
+    ctx: &ScreenCtx,
+    rect: (f32, f32, f32, f32),
+    dragging: bool,
+    keep_slider_drag: bool,
+) -> GuiInput {
     let (x, y, w, h) = rect;
     let over = ctx.hovering(x, y, w, h);
     let mut input = ctx.input.clone();
-    if dragging || (!over && !widgets::slider_dragging()) {
+    if dragging || (!over && !(keep_slider_drag && widgets::slider_dragging())) {
         input.mouse = None;
     }
     if dragging || !over {
         input.left_click = false;
     }
     input
+}
+
+#[cfg_attr(not(any(feature = "shader_support", resource_packs)), allow(dead_code))]
+pub(in crate::gui) fn scroll_masked(
+    scroll: &mut f32,
+    drag: &mut Option<f32>,
+    ctx: &ScreenCtx,
+    left: f32,
+    row_w: f32,
+    rect: (f32, f32, f32, f32),
+    content_h: f32,
+) -> GuiInput {
+    scroll_input(scroll, drag, ctx, left, row_w, rect.1, rect.3, content_h);
+    masked_input(ctx, rect, drag.is_some())
+}
+
+#[cfg_attr(not(any(feature = "shader_support", resource_packs)), allow(dead_code))]
+pub(in crate::gui) fn row_visible(y: f32, row_h: f32, list_y: f32, list_h: f32) -> bool {
+    y + row_h >= list_y && y <= list_y + list_h
 }
 
 #[cfg(feature = "mobile_ui")]
@@ -478,11 +513,11 @@ fn fov_label(value: i32) -> String {
     }
 }
 
-fn fov_effects_label(value: i32) -> String {
+fn percent_or_off(caption: &str, value: i32) -> String {
     if value == 0 {
-        format!("{FOV_EFFECTS}: {OFF}")
+        format!("{caption}: {OFF}")
     } else {
-        format!("{FOV_EFFECTS}: {value}%")
+        format!("{caption}: {value}%")
     }
 }
 
@@ -510,18 +545,8 @@ fn gui_scale_label(value: i32) -> String {
     }
 }
 
-#[cfg(feature = "audio")]
-fn volume_label(name: &str, value: i32) -> String {
-    if value == 0 {
-        format!("{name}: {OFF}")
-    } else {
-        format!("{name}: {value}%")
-    }
-}
-
-fn toggle(p: &mut Painter, ctx: &ScreenCtx, at: (f32, f32), label: &str, value: &mut bool) -> bool {
+fn toggle(p: &mut Painter, ctx: &ScreenCtx, x: f32, y: f32, label: &str, value: &mut bool) -> bool {
     let caption = format!("{label}: {}", if *value { ON } else { OFF });
-    let (x, y) = at;
 
     if !Button::new(x, y, COLUMN_W, WIDGET_HEIGHT, &caption).draw(p, ctx) {
         return false;
@@ -532,7 +557,7 @@ fn toggle(p: &mut Painter, ctx: &ScreenCtx, at: (f32, f32), label: &str, value: 
 }
 
 pub(in crate::gui) fn draw_title(p: &mut Painter, ctx: &ScreenCtx, title: &str) {
-    widgets::draw_title(p, ctx.vw, LAYOUT.title_y(), title);
+    p.text_centered(title, ctx.vw / 2.0, LAYOUT.title_y(), 0xFFFFFF, true);
 }
 
 pub(in crate::gui) fn draw_done(p: &mut Painter, ctx: &ScreenCtx) -> bool {
@@ -550,6 +575,7 @@ fn reset_video_options(o: &mut crate::gui::GuiOptions) {
     o.gui_scale = 0;
     o.fov = crate::renderer::systems::VANILLA_FOV_DEGREES as u32;
     o.fov_effects = crate::gui::FOV_EFFECTS_DEFAULT;
+    o.screen_effects = crate::gui::SCREEN_EFFECTS_DEFAULT;
     o.clouds = if cfg!(feature = "mobile_ui") {
         crate::renderer::clouds::CloudStatus::Fast
     } else {
@@ -624,6 +650,17 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     for (i, (label, entry)) in entries.iter().enumerate() {
         let x = left + (i % 2) as f32 * COLUMN_STEP;
         let button = Button::new(x, row(i / 2), COLUMN_W, WIDGET_HEIGHT, label);
+        #[cfg(feature = "tutorial")]
+        {
+            let r = crate::gui::hud_layout::Rect::new(x, row(i / 2), COLUMN_W, WIDGET_HEIGHT);
+            match entry {
+                Entry::Hud => crate::gui::tutorial::mark(crate::gui::tutorial::Spot::EditHud, r),
+                Entry::Screen(Screen::ManageStorage) => {
+                    crate::gui::tutorial::mark(crate::gui::tutorial::Spot::Storage, r)
+                }
+                _ => {}
+            }
+        }
         if !button.draw(p, ctx) {
             continue;
         }
@@ -675,6 +712,9 @@ pub fn draw_manage_storage(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCt
     if cfg!(feature = "asset_download") {
         count += 1;
     }
+    if cfg!(feature = "tutorial") {
+        count += 1;
+    }
     let left = (ctx.vw / 2.0 - GRID_LEFT_OFFSET).floor();
     let top = LAYOUT.content_y(ctx.vh, menu_content_h(count));
     #[allow(unused)]
@@ -708,6 +748,19 @@ pub fn draw_manage_storage(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCt
         }
     }
 
+    #[cfg(feature = "tutorial")]
+    {
+        let (x, y) = cell(next);
+        next += 1;
+        crate::gui::tutorial::mark(
+            crate::gui::tutorial::Spot::Restart,
+            crate::gui::hud_layout::Rect::new(x, y, COLUMN_W, WIDGET_HEIGHT),
+        );
+        if Button::new(x, y, COLUMN_W, WIDGET_HEIGHT, "Restart Tutorial").draw(p, ctx) {
+            crate::gui::tutorial::restart(state);
+        }
+    }
+
     #[cfg(feature = "asset_download")]
     {
         let (x, y) = cell(next);
@@ -733,6 +786,11 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
 
     let left = (ctx.vw / 2.0 - GRID_LEFT_OFFSET).floor();
     let (list_x, list_y, list_w, list_h) = LAYOUT.content_rect(ctx.vw, ctx.vh);
+    #[cfg(feature = "tutorial")]
+    crate::gui::tutorial::mark(
+        crate::gui::tutorial::Spot::Video,
+        crate::gui::hud_layout::Rect::new(list_x, list_y, list_w, list_h),
+    );
     scroll_input(
         &mut state.video_scroll,
         &mut state.video_scroll_drag,
@@ -745,20 +803,12 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     );
     let top = (list_y - state.video_scroll).floor();
 
-    let over_list = ctx.hovering(list_x, list_y, list_w, list_h);
-    let dragging_bar = state.video_scroll_drag.is_some();
-    let mut list_input = ctx.input.clone();
-    if dragging_bar || (!over_list && !widgets::slider_dragging()) {
-        list_input.mouse = None;
-    }
-    if dragging_bar || !over_list {
-        list_input.left_click = false;
-    }
-    let list_ctx = &ScreenCtx {
-        input: &list_input,
-        vw: ctx.vw,
-        vh: ctx.vh,
-    };
+    let list_input = masked_input(
+        ctx,
+        (list_x, list_y, list_w, list_h),
+        state.video_scroll_drag.is_some(),
+    );
+    let list_ctx = &ctx.with_input(&list_input);
     let screen_ctx = ctx;
     let ctx = list_ctx;
 
@@ -852,8 +902,8 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         crate::gui::save_options(&state.options);
     }
 
-    let at = cell(0.0, Y_DISPLAY_ROW_2);
-    if toggle(p, ctx, at, FPS_COUNTER, &mut state.options.fps_counter) {
+    let (x, y) = cell(0.0, Y_DISPLAY_ROW_2);
+    if toggle(p, ctx, x, y, FPS_COUNTER, &mut state.options.fps_counter) {
         crate::gui::save_options(&state.options);
     }
 
@@ -861,8 +911,8 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     let vsync_cell = Some(cell(1.0, Y_DISPLAY_ROW_2));
     #[cfg(target_arch = "wasm32")]
     let vsync_cell: Option<(f32, f32)> = None;
-    if let Some(at) = vsync_cell
-        && toggle(p, ctx, at, VSYNC, &mut state.options.vsync)
+    if let Some((x, y)) = vsync_cell
+        && toggle(p, ctx, x, y, VSYNC, &mut state.options.vsync)
     {
         crate::gui::save_options(&state.options);
     }
@@ -877,11 +927,29 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         min: 0,
         max: FOV_EFFECTS_MAX,
         value: state.options.fov_effects as i32,
-        label: fov_effects_label,
+        label: |v| percent_or_off(FOV_EFFECTS, v),
     };
     let new_fov_effects = fov_effects.draw(p, ctx).clamp(0, FOV_EFFECTS_MAX) as u32;
     if new_fov_effects != state.options.fov_effects {
         state.options.fov_effects = new_fov_effects;
+        crate::gui::save_options(&state.options);
+    }
+
+    let (x, y) = cell(1.0, Y_DISPLAY_ROW_3);
+    let screen_effects = Slider {
+        id: SCREEN_EFFECTS_SLIDER_ID,
+        x,
+        y,
+        w: COLUMN_W,
+        h: WIDGET_HEIGHT,
+        min: 0,
+        max: SCREEN_EFFECTS_MAX,
+        value: state.options.screen_effects as i32,
+        label: |v| percent_or_off(SCREEN_EFFECTS, v),
+    };
+    let new_screen_effects = screen_effects.draw(p, ctx).clamp(0, SCREEN_EFFECTS_MAX) as u32;
+    if new_screen_effects != state.options.screen_effects {
+        state.options.screen_effects = new_screen_effects;
         crate::gui::save_options(&state.options);
     }
 
@@ -915,27 +983,29 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         crate::gui::save_options(&state.options);
     }
 
-    let at = cell(0.0, Y_QUALITY_ROW_1);
+    let (x, y) = cell(0.0, Y_QUALITY_ROW_1);
     if toggle(
         p,
         ctx,
-        at,
+        x,
+        y,
         SMOOTH_LIGHTING,
         &mut state.options.smooth_lighting,
     ) {
         crate::gui::save_options(&state.options);
     }
 
-    let at = cell(1.0, Y_QUALITY_ROW_1);
-    if toggle(p, ctx, at, ANTIALIASING, &mut state.options.antialiasing) {
+    let (x, y) = cell(1.0, Y_QUALITY_ROW_1);
+    if toggle(p, ctx, x, y, ANTIALIASING, &mut state.options.antialiasing) {
         crate::gui::save_options(&state.options);
     }
 
-    let at = cell(0.0, Y_QUALITY_ROW_2);
+    let (x, y) = cell(0.0, Y_QUALITY_ROW_2);
     if toggle(
         p,
         ctx,
-        at,
+        x,
+        y,
         LIGHTING_ENGINE,
         &mut state.options.lighting_enabled,
     ) {
@@ -952,8 +1022,8 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
 
     #[cfg(feature = "builtin_shaders")]
     {
-        let at = cell(1.0, Y_QUALITY_ROW_2);
-        if toggle(p, ctx, at, SHADERS, &mut state.options.shaders_enabled) {
+        let (x, y) = cell(1.0, Y_QUALITY_ROW_2);
+        if toggle(p, ctx, x, y, SHADERS, &mut state.options.shaders_enabled) {
             crate::gui::save_options(&state.options);
         }
 
@@ -1064,9 +1134,6 @@ const RESET_ALL_KEYS: &str = "Reset Keys";
 
 const DUPLICATE: &str = "This key is also used for:";
 
-const FOOTER_GAP: f32 = 8.0;
-const FOOTER_BUTTON_W: f32 = 150.0;
-
 pub fn draw_controls(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     draw_title(p, ctx, CONTROLS_TITLE);
 
@@ -1077,11 +1144,7 @@ pub fn draw_controls(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     if captured {
         screen_input.left_click = false;
     }
-    let screen_ctx = &ScreenCtx {
-        input: &screen_input,
-        vw: ctx.vw,
-        vh: ctx.vh,
-    };
+    let screen_ctx = &ctx.with_input(&screen_input);
 
     let rows = bind_rows();
     let content_h = rows.len() as f32 * BIND_ROW_H;
@@ -1117,18 +1180,13 @@ pub fn draw_controls(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     );
     let top = (list_y - state.controls_scroll).floor();
 
-    let over_list = screen_ctx.hovering(list_x, list_y, list_w, list_h);
-    let dragging_bar = state.controls_scroll_drag.is_some();
-    let mut list_input = screen_input.clone();
-    if dragging_bar || !over_list {
-        list_input.mouse = None;
-        list_input.left_click = false;
-    }
-    let list_ctx = &ScreenCtx {
-        input: &list_input,
-        vw: ctx.vw,
-        vh: ctx.vh,
-    };
+    let list_input = mask_input(
+        screen_ctx,
+        (list_x, list_y, list_w, list_h),
+        state.controls_scroll_drag.is_some(),
+        false,
+    );
+    let list_ctx = &ctx.with_input(&list_input);
 
     let bar_x = left + BIND_ROW_W + SCROLLBAR_GAP;
     let reset_x = bar_x - RESET_W - BIND_PADDING;
@@ -1140,15 +1198,14 @@ pub fn draw_controls(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
 
     for (i, row) in rows.iter().enumerate() {
         let row_y = top + i as f32 * BIND_ROW_H;
-        if row_y + BIND_ROW_H < list_y || row_y > list_y + list_h {
+        if !row_visible(row_y, BIND_ROW_H, list_y, list_h) {
             continue;
         }
         match row {
             BindRow::Category(name) => {
-                let w = p.atlas.font.width_str(name);
-                p.text_str(
+                p.text_centered(
                     name,
-                    ((ctx.vw - w) / 2.0).floor(),
+                    ctx.vw / 2.0,
                     row_y + BIND_ROW_H - LINE_HEIGHT - ROW_INSET,
                     0xFFFFFF,
                     true,
@@ -1183,14 +1240,7 @@ pub fn draw_controls(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
                 if change.draw(p, list_ctx) {
                     state.keybinds.capturing = Some(*bind);
                 }
-                let lw = p.atlas.font.width_str(&label);
-                p.text_str(
-                    &label,
-                    (change_x + (CHANGE_W - lw) / 2.0).floor(),
-                    row_y + 6.0,
-                    color,
-                    true,
-                );
+                p.text_centered(&label, change_x + CHANGE_W / 2.0, row_y + 6.0, color, true);
 
                 if !collisions.is_empty()
                     && list_ctx.hovering(change_x, row_y, CHANGE_W, BIND_ROW_H)
@@ -1229,12 +1279,12 @@ pub fn draw_controls(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         draw_bind_tooltip(p, &lines, m.x, m.y, ctx.vw);
     }
 
-    let footer_left = ((ctx.vw - 2.0 * FOOTER_BUTTON_W - FOOTER_GAP) / 2.0).floor();
+    let footer_left = centered_row_x(ctx.vw, 2.0 * FOOTER_W + FOOTER_GAP);
     let footer_y = LAYOUT.footer_y(ctx.vh);
     let reset_all = Button {
         x: footer_left,
         y: footer_y,
-        w: FOOTER_BUTTON_W,
+        w: FOOTER_W,
         h: WIDGET_HEIGHT,
         label: RESET_ALL_KEYS,
         active: state.keybinds.any_rebound(),
@@ -1243,9 +1293,9 @@ pub fn draw_controls(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         state.keybinds.reset_all();
     }
     let done = Button::new(
-        footer_left + FOOTER_BUTTON_W + FOOTER_GAP,
+        footer_left + FOOTER_W + FOOTER_GAP,
         footer_y,
-        FOOTER_BUTTON_W,
+        FOOTER_W,
         WIDGET_HEIGHT,
         DONE,
     );
@@ -1322,28 +1372,20 @@ pub fn draw_game(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     );
     let top = (list_y - state.game_scroll).floor();
 
-    let over_list = ctx.hovering(list_x, list_y, list_w, list_h);
-    let dragging_bar = state.game_scroll_drag.is_some();
-    let mut list_input = ctx.input.clone();
-    if dragging_bar || (!over_list && !widgets::slider_dragging()) {
-        list_input.mouse = None;
-    }
-    if dragging_bar || !over_list {
-        list_input.left_click = false;
-    }
-    let list_ctx = &ScreenCtx {
-        input: &list_input,
-        vw: ctx.vw,
-        vh: ctx.vh,
-    };
+    let list_input = masked_input(
+        ctx,
+        (list_x, list_y, list_w, list_h),
+        state.game_scroll_drag.is_some(),
+    );
+    let list_ctx = &ctx.with_input(&list_input);
     let screen_ctx = ctx;
     let ctx = list_ctx;
     let clip = p.push_clip(list_x, list_y, list_w, list_h);
 
     let cell = |column: f32, row_y: f32| (left + column * COLUMN_STEP, top + row_y + ROW_INSET);
 
-    let at = cell(0.0, Y_GAME_ROW_0);
-    if toggle(p, ctx, at, AUTO_JUMP, &mut state.options.auto_jump) {
+    let (x, y) = cell(0.0, Y_GAME_ROW_0);
+    if toggle(p, ctx, x, y, AUTO_JUMP, &mut state.options.auto_jump) {
         crate::gui::save_options(&state.options);
     }
 
@@ -1375,7 +1417,8 @@ pub fn draw_game(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         if toggle(
             p,
             ctx,
-            (x, y),
+            x,
+            y,
             SIGNED_CHAT,
             &mut state.options.allow_signed_chat,
         ) {
@@ -1405,22 +1448,23 @@ pub fn draw_game(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         true,
     );
 
-    let at = cell(0.0, Y_TOAST_ROW_0);
+    let (x, y) = cell(0.0, Y_TOAST_ROW_0);
     if toggle(
         p,
         ctx,
-        at,
+        x,
+        y,
         TOAST_ADVANCEMENT,
         &mut state.options.toast_advancement,
     ) {
         crate::gui::save_options(&state.options);
     }
-    let at = cell(1.0, Y_TOAST_ROW_0);
-    if toggle(p, ctx, at, TOAST_RECIPE, &mut state.options.toast_recipe) {
+    let (x, y) = cell(1.0, Y_TOAST_ROW_0);
+    if toggle(p, ctx, x, y, TOAST_RECIPE, &mut state.options.toast_recipe) {
         crate::gui::save_options(&state.options);
     }
-    let at = cell(0.0, Y_TOAST_ROW_1);
-    if toggle(p, ctx, at, TOAST_SYSTEM, &mut state.options.toast_system) {
+    let (x, y) = cell(0.0, Y_TOAST_ROW_1);
+    if toggle(p, ctx, x, y, TOAST_SYSTEM, &mut state.options.toast_system) {
         crate::gui::save_options(&state.options);
     }
 
@@ -1460,9 +1504,9 @@ pub fn draw_game(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
             .zip(crate::gui::MODEL_PART_KEYS.map(|(_, bit)| bit))
             .enumerate()
         {
-            let at = cell((i % 2) as f32, rows[i / 2]);
+            let (x, y) = cell((i % 2) as f32, rows[i / 2]);
             let mut on = state.options.skin_parts & (1 << bit) != 0;
-            if toggle(p, ctx, at, label, &mut on) {
+            if toggle(p, ctx, x, y, label, &mut on) {
                 state.options.skin_parts ^= 1 << bit;
                 crate::gui::save_options(&state.options);
             }
@@ -1527,7 +1571,7 @@ pub fn draw_audio(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         min: 0,
         max: 100,
         value: state.options.volumes[master.index()] as i32,
-        label: |v| volume_label(master.label(), v),
+        label: |v| percent_or_off(master.label(), v),
     };
     let new_master = master_slider.draw(p, ctx).clamp(0, 100) as u32;
     if new_master != state.options.volumes[master.index()] {
@@ -1560,7 +1604,7 @@ pub fn draw_audio(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
             min: 0,
             max: 100,
             value: state.options.volumes[category.index()] as i32,
-            label: |v| volume_label(category.label(), v),
+            label: |v| percent_or_off(category.label(), v),
         };
         let new_value = slider.draw(p, ctx).clamp(0, 100) as u32;
         if new_value != state.options.volumes[category.index()] {
@@ -1753,12 +1797,11 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "audio")]
     #[test]
-    fn a_zero_volume_reads_as_off() {
-        assert_eq!(volume_label("Master Volume", 0), "Master Volume: OFF");
-        assert_eq!(volume_label("Music", 55), "Music: 55%");
-        assert_eq!(volume_label("Voice", 100), "Voice: 100%");
+    fn a_zero_percentage_reads_as_off() {
+        assert_eq!(percent_or_off("Master Volume", 0), "Master Volume: OFF");
+        assert_eq!(percent_or_off("Music", 55), "Music: 55%");
+        assert_eq!(percent_or_off("Voice", 100), "Voice: 100%");
     }
 
     #[cfg(feature = "audio")]

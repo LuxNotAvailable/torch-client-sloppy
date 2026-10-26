@@ -1,10 +1,10 @@
 use super::{
     BeaconPick, GuiState, InvAction, Layout, Painter, ScreenCtx, SlotStack, Snapshot, button,
-    dim_background, slots, window_origin,
+    dim_background, filled, slots, window_origin,
 };
 use crate::gui::tooltip;
 use crate::play::mob_effects;
-use crate::text::{Span, Style};
+use crate::text::Span;
 use azalea_registry::Registry;
 use azalea_registry::builtin::MobEffect;
 use std::str::FromStr;
@@ -32,8 +32,14 @@ pub fn draw(
     dim_background(p, ctx.vw, ctx.vh);
     p.blit_sheet("container/beacon", 0.0, 0.0, 230.0, 219.0, left, top);
 
-    draw_centered_label(p, primary_label(), left + 62.0, top + 10.0);
-    draw_centered_label(p, secondary_label(), left + 169.0, top + 10.0);
+    p.text_centered(primary_label(), left + 62.0, top + 10.0, LABEL_RGB, false);
+    p.text_centered(
+        secondary_label(),
+        left + 169.0,
+        top + 10.0,
+        LABEL_RGB,
+        false,
+    );
 
     for (id, x) in [
         ("netherite_ingot", 20.0),
@@ -163,10 +169,7 @@ fn power_button(
         if is_upgrade {
             name.push_str(" II");
         }
-        let line = vec![Span {
-            text: name,
-            style: Style::default(),
-        }];
+        let line = vec![Span::new(name)];
         tooltip::draw_lines(p, &[line], m.x, m.y, ctx.vw, ctx.vh);
     }
 
@@ -220,29 +223,16 @@ fn to_effect_option(id: Option<i16>) -> Option<u32> {
     id.filter(|&id| id >= 0).map(|id| id as u32)
 }
 
-fn filled(snap: &Snapshot, i: usize) -> bool {
-    snap.menu_slots.get(i).is_some_and(|s| !s.is_empty())
-}
-
 fn row_width(count: usize) -> f32 {
     count as f32 * 22.0 + (count as f32 - 1.0) * 2.0
 }
 
-fn draw_centered_label(p: &mut Painter, text: &str, cx: f32, y: f32) {
-    let w = p.atlas.font.width_str(text);
-    p.text_plain(text, (cx - w / 2.0).floor(), y, LABEL_RGB, false);
-}
-
 fn primary_label() -> &'static str {
-    use std::sync::OnceLock;
-    static LABEL: OnceLock<String> = OnceLock::new();
-    LABEL.get_or_init(|| tooltip::translate("block.minecraft.beacon.primary", &[]))
+    tooltip::label!("block.minecraft.beacon.primary")
 }
 
 fn secondary_label() -> &'static str {
-    use std::sync::OnceLock;
-    static LABEL: OnceLock<String> = OnceLock::new();
-    LABEL.get_or_init(|| tooltip::translate("block.minecraft.beacon.secondary", &[]))
+    tooltip::label!("block.minecraft.beacon.secondary")
 }
 
 #[cfg(test)]

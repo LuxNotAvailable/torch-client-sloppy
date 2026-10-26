@@ -13,7 +13,9 @@ use bevy::prelude::*;
 
 use crate::entities::geom::{BakedModel, LayerDef, PartState, bake};
 use crate::entities::{Blend, CameraView, Carried, CarriedEntities, Carrier, EntityState};
-use crate::renderer::entity_material::{EntityMaterial, LightMode, Lit, diffuse_lights};
+use crate::renderer::entity_material::{
+    EntityMaterial, LightMode, Lit, SharedMaterials, diffuse_lights,
+};
 use feed::{BlockEntityData, BlockEntityInfo, BlockStateInfo};
 use sim::Anim;
 
@@ -371,7 +373,7 @@ impl Submit<'_> {
     }
 
     pub fn light_at(&self, pos: [i32; 3]) -> (u8, u8) {
-        crate::renderer::lightmap::resolved_levels(self.light_map.at(pos[0], pos[1], pos[2]))
+        crate::renderer::lightmap::levels_in(self.light_map, pos)
     }
 
     pub fn set_light(&mut self, levels: (u8, u8)) {
@@ -511,18 +513,10 @@ struct BeMaterialKey {
     depth_bias: i32,
 }
 
-struct SharedMaterial {
-    handle: Handle<EntityMaterial>,
-    epoch: u64,
-}
-
 #[derive(Resource, Default)]
 struct BeAssets {
     models: HashMap<(usize, u64), GpuModel>,
-    images: HashMap<String, Option<Handle<Image>>>,
-    tiled: HashMap<String, Option<Handle<Image>>>,
-    materials: HashMap<BeMaterialKey, SharedMaterial>,
-    epoch: u64,
+    materials: SharedMaterials<BeMaterialKey, MAX_SHARED_MATERIALS>,
 }
 
 impl BeAssets {
@@ -547,34 +541,6 @@ impl BeAssets {
         })
     }
 
-    fn image(
-        &mut self,
-        path: &str,
-        tiled: bool,
-        images: &mut Assets<Image>,
-    ) -> Option<Handle<Image>> {
-        let cache = if tiled {
-            &mut self.tiled
-        } else {
-            &mut self.images
-        };
-        if let Some(cached) = cache.get(path) {
-            return cached.clone();
-        }
-        let handle = crate::entities::load_entity_image(path, images);
-        match &handle {
-            Some(handle) if tiled => {
-                if let Some(image) = images.get_mut(handle) {
-                    image.sampler = crate::entities::repeating_nearest();
-                }
-            }
-            Some(_) => {}
-            None => warn!("block entity texture not found: textures/{path}.png"),
-        }
-        cache.insert(path.to_string(), handle.clone());
-        handle
-    }
-
     fn material(
         &mut self,
         spec: &BeSpec,
@@ -594,34 +560,16 @@ impl BeAssets {
             dirs: lit.dirs.map(|d| d.to_array().map(f32::to_bits)),
             depth_bias: spec.depth_bias,
         };
-        if let Some(shared) = self.materials.get_mut(&key) {
-            if shared.epoch != self.epoch
-                && let Some(material) = materials.get_mut(&shared.handle)
-            {
-                material.params.set(lit);
-                shared.epoch = self.epoch;
-            }
-            return shared.handle.clone();
-        }
-        if self.materials.len() >= MAX_SHARED_MATERIALS {
-            self.materials.clear();
-        }
-        let handle = materials.add(EntityMaterial::new(
-            texture,
-            spec.light_mode(),
-            alpha_mode,
-            cutoff,
-            lit,
-            spec.depth_bias,
-        ));
-        self.materials.insert(
-            key,
-            SharedMaterial {
-                handle: handle.clone(),
-                epoch: self.epoch,
-            },
-        );
-        handle
+        self.materials.get(key, lit, materials, || {
+            EntityMaterial::new(
+                texture,
+                spec.light_mode(),
+                alpha_mode,
+                cutoff,
+                lit,
+                spec.depth_bias,
+            )
+        })
     }
 }
 
@@ -700,7 +648,7 @@ fn sync_block_entities(
     mut assets: ResMut<BeAssets>,
     mut rigs: ResMut<BeRigs>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut images: ResMut<Assets<Image>>,
+    (mut images, mut entity_images): (ResMut<Assets<Image>>, ResMut<crate::entities::EntityImages>),
     mut materials: ResMut<Assets<EntityMaterial>>,
     gui: Option<Res<crate::gui::render::GuiAssets>>,
     camera_q: Query<&GlobalTransform, With<crate::renderer::systems::WorldCamera>>,
@@ -737,7 +685,7 @@ fn sync_block_entities(
 
     let light_map = crate::client::worldsync::light_map().read();
     lights.begin(&lightmap.current);
-    assets.epoch = assets.epoch.wrapping_add(1);
+    assets.materials.begin_frame();
 
     let dirs = diffuse_lights(crate::renderer::dimension::current());
 
@@ -837,7 +785,7 @@ fn sync_block_entities(
             {
                 if let BeGeom::Model(geom) = &spec.geom
                     && geom.animated
-                    && let Some(image) = assets.image(&(geom.texture)(&st), false, &mut images)
+                    && let Some(image) = entity_images.get(&(geom.texture)(&st), &mut images)
                 {
                     rig.layers[i].texture = Some(image);
                 }
@@ -859,6 +807,7 @@ fn sync_block_entities(
                 LayerSinks {
                     assets: &mut assets,
                     meshes: &mut meshes,
+                    entity_images: &mut entity_images,
                     images: &mut images,
                     materials: &mut materials,
                     gui: &*gui,
@@ -1009,9 +958,7 @@ fn block_entity_levels(
     info: &BlockEntityInfo,
     pos: [i32; 3],
 ) -> (u8, u8) {
-    let at = |pos: [i32; 3]| {
-        crate::renderer::lightmap::resolved_levels(light.at(pos[0], pos[1], pos[2]))
-    };
+    let at = |pos| crate::renderer::lightmap::levels_in(light, pos);
     let (mut block, mut sky) = at(pos);
     if let Some(partner) = info.partner {
         let (other_block, other_sky) = at(partner);
@@ -1024,6 +971,7 @@ fn block_entity_levels(
 struct LayerSinks<'a> {
     assets: &'a mut BeAssets,
     meshes: &'a mut Assets<Mesh>,
+    entity_images: &'a mut crate::entities::EntityImages,
     images: &'a mut Assets<Image>,
     materials: &'a mut Assets<EntityMaterial>,
     gui: &'a crate::gui::render::GuiAssets,
@@ -1043,6 +991,7 @@ fn spawn_layer(
     let LayerSinks {
         assets,
         meshes,
+        entity_images,
         images,
         materials,
         gui,
@@ -1050,7 +999,7 @@ fn spawn_layer(
     match &spec.geom {
         BeGeom::Model(geom) => {
             let texture = (geom.texture)(st);
-            let image = assets.image(&texture, false, images)?;
+            let image = entity_images.get(&texture, images)?;
             let (root, node) = spawn_roots(commands, spec, st);
             let material = assets.material(spec, Some(image.clone()), levels, lit, materials);
             let gpu = assets.model((idx, key), geom, st, meshes);
@@ -1105,7 +1054,7 @@ fn spawn_layer(
         BeGeom::Built(geom) => {
             let mesh = (geom.build)(st, &gui.atlas)?;
             let image = match &geom.texture {
-                BuiltTexture::Tiled(path) => assets.image(&(path)(st), true, images)?,
+                BuiltTexture::Tiled(path) => entity_images.tiled(&(path)(st), images)?,
                 BuiltTexture::Font => gui.image.clone(),
             };
             let (root, node) = spawn_roots(commands, spec, st);
@@ -1156,11 +1105,7 @@ fn spawn_roots(commands: &mut Commands, spec: &BeSpec, st: &BeState) -> (Entity,
 }
 
 fn blend_modes(spec: &BeSpec) -> (AlphaMode, f32) {
-    let (alpha_mode, cutoff) = match spec.blend {
-        Blend::Cutout => (AlphaMode::Mask(0.1), 0.1),
-        Blend::Translucent => (AlphaMode::Blend, 0.1),
-        Blend::Additive => (AlphaMode::Add, 0.0),
-    };
+    let (alpha_mode, cutoff) = spec.blend.alpha();
     let cutoff = match &spec.geom {
         BeGeom::Built(_) => 0.0,
         BeGeom::Model(_) => cutoff,

@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 pub(crate) fn read(path: impl AsRef<Path>) -> Option<Cow<'static, [u8]>> {
     let path = path.as_ref();
     #[cfg(resource_packs)]
-    if let Some(bytes) = pack_key(path).and_then(|key| archive::PACKS.get(&key)) {
-        return Some(Cow::Borrowed(bytes));
+    if let Some(bytes) = pack_key(path).and_then(|key| archive::pack_get(&key)) {
+        return Some(Cow::Owned(bytes));
     }
     read_base(path)
 }
@@ -47,9 +47,9 @@ pub(crate) fn read_stack(path: impl AsRef<Path>) -> Vec<Cow<'static, str>> {
     #[cfg(resource_packs)]
     if let Some(key) = pack_key(path) {
         out.extend(
-            archive::PACKS
-                .stack(&key)
-                .filter_map(|b| utf8(Cow::Borrowed(b))),
+            archive::pack_stack(&key)
+                .into_iter()
+                .filter_map(|b| utf8(Cow::Owned(b))),
         );
     }
     out
@@ -160,7 +160,7 @@ fn walk_base(dir: &Path) -> Vec<PathBuf> {
 
 #[cfg(resource_packs)]
 fn pack_key(path: &Path) -> Option<String> {
-    if !archive::PACKS.active() {
+    if !archive::packs_active() {
         return None;
     }
     key(path)
@@ -169,18 +169,15 @@ fn pack_key(path: &Path) -> Option<String> {
 #[cfg(resource_packs)]
 fn add_pack_files(dir: &Path, out: &mut Vec<PathBuf>, deep: bool) {
     let Some(prefix) = pack_key(dir) else { return };
-    let listed: std::collections::HashSet<PathBuf> = out.iter().cloned().collect();
-    let names: Vec<&'static str> = if deep {
-        archive::PACKS.descendants(&prefix).collect()
-    } else {
-        archive::PACKS.children(&prefix).collect()
-    };
-    out.extend(
-        names
-            .into_iter()
-            .map(|name| dir.join(name))
-            .filter(|p| !listed.contains(p)),
-    );
+    let mut listed: std::collections::HashSet<PathBuf> = out.iter().cloned().collect();
+    for path in archive::pack_files(&prefix, deep)
+        .into_iter()
+        .map(|name| dir.join(name))
+    {
+        if listed.insert(path.clone()) {
+            out.push(path);
+        }
+    }
 }
 
 fn archive_key(path: &Path) -> Option<String> {
@@ -202,6 +199,11 @@ fn key(path: &Path) -> Option<String> {
 pub(crate) mod archive {
     use std::collections::{BTreeSet, HashMap};
     use std::sync::OnceLock;
+    #[cfg(resource_packs)]
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
 
     pub(crate) type Layer = HashMap<String, &'static [u8]>;
 
@@ -212,17 +214,17 @@ pub(crate) mod archive {
             Stack(OnceLock::new())
         }
 
-        pub(crate) fn install(&self, layers: Vec<Layer>) -> Result<(), String> {
+        fn install(&self, layers: Vec<Layer>) -> Result<(), String> {
             self.0
                 .set(layers)
                 .map_err(|_| "assets already loaded".to_owned())
         }
 
-        pub(crate) fn active(&self) -> bool {
+        fn active(&self) -> bool {
             self.0.get().is_some_and(|l| !l.is_empty())
         }
 
-        pub(crate) fn get(&self, key: &str) -> Option<&'static [u8]> {
+        fn get(&self, key: &str) -> Option<&'static [u8]> {
             self.0
                 .get()?
                 .iter()
@@ -230,23 +232,11 @@ pub(crate) mod archive {
                 .copied()
         }
 
-        #[cfg_attr(not(resource_packs), allow(dead_code))]
-        pub(crate) fn stack(&self, key: &str) -> impl Iterator<Item = &'static [u8]> {
-            self.0
-                .get()
-                .into_iter()
-                .flat_map(|layers| layers.iter().rev())
-                .filter_map(move |layer| layer.get(key).copied())
-        }
-
-        pub(crate) fn children(&'static self, prefix: &str) -> impl Iterator<Item = &'static str> {
+        fn children(&'static self, prefix: &str) -> impl Iterator<Item = &'static str> {
             self.descendants(prefix).filter(|rest| !rest.contains('/'))
         }
 
-        pub(crate) fn descendants(
-            &'static self,
-            prefix: &str,
-        ) -> impl Iterator<Item = &'static str> {
+        fn descendants(&'static self, prefix: &str) -> impl Iterator<Item = &'static str> {
             let prefix = format!("{}/", prefix.trim_end_matches('/'));
             self.0
                 .get()
@@ -262,7 +252,105 @@ pub(crate) mod archive {
     static BASE: Stack = Stack::new();
 
     #[cfg(resource_packs)]
-    pub(crate) static PACKS: Stack = Stack::new();
+    pub(crate) struct OwnedLayer {
+        pub(crate) bytes: Box<[u8]>,
+        pub(crate) files: HashMap<String, std::ops::Range<usize>>,
+    }
+
+    #[cfg(resource_packs)]
+    impl OwnedLayer {
+        pub(crate) fn get(&self, key: &str) -> Option<&[u8]> {
+            self.files.get(key).map(|range| &self.bytes[range.clone()])
+        }
+    }
+
+    #[cfg(resource_packs)]
+    struct Mounted {
+        server: Vec<Arc<OwnedLayer>>,
+        selected: Vec<Arc<OwnedLayer>>,
+    }
+
+    #[cfg(resource_packs)]
+    impl Mounted {
+        fn layers(&self) -> impl DoubleEndedIterator<Item = &OwnedLayer> {
+            self.server
+                .iter()
+                .chain(&self.selected)
+                .map(|layer| &**layer)
+        }
+    }
+
+    #[cfg(resource_packs)]
+    static MOUNTED: parking_lot::RwLock<Mounted> = parking_lot::RwLock::new(Mounted {
+        server: Vec::new(),
+        selected: Vec::new(),
+    });
+
+    #[cfg(resource_packs)]
+    static ANY: AtomicBool = AtomicBool::new(false);
+
+    #[cfg(resource_packs)]
+    fn mount(change: impl FnOnce(&mut Mounted)) {
+        let mut mounted = MOUNTED.write();
+        change(&mut mounted);
+        ANY.store(
+            !mounted.server.is_empty() || !mounted.selected.is_empty(),
+            Ordering::Relaxed,
+        );
+    }
+
+    #[cfg(resource_packs)]
+    pub(crate) fn set_selected(layers: Vec<Arc<OwnedLayer>>) {
+        mount(|m| m.selected = layers);
+    }
+
+    #[cfg(resource_packs)]
+    pub(crate) fn set_server(layers: Vec<Arc<OwnedLayer>>) {
+        mount(|m| m.server = layers);
+    }
+
+    #[cfg(resource_packs)]
+    pub(crate) fn selected() -> Vec<Arc<OwnedLayer>> {
+        MOUNTED.read().selected.clone()
+    }
+
+    #[cfg(resource_packs)]
+    pub(crate) fn packs_active() -> bool {
+        ANY.load(Ordering::Relaxed)
+    }
+
+    #[cfg(resource_packs)]
+    pub(crate) fn pack_get(key: &str) -> Option<Vec<u8>> {
+        MOUNTED
+            .read()
+            .layers()
+            .find_map(|layer| layer.get(key))
+            .map(<[u8]>::to_vec)
+    }
+
+    #[cfg(resource_packs)]
+    pub(crate) fn pack_stack(key: &str) -> Vec<Vec<u8>> {
+        MOUNTED
+            .read()
+            .layers()
+            .rev()
+            .filter_map(|layer| layer.get(key))
+            .map(<[u8]>::to_vec)
+            .collect()
+    }
+
+    #[cfg(resource_packs)]
+    pub(crate) fn pack_files(prefix: &str, deep: bool) -> Vec<String> {
+        let prefix = format!("{}/", prefix.trim_end_matches('/'));
+        MOUNTED
+            .read()
+            .layers()
+            .flat_map(|layer| layer.files.keys())
+            .filter_map(|key| key.strip_prefix(&prefix))
+            .filter(|rest| deep || !rest.contains('/'))
+            .map(str::to_owned)
+            .collect()
+    }
 
     #[cfg_attr(not(packed_assets), allow(dead_code))]
     pub(crate) fn load(packed: Vec<u8>) -> Result<(), String> {
@@ -292,6 +380,32 @@ pub(crate) mod archive {
     pub(crate) fn descendants(prefix: &str) -> impl Iterator<Item = &'static str> {
         BASE.descendants(prefix)
     }
+
+    #[cfg(all(test, resource_packs))]
+    mod tests {
+        use super::*;
+
+        fn layer(body: &[u8]) -> Arc<OwnedLayer> {
+            let files = HashMap::from([("assets/minecraft/a".to_owned(), 0..body.len())]);
+            Arc::new(OwnedLayer {
+                bytes: body.into(),
+                files,
+            })
+        }
+
+        #[test]
+        fn server_packs_shadow_the_selected_ones_topmost_first() {
+            let mounted = Mounted {
+                server: vec![layer(b"s1"), layer(b"s2")],
+                selected: vec![layer(b"p1")],
+            };
+            let order: Vec<&[u8]> = mounted
+                .layers()
+                .filter_map(|l| l.get("assets/minecraft/a"))
+                .collect();
+            assert_eq!(order, [&b"s1"[..], b"s2", b"p1"]);
+        }
+    }
 }
 
 pub(crate) const ARCHIVE_MAGIC: &[u8; 8] = b"MCASSET2";
@@ -314,10 +428,8 @@ pub(crate) fn unpack(
         blobs.push(at..end);
         at = end;
     }
-    let count = table.len();
-
     let bytes: &'static [u8] = Box::leak(packed.into_boxed_slice());
-    let mut files = std::collections::HashMap::with_capacity(count);
+    let mut files = std::collections::HashMap::with_capacity(table.len());
     for ((path, _), blob) in table.into_iter().zip(blobs) {
         files.insert(path, &bytes[blob]);
     }

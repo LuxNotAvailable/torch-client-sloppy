@@ -1,9 +1,20 @@
 use std::f32::consts::PI;
 
+use bevy::asset::embedded_asset;
 use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
 use bevy::camera::{Camera, ClearColorConfig, PerspectiveProjection, Projection};
+use bevy::light::NotShadowCaster;
 use bevy::light::cluster::ClusterConfig;
+use bevy::mesh::MeshVertexBufferLayoutRef;
+use bevy::pbr::{
+    ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline,
+    MaterialPlugin,
+};
 use bevy::prelude::*;
+use bevy::render::render_resource::{
+    AsBindGroup, RenderPipelineDescriptor, SpecializedMeshPipelineError,
+};
+use bevy::shader::{ShaderDefVal, ShaderRef};
 
 use crate::items::mesh::Transform as ItemTransform;
 use crate::items::model::DisplayContext;
@@ -20,7 +31,60 @@ const HAND_CAMERA_ORDER: isize = 1;
 const HAND_NEAR: f32 = 0.05;
 const HAND_FAR: f32 = 100.0;
 
-const HAND_FOV_DEGREES: f32 = 70.0;
+pub(crate) const HAND_FOV_DEGREES: f32 = 70.0;
+
+pub const HAND_DEPTH_BAND: f32 = 1.0 / 64.0;
+
+pub fn band_floor_def() -> ShaderDefVal {
+    ShaderDefVal::UInt(
+        "HAND_BAND_FLOOR_BITS".into(),
+        (1.0 - HAND_DEPTH_BAND).to_bits(),
+    )
+}
+
+pub type HandMaterial = ExtendedMaterial<StandardMaterial, HandProjection>;
+
+#[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
+pub struct HandProjection {}
+
+impl MaterialExtension for HandProjection {
+    fn vertex_shader() -> ShaderRef {
+        super::embedded_shader("renderer/hand_projection.wgsl")
+    }
+
+    fn enable_prepass() -> bool {
+        false
+    }
+
+    fn enable_shadows() -> bool {
+        false
+    }
+
+    fn specialize(
+        _pipeline: &MaterialExtensionPipeline,
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        _key: MaterialExtensionKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        let bits = |name: &str, value: f32| ShaderDefVal::UInt(name.into(), value.to_bits());
+        descriptor.vertex.shader_defs.extend([
+            bits("HAND_NEAR_BITS", HAND_NEAR),
+            bits("HAND_FOV_BITS", HAND_FOV_DEGREES.to_radians()),
+            bits("HAND_BAND_BITS", HAND_DEPTH_BAND),
+        ]);
+        Ok(())
+    }
+}
+
+fn hand_material(base: StandardMaterial) -> HandMaterial {
+    ExtendedMaterial {
+        base: StandardMaterial {
+            fog_enabled: false,
+            ..base
+        },
+        extension: HandProjection {},
+    }
+}
 
 use crate::util::mth::ease::{in_out_expo, in_out_sine, out_back};
 use crate::util::mth::{DEG_TO_RAD, progress};
@@ -832,6 +896,9 @@ fn decoration_mesh(decorations: &[crate::session::MapDecoration]) -> Mesh {
 pub struct HandCamera;
 
 #[derive(Component)]
+pub struct HandRoot;
+
+#[derive(Component)]
 struct HandNode;
 
 type NodeQuery<'w, 's> =
@@ -924,12 +991,13 @@ struct HandAssets {
     slim_arm: [Handle<Mesh>; 2],
     #[cfg(feature = "skins")]
     slim_sleeve: [Handle<Mesh>; 2],
-    base: Handle<StandardMaterial>,
-    overlay: Handle<StandardMaterial>,
-    map_background: Handle<StandardMaterial>,
-    map_checkerboard: Handle<StandardMaterial>,
-    map_picture: [Handle<StandardMaterial>; 2],
-    decorations: Handle<StandardMaterial>,
+    base: Handle<HandMaterial>,
+    overlay: Handle<HandMaterial>,
+    map_background: Handle<HandMaterial>,
+    map_checkerboard: Handle<HandMaterial>,
+    map_picture: [Handle<HandMaterial>; 2],
+    decorations: Handle<HandMaterial>,
+    item: [Handle<HandMaterial>; 2],
 }
 
 pub struct HandPlugin;
@@ -937,6 +1005,9 @@ pub struct HandPlugin;
 impl Plugin for HandPlugin {
     fn build(&self, app: &mut App) {
         use crate::renderer::AppState;
+        embedded_asset!(app, "hand_projection.wgsl");
+        app.add_plugins(MaterialPlugin::<HandMaterial>::default());
+        crate::renderer::reload::touch_on_reload::<HandMaterial>(app);
         app.add_systems(
             Update,
             setup_hand.run_if(resource_added::<crate::renderer::systems::AssetsReady>),
@@ -945,12 +1016,6 @@ impl Plugin for HandPlugin {
             Update,
             sync_hands
                 .after(crate::renderer::frame_view::FrameViewSystems)
-                .run_if(in_state(AppState::InGame)),
-        )
-        .add_systems(
-            PostUpdate,
-            follow_world_camera
-                .before(TransformSystems::Propagate)
                 .run_if(in_state(AppState::InGame)),
         );
 
@@ -969,7 +1034,7 @@ fn bind_hand_arms(
     assets: Option<Res<HandAssets>>,
     rig: Option<ResMut<HandRig>>,
     #[cfg(feature = "skins")] mut skins: ResMut<super::skin::SkinTextures>,
-    #[cfg(feature = "skins")] mut materials: ResMut<Assets<StandardMaterial>>,
+    #[cfg(feature = "skins")] mut materials: ResMut<Assets<HandMaterial>>,
     #[cfg(feature = "skins")] mut images: ResMut<Assets<Image>>,
     mut meshes: Query<&mut Mesh3d>,
 ) {
@@ -1013,7 +1078,7 @@ fn bind_hand_arms(
         if let Some(texture) = texture {
             for handle in [&assets.base, &assets.overlay] {
                 if let Some(material) = materials.get_mut(handle) {
-                    material.base_color_texture = Some(texture.clone());
+                    material.base.base_color_texture = Some(texture.clone());
                 }
             }
         }
@@ -1048,33 +1113,14 @@ fn setup_hand(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<HandMaterial>>,
 ) {
     let Some(skin) = super::skin::load_default_skin(&mut images, "first-person hand") else {
         return;
     };
 
-    let base = materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        base_color_texture: Some(skin.clone()),
-        unlit: true,
-        alpha_mode: AlphaMode::Mask(0.1),
-        double_sided: true,
-        cull_mode: None,
-        ..default()
-    });
-    let overlay = materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        base_color_texture: Some(skin),
-        unlit: true,
-        alpha_mode: AlphaMode::Mask(0.1),
-        double_sided: true,
-        cull_mode: None,
-        ..default()
-    });
-
-    let mut map_material = |texture: Option<Handle<Image>>| {
-        materials.add(StandardMaterial {
+    let mut cutout = |texture: Option<Handle<Image>>| {
+        materials.add(hand_material(StandardMaterial {
             base_color: Color::WHITE,
             base_color_texture: texture,
             unlit: true,
@@ -1082,8 +1128,10 @@ fn setup_hand(
             double_sided: true,
             cull_mode: None,
             ..default()
-        })
+        }))
     };
+    let base = cutout(Some(skin.clone()));
+    let overlay = cutout(Some(skin));
     let paper = |images: &mut Assets<Image>, name: &str| {
         super::skin::load_texture(images, &format!("textures/map/{name}.png"), "held map")
     };
@@ -1108,42 +1156,51 @@ fn setup_hand(
                 OVERLAY_SCALE,
             ))
         }),
-        map_background: map_material(paper(&mut images, "map_background")),
-        map_checkerboard: map_material(paper(&mut images, "map_background_checkerboard")),
-        map_picture: std::array::from_fn(|_| map_material(None)),
-        decorations: map_material(Some(crate::renderer::maps::build_decoration_sheet(
+        map_background: cutout(paper(&mut images, "map_background")),
+        map_checkerboard: cutout(paper(&mut images, "map_background_checkerboard")),
+        map_picture: std::array::from_fn(|_| cutout(None)),
+        decorations: cutout(Some(crate::renderer::maps::build_decoration_sheet(
             &mut images,
         ))),
+        item: std::array::from_fn(|_| cutout(None)),
         base,
         overlay,
     };
     let paper_mesh = meshes.add(map_background_mesh());
     let picture_mesh = meshes.add(map_picture_mesh());
 
-    let camera = commands
+    let root = commands
         .spawn((
-            Camera3d::default(),
-            Msaa::Off,
-            ClusterConfig::None,
-            crate::renderer::systems::no_indirect_drawing(),
-            Camera {
-                order: HAND_CAMERA_ORDER,
-                clear_color: ClearColorConfig::None,
-                ..default()
-            },
-            Projection::Perspective(PerspectiveProjection {
-                fov: HAND_FOV_DEGREES.to_radians(),
-                near: HAND_NEAR,
-                far: HAND_FAR,
-                ..default()
-            }),
-            bevy::core_pipeline::tonemapping::Tonemapping::None,
-            Transform::default(),
-            RenderLayers::layer(HAND_LAYER),
-            HandCamera,
-            Name::new("hand_camera"),
+            Transform::IDENTITY,
+            Visibility::Inherited,
+            HandRoot,
+            Name::new("hand_root"),
         ))
         .id();
+
+    commands.spawn((
+        Camera3d::default(),
+        Msaa::Off,
+        ClusterConfig::None,
+        crate::renderer::systems::no_indirect_drawing(),
+        Camera {
+            order: HAND_CAMERA_ORDER,
+            clear_color: ClearColorConfig::None,
+            is_active: false,
+            ..default()
+        },
+        Projection::Perspective(PerspectiveProjection {
+            fov: HAND_FOV_DEGREES.to_radians(),
+            near: HAND_NEAR,
+            far: HAND_FAR,
+            ..default()
+        }),
+        bevy::core_pipeline::tonemapping::Tonemapping::None,
+        Transform::default(),
+        RenderLayers::layer(HAND_LAYER),
+        HandCamera,
+        Name::new("hand_camera"),
+    ));
 
     let hands = [Hand::Main, Hand::Off].map(|hand| {
         let name = match hand {
@@ -1158,14 +1215,16 @@ fn setup_hand(
                 Name::new(format!("{name}_pose")),
             ))
             .id();
+        let index = hand.index();
         let item = commands
             .spawn((
                 Mesh3d::default(),
-                MeshMaterial3d::<StandardMaterial>::default(),
+                MeshMaterial3d(assets.item[index].clone()),
                 Transform::default(),
                 Visibility::Inherited,
                 RenderLayers::layer(HAND_LAYER),
                 NoFrustumCulling,
+                NotShadowCaster,
                 HandNode,
                 HandItemNode,
                 Name::new(format!("{name}_item")),
@@ -1173,7 +1232,6 @@ fn setup_hand(
             .id();
         commands.entity(pose).add_child(item);
 
-        let index = hand.index();
         let side = hand.is_left(false) as usize;
         let arm = commands
             .spawn((
@@ -1183,6 +1241,7 @@ fn setup_hand(
                 Visibility::Hidden,
                 RenderLayers::layer(HAND_LAYER),
                 NoFrustumCulling,
+                NotShadowCaster,
                 HandNode,
                 Name::new(format!("{name}_arm")),
             ))
@@ -1195,6 +1254,7 @@ fn setup_hand(
                 Visibility::Inherited,
                 RenderLayers::layer(HAND_LAYER),
                 NoFrustumCulling,
+                NotShadowCaster,
                 Name::new(format!("{name}_sleeve")),
             ))
             .id();
@@ -1208,7 +1268,7 @@ fn setup_hand(
                 Name::new(format!("{name}_map")),
             ))
             .id();
-        let mut map_piece = |mesh: Handle<Mesh>, material: Handle<StandardMaterial>, part: &str| {
+        let mut map_piece = |mesh: Handle<Mesh>, material: Handle<HandMaterial>, part: &str| {
             let entity = commands
                 .spawn((
                     Mesh3d(mesh),
@@ -1217,6 +1277,7 @@ fn setup_hand(
                     Visibility::Inherited,
                     RenderLayers::layer(HAND_LAYER),
                     NoFrustumCulling,
+                    NotShadowCaster,
                     HandNode,
                     HandMapNode,
                     Name::new(format!("{name}_map_{part}")),
@@ -1241,7 +1302,7 @@ fn setup_hand(
             "decorations",
         );
         commands.entity(pose).add_child(map);
-        commands.entity(camera).add_children(&[pose, arm]);
+        commands.entity(root).add_children(&[pose, arm]);
 
         HandEntities {
             pose,
@@ -1259,39 +1320,12 @@ fn setup_hand(
     commands.insert_resource(assets);
 }
 
-fn follow_world_camera(
-    world: Query<&Transform, With<crate::renderer::systems::WorldCamera>>,
-    mut hand: Query<
-        (&mut Transform, &mut Projection),
-        (
-            With<HandCamera>,
-            Without<crate::renderer::systems::WorldCamera>,
-        ),
-    >,
-) {
-    let Ok(world_transform) = world.single() else {
-        return;
-    };
-    let Ok((mut transform, mut projection)) = hand.single_mut() else {
-        return;
-    };
-
-    transform.translation = world_transform.translation;
-    transform.rotation = world_transform.rotation;
-
-    if let Projection::Perspective(hand_perspective) = &mut *projection {
-        hand_perspective.fov = HAND_FOV_DEGREES.to_radians();
-        hand_perspective.near = HAND_NEAR;
-        hand_perspective.far = HAND_FAR;
-    }
-}
-
 fn light_hand(
     lightmap: &crate::renderer::systems::LightmapState,
     eye: [f32; 3],
     #[cfg(feature = "builtin_shaders")] daylight: Option<&crate::renderer::terrain::Daylight>,
     assets: &HandAssets,
-    materials: &mut Assets<StandardMaterial>,
+    materials: &mut Assets<HandMaterial>,
 ) {
     let cell = crate::renderer::lightmap::entity_light(&lightmap.current, eye, false);
 
@@ -1322,11 +1356,11 @@ fn light_hand(
         &assets.map_picture[1],
         &assets.decorations,
     ] {
-        if materials.get(handle).map(|m| m.base_color) == Some(want) {
+        if materials.get(handle).map(|m| m.base.base_color) == Some(want) {
             continue;
         }
         if let Some(material) = materials.get_mut(handle) {
-            material.base_color = want;
+            material.base.base_color = want;
         }
     }
 }
@@ -1345,13 +1379,13 @@ fn sync_hands(
     map_textures: Res<crate::renderer::maps::MapTextures>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut hand_materials: ResMut<Assets<HandMaterial>>,
     lightmap: Res<crate::renderer::systems::LightmapState>,
     #[cfg(feature = "builtin_shaders")] daylight: Option<Res<crate::renderer::terrain::Daylight>>,
     mut nodes: NodeQuery,
-    mut item_nodes: Query<(&mut Mesh3d, &mut MeshMaterial3d<StandardMaterial>), With<HandItemNode>>,
+    mut item_nodes: Query<&mut Mesh3d, With<HandItemNode>>,
     mut map_nodes: Query<
-        (&mut Mesh3d, &mut MeshMaterial3d<StandardMaterial>),
+        (&mut Mesh3d, &mut MeshMaterial3d<HandMaterial>),
         (With<HandMapNode>, Without<HandItemNode>),
     >,
 ) {
@@ -1369,11 +1403,7 @@ fn sync_hands(
     let live_pitch = -frame_view.camera_pitch;
     let live_yaw = wrap_degrees(-frame_view.camera_yaw - 180.0);
     let feet = frame_view.player_pos;
-    let eye = [
-        feet[0],
-        feet[1] + crate::renderer::systems::eye_height(false),
-        feet[2],
-    ];
+    let eye = [feet[0], feet[1] + frame_view.eye_height, feet[2]];
 
     if let Some(hand_assets) = hand_assets.as_deref() {
         #[cfg(feature = "builtin_shaders")]
@@ -1382,10 +1412,10 @@ fn sync_hands(
             eye,
             daylight.as_deref(),
             hand_assets,
-            &mut materials,
+            &mut hand_materials,
         );
         #[cfg(not(feature = "builtin_shaders"))]
-        light_hand(&lightmap, eye, hand_assets, &mut materials);
+        light_hand(&lightmap, eye, hand_assets, &mut hand_materials);
     }
 
     let scoping = sample.using_item
@@ -1493,7 +1523,7 @@ fn sync_hands(
                 &map_textures,
                 hand_assets.as_deref(),
                 &mut meshes,
-                &mut materials,
+                &mut hand_materials,
                 &mut nodes,
                 &mut map_nodes,
             );
@@ -1523,14 +1553,21 @@ fn sync_hands(
                     frame.using,
                     &mut meshes,
                     &mut images,
-                    &mut materials,
                 );
                 let display = gpu.map(|gpu| display_transform(gpu, hand, frame.main_arm_left));
                 if let Some(gpu) = gpu
-                    && let Ok((mut mesh, mut material)) = item_nodes.get_mut(state.nodes.item)
+                    && let Ok(mut mesh) = item_nodes.get_mut(state.nodes.item)
                 {
                     mesh.0 = gpu.mesh.clone();
-                    material.0 = gpu.material.clone();
+                    if let Some(assets) = hand_assets.as_deref() {
+                        let handle = &assets.item[index];
+                        let stale = hand_materials.get(handle).is_some_and(|m| {
+                            m.base.base_color_texture.as_ref() != Some(&gpu.texture)
+                        });
+                        if stale && let Some(material) = hand_materials.get_mut(handle) {
+                            material.base.base_color_texture = Some(gpu.texture.clone());
+                        }
+                    }
                 }
                 state.uploaded = Some(UploadedItem {
                     item: frame.item.clone(),
@@ -1562,10 +1599,10 @@ fn bind_map(
     map_textures: &crate::renderer::maps::MapTextures,
     assets: Option<&HandAssets>,
     meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
+    materials: &mut Assets<HandMaterial>,
     nodes: &mut NodeQuery,
     map_nodes: &mut Query<
-        (&mut Mesh3d, &mut MeshMaterial3d<StandardMaterial>),
+        (&mut Mesh3d, &mut MeshMaterial3d<HandMaterial>),
         (With<HandMapNode>, Without<HandItemNode>),
     >,
 ) {
@@ -1598,7 +1635,7 @@ fn bind_map(
     set_visible(nodes, picture, true);
     if state.map_bound.as_ref() != Some(&image) {
         if let Some(material) = materials.get_mut(&assets.map_picture[index]) {
-            material.base_color_texture = Some(image.clone());
+            material.base.base_color_texture = Some(image.clone());
         }
         state.map_bound = Some(image);
     }
@@ -2282,5 +2319,68 @@ mod tests {
         );
         assert!((max - min - 8.0).abs() < 1e-5, "{min}..{max}");
         assert!(((min + max) / 2.0 - (MAP_EDGE_PIXELS / 2.0 - 0.5)).abs() < 1e-5);
+    }
+
+    fn hand_clip(p: Vec3, aspect: f32) -> Vec4 {
+        let f = 1.0 / (HAND_FOV_DEGREES.to_radians() * 0.5).tan();
+        let w = -p.z;
+        Vec4::new(
+            p.x * f / aspect,
+            p.y * f,
+            w * (1.0 - HAND_DEPTH_BAND) + HAND_DEPTH_BAND * HAND_NEAR,
+            w,
+        )
+    }
+
+    fn kept(clip: Vec4) -> bool {
+        clip.z >= 0.0 && clip.z <= clip.w
+    }
+
+    #[test]
+    fn hand_depth_stays_in_the_band_and_keeps_its_order() {
+        let floor = 1.0 - HAND_DEPTH_BAND;
+        let near = hand_clip(Vec3::new(0.0, 0.0, -HAND_NEAR), 16.0 / 9.0);
+        assert!((near.z / near.w - 1.0).abs() < 1e-6, "{near}");
+
+        let mut last = f32::INFINITY;
+        let steps = 2000;
+        for i in 1..=steps {
+            let w = HAND_NEAR + (HAND_FAR - HAND_NEAR) * i as f32 / steps as f32;
+            let clip = hand_clip(Vec3::new(0.3, -0.4, -w), 16.0 / 9.0);
+            let depth = clip.z / clip.w;
+            assert!(kept(clip), "w {w}: {clip}");
+            assert!((floor..=1.0).contains(&depth), "w {w}: depth {depth}");
+            if w <= 2.0 {
+                assert!(depth < last, "w {w}: {depth} after {last}");
+            } else {
+                assert!(depth <= last + f32::EPSILON, "w {w}: {depth} after {last}");
+            }
+            last = depth;
+        }
+    }
+
+    #[test]
+    fn hand_geometry_inside_the_near_plane_is_clipped() {
+        for w in [0.049, 0.01, 0.0, -0.5] {
+            assert!(!kept(hand_clip(Vec3::new(0.0, 0.0, -w), 1.0)), "w {w}");
+        }
+    }
+
+    #[test]
+    fn hand_projection_uses_its_own_field_of_view() {
+        let half = (HAND_FOV_DEGREES * 0.5).to_radians();
+        let top = hand_clip(Vec3::new(0.0, half.tan(), -1.0), 2.0);
+        assert!((top.y / top.w - 1.0).abs() < 1e-5, "{top}");
+        let side = hand_clip(Vec3::new(2.0 * half.tan(), 0.0, -1.0), 2.0);
+        assert!((side.x / side.w - 1.0).abs() < 1e-5, "{side}");
+    }
+
+    #[test]
+    fn hand_band_sits_in_front_of_the_world() {
+        let world_near = PerspectiveProjection::default().near;
+        let floor = 1.0 - HAND_DEPTH_BAND;
+        let reach = world_near / floor - world_near;
+        assert!(reach < 0.002, "{reach}");
+        assert!(world_near / (world_near + 0.002) < floor);
     }
 }

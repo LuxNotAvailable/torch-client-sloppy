@@ -3,6 +3,7 @@ use bevy::render::view::ExtractedView;
 
 use super::builtins::{BUILTINS, Builtin, Value};
 use super::{BlockHead, MatrixSet};
+use crate::renderer::hand::HAND_FOV_DEGREES;
 use crate::renderer::packdraw::inputs::{Inputs, MAX_ARMOR, MAX_HUNGER};
 use crate::shaderpack::directives::Constants;
 use crate::shaderpack::expressions::Smooth;
@@ -14,8 +15,6 @@ pub(crate) const NEAR: f32 = 0.05;
 const FAR_PLANE_PER_BLOCK: f32 = 4.0;
 
 const DAY_TICKS: f64 = 24000.0;
-
-const HAND_FOV_DEGREES: f32 = 70.0;
 
 const CAMERA_WALK_RANGE: f64 = 30000.0;
 const CAMERA_TP_RANGE: f64 = 1000.0;

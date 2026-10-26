@@ -6,6 +6,7 @@ use crate::entities::models::animals::feline;
 use crate::entities::registry::Registry;
 use crate::entities::state::EntityState;
 use crate::entities::{RenderSpec, RootPose, default_root};
+use crate::util::mth;
 
 use super::dye;
 
@@ -59,17 +60,13 @@ fn root(st: &EntityState) -> RootPose {
     if lie > 0.0 {
         let mut offset = Vec3::new(0.4 * lie, 0.15 * lie, 0.1 * lie);
         if st.extras.lying_on_sleeping_player {
-            offset += Quat::from_rotation_z(rot_lerp(lie, 0.0, 90.0).to_radians())
+            offset += Quat::from_rotation_z(mth::lerp(lie, 0.0, 90.0).to_radians())
                 * Vec3::new(0.15 * lie, 0.0, 0.0);
         }
         pose.extra_offset += offset;
-        pose.extra_rotation *= Quat::from_rotation_z(rot_lerp(lie, 0.0, 90.0).to_radians());
+        pose.extra_rotation *= Quat::from_rotation_z(mth::lerp(lie, 0.0, 90.0).to_radians());
     }
     pose
-}
-
-fn rot_lerp(a: f32, from: f32, to: f32) -> f32 {
-    from + a * (to - from)
 }
 
 fn texture(st: &EntityState) -> TexturePath {

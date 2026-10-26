@@ -92,6 +92,8 @@ declare_menus! {
     },
     Crafter3x3 {
         contents: 9,
+        player: 36,
+        result: 1,
     },
     Anvil {
         first: 1,

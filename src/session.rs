@@ -11,7 +11,8 @@ pub const MOVE_SNEAK: u8 = 1 << 7;
 
 pub const MAX_AIR_SUPPLY: i32 = 300;
 
-pub const VANILLA_MAX_HEALTH: f32 = 20.0;
+pub const VANILLA_MAX_HEALTH: f32 =
+    crate::client::tracking::ranged(azalea_registry::builtin::Attribute::MaxHealth).default as f32;
 
 #[derive(Default)]
 pub struct SharedState {
@@ -27,6 +28,7 @@ pub struct SharedState {
     pub end_notice: Option<String>,
     pub disconnect_reason: Option<Vec<crate::text::Span>>,
     pub reload_chunks_requested: bool,
+    pub remesh_chunks_requested: bool,
     pub leave_bed_requested: bool,
     pub respawn_requested: bool,
     pub in_world: bool,
@@ -121,6 +123,7 @@ pub struct SessionState {
     pub flying: bool,
     pub auto_jump: bool,
     pub fov: FovState,
+    pub camera_eye: CameraEye,
     pub other_players: Vec<OtherPlayerInfo>,
     pub menu_slots: Vec<SlotStack>,
     pub hotbar: std::sync::Arc<[SlotStack]>,
@@ -135,6 +138,7 @@ pub struct SessionState {
     pub merchant_hint: i32,
     pub merchant_future_xp: u32,
     pub stonecutter_recipes: std::sync::Arc<[StonecutterRecipe]>,
+    pub recipes: crate::client::recipes::RecipeBookState,
     pub horse: Option<HorseMenu>,
     pub horse_published_state_id: u32,
     pub inv_actions: Vec<InvAction>,
@@ -157,6 +161,8 @@ pub struct SessionState {
     pub swimming: bool,
     pub sleeping: bool,
     pub bed_orientation: Option<crate::direction::Direction>,
+    pub camera_distance: Option<f32>,
+    pub local_body: PlayerBody,
     pub sleep_timer: u32,
     pub player_pos_prev: [f32; 3],
     pub game_time: u64,
@@ -182,8 +188,12 @@ pub struct SessionState {
     pub seen_advancements: Vec<Option<azalea_registry::identifier::Identifier>>,
     pub dialog_show: Option<std::sync::Arc<crate::play::dialog::Dialog>>,
     pub dialog_clear: bool,
+    pub win_game: bool,
+    pub code_of_conduct: Option<String>,
+    pub reconfiguring: bool,
     pub dialog_submits: Vec<crate::play::dialog::Submit>,
     pub server_links: Vec<ServerLink>,
+    pub server_packs: crate::client::server_packs::ServerPacks,
     pub targeted_block: Option<TargetedBlock>,
     pub targeted_entity: bool,
     pub crosshair_entity: Option<i32>,
@@ -315,6 +325,32 @@ impl Default for FovState {
 }
 
 impl FovState {
+    pub fn sample(&self, partial: f32) -> f32 {
+        self.prev + (self.cur - self.prev) * partial
+    }
+}
+
+pub struct CameraEye {
+    pub prev: f32,
+    pub cur: f32,
+}
+
+impl Default for CameraEye {
+    fn default() -> Self {
+        let eye = PlayerBody::STANDING.eye_height;
+        Self {
+            prev: eye,
+            cur: eye,
+        }
+    }
+}
+
+impl CameraEye {
+    pub fn tick(&mut self, target: f32) {
+        self.prev = self.cur;
+        self.cur += (target - self.cur) * 0.5;
+    }
+
     pub fn sample(&self, partial: f32) -> f32 {
         self.prev + (self.cur - self.prev) * partial
     }
@@ -589,6 +625,56 @@ impl Default for SkinPrefs {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct PlayerBody {
+    pub invisible: bool,
+    pub on_fire: bool,
+    pub scale: f32,
+    pub bounding_box: [f32; 2],
+    pub eye_height: f32,
+}
+
+impl PlayerBody {
+    pub const STANDING: PlayerBody = PlayerBody {
+        invisible: false,
+        on_fire: false,
+        scale: 1.0,
+        bounding_box: [0.6, 1.8],
+        eye_height: 1.62,
+    };
+
+    pub fn hidden_to(&self, viewer: Gamemode) -> bool {
+        invisible_to(self.invisible, viewer)
+    }
+}
+
+impl Default for PlayerBody {
+    fn default() -> Self {
+        Self::STANDING
+    }
+}
+
+pub fn player_dimensions(
+    pose: azalea::entity::Pose,
+    scale: f32,
+) -> azalea::entity::dimensions::EntityDimensions {
+    let d = azalea::entity::dimensions::calculate_dimensions(
+        azalea_registry::builtin::EntityKind::Player,
+        pose,
+    );
+    let s = if d.fixed { 1.0 } else { scale };
+    azalea::entity::dimensions::EntityDimensions {
+        width: d.width * s,
+        height: d.height * s,
+        eye_height: d.eye_height * s,
+        fixed: d.fixed,
+    }
+}
+
+pub fn invisible_to(invisible: bool, viewer: Gamemode) -> bool {
+    invisible && viewer != Gamemode::Spectator
+}
+
 #[derive(Clone, Default)]
 pub struct OtherPlayerInfo {
     pub id: i32,
@@ -597,6 +683,7 @@ pub struct OtherPlayerInfo {
     pub hidden_by_team: bool,
     pub health: Option<f32>,
     pub max_health: f32,
+    pub body: PlayerBody,
     pub gamemode: Option<Gamemode>,
     pub below_name: Vec<crate::text::Span>,
     pub discrete: bool,
@@ -613,6 +700,9 @@ pub enum ContainerKind {
     Crafting,
     Furnace(FurnaceKind),
     Hopper,
+    ShulkerBox,
+    Dispenser,
+    Crafter,
     Grindstone,
     Enchantment,
     Loom,
@@ -910,6 +1000,10 @@ pub enum InvAction {
         secondary: Option<u32>,
     },
     RenameItem(String),
+    SlotStateChanged {
+        slot: u8,
+        enabled: bool,
+    },
     Close,
 }
 

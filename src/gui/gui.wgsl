@@ -31,8 +31,13 @@ fn vertex(vertex: Vertex) -> VertexOutput {
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     if in.uv.x >= UNIHEX_UV_TEST {
         let uv = vec2(in.uv.x - UNIHEX_UV_BIAS, in.uv.y);
-        let a = textureSampleLevel(unihex_texture, unihex_sampler, uv, 0.0).r;
-        return vec4(in.color.rgb, in.color.a * a);
+        let a = in.color.a * textureSampleLevel(unihex_texture, unihex_sampler, uv, 0.0).r;
+        return vec4(in.color.rgb * a, a);
     }
-    return in.color * textureSampleLevel(atlas_texture, atlas_sampler, in.uv, 0.0);
+    let texel = textureSampleLevel(atlas_texture, atlas_sampler, in.uv, 0.0);
+    if in.color.a < 0.0 {
+        return vec4(texel.rgb * in.color.rgb, 0.0);
+    }
+    let color = in.color * texel;
+    return vec4(color.rgb * color.a, color.a);
 }

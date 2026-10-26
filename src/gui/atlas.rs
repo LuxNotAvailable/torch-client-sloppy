@@ -8,7 +8,11 @@ use crate::text::Font;
 
 pub const SERVER_ICON_PX: u32 = 64;
 
-pub const SERVER_ICON_SLOTS: usize = 32;
+pub const SERVER_ICON_SLOTS: usize = 20;
+
+pub const PACK_ICON_SLOTS: usize = 12;
+
+pub const ICON_SLOTS: usize = SERVER_ICON_SLOTS + PACK_ICON_SLOTS;
 
 const SERVER_ICON_COLUMNS: usize = 8;
 
@@ -74,7 +78,7 @@ const SERVER_ICON_GRID: ReservedGrid = ReservedGrid::new(
     SERVER_ICON_PX,
     SERVER_ICON_PX,
     SERVER_ICON_COLUMNS,
-    SERVER_ICON_SLOTS,
+    ICON_SLOTS,
 );
 const BANNER_ICON_GRID: ReservedGrid = ReservedGrid::new(
     BANNER_ICON_PX,
@@ -377,6 +381,21 @@ const SHEETS: &[Sheet] = &[
         h: 133,
     },
     Sheet {
+        key: "container/shulker_box",
+        w: 176,
+        h: 167,
+    },
+    Sheet {
+        key: "container/dispenser",
+        w: 176,
+        h: 166,
+    },
+    Sheet {
+        key: "container/crafter",
+        w: 176,
+        h: 166,
+    },
+    Sheet {
         key: "container/beacon",
         w: 230,
         h: 219,
@@ -390,6 +409,11 @@ const SHEETS: &[Sheet] = &[
         key: "book",
         w: 192,
         h: 192,
+    },
+    Sheet {
+        key: "recipe_book",
+        w: 148,
+        h: 167,
     },
     Sheet {
         key: "advancements/window",
@@ -519,6 +543,24 @@ const EXTRAS: &[Extra] = &[
         scaling: Scaling::Stretch,
     },
     Extra {
+        key: "nausea_overlay",
+        path: "misc/nausea.png",
+        alt_path: None,
+        size: (256, 256),
+        crop_h: None,
+        nearest: false,
+        scaling: Scaling::Stretch,
+    },
+    Extra {
+        key: "fire_overlay",
+        path: "block/fire_1.png",
+        alt_path: None,
+        size: (16, 512),
+        crop_h: Some(16),
+        nearest: true,
+        scaling: Scaling::Stretch,
+    },
+    Extra {
         key: "pack_icon",
         path: "gui/pack.png",
         alt_path: Some("../../../pack.png"),
@@ -575,7 +617,6 @@ fn bake_banner_layers(assets: &Path) -> Vec<Entry> {
 fn load_sga(assets: &Path) -> Option<Entry> {
     let path = assets.join("textures").join("font").join("ascii_sga.png");
     let image = crate::platform::assets::open_image(&path).ok()?.to_rgba8();
-    SGA_ADVANCE.set(sga_advances(&image)).ok();
     Some(Entry {
         kind: Kind::Sprite,
         key: SGA_SPRITE.to_string(),
@@ -588,13 +629,19 @@ pub const SGA_SPRITE: &str = "font/ascii_sga";
 
 pub const SGA_CELL: f32 = 8.0;
 
-static SGA_ADVANCE: std::sync::OnceLock<[u8; 128]> = std::sync::OnceLock::new();
+static SGA_ADVANCE: crate::util::reload::Reloadable<[u8; 128]> =
+    crate::util::reload::Reloadable::new(|| {
+        let path = crate::assets_root().join("textures/font/ascii_sga.png");
+        crate::platform::assets::open_image(&path)
+            .map_or([0; 128], |image| sga_advances(&image.to_rgba8()))
+    });
+
+pub(crate) fn reset_sga() {
+    SGA_ADVANCE.reset();
+}
 
 pub fn sga_advance(c: char) -> f32 {
-    let table = match SGA_ADVANCE.get() {
-        Some(t) => t,
-        None => return 0.0,
-    };
+    let table = SGA_ADVANCE.get();
     let i = c as usize;
     if i < table.len() {
         table[i] as f32
@@ -626,20 +673,58 @@ fn sga_advances(image: &RgbaImage) -> [u8; 128] {
     out
 }
 
+const DIRT_TILE: u32 = 256;
+
+fn dirt_tile(textures: &Path) -> Option<RgbaImage> {
+    let img = crate::platform::assets::open_image(&textures.join("block/dirt.png")).ok()?;
+    let cell = image::imageops::resize(
+        &img.to_rgba8(),
+        32,
+        32,
+        image::imageops::FilterType::Nearest,
+    );
+    let mut out = RgbaImage::new(DIRT_TILE, DIRT_TILE);
+    for cy in 0..DIRT_TILE / 32 {
+        for cx in 0..DIRT_TILE / 32 {
+            let mut h = cx.wrapping_mul(0x9E37_79B1) ^ cy.wrapping_mul(0x85EB_CA6B);
+            h ^= h >> 15;
+            h = h.wrapping_mul(0x2C1B_3C6D);
+            h ^= h >> 12;
+            let k = 0x40 as f32 / 255.0;
+            for y in 0..32 {
+                for x in 0..32 {
+                    let (sx, sy) = if h & 4 != 0 { (y, x) } else { (x, y) };
+                    let sx = if h & 1 != 0 { 31 - sx } else { sx };
+                    let sy = if h & 2 != 0 { 31 - sy } else { sy };
+                    let src = cell.get_pixel(sx, sy).0;
+                    let c = |v: u8| (v as f32 * k) as u8;
+                    out.put_pixel(
+                        cx * 32 + x,
+                        cy * 32 + y,
+                        image::Rgba([c(src[0]), c(src[1]), c(src[2]), 255]),
+                    );
+                }
+            }
+        }
+    }
+    Some(out)
+}
+
 fn load_extra(textures: &Path, extra: &Extra) -> Option<RgbaImage> {
     let path = textures.join(extra.path);
     let img = match crate::platform::assets::open_image(&path) {
         Ok(img) => img.to_rgba8(),
         Err(e) => {
             let Some(alt) = extra.alt_path.map(|alt| textures.join(alt)) else {
-                eprintln!("[GuiAtlas] missing {}: {e}", path.display());
+                crate::log_warn!("atlas", "gui: missing {}: {e}", path.display());
                 return None;
             };
             match crate::platform::assets::open_image(&alt) {
                 Ok(img) => img.to_rgba8(),
                 Err(e) => {
-                    eprintln!(
-                        "[GuiAtlas] missing {} and {}: {e}",
+                    crate::log_warn!(
+                        "atlas",
+                        "gui: missing {} and {}: {e}",
                         path.display(),
                         alt.display()
                     );
@@ -725,10 +810,22 @@ pub fn build_gui_atlas(assets: &Path) -> GuiAtlas {
         });
     }
 
+    if let Some(image) = dirt_tile(&textures) {
+        entries.push(Entry {
+            kind: Kind::Sprite,
+            key: "dirt_background".to_string(),
+            image,
+            scaling: Scaling::Tile {
+                w: DIRT_TILE,
+                h: DIRT_TILE,
+            },
+        });
+    }
+
     for skin in &crate::gui::tablist::DEFAULT_SKINS {
         let path = textures.join(format!("entity/player/{}.png", skin.path));
         let Ok(img) = crate::platform::assets::open_image(&path) else {
-            eprintln!("[GuiAtlas] missing skin {}", path.display());
+            crate::log_warn!("atlas", "gui: missing skin {}", path.display());
             continue;
         };
         let mut img = img.to_rgba8();
@@ -761,11 +858,11 @@ pub fn build_gui_atlas(assets: &Path) -> GuiAtlas {
                 image: img,
                 scaling: Scaling::Stretch,
             }),
-            Err(_) => eprintln!("[GuiAtlas] missing {}", hanging.display()),
+            Err(_) => crate::log_warn!("atlas", "gui: missing {}", hanging.display()),
         }
         let plain = textures.join(format!("entity/signs/{wood}.png"));
         let Ok(img) = crate::platform::assets::open_image(&plain) else {
-            eprintln!("[GuiAtlas] missing {}", plain.display());
+            crate::log_warn!("atlas", "gui: missing {}", plain.display());
             continue;
         };
         let mut img = img.to_rgba8();
@@ -795,7 +892,7 @@ pub fn build_gui_atlas(assets: &Path) -> GuiAtlas {
     for sheet in SHEETS {
         let path = gui_dir.join(format!("{}.png", sheet.key));
         let Ok(mut img) = crate::platform::assets::open_gui_image(&path) else {
-            eprintln!("[GuiAtlas] missing sheet {}", path.display());
+            crate::log_warn!("atlas", "gui: missing sheet {}", path.display());
             continue;
         };
         let (w, h) = (sheet.w.min(img.width()), sheet.h.min(img.height()));
@@ -955,8 +1052,9 @@ pub fn build_gui_atlas(assets: &Path) -> GuiAtlas {
         })
         .collect::<HashMap<_, _>>();
 
-    println!(
-        "[GuiAtlas] {}×{}, {} sprites, {} sheets, {} item icons, {:.0} ms",
+    crate::log_info!(
+        "atlas",
+        "gui {}×{}, {} sprites, {} sheets, {} item icons, {:.0} ms",
         WIDTH,
         height,
         sprites.len(),

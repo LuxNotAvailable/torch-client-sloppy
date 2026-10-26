@@ -13,13 +13,13 @@ use crate::gui::hud_layout::{ElementId, Hud, Transforms};
 use crate::gui::painter::Painter;
 use crate::gui::render::effective_gui_scale;
 use crate::gui::{GuiState, Screen, ScreenCtx};
-use crate::renderer::input::{CameraAngles, apply_look};
+use crate::renderer::input::{CameraAngles, FreecamState, apply_look};
 use crate::renderer::systems::{Shared, WorldCamera};
 use crate::session::{
     Gamemode, MOVE_BACK, MOVE_DESCEND, MOVE_FORWARD, MOVE_JUMP, MOVE_LEFT, MOVE_RIGHT, MOVE_SNEAK,
     MOVE_SPRINT,
 };
-use look::{LastTap, LookTrack, MobileConfig};
+use look::{LastTap, LookTrack, MobileConfig, ZoomTaps};
 use pad::{Cell, Control, Layout, Movement, PadState, Rect, Stick};
 use pointer::{Pointer, PointerId};
 
@@ -32,12 +32,17 @@ struct Owner {
 #[derive(Clone, Copy)]
 enum Claim {
     Pad(Cell),
-    Stick { at: Vec2 },
+    Stick {
+        at: Vec2,
+    },
     Use,
-    Hotbar(u8),
+    Hotbar,
     Chat,
+    #[cfg(feature = "module_panel")]
+    Modules,
     Look(LookTrack),
     LookOnly(LookTrack),
+    Zoom(LookTrack),
 }
 
 impl Claim {
@@ -46,10 +51,13 @@ impl Claim {
             Control::Pad(cell) => Claim::Pad(cell),
             Control::Stick => Claim::Stick { at: stick_at() },
             Control::Use => Claim::Use,
-            Control::Hotbar(slot) => Claim::Hotbar(slot),
+            Control::Hotbar(_) => Claim::Hotbar,
             Control::Chat => Claim::Chat,
+            #[cfg(feature = "module_panel")]
+            Control::Modules => Claim::Modules,
             Control::Look => Claim::Look(LookTrack::new(pos, now)),
             Control::LookOnly => Claim::LookOnly(LookTrack::new(pos, now)),
+            Control::Zoom => Claim::Zoom(LookTrack::new(pos, now)),
         }
     }
 }
@@ -65,6 +73,7 @@ pub struct MobileUi {
     stick_at: Option<Vec2>,
     last_tap: Option<LastTap>,
     hold_hints: Vec<(Vec2, f32)>,
+    zoom: ZoomTaps,
 }
 
 impl MobileUi {
@@ -79,6 +88,7 @@ impl MobileUi {
         self.stick_at = None;
         self.last_tap = None;
         self.hold_hints.clear();
+        crate::modules::zoom::set_touch(self.zoom.latched);
     }
 }
 
@@ -112,6 +122,7 @@ fn mobile_input(
     mut gui: ResMut<GuiState>,
     mut gui_input: ResMut<crate::gui::render::GuiInput>,
     mut angles: ResMut<CameraAngles>,
+    freecam: Res<FreecamState>,
     mut camera: Query<&mut Transform, With<WorldCamera>>,
     mut intent: ResMut<crate::renderer::intent::Intent>,
 ) {
@@ -130,6 +141,7 @@ fn mobile_input(
         gui.options.touch_movement,
     );
     let now = time.elapsed_secs();
+    let base_fov = gui.options.fov as f32;
 
     let ui = &mut gui.mobile;
     let cfg = ui.cfg;
@@ -153,7 +165,7 @@ fn mobile_input(
     }
 
     if gui.screen.is_open() {
-        let closed = gui.screen != Screen::Death
+        let closed = closable(gui.screen)
             && ui.pointers.iter().any(|p| {
                 p.pressed
                     && layout
@@ -197,6 +209,7 @@ fn mobile_input(
         stick_at,
         last_tap,
         hold_hints,
+        zoom,
         ..
     } = ui;
 
@@ -214,7 +227,7 @@ fn mobile_input(
 
     for p in pointers.iter() {
         if p.pressed {
-            let control = layout.hit_in(p.pos, &xf);
+            let control = layout.hit_in(p.pos, &xf, &gui.hud_state.layout.areas);
             match control {
                 Control::Pad(Cell::Inventory) => nav = Some(inventory_screen(&shared)),
                 Control::Pad(Cell::Pause) => nav = Some(Screen::Pause),
@@ -228,9 +241,15 @@ fn mobile_input(
                     gui.chat.open("");
                     nav = Some(Screen::Chat);
                 }
+                #[cfg(feature = "module_panel")]
+                Control::Modules => {
+                    gui.clickgui_parent = Screen::None;
+                    nav = Some(Screen::ClickGui);
+                }
+                Control::Zoom => zoom.press(now, &cfg),
                 Control::Stick | Control::Look | Control::LookOnly => {}
             }
-            let camera = matches!(control, Control::Look | Control::LookOnly);
+            let camera = matches!(control, Control::Look | Control::LookOnly | Control::Zoom);
             claimed |= !camera;
             owners.retain(|o| o.id != p.id);
             owners.push(Owner {
@@ -252,7 +271,10 @@ fn mobile_input(
             }
             Claim::Look(track) => (track, true),
             Claim::LookOnly(track) => (track, false),
-            Claim::Pad(_) | Claim::Use | Claim::Hotbar(_) | Claim::Chat => continue,
+            Claim::Zoom(track) => (track, false),
+            Claim::Pad(_) | Claim::Use | Claim::Hotbar | Claim::Chat => continue,
+            #[cfg(feature = "module_panel")]
+            Claim::Modules => continue,
         };
         let moved = track.advance(p.pos);
         look_delta += moved;
@@ -268,12 +290,16 @@ fn mobile_input(
                 });
             }
         }
+        if let (true, Claim::Zoom(track)) = (p.released, owner.claim) {
+            zoom.release(track.is_tap(now, &cfg), now);
+        }
     }
     owners.retain(|o| o.seen);
 
     let mut move_bits = 0u8;
     let mut attack_held = false;
     let mut use_held = false;
+    let mut zoom_held = false;
     *pressed_cells = 0;
     *use_pressed = false;
     *stick_at = None;
@@ -319,7 +345,10 @@ fn mobile_input(
                 hold_hints.push((track.last, track.progress(now, &cfg)));
             }
             Claim::LookOnly(track) => hold_hints.push((track.last, 0.0)),
-            Claim::Hotbar(_) | Claim::Chat => {}
+            Claim::Zoom(track) => zoom_held |= zoom.nth >= 2 && !track.is_tap(now, &cfg),
+            Claim::Hotbar | Claim::Chat => {}
+            #[cfg(feature = "module_panel")]
+            Claim::Modules => {}
         }
     }
     if pad.auto_walk {
@@ -327,14 +356,21 @@ fn mobile_input(
     }
     let (sneak, sprint) = (pad.sneak, pad.sprint);
 
+    crate::modules::zoom::set_touch(zoom_held || zoom.latched);
     if look_delta != Vec2::ZERO {
+        let z = crate::modules::zoom::settings();
+        let sens = if z.on && base_fov > 0.0 {
+            (z.fov / base_fov).min(1.0)
+        } else {
+            1.0
+        };
         apply_look(
-            look_delta.x * cfg.look_deg_per_unit,
-            look_delta.y * cfg.look_deg_per_unit,
+            look_delta.x * cfg.look_deg_per_unit * sens,
+            look_delta.y * cfg.look_deg_per_unit * sens,
             &mut angles,
             &mut camera,
             &shared,
-            false,
+            freecam.active,
             time.delta_secs(),
         );
     }
@@ -376,6 +412,17 @@ fn swallow_click(input: &mut crate::gui::render::GuiInput) {
     input.triple_click = false;
 }
 
+fn closable(screen: Screen) -> bool {
+    #[cfg(feature = "module_panel")]
+    if screen == Screen::ClickGui {
+        return false;
+    }
+    !matches!(
+        screen,
+        Screen::Death | Screen::ServerPackPrompt | Screen::CodeOfConduct | Screen::Reconfiguring
+    )
+}
+
 fn close_target(gui: &mut GuiState) -> Screen {
     match gui.screen {
         Screen::Options => gui.options_parent,
@@ -393,6 +440,14 @@ fn close_target(gui: &mut GuiState) -> Screen {
         #[cfg(feature = "shader_support")]
         Screen::ShaderOptions => Screen::ShaderPacks,
         Screen::Advancements => gui.advancements.parent,
+        Screen::WinGame => {
+            gui.win.skip();
+            Screen::WinGame
+        }
+        #[cfg(feature = "click_gui")]
+        Screen::ClickGui if gui.clickgui.escape() => Screen::ClickGui,
+        #[cfg(feature = "click_gui")]
+        Screen::ClickGui => gui.clickgui_parent,
         Screen::Chat => {
             gui.chat.close();
             Screen::None
@@ -436,12 +491,17 @@ pub fn draw(p: &mut Painter, ctx: &ScreenCtx, view: View, hud: &mut Hud) {
     let (vw, vh) = (ctx.vw, ctx.vh);
     let layout = Layout::new(vw, vh, ui.cfg.safe_inset, view.movement);
     if view.screen.is_open() && !view.editing {
-        if view.screen != Screen::Death {
+        if closable(view.screen) {
             hud.draw(p, vw, vh, ElementId::ChatButton, |p| {
                 button(p, layout.close_button, "X", false, false);
             });
             if view.screen == Screen::Chat && crate::platform::orientation::SUPPORTED {
                 hud.follow(p, vw, vh, ElementId::ChatButton, |p| {
+                    #[cfg(feature = "tutorial")]
+                    crate::gui::tutorial::mark_in(p, crate::gui::tutorial::Spot::Swap, {
+                        let r = layout.texting_button;
+                        crate::gui::hud_layout::Rect::new(r.x, r.y, r.w, r.h)
+                    });
                     button(
                         p,
                         layout.texting_button,
@@ -524,6 +584,10 @@ pub fn draw(p: &mut Painter, ctx: &ScreenCtx, view: View, hud: &mut Hud) {
     });
     hud.draw(p, vw, vh, ElementId::ChatButton, |p| {
         button(p, layout.close_button, "CHAT", false, false);
+    });
+    #[cfg(feature = "module_panel")]
+    hud.draw(p, vw, vh, ElementId::ModButton, |p| {
+        button(p, layout.texting_button, "MOD", false, false);
     });
 
     let radius = layout.cell * HINT_RADIUS;

@@ -6,6 +6,7 @@ pub fn toggle() {
 #[cfg(target_os = "android")]
 pub fn android_init() {
     android::keep_screen_on();
+    android::immersive();
 }
 
 pub fn capture_escape(take: bool) {
@@ -27,6 +28,7 @@ pub fn is_fullscreen() -> bool {
 #[cfg(target_os = "android")]
 mod android {
     use bevy::android::android_activity::WindowManagerFlags;
+    use jni::{JValue, jni_sig, jni_str};
 
     pub(super) fn keep_screen_on() {
         if let Some(app) = bevy::android::ANDROID_APP.get() {
@@ -34,6 +36,25 @@ mod android {
                 WindowManagerFlags::KEEP_SCREEN_ON,
                 WindowManagerFlags::empty(),
             );
+        }
+    }
+
+    pub(super) fn immersive() {
+        let result = crate::platform::java::with_activity(|env, activity| {
+            let class =
+                crate::platform::java::app_class(env, activity, "com.torchclient.game.Immersive")?;
+            env.call_static_method(
+                &class,
+                jni_str!("install"),
+                jni_sig!("(Landroid/app/Activity;)V"),
+                &[JValue::Object(activity)],
+            )?;
+            Ok(())
+        });
+        match result {
+            None => crate::log_warn!("window", "immersive mode: no AndroidApp yet"),
+            Some(Err(e)) => crate::log_warn!("window", "immersive mode failed: {e}"),
+            Some(Ok(())) => {}
         }
     }
 }

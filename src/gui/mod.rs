@@ -7,6 +7,8 @@ pub mod assetdownload;
 pub mod atlas;
 pub mod atlas_writes;
 pub mod banner_icons;
+#[cfg(feature = "online_mode")]
+pub mod bannotice;
 pub mod book;
 pub mod chat;
 pub mod clickevent;
@@ -14,6 +16,7 @@ pub mod clickevent;
 pub mod clickgui;
 pub mod command_block;
 pub mod command_history;
+pub mod configphase;
 pub mod confirmlink;
 pub mod container;
 pub mod creative;
@@ -43,11 +46,15 @@ pub mod pool;
 #[cfg(test)]
 pub mod preview;
 pub mod profile;
+pub mod recipe_book;
+pub mod recipe_book_ghost;
 pub mod render;
 #[cfg(resource_packs)]
 pub mod resourcepacks;
+pub mod screen_effects;
 pub mod screens;
 pub mod serverlist;
+pub mod serverpack;
 #[cfg(feature = "shader_support")]
 pub mod shaderpacks;
 pub mod sign_edit;
@@ -60,7 +67,10 @@ pub mod tablist;
 pub mod title;
 pub mod toast;
 pub mod tooltip;
+#[cfg(feature = "tutorial")]
+pub mod tutorial;
 pub mod widgets;
+pub mod winscreen;
 
 use bevy::prelude::*;
 
@@ -86,6 +96,8 @@ pub enum Screen {
     AddAccount,
     #[cfg(feature = "online_mode")]
     MicrosoftLogin,
+    #[cfg(feature = "online_mode")]
+    BanNotice,
     Multiplayer,
     ManageServer,
     DirectConnect,
@@ -123,6 +135,10 @@ pub enum Screen {
     Sleep,
     Death,
     SignedChatPrompt,
+    ServerPackPrompt,
+    WinGame,
+    CodeOfConduct,
+    Reconfiguring,
 
     #[cfg(feature = "click_gui")]
     ClickGui,
@@ -164,7 +180,10 @@ impl Screen {
         }
         #[cfg(feature = "online_mode")]
         {
-            matches!(self, Screen::AddAccount | Screen::MicrosoftLogin)
+            matches!(
+                self,
+                Screen::AddAccount | Screen::MicrosoftLogin | Screen::BanNotice
+            )
         }
         #[cfg(not(feature = "online_mode"))]
         {
@@ -226,7 +245,10 @@ impl Screen {
             return true;
         }
         #[cfg(feature = "online_mode")]
-        if matches!(self, Screen::AddAccount | Screen::MicrosoftLogin) {
+        if matches!(
+            self,
+            Screen::AddAccount | Screen::MicrosoftLogin | Screen::BanNotice
+        ) {
             return true;
         }
         matches!(
@@ -243,17 +265,20 @@ impl Screen {
                 | Screen::Disconnected
                 | Screen::Death
                 | Screen::SignedChatPrompt
+                | Screen::ServerPackPrompt
                 | Screen::Dialog
                 | Screen::Advancements
+                | Screen::CodeOfConduct
+                | Screen::Reconfiguring
         )
     }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum TouchMovement {
-    #[default]
     Buttons,
     Joystick,
+    #[default]
     PadStick,
 }
 
@@ -304,6 +329,7 @@ pub struct GuiOptions {
     pub gui_scale: u32,
     pub fov: u32,
     pub fov_effects: u32,
+    pub screen_effects: u32,
     pub clouds: crate::renderer::clouds::CloudStatus,
     pub particles: crate::util::particles::ParticleStatus,
     pub render_distance: u32,
@@ -361,6 +387,8 @@ pub const GAMMA_MAX: u32 = 150;
 
 pub const FOV_EFFECTS_DEFAULT: u32 = 100;
 
+pub const SCREEN_EFFECTS_DEFAULT: u32 = 100;
+
 #[cfg(feature = "skins")]
 pub const MODEL_PART_KEYS: [(&str, u8); 7] = [
     ("modelPart_cape", 0),
@@ -376,6 +404,12 @@ impl Default for GuiOptions {
     fn default() -> Self {
         let stored = load_options();
         let value = |key: &str| stored.as_ref().and_then(|json| json.get(key).cloned());
+        let effect_scale = |key: &str, default: u32| {
+            value(key)
+                .and_then(|v| v.as_u64())
+                .map_or(default, |v| v as u32)
+                .min(default)
+        };
         GuiOptions {
             gui_scale: value("guiScale")
                 .and_then(|v| v.as_u64())
@@ -385,11 +419,8 @@ impl Default for GuiOptions {
                 .and_then(|v| v.as_u64())
                 .map(|v| v as u32)
                 .unwrap_or(crate::renderer::systems::VANILLA_FOV_DEGREES as u32),
-            fov_effects: value("fovEffectScale")
-                .and_then(|v| v.as_u64())
-                .map(|v| v as u32)
-                .unwrap_or(FOV_EFFECTS_DEFAULT)
-                .min(FOV_EFFECTS_DEFAULT),
+            fov_effects: effect_scale("fovEffectScale", FOV_EFFECTS_DEFAULT),
+            screen_effects: effect_scale("screenEffectScale", SCREEN_EFFECTS_DEFAULT),
             clouds: value("renderClouds")
                 .and_then(|v| v.as_str().and_then(CloudStatus::from_serialized_name))
                 .unwrap_or(if cfg!(feature = "mobile_ui") {
@@ -507,6 +538,7 @@ pub fn save_options(options: &GuiOptions) {
         "guiScale": options.gui_scale,
         "fov": options.fov,
         "fovEffectScale": options.fov_effects,
+        "screenEffectScale": options.screen_effects,
         "renderClouds": options.clouds.serialized_name(),
         "particles": options.particles.serialized_name(),
         "renderDistance": options.render_distance,
@@ -565,15 +597,22 @@ pub struct GuiState {
     pub tab_list_held: bool,
     pub tablist: tablist::TabListState,
     pub hearts: health::HeartAnim,
+    pub screen_effects: screen_effects::ScreenEffects,
     pub chunk_borders: bool,
     pub hide_gui: bool,
     pub slots: slots::SlotState,
     pub container: container::ContainerUi,
+    pub recipe_book: recipe_book::RecipeBookUi,
+    pub ghost: recipe_book_ghost::GhostSlots,
+    pub book_requests: Vec<crate::client::recipes::BookRequest>,
+    pub book_clock: Option<f32>,
     #[cfg(feature = "click_gui")]
     pub clickgui: clickgui::ClickGuiState,
     #[cfg(feature = "click_gui")]
     pub clickgui_parent: Screen,
     pub hud_state: hud_layout::HudState,
+    #[cfg(feature = "tutorial")]
+    pub tutorial: tutorial::Tutorial,
     pub options: GuiOptions,
     pub keybinds: keybinds::KeyBinds,
     pub controls_scroll: f32,
@@ -581,6 +620,8 @@ pub struct GuiState {
     pub nav: Option<Screen>,
     pub suppress_click: bool,
     pub death: death::DeathState,
+    pub win: winscreen::WinState,
+    pub config_phase: configphase::State,
     pub advancements: advancements::AdvancementsUi,
     pub quit: bool,
     pub disconnect: bool,
@@ -601,6 +642,7 @@ pub struct GuiState {
     #[cfg(explore_modrinth)]
     pub explore_packs: explore_packs::State,
     pub options_parent: Screen,
+    pub server_pack_parent: Screen,
     pub disconnect_reason: Option<Vec<crate::text::Span>>,
     pub connect: Option<String>,
     pub hud: hud::HudInfo,
@@ -693,6 +735,8 @@ pub struct Snapshot {
         reason = "published session state the sleep screen does not read yet"
     )]
     pub sleeping: bool,
+    pub recipe_book: Option<std::sync::Arc<crate::client::recipes::RecipeBook>>,
+    pub recipe_ghost: Option<crate::client::recipes::ResolvedDisplay>,
 }
 
 impl Snapshot {
@@ -757,6 +801,14 @@ pub struct ScreenCtx<'a> {
 impl ScreenCtx<'_> {
     pub fn mouse(&self) -> Option<Vec2> {
         self.input.mouse
+    }
+
+    pub fn with_input<'b>(&self, input: &'b GuiInput) -> ScreenCtx<'b> {
+        ScreenCtx {
+            input,
+            vw: self.vw,
+            vh: self.vh,
+        }
     }
 
     pub fn hovering(&self, x: f32, y: f32, w: f32, h: f32) -> bool {

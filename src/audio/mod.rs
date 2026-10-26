@@ -1,6 +1,6 @@
 #[cfg(any(target_arch = "wasm32", target_os = "android"))]
 compile_error!(
-    "the `audio` feature is desktop-only for now: the sounds are 332 MB in an \
+    "the `audio` feature is desktop-only for now: the sounds are 331 MiB in an \
      object store a browser cannot reach, and the mixer's backend is not built \
      for these targets. See the feature's comment in Cargo.toml."
 );

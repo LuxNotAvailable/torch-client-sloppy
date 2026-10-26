@@ -272,68 +272,13 @@ pub struct AnimInput {
     pub on_ground: bool,
 }
 
-const SWING_DURATION: i32 = 6;
-
-const MAX_HEAD_ROTATION: f32 = 50.0;
-
-const LERP_HEAD_STEPS: i32 = 3;
-
-const MAX_INTERPOLATION_DISTANCE_SQR: f64 = 4096.0;
-
-fn distance_sqr(a: [f64; 3], b: [f64; 3]) -> f64 {
-    let (dx, dy, dz) = (a[0] - b[0], a[1] - b[1], a[2] - b[2]);
-    dx * dx + dy * dy + dz * dz
-}
-
-fn unwind(old: &mut f32, new: f32) {
-    while new - *old < -180.0 {
-        *old -= 360.0;
-    }
-    while new - *old >= 180.0 {
-        *old += 360.0;
-    }
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct HumanoidAnim {
-    walk_pos: f32,
-    walk_speed: f32,
-    walk_speed_old: f32,
-
-    body_yaw: f32,
-    body_yaw_old: f32,
-    head_yaw: f32,
-    head_yaw_old: f32,
-    y_rot: f32,
-    y_rot_old: f32,
-    pitch: f32,
-    pitch_old: f32,
-
-    interp: Option<crate::util::interp::Interpolation>,
-    lerp_head_steps: i32,
-    lerp_y_head_rot: f32,
-    raw_pos: [f64; 3],
-    raw_y_rot: f32,
-    raw_pitch: f32,
-    raw_head_yaw: f32,
-
-    swing_time: i32,
-    swinging: bool,
-    swing_left: bool,
-    attack_anim: f32,
-    attack_anim_old: f32,
-
-    swim: f32,
-    swim_old: f32,
-
+    core: LivingCore,
+    swim: SwimAmount,
     ticks: u32,
-    death_time: u32,
-    hurt_time: u32,
     use_ticks: u32,
     use_ticks_old: u32,
-
-    pos: [f64; 3],
-    pos_old: [f64; 3],
 
     #[cfg(feature = "skins")]
     cloak: [f64; 3],
@@ -364,18 +309,15 @@ impl HumanoidAnim {
     pub fn tick(&mut self, input: AnimInput) {
         if !self.started {
             self.started = true;
-            self.interp = input
-                .interpolated
-                .then(crate::util::interp::Interpolation::new);
-            self.pos = input.pos;
-            self.y_rot = input.y_rot;
-            self.body_yaw = input.y_rot;
-            self.head_yaw = input.head_yaw;
-            self.pitch = input.pitch;
-            self.raw_pos = input.pos;
-            self.raw_y_rot = input.y_rot;
-            self.raw_pitch = input.pitch;
-            self.raw_head_yaw = input.head_yaw;
+            self.core.start(
+                input.pos,
+                input.y_rot,
+                input.pitch,
+                input.head_yaw,
+                input
+                    .interpolated
+                    .then(crate::util::interp::Interpolation::new),
+            );
         }
 
         #[cfg(feature = "skins")]
@@ -383,86 +325,39 @@ impl HumanoidAnim {
 
         let self_move = self.handle_movement_packets(&input);
 
-        self.pos_old = self.pos;
-        self.y_rot_old = self.y_rot;
-        self.head_yaw_old = self.head_yaw;
-        self.pitch_old = self.pitch;
-        self.body_yaw_old = self.body_yaw;
+        self.core.latch();
         self.flags = input;
         self.ticks = self.ticks.wrapping_add(1);
 
         if let Some((pos, y_rot, pitch)) = self_move {
-            self.pos = pos;
-            self.y_rot = y_rot;
-            self.pitch = pitch;
+            self.core.pos = pos;
+            self.core.y_rot = y_rot;
+            self.core.x_rot = pitch;
         }
 
-        if let Some(mut interp) = self.interp.take() {
-            if interp.has_active_interpolation() {
-                interp.interpolate(crate::util::interp::Target {
-                    pos: &mut self.pos,
-                    y_rot: &mut self.y_rot,
-                    x_rot: &mut self.pitch,
-                });
-            }
-            self.interp = Some(interp);
-        }
-        if self.lerp_head_steps > 0 {
-            self.head_yaw = rot_lerp(
-                1.0 / self.lerp_head_steps as f32,
-                self.head_yaw,
-                self.lerp_y_head_rot,
-            );
-            self.lerp_head_steps -= 1;
-        }
+        self.core.step_interpolation();
 
         let alive = self.flags.health > 0.0;
-        if alive {
-            self.death_time = 0;
-        } else if self.death_time < 20 {
-            self.death_time += 1;
-        }
-        if self.hurt_time > 0 {
-            self.hurt_time -= 1;
-        }
+        self.core.tick_counters(!alive);
+        self.swim.tick(self.flags.visually_swimming);
 
-        self.attack_anim_old = self.attack_anim;
-        if self.swinging {
-            self.swing_time += 1;
-            if self.swing_time >= SWING_DURATION {
-                self.swing_time = 0;
-                self.swinging = false;
-            }
-        } else {
-            self.swing_time = 0;
-        }
-        self.attack_anim = self.swing_time as f32 / SWING_DURATION as f32;
-
-        self.swim_old = self.swim;
-        self.swim = if self.flags.visually_swimming {
-            (self.swim + 0.09).min(1.0)
-        } else {
-            (self.swim - 0.09).max(0.0)
-        };
-
-        self.walk_speed_old = self.walk_speed;
         if self.flags.passenger || !alive {
-            self.walk_pos = 0.0;
-            self.walk_speed = 0.0;
-            self.walk_speed_old = 0.0;
+            self.core.walk.stop();
         } else {
-            let dx = (self.pos[0] - self.pos_old[0]) as f32;
-            let dz = (self.pos[2] - self.pos_old[2]) as f32;
-            let target = (dx.hypot(dz) * 4.0).min(1.0);
-            self.walk_speed += (target - self.walk_speed) * 0.4;
-            self.walk_pos += self.walk_speed;
+            let target = crate::entities::feed::walk_target(
+                azalea_registry::builtin::EntityKind::Player,
+                self.core.pos_old,
+                self.core.pos,
+            );
+            self.core.walk.update(target, 0.4, 1.0);
         }
+
+        let step: [f64; 3] = std::array::from_fn(|i| self.core.pos[i] - self.core.pos_old[i]);
 
         #[cfg(feature = "skins")]
         {
+            let (dx, dz) = (step[0] as f32, step[2] as f32);
             if !self.flags.interpolated {
-                let dx = (self.pos[0] - self.pos_old[0]) as f32;
-                let dz = (self.pos[2] - self.pos_old[2]) as f32;
                 self.walk_dist_old = self.walk_dist;
                 self.walk_dist += dx.hypot(dz) * 0.6;
             }
@@ -470,8 +365,6 @@ impl HumanoidAnim {
                 self.bob_old = self.bob;
                 self.bob = 0.0;
             } else {
-                let dx = (self.pos[0] - self.pos_old[0]) as f32;
-                let dz = (self.pos[2] - self.pos_old[2]) as f32;
                 let target = if self.flags.on_ground && alive && !self.flags.visually_swimming {
                     dx.hypot(dz).min(0.1)
                 } else {
@@ -492,11 +385,7 @@ impl HumanoidAnim {
             &mut self.elytra,
             self.flags.fall_flying,
             self.flags.crouching,
-            [
-                self.pos[0] - self.pos_old[0],
-                self.pos[1] - self.pos_old[1],
-                self.pos[2] - self.pos_old[2],
-            ],
+            step,
         );
 
         self.use_ticks_old = self.use_ticks;
@@ -506,116 +395,36 @@ impl HumanoidAnim {
             0
         };
 
-        self.turn_body();
-
-        unwind(&mut self.y_rot_old, self.y_rot);
-        unwind(&mut self.body_yaw_old, self.body_yaw);
-        unwind(&mut self.pitch_old, self.pitch);
-        unwind(&mut self.head_yaw_old, self.head_yaw);
+        self.core.turn_body();
     }
 
     fn handle_movement_packets(&mut self, input: &AnimInput) -> Option<([f64; 3], f32, f32)> {
-        let mut deferred = None;
-        if input.pos != self.raw_pos
-            || input.y_rot != self.raw_y_rot
-            || input.pitch != self.raw_pitch
-        {
-            self.raw_pos = input.pos;
-            self.raw_y_rot = input.y_rot;
-            self.raw_pitch = input.pitch;
-            let too_big = distance_sqr(self.pos, input.pos) > MAX_INTERPOLATION_DISTANCE_SQR;
-            match self.interp.take() {
-                Some(mut interp) if too_big => {
-                    self.pos = input.pos;
-                    self.y_rot = input.y_rot;
-                    self.pitch = input.pitch;
-                    self.pos_old = self.pos;
-                    self.y_rot_old = self.y_rot;
-                    self.pitch_old = self.pitch;
-                    interp.cancel();
-                    self.interp = Some(interp);
-                }
-                Some(mut interp) => {
-                    interp.interpolate_to(
-                        crate::util::interp::Target {
-                            pos: &mut self.pos,
-                            y_rot: &mut self.y_rot,
-                            x_rot: &mut self.pitch,
-                        },
-                        input.pos,
-                        input.y_rot,
-                        input.pitch,
-                    );
-                    self.interp = Some(interp);
-                }
-                None => deferred = Some((input.pos, input.y_rot, input.pitch)),
-            }
-        }
-
-        if input.head_yaw != self.raw_head_yaw {
-            self.raw_head_yaw = input.head_yaw;
-            if self.interp.is_some() {
-                self.lerp_y_head_rot = input.head_yaw;
-                self.lerp_head_steps = LERP_HEAD_STEPS;
-            } else {
-                self.head_yaw = input.head_yaw;
-            }
-        }
+        let deferred = self
+            .core
+            .handle_movement_packets(input.pos, input.y_rot, input.pitch);
+        let lerp = self.core.interp.is_some();
+        self.core.rotate_head(input.head_yaw, lerp);
         deferred
     }
 
     pub fn body_yaw_pair(&self) -> (f32, f32) {
-        (self.body_yaw_old, self.body_yaw)
-    }
-
-    fn turn_body(&mut self) {
-        let dx = self.pos[0] - self.pos_old[0];
-        let dz = self.pos[2] - self.pos_old[2];
-        let mut target = self.body_yaw;
-        if (dx * dx + dz * dz) as f32 > 0.002_500_000_2 {
-            let walk = (dz.atan2(dx) as f32).to_degrees() - 90.0;
-            let diff = (wrap_degrees(self.y_rot) - walk).abs();
-            target = if (95.0..265.0).contains(&diff) {
-                walk - 180.0
-            } else {
-                walk
-            };
-        }
-        if self.attack_anim > 0.0 {
-            target = self.y_rot;
-        }
-
-        self.body_yaw += wrap_degrees(target - self.body_yaw) * 0.3;
-        let head_diff = wrap_degrees(self.y_rot - self.body_yaw);
-        if head_diff.abs() > MAX_HEAD_ROTATION {
-            self.body_yaw += head_diff - head_diff.signum() * MAX_HEAD_ROTATION;
-        }
+        self.core.body_rot_pair()
     }
 
     pub fn swing(&mut self, left_arm: bool) {
-        if !self.swinging || self.swing_time >= SWING_DURATION / 2 || self.swing_time < 0 {
-            self.swing_time = -1;
-            self.swinging = true;
-            self.swing_left = left_arm;
-        }
+        self.core.swing(left_arm);
     }
 
     pub fn hurt(&mut self) {
-        self.hurt_time = 10;
+        self.core.hurt();
     }
 
     pub fn damage(&mut self) {
-        self.walk_speed = 1.5;
-        self.hurt();
+        self.core.damage();
     }
 
     pub fn position(&self, partial: f32) -> [f32; 3] {
-        let t = partial.clamp(0.0, 1.0) as f64;
-        [
-            (self.pos_old[0] + (self.pos[0] - self.pos_old[0]) * t) as f32,
-            (self.pos_old[1] + (self.pos[1] - self.pos_old[1]) * t) as f32,
-            (self.pos_old[2] + (self.pos[2] - self.pos_old[2]) * t) as f32,
-        ]
+        self.core.position(partial.clamp(0.0, 1.0))
     }
 
     #[cfg(feature = "skins")]
@@ -624,9 +433,9 @@ impl HumanoidAnim {
 
         self.cloak_old = self.cloak;
         for axis in 0..3 {
-            let delta = self.pos[axis] - self.cloak[axis];
+            let delta = self.core.pos[axis] - self.cloak[axis];
             if delta.abs() > TELEPORT {
-                self.cloak[axis] = self.pos[axis];
+                self.cloak[axis] = self.core.pos[axis];
                 self.cloak_old[axis] = self.cloak[axis];
             } else {
                 self.cloak[axis] += delta * 0.25;
@@ -636,13 +445,13 @@ impl HumanoidAnim {
 
     #[cfg(feature = "skins")]
     fn cape(&self, t: f32) -> [f32; 3] {
-        let td = t as f64;
-        let lerp = |old: f64, new: f64| old + (new - old) * td;
-        let dx = lerp(self.cloak_old[0], self.cloak[0]) - lerp(self.pos_old[0], self.pos[0]);
-        let dy = lerp(self.cloak_old[1], self.cloak[1]) - lerp(self.pos_old[1], self.pos[1]);
-        let dz = lerp(self.cloak_old[2], self.cloak[2]) - lerp(self.pos_old[2], self.pos[2]);
+        let lerp = |old: f64, new: f64| crate::util::mth::lerp_f64(t, old, new);
+        let c = &self.core;
+        let dx = lerp(self.cloak_old[0], self.cloak[0]) - lerp(c.pos_old[0], c.pos[0]);
+        let dy = lerp(self.cloak_old[1], self.cloak[1]) - lerp(c.pos_old[1], c.pos[1]);
+        let dz = lerp(self.cloak_old[2], self.cloak[2]) - lerp(c.pos_old[2], c.pos[2]);
 
-        let body_yaw = rot_lerp(t, self.body_yaw_old, self.body_yaw) * DEG_TO_RAD;
+        let body_yaw = rot_lerp(t, c.body_rot_old, c.body_rot) * DEG_TO_RAD;
         let (forward_x, forward_z) = (body_yaw.sin() as f64, -body_yaw.cos() as f64);
 
         let fly = self.fall_fly_ticks as f32 + t;
@@ -661,14 +470,15 @@ impl HumanoidAnim {
 
     pub fn sample(&self, partial: f32) -> AnimSample {
         let t = partial.clamp(0.0, 1.0);
-        let body_yaw = rot_lerp(t, self.body_yaw_old, self.body_yaw);
-        let head_yaw = rot_lerp(t, self.head_yaw_old, self.head_yaw);
+        let c = &self.core;
+        let body_yaw = rot_lerp(t, c.body_rot_old, c.body_rot);
+        let head_yaw = rot_lerp(t, c.head_rot_old, c.head_rot);
         let using_hand = self.flags.using_item.then_some(self.flags.using_offhand);
         let (main_pose, off_pose) = arm_poses(
             &self.flags.main_hand,
             &self.flags.off_hand,
             using_hand,
-            self.swinging,
+            c.swinging(),
         );
         let (right, left) = if self.flags.main_arm_left {
             (off_pose, main_pose)
@@ -676,22 +486,17 @@ impl HumanoidAnim {
             (main_pose, off_pose)
         };
         AnimSample {
-            walk_pos: self.walk_pos - self.walk_speed * (1.0 - t),
-            walk_speed: (self.walk_speed_old + (self.walk_speed - self.walk_speed_old) * t)
-                .min(1.0),
+            walk_pos: c.walk.position(t),
+            walk_speed: c.walk.speed(t),
             body_yaw,
             head_yaw: wrap_degrees(head_yaw - body_yaw),
-            pitch: self.pitch_old + (self.pitch - self.pitch_old) * t,
-            attack_time: self.attack_anim_old + (self.attack_anim - self.attack_anim_old) * t,
-            attack_left: self.swing_left,
-            swim_amount: self.swim_old + (self.swim - self.swim_old) * t,
+            pitch: crate::util::mth::lerp(t, c.x_rot_old, c.x_rot),
+            attack_time: c.attack_time(t),
+            attack_left: c.swing_left(),
+            swim_amount: self.swim.get(t),
             age_ticks: self.ticks as f32 + t,
-            death_time: if self.death_time > 0 {
-                self.death_time as f32 + t
-            } else {
-                0.0
-            },
-            has_red_overlay: self.hurt_time > 0 || self.death_time > 0,
+            death_time: c.death_time(t),
+            has_red_overlay: c.has_red_overlay(),
             #[cfg(feature = "skins")]
             cape: self.cape(t),
             elytra: std::array::from_fn(|i| {
@@ -721,12 +526,15 @@ impl HumanoidAnim {
 
 pub use crate::util::mth::{rot_lerp, wrap_degrees};
 
+use crate::entities::living::{LivingCore, SwimAmount};
+
 #[cfg(feature = "skins")]
 use crate::util::mth::DEG_TO_RAD;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::entities::living::MAX_HEAD_ROTATION;
 
     fn input(x: f64, z: f64) -> AnimInput {
         AnimInput {

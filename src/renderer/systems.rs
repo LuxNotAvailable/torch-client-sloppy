@@ -14,12 +14,12 @@ use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 
 use super::input::{
-    CameraAngles, FreecamState, THIRD_PERSON_DISTANCE, ThirdPersonState, apply_gui_nav,
-    bot_movement_input, flight_toggle_input, freecam_movement, handle_hotbar_keys,
+    CameraAngles, FreecamState, ThirdPersonState, apply_gui_nav, bot_movement_input,
+    flight_toggle_input, freecam_movement, fullscreen_key, handle_hotbar_keys,
     handle_hotbar_scroll, handle_keybinds, handle_mouse_input, handle_spectator_action_key,
     handle_spectator_fly_speed_scroll, mouse_look, reload_all_chunks, toggle_advanced_tooltips,
-    toggle_chunk_borders, toggle_freecam, toggle_screen, toggle_third_person, web_fullscreen,
-    web_pointer_lock, window_focus_cursor,
+    toggle_chunk_borders, toggle_freecam, toggle_screen, toggle_third_person, web_pointer_lock,
+    window_focus_cursor,
 };
 use super::overlays::{
     BlockOutline, BlockOutlineMarker, BreakOverlay, BreakOverlayMarker, ChunkBorderMarker,
@@ -54,10 +54,23 @@ pub struct ChunkMaterial(pub Handle<StandardMaterial>);
 )]
 pub struct WaterMaterial(pub Handle<StandardMaterial>);
 
-#[derive(Resource, Default)]
+#[derive(Resource)]
 pub struct LightmapState {
     flicker: f32,
+    flicker_tick: u64,
+    flicker_rng: crate::util::javarandom::JavaRandom,
     pub current: super::lightmap::State,
+}
+
+impl Default for LightmapState {
+    fn default() -> Self {
+        LightmapState {
+            flicker: 0.0,
+            flicker_tick: 0,
+            flicker_rng: crate::util::javarandom::JavaRandom::new(0),
+            current: Default::default(),
+        }
+    }
 }
 
 fn update_environment(
@@ -89,19 +102,20 @@ fn update_environment(
 
 fn update_lightmap(
     env: Res<super::environment::Environment>,
+    view: Res<FrameView>,
     mut pixels: ResMut<super::terrain::LightmapPixels>,
     mut state: ResMut<LightmapState>,
-    time: Res<Time>,
     gui: Res<crate::gui::GuiState>,
 ) {
     crate::prof_span!("render:update_lightmap");
-    let t = time.elapsed_secs();
-    let noise = [
-        (t * 12.9898).sin().abs(),
-        (t * 78.233).sin().abs(),
-        (t * 37.719).sin().abs(),
-    ];
-    state.flicker = super::lightmap::tick_flicker(state.flicker, noise);
+    let tick = view.game_time;
+    let behind = tick.wrapping_sub(state.flicker_tick).min(20);
+    for _ in 0..behind {
+        let rng = &mut state.flicker_rng;
+        let noise = [rng.next_f32(), rng.next_f32(), rng.next_f32()];
+        state.flicker = super::lightmap::tick_flicker(state.flicker, noise);
+    }
+    state.flicker_tick = tick;
 
     let gamma = gui.options.gamma as f32 / 100.0;
     let lm =
@@ -289,9 +303,6 @@ pub struct BlockAtlasHandle(pub Handle<Image>);
 #[derive(Resource)]
 struct PendingAtlas(Image);
 
-#[derive(Resource)]
-pub struct BlockTileMap(pub HashMap<String, u32>);
-
 #[derive(Resource, Default)]
 struct ProfVisible {
     shown: bool,
@@ -462,6 +473,7 @@ fn setup(
         },
         Msaa::Off,
         Tonemapping::None,
+        RenderLayers::from_layers(&[0, super::hand::HAND_LAYER]),
         Projection::Perspective(PerspectiveProjection {
             fov: VANILLA_FOV_DEGREES.to_radians(),
             ..default()
@@ -547,10 +559,10 @@ fn poll_shared_state(
     if !freecam.active {
         let [ix, iy, iz] = view.player_lerp;
         if let Ok(mut transform) = camera.single_mut() {
-            let eye = Vec3::new(ix, iy + view.eye_height, iz);
+            let eye = Vec3::new(ix, iy + view.camera_eye_height, iz);
             if third_person.active {
                 let forward = angles.rotation() * Vec3::NEG_Z;
-                transform.translation = eye - forward * THIRD_PERSON_DISTANCE;
+                transform.translation = eye - forward * view.camera_distance;
             } else if view.sleeping {
                 let mc_yaw = match view.bed_orientation {
                     Some(dir) => dir.to_y_rot() - 180.0,
@@ -745,11 +757,12 @@ pub fn scene_camera(
 fn skip_redundant_blits(
     primary_window: Query<Entity, With<PrimaryWindow>>,
     mut cameras: Query<(&mut Camera, &bevy::camera::RenderTarget)>,
+    mut last: Local<HashMap<bevy::camera::NormalizedRenderTarget, isize>>,
 ) {
-    use bevy::camera::{CameraOutputMode, NormalizedRenderTarget};
+    use bevy::camera::CameraOutputMode;
 
     let primary = primary_window.single().ok();
-    let mut last: HashMap<NormalizedRenderTarget, isize> = HashMap::new();
+    last.clear();
     for (camera, target) in cameras.iter() {
         if !camera.is_active {
             continue;
@@ -781,33 +794,22 @@ fn skip_redundant_blits(
 
 fn no_cutout() -> bool {
     static OFF: OnceLock<bool> = OnceLock::new();
-    *OFF.get_or_init(|| {
-        matches!(
-            std::env::var("MC_NO_CUTOUT").as_deref(),
-            Ok("1") | Ok("true")
-        )
-    })
+    *OFF.get_or_init(|| crate::platform::env::flag("MC_NO_CUTOUT"))
 }
 
 pub fn eye_height(crouching: bool) -> f32 {
-    if crouching {
-        EYE_HEIGHT_CROUCHING
+    let pose = if crouching {
+        azalea::entity::Pose::Crouching
     } else {
-        EYE_HEIGHT
-    }
+        azalea::entity::Pose::Standing
+    };
+    crate::session::player_dimensions(pose, 1.0).eye_height
 }
 
-const EYE_HEIGHT: f32 = 1.62;
-const EYE_HEIGHT_CROUCHING: f32 = 1.27;
-pub const SLEEPING_EYE_HEIGHT: f32 = 0.2;
 const SLEEPING_CAMERA_NUDGE: f32 = 0.3;
 
 pub fn session_eye_height(session: &crate::session::SessionState) -> f32 {
-    if session.sleeping {
-        SLEEPING_EYE_HEIGHT
-    } else {
-        eye_height(session.crouching)
-    }
+    session.local_body.eye_height
 }
 
 const NAME_TAG_SCALE: f32 = 0.025;
@@ -901,6 +903,7 @@ impl TagProjector {
 
 fn collect_player_tags(
     players: &[crate::session::OtherPlayerInfo],
+    viewer: crate::session::Gamemode,
     partial: f32,
     projector: &TagProjector,
     tags: &mut Vec<crate::gui::hud::NameTag>,
@@ -922,11 +925,14 @@ fn collect_player_tags(
         if info.hidden_by_team && !on {
             continue;
         }
+        if info.body.hidden_to(viewer) && !on {
+            continue;
+        }
         if info.name_tag.is_empty() {
             continue;
         }
         let feet = info.anim.position(partial);
-        let height = if info.discrete { 1.5 } else { 1.8 };
+        let height = info.body.bounding_box[1];
         let range = match (on, info.discrete) {
             (true, _) => f32::INFINITY,
             (false, true) => NAME_TAG_RANGE_DISCRETE,
@@ -954,6 +960,7 @@ fn collect_player_tags(
 fn collect_nametags(
     entities: &[crate::entities::feed::EntityAnim],
     crosshair_entity: Option<i32>,
+    viewer: crate::session::Gamemode,
     partial: f32,
     projector: &TagProjector,
     tags: &mut Vec<crate::gui::hud::NameTag>,
@@ -966,7 +973,9 @@ fn collect_nametags(
         if !extras.name_visible && crosshair_entity != Some(anim.id) {
             continue;
         }
-        if anim.is_invisible() && anim.kind != azalea_registry::builtin::EntityKind::ArmorStand {
+        if crate::session::invisible_to(anim.is_invisible(), viewer)
+            && anim.kind != azalea_registry::builtin::EntityKind::ArmorStand
+        {
             continue;
         }
         let pos = anim.position(partial);
@@ -1022,6 +1031,7 @@ fn collect_hud_info(
         if let Some(projector) = &projector {
             collect_player_tags(
                 &s.session.other_players,
+                s.session.gamemode,
                 view.partial,
                 projector,
                 &mut nametags,
@@ -1047,6 +1057,7 @@ fn collect_hud_info(
         collect_nametags(
             &view.entities,
             view.crosshair_entity,
+            view.gamemode,
             view.partial,
             projector,
             &mut nametags,
@@ -1391,9 +1402,23 @@ fn world_cursor() -> (CursorGrabMode, bool) {
     }
 }
 
-pub(super) fn reset_menu_state(state: &mut crate::gui::GuiState) {
+pub(super) fn reset_menu_state(state: &mut crate::gui::GuiState, shared: &Shared) {
+    if state.screen == crate::gui::Screen::Creative
+        && let Some(cursor) = state.slots.take_cursor()
+    {
+        let mut s = shared.0.lock().unwrap();
+        let session = &mut s.session;
+        crate::gui::slots::stow_creative_cursor(
+            cursor,
+            &session.menu_slots,
+            &mut session.inv_actions,
+        );
+    }
     state.slots.reset_for_screen_change();
     state.container.reset();
+    state.recipe_book.reset();
+    state.ghost.clear();
+    state.book_clock = None;
 }
 
 pub(super) fn enter_screen(
@@ -1406,7 +1431,7 @@ pub(super) fn enter_screen(
     if next != state.screen {
         crate::platform::keyboard::hide();
     }
-    reset_menu_state(state);
+    reset_menu_state(state, shared);
     if next != state.screen {
         crate::gui::focus::clear();
     }
@@ -1610,26 +1635,28 @@ fn report_render_spans(
     }
     *last = Some(now);
 
-    let mut spans: Vec<(String, f64)> = diagnostics
-        .iter()
-        .filter_map(|diagnostic| {
-            let path = diagnostic.path().as_str();
-            let node = path.strip_prefix("render/")?.strip_suffix("/elapsed_cpu")?;
-            Some((node.to_owned(), diagnostic.smoothed()?))
-        })
-        .collect();
-    if spans.is_empty() {
-        return;
+    for (suffix, label) in [("/elapsed_cpu", "cpu"), ("/elapsed_gpu", "gpu")] {
+        let mut spans: Vec<(String, f64)> = diagnostics
+            .iter()
+            .filter_map(|diagnostic| {
+                let path = diagnostic.path().as_str();
+                let node = path.strip_prefix("render/")?.strip_suffix(suffix)?;
+                Some((node.to_owned(), diagnostic.smoothed()?))
+            })
+            .collect();
+        if spans.is_empty() {
+            continue;
+        }
+        let total: f64 = spans.iter().map(|(_, ms)| ms).sum();
+        spans.sort_by(|a, b| b.1.total_cmp(&a.1));
+        spans.truncate(8);
+        let line = spans
+            .iter()
+            .map(|(node, ms)| format!("{node} {ms:.3}"))
+            .collect::<Vec<_>>()
+            .join("  ");
+        crate::log_info!("render", "graph {label} {total:.2} ms total: {line}");
     }
-    let total: f64 = spans.iter().map(|(_, ms)| ms).sum();
-    spans.sort_by(|a, b| b.1.total_cmp(&a.1));
-    spans.truncate(8);
-    let line = spans
-        .iter()
-        .map(|(node, ms)| format!("{node} {ms:.3}"))
-        .collect::<Vec<_>>()
-        .join("  ");
-    crate::log_info!("render", "graph cpu {total:.2} ms total: {line}");
 }
 
 #[cfg(feature = "budget")]
@@ -1650,6 +1677,16 @@ fn budget_render_begin() {
 #[cfg(feature = "budget")]
 fn budget_mark_upload() {
     crate::diag::budget::render_mark(crate::diag::budget::Phase::Upload);
+}
+
+#[cfg(feature = "budget")]
+fn budget_mark_views() {
+    crate::diag::budget::render_mark(crate::diag::budget::Phase::Views);
+}
+
+#[cfg(feature = "budget")]
+fn budget_mark_views_after() {
+    crate::diag::budget::render_mark(crate::diag::budget::Phase::Views);
 }
 
 #[cfg(feature = "budget")]
@@ -1745,7 +1782,7 @@ fn apply_fov(
     let Ok(mut projection) = camera.single_mut() else {
         return;
     };
-    if let Projection::Perspective(perspective) = &mut *projection {
+    if let Projection::Perspective(perspective) = &*projection {
         let modifier = view.fov_modifier;
 
         let zoom = crate::modules::zoom::settings();
@@ -1759,7 +1796,9 @@ fn apply_fov(
 
         let base_fov = state.options.fov as f32 + (target_fov - state.options.fov as f32) * ease.0;
         let fov = (base_fov * modifier).to_radians();
-        if perspective.fov != fov {
+        if perspective.fov != fov
+            && let Projection::Perspective(perspective) = &mut *projection
+        {
             perspective.fov = fov;
         }
     }
@@ -1894,12 +1933,45 @@ fn sync_vsync(
     }
     *last = Some(wanted);
     if let Ok(mut window) = windows.single_mut() {
-        window.present_mode = if wanted {
+        window.present_mode = present_override().unwrap_or(if wanted {
             bevy::window::PresentMode::AutoVsync
         } else {
             bevy::window::PresentMode::AutoNoVsync
-        };
+        });
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn present_override() -> Option<bevy::window::PresentMode> {
+    use bevy::window::PresentMode;
+    let mode = match std::env::var("MC_PRESENT").ok()?.as_str() {
+        "immediate" => PresentMode::Immediate,
+        "mailbox" => PresentMode::Mailbox,
+        "fifo" => PresentMode::Fifo,
+        "fifo_relaxed" => PresentMode::FifoRelaxed,
+        other => {
+            crate::log_info!(
+                "render",
+                "MC_PRESENT={other} is not a present mode; ignored"
+            );
+            return None;
+        }
+    };
+    crate::log_info!("render", "present mode forced to {mode:?} by MC_PRESENT");
+    Some(mode)
+}
+
+#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+const DESKTOP_FRAME_LATENCY: std::num::NonZeroU32 = std::num::NonZeroU32::new(3).unwrap();
+
+#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+fn frame_latency_override() -> Option<std::num::NonZeroU32> {
+    let latency = std::env::var("MC_FRAME_LATENCY").ok()?.parse().ok()?;
+    crate::log_info!(
+        "render",
+        "frame latency set to {latency} by MC_FRAME_LATENCY"
+    );
+    Some(latency)
 }
 
 fn auto_harness(
@@ -2014,15 +2086,26 @@ fn dump_flamegraph(
     }
 }
 
+fn instance_flags() -> bevy::render::settings::InstanceFlags {
+    use bevy::render::settings::InstanceFlags;
+    InstanceFlags::default()
+        .difference(InstanceFlags::VALIDATION_INDIRECT_CALL)
+        .with_env()
+}
+
 fn withheld_features() -> Option<bevy::render::settings::WgpuFeatures> {
-    #[cfg(target_os = "android")]
-    {
-        Some(bevy::render::settings::WgpuFeatures::BUFFER_BINDING_ARRAY)
-    }
-    #[cfg(not(target_os = "android"))]
-    {
-        None
-    }
+    use bevy::render::settings::WgpuFeatures;
+    let withheld = if cfg!(target_os = "android") {
+        WgpuFeatures::BUFFER_BINDING_ARRAY
+    } else {
+        WgpuFeatures::empty()
+    };
+    let withheld = if cfg!(feature = "budget") {
+        withheld | WgpuFeatures::PIPELINE_STATISTICS_QUERY
+    } else {
+        withheld
+    };
+    (!withheld.is_empty()).then_some(withheld)
 }
 
 fn constrained_limits() -> Option<bevy::render::settings::WgpuLimits> {
@@ -2100,7 +2183,6 @@ fn select_debug_page(
 pub fn run(
     shared: Arc<SharedMutex>,
     atlas: Image,
-    tile_map: HashMap<String, u32>,
     gui_atlas: std::sync::Arc<crate::gui::atlas::GuiAtlas>,
     startup: crate::gui::render::StartupState,
     have_assets: bool,
@@ -2116,6 +2198,10 @@ pub fn run(
                     present_mode: bevy::window::PresentMode::AutoNoVsync,
                     #[cfg(not(target_os = "android"))]
                     present_mode: bevy::window::PresentMode::AutoVsync,
+                    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+                    desired_maximum_frame_latency: Some(
+                        frame_latency_override().unwrap_or(DESKTOP_FRAME_LATENCY),
+                    ),
                     #[cfg(target_arch = "wasm32")]
                     canvas: Some("#canvas".into()),
                     #[cfg(target_arch = "wasm32")]
@@ -2134,6 +2220,7 @@ pub fn run(
                     bevy::render::settings::WgpuSettings {
                         disabled_features: withheld_features(),
                         constrained_limits: constrained_limits(),
+                        instance_flags: instance_flags(),
                         ..default()
                     },
                 ),
@@ -2170,9 +2257,9 @@ pub fn run(
     .add_plugins(crate::entities::EntityPlugin)
     .add_plugins(crate::util::particles::ParticlePlugin)
     .add_plugins(crate::renderer::world_text::WorldTextPlugin)
+    .add_plugins(crate::renderer::reload::ReloadPlugin)
     .insert_resource(Shared(shared))
     .insert_resource(PendingAtlas(atlas))
-    .insert_resource(BlockTileMap(tile_map))
     .insert_resource(ClearColor(SKY_COLOR))
     .init_resource::<ChunkIndex>()
     .init_resource::<CameraAngles>()
@@ -2260,7 +2347,7 @@ pub fn run(
         .add_systems(Update, window_focus_cursor)
         .add_systems(Update, crate::renderer::input::track_lifecycle)
         .add_systems(Update, log_window_geometry)
-        .add_systems(Update, web_fullscreen)
+        .add_systems(Update, fullscreen_key)
         .add_systems(
             Update,
             web_pointer_lock
@@ -2386,7 +2473,17 @@ pub fn run(
                 budget_mark_upload
                     .after(Set::PrepareMeshes)
                     .before(Set::ManageViews),
+                budget_mark_views
+                    .in_set(Set::ManageViews)
+                    .after(bevy::render::camera::sort_cameras)
+                    .after(bevy::pbr::prepare_lights)
+                    .before(bevy::render::view::prepare_windows),
                 budget_mark_acquire
+                    .in_set(Set::ManageViews)
+                    .after(bevy::render::view::prepare_windows)
+                    .before(bevy::render::view::prepare_view_attachments)
+                    .before(bevy::render::view::prepare_view_targets),
+                budget_mark_views_after
                     .after(Set::ManageViews)
                     .before(Set::Queue),
                 budget_mark_prepare.after(Set::Prepare).before(Set::Render),
@@ -2438,8 +2535,6 @@ pub fn run(
 
     #[cfg(not(target_arch = "wasm32"))]
     super::input::run_exit_tasks();
-    #[cfg(resource_packs)]
-    crate::resourcepacks::restart_if_requested();
 }
 
 #[cfg(test)]

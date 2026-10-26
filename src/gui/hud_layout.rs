@@ -41,7 +41,7 @@ impl Rect {
 }
 
 macro_rules! elements {
-    ($($(#[$m:meta])* $id:ident = $key:literal, $label:literal;)*) => {
+    ($($(#[$m:meta])* $id:ident = $key:literal, $label:literal, $layer:ident;)*) => {
         #[derive(Clone, Copy, PartialEq, Eq, Debug)]
         #[repr(u8)]
         pub enum ElementId { $($(#[$m])* $id),* }
@@ -62,65 +62,96 @@ macro_rules! elements {
             pub const fn label(self) -> &'static str {
                 match self { $(ElementId::$id => $label),* }
             }
+
+            pub const fn layer(self) -> Layer {
+                match self { $(ElementId::$id => Layer::$layer),* }
+            }
         }
     };
 }
 
 elements! {
-    Coords = "coords", "Coordinates";
-    Gamemode = "gamemode", "Gamemode";
-    Direction = "direction", "Direction";
-    Flying = "flying", "Flying";
-    Status = "status", "Status";
-    Fps = "fps", "FPS";
-    Ram = "ram", "RAM";
-    Freecam = "freecam", "Freecam";
-    Effects = "effects", "Effects";
-    BossBars = "boss_bars", "Boss bars";
-    Sidebar = "sidebar", "Scoreboard";
-    Debug = "debug", "Debug (F3)";
-    Hotbar = "hotbar", "Hotbar";
-    Chat = "chat", "Chat";
-    Pad = "pad", "Movement";
-    UseButton = "use_button", "Use button";
-    JumpButton = "jump_button", "Jump button";
-    ChatButton = "chat_button", "Chat button";
+    BossBars = "boss_bars", "Boss bars", Base;
+    Effects = "effects", "Effects", Base;
+    Hotbar = "hotbar", "Hotbar", Base;
+    Chat = "chat", "Chat", Base;
+    Sidebar = "sidebar", "Scoreboard", Base;
+    Fps = "fps", "FPS", Extras;
+    Coords = "coords", "Coordinates", Extras;
+    Direction = "direction", "Direction", Extras;
+    Gamemode = "gamemode", "Gamemode", Extras;
+    Flying = "flying", "Flying", Extras;
+    Status = "status", "Status", Extras;
+    Ram = "ram", "RAM", Extras;
+    Freecam = "freecam", "Freecam", Extras;
+    Pad = "pad", "Movement", Controls;
+    UseButton = "use_button", "Use button", Controls;
+    JumpButton = "jump_button", "Jump button", Controls;
+    ChatButton = "chat_button", "Chat button", Controls;
+    ModButton = "mod_button", "Modules button", Controls;
+    Debug = "debug", "Debug (F3)", Debug;
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Layer {
+    Base,
+    #[default]
+    Extras,
+    #[cfg(feature = "mobile_ui")]
+    Areas,
+    Controls,
+    Debug,
+}
+
+impl Layer {
+    #[cfg(feature = "mobile_ui")]
+    pub const ALL: [Layer; 5] = [
+        Layer::Base,
+        Layer::Extras,
+        Layer::Areas,
+        Layer::Controls,
+        Layer::Debug,
+    ];
+    #[cfg(not(feature = "mobile_ui"))]
+    pub const ALL: [Layer; 3] = [Layer::Base, Layer::Extras, Layer::Debug];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Layer::Base => "Base game",
+            Layer::Extras => "Extras",
+            #[cfg(feature = "mobile_ui")]
+            Layer::Areas => "Areas",
+            Layer::Controls => "Controls",
+            Layer::Debug => "Debug",
+        }
+    }
 }
 
 const _: () = assert!(COUNT <= 32);
 
 impl ElementId {
-    pub const fn default_enabled(self) -> bool {
-        if cfg!(feature = "mobile_ui") {
-            !matches!(
-                self,
-                ElementId::Coords | ElementId::Gamemode | ElementId::Direction | ElementId::Flying
-            )
+    pub const fn default_visibility(self) -> Visibility {
+        if matches!(self, ElementId::Gamemode | ElementId::Flying) {
+            return Visibility::Removed;
+        }
+        let hidden = if cfg!(feature = "mobile_ui") {
+            matches!(self, ElementId::Coords | ElementId::Direction)
         } else {
-            !matches!(self, ElementId::Ram)
+            matches!(self, ElementId::Ram)
+        };
+        if hidden {
+            Visibility::Hidden
+        } else {
+            Visibility::Shown
         }
     }
 
     pub const fn stackable(self) -> bool {
-        !matches!(
-            self,
-            ElementId::BossBars
-                | ElementId::Sidebar
-                | ElementId::Debug
-                | ElementId::Hotbar
-                | ElementId::Chat
-                | ElementId::Pad
-                | ElementId::UseButton
-                | ElementId::JumpButton
-                | ElementId::ChatButton
-        )
+        matches!(self.layer(), Layer::Extras) || matches!(self, ElementId::Effects)
     }
 
     pub const fn required(self) -> bool {
-        matches!(
-            self,
-            ElementId::Pad | ElementId::UseButton | ElementId::JumpButton | ElementId::ChatButton
-        )
+        matches!(self.layer(), Layer::Controls)
     }
 
     #[cfg(feature = "mobile_ui")]
@@ -191,6 +222,7 @@ impl ElementId {
             ElementId::UseButton => Rect::new(vw - 60.0, vh - 80.0, 50.0, 50.0),
             ElementId::JumpButton => Rect::new(vw - 100.0, vh - 60.0, 30.0, 30.0),
             ElementId::ChatButton => Rect::new(vw - 30.0, 8.0, 24.0, 24.0),
+            ElementId::ModButton => Rect::new(vw - 60.0, 8.0, 24.0, 24.0),
             _ => Rect::new(2.0, 2.0, 60.0, 9.0),
         }
     }
@@ -440,6 +472,9 @@ impl Deref for Members {
     }
 }
 
+const INACTIVE_RGB: f32 = 0.5;
+const INACTIVE_ALPHA: f32 = 0.25;
+
 pub const MIN_SCALE: f32 = 0.5;
 pub const MAX_SCALE: f32 = 3.0;
 
@@ -451,7 +486,83 @@ pub struct HudLayout {
     pub stacks: Vec<Stack>,
     next_stack: u32,
     pub grid: usize,
+    #[cfg(feature = "mobile_ui")]
+    pub areas: Vec<Area>,
+    #[cfg(feature = "hud_editor")]
+    pub panel: Option<Panel>,
 }
+
+#[cfg(feature = "hud_editor")]
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Panel {
+    pub centre: Vec2,
+    pub width: f32,
+}
+
+#[cfg(feature = "mobile_ui")]
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Area {
+    pub anchor: Anchor,
+    pub offset: Vec2,
+    pub size: Vec2,
+    pub zoom: bool,
+}
+
+#[cfg(feature = "mobile_ui")]
+impl Area {
+    pub const MIN: f32 = 12.0;
+
+    pub fn at(r: Rect, vw: f32, vh: f32) -> Area {
+        let mut area = Area {
+            anchor: Anchor::TopLeft,
+            offset: Vec2::ZERO,
+            size: Vec2::ZERO,
+            zoom: false,
+        };
+        area.place(r, vw, vh);
+        area
+    }
+
+    pub fn place(&mut self, r: Rect, vw: f32, vh: f32) {
+        self.anchor = Anchor::nearest(r, vw, vh);
+        self.offset = self.anchor.offset_for(vw, vh, r.size(), r.pos());
+        self.size = r.size();
+    }
+
+    pub fn rect(&self, vw: f32, vh: f32) -> Rect {
+        let size = self.size.min(Vec2::new(vw, vh));
+        let pos = self.anchor.resolve(vw, vh, size, self.offset);
+        Rect::new(
+            pos.x.min(vw - size.x).max(0.0),
+            pos.y.min(vh - size.y).max(0.0),
+            size.x,
+            size.y,
+        )
+    }
+}
+
+#[cfg(feature = "mobile_ui")]
+pub fn default_areas() -> Vec<Area> {
+    let thumb = |anchor| Area {
+        anchor,
+        offset: Vec2::ZERO,
+        size: Vec2::new(128.0, 180.0),
+        zoom: false,
+    };
+    vec![
+        thumb(Anchor::BottomLeft),
+        thumb(Anchor::BottomRight),
+        ZOOM_AREA,
+    ]
+}
+
+#[cfg(feature = "mobile_ui")]
+const ZOOM_AREA: Area = Area {
+    anchor: Anchor::Center,
+    offset: Vec2::ZERO,
+    size: Vec2::new(40.0, 40.0),
+    zoom: true,
+};
 
 impl Default for HudLayout {
     fn default() -> Self {
@@ -470,16 +581,16 @@ impl HudLayout {
     fn bare() -> HudLayout {
         HudLayout {
             elements: ElementId::ALL.map(|id| Element {
-                visibility: if id.default_enabled() {
-                    Visibility::Shown
-                } else {
-                    Visibility::Hidden
-                },
+                visibility: id.default_visibility(),
                 place: Place::Fixed,
             }),
             stacks: Vec::new(),
             next_stack: 0,
             grid: 2,
+            #[cfg(feature = "mobile_ui")]
+            areas: default_areas(),
+            #[cfg(feature = "hud_editor")]
+            panel: None,
         }
     }
 
@@ -721,6 +832,29 @@ impl HudLayout {
         }
     }
 
+    pub fn reset_layer(&mut self, layer: Layer) {
+        #[cfg(feature = "mobile_ui")]
+        if layer == Layer::Areas {
+            self.areas = default_areas();
+            return;
+        }
+        for id in ElementId::ALL.into_iter().filter(|id| id.layer() == layer) {
+            self.get_mut(id).visibility = id.default_visibility();
+            self.reset(id);
+        }
+        if layer == Layer::Extras {
+            let homes: Vec<StackId> = self
+                .stacks
+                .iter()
+                .filter(|s| s.home.is_some())
+                .map(|s| s.id)
+                .collect();
+            for si in homes {
+                self.reset_stack_position(si);
+            }
+        }
+    }
+
     pub fn reset_stack_position(&mut self, stack: StackId) {
         let Some(s) = self.stack_mut(stack) else {
             return;
@@ -764,7 +898,8 @@ impl HudLayout {
                         Visibility::Hidden
                     };
                 }
-                if e.get("removed").and_then(|v| v.as_bool()) == Some(true) {
+                let removed = e.get("removed").and_then(|v| v.as_bool());
+                if removed.unwrap_or(id.default_visibility() == Visibility::Removed) {
                     element.visibility = Visibility::Removed;
                 }
                 if let (Some(anchor), Some(x), Some(y)) = (anchor_of(e), num(e, "x"), num(e, "y")) {
@@ -812,6 +947,12 @@ impl HudLayout {
         } else {
             false
         };
+        layout.panel = json.get("panel").and_then(|p| {
+            Some(Panel {
+                centre: Vec2::new(num(p, "x")?, num(p, "y")?),
+                width: num(p, "w")?,
+            })
+        });
         let deleted: Vec<Home> = json
             .get("removed_stacks")
             .and_then(|r| r.as_array())
@@ -834,6 +975,23 @@ impl HudLayout {
                 layout.reset(id);
             }
         }
+        #[cfg(feature = "mobile_ui")]
+        if let Some(areas) = json.get("areas").and_then(|a| a.as_array()) {
+            layout.areas = areas
+                .iter()
+                .filter_map(|a| {
+                    Some(Area {
+                        anchor: anchor_of(a)?,
+                        offset: Vec2::new(num(a, "x")?, num(a, "y")?),
+                        size: Vec2::new(num(a, "w")?, num(a, "h")?).max(Vec2::splat(Area::MIN)),
+                        zoom: a.get("zoom").and_then(|z| z.as_bool()).unwrap_or(false),
+                    })
+                })
+                .collect();
+            if !layout.areas.iter().any(|a| a.zoom) {
+                layout.areas.push(ZOOM_AREA);
+            }
+        }
         layout.prune();
         layout
     }
@@ -847,9 +1005,10 @@ impl HudLayout {
                 "enabled".into(),
                 (element.visibility == Visibility::Shown).into(),
             );
-            if element.visibility == Visibility::Removed {
-                e.insert("removed".into(), true.into());
-            }
+            e.insert(
+                "removed".into(),
+                (element.visibility == Visibility::Removed).into(),
+            );
             if let Place::Free {
                 anchor,
                 offset,
@@ -878,13 +1037,34 @@ impl HudLayout {
                 })
             })
             .collect();
-        let json = serde_json::json!({
+        let mut json = serde_json::json!({
             "version": 2,
             "grid": self.grid,
             "elements": elements,
             "stacks": stacks,
             "removed_stacks": self.removed_homes().map(Home::key).collect::<Vec<_>>(),
         });
+        if let Some(p) = self.panel {
+            json["panel"] = serde_json::json!({ "x": p.centre.x, "y": p.centre.y, "w": p.width });
+        }
+        #[cfg(feature = "mobile_ui")]
+        {
+            let areas: Vec<serde_json::Value> = self
+                .areas
+                .iter()
+                .map(|a| {
+                    serde_json::json!({
+                        "anchor": a.anchor.key(),
+                        "x": a.offset.x,
+                        "y": a.offset.y,
+                        "w": a.size.x,
+                        "h": a.size.y,
+                        "zoom": a.zoom,
+                    })
+                })
+                .collect();
+            json["areas"] = areas.into();
+        }
         crate::platform::storage::HUD.store(&json.to_string());
     }
 }
@@ -922,6 +1102,7 @@ pub struct Frames {
     pub indices: [Option<(usize, usize)>; COUNT],
     size: (f32, f32),
     pub transforms: Transforms,
+    pub layer: Layer,
 }
 
 impl Frames {
@@ -1053,7 +1234,7 @@ impl<'a> Hud<'a> {
     pub fn shown(&self, id: ElementId) -> bool {
         match self.layout.get(id).visibility {
             Visibility::Shown => true,
-            Visibility::Hidden => self.editing,
+            Visibility::Hidden => self.editing && self.frames.layer == id.layer(),
             Visibility::Removed => false,
         }
     }
@@ -1197,7 +1378,7 @@ impl<'a> Hud<'a> {
         label: &str,
         f: impl FnOnce(&mut Painter),
     ) {
-        if !self.shown(id) {
+        if !self.shown(id) || self.frames.layer != id.layer() {
             return;
         }
         let natural = self.natural_of(id, vw, vh);
@@ -1260,6 +1441,7 @@ impl<'a> Hud<'a> {
         f: impl FnOnce(&mut Painter),
     ) {
         let preview = self.editing && kind != Kind::Follow;
+        let active = self.frames.layer == id.layer();
         let label = ghost.unwrap_or(id.label());
         let start = p.positions.len();
         let index_start = p.indices.len();
@@ -1278,7 +1460,7 @@ impl<'a> Hud<'a> {
                     let r = Rect::new((b.x - ox) / s, (b.y - oy) / s, b.w / s, b.h / s);
                     draw_placeholder(p, label, r);
                 }
-            } else if preview && empty {
+            } else if preview && empty && active {
                 draw_placeholder(p, label, natural);
             }
             empty
@@ -1299,6 +1481,14 @@ impl<'a> Hud<'a> {
                 finish(p, (1.0, 0.0, 0.0))
             }
         };
+        if self.editing && !active {
+            for c in &mut p.colors[start..] {
+                c[0] *= INACTIVE_RGB;
+                c[1] *= INACTIVE_RGB;
+                c[2] *= INACTIVE_RGB;
+                c[3] *= INACTIVE_ALPHA;
+            }
+        }
         if kind == Kind::Follow {
             return;
         }

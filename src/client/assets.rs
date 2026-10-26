@@ -276,15 +276,15 @@ fn jar_key(name: &str) -> Option<String> {
 const REPORT_STEP: u64 = 4 * 1024 * 1024;
 
 fn progress_line(done: u64, total: u64) -> String {
-    let mb = |n: u64| n as f64 / (1024.0 * 1024.0);
+    use crate::util::bytes::Bytes;
     if total == 0 {
-        return format!("{:.1} MB", mb(done));
+        return Bytes(done).to_string();
     }
     format!(
-        "{:.1}/{:.1} MB ({}%)",
-        mb(done),
-        mb(total),
-        done * 100 / total.max(1)
+        "{} of {} ({}%)",
+        Bytes(done),
+        Bytes(total),
+        done * 100 / total
     )
 }
 
@@ -516,24 +516,17 @@ impl Download {
         #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
         if SOUNDS_ONLY.load(Ordering::Relaxed) {
             let result = self.install_sounds_only(version).await;
-            match self.settle_sounds(result) {
-                Ok(true) => {
-                    log_info!("assets", "sound set installed");
-                    self.set(Stage::Done);
-                }
-                Ok(false) => {
-                    log_info!("assets", "download cancelled");
-                    self.done.store(0, Ordering::Relaxed);
-                    self.total.store(0, Ordering::Relaxed);
-                    self.set(Stage::Cancelled);
-                }
-                Err(e) => self.fail(e.short, e.detail),
-            }
+            self.settle(self.settle_sounds(result), "sound set");
             return;
         }
-        match self.install(version).await {
+        let result = self.install(version).await;
+        self.settle(result, version);
+    }
+
+    fn settle(&self, result: Result<bool, Failure>, what: &str) {
+        match result {
             Ok(true) => {
-                log_info!("assets", "{version} installed");
+                log_info!("assets", "{what} installed");
                 self.set(Stage::Done);
             }
             Ok(false) => {
@@ -586,10 +579,6 @@ impl Download {
                 if store::has_index(id) {
                     log_info!("assets", "objects layer {id} is already installed");
                 } else {
-                    log_info!(
-                        "assets",
-                        "the jar's panorama or unifont table is stubbed; reading index {id}"
-                    );
                     let wanted = |key: &str| {
                         (wants_panorama && key.starts_with(PANORAMA_DIR))
                             || (wants_unifont
@@ -676,7 +665,7 @@ impl Download {
                 None => Err(e),
             },
         }
-        .map_err(|e| Failure::new("The download was interrupted", e))?;
+        .map_err(|e| Failure::http("The download was interrupted", e))?;
 
         let bytes = match body {
             crate::platform::http::Fetched::Body(bytes) => bytes,
@@ -773,7 +762,7 @@ impl Download {
             let url = object_url(&hash);
             let body = crate::platform::http::get_bytes(&url, 0, &mut |_, _| !self.cancelled())
                 .await
-                .map_err(|e| Failure::new("Could not reach Mojang", e))?;
+                .map_err(|e| Failure::http("Could not reach Mojang", e))?;
             let bytes = match body {
                 crate::platform::http::Fetched::Body(bytes) => bytes,
                 crate::platform::http::Fetched::Cancelled => return Ok(None),
@@ -791,7 +780,6 @@ impl Download {
 
             done += bytes.len() as u64;
             self.done.store(done, Ordering::Relaxed);
-            log_info!("assets", "object {key}, {} bytes", bytes.len());
             out.push((key, bytes));
         }
         Ok(Some(out))
@@ -910,7 +898,7 @@ impl Download {
                             Ok(bytes) => bytes,
                             Err(e) => {
                                 *failed.lock().unwrap() =
-                                    Some(Failure::new("A sound could not be fetched", e));
+                                    Some(Failure::http("A sound could not be fetched", e));
                                 return;
                             }
                         };
@@ -951,7 +939,7 @@ impl Download {
         let url = object_url(hash);
         let body = crate::platform::http::get_bytes(&url, 0, &mut |_, _| !self.cancelled())
             .await
-            .map_err(|e| Failure::new("Mojang's asset store did not answer", e))?;
+            .map_err(|e| Failure::http("Mojang's asset store did not answer", e))?;
         let bytes = match body {
             crate::platform::http::Fetched::Body(bytes) => bytes,
             crate::platform::http::Fetched::Cancelled => return Ok(None),
@@ -1078,6 +1066,8 @@ fn unifont_is_stubbed(entries: &[(String, Vec<u8>)]) -> bool {
     }
 }
 
+pub(crate) const NETWORK_FAILURE: &str = "Network connection problem";
+
 struct Failure {
     short: &'static str,
     detail: String,
@@ -1088,6 +1078,14 @@ impl Failure {
         Failure {
             short,
             detail: detail.to_string(),
+        }
+    }
+
+    fn http(short: &'static str, e: crate::platform::http::HttpError) -> Failure {
+        if e.network {
+            Failure::new(NETWORK_FAILURE, e)
+        } else {
+            Failure::new(short, e)
         }
     }
 
@@ -1110,7 +1108,7 @@ async fn get_json(url: &str) -> Result<serde_json::Value, Failure> {
             None => Err(e),
         },
     }
-    .map_err(|e| Failure::new("Could not reach Mojang", e))?;
+    .map_err(|e| Failure::http("Could not reach Mojang", e))?;
     serde_json::from_str(&text).map_err(|e| Failure::new("Mojang sent something unreadable", e))
 }
 

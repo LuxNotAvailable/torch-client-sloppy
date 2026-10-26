@@ -63,6 +63,7 @@ fn handle_menu_opened_trigger(event: On<MenuOpenedEvent>, mut query: Query<&mut 
     inventory.id = event.window_id;
     inventory.container_menu = Some(Menu::from_kind(event.menu_type));
     inventory.container_menu_title = Some(event.title.clone());
+    inventory.crafter_disabled_slots = 0;
 }
 
 #[derive(EntityEvent)]
@@ -213,13 +214,19 @@ pub fn handle_set_container_content_trigger(
     inventory.sync_player_slots(true);
 }
 
+pub fn trace_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        std::env::var("MC_INV_TRACE").is_ok_and(|v| !matches!(v.trim(), "" | "0" | "false"))
+    })
+}
+
 pub fn trace(args: std::fmt::Arguments<'_>) {
     use std::io::Write as _;
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     static FILE: std::sync::OnceLock<Option<std::sync::Mutex<std::fs::File>>> =
         std::sync::OnceLock::new();
 
-    if !*ON.get_or_init(|| std::env::var_os("MC_INV_TRACE").is_some()) {
+    if !trace_enabled() {
         return;
     }
     eprintln!("{args}");

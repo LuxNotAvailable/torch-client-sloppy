@@ -319,6 +319,15 @@ impl PlanResources<'_> {
                     (false, false) => &self.statics.repeat_nearest,
                 }
             }
+            TextureSource::Image { index, .. } => {
+                match self.installed.custom_images[usize::from(index)]
+                    .format
+                    .sample_kind()
+                {
+                    SampleKind::Float => &self.statics.linear,
+                    _ => &self.statics.nearest,
+                }
+            }
             _ => match source.sample_kind(&self.installed.targets) {
                 SampleKind::Float => &self.statics.linear,
                 _ => &self.statics.nearest,

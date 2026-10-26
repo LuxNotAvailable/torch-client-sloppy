@@ -1,5 +1,7 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use serde_json::Value;
 
@@ -952,151 +954,176 @@ fn ratio(color: [u8; 3], base: [u8; 3]) -> [f32; 3] {
 }
 
 struct Table {
+    rows: Vec<BiomeRow>,
     index_by_name: HashMap<String, u8>,
-    ratios: Vec<BiomeRatio>,
     envs: Vec<BiomeEnv>,
     downfalls: Vec<f32>,
     any_env: bool,
-    #[cfg(feature = "shader_support")]
-    absolute: Vec<BiomeTint>,
 }
 
 static TABLE: OnceLock<Table> = OnceLock::new();
 
-pub fn init(colormap_dir: &str) {
-    if TABLE.get().is_some() {
-        return;
-    }
-    let grass_map = load_colormap(colormap_dir, "grass");
-    let foliage_map = load_colormap(colormap_dir, "foliage");
-    let dry_foliage_map = load_colormap(colormap_dir, "dry_foliage").unwrap_or_else(|| {
-        image::RgbaImage::from_pixel(1, 1, image::Rgba([0x5c, 0x3c, 0x32, 255]))
-    });
-    let (Some(grass_map), Some(foliage_map)) = (grass_map, foliage_map) else {
-        eprintln!("[BiomeColor] Could not load colormap(s) in {colormap_dir}; biome tint disabled");
-        return;
-    };
-
-    let datapack_rows = rows_from_datapack();
-    let rows: Vec<BiomeRow> = if datapack_rows.is_empty() {
-        eprintln!(
-            "[BiomeColor] No worldgen/biome entries on disk; using the built-in fallback table"
-        );
-        BIOME_DATA.iter().map(BiomeRow::from).collect()
-    } else {
-        datapack_rows
-    };
-    crate::log_info!("biome", "{} biomes loaded", rows.len());
-
-    let absolute: Vec<BiomeTint> = rows
-        .iter()
-        .map(|row| tint_for(row, &grass_map, &foliage_map, &dry_foliage_map))
-        .collect();
-    let plains = absolute
-        .iter()
-        .zip(&rows)
-        .find(|(_, row)| row.name == "plains")
-        .map(|(t, _)| *t)
-        .unwrap_or_default();
-
-    let ratios: Vec<BiomeRatio> = absolute
-        .iter()
-        .map(|t| BiomeRatio {
-            grass: ratio(t.grass, plains.grass),
-            foliage: ratio(t.foliage, plains.foliage),
-            water: ratio(t.water, plains.water),
-            dry_foliage: ratio(t.dry_foliage, plains.dry_foliage),
-        })
-        .collect();
-
-    let index_by_name = rows
-        .iter()
-        .enumerate()
-        .map(|(i, row)| (row.name.clone(), i as u8))
-        .collect();
-
-    let envs: Vec<BiomeEnv> = rows.iter().map(|row| row.env).collect();
-    let downfalls: Vec<f32> = rows.iter().map(|row| row.downfall as f32).collect();
-    let any_env = envs.iter().any(|env| !env.is_identity());
-
-    let _ = TABLE.set(Table {
-        index_by_name,
-        ratios,
-        envs,
-        downfalls,
-        any_env,
-        #[cfg(feature = "shader_support")]
-        absolute,
-    });
-    let _ = PLAINS_ABSOLUTE.set(plains);
+fn table() -> &'static Table {
+    TABLE.get_or_init(|| {
+        let datapack_rows = rows_from_datapack();
+        let rows: Vec<BiomeRow> = if datapack_rows.is_empty() {
+            crate::log_warn!(
+                "biome",
+                "no worldgen/biome entries on disk; using the built-in fallback table"
+            );
+            BIOME_DATA.iter().map(BiomeRow::from).collect()
+        } else {
+            datapack_rows
+        };
+        crate::log_info!("biome", "{} biomes loaded", rows.len());
+        let index_by_name = rows
+            .iter()
+            .enumerate()
+            .map(|(i, row)| (row.name.clone(), i as u8))
+            .collect();
+        let envs: Vec<BiomeEnv> = rows.iter().map(|row| row.env).collect();
+        let downfalls = rows.iter().map(|row| row.downfall as f32).collect();
+        let any_env = envs.iter().any(|env| !env.is_identity());
+        Table {
+            rows,
+            index_by_name,
+            envs,
+            downfalls,
+            any_env,
+        }
+    })
 }
 
-static PLAINS_ABSOLUTE: OnceLock<BiomeTint> = OnceLock::new();
+pub struct Tints {
+    ratios: Vec<BiomeRatio>,
+    #[cfg(feature = "shader_support")]
+    absolute: Vec<BiomeTint>,
+    plains: BiomeTint,
+}
+
+pub struct Plains {
+    pub grass: [u8; 4],
+    pub foliage: [u8; 4],
+    pub dry_foliage: [u8; 4],
+}
 
 const UNTINTED: [u8; 4] = [255, 255, 255, 255];
 
-pub fn plains_grass() -> [u8; 4] {
-    match PLAINS_ABSOLUTE.get() {
-        Some(t) => [t.grass[0], t.grass[1], t.grass[2], 255],
-        None => UNTINTED,
+impl Tints {
+    pub fn load(colormap_dir: &str) -> Option<Tints> {
+        let grass_map = load_colormap(colormap_dir, "grass");
+        let foliage_map = load_colormap(colormap_dir, "foliage");
+        let dry_foliage_map = load_colormap(colormap_dir, "dry_foliage").unwrap_or_else(|| {
+            image::RgbaImage::from_pixel(1, 1, image::Rgba([0x5c, 0x3c, 0x32, 255]))
+        });
+        let (Some(grass_map), Some(foliage_map)) = (grass_map, foliage_map) else {
+            crate::log_warn!(
+                "biome",
+                "could not load colormap(s) in {colormap_dir}; biome tint disabled"
+            );
+            return None;
+        };
+        let rows = &table().rows;
+        let absolute: Vec<BiomeTint> = rows
+            .iter()
+            .map(|row| tint_for(row, &grass_map, &foliage_map, &dry_foliage_map))
+            .collect();
+        let plains = absolute
+            .iter()
+            .zip(rows)
+            .find(|(_, row)| row.name == "plains")
+            .map(|(t, _)| *t)
+            .unwrap_or_default();
+        let ratios = absolute
+            .iter()
+            .map(|t| BiomeRatio {
+                grass: ratio(t.grass, plains.grass),
+                foliage: ratio(t.foliage, plains.foliage),
+                water: ratio(t.water, plains.water),
+                dry_foliage: ratio(t.dry_foliage, plains.dry_foliage),
+            })
+            .collect();
+        Some(Tints {
+            ratios,
+            #[cfg(feature = "shader_support")]
+            absolute,
+            plains,
+        })
+    }
+
+    pub fn plains(tints: Option<&Tints>) -> Plains {
+        let rgba = |c: [u8; 3]| [c[0], c[1], c[2], 255];
+        match tints {
+            Some(t) => Plains {
+                grass: rgba(t.plains.grass),
+                foliage: rgba(t.plains.foliage),
+                dry_foliage: rgba(t.plains.dry_foliage),
+            },
+            None => Plains {
+                grass: UNTINTED,
+                foliage: UNTINTED,
+                dry_foliage: UNTINTED,
+            },
+        }
     }
 }
 
-pub fn plains_foliage() -> [u8; 4] {
-    match PLAINS_ABSOLUTE.get() {
-        Some(t) => [t.foliage[0], t.foliage[1], t.foliage[2], 255],
-        None => UNTINTED,
-    }
+static TINTS: parking_lot::RwLock<Option<Arc<Tints>>> = parking_lot::RwLock::new(None);
+static TINTS_VERSION: AtomicU32 = AtomicU32::new(0);
+
+thread_local! {
+    static LOCAL_TINTS: RefCell<(u32, Option<Arc<Tints>>)> = const { RefCell::new((0, None)) };
 }
 
-pub fn plains_dry_foliage() -> [u8; 4] {
-    match PLAINS_ABSOLUTE.get() {
-        Some(t) => [t.dry_foliage[0], t.dry_foliage[1], t.dry_foliage[2], 255],
-        None => UNTINTED,
-    }
+pub fn publish(tints: Option<Tints>) {
+    *TINTS.write() = tints.map(Arc::new);
+    TINTS_VERSION.fetch_add(1, Ordering::Release);
+}
+
+fn with_tints<R>(f: impl FnOnce(Option<&Tints>) -> R) -> R {
+    let version = TINTS_VERSION.load(Ordering::Acquire);
+    LOCAL_TINTS.with_borrow_mut(|(seen, local)| {
+        if *seen != version {
+            *local = TINTS.read().clone();
+            *seen = version;
+        }
+        f(local.as_deref())
+    })
 }
 
 pub fn biome_index(name: &str) -> Option<u8> {
-    TABLE.get()?.index_by_name.get(name).copied()
+    table().index_by_name.get(name).copied()
 }
 
 pub fn env(idx: u8) -> &'static BiomeEnv {
     static NONE: BiomeEnv = BiomeEnv::NONE;
-    TABLE
-        .get()
-        .and_then(|t| t.envs.get(idx as usize))
-        .unwrap_or(&NONE)
+    table().envs.get(idx as usize).unwrap_or(&NONE)
 }
 
 pub fn downfall(idx: u8) -> f32 {
-    TABLE
-        .get()
-        .and_then(|t| t.downfalls.get(idx as usize))
-        .copied()
-        .unwrap_or(0.0)
+    table().downfalls.get(idx as usize).copied().unwrap_or(0.0)
 }
 
 pub fn any_biome_env() -> bool {
-    TABLE.get().is_some_and(|t| t.any_env)
+    table().any_env
 }
 
 pub const NEUTRAL: [f32; 3] = [1.0, 1.0, 1.0];
 
 fn lookup(idx: u8, pick: fn(&BiomeRatio) -> [f32; 3]) -> [f32; 3] {
-    TABLE
-        .get()
-        .and_then(|t| t.ratios.get(idx as usize))
-        .map(pick)
-        .unwrap_or(NEUTRAL)
+    with_tints(|t| {
+        t.and_then(|t| t.ratios.get(idx as usize))
+            .map_or(NEUTRAL, pick)
+    })
 }
 
 #[cfg(feature = "shader_support")]
 fn pack_colour(idx: u8, pick: fn(&BiomeTint) -> [u8; 3]) -> [f32; 3] {
-    let tint = TABLE
-        .get()
-        .and_then(|t| t.absolute.get(idx as usize))
-        .or(PLAINS_ABSOLUTE.get())
-        .map_or([255; 3], pick);
+    let tint = with_tints(|t| {
+        t.map_or([255; 3], |t| {
+            pick(t.absolute.get(idx as usize).unwrap_or(&t.plains))
+        })
+    });
     tint.map(|c| f32::from(c) / 255.0)
 }
 

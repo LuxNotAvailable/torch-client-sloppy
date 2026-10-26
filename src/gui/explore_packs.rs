@@ -3,15 +3,20 @@ use std::ops::Range;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::gui::painter::Painter;
-use crate::gui::widgets::{self, Button, HeaderFooter, TAB_BAR_H, TextBox, WIDGET_HEIGHT};
+use crate::gui::painter::{ClipGuard, Painter};
+use crate::gui::render::GuiInput;
+use crate::gui::widgets::{
+    self, Button, FOOTER_GAP, FOOTER_W, HeaderFooter, TAB_BAR_H, TextBox, WIDGET_HEIGHT,
+    centered_row_x,
+};
 use crate::gui::{GuiState, Screen, ScreenCtx};
 use crate::platform::time::Instant;
 use crate::resourcepacks::modrinth::{self, Hit, Query, Sort, Tags};
 use crate::resourcepacks::{self, Compat, Info};
-use crate::text::{LINE_HEIGHT, Span, Style};
+use crate::text::{LINE_HEIGHT, Span};
+use crate::util::bytes::Bytes;
 
-use super::options::{SCROLLBAR_W, draw_scrollbar, masked_input, scroll_input};
+use super::options::{SCROLLBAR_W, draw_scrollbar, row_visible, scroll_input, scroll_masked};
 use super::resourcepacks::{
     BAR_ROW_W, DESCRIPTION, HEADER_H, ICON, LIST_GAP, LIST_W, PADDING, ROW_H, ROW_W, TEXT_W,
     entry_text, header, icon_key, plain,
@@ -45,8 +50,6 @@ const SEARCH_Y: f32 = TAB_BAR_H + 6.0;
 const FILTER_Y: f32 = SEARCH_Y + 24.0;
 const FULL_W: f32 = 2.0 * (LIST_W + LIST_GAP);
 const FILTER_GAP: f32 = 5.0;
-const FOOTER_W: f32 = 150.0;
-const FOOTER_GAP: f32 = 8.0;
 const SEARCH_MAX_LEN: usize = 100;
 const DETAIL_TEXT_W: f32 = ROW_W - 2.0 * PADDING - SCROLLBAR_W;
 const SIZE_GAP: f32 = 4.0;
@@ -61,6 +64,14 @@ const WHITE: u32 = 0xFF_FFFF;
 
 const PREVIEW_KEY: &str = "\u{0}modrinth/preview";
 
+fn pack_icon_key(pack: &LocalPack) -> String {
+    let key = icon_key(&pack.name);
+    if let Some(pixels) = &pack.icon {
+        crate::gui::ping::ensure_icon(&key, pixels);
+    }
+    key
+}
+
 fn row_key(i: usize) -> String {
     format!("\u{0}modrinth/{i}")
 }
@@ -68,6 +79,7 @@ fn row_key(i: usize) -> String {
 struct LocalPack {
     name: String,
     info: Info,
+    icon: Option<Arc<Vec<u8>>>,
     size: u64,
     downloaded: bool,
 }
@@ -214,6 +226,7 @@ impl State {
                 .into_iter()
                 .map(|pack| LocalPack {
                     info: resourcepacks::info(&pack),
+                    icon: None,
                     size: resourcepacks::size(&pack.name),
                     downloaded: downloaded.contains_key(&pack.name),
                     name: pack.name,
@@ -282,9 +295,7 @@ impl State {
         }
         if let Some(mut packs) = inbox.packs {
             for pack in &mut packs {
-                if let Some(pixels) = pack.info.icon.take() {
-                    crate::gui::ping::note_icon(&icon_key(&pack.name), Arc::new(pixels));
-                }
+                pack.icon = pack.info.icon.take().map(Arc::new);
             }
             let selected = self.pack_selected.map(|i| &self.packs[i].name);
             self.pack_selected =
@@ -413,7 +424,14 @@ impl State {
             let Some(pixels) = self.icons.get(*id) else {
                 continue;
             };
-            if self.keyed.iter().any(|held| held.as_deref() == Some(*id)) {
+            if let Some(held) = self
+                .keyed
+                .iter()
+                .position(|held| held.as_deref() == Some(*id))
+            {
+                if crate::gui::ping::icon_slot(&row_key(held)).is_none() {
+                    crate::gui::ping::note_icon(&row_key(held), pixels.clone());
+                }
                 continue;
             }
             let free = self
@@ -434,7 +452,9 @@ impl State {
     }
 
     fn preview_icon_key(&mut self, id: &str) -> Option<String> {
-        if self.preview_icon.as_deref() != Some(id) {
+        if self.preview_icon.as_deref() != Some(id)
+            || crate::gui::ping::icon_slot(PREVIEW_KEY).is_none()
+        {
             let pixels = self.icons.get(id)?;
             crate::gui::ping::note_icon(PREVIEW_KEY, pixels.clone());
             self.preview_icon = Some(id.to_owned());
@@ -464,7 +484,7 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         (ctx.vw / 2.0 + LIST_GAP).floor(),
     ];
     let footer_y = layout.footer_y(ctx.vh);
-    let x = (ctx.vw / 2.0 - FOOTER_W - FOOTER_GAP / 2.0).floor();
+    let x = centered_row_x(ctx.vw, 2.0 * FOOTER_W + FOOTER_GAP);
     let action = |label, active| Button {
         active,
         ..Button::new(x, footer_y, FOOTER_W, WIDGET_HEIGHT, label)
@@ -577,6 +597,109 @@ fn filter_row(p: &mut Painter, ctx: &ScreenCtx, st: &mut State, x0: f32) {
     }
 }
 
+struct ListView {
+    input: GuiInput,
+    clip: ClipGuard,
+    scroll: f32,
+    top: f32,
+    left: f32,
+    list_y: f32,
+    list_h: f32,
+    content_h: f32,
+    row_x: f32,
+    text_w: f32,
+}
+
+impl ListView {
+    fn open(
+        p: &mut Painter,
+        ctx: &ScreenCtx,
+        panes: &mut Panes,
+        (left, list_y, list_h): (f32, f32, f32),
+        title: &str,
+        count: usize,
+    ) -> ListView {
+        let content_h = HEADER_H + count as f32 * ROW_H;
+        let input = scroll_masked(
+            &mut panes.scroll[0],
+            &mut panes.drag[0],
+            ctx,
+            left,
+            BAR_ROW_W,
+            (left, list_y, LIST_W, list_h),
+            content_h,
+        );
+        let clip = p.push_clip(left, list_y, LIST_W, list_h);
+        let scroll = panes.scroll[0];
+        let top = (list_y - scroll).floor();
+        header(p, title, left, top, LIST_W);
+        ListView {
+            input,
+            clip,
+            scroll,
+            top,
+            left,
+            list_y,
+            list_h,
+            content_h,
+            row_x: left + (LIST_W - ROW_W) / 2.0,
+            text_w: TEXT_W - if content_h > list_h { SCROLLBAR_W } else { 0.0 },
+        }
+    }
+
+    fn row_y(&self, i: usize) -> f32 {
+        self.top + HEADER_H + i as f32 * ROW_H
+    }
+
+    fn visible(&self, count: usize) -> Range<usize> {
+        let first = ((self.list_y - self.top - HEADER_H) / ROW_H)
+            .floor()
+            .max(0.0) as usize;
+        let last = (((self.list_y + self.list_h - self.top - HEADER_H) / ROW_H)
+            .ceil()
+            .max(0.0) as usize)
+            .min(count);
+        first.min(last)..last
+    }
+
+    fn row(
+        &self,
+        p: &mut Painter,
+        ctx: &ScreenCtx,
+        i: usize,
+        fill: Option<u32>,
+        selected: bool,
+    ) -> bool {
+        let y = self.row_y(i);
+        if let Some(fill) = fill {
+            p.fill(self.row_x, y, ROW_W, ROW_H, fill);
+        }
+        if selected {
+            outline(p, self.row_x, y, ROW_W, ROW_H);
+        }
+        self.input.left_click
+            && ctx
+                .with_input(&self.input)
+                .hovering(self.row_x, y, ROW_W, ROW_H)
+    }
+
+    fn close(self, p: &mut Painter, empty: Option<&str>) {
+        if let Some(text) = empty {
+            centred(p, text, self.left, self.top + HEADER_H + PADDING);
+        }
+        p.pop_clip(self.clip);
+        draw_scrollbar(
+            p,
+            self.scroll,
+            self.left,
+            BAR_ROW_W,
+            self.list_y,
+            self.list_h,
+            self.content_h,
+        );
+    }
+}
+
 fn installed(
     p: &mut Painter,
     ctx: &ScreenCtx,
@@ -585,83 +708,44 @@ fn installed(
     list_y: f32,
     list_h: f32,
 ) {
-    let panes = &mut st.installed_panes;
-    let content_h = HEADER_H + st.packs.len() as f32 * ROW_H;
-    scroll_input(
-        &mut panes.scroll[0],
-        &mut panes.drag[0],
+    let view = ListView::open(
+        p,
         ctx,
-        left,
-        BAR_ROW_W,
-        list_y,
-        list_h,
-        content_h,
+        &mut st.installed_panes,
+        (left, list_y, list_h),
+        PACKS,
+        st.packs.len(),
     );
-    let input = masked_input(ctx, (left, list_y, LIST_W, list_h), panes.drag[0].is_some());
-    let list_ctx = ScreenCtx {
-        input: &input,
-        vw: ctx.vw,
-        vh: ctx.vh,
-    };
-    let clip = p.push_clip(left, list_y, LIST_W, list_h);
-    let top = (list_y - panes.scroll[0]).floor();
-    header(p, PACKS, left, top);
-
-    let row_x = left + (LIST_W - ROW_W) / 2.0;
-    let text_w = TEXT_W - if content_h > list_h { SCROLLBAR_W } else { 0.0 };
     let mut clicked = None;
-    for (i, pack) in st.packs.iter().enumerate() {
-        let y = top + HEADER_H + i as f32 * ROW_H;
-        if y + ROW_H < list_y || y > list_y + list_h {
-            continue;
-        }
-        let (cx, cy) = (row_x + PADDING, y + PADDING);
-        p.fill(
-            row_x,
-            y,
-            ROW_W,
-            ROW_H,
-            if pack.downloaded {
-                DOWNLOADED_FILL
-            } else {
-                BY_HAND_FILL
-            },
-        );
-        if st.pack_selected == Some(i) {
-            outline(p, row_x, y, ROW_W, ROW_H);
-        }
-        if list_ctx.input.left_click && list_ctx.hovering(row_x, y, ROW_W, ROW_H) {
+    for i in view.visible(st.packs.len()) {
+        let pack = &st.packs[i];
+        let fill = if pack.downloaded {
+            DOWNLOADED_FILL
+        } else {
+            BY_HAND_FILL
+        };
+        if view.row(p, ctx, i, Some(fill), st.pack_selected == Some(i)) {
             clicked = Some(i);
         }
-        icon(p, Some(icon_key(&pack.name)), cx, cy);
-        let size = plain(&megabytes(pack.size));
+        let (cx, cy) = (view.row_x + PADDING, view.row_y(i) + PADDING);
+        icon(p, Some(pack_icon_key(pack)), cx, cy);
+        let size = plain(&Bytes(pack.size).to_string());
         let size_w = p.atlas.font.width(&size);
-        p.text(&size, cx + ICON + PADDING + text_w - size_w, cy + 1.0, true);
+        p.text(
+            &size,
+            cx + ICON + PADDING + view.text_w - size_w,
+            cy + 1.0,
+            true,
+        );
         let name = p
             .atlas
             .font
-            .trim_to_width(&plain(&pack.name), text_w - size_w - SIZE_GAP);
+            .trim_to_width(&plain(&pack.name), view.text_w - size_w - SIZE_GAP);
         let name: String = name.iter().map(|span| span.text.as_str()).collect();
-        entry_text(p, &name, &pack.info.description, cx, cy, text_w);
+        entry_text(p, &name, &pack.info.description, cx, cy, view.text_w);
     }
-    if st.packs.is_empty() {
-        centred(
-            p,
-            if st.scanning { SCANNING } else { NO_PACKS },
-            left,
-            top + HEADER_H + PADDING,
-        );
-    }
-    p.pop_clip(clip);
-    draw_scrollbar(
-        p,
-        panes.scroll[0],
-        left,
-        BAR_ROW_W,
-        list_y,
-        list_h,
-        content_h,
-    );
+    let empty = if st.scanning { SCANNING } else { NO_PACKS };
+    view.close(p, st.packs.is_empty().then_some(empty));
 
     if let Some(i) = clicked {
         st.pack_selected = Some(i);
@@ -685,7 +769,7 @@ fn pack_details(
     let pack = &st.packs[index];
     let lines = st.pack_detail.get_or_insert_with(|| pack_lines(p, pack));
     let shown = Detail {
-        icon: Some(icon_key(&pack.name)),
+        icon: Some(pack_icon_key(pack)),
         name: &pack.name,
         summary: &pack.info.description,
         lines: &lines[..],
@@ -716,7 +800,7 @@ fn pack_lines(p: &Painter, pack: &LocalPack) -> Vec<Vec<Span>> {
     field_lines(
         p,
         vec![
-            ("Size", megabytes(pack.size)),
+            ("Size", Bytes(pack.size).to_string()),
             ("Source", source.to_owned()),
             ("Compatibility", compat.to_owned()),
         ],
@@ -725,74 +809,41 @@ fn pack_lines(p: &Painter, pack: &LocalPack) -> Vec<Vec<Span>> {
 
 fn results(p: &mut Painter, ctx: &ScreenCtx, st: &mut State, left: f32, list_y: f32, list_h: f32) {
     let count = st.hits.len();
-    let content_h = HEADER_H + count as f32 * ROW_H;
-    let panes = &mut st.browse_panes;
-    scroll_input(
-        &mut panes.scroll[0],
-        &mut panes.drag[0],
+    let view = ListView::open(
+        p,
         ctx,
-        left,
-        BAR_ROW_W,
-        list_y,
-        list_h,
-        content_h,
+        &mut st.browse_panes,
+        (left, list_y, list_h),
+        RESULTS,
+        count,
     );
-    let near_end = panes.scroll[0] + list_h + PREFETCH_ROWS * ROW_H >= content_h;
-    let input = masked_input(ctx, (left, list_y, LIST_W, list_h), panes.drag[0].is_some());
-    let top = (list_y - panes.scroll[0]).floor();
+    let near_end = view.scroll + list_h + PREFETCH_ROWS * ROW_H >= view.content_h;
     if near_end && !st.loading && st.error.is_none() && count < st.total {
         st.request_page();
     }
 
-    let list_ctx = ScreenCtx {
-        input: &input,
-        vw: ctx.vw,
-        vh: ctx.vh,
-    };
-    let clip = p.push_clip(left, list_y, LIST_W, list_h);
-    header(p, RESULTS, left, top);
-
-    let row_x = left + (LIST_W - ROW_W) / 2.0;
-    let text_w = TEXT_W - if content_h > list_h { SCROLLBAR_W } else { 0.0 };
-    let first = ((list_y - top - HEADER_H) / ROW_H).floor().max(0.0) as usize;
-    let last = (((list_y + list_h - top - HEADER_H) / ROW_H).ceil().max(0.0) as usize).min(count);
-    let rows = first.min(last)..last;
+    let rows = view.visible(count);
     st.assign_icons(rows.clone());
     let mut clicked = None;
     for i in rows {
-        let y = top + HEADER_H + i as f32 * ROW_H;
-        let (cx, cy) = (row_x + PADDING, y + PADDING);
         let hit = &st.hits[i];
-        if st.installed_projects.contains(&hit.project_id) {
-            p.fill(row_x, y, ROW_W, ROW_H, DOWNLOADED_FILL);
-        }
-        if st.selected == Some(i) {
-            outline(p, row_x, y, ROW_W, ROW_H);
-        }
-        if list_ctx.input.left_click && list_ctx.hovering(row_x, y, ROW_W, ROW_H) {
+        let fill = st
+            .installed_projects
+            .contains(&hit.project_id)
+            .then_some(DOWNLOADED_FILL);
+        if view.row(p, ctx, i, fill, st.selected == Some(i)) {
             clicked = Some(i);
         }
+        let (cx, cy) = (view.row_x + PADDING, view.row_y(i) + PADDING);
         icon(p, st.row_icon_key(&hit.project_id), cx, cy);
-        entry_text(p, &hit.title, &plain(&hit.description), cx, cy, text_w);
+        entry_text(p, &hit.title, &plain(&hit.description), cx, cy, view.text_w);
     }
-    if count == 0 {
-        let status = match &st.error {
-            Some(e) => e.as_str(),
-            None if st.loading || st.sent.is_none() => SEARCHING,
-            None => NO_RESULTS,
-        };
-        centred(p, status, left, top + HEADER_H + PADDING);
-    }
-    p.pop_clip(clip);
-    draw_scrollbar(
-        p,
-        st.browse_panes.scroll[0],
-        left,
-        BAR_ROW_W,
-        list_y,
-        list_h,
-        content_h,
-    );
+    let status = match &st.error {
+        Some(e) => e.as_str(),
+        None if st.loading || st.sent.is_none() => SEARCHING,
+        None => NO_RESULTS,
+    };
+    view.close(p, (count == 0).then_some(status));
 
     if let Some(i) = clicked {
         st.select(i);
@@ -849,7 +900,7 @@ fn detail(
 ) {
     let Some(shown) = shown else {
         let clip = p.push_clip(left, list_y, LIST_W, list_h);
-        header(p, DETAILS, left, list_y);
+        header(p, DETAILS, left, list_y, LIST_W);
         centred(p, NOTHING_SELECTED, left, list_y + HEADER_H + PADDING);
         p.pop_clip(clip);
         return;
@@ -867,7 +918,7 @@ fn detail(
     );
     let clip = p.push_clip(left, list_y, LIST_W, list_h);
     let top = (list_y - panes.scroll[1]).floor();
-    header(p, DETAILS, left, top);
+    header(p, DETAILS, left, top, LIST_W);
 
     let (cx, cy) = (
         left + (LIST_W - ROW_W) / 2.0 + PADDING,
@@ -885,7 +936,7 @@ fn detail(
     let text_top = top + HEADER_H + ROW_H;
     for (i, line) in shown.lines.iter().enumerate() {
         let y = text_top + i as f32 * LINE_HEIGHT;
-        if y + LINE_HEIGHT < list_y || y > list_y + list_h {
+        if !row_visible(y, LINE_HEIGHT, list_y, list_h) {
             continue;
         }
         p.text(line, cx, y, true);
@@ -943,10 +994,7 @@ fn preview_lines(p: &Painter, hit: &Hit, body: Option<&str>) -> Vec<Vec<Span>> {
                 if paragraph.is_empty() {
                     lines.push(Vec::new());
                 } else {
-                    let spans = [Span {
-                        text: paragraph.to_owned(),
-                        style: Style::colored(WHITE),
-                    }];
+                    let spans = [Span::colored(paragraph, WHITE)];
                     lines.extend(p.atlas.font.wrap(&spans, DETAIL_TEXT_W));
                 }
             }
@@ -960,14 +1008,8 @@ fn field_lines(p: &Painter, fields: Vec<(&str, String)>) -> Vec<Vec<Span>> {
     let mut lines = Vec::new();
     for (label, value) in fields {
         let spans = [
-            Span {
-                text: format!("{label}: "),
-                style: Style::colored(DESCRIPTION),
-            },
-            Span {
-                text: value,
-                style: Style::colored(WHITE),
-            },
+            Span::colored(format!("{label}: "), DESCRIPTION),
+            Span::colored(value, WHITE),
         ];
         lines.extend(p.atlas.font.wrap(&spans, DETAIL_TEXT_W));
     }
@@ -995,10 +1037,6 @@ fn centred(p: &mut Painter, text: &str, left: f32, y: f32) {
     let line = p.atlas.font.trim_to_width(&plain(text), ROW_W);
     let w = p.atlas.font.width(&line);
     p.text(&line, (left + (LIST_W - w) / 2.0).floor(), y, true);
-}
-
-fn megabytes(bytes: u64) -> String {
-    format!("{:.2} MB", bytes as f64 / (1024.0 * 1024.0))
 }
 
 fn compact(n: u64) -> String {

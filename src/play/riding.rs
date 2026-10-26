@@ -337,12 +337,17 @@ fn ride_pre_travel(
     *direction = LookDirection::new(rider_direction.y_rot(), rider_direction.x_rot() * 0.5);
     let yaw = direction.y_rot();
 
-    let attrs = crate::client::tracking::mount_attributes()
-        .lock()
-        .unwrap()
-        .get(&vehicle_id)
-        .copied()
-        .unwrap_or_default();
+    let (movement_speed, jump_strength, step_height) = {
+        use azalea_registry::builtin::Attribute as Attr;
+        let map = crate::client::tracking::attributes().lock().unwrap();
+        let attrs = map.get(&vehicle_id);
+        let value = |attribute| attrs.and_then(|a| a.value(attribute));
+        (
+            value(Attr::MovementSpeed),
+            value(Attr::JumpStrength),
+            value(Attr::StepHeight),
+        )
+    };
 
     let rearing = physics.on_ground() && standing.is_some_and(|s| s.0);
     let input = ridden_input(
@@ -359,7 +364,7 @@ fn ride_pre_travel(
                 execute_riders_jump(
                     &mut physics,
                     yaw,
-                    attrs.jump_strength.unwrap_or(DEFAULT_JUMP_STRENGTH),
+                    jump_strength.unwrap_or(DEFAULT_JUMP_STRENGTH),
                     *pending,
                     input,
                 );
@@ -370,11 +375,9 @@ fn ride_pre_travel(
 
     attributes.movement_speed.base = ridden_speed(
         kind,
-        attrs
-            .movement_speed
-            .unwrap_or_else(|| default_movement_speed(kind)),
+        movement_speed.unwrap_or_else(|| default_movement_speed(kind)),
     );
-    attributes.step_height.base = attrs.step_height.unwrap_or(DEFAULT_STEP_HEIGHT);
+    attributes.step_height.base = step_height.unwrap_or(DEFAULT_STEP_HEIGHT);
 
     let Some(world_lock) = worlds.get(world_name) else {
         return;

@@ -15,6 +15,7 @@ pub const SUGGESTION_LINE_HEIGHT: f32 = 12.0;
 const SUGGESTION_CHIP_PAD: f32 = 4.0;
 const SUGGESTION_SELECTED: u32 = 0xFFFF00;
 const SUGGESTION_UNSELECTED: u32 = 0xAAAAAA;
+const USAGE_COLOR: u32 = 0xAAAAAA;
 pub const GHOST_COLOR: u32 = 0x808080;
 
 pub struct List {
@@ -29,6 +30,46 @@ pub struct List {
     tab_cycles: bool,
     last_mouse: Option<(f32, f32)>,
     cols: Vec<f32>,
+}
+
+impl List {
+    fn new(
+        items: Vec<Suggestion>,
+        (x, y, w, h): (f32, f32, f32, f32),
+        original: String,
+        cols: Vec<f32>,
+    ) -> List {
+        List {
+            items,
+            x,
+            y,
+            w,
+            h,
+            offset: 0,
+            current: 0,
+            original,
+            tab_cycles: false,
+            last_mouse: None,
+            cols,
+        }
+    }
+
+    #[cfg(not(feature = "mobile_ui"))]
+    fn row_at(&self, y: f32) -> usize {
+        ((y - self.y) / SUGGESTION_LINE_HEIGHT) as usize + self.offset
+    }
+
+    #[cfg(feature = "mobile_ui")]
+    fn col_at(&self, x: f32) -> Option<usize> {
+        let rel = x - self.x;
+        self.cols.iter().rposition(|&col| rel >= col)
+    }
+
+    fn mouse_moved(&mut self, mouse: Option<(f32, f32)>) -> bool {
+        let moved = self.last_mouse != mouse;
+        self.last_mouse = mouse;
+        moved
+    }
 }
 
 #[derive(Default)]
@@ -98,9 +139,13 @@ impl Field {
         self.suggest.ghost = None;
         true
     }
-}
 
-impl Field {
+    pub fn handle_edit(&mut self, input: &GuiInput) {
+        if self.input.handle_input(input) {
+            self.suggest.allow = true;
+        }
+    }
+
     pub fn screen_x(&self, font: &Font, pos: usize, a: Anchor) -> f32 {
         if pos > self.input.text.chars().count() {
             return a.text_x;
@@ -184,10 +229,9 @@ impl Field {
 
     #[cfg(not(feature = "mobile_ui"))]
     pub fn show(&mut self, font: &Font, st: Style, a: Anchor) {
-        if self.suggest.pending.is_empty() {
+        let Some(items) = self.sorted_pending() else {
             return;
-        }
-        let items = sort_suggestions(&self.suggest.pending, &self.input.text, self.input.cursor);
+        };
         let max_width = items
             .iter()
             .fold(0.0f32, |w, s| w.max(font.width_str(&s.text)));
@@ -195,32 +239,24 @@ impl Field {
         let right = (a.text_x + a.inner_width - max_width).max(0.0);
         let x = anchor.clamp(0.0, right);
         let rows = items.len().min(st.limit) as f32;
-        self.suggest.list = Some(List {
-            items,
-            x: x - if st.bordered { 0.0 } else { 1.0 },
-            y: if st.anchor_to_bottom {
+        let rect = (
+            x - if st.bordered { 0.0 } else { 1.0 },
+            if st.anchor_to_bottom {
                 a.popup_y - 3.0 - rows * SUGGESTION_LINE_HEIGHT
             } else {
                 a.popup_y - if st.bordered { 1.0 } else { 0.0 }
             },
-            w: max_width + 1.0,
-            h: rows * SUGGESTION_LINE_HEIGHT,
-            offset: 0,
-            current: 0,
-            original: self.input.text.clone(),
-            tab_cycles: false,
-            last_mouse: None,
-            cols: Vec::new(),
-        });
-        self.select(0);
+            max_width + 1.0,
+            rows * SUGGESTION_LINE_HEIGHT,
+        );
+        self.open_list(List::new(items, rect, self.input.text.clone(), Vec::new()));
     }
 
     #[cfg(feature = "mobile_ui")]
     pub fn show(&mut self, font: &Font, st: Style, a: Anchor) {
-        if self.suggest.pending.is_empty() {
+        let Some(all) = self.sorted_pending() else {
             return;
-        }
-        let all = sort_suggestions(&self.suggest.pending, &self.input.text, self.input.cursor);
+        };
         let inner_width = a.inner_width;
         let mut items = Vec::new();
         let mut cols = Vec::new();
@@ -234,23 +270,32 @@ impl Field {
             x += w;
             items.push(item);
         }
-        self.suggest.list = Some(List {
-            items,
-            x: a.text_x - if st.bordered { 0.0 } else { 1.0 },
-            y: if st.anchor_to_bottom {
+        let rect = (
+            a.text_x - if st.bordered { 0.0 } else { 1.0 },
+            if st.anchor_to_bottom {
                 a.popup_y - SUGGESTION_LINE_HEIGHT - 4.0
             } else {
                 a.popup_y
             },
-            w: x,
-            h: SUGGESTION_LINE_HEIGHT,
-            offset: 0,
-            current: 0,
-            original: self.input.text.clone(),
-            tab_cycles: false,
-            last_mouse: None,
-            cols,
-        });
+            x,
+            SUGGESTION_LINE_HEIGHT,
+        );
+        self.open_list(List::new(items, rect, self.input.text.clone(), cols));
+    }
+
+    fn sorted_pending(&self) -> Option<Vec<Suggestion>> {
+        if self.suggest.pending.is_empty() {
+            return None;
+        }
+        Some(sort_suggestions(
+            &self.suggest.pending,
+            &self.input.text,
+            self.input.cursor,
+        ))
+    }
+
+    fn open_list(&mut self, list: List) {
+        self.suggest.list = Some(list);
         self.select(0);
     }
 
@@ -280,23 +325,11 @@ impl Field {
             && let Some(m) = input.mouse
             && self.contains(m.x, m.y)
         {
+            let list = self.suggest.list.as_ref().unwrap();
             #[cfg(not(feature = "mobile_ui"))]
-            let hit = {
-                let list = self.suggest.list.as_ref().unwrap();
-                let row = ((m.y - list.y) / SUGGESTION_LINE_HEIGHT) as usize + list.offset;
-                (row < list.items.len()).then_some(row)
-            };
+            let hit = Some(list.row_at(m.y)).filter(|&row| row < list.items.len());
             #[cfg(feature = "mobile_ui")]
-            let hit = {
-                let list = self.suggest.list.as_ref().unwrap();
-                let rel = m.x - list.x;
-                list.cols
-                    .iter()
-                    .enumerate()
-                    .rev()
-                    .find(|&(_, &col)| rel >= col)
-                    .map(|(i, _)| i)
-            };
+            let hit = list.col_at(m.x);
             if let Some(hit) = hit {
                 self.select(hit as i32);
                 self.use_suggestion();
@@ -370,23 +403,29 @@ impl Field {
             self.suggest.ghost = None;
         }
 
-        self.suggest.info =
-            commands::update_command_info(tree.as_deref(), &value, cursor, &source, st.options);
+        let request: String = value.chars().take(cursor).collect();
+        let held = self
+            .suggest
+            .client
+            .reply_for(&request)
+            .cloned()
+            .or_else(|| self.suggest.client.narrow(&request));
+        self.suggest.info = commands::update_command_info(
+            tree.as_deref(),
+            &value,
+            cursor,
+            &source,
+            st.options,
+            held.as_ref(),
+        );
 
-        if let Some(request) = self.suggest.info.ask_server.clone()
-            && let Some(packet) = self.suggest.client.request(&request)
+        if let Some(request) = &self.suggest.info.ask_server
+            && let Some(packet) = self.suggest.client.request(request)
         {
             shared.lock().unwrap().session.suggestion_request = Some(packet);
         }
 
-        let input_chars: Vec<char> = value.chars().collect();
-        let mut parts = vec![self.suggest.info.suggestions.clone()];
-        if let Some(request) = &self.suggest.info.ask_server
-            && let Some(answer) = self.suggest.client.reply_for(request)
-        {
-            parts.push(answer.clone());
-        }
-        self.suggest.pending = Suggestions::merge(&input_chars, parts);
+        self.suggest.pending = self.suggest.info.suggestions.clone();
 
         self.suggest.last_value = value;
         self.suggest.last_cursor = cursor;
@@ -401,7 +440,7 @@ impl Field {
 
 fn sort_suggestions(pending: &Suggestions, value: &str, cursor: usize) -> Vec<Suggestion> {
     let typed: Vec<char> = value.chars().take(cursor).collect();
-    let start = last_word_start(&typed);
+    let start = commands::last_word_index(&typed);
     let last_word: String = typed[start..].iter().collect::<String>().to_lowercase();
     let namespaced = format!("minecraft:{last_word}");
     let (mut head, tail): (Vec<Suggestion>, Vec<Suggestion>) = pending
@@ -411,22 +450,6 @@ fn sort_suggestions(pending: &Suggestions, value: &str, cursor: usize) -> Vec<Su
         .partition(|s| s.text.starts_with(&last_word) || s.text.starts_with(&namespaced));
     head.extend(tail);
     head
-}
-
-fn last_word_start(text: &[char]) -> usize {
-    let mut result = 0usize;
-    let mut i = 0usize;
-    while i < text.len() {
-        if text[i].is_whitespace() {
-            while i < text.len() && text[i].is_whitespace() {
-                i += 1;
-            }
-            result = i;
-        } else {
-            i += 1;
-        }
-    }
-    result
 }
 
 pub fn draw(p: &mut Painter, f: &mut Field, ctx: &ScreenCtx, st: Style, a: Anchor) {
@@ -447,41 +470,25 @@ fn draw_list(p: &mut Painter, f: &mut Field, ctx: &ScreenCtx, st: Style) {
 #[cfg(feature = "mobile_ui")]
 fn draw_row(p: &mut Painter, f: &mut Field, ctx: &ScreenCtx, st: Style) {
     let mouse = ctx.input.mouse.map(|m| (m.x, m.y));
-    let (rect_x, rect_y, rect_h, current, cols) = {
-        let list = f.suggest.list.as_ref().unwrap();
-        (list.x, list.y, list.h, list.current, list.cols.clone())
-    };
-
-    let moved = f
-        .suggest
-        .list
-        .as_ref()
-        .is_some_and(|l| l.last_mouse != mouse);
-    if let Some(list) = f.suggest.list.as_mut() {
-        list.last_mouse = mouse;
-    }
+    let list = f.suggest.list.as_mut().unwrap();
+    let (rect_x, rect_y, rect_h) = (list.x, list.y, list.h);
+    let moved = list.mouse_moved(mouse);
 
     let mut hovered: Option<usize> = None;
     if let Some((mx, my)) = mouse
         && my > rect_y
         && my < rect_y + rect_h
     {
-        let rel = mx - rect_x;
-        hovered = cols
-            .iter()
-            .enumerate()
-            .rev()
-            .find(|&(_, &col)| rel >= col)
-            .map(|(i, _)| i);
+        hovered = list.col_at(mx);
     }
     if moved && let Some(i) = hovered {
         f.select(i as i32);
     }
-    let current = f.suggest.list.as_ref().map_or(current, |l| l.current);
 
     let list = f.suggest.list.as_ref().unwrap();
+    let current = list.current;
     for (i, item) in list.items.iter().enumerate() {
-        let x = rect_x + cols[i];
+        let x = rect_x + list.cols[i];
         let w = p.atlas.font.width_str(&item.text) + SUGGESTION_CHIP_PAD * 2.0;
         p.fill(x, rect_y, w, rect_h, st.fill);
         let color = if i == current {
@@ -509,7 +516,7 @@ fn draw_row(p: &mut Painter, f: &mut Field, ctx: &ScreenCtx, st: Style) {
 #[cfg(not(feature = "mobile_ui"))]
 fn draw_column(p: &mut Painter, f: &mut Field, ctx: &ScreenCtx, st: Style) {
     let mouse = ctx.input.mouse.map(|m| (m.x, m.y));
-    let (rect_x, rect_y, rect_w, rect_h, offset, current, limit, total) = {
+    let (rect_x, rect_y, rect_w, rect_h, offset, limit, total) = {
         let list = f.suggest.list.as_ref().unwrap();
         let limit = list.items.len().min(st.limit);
         (
@@ -518,7 +525,6 @@ fn draw_column(p: &mut Painter, f: &mut Field, ctx: &ScreenCtx, st: Style) {
             list.w,
             list.h,
             list.offset,
-            list.current,
             limit,
             list.items.len(),
         )
@@ -541,14 +547,8 @@ fn draw_column(p: &mut Painter, f: &mut Field, ctx: &ScreenCtx, st: Style) {
         }
     }
 
-    let moved = f
-        .suggest
-        .list
-        .as_ref()
-        .is_some_and(|l| l.last_mouse != mouse);
-    if let Some(list) = f.suggest.list.as_mut() {
-        list.last_mouse = mouse;
-    }
+    let list = f.suggest.list.as_mut().unwrap();
+    let moved = list.mouse_moved(mouse);
     let mut hovered_row: Option<usize> = None;
     if let Some((mx, my)) = mouse
         && mx > rect_x
@@ -556,7 +556,7 @@ fn draw_column(p: &mut Painter, f: &mut Field, ctx: &ScreenCtx, st: Style) {
         && my > rect_y
         && my < rect_y + rect_h
     {
-        hovered_row = Some(((my - rect_y) / SUGGESTION_LINE_HEIGHT) as usize + offset);
+        hovered_row = Some(list.row_at(my));
     }
     if moved
         && let Some(row) = hovered_row
@@ -564,9 +564,9 @@ fn draw_column(p: &mut Painter, f: &mut Field, ctx: &ScreenCtx, st: Style) {
     {
         f.select(row as i32);
     }
-    let current = f.suggest.list.as_ref().map_or(current, |l| l.current);
 
     let list = f.suggest.list.as_ref().unwrap();
+    let current = list.current;
     for i in 0..limit {
         let index = i + offset;
         let row_y = rect_y + SUGGESTION_LINE_HEIGHT * i as f32;
@@ -620,7 +620,7 @@ fn draw_usage(p: &mut Painter, f: &Field, st: Style, a: Anchor) {
             a.usage_y + SUGGESTION_LINE_HEIGHT * i as f32
         };
         p.fill(x - 1.0, y, width + 2.0, SUGGESTION_LINE_HEIGHT, st.fill);
-        let color = if *is_error { 0xFFFFFF } else { 0xAAAAAA };
+        let color = if *is_error { 0xFFFFFF } else { USAGE_COLOR };
         p.text_str(line, x, y + 2.0, color, true);
     }
 }

@@ -6,6 +6,7 @@ use azalea_registry::identifier::Identifier;
 
 use crate::client::advancements::{AdvancementTree, Display, Node};
 use crate::gui::atlas::MISSING_TEXTURE;
+use crate::gui::container::LABEL_COLOR;
 use crate::gui::painter::Painter;
 use crate::gui::tooltip::{self, label};
 use crate::gui::{Screen, ScreenCtx, Snapshot, options};
@@ -20,7 +21,6 @@ const INSIDE_Y: i32 = 18;
 const INSIDE_W: i32 = 234;
 const INSIDE_H: i32 = 113;
 const SCROLL_SPEED: f32 = 16.0;
-const WINDOW_TITLE: u32 = 0x404040;
 const LINE: i32 = 9;
 const TITLE_MAX_W: f32 = 163.0;
 const TITLE_MIN_W: i32 = 80;
@@ -228,13 +228,6 @@ impl AdvancementsUi {
     }
 }
 
-fn split(font: &Font, spans: &[Span], width: f32) -> Vec<Vec<Span>> {
-    if spans.iter().all(|s| s.text.is_empty()) {
-        return Vec::new();
-    }
-    font.wrap(spans, width)
-}
-
 fn width(font: &Font, spans: &[Span]) -> i32 {
     font.width(spans).ceil() as i32
 }
@@ -243,7 +236,7 @@ fn optimal_lines(font: &Font, spans: &[Span], preferred: i32) -> Vec<Vec<Span>> 
     let mut best = Vec::new();
     let mut best_distance = f32::MAX;
     for offset in SPLIT_OFFSETS {
-        let lines = split(font, spans, (preferred - offset) as f32);
+        let lines = font.wrap_nonempty(spans, (preferred - offset) as f32);
         let widest = lines.iter().map(|l| font.width(l)).fold(0.0, f32::max);
         let distance = (widest - preferred as f32).abs();
         if distance <= 10.0 {
@@ -265,7 +258,7 @@ fn progress_text(done: u16, total: u16) -> String {
 }
 
 fn widget(font: &Font, node: u32, n: &Node, display: Arc<Display>, parent: Option<u16>) -> Widget {
-    let title = split(font, &display.title, TITLE_MAX_W);
+    let title = font.wrap_nonempty(&display.title, TITLE_MAX_W);
     let title_w = title
         .iter()
         .map(|l| width(font, l))
@@ -635,8 +628,7 @@ fn lines(p: &mut Painter, lines: &[Vec<Span>], x: i32, y: i32) {
 }
 
 fn centered(p: &mut Painter, s: &str, mid: i32, y: i32) {
-    let w = p.atlas.font.width_str(s).ceil() as i32;
-    p.text_str(s, (mid - w / 2) as f32, y as f32, 0xFFFFFF, true);
+    p.text_centered(s, mid as f32 + 0.5, y as f32, 0xFFFFFF, true);
 }
 
 fn select(shared: &SharedMutex, tree: &AdvancementTree, root: Option<u32>) {
@@ -789,7 +781,7 @@ pub fn draw(
                 label!("gui.advancements"),
                 (xo + 8) as f32,
                 (yo + 6) as f32,
-                WINDOW_TITLE,
+                LABEL_COLOR,
                 false,
             );
         }

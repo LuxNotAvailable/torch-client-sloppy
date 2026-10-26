@@ -93,7 +93,7 @@ fn install_error_handler(device: &RenderDevice) {
 }
 
 fn timing_requested() -> bool {
-    std::env::var_os("MC_SHADERPACK_TIMING").is_some_and(|v| v != "0")
+    crate::platform::env::flag("MC_SHADERPACK_TIMING")
 }
 
 const TIMED_STAGES: [&str; 11] = [

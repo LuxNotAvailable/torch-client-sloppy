@@ -3,8 +3,7 @@ use crate::session::{MerchantOffer, MerchantOffers};
 
 use super::{
     ContainerUi, Digits, GuiState, InvAction, Layout, Painter, ScreenCtx, SlotStack, Snapshot,
-    TitleCache, dim_background, draw_inventory_label_at, draw_title, hovering, slots,
-    window_origin,
+    TitleCache, dim_background, draw_inventory_label, draw_title, slots, window_origin,
 };
 
 const INVENTORY_LABEL_X: f32 = 107.0;
@@ -50,7 +49,7 @@ pub fn draw(
         let row_x = left + 5.0;
         let row_y = top + 18.0 + slot as f32 * ROW_H;
 
-        let row_hovered = hovering(ctx, row_x, row_y, ROW_W, ROW_H);
+        let row_hovered = ctx.hovering(row_x, row_y, ROW_W, ROW_H);
         if widgets::Button::new(row_x, row_y, ROW_W, ROW_H, "").draw(p, ctx) {
             ui.selected = row as i16;
             out.push(InvAction::SelectTrade(row as u32));
@@ -118,13 +117,10 @@ pub fn draw(
 
     if sold_out
         && offers.can_restock
-        && hovering(ctx, left + 186.0, top + 35.0, 22.0, 21.0)
+        && ctx.hovering(left + 186.0, top + 35.0, 22.0, 21.0)
         && let Some(m) = ctx.mouse()
     {
-        let line = vec![crate::text::Span {
-            text: restock_label().to_string(),
-            style: crate::text::Style::default(),
-        }];
+        let line = vec![crate::text::Span::new(restock_label())];
         tooltip::draw_lines(p, &[line], m.x, m.y, ctx.vw, ctx.vh);
     }
 
@@ -214,10 +210,13 @@ fn draw_merchant_labels(
     match offers.filter(|o| o.show_progress && (1..=5).contains(&o.level)) {
         Some(offers) => {
             let title = titled_with_level(ui, snap, offers.level);
-            let w = p.atlas.font.width_str(title);
-            let x = (49.0 + img_w / 2.0 - w / 2.0).floor();
-            let title = title.to_string();
-            p.text_plain(&title, left + x, top + 6.0, super::LABEL_COLOR, false);
+            p.text_centered(
+                title,
+                left + 49.0 + img_w / 2.0,
+                top + 6.0,
+                super::LABEL_COLOR,
+                false,
+            );
         }
         None => {
             let title_w = super::title_width(p, &snap.container_title);
@@ -225,7 +224,7 @@ fn draw_merchant_labels(
             draw_title(p, &snap.container_title, left + title_x, top + 6.0);
         }
     }
-    draw_inventory_label_at(p, left, top, img_h, INVENTORY_LABEL_X);
+    draw_inventory_label(p, left, top, img_h, INVENTORY_LABEL_X);
 
     let trades = trades_label();
     let trades_w = p.atlas.font.width_str(trades);
@@ -239,15 +238,11 @@ fn draw_merchant_labels(
 }
 
 fn trades_label() -> &'static str {
-    use std::sync::OnceLock;
-    static LABEL: OnceLock<String> = OnceLock::new();
-    LABEL.get_or_init(|| tooltip::translate("merchant.trades", &[]))
+    tooltip::label!("merchant.trades")
 }
 
 fn restock_label() -> &'static str {
-    use std::sync::OnceLock;
-    static LABEL: OnceLock<String> = OnceLock::new();
-    LABEL.get_or_init(|| tooltip::translate("merchant.deprecated", &[]))
+    tooltip::label!("merchant.deprecated")
 }
 
 fn titled_with_level<'a>(ui: &'a mut ContainerUi, snap: &Snapshot, level: u32) -> &'a str {

@@ -1,6 +1,6 @@
 [package]
 name = "torch-client"
-version = "0.1.0"
+version = "0.1.3"
 edition = "2024"
 
 [lib]
@@ -8,7 +8,18 @@ name = "torch_client"
 crate-type = ["rlib"]
 
 [features]
-default = ["asset_download", "multiversion", "full_font", "skins", "online_mode"]
+default = [
+    "asset_download",
+    "multiversion",
+    "full_font",
+    "skins",
+    "online_mode",
+    "resourcepacks",
+    "update_checker",
+    "hud_editor",
+]
+
+update_checker = ["dep:reqwest", "dep:rustls"]
 
 skins = ["dep:reqwest", "dep:rustls"]
 
@@ -25,13 +36,17 @@ mobile_ui = ["bevy/touch"]
 
 click_gui = []
 
+module_panel = ["click_gui"]
+
 hud_editor = []
+
+tutorial = ["mobile_ui", "hud_editor"]
 
 builtin_shaders = ["bevy/bevy_anti_alias", "bevy/bevy_post_process"]
 
 shader_support = ["dep:flate2", "dep:naga", "dep:wgpu"]
 
-resourcepacks = ["dep:flate2"]
+resourcepacks = ["dep:flate2", "dep:sha1"]
 
 explore_modrinth = ["resourcepacks", "dep:reqwest", "dep:rustls", "dep:sha1", "image/webp"]
 

@@ -294,6 +294,23 @@ pub(crate) fn reload_all_chunks(bot: &Client, shared: &Arc<SharedMutex>) {
     }
 }
 
+pub(crate) fn remesh_all_chunks(bot: &Client) {
+    if crate::client::mesh_worker::active() {
+        return;
+    }
+    let (Ok(world), Some(q)) = (bot.world(), CHUNK_Q.get()) else {
+        return;
+    };
+    let mut cols: Vec<(i32, i32)> = meshed_chunks().lock().unwrap().iter().copied().collect();
+    if let Ok(pos) = bot.position() {
+        let (px, pz) = ((pos.x as i32) >> 4, (pos.z as i32) >> 4);
+        cols.sort_unstable_by_key(|&(x, z)| (x - px).pow(2) + (z - pz).pow(2));
+    }
+    for (cx, cz) in cols {
+        q.push(world.clone(), cx, cz, JobScope::Column);
+    }
+}
+
 const COMPACT_INTERVAL: u32 = 256;
 static FORGOTTEN_SINCE_COMPACT: AtomicU32 = AtomicU32::new(0);
 

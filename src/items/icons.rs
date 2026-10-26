@@ -1097,7 +1097,8 @@ pub fn bake_item_icons(assets: &Path) -> ItemIcons {
     dispatch_report.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
     let mut source_report: Vec<_> = source_counts.into_iter().collect();
     source_report.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
-    eprintln!(
+    crate::log_info!(
+        "items",
         "item icons: {} items (+{variant_count} potion variants), {}x{} atlas, {:.2?} on {} threads",
         ids.len() - variant_count,
         image.width(),
@@ -1105,10 +1106,10 @@ pub fn bake_item_icons(assets: &Path) -> ItemIcons {
         start.elapsed(),
         threads
     );
-    eprintln!("item icons: dispatch {:?}", dispatch_report);
-    eprintln!("item icons: source {:?}", source_report);
+    crate::log_debug!("items", "item icons: dispatch {:?}", dispatch_report);
+    crate::log_debug!("items", "item icons: source {:?}", source_report);
     if !fell_back.is_empty() {
-        eprintln!("item icons: no model geometry for {:?}", fell_back);
+        crate::log_debug!("items", "item icons: no model geometry for {:?}", fell_back);
     }
 
     ItemIcons { image, map }

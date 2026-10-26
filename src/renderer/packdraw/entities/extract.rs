@@ -187,7 +187,7 @@ pub(crate) fn extract_standard_draws(
         Query<(
             &crate::renderer::sky::SkyPart,
             &Mesh3d,
-            &MeshMaterial3d<StandardMaterial>,
+            &MeshMaterial3d<crate::renderer::sky::BackdropMaterial>,
             &GlobalTransform,
             &ViewVisibility,
         )>,
@@ -207,13 +207,11 @@ pub(crate) fn extract_standard_draws(
     hand: Extract<
         Query<(
             &Mesh3d,
-            &MeshMaterial3d<StandardMaterial>,
+            &MeshMaterial3d<crate::renderer::hand::HandMaterial>,
             &GlobalTransform,
             &ViewVisibility,
-            &bevy::camera::visibility::RenderLayers,
         )>,
     >,
-    hand_camera: Extract<Query<&GlobalTransform, With<crate::renderer::hand::HandCamera>>>,
     overlays: Extract<
         Query<
             (
@@ -230,6 +228,8 @@ pub(crate) fn extract_standard_draws(
         >,
     >,
     materials: Extract<Res<Assets<StandardMaterial>>>,
+    sky_materials: Extract<Res<Assets<crate::renderer::sky::BackdropMaterial>>>,
+    hand_materials: Extract<Res<Assets<crate::renderer::hand::HandMaterial>>>,
     render: Option<ResMut<PackRender>>,
 ) {
     use crate::renderer::sky::SkyPart;
@@ -295,7 +295,7 @@ pub(crate) fn extract_standard_draws(
             if !visible.get() || !wanted || !has(kind) {
                 continue;
             }
-            let Some(material) = materials.get(&material.0) else {
+            let Some(material) = sky_materials.get(&material.0).map(|m| &m.base) else {
                 continue;
             };
             let second = material.alpha_mode == AlphaMode::Add;
@@ -358,17 +358,12 @@ pub(crate) fn extract_standard_draws(
         );
     }
 
-    if EntityKind::ALL.iter().any(|k| k.is_hand() && has(*k))
-        && let Ok(camera) = hand_camera.single()
-    {
-        let view = camera.to_matrix().inverse();
-        let layer =
-            bevy::camera::visibility::RenderLayers::layer(crate::renderer::hand::HAND_LAYER);
-        for (mesh, material, transform, visible, layers) in &hand {
-            if !visible.get() || !layers.intersects(&layer) {
+    if EntityKind::ALL.iter().any(|k| k.is_hand() && has(*k)) {
+        for (mesh, material, transform, visible) in &hand {
+            if !visible.get() {
                 continue;
             }
-            let Some(material) = materials.get(&material.0) else {
+            let Some(material) = hand_materials.get(&material.0).map(|m| &m.base) else {
                 continue;
             };
             let translucent = blended(material.alpha_mode);
@@ -384,7 +379,7 @@ pub(crate) fn extract_standard_draws(
                 kind,
                 mesh,
                 material,
-                view * transform.to_matrix(),
+                transform.to_matrix(),
                 true,
                 kind.render_stage(),
                 0,

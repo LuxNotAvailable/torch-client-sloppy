@@ -3,10 +3,12 @@ use std::collections::VecDeque;
 use crate::diag::Stat;
 use crate::direction::Direction;
 use crate::gui::ScreenCtx;
+use crate::gui::chat::argb;
 use crate::gui::hud_layout::{ElementId, Hud, Rect};
 use crate::gui::painter::Painter;
 use crate::session::{ChunkProfiling, Gamemode};
 use crate::text::LINE_HEIGHT;
+use crate::util::bytes::Bytes;
 
 const DEBUG_COLOR: u32 = 0xE6FFA0;
 const STATUS_COLOR: u32 = 0xFFFF55;
@@ -143,27 +145,8 @@ pub struct MemoryUse {
     pub block_entities: usize,
 }
 
-fn bytes(n: u64) -> String {
-    const UNITS: [&str; 4] = ["B", "KiB", "MiB", "GiB"];
-    let mut value = n as f64;
-    let mut unit = 0;
-    while value >= 1024.0 && unit < UNITS.len() - 1 {
-        value /= 1024.0;
-        unit += 1;
-    }
-    if unit == 0 {
-        format!("{n} B")
-    } else if value < 10.0 {
-        format!("{value:.2} {}", UNITS[unit])
-    } else if value < 100.0 {
-        format!("{value:.1} {}", UNITS[unit])
-    } else {
-        format!("{value:.0} {}", UNITS[unit])
-    }
-}
-
 fn rate(n: f64) -> String {
-    format!("{}/s", bytes(n.max(0.0) as u64))
+    format!("{}/s", Bytes(n.max(0.0) as u64))
 }
 
 pub const TEXT_COLOR: u32 = 0xFFFFFF;
@@ -324,9 +307,9 @@ pub fn draw(
     }
     if crate::diag::MEMORY_METRICS && hud.shown(ElementId::Ram) {
         let mut l = line(
-            format!("RAM: {}", bytes(info.runtime.rss_bytes)),
+            format!("RAM: {}", Bytes(info.runtime.rss_bytes)),
             TEXT_COLOR,
-            width("RAM: 9999.99 GiB"),
+            width("RAM: 9999 GiB"),
         );
         l.fixed = true;
         put(ElementId::Ram, l);
@@ -721,14 +704,14 @@ fn world_items(info: &HudInfo, d: &DebugInfo) -> Vec<Item<'static>> {
         na_row(
             "World",
             in_world,
-            format!("{} in {} chunks", bytes(mem.world_bytes), mem.world_chunks),
+            format!("{} in {} chunks", Bytes(mem.world_bytes), mem.world_chunks),
         ),
         na_row(
             "Terrain mesh",
             in_world,
             format!(
                 "{} in {} slots{}",
-                bytes(mem.terrain_bytes),
+                Bytes(mem.terrain_bytes),
                 mem.sections,
                 crate::renderer::terrain_pool::stats()
                     .map(|s| &s.0)
@@ -745,7 +728,7 @@ fn world_items(info: &HudInfo, d: &DebugInfo) -> Vec<Item<'static>> {
             in_world,
             format!(
                 "{} in {} sections",
-                bytes(mem.light_bytes),
+                Bytes(mem.light_bytes),
                 mem.light_sections
             ),
         ),
@@ -757,12 +740,12 @@ fn network_items(info: &HudInfo) -> Vec<Item<'static>> {
     vec![
         row(
             "Down",
-            format!("{} ({})", rate(rt.rx_per_sec), bytes(rt.rx_total)),
+            format!("{} ({})", rate(rt.rx_per_sec), Bytes(rt.rx_total)),
         )
         .into(),
         row(
             "Up",
-            format!("{} ({})", rate(rt.tx_per_sec), bytes(rt.tx_total)),
+            format!("{} ({})", rate(rt.tx_per_sec), Bytes(rt.tx_total)),
         )
         .into(),
     ]
@@ -825,29 +808,42 @@ fn memory_items(info: &HudInfo, d: &DebugInfo) -> Vec<Item<'static>> {
 
     let mut items: Vec<Item<'static>> = Vec::new();
     if crate::diag::MEMORY_METRICS {
-        items.push(row("RSS", bytes(rt.rss_bytes)).into());
+        items.push(row("RSS", Bytes(rt.rss_bytes).to_string()).into());
     }
     items.extend([
         na_row(
             "World",
             in_world,
-            format!("{} in {} chunks", bytes(mem.world_bytes), mem.world_chunks),
+            format!("{} in {} chunks", Bytes(mem.world_bytes), mem.world_chunks),
         ),
         na_row(
             "Terrain mesh",
             in_world,
             format!(
                 "{} in {} column meshes",
-                bytes(mem.terrain_bytes),
+                Bytes(mem.terrain_bytes),
                 mem.sections
             ),
+        ),
+        na_row(
+            "Terrain pools",
+            in_world,
+            crate::renderer::terrain_pool::stats()
+                .map(|s| &s.0)
+                .map_or(String::new(), |s| {
+                    format!(
+                        "{} pools, {} allocated",
+                        s.pools.load(std::sync::atomic::Ordering::Relaxed),
+                        Bytes(s.capacity_bytes.load(std::sync::atomic::Ordering::Relaxed))
+                    )
+                }),
         ),
         na_row(
             "Light",
             in_world,
             format!(
                 "{} in {} sections",
-                bytes(mem.light_bytes),
+                Bytes(mem.light_bytes),
                 mem.light_sections
             ),
         ),
@@ -856,7 +852,7 @@ fn memory_items(info: &HudInfo, d: &DebugInfo) -> Vec<Item<'static>> {
             in_world,
             format!(
                 "{} in {} sections",
-                bytes(mem.light_engine_bytes),
+                Bytes(mem.light_engine_bytes),
                 mem.light_engine_sections
             ),
         ),
@@ -864,7 +860,7 @@ fn memory_items(info: &HudInfo, d: &DebugInfo) -> Vec<Item<'static>> {
             "Baked blocks",
             format!(
                 "{} in {} states / {} models",
-                bytes(mem.baked_bytes),
+                Bytes(mem.baked_bytes),
                 mem.baked_states,
                 mem.baked_models
             ),
@@ -872,7 +868,7 @@ fn memory_items(info: &HudInfo, d: &DebugInfo) -> Vec<Item<'static>> {
         .into(),
         row(
             "Textures",
-            format!("{} in {}", bytes(mem.texture_bytes), mem.textures),
+            format!("{} in {}", Bytes(mem.texture_bytes), mem.textures),
         )
         .into(),
         na_row(
@@ -887,14 +883,14 @@ fn memory_items(info: &HudInfo, d: &DebugInfo) -> Vec<Item<'static>> {
         ),
     ]);
     if crate::diag::MEMORY_METRICS {
-        items.push(row("Other", bytes(other)).into());
+        items.push(row("Other", Bytes(other).to_string()).into());
         items.push(
             row(
                 "RSS anon/mapped",
                 format!(
                     "{} / {}",
-                    bytes(rt.rss_anon_bytes),
-                    bytes(rt.rss_bytes.saturating_sub(rt.rss_anon_bytes))
+                    Bytes(rt.rss_anon_bytes),
+                    Bytes(rt.rss_bytes.saturating_sub(rt.rss_anon_bytes))
                 ),
             )
             .into(),
@@ -905,16 +901,12 @@ fn memory_items(info: &HudInfo, d: &DebugInfo) -> Vec<Item<'static>> {
             "Heap live",
             format!(
                 "{} in {} allocs",
-                bytes(rt.heap_live_bytes),
+                Bytes(rt.heap_live_bytes),
                 rt.heap_live_allocs
             ),
         )
         .into(),
-        row(
-            "Heap churn",
-            format!("{}/s", bytes(rt.heap_alloc_per_sec as u64)),
-        )
-        .into(),
+        row("Heap churn", rate(rt.heap_alloc_per_sec)).into(),
         row("Churn frame", churn_row(rt, &[0, 1, 2, 9])).into(),
         row("Churn threads", churn_row(rt, &[3, 4, 5, 6, 7, 8])).into(),
     ]);
@@ -929,7 +921,7 @@ fn churn_row(rt: &crate::diag::Runtime, sites: &[usize]) -> String {
             format!(
                 "{} {}",
                 crate::diag::alloc::SITES[i],
-                bytes(rt.heap_churn_by_site[i] as u64)
+                Bytes(rt.heap_churn_by_site[i] as u64)
             )
         })
         .collect();
@@ -972,7 +964,7 @@ fn overview_sections(info: &HudInfo, d: &DebugInfo) -> Vec<(&'static str, Vec<It
         .into(),
     ];
     if crate::diag::MEMORY_METRICS {
-        perf.push(row("Mem", bytes(rt.rss_bytes)).into());
+        perf.push(row("Mem", Bytes(rt.rss_bytes).to_string()).into());
     }
     vec![
         ("PERFORMANCE", perf),
@@ -1203,7 +1195,7 @@ pub fn draw_effects(
         p.sprite(bg, x.floor(), y.floor(), 24.0, 24.0);
 
         let icon = format!("mob_effect/{}", effect.id);
-        let tint = ((alpha.clamp(0.0, 1.0) * 255.0).round() as u32) << 24 | 0x00FF_FFFF;
+        let tint = argb(alpha, 0x00FF_FFFF);
         p.sprite_tinted(
             &icon,
             (x + 3.0).floor(),

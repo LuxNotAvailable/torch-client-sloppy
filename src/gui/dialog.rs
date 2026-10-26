@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::gui::chat::plain_text;
 use crate::gui::clickevent::{self, Followup};
 use crate::gui::confirmlink;
 use crate::gui::focus;
@@ -11,7 +12,7 @@ use crate::play::dialog::{
     Action, ActionButton, AfterAction, Body, Click, Control, Dialog, Kind, RangeInfo, Value,
 };
 use crate::session::{ServerLink, SharedMutex};
-use crate::text::{LINE_HEIGHT, Span, Style};
+use crate::text::{LINE_HEIGHT, Span};
 
 const FOOTER_MARGIN: f32 = 5.0;
 
@@ -41,7 +42,7 @@ const WAIT_BUTTON_VISIBLE_SECS: f32 = 1.0;
 const WAIT_BUTTON_ACTIVE_SECS: f32 = 5.0;
 const WAIT_BUTTON_WIDTH: f32 = 200.0;
 
-const CONFIRM_BUTTON_WIDTH: f32 = 150.0;
+pub(crate) const CONFIRM_BUTTON_WIDTH: f32 = 150.0;
 
 #[derive(Default)]
 pub struct DialogState {
@@ -253,10 +254,7 @@ fn choice_label(control: &Control, index: usize) -> Vec<Span> {
         return chosen;
     }
     let mut spans = label.clone();
-    spans.push(Span {
-        text: ": ".to_string(),
-        style: Style::default(),
-    });
+    spans.push(Span::new(": "));
     spans.extend(chosen);
     spans
 }
@@ -271,7 +269,7 @@ fn slider_label(control: &Control, slider: f32) -> Vec<Span> {
     else {
         return Vec::new();
     };
-    let plain: String = label.iter().map(|span| span.text.as_str()).collect();
+    let plain = plain_text(&label);
     let value = RangeInfo::value_string(range.scaled(slider));
     vec![Span {
         text: tooltip::translate(label_format, &[plain, value]),
@@ -354,11 +352,7 @@ pub fn draw(
         ctx
     } else {
         masked_input = confirmlink::masked(ctx.input);
-        masked_ctx = ScreenCtx {
-            input: &masked_input,
-            vw: ctx.vw,
-            vh: ctx.vh,
-        };
+        masked_ctx = ctx.with_input(&masked_input);
         &masked_ctx
     };
 
@@ -408,20 +402,12 @@ fn draw_dialog(
         content_h,
     );
 
-    let over_list = ctx.hovering(list_x, list_y, list_w, list_h);
-    let dragging_bar = state.scroll_drag.is_some();
-    let mut list_input = ctx.input.clone();
-    if dragging_bar || (!over_list && !widgets::slider_dragging()) {
-        list_input.mouse = None;
-    }
-    if dragging_bar || !over_list {
-        list_input.left_click = false;
-    }
-    let list_ctx = ScreenCtx {
-        input: &list_input,
-        vw: ctx.vw,
-        vh: ctx.vh,
-    };
+    let list_input = options::masked_input(
+        ctx,
+        (list_x, list_y, list_w, list_h),
+        state.scroll_drag.is_some(),
+    );
+    let list_ctx = ctx.with_input(&list_input);
 
     let top = if content_h <= list_h {
         layout.content_y(ctx.vh, content_h).floor()
@@ -903,28 +889,15 @@ fn draw_input(
                     *label = slider_label(control, moved);
                 }
             }
-            p.sprite(
-                if focused {
-                    "widget/slider_highlighted"
-                } else {
-                    "widget/slider"
-                },
+            widgets::draw_slider(
+                p,
                 x,
                 cy,
                 row.w,
                 control_h,
-            );
-            let handle = if hovered || tracking {
-                "widget/slider_handle_highlighted"
-            } else {
-                "widget/slider_handle"
-            };
-            p.sprite(
-                handle,
-                x + (*slider * (row.w - HANDLE_WIDTH)).floor(),
-                cy,
-                HANDLE_WIDTH,
-                control_h,
+                *slider,
+                focused,
+                hovered || tracking,
             );
             widgets::draw_label_spans(p, label, x, cy, row.w, control_h);
         }
@@ -949,11 +922,12 @@ fn draw_waiting(p: &mut Painter, state: &mut DialogState, ctx: &ScreenCtx) -> Ou
     let elapsed = (ctx.input.time - since).max(0.0);
 
     let layout = HeaderFooter::new(HeaderFooter::DEFAULT_H, 0.0);
-    widgets::draw_title(
-        p,
-        ctx.vw,
-        layout.title_y(),
+    p.text_centered(
         &tooltip::translate("gui.waitingForResponse.title", &[]),
+        ctx.vw / 2.0,
+        layout.title_y(),
+        0xFFFFFF,
+        true,
     );
 
     let active = elapsed >= WAIT_BUTTON_ACTIVE_SECS;
@@ -975,10 +949,7 @@ fn draw_waiting(p: &mut Painter, state: &mut DialogState, ctx: &ScreenCtx) -> Ou
     };
     let x = ((ctx.vw - WAIT_BUTTON_WIDTH) / 2.0).floor();
     let y = layout.content_y(ctx.vh, CONTROL_HEIGHT).floor();
-    let spans = [Span {
-        text: label,
-        style: Style::default(),
-    }];
+    let spans = [Span::new(label)];
     if widgets::draw_button_spans(
         p,
         ctx,

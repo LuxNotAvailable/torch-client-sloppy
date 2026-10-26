@@ -1,7 +1,7 @@
 use super::{
     CONTAINER_W, GuiState, INV_H, INV_W, InvAction, Layout, Painter, ScreenCtx, SlotStack,
-    Snapshot, dim_background, draw_inventory_label, draw_labels, draw_labels_centered, draw_title,
-    error_icon, slots, window_origin,
+    Snapshot, close_window, dim_background, draw_labels, draw_labels_centered, error_icon, filled,
+    open_window, slots, window_origin,
 };
 
 pub fn draw_chest(
@@ -49,17 +49,39 @@ pub fn draw_crafting_table(
     snap: &Snapshot,
     out: &mut Vec<InvAction>,
 ) -> Option<SlotStack> {
-    let (hovered, left, top) = simple(
+    crate::gui::recipe_book_ghost::draw_screen(
         p,
         state,
         ctx,
         snap,
-        out,
         Layout::Crafting,
-        "container/crafting_table",
-    );
-    draw_labels(p, snap, left, top, INV_H, 29.0);
-    hovered
+        (5.0, -49.0),
+        true,
+        out,
+        |p, state, frame, out| {
+            let (left, top) = frame.origin;
+            p.blit_sheet(
+                "container/crafting_table",
+                0.0,
+                0.0,
+                INV_W,
+                INV_H,
+                left,
+                top,
+            );
+            let hovered = slots::panel(
+                p,
+                Layout::Crafting,
+                (left, top),
+                &frame.ctx,
+                snap,
+                &mut state.slots,
+                out,
+            );
+            draw_labels(p, snap, left, top, INV_H, 29.0);
+            hovered
+        },
+    )
 }
 
 pub fn draw_furnace(
@@ -70,8 +92,30 @@ pub fn draw_furnace(
     kind: crate::session::FurnaceKind,
     out: &mut Vec<InvAction>,
 ) -> Option<SlotStack> {
-    let (left, top) = window_origin(Layout::Furnace, ctx);
-    dim_background(p, ctx.vw, ctx.vh);
+    crate::gui::recipe_book_ghost::draw_screen(
+        p,
+        state,
+        ctx,
+        snap,
+        Layout::Furnace,
+        (20.0, -49.0),
+        true,
+        out,
+        |p, state, frame, out| {
+            draw_furnace_window(p, state, &frame.ctx, snap, kind, frame.origin, out)
+        },
+    )
+}
+
+fn draw_furnace_window(
+    p: &mut Painter,
+    state: &mut GuiState,
+    ctx: &ScreenCtx,
+    snap: &Snapshot,
+    kind: crate::session::FurnaceKind,
+    (left, top): (f32, f32),
+    out: &mut Vec<InvAction>,
+) -> Option<SlotStack> {
     let (sheet, lit, burn) = furnace_sprites(kind);
     p.blit_sheet(sheet, 0.0, 0.0, INV_W, INV_H, left, top);
 
@@ -138,15 +182,83 @@ fn furnace_sprites(
     }
 }
 
-pub fn draw_hopper(
+#[allow(clippy::too_many_arguments)]
+pub fn draw_simple(
+    p: &mut Painter,
+    state: &mut GuiState,
+    ctx: &ScreenCtx,
+    snap: &Snapshot,
+    out: &mut Vec<InvAction>,
+    layout: Layout,
+    sheet: &str,
+    centered_title: bool,
+) -> Option<SlotStack> {
+    let (hovered, left, top) = simple(p, state, ctx, snap, out, layout, sheet);
+    if centered_title {
+        draw_labels_centered(p, snap, left, top, INV_W, INV_H);
+    } else {
+        draw_labels(p, snap, left, top, layout.size().1, 8.0);
+    }
+    hovered
+}
+
+pub fn draw_crafter(
     p: &mut Painter,
     state: &mut GuiState,
     ctx: &ScreenCtx,
     snap: &Snapshot,
     out: &mut Vec<InvAction>,
 ) -> Option<SlotStack> {
-    let (hovered, left, top) = simple(p, state, ctx, snap, out, Layout::Hopper, "container/hopper");
-    draw_labels(p, snap, left, top, Layout::Hopper.size().1, 8.0);
+    let d = &snap.container_data;
+    let mask = (0..9).fold(0u16, |m, i| m | (u16::from(d[i] == 1) << i));
+    let layout = Layout::Crafter(mask);
+    let queued = out.len();
+    let (hovered, left, top) = simple(p, state, ctx, snap, out, layout, "container/crafter");
+    draw_labels_centered(p, snap, left, top, INV_W, INV_H);
+
+    let redstone = if d[9] == 1 {
+        "container/crafter/powered_redstone"
+    } else {
+        "container/crafter/unpowered_redstone"
+    };
+    p.sprite(redstone, left + 97.0, top + 35.0, 16.0, 16.0);
+
+    #[cfg(feature = "audio")]
+    for action in &out[queued..] {
+        if let InvAction::SlotStateChanged { enabled, .. } = *action {
+            let pitch = if enabled { 1.0 } else { 0.75 };
+            crate::audio::play(
+                "ui.button.click",
+                crate::audio::SoundCategory::Players,
+                0.4,
+                pitch,
+            );
+        }
+    }
+    #[cfg(not(feature = "audio"))]
+    let _ = queued;
+
+    let toggle_hint = (0..9).find(|&i| {
+        let (sx, sy) = layout.slot_pos(i);
+        ctx.hovering(
+            left + sx - 1.0,
+            top + sy - 1.0,
+            slots::SLOT_PITCH,
+            slots::SLOT_PITCH,
+        )
+    });
+    if let Some(i) = toggle_hint
+        && !layout.slot_disabled(i)
+        && snap.slot(i).is_empty()
+        && snap.gamemode != crate::session::Gamemode::Spectator
+        && state.slots.cursor(snap).is_empty()
+        && let Some(m) = ctx.mouse()
+    {
+        let line = vec![crate::text::Span::new(crate::gui::tooltip::label!(
+            "gui.togglable_slot"
+        ))];
+        crate::gui::tooltip::draw_lines(p, &[line], m.x, m.y, ctx.vw, ctx.vh);
+    }
     hovered
 }
 
@@ -157,9 +269,7 @@ pub fn draw_grindstone(
     snap: &Snapshot,
     out: &mut Vec<InvAction>,
 ) -> Option<SlotStack> {
-    let (left, top) = window_origin(Layout::Grindstone, ctx);
-    dim_background(p, ctx.vw, ctx.vh);
-    p.blit_sheet("container/grindstone", 0.0, 0.0, INV_W, INV_H, left, top);
+    let (left, top) = open_window(p, ctx, Layout::Grindstone, "container/grindstone");
     if (filled(snap, 0) || filled(snap, 1)) && !filled(snap, 2) {
         error_icon(p, "container/grindstone/error", left + 92.0, top + 31.0);
     }
@@ -183,24 +293,20 @@ pub fn draw_smithing(
     snap: &Snapshot,
     out: &mut Vec<InvAction>,
 ) -> Option<SlotStack> {
-    let (left, top) = window_origin(Layout::Smithing, ctx);
-    dim_background(p, ctx.vw, ctx.vh);
-    p.blit_sheet("container/smithing", 0.0, 0.0, INV_W, INV_H, left, top);
+    let (left, top) = open_window(p, ctx, Layout::Smithing, "container/smithing");
     if snap.container_data[0] != 0 {
         error_icon(p, "container/smithing/error", left + 65.0, top + 46.0);
     }
-    let hovered = slots::panel(
+    close_window(
         p,
-        Layout::Smithing,
-        (left, top),
+        state,
         ctx,
         snap,
-        &mut state.slots,
         out,
-    );
-    draw_title(p, &snap.container_title, left + 44.0, top + 15.0);
-    draw_inventory_label(p, left, top, INV_H);
-    hovered
+        Layout::Smithing,
+        (left, top),
+        (44.0, 15.0),
+    )
 }
 
 pub fn draw_cartography(
@@ -210,17 +316,7 @@ pub fn draw_cartography(
     snap: &Snapshot,
     out: &mut Vec<InvAction>,
 ) -> Option<SlotStack> {
-    let (left, top) = window_origin(Layout::Cartography, ctx);
-    dim_background(p, ctx.vw, ctx.vh);
-    p.blit_sheet(
-        "container/cartography_table",
-        0.0,
-        0.0,
-        INV_W,
-        INV_H,
-        left,
-        top,
-    );
+    let (left, top) = open_window(p, ctx, Layout::Cartography, "container/cartography_table");
 
     let (scaling, duplicating, locking) = match item_in(snap, 1) {
         "paper" => (true, false, false),
@@ -280,18 +376,16 @@ pub fn draw_cartography(
         }
     }
 
-    let hovered = slots::panel(
+    close_window(
         p,
-        Layout::Cartography,
-        (left, top),
+        state,
         ctx,
         snap,
-        &mut state.slots,
         out,
-    );
-    draw_title(p, &snap.container_title, left + 8.0, top + 4.0);
-    draw_inventory_label(p, left, top, INV_H);
-    hovered
+        Layout::Cartography,
+        (left, top),
+        (8.0, 4.0),
+    )
 }
 
 pub fn draw_brewing_stand(
@@ -301,9 +395,7 @@ pub fn draw_brewing_stand(
     snap: &Snapshot,
     out: &mut Vec<InvAction>,
 ) -> Option<SlotStack> {
-    let (left, top) = window_origin(Layout::BrewingStand, ctx);
-    dim_background(p, ctx.vw, ctx.vh);
-    p.blit_sheet("container/brewing_stand", 0.0, 0.0, INV_W, INV_H, left, top);
+    let (left, top) = open_window(p, ctx, Layout::BrewingStand, "container/brewing_stand");
 
     let ticks = snap.container_data[0].max(0) as f32;
     let fuel = snap.container_data[1].max(0) as f32;
@@ -376,10 +468,6 @@ fn simple(
     p.blit_sheet(sheet, 0.0, 0.0, w, h, left, top);
     let hovered = slots::panel(p, layout, (left, top), ctx, snap, &mut state.slots, out);
     (hovered, left, top)
-}
-
-fn filled(snap: &Snapshot, i: usize) -> bool {
-    snap.menu_slots.get(i).is_some_and(|s| !s.is_empty())
 }
 
 fn item_in(snap: &Snapshot, i: usize) -> &str {

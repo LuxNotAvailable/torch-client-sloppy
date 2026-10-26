@@ -98,8 +98,12 @@ pub fn debug_on(tag: &str) -> bool {
             .map(|t| t.trim().to_ascii_lowercase())
             .filter(|t| !t.is_empty())
             .collect();
-        for (var, tag) in [("MC_DEBUG_CHUNKS", "chunks"), ("MC_DEBUG_LIGHT", "light")] {
-            if std::env::var_os(var).is_some() {
+        for (var, tag) in [
+            ("MC_DEBUG_CHUNKS", "chunks"),
+            ("MC_DEBUG_LIGHT", "light"),
+            ("MC_TRACE", "packet"),
+        ] {
+            if crate::platform::env::flag(var) {
                 tags.push(tag.to_string());
             }
         }

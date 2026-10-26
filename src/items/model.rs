@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 use super::json::Json;
 use crate::direction::Direction;
@@ -314,11 +314,6 @@ pub struct Assets {
     files: Mutex<HashMap<String, Option<Arc<Json>>>>,
     models: Mutex<HashMap<String, Arc<Resolved>>>,
     textures: Mutex<HashMap<String, Option<Arc<Tex>>>>,
-}
-
-pub fn shared() -> &'static Assets {
-    static SHARED: OnceLock<Assets> = OnceLock::new();
-    SHARED.get_or_init(|| Assets::new(crate::assets_root()))
 }
 
 impl Assets {

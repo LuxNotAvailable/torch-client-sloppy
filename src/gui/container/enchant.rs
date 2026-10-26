@@ -1,9 +1,9 @@
 use super::{
     Digits, GuiState, INV_H, INV_W, InvAction, Layout, Painter, ScreenCtx, SlotStack, Snapshot,
-    dim_background, draw_labels, hovering, slots, window_origin,
+    dim_background, draw_labels, slots, window_origin,
 };
 use crate::gui::tooltip;
-use crate::text::{Span, Style};
+use crate::text::Span;
 use crate::util::javarandom::JavaRandom;
 
 pub fn draw(
@@ -52,7 +52,7 @@ pub fn draw(
 
         let cannot_afford =
             (gold_count < i as i32 + 1 || snap.xp_level < cost as u32) && !infinite_materials;
-        let hovered = !cannot_afford && hovering(ctx, left + 60.0, row_y, 108.0, 19.0);
+        let hovered = !cannot_afford && ctx.hovering(left + 60.0, row_y, 108.0, 19.0);
 
         let (slot_sprite, level_sprite, name_rgb) = if cannot_afford {
             (
@@ -301,13 +301,7 @@ fn draw_clue_tooltip(
         full_name.push_str(&roman(level));
     }
     let clue = tooltip::translate("container.enchant.clue", &[full_name]);
-    let mut lines = vec![vec![Span {
-        text: clue,
-        style: Style {
-            color: WHITE,
-            ..Style::default()
-        },
-    }]];
+    let mut lines = vec![vec![Span::colored(clue, WHITE)]];
 
     if !infinite_materials {
         lines.push(vec![]);
@@ -316,13 +310,7 @@ fn draw_clue_tooltip(
                 "container.enchant.level.requirement",
                 &[Digits::new(min_level as u32).as_str().to_string()],
             );
-            lines.push(vec![Span {
-                text,
-                style: Style {
-                    color: RED,
-                    ..Style::default()
-                },
-            }]);
+            lines.push(vec![Span::colored(text, RED)]);
         } else {
             let lapis_key = if cost == 1 {
                 "container.enchant.lapis.one"
@@ -335,13 +323,10 @@ fn draw_clue_tooltip(
                 &[Digits::new(cost as u32).as_str().to_string()]
             };
             let lapis_color = if gold_count >= cost { GRAY } else { RED };
-            lines.push(vec![Span {
-                text: tooltip::translate(lapis_key, lapis_args),
-                style: Style {
-                    color: lapis_color,
-                    ..Style::default()
-                },
-            }]);
+            lines.push(vec![Span::colored(
+                tooltip::translate(lapis_key, lapis_args),
+                lapis_color,
+            )]);
 
             let level_key = if cost == 1 {
                 "container.enchant.level.one"
@@ -353,13 +338,10 @@ fn draw_clue_tooltip(
             } else {
                 &[Digits::new(cost as u32).as_str().to_string()]
             };
-            lines.push(vec![Span {
-                text: tooltip::translate(level_key, level_args),
-                style: Style {
-                    color: GRAY,
-                    ..Style::default()
-                },
-            }]);
+            lines.push(vec![Span::colored(
+                tooltip::translate(level_key, level_args),
+                GRAY,
+            )]);
         }
     }
 

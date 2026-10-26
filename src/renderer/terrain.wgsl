@@ -11,24 +11,16 @@
 #import bevy_core_pipeline::tonemapping::tone_mapping
 #endif
 
-fn vanilla_fog_ramp(distance: f32, start: f32, end: f32) -> f32 {
-    if distance <= start {
-        return 0.0;
-    } else if distance >= end {
-        return 1.0;
-    }
-    return (distance - start) / (end - start);
+fn vanilla_fog_ramp(distance: f32, ramp: vec2<f32>) -> f32 {
+    return saturate((distance - ramp.x) * ramp.y);
 }
 
-fn vanilla_fog(color: vec4<f32>, rel: vec3<f32>) -> vec4<f32> {
-    let spherical = length(rel);
-    let cylindrical = max(length(rel.xz), abs(rel.y));
-    let environmental = fog.directional_light_color.xy;
+fn vanilla_fog(color: vec4<f32>, distance: vec2<f32>) -> vec4<f32> {
     let value = max(
-        vanilla_fog_ramp(spherical, environmental.x, environmental.y),
-        vanilla_fog_ramp(cylindrical, fog.be.x, fog.be.y),
+        vanilla_fog_ramp(distance.x, params.fog_ramps.xy),
+        vanilla_fog_ramp(distance.y, params.fog_ramps.zw),
     );
-    let mixed = mix(encode_srgb(color.rgb), encode_srgb(fog.base_color.rgb), value * fog.base_color.a);
+    let mixed = mix(encode_srgb(color.rgb), params.fog_color.rgb, value * params.fog_color.a);
     return vec4(decode_srgb(mixed), color.a);
 }
 
@@ -44,9 +36,14 @@ fn decode_srgb(c: vec3<f32>) -> vec3<f32> {
 @group(2) @binding(1) var atlas_sampler: sampler;
 @group(2) @binding(2) var lightmap_texture: texture_2d<f32>;
 @group(2) @binding(3) var lightmap_sampler: sampler;
-@group(2) @binding(4) var<uniform> params: vec4<f32>;
+struct TerrainParams {
+    misc: vec4<f32>,
+    fog_color: vec4<f32>,
+    fog_ramps: vec4<f32>,
+}
+@group(2) @binding(4) var<uniform> params: TerrainParams;
 
-struct SlotMeta { min: vec3<f32>, first_index: u32, max: vec3<f32>, index_count: u32, origin: vec3<i32>, base_vertex: u32, solid_count: u32, flags: u32, pool: u32, cutout_first: u32 }
+struct SlotMeta { min: vec3<f32>, first_index: u32, max: vec3<f32>, index_count: u32, origin: vec3<i32>, base_vertex: u32, solid_count: u32, flags: u32, pool: u32, cutout_first: u32, faces: array<vec4<u32>, 2>, }
 #ifdef META_TEXTURE
 const ORIGIN_ROW: i32 = 256;
 @group(2) @binding(5) var origins: texture_2d<i32>;
@@ -79,7 +76,7 @@ struct Vertex {
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
-    @location(0) world_position: vec4<f32>,
+    @location(0) fog_distance: vec2<f32>,
     @location(1) uv: vec2<f32>,
     @location(2) color: vec4<f32>,
 #ifdef FANCY_SHADERS
@@ -87,6 +84,7 @@ struct VertexOutput {
     @location(4) sky: vec3<f32>,
     @location(5) wave_normal: vec3<f32>,
     @location(6) @interpolate(flat) material: f32,
+    @location(7) world_position: vec4<f32>,
 #endif
 };
 
@@ -178,7 +176,7 @@ fn wave_surface_normal(xz: vec2<f32>, t: f32) -> vec3<f32> {
 @vertex
 fn vertex(vertex: Vertex) -> VertexOutput {
     var out: VertexOutput;
-    out.world_position = vec4(
+    var world_position = vec4(
         section_origin(vertex.instance_index, vertex.position.w)
             + vec3<f32>(vertex.position.xyz) / 256.0, 1.0);
 
@@ -189,27 +187,30 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     if material == MATERIAL_WATER || material == MATERIAL_LAVA {
         let calm = select(1.0, 0.33, material == MATERIAL_LAVA);
         let speed = select(1.0, 0.5, material == MATERIAL_LAVA);
-        let xz = out.world_position.xz;
+        let xz = world_position.xz;
         let t = globals.time * speed;
-        out.world_position.y += wave_height(xz, t) * calm;
+        world_position.y += wave_height(xz, t) * calm;
         out.wave_normal = wave_surface_normal(xz, t);
     } else {
         let weight = wind_weight(material, vertex.light.w);
         if weight > 0.0 {
             let gust = wind_offset(
-                out.world_position.xyz,
+                world_position.xyz,
                 globals.time * WIND_SPEED,
                 wind_frequency(material),
             );
-            out.world_position = vec4(
-                out.world_position.xyz + gust * weight,
-                out.world_position.w,
+            world_position = vec4(
+                world_position.xyz + gust * weight,
+                world_position.w,
             );
         }
     }
+    out.world_position = world_position;
 #endif
 
-    out.clip_position = position_world_to_clip(out.world_position.xyz);
+    out.clip_position = position_world_to_clip(world_position.xyz);
+    let rel = world_position.xyz - view.world_position;
+    out.fog_distance = vec2(length(rel), max(length(rel.xz), abs(rel.y)));
     out.uv = vertex.uv;
 
 #ifdef FANCY_SHADERS
@@ -278,14 +279,14 @@ fn fog_color(view_dir: vec3<f32>, sun_color: vec3<f32>, to_light: vec3<f32>, has
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
-    let texel = textureSampleBias(atlas_texture, atlas_sampler, in.uv, params.y);
+    let texel = textureSampleBias(atlas_texture, atlas_sampler, in.uv, params.misc.y);
 #ifdef FANCY_SHADERS
     var color = vec4(texel.rgb * in.color.rgb, texel.a);
 #else
     var color = texel * in.color;
 #endif
 #ifdef ALPHA_CUTOUT
-    if color.a < params.x {
+    if color.a < params.misc.x {
         discard;
     }
 #endif
@@ -293,10 +294,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     color.a = 1.0;
 #endif
 
+#ifdef FANCY_SHADERS
     let world_position = in.world_position.xyz;
     let view_distance = length(world_position - view.world_position);
-
-#ifdef FANCY_SHADERS
     let water = in.material == MATERIAL_WATER;
     let lava = in.material == MATERIAL_LAVA;
     let foliage = in.material == MATERIAL_LEAF || in.material == MATERIAL_PLANT;
@@ -387,10 +387,12 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 #endif
 
     if fog.mode != 0u {
-        color = vanilla_fog(color, world_position - view.world_position);
+        color = vanilla_fog(color, in.fog_distance);
     }
 #ifdef TONEMAP_IN_SHADER
+#ifndef TONEMAP_METHOD_NONE
     color = tone_mapping(color, view.color_grading);
+#endif
 #endif
     return color;
 }

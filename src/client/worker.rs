@@ -12,25 +12,51 @@ use azalea_core::registry_holder::RegistryHolder;
 use azalea_world::{Chunk, World};
 use parking_lot::RwLock;
 
-use crate::ATLAS_ROWS;
+use crate::blocks::Blocks;
 use crate::renderer::{self, Occupancy, PendingSection, RenderedBlock, build_section_mesh};
 use crate::session::{SharedMutex, SideMutex};
-use crate::util::block_model::block_visual;
+use crate::util::block_model::block_visual_in;
 
-struct BlockCache(Vec<Option<RenderedBlock>>);
+struct BlockCache {
+    states: Vec<Option<RenderedBlock>>,
+    blocks: Option<Arc<Blocks>>,
+}
 
 impl BlockCache {
     fn new() -> Self {
-        Self(Vec::new())
+        Self {
+            states: Vec::new(),
+            blocks: None,
+        }
+    }
+
+    fn use_registry(&mut self, blocks: Arc<Blocks>) {
+        if self
+            .blocks
+            .as_ref()
+            .is_some_and(|held| held.generation() == blocks.generation())
+        {
+            return;
+        }
+        self.states.clear();
+        self.blocks = Some(blocks);
+    }
+
+    fn sprites(&self) -> &crate::renderer::Sprites {
+        self.blocks
+            .as_ref()
+            .expect("use_registry runs first")
+            .sprites()
     }
 
     #[inline]
     fn get(&mut self, state: BlockState) -> &RenderedBlock {
         let id = state.id() as usize;
-        if id >= self.0.len() {
-            self.0.resize(id + 1, None);
+        if id >= self.states.len() {
+            self.states.resize(id + 1, None);
         }
-        self.0[id].get_or_insert_with(|| block_visual(state))
+        let blocks = self.blocks.as_deref().expect("use_registry runs first");
+        self.states[id].get_or_insert_with(|| block_visual_in(state, blocks))
     }
 }
 
@@ -549,6 +575,7 @@ fn process_job(
 ) -> Option<Job> {
     crate::prof_span!("mesh:process_job");
     let job_start = Instant::now();
+    cache.use_registry(crate::blocks::registry());
 
     if let JobScope::Section(sy) = job.scope
         && !queue.is_current(job.chunk_x, job.chunk_z, sy * 16, job.seq)
@@ -663,7 +690,7 @@ fn process_job(
         );
     }
 
-    let atlas_rows = ATLAS_ROWS.get().copied().unwrap_or(renderer::TILE_PX);
+    let tiles = cache.sprites().mesh_tiles();
     let mut results: Vec<PendingSection> = Vec::with_capacity((sec_hi - sec_lo) as usize);
     let mut blocks: Vec<(i32, i32, i32, RenderedBlock)> = Vec::with_capacity(4096);
     let mut stopped_at = sec_hi;
@@ -711,8 +738,7 @@ fn process_job(
                     }
                 }
             }
-            let (opaque, water) =
-                build_section_mesh(&blocks, x_base, sec_y, z_base, atlas_rows, &occ);
+            let (opaque, water) = build_section_mesh(&blocks, x_base, sec_y, z_base, tiles, &occ);
             let vis = crate::renderer::visgraph::resolve(|lx, ly, lz| {
                 occ.is_solid(x_base + lx as i32, sec_y + ly as i32, z_base + lz as i32)
             });

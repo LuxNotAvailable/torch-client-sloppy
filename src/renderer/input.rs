@@ -32,8 +32,6 @@ pub struct ThirdPersonState {
     pub active: bool,
 }
 
-pub(super) const THIRD_PERSON_DISTANCE: f32 = 4.0;
-
 pub(crate) fn run_exit_tasks() {
     save_on_session_end();
     crate::client::bot::shutdown_connection();
@@ -72,11 +70,15 @@ struct NavPoll {
     container_kind: crate::session::ContainerKind,
     sign_editor_open: Option<crate::session::SignEditRequest>,
     signing_prompt: bool,
+    server_pack_prompt: bool,
     book_open: Option<crate::session::InteractionHand>,
     book_edit_open: Option<crate::session::BookEditRequest>,
     command_block_open: Option<crate::session::CommandBlockOpen>,
     dialog_show: Option<std::sync::Arc<crate::play::dialog::Dialog>>,
     dialog_clear: bool,
+    win_game: bool,
+    code_of_conduct: Option<String>,
+    reconfiguring: bool,
     sleeping: bool,
     dead: bool,
     death_opening: Option<(Option<Vec<crate::text::Span>>, i32, bool)>,
@@ -92,6 +94,12 @@ pub(super) fn apply_gui_nav(
 ) {
     if std::mem::take(&mut state.quit) {
         shared.0.lock().unwrap().quit_requested = true;
+        #[cfg(target_os = "android")]
+        if let Some(app) = bevy::android::ANDROID_APP.get() {
+            run_exit_tasks();
+            crate::step("quit pressed, finishing the activity");
+            crate::finish_and_exit(app);
+        }
         exit.write(AppExit::Success);
         return;
     }
@@ -103,6 +111,8 @@ pub(super) fn apply_gui_nav(
             &mut faces,
         );
     }
+    #[cfg(feature = "online_mode")]
+    crate::gui::bannotice::poll(&mut state);
     use crate::gui::Screen;
     let poll = {
         let mut s = shared.0.lock().unwrap();
@@ -120,11 +130,15 @@ pub(super) fn apply_gui_nav(
             container_kind: s.session.container_kind,
             sign_editor_open: s.session.sign_editor_open.take(),
             signing_prompt: std::mem::take(&mut s.session.chat_signing_prompt),
+            server_pack_prompt: std::mem::take(&mut s.session.server_packs.open_prompt),
             book_open: s.session.book_open.take(),
             book_edit_open: s.session.book_edit_open.take(),
             command_block_open: s.session.command_block_open.take(),
             dialog_show: s.session.dialog_show.take(),
             dialog_clear: std::mem::take(&mut s.session.dialog_clear),
+            win_game: std::mem::take(&mut s.session.win_game),
+            code_of_conduct: s.session.code_of_conduct.take(),
+            reconfiguring: s.session.reconfiguring,
             sleeping: s.session.sleeping,
             dead,
             death_opening: death_opening.then(|| {
@@ -154,10 +168,10 @@ pub(super) fn apply_gui_nav(
     let (container_id, kind) = (poll.container_id, poll.container_kind);
     if container_id != *last_container_id && container_id != 0 {
         if kind.is_some() {
-            crate::renderer::systems::reset_menu_state(&mut state);
+            crate::renderer::systems::reset_menu_state(&mut state, &shared);
             state.nav = Some(Screen::Container(kind));
         } else if state.screen.is_container() {
-            crate::renderer::systems::reset_menu_state(&mut state);
+            crate::renderer::systems::reset_menu_state(&mut state, &shared);
             state.nav = Some(Screen::None);
         }
     } else if container_id == 0 && state.screen.is_container() {
@@ -221,6 +235,43 @@ pub(super) fn apply_gui_nav(
 
     if signing_prompt && state.screen != Screen::SignedChatPrompt {
         state.nav = Some(Screen::SignedChatPrompt);
+    }
+
+    if poll.server_pack_prompt
+        && state.screen != Screen::ServerPackPrompt
+        && state.nav != Some(Screen::Disconnected)
+    {
+        state.server_pack_parent = state.nav.unwrap_or(state.screen);
+        state.nav = Some(Screen::ServerPackPrompt);
+    }
+
+    if state.nav != Some(Screen::Disconnected) {
+        if poll.win_game {
+            state.win.open();
+            state.nav = Some(Screen::WinGame);
+        }
+        if let Some(text) = poll.code_of_conduct {
+            let parent = state.nav.unwrap_or(state.screen);
+            state.config_phase.open_code_of_conduct(&text, parent);
+            state.nav = Some(Screen::CodeOfConduct);
+        }
+    }
+    if state.nav.is_none() {
+        if poll.reconfiguring
+            && !state.screen.is_menu()
+            && !matches!(
+                state.screen,
+                Screen::Reconfiguring
+                    | Screen::CodeOfConduct
+                    | Screen::Dialog
+                    | Screen::ServerPackPrompt
+            )
+        {
+            state.config_phase.open_reconfig();
+            state.nav = Some(Screen::Reconfiguring);
+        } else if !poll.reconfiguring && state.screen == Screen::Reconfiguring {
+            state.nav = Some(Screen::None);
+        }
     }
 
     if state.nav.is_none() {
@@ -503,20 +554,56 @@ pub(super) fn web_pointer_lock(
     }
 }
 
-pub(super) fn web_fullscreen(
+pub(super) fn fullscreen_key(
     keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
     state: Res<crate::gui::GuiState>,
-    mut captured: Local<bool>,
+    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))] mut windows: Query<
+        &mut Window,
+        With<bevy::window::PrimaryWindow>,
+    >,
+    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))] time: Res<
+        Time<bevy::time::Real>,
+    >,
+    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))] mut last_toggle: Local<
+        Option<f64>,
+    >,
+    #[cfg(target_arch = "wasm32")] mut captured: Local<bool>,
 ) {
-    if state.keybinds.just(Action::Fullscreen, &keys, &buttons) {
-        crate::platform::fullscreen::toggle();
+    let pressed = state.keybinds.just(Action::Fullscreen, &keys, &buttons);
+
+    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+    {
+        const ECHO_SECS: f64 = 0.5;
+        let now = time.elapsed_secs_f64();
+        let echo = last_toggle.is_some_and(|at| now - at < ECHO_SECS);
+        if pressed
+            && !echo
+            && let Ok(mut window) = windows.single_mut()
+        {
+            use bevy::window::{MonitorSelection, WindowMode};
+            window.mode = match window.mode {
+                WindowMode::Windowed => WindowMode::BorderlessFullscreen(MonitorSelection::Current),
+                _ => WindowMode::Windowed,
+            };
+            *last_toggle = Some(now);
+        }
     }
-    let fullscreen = crate::platform::fullscreen::is_fullscreen();
-    if fullscreen != *captured {
-        *captured = fullscreen;
-        crate::platform::fullscreen::capture_escape(fullscreen);
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        if pressed {
+            crate::platform::fullscreen::toggle();
+        }
+        let fullscreen = crate::platform::fullscreen::is_fullscreen();
+        if fullscreen != *captured {
+            *captured = fullscreen;
+            crate::platform::fullscreen::capture_escape(fullscreen);
+        }
     }
+
+    #[cfg(target_os = "android")]
+    let _ = pressed;
 }
 
 pub(super) fn poll_module_binds(
@@ -865,6 +952,7 @@ pub(super) fn toggle_screen(
     shared: Res<Shared>,
     mut state: ResMut<crate::gui::GuiState>,
     mut windows: Query<(&mut Window, &mut CursorOptions), With<PrimaryWindow>>,
+    gui_input: Res<crate::gui::GuiInput>,
 ) {
     use crate::gui::Screen;
 
@@ -953,6 +1041,13 @@ pub(super) fn toggle_screen(
                 state.screen == Screen::ShaderOptions && state.shaderpacks.pop_screen();
             #[cfg(not(feature = "shader_support"))]
             let stepped_within = false;
+            #[cfg(resource_packs)]
+            let stepped_within = stepped_within
+                || (state.screen == Screen::ResourcePacks && state.resourcepacks.cancel_prompt());
+            #[cfg(resource_packs)]
+            if state.screen == Screen::ResourcePacks && !stepped_within {
+                state.resourcepacks.apply();
+            }
 
             if stepped_within {
                 None
@@ -1016,6 +1111,11 @@ pub(super) fn toggle_screen(
             shared.0.lock().unwrap().leave_bed_requested = true;
         }
         None
+    } else if matches!(
+        state.screen,
+        Screen::WinGame | Screen::CodeOfConduct | Screen::Reconfiguring | Screen::ServerPackPrompt
+    ) {
+        None
     } else if state.screen == Screen::Death {
         None
     } else if state.screen == Screen::Advancements {
@@ -1027,11 +1127,24 @@ pub(super) fn toggle_screen(
             None
         }
     } else if state.screen.is_open() {
-        if toggle_key || close_key {
+        if (toggle_key || close_key)
+            && crate::gui::recipe_book_ghost::key_before_close(
+                &state,
+                &shared.0,
+                close_key,
+                gui_input.size.x,
+            )
+        {
+            None
+        } else if toggle_key || close_key {
             Some(Screen::None)
         } else {
             None
         }
+    } else if state.keybinds.down(Action::DebugModifier, &keys, &buttons)
+        && !(close_key || pause_key)
+    {
+        None
     } else if toggle_key {
         let creative = shared.0.lock().unwrap().session.gamemode == Gamemode::Creative;
         if creative {
@@ -1105,6 +1218,46 @@ pub(super) fn toggle_chunk_borders(
     if debug_combo(Action::ChunkBorders, &keys, &buttons, &state) {
         state.chunk_borders = !state.chunk_borders;
     }
+}
+
+#[cfg(resource_packs)]
+pub(super) fn reload_resource_packs(
+    keys: Res<ButtonInput<KeyCode>>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    state: Res<crate::gui::GuiState>,
+    shared: Res<Shared>,
+) {
+    use crate::text::{Span, Style};
+    if !debug_combo(Action::ReloadResourcePacks, &keys, &buttons, &state) {
+        return;
+    }
+    crate::renderer::reload::request();
+    let prefix = Style {
+        bold: true,
+        ..Style::colored(0xFFFF55)
+    };
+    let spans = vec![
+        Span {
+            text: format!("{} ", crate::gui::tooltip::translate("debug.prefix", &[])),
+            style: prefix,
+        },
+        Span::colored(
+            crate::gui::tooltip::translate("debug.reload_resourcepacks.message", &[]),
+            0xFF_FFFF,
+        ),
+    ];
+    shared
+        .0
+        .lock()
+        .unwrap()
+        .session
+        .chat_incoming
+        .push(crate::session::ChatEntry {
+            spans,
+            events: None,
+            tag: crate::session::ChatTag::System,
+            original: None,
+        });
 }
 
 pub(super) fn reload_all_chunks(

@@ -69,7 +69,15 @@ impl Material for EspMaterial {
         descriptor.vertex.buffers = vec![vertex_layout];
         descriptor.primitive.cull_mode = None;
         if let Some(depth_stencil) = descriptor.depth_stencil.as_mut() {
-            depth_stencil.depth_compare = bevy::render::render_resource::CompareFunction::Always;
+            depth_stencil.depth_compare =
+                bevy::render::render_resource::CompareFunction::GreaterEqual;
+        }
+        descriptor
+            .vertex
+            .shader_defs
+            .push(super::hand::band_floor_def());
+        if let Some(fragment) = descriptor.fragment.as_mut() {
+            fragment.shader_defs.push(super::hand::band_floor_def());
         }
         Ok(())
     }

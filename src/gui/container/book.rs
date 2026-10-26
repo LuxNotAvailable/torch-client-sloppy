@@ -76,7 +76,5 @@ pub fn draw(
 }
 
 fn take_book_label() -> &'static str {
-    use std::sync::OnceLock;
-    static LABEL: OnceLock<String> = OnceLock::new();
-    LABEL.get_or_init(|| tooltip::translate("lectern.take_book", &[]))
+    tooltip::label!("lectern.take_book")
 }

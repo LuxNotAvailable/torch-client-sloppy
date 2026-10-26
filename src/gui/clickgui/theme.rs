@@ -146,8 +146,18 @@ pub fn revert(p: &mut Painter, x: f32, y: f32, argb: u32) {
     }
 }
 
+#[cfg(not(feature = "module_panel"))]
 pub fn dots(p: &mut Painter, x: f32, y: f32, argb: u32) {
     for i in 0..3 {
         p.fill(x, y + i as f32 * 2.5, 1.0, 1.0, argb);
+    }
+}
+
+#[cfg(feature = "module_panel")]
+pub fn cross(p: &mut Painter, x: f32, y: f32, argb: u32) {
+    for i in 0..6 {
+        let i = i as f32;
+        p.fill(x + i, y + i, 2.0, 1.0, argb);
+        p.fill(x + 5.0 - i, y + i, 2.0, 1.0, argb);
     }
 }

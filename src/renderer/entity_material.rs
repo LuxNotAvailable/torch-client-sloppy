@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::hash::Hash;
+
 use bevy::asset::{Asset, embedded_asset};
 use bevy::mesh::{Mesh, MeshVertexBufferLayoutRef};
 use bevy::pbr::{Material, MaterialPipeline, MaterialPlugin};
@@ -153,6 +156,8 @@ impl From<&EntityMaterial> for EntityMaterialKey {
     }
 }
 
+pub const ALPHA_CUTOUT: f32 = 0.1;
+
 impl EntityMaterial {
     pub fn new(
         texture: Option<Handle<Image>>,
@@ -169,6 +174,76 @@ impl EntityMaterial {
             depth_bias,
             see_through: false,
         }
+    }
+
+    pub fn cutout(texture: Option<Handle<Image>>, mode: LightMode, lit: Lit) -> EntityMaterial {
+        EntityMaterial::new(
+            texture,
+            mode,
+            AlphaMode::Mask(ALPHA_CUTOUT),
+            ALPHA_CUTOUT,
+            lit,
+            0,
+        )
+    }
+
+    pub fn relight(
+        materials: &mut Assets<EntityMaterial>,
+        handle: &Handle<EntityMaterial>,
+        lit: Lit,
+    ) {
+        let Some(material) = materials.get(handle) else {
+            return;
+        };
+        let mut params = material.params;
+        params.set(lit);
+        if params != material.params
+            && let Some(material) = materials.get_mut(handle)
+        {
+            material.params = params;
+        }
+    }
+}
+
+pub struct SharedMaterials<K, const CAP: usize> {
+    entries: HashMap<K, (Handle<EntityMaterial>, u64)>,
+    epoch: u64,
+}
+
+impl<K, const CAP: usize> Default for SharedMaterials<K, CAP> {
+    fn default() -> Self {
+        SharedMaterials {
+            entries: HashMap::default(),
+            epoch: 0,
+        }
+    }
+}
+
+impl<K: Hash + Eq, const CAP: usize> SharedMaterials<K, CAP> {
+    pub fn begin_frame(&mut self) {
+        self.epoch = self.epoch.wrapping_add(1);
+    }
+
+    pub fn get(
+        &mut self,
+        key: K,
+        lit: Lit,
+        materials: &mut Assets<EntityMaterial>,
+        build: impl FnOnce() -> EntityMaterial,
+    ) -> Handle<EntityMaterial> {
+        if let Some((handle, epoch)) = self.entries.get_mut(&key) {
+            if *epoch != self.epoch {
+                EntityMaterial::relight(materials, handle, lit);
+                *epoch = self.epoch;
+            }
+            return handle.clone();
+        }
+        if self.entries.len() >= CAP {
+            self.entries.clear();
+        }
+        let handle = materials.add(build());
+        self.entries.insert(key, (handle.clone(), self.epoch));
+        handle
     }
 }
 
@@ -221,7 +296,12 @@ impl Material for EntityMaterial {
             depth_stencil.bias.constant = key.bind_group_data.depth_bias;
             if key.bind_group_data.see_through {
                 depth_stencil.depth_compare =
-                    bevy::render::render_resource::CompareFunction::Always;
+                    bevy::render::render_resource::CompareFunction::GreaterEqual;
+                descriptor.vertex.shader_defs.push("SEE_THROUGH".into());
+                descriptor
+                    .vertex
+                    .shader_defs
+                    .push(super::hand::band_floor_def());
             }
         }
         if key.bind_group_data.fancy {
@@ -242,6 +322,7 @@ impl Plugin for EntityMaterialPlugin {
         #[cfg(feature = "builtin_shaders")]
         embedded_asset!(app, "entity_prepass.wgsl");
         app.add_plugins(MaterialPlugin::<EntityMaterial>::default());
+        crate::renderer::reload::touch_on_reload::<EntityMaterial>(app);
     }
 }
 

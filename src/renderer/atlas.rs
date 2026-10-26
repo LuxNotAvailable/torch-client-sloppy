@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::OnceLock;
 
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
@@ -7,10 +6,71 @@ use bevy::prelude::*;
 
 use super::{ATLAS_COLS, TILE_PX};
 
-static OPAQUE_TEXTURES: OnceLock<HashSet<String>> = OnceLock::new();
+pub struct Sprites {
+    tiles: HashMap<String, u32>,
+    opaque: HashSet<String>,
+    rows: u32,
+}
 
-pub fn texture_is_opaque(stem: &str) -> bool {
-    OPAQUE_TEXTURES.get().is_some_and(|set| set.contains(stem))
+impl Default for Sprites {
+    fn default() -> Self {
+        Self {
+            tiles: HashMap::new(),
+            opaque: HashSet::new(),
+            rows: 1,
+        }
+    }
+}
+
+impl Sprites {
+    pub fn tile(&self, stem: &str) -> Option<u32> {
+        self.tiles.get(stem).copied()
+    }
+
+    pub fn rows(&self) -> u32 {
+        self.rows
+    }
+
+    pub fn is_opaque(&self, stem: &str) -> bool {
+        self.opaque.contains(stem)
+    }
+
+    pub fn mesh_tiles(&self) -> MeshTiles {
+        MeshTiles {
+            rows: self.rows,
+            water_still: self.tile("water_still").unwrap_or(0),
+            water_flow: self.tile("water_flow").unwrap_or(0),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct MeshTiles {
+    pub rows: u32,
+    pub water_still: u32,
+    pub water_flow: u32,
+}
+
+pub struct BlockAtlas {
+    pub image: Image,
+    pub sprites: Sprites,
+    pub tables: AtlasTables,
+}
+
+pub struct AtlasTables {
+    tints: Option<crate::util::biome_color::Tints>,
+    #[cfg(feature = "shader_support")]
+    untinted: Option<std::sync::Arc<UntintedTiles>>,
+}
+
+impl AtlasTables {
+    pub fn publish(self) {
+        crate::util::biome_color::publish(self.tints);
+        #[cfg(feature = "shader_support")]
+        {
+            *UNTINTED.write() = self.untinted;
+        }
+    }
 }
 
 fn is_fully_opaque(rgba: &image::RgbaImage) -> bool {
@@ -85,21 +145,21 @@ fn decode_dir(dir: &str) -> BTreeMap<String, image::RgbaImage> {
 pub(crate) type UntintedTiles = Vec<(u32, Vec<Vec<u8>>)>;
 
 #[cfg(feature = "shader_support")]
-static UNTINTED: std::sync::RwLock<Option<std::sync::Arc<UntintedTiles>>> =
-    std::sync::RwLock::new(None);
+static UNTINTED: parking_lot::RwLock<Option<std::sync::Arc<UntintedTiles>>> =
+    parking_lot::RwLock::new(None);
 
 #[cfg(feature = "shader_support")]
 pub(crate) fn untinted_tiles() -> Option<std::sync::Arc<UntintedTiles>> {
-    UNTINTED.read().ok().and_then(|t| t.clone())
+    UNTINTED.read().clone()
 }
 
 #[cfg(feature = "shader_support")]
-fn publish_untinted(
+fn collect_untinted(
     entries: &[(&str, &image::RgbaImage)],
     biome_tinted: &[&str],
     tiles: &HashMap<String, u32>,
     n_mips: u32,
-) {
+) -> UntintedTiles {
     let (level0, atlas_w, atlas_h, _) = pack_tiles(entries);
     let tile_px = atlas_w / ATLAS_COLS;
     let chain = if n_mips > 1 {
@@ -127,24 +187,31 @@ fn publish_untinted(
         }
         out.push((tile, levels));
     }
-    if let Ok(mut slot) = UNTINTED.write() {
-        *slot = Some(std::sync::Arc::new(out));
-    }
+    out
 }
 
-pub fn build_block_atlas(textures: &Textures, textures_dir: &str) -> (Image, HashMap<String, u32>) {
+pub fn build_block_atlas(textures: &Textures, textures_dir: &str) -> BlockAtlas {
     use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
-    let colormap_dir = format!("{}/colormap", textures_dir);
-
-    crate::util::biome_color::init(&colormap_dir);
-    let grass_tint = crate::util::biome_color::plains_grass();
-    let foliage_tint = crate::util::biome_color::plains_foliage();
-    let dry_foliage_tint = crate::util::biome_color::plains_dry_foliage();
+    let tints = crate::util::biome_color::Tints::load(&format!("{textures_dir}/colormap"));
+    let plains = crate::util::biome_color::Tints::plains(tints.as_ref());
+    let (grass_tint, foliage_tint, dry_foliage_tint) =
+        (plains.grass, plains.foliage, plains.dry_foliage);
 
     if textures.block.is_empty() {
-        eprintln!("Cannot read block texture dir {textures_dir}/block");
-        return (placeholder_atlas(), HashMap::new());
+        crate::log_warn!(
+            "atlas",
+            "cannot read block texture dir {textures_dir}/block"
+        );
+        return BlockAtlas {
+            image: placeholder_atlas(),
+            sprites: Sprites::default(),
+            tables: AtlasTables {
+                tints,
+                #[cfg(feature = "shader_support")]
+                untinted: None,
+            },
+        };
     }
     let mut opaque: HashSet<String> = HashSet::new();
     let mut recoloured: BTreeMap<&str, image::RgbaImage> = BTreeMap::new();
@@ -183,7 +250,6 @@ pub fn build_block_atlas(textures: &Textures, textures_dir: &str) -> (Image, Has
         entries.push((stem.as_str(), rgba));
     }
     let opaque_count = opaque.len();
-    OPAQUE_TEXTURES.set(opaque).ok();
 
     let (atlas_data, atlas_w, atlas_h, tex_to_tile) = pack_tiles(&entries);
     #[cfg(feature = "shader_support")]
@@ -202,7 +268,12 @@ pub fn build_block_atlas(textures: &Textures, textures_dir: &str) -> (Image, Has
         atlas_data
     };
     #[cfg(feature = "shader_support")]
-    publish_untinted(&untinted_entries, &biome_tinted, &tex_to_tile, n_mips);
+    let untinted = std::sync::Arc::new(collect_untinted(
+        &untinted_entries,
+        &biome_tinted,
+        &tex_to_tile,
+        n_mips,
+    ));
 
     let mut image = Image::new_uninit(
         Extent3d {
@@ -219,15 +290,29 @@ pub fn build_block_atlas(textures: &Textures, textures_dir: &str) -> (Image, Has
     image.sampler = block_atlas_sampler();
     #[cfg(feature = "shader_support")]
     super::packdraw::allow_display_view(&mut image);
-    println!(
-        "[Atlas] {} block textures loaded ({} fully opaque), atlas {}×{}, {} mip levels",
+    crate::log_info!(
+        "atlas",
+        "{} block textures loaded ({} fully opaque), atlas {}×{}, {} mip levels",
         entries.len(),
         opaque_count,
         atlas_w,
         atlas_h,
         n_mips
     );
-    (image, tex_to_tile)
+    let rows = super::atlas_rows(&image);
+    BlockAtlas {
+        image,
+        sprites: Sprites {
+            tiles: tex_to_tile,
+            opaque,
+            rows,
+        },
+        tables: AtlasTables {
+            tints,
+            #[cfg(feature = "shader_support")]
+            untinted: Some(untinted),
+        },
+    }
 }
 
 fn block_atlas_sampler() -> ImageSampler {
@@ -449,10 +534,6 @@ fn blit_gray_placeholder(atlas: &mut [u8], tile: u32, atlas_w: u32, tile_px: u32
 }
 
 pub fn placeholder_atlas() -> Image {
-    #[cfg(feature = "shader_support")]
-    if let Ok(mut slot) = UNTINTED.write() {
-        *slot = None;
-    }
     let mut data = vec![0u8; (TILE_PX * TILE_PX * 4) as usize];
     blit_gray_placeholder(&mut data, 0, TILE_PX, TILE_PX);
     #[cfg_attr(not(feature = "shader_support"), allow(unused_mut))]

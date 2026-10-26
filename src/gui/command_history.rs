@@ -17,10 +17,7 @@ fn history() -> &'static Mutex<History> {
         let mut commands = VecDeque::new();
         if let Some(text) = storage::COMMAND_HISTORY.load() {
             for line in text.lines().filter(|l| !l.is_empty()) {
-                if commands.len() >= MAX_SAVED {
-                    commands.pop_front();
-                }
-                commands.push_back(line.to_string());
+                push_back_capped(&mut commands, line.to_string(), MAX_SAVED);
             }
         }
         Mutex::new(History {
@@ -36,14 +33,24 @@ pub fn load() -> Vec<String> {
 
 pub fn record(command: &str) {
     let mut h = history().lock().unwrap();
-    if h.commands.back().map(String::as_str) == Some(command) {
-        return;
+    if push_capped(&mut h.commands, command, MAX_SAVED) {
+        h.dirty = true;
     }
-    if h.commands.len() >= MAX_SAVED {
-        h.commands.pop_front();
+}
+
+pub(crate) fn push_capped(list: &mut VecDeque<String>, line: &str, cap: usize) -> bool {
+    if list.back().map(String::as_str) == Some(line) {
+        return false;
     }
-    h.commands.push_back(command.to_string());
-    h.dirty = true;
+    push_back_capped(list, line.to_string(), cap);
+    true
+}
+
+fn push_back_capped(list: &mut VecDeque<String>, line: String, cap: usize) {
+    if list.len() >= cap {
+        list.pop_front();
+    }
+    list.push_back(line);
 }
 
 pub fn save() {

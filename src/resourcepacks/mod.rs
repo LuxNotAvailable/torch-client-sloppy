@@ -1,12 +1,14 @@
 #[cfg(explore_modrinth)]
 pub(crate) mod modrinth;
 
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, LazyLock};
 
+use parking_lot::Mutex;
 use serde_json::Value;
 
-use crate::platform::assets::archive::{self, Layer};
+use crate::platform::assets::archive::{self, OwnedLayer};
 use crate::platform::storage;
 use crate::text::Span;
 use crate::util::pack::{Pack, Source};
@@ -82,16 +84,17 @@ pub(crate) struct Info {
 }
 
 pub(crate) fn info(pack: &Pack) -> Info {
-    let source = match Source::open(&dir().join(&pack.name), ROOT) {
-        Ok(source) => source,
-        Err(e) => {
-            return Info {
-                description: crate::text::parse_formatted(&e),
-                compat: Compat::Unknown,
-                icon: None,
-            };
-        }
-    };
+    match Source::open(&dir().join(&pack.name), ROOT) {
+        Ok(source) => info_of(&source),
+        Err(e) => Info {
+            description: crate::text::parse_formatted(&e),
+            compat: Compat::Unknown,
+            icon: None,
+        },
+    }
+}
+
+fn info_of(source: &Source) -> Info {
     let meta = source
         .read_text("/pack.mcmeta")
         .and_then(|text| serde_json::from_str::<Value>(&text).ok());
@@ -187,35 +190,228 @@ fn overlays(meta: &Value) -> Vec<String> {
         .collect()
 }
 
-pub(crate) fn mount() {
-    let started = crate::platform::time::Instant::now();
-    let mut layers = Vec::new();
-    for name in selected() {
-        match layer(&dir().join(&name)) {
-            Ok(layer) => {
-                crate::log_info!("resourcepacks", "{name}: {} files", layer.len());
-                layers.push(layer);
-            }
-            Err(e) => crate::log_warn!("resourcepacks", "{name} is not mounted: {e}"),
-        }
-    }
-    if layers.is_empty() {
-        return;
-    }
-    let count = layers.len();
-    if let Err(e) = archive::PACKS.install(layers) {
-        crate::log_warn!("resourcepacks", "{e}");
-        return;
-    }
-    crate::log_info!(
-        "resourcepacks",
-        "mounted {count} pack(s) in {:.0} ms",
-        started.elapsed().as_secs_f32() * 1000.0
-    );
+type Stamp = (u64, std::time::SystemTime);
+
+static INFLATED: LazyLock<Mutex<HashMap<String, (Stamp, Arc<OwnedLayer>)>>> =
+    LazyLock::new(Default::default);
+
+fn zip_stamp(path: &std::path::Path) -> Option<Stamp> {
+    let meta = std::fs::metadata(path).ok()?;
+    meta.is_file().then_some(())?;
+    Some((meta.len(), meta.modified().ok()?))
 }
 
-fn layer(path: &std::path::Path) -> Result<Layer, String> {
-    let source = Source::open(path, ROOT)?;
+pub(crate) fn mount() {
+    let started = crate::platform::time::Instant::now();
+    let names = selected();
+    let stamps: Vec<Option<Stamp>> = names
+        .iter()
+        .map(|name| zip_stamp(&dir().join(name)))
+        .collect();
+    let mut inflated = INFLATED.lock();
+    inflated.retain(|name, _| names.contains(name));
+
+    let mut layers: Vec<Option<Arc<OwnedLayer>>> = names
+        .iter()
+        .zip(&stamps)
+        .map(|(name, stamp)| {
+            let (held, layer) = inflated.get(name)?;
+            (Some(held) == stamp.as_ref()).then(|| layer.clone())
+        })
+        .collect();
+    let missing: Vec<usize> = (0..names.len()).filter(|&i| layers[i].is_none()).collect();
+    let opened: Vec<Result<OwnedLayer, String>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = missing
+            .iter()
+            .map(|&i| {
+                let path = dir().join(&names[i]);
+                scope.spawn(move || layer(&path))
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .unwrap_or_else(|_| Err("reading it panicked".to_owned()))
+            })
+            .collect()
+    });
+    for (i, result) in missing.into_iter().zip(opened) {
+        let name = &names[i];
+        match result {
+            Ok(layer) => {
+                crate::log_info!("resourcepacks", "{name}: {} files", layer.files.len());
+                let layer = Arc::new(layer);
+                if let Some(stamp) = stamps[i] {
+                    inflated.insert(name.clone(), (stamp, layer.clone()));
+                }
+                layers[i] = Some(layer);
+            }
+            Err(e) => {
+                inflated.remove(name);
+                crate::log_warn!("resourcepacks", "{name} is not mounted: {e}");
+            }
+        }
+    }
+    drop(inflated);
+
+    let layers: Vec<Arc<OwnedLayer>> = layers.into_iter().flatten().collect();
+    let count = layers.len();
+    archive::set_selected(layers);
+    if count > 0 {
+        crate::log_info!(
+            "resourcepacks",
+            "mounted {count} pack(s) in {:.0} ms",
+            started.elapsed().as_secs_f32() * 1000.0
+        );
+    }
+}
+
+fn layer(path: &std::path::Path) -> Result<OwnedLayer, String> {
+    owned(&Source::open(path, ROOT)?)
+}
+
+pub(crate) struct ServerPack {
+    pub(crate) info: Info,
+    pub(crate) zip: Vec<u8>,
+    pub(crate) file_name: String,
+}
+
+pub(crate) fn server_pack(
+    zip: Vec<u8>,
+    url: &str,
+    sha1: &str,
+) -> Result<(OwnedLayer, ServerPack), String> {
+    let source = Source::from_zip(zip, ROOT)?;
+    let layer = owned(&source)?;
+    let info = info_of(&source);
+    let zip = source.into_zip().unwrap_or_default();
+    Ok((
+        layer,
+        ServerPack {
+            info,
+            zip,
+            file_name: server_file_name(url, sha1),
+        },
+    ))
+}
+
+fn server_file_name(url: &str, sha1: &str) -> String {
+    let path = url.split(['?', '#']).next().unwrap_or_default();
+    let last = path.rsplit('/').next().unwrap_or_default();
+    let ext = last
+        .len()
+        .checked_sub(4)
+        .filter(|&at| last.is_char_boundary(at) && last[at..].eq_ignore_ascii_case(".zip"));
+    let stem: String = last[..ext.unwrap_or(last.len())]
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        .take(48)
+        .collect();
+    let stem = stem.trim_matches('.');
+    let short = &sha1[..sha1.len().min(8)];
+    if stem.is_empty() {
+        format!("server-{short}.zip")
+    } else {
+        format!("{stem}-{short}.zip")
+    }
+}
+
+pub(crate) fn install(name: &str, bytes: &[u8]) -> Result<(), String> {
+    let dir = dir();
+    let part = dir.join(format!("{name}.part"));
+    std::fs::create_dir_all(&dir)
+        .and_then(|()| std::fs::write(&part, bytes))
+        .and_then(|()| std::fs::rename(&part, dir.join(name)))
+        .map_err(|e| e.to_string())
+}
+
+#[derive(Default)]
+pub(crate) struct Dropped {
+    pub(crate) copied: bool,
+    pub(crate) failed: bool,
+    pub(crate) rejected: Vec<String>,
+}
+
+pub(crate) fn copy_in(paths: &[PathBuf]) -> Dropped {
+    let target = dir();
+    let mut out = Dropped::default();
+    if let Err(e) = std::fs::create_dir_all(&target) {
+        crate::log_warn!(
+            "resourcepacks",
+            "could not create {}: {e}",
+            target.display()
+        );
+        out.failed = true;
+        return out;
+    }
+    for path in paths {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let kind = std::fs::symlink_metadata(path)
+            .ok()
+            .map(|meta| meta.file_type());
+        let is_pack = match kind {
+            Some(kind) if kind.is_dir() => path.join("pack.mcmeta").is_file(),
+            Some(kind) if kind.is_file() => name.ends_with(".zip"),
+            _ => false,
+        };
+        if !is_pack {
+            crate::log_warn!(
+                "resourcepacks",
+                "{} does not seem like a pack",
+                path.display()
+            );
+            out.rejected.push(name);
+            continue;
+        }
+        out.copied = true;
+        if let Err(e) = copy_tree(path, &target.join(&name)) {
+            crate::log_warn!(
+                "resourcepacks",
+                "could not copy {} into {}: {e}",
+                path.display(),
+                target.display()
+            );
+            out.failed = true;
+        }
+    }
+    out
+}
+
+fn copy_tree(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    if to.exists() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!("{} already exists", to.display()),
+        ));
+    }
+    if !std::fs::symlink_metadata(from)?.is_dir() {
+        return std::fs::copy(from, to).map(drop);
+    }
+    std::fs::create_dir(to)?;
+    let mut first = None;
+    for entry in std::fs::read_dir(from)? {
+        let result = entry.and_then(|entry| copy_tree(&entry.path(), &to.join(entry.file_name())));
+        if let Err(e) = result {
+            first.get_or_insert(e);
+        }
+    }
+    first.map_or(Ok(()), Err)
+}
+
+fn owned(source: &Source) -> Result<OwnedLayer, String> {
+    let (bytes, files) = inflate(source)?;
+    Ok(OwnedLayer {
+        bytes: bytes.into_boxed_slice(),
+        files: files.into_iter().collect(),
+    })
+}
+
+fn inflate(source: &Source) -> Result<(Vec<u8>, Vec<(String, std::ops::Range<usize>)>), String> {
     let meta = source
         .read_text("/pack.mcmeta")
         .and_then(|text| serde_json::from_str::<Value>(&text).ok())
@@ -224,7 +420,7 @@ fn layer(path: &std::path::Path) -> Result<Layer, String> {
     let mut prefixes = vec![String::from("/")];
     prefixes.extend(overlays(&meta).into_iter().map(|dir| format!("/{dir}/")));
     let files = source.files();
-    let mut chosen: std::collections::HashMap<String, &str> = std::collections::HashMap::new();
+    let mut chosen: HashMap<String, &str> = HashMap::new();
     for prefix in &prefixes {
         for file in &files {
             if let Some(key) = file
@@ -245,34 +441,15 @@ fn layer(path: &std::path::Path) -> Result<Layer, String> {
         ranges.push((key, bytes.len()..bytes.len() + data.len()));
         bytes.extend_from_slice(&data);
     }
-    let bytes: &'static [u8] = Box::leak(bytes.into_boxed_slice());
-    Ok(ranges
-        .into_iter()
-        .map(|(key, range)| (key, &bytes[range]))
-        .collect())
+    Ok((bytes, ranges))
 }
 
-static RESTART: AtomicBool = AtomicBool::new(false);
-
-pub(crate) fn request_restart() {
-    RESTART.store(true, Ordering::Relaxed);
-}
-
-pub(crate) fn restart_if_requested() {
-    if !RESTART.load(Ordering::Relaxed) {
-        return;
-    }
-    let spawned = std::env::current_exe().and_then(|exe| {
-        std::process::Command::new(exe)
-            .args(std::env::args_os().skip(1))
-            .spawn()
-    });
-    if let Err(e) = spawned {
-        crate::log_warn!(
-            "resourcepacks",
-            "could not relaunch the client: {e}; start it again to use the new packs"
-        );
-    }
+pub(crate) fn sha1_hex(bytes: &[u8]) -> String {
+    use sha1::Digest;
+    sha1::Sha1::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 #[cfg(test)]
@@ -341,6 +518,23 @@ mod tests {
     }
 
     #[test]
+    fn a_saved_server_pack_is_named_from_its_url_and_hash() {
+        let sha1 = "0123456789abcdef0123456789abcdef01234567";
+        assert_eq!(
+            server_file_name("https://example.com/p/Cool%20Pack.ZIP?t=1", sha1),
+            "Cool20Pack-01234567.zip"
+        );
+        assert_eq!(
+            server_file_name("https://example.com/download/", sha1),
+            "server-01234567.zip"
+        );
+        assert_eq!(
+            server_file_name("https://example.com/../..", sha1),
+            "server-01234567.zip"
+        );
+    }
+
+    #[test]
     fn an_overlay_shadows_the_pack() {
         let pack = crate::util::pack::fixture("resourcepack-overlay");
         let file = |rel: &str, body: &str| {
@@ -357,14 +551,8 @@ mod tests {
         file("readme.txt", "not an asset");
 
         let layer = layer(&pack).unwrap();
-        assert_eq!(
-            layer.get("assets/minecraft/a.txt").copied(),
-            Some(&b"overlay"[..])
-        );
-        assert_eq!(
-            layer.get("assets/minecraft/b.txt").copied(),
-            Some(&b"base"[..])
-        );
-        assert_eq!(layer.len(), 2);
+        assert_eq!(layer.get("assets/minecraft/a.txt"), Some(&b"overlay"[..]));
+        assert_eq!(layer.get("assets/minecraft/b.txt"), Some(&b"base"[..]));
+        assert_eq!(layer.files.len(), 2);
     }
 }

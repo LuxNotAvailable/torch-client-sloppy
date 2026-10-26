@@ -16,6 +16,7 @@ pub struct Attributes {
     pub gravity: AttributeInstance,
     pub mining_efficiency: AttributeInstance,
     pub block_break_speed: AttributeInstance,
+    pub submerged_mining_speed: AttributeInstance,
 
     pub block_interaction_range: AttributeInstance,
     pub entity_interaction_range: AttributeInstance,
@@ -37,6 +38,7 @@ impl Attributes {
             Attribute::EntityInteractionRange => &mut self.entity_interaction_range,
             Attribute::StepHeight => &mut self.step_height,
             Attribute::BlockBreakSpeed => &mut self.block_break_speed,
+            Attribute::SubmergedMiningSpeed => &mut self.submerged_mining_speed,
             _ => return None,
         };
         Some(value)
@@ -62,17 +64,32 @@ impl AttributeInstance {
     }
 
     pub fn calculate(&self) -> f64 {
-        let mut total = self.base;
+        let mut base = self.base;
         for modifier in self.modifiers_by_id.values() {
-            match modifier.operation {
-                AttributeModifierOperation::AddValue => total += modifier.amount,
-                AttributeModifierOperation::AddMultipliedBase => {
-                    total += modifier.amount * self.base
-                }
-                AttributeModifierOperation::AddMultipliedTotal => total *= 1. + modifier.amount,
-            };
+            if modifier.operation == AttributeModifierOperation::AddValue {
+                base += modifier.amount;
+            }
+        }
+        let mut total = base;
+        for modifier in self.modifiers_by_id.values() {
+            if modifier.operation == AttributeModifierOperation::AddMultipliedBase {
+                total += base * modifier.amount;
+            }
+        }
+        for modifier in self.modifiers_by_id.values() {
+            if modifier.operation == AttributeModifierOperation::AddMultipliedTotal {
+                total *= 1. + modifier.amount;
+            }
         }
         total
+    }
+
+    pub fn apply_snapshot(&mut self, base: f64, modifiers: &[AttributeModifier]) {
+        self.base = base;
+        self.modifiers_by_id.clear();
+        for modifier in modifiers {
+            self.insert(modifier.clone());
+        }
     }
 
     pub fn insert(&mut self, modifier: AttributeModifier) -> Option<AttributeModifier> {

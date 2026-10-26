@@ -1,9 +1,12 @@
 use crate::platform::time::Instant;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, OnceLock};
 
 use parking_lot::RwLock;
+
+use crate::items::model::Assets;
+use crate::renderer::Sprites;
 
 pub mod ambient;
 pub mod bake;
@@ -24,31 +27,47 @@ pub struct Blocks {
     defs: HashMap<String, StateDef>,
     models: RwLock<HashMap<ModelKey, Arc<BakedModel>>>,
     baked: RwLock<HashMap<u16, Arc<BakedBlock>>>,
-    atlas_rows: u32,
+    sprites: Sprites,
+    assets: Arc<Assets>,
+    generation: u32,
     missing_defs: AtomicU32,
     missing_textures: AtomicU32,
 }
 
-static REGISTRY: OnceLock<Blocks> = OnceLock::new();
+static REGISTRY: RwLock<Option<Arc<Blocks>>> = RwLock::new(None);
+static GENERATION: AtomicU32 = AtomicU32::new(0);
 
-pub fn registry() -> &'static Blocks {
-    REGISTRY.get_or_init(Blocks::load)
+pub fn registry() -> Arc<Blocks> {
+    if let Some(blocks) = REGISTRY.read().as_ref() {
+        return blocks.clone();
+    }
+    REGISTRY
+        .write()
+        .get_or_insert_with(|| Arc::new(Blocks::load(Sprites::default())))
+        .clone()
+}
+
+pub fn install(blocks: Blocks) {
+    *REGISTRY.write() = Some(Arc::new(blocks));
 }
 
 pub fn cache_bytes() -> (u64, usize, usize) {
-    REGISTRY.get().map(Blocks::cache_bytes).unwrap_or((0, 0, 0))
+    REGISTRY
+        .read()
+        .as_ref()
+        .map_or((0, 0, 0), |blocks| blocks.cache_bytes())
 }
 
 impl Blocks {
-    fn load() -> Blocks {
+    pub fn load(sprites: Sprites) -> Blocks {
         let started = Instant::now();
         let root = crate::assets_root();
-        let assets = crate::items::model::shared();
+        let assets = Arc::new(Assets::new(root));
         let mut defs = HashMap::new();
         let dir = root.join("blockstates");
         let blockstates = crate::platform::assets::read_dir(&dir);
         if blockstates.is_empty() {
-            eprintln!("[BlockModels] cannot read {}", dir.display());
+            crate::log_warn!("blocks", "cannot read {}", dir.display());
         }
         for path in blockstates {
             if path.extension().and_then(|e| e.to_str()) != Some("json") {
@@ -58,22 +77,19 @@ impl Blocks {
                 continue;
             };
             let Some(json) = assets.json(&format!("blockstates/{}.json", name)) else {
-                eprintln!("[BlockModels] {}.json did not parse", name);
+                crate::log_warn!("blocks", "{name}.json did not parse");
                 continue;
             };
             match StateDef::parse(&json) {
                 Some(def) => {
                     defs.insert(name.to_string(), def);
                 }
-                None => eprintln!("[BlockModels] {}.json has no variants/multipart", name),
+                None => crate::log_warn!("blocks", "{name}.json has no variants/multipart"),
             }
         }
-        let atlas_rows = crate::ATLAS_ROWS
-            .get()
-            .copied()
-            .unwrap_or(crate::renderer::TILE_PX);
-        println!(
-            "[BlockModels] {} blockstates parsed in {:.1} ms",
+        crate::log_info!(
+            "blocks",
+            "{} blockstates parsed in {:.1} ms",
             defs.len(),
             started.elapsed().as_secs_f32() * 1000.0
         );
@@ -81,10 +97,24 @@ impl Blocks {
             defs,
             models: RwLock::new(HashMap::new()),
             baked: RwLock::new(HashMap::new()),
-            atlas_rows,
+            sprites,
+            assets,
+            generation: GENERATION.fetch_add(1, Ordering::Relaxed) + 1,
             missing_defs: AtomicU32::new(0),
             missing_textures: AtomicU32::new(0),
         }
+    }
+
+    pub fn sprites(&self) -> &Sprites {
+        &self.sprites
+    }
+
+    pub fn assets(&self) -> &Arc<Assets> {
+        &self.assets
+    }
+
+    pub fn generation(&self) -> u32 {
+        self.generation
     }
 
     pub fn cache_bytes(&self) -> (u64, usize, usize) {
@@ -126,10 +156,10 @@ impl Blocks {
             return hit.clone();
         }
         let built = Arc::new(bake::bake_model(
-            crate::items::model::shared(),
+            &self.assets,
             &reference.model,
             reference.rot,
-            self.atlas_rows,
+            &self.sprites,
         ));
         if built.missing_textures > 0 {
             self.missing_textures

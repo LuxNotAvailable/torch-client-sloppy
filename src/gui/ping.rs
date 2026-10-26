@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
-use crate::gui::atlas::{SERVER_ICON_PX, SERVER_ICON_SLOTS};
+use crate::gui::atlas::{PACK_ICON_SLOTS, SERVER_ICON_PX, SERVER_ICON_SLOTS};
 use crate::text::Span;
 
 pub type IconPixels = std::sync::Arc<Vec<u8>>;
@@ -82,11 +82,58 @@ fn table() -> &'static Mutex<HashMap<String, PingState>> {
 struct Icons {
     slots: HashMap<String, usize>,
     pending: Vec<(usize, IconPixels)>,
+    written: HashMap<usize, IconPixels>,
+    free_servers: Vec<usize>,
+    next_server: usize,
+    packs: Vec<(String, u64)>,
+    clock: u64,
 }
 
 fn icons() -> &'static Mutex<Icons> {
     static ICONS: OnceLock<Mutex<Icons>> = OnceLock::new();
     ICONS.get_or_init(Default::default)
+}
+
+fn is_pack_key(key: &str) -> bool {
+    key.starts_with('\0')
+}
+
+impl Icons {
+    fn touch(&mut self, key: &str) {
+        self.clock += 1;
+        let clock = self.clock;
+        if let Some(entry) = self.packs.iter_mut().find(|(held, _)| held == key) {
+            entry.1 = clock;
+        }
+    }
+
+    fn slot_for_pack(&mut self, key: &str) -> usize {
+        self.clock += 1;
+        let stamp = self.clock;
+        if self.packs.len() < PACK_ICON_SLOTS {
+            self.packs.push((key.to_string(), stamp));
+            return SERVER_ICON_SLOTS + self.packs.len() - 1;
+        }
+        let victim = (0..self.packs.len())
+            .min_by_key(|&i| self.packs[i].1)
+            .unwrap();
+        let slot = SERVER_ICON_SLOTS + victim;
+        let old = std::mem::replace(&mut self.packs[victim], (key.to_string(), stamp));
+        self.slots.remove(&old.0);
+        self.pending.retain(|(pending, _)| *pending != slot);
+        slot
+    }
+
+    fn slot_for_server(&mut self) -> Option<usize> {
+        if let Some(slot) = self.free_servers.pop() {
+            return Some(slot);
+        }
+        if self.next_server >= SERVER_ICON_SLOTS {
+            return None;
+        }
+        self.next_server += 1;
+        Some(self.next_server - 1)
+    }
 }
 
 pub(crate) fn note_icon(address: &str, pixels: IconPixels) {
@@ -95,21 +142,54 @@ pub(crate) fn note_icon(address: &str, pixels: IconPixels) {
     }
     let mut icons = icons().lock().unwrap();
     let slot = match icons.slots.get(address) {
-        Some(slot) => *slot,
-        None => {
-            let slot = icons.slots.len();
-            if slot >= SERVER_ICON_SLOTS {
-                return;
+        Some(slot) => {
+            let slot = *slot;
+            if is_pack_key(address) {
+                icons.touch(address);
             }
+            slot
+        }
+        None => {
+            let slot = if is_pack_key(address) {
+                Some(icons.slot_for_pack(address))
+            } else {
+                icons.slot_for_server()
+            };
+            let Some(slot) = slot else { return };
             icons.slots.insert(address.to_string(), slot);
             slot
         }
     };
+    icons.pending.retain(|(pending, _)| *pending != slot);
+    icons.written.insert(slot, pixels.clone());
     icons.pending.push((slot, pixels));
 }
 
+pub(crate) fn requeue_all() {
+    let mut icons = icons().lock().unwrap();
+    let all: Vec<(usize, IconPixels)> = icons
+        .written
+        .iter()
+        .map(|(&slot, pixels)| (slot, pixels.clone()))
+        .collect();
+    icons.pending = all;
+}
+
 pub fn icon_slot(address: &str) -> Option<usize> {
-    icons().lock().unwrap().slots.get(address).copied()
+    let mut icons = icons().lock().unwrap();
+    let slot = icons.slots.get(address).copied();
+    if slot.is_some() && is_pack_key(address) {
+        icons.touch(address);
+    }
+    slot
+}
+
+pub fn ensure_icon(key: &str, pixels: &IconPixels) -> Option<usize> {
+    if let Some(slot) = icon_slot(key) {
+        return Some(slot);
+    }
+    note_icon(key, pixels.clone());
+    None
 }
 
 pub fn take_pending_icons() -> Vec<(usize, IconPixels)> {
@@ -241,6 +321,15 @@ pub fn refresh() {
 
 pub fn forget(address: &str) {
     table().lock().unwrap().remove(address);
+    let mut icons = icons().lock().unwrap();
+    if is_pack_key(address) {
+        return;
+    }
+    if let Some(slot) = icons.slots.remove(address) {
+        icons.pending.retain(|(pending, _)| *pending != slot);
+        icons.written.remove(&slot);
+        icons.free_servers.push(slot);
+    }
 }
 
 #[cfg(test)]

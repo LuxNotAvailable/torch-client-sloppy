@@ -43,7 +43,7 @@ pub fn has_map(st: &EntityState) -> bool {
 }
 
 fn facing(st: &EntityState) -> (Vec3, f32, f32) {
-    let dir = st.extras.item_frame_direction;
+    let dir = st.extras.hanging_direction;
     let step = Vec3::from(dir.normal());
     match dir {
         Direction::Up => (step, -90.0, 180.0),
@@ -130,7 +130,7 @@ mod tests {
     fn state(dir: Direction) -> EntityState {
         let mut st = EntityState::new(0, EntityKind::ItemFrame);
         st.extras = Extras::with_shared(std::sync::Arc::new(ExtrasShared {
-            item_frame_direction: dir,
+            hanging_direction: dir,
             ..ExtrasShared::default()
         }));
         st

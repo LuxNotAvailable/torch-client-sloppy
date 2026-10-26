@@ -153,7 +153,7 @@ pub fn handle_chunk_batch_finished_event(
         if let Ok(mut chunk_batch_info) = query.get_mut(event.entity) {
             chunk_batch_info.batch_finished(event.batch_size);
             let desired_chunks_per_tick = chunk_batch_info.desired_chunks_per_tick();
-            tracing::info!(
+            tracing::debug!(
                 "chunk batch: {} chunks, {:?} per chunk, asking for {desired_chunks_per_tick:.3} \
                  chunks/tick",
                 event.batch_size,

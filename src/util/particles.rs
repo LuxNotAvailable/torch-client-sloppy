@@ -7,6 +7,7 @@ use bevy::prelude::*;
 
 use azalea::entity::particle::Particle as P;
 
+use crate::entities::quads::QUAD_INDICES;
 use crate::renderer::AppState;
 use crate::renderer::entity_material::{
     EntityMaterial, EntityParams, LightMode, Lit, diffuse_lights,
@@ -135,7 +136,27 @@ impl Default for ParticleRng {
 struct LiveParticles(Vec<Particle>);
 
 #[derive(Resource, Default)]
-struct ParticleAtlas(Option<Atlas>);
+pub(crate) struct ParticleAtlas(Option<Atlas>);
+
+impl ParticleAtlas {
+    pub(crate) fn is_built(&self) -> bool {
+        self.0.is_some()
+    }
+
+    pub(crate) fn adopt(
+        &mut self,
+        built: particle_assets::ParticleAtlasData,
+        images: &mut Assets<Image>,
+    ) {
+        let Some(atlas) = &mut self.0 else { return };
+        let (image, rebuilt) = Atlas::from_data(built);
+        let _ = images.insert(&atlas.image, image);
+        *atlas = Atlas {
+            image: atlas.image.clone(),
+            ..rebuilt
+        };
+    }
+}
 
 pub(crate) struct Atlas {
     image: Handle<Image>,
@@ -146,6 +167,26 @@ pub(crate) struct Atlas {
 }
 
 impl Atlas {
+    fn from_data(built: particle_assets::ParticleAtlasData) -> (Image, Atlas) {
+        let mut sheets = Vec::with_capacity(built.sheets.len());
+        let mut by_name = HashMap::with_capacity(built.sheets.len());
+        for (name, tiles) in built.sheets {
+            by_name.insert(name, sheets.len() as u16);
+            sheets.push(tiles);
+        }
+        let crit = by_name
+            .get("crit")
+            .map(|&i| particle_assets::tile_uv(sheets[i as usize][0], built.rows));
+        let atlas = Atlas {
+            image: Handle::default(),
+            rows: built.rows,
+            sheets,
+            by_name,
+            crit,
+        };
+        (built.image, atlas)
+    }
+
     fn sheet_index(&self, particle_type: &str) -> Option<u16> {
         self.by_name.get(particle_type).copied()
     }
@@ -164,21 +205,10 @@ fn load_particle_atlas(mut atlas: ResMut<ParticleAtlas>, mut images: ResMut<Asse
     if built.sheets.is_empty() {
         return;
     }
-    let mut sheets = Vec::with_capacity(built.sheets.len());
-    let mut by_name = HashMap::with_capacity(built.sheets.len());
-    for (name, tiles) in built.sheets {
-        by_name.insert(name, sheets.len() as u16);
-        sheets.push(tiles);
-    }
-    let crit = by_name
-        .get("crit")
-        .map(|&i| particle_assets::tile_uv(sheets[i as usize][0], built.rows));
+    let (image, built) = Atlas::from_data(built);
     atlas.0 = Some(Atlas {
-        image: images.add(built.image),
-        rows: built.rows,
-        sheets,
-        by_name,
-        crit,
+        image: images.add(image),
+        ..built
     });
 }
 
@@ -2503,10 +2533,7 @@ fn draw_particles(
     hide_from(&batches.pool, used, &mut drawn);
 
     for (key, handle) in material_cache.0.iter() {
-        let Some(material) = ent_materials.get_mut(handle) else {
-            continue;
-        };
-        material.params.set(Lit {
+        let lit = Lit {
             tint: [1.0; 4],
             light: crate::renderer::lightmap::cell_light(
                 &lightmap.current,
@@ -2516,7 +2543,8 @@ fn draw_particles(
             dirs,
             overlay_alpha: 1.0,
             overlay_white: false,
-        });
+        };
+        EntityMaterial::relight(&mut ent_materials, handle, lit);
     }
 }
 
@@ -2662,7 +2690,7 @@ fn write_batch_mesh(
             uvs.push(uv);
             colors.push(p.tint);
         }
-        indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        indices.extend(QUAD_INDICES.map(|i| base + i));
     }
 
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);

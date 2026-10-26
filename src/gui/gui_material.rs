@@ -67,5 +67,6 @@ impl Plugin for GuiMaterialPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "gui.wgsl");
         app.add_plugins(MaterialPlugin::<GuiMaterial>::default());
+        crate::renderer::reload::touch_on_reload::<GuiMaterial>(app);
     }
 }

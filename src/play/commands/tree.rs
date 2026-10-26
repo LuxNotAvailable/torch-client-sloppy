@@ -1,5 +1,7 @@
 use azalea_protocol::packets::game::c_commands::{BrigadierNodeStub, BrigadierParser, NodeType};
 
+use super::parse::read_while;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Provider {
     Argument,
@@ -95,36 +97,23 @@ impl CommandTree {
 
     pub(super) fn relevant_children(&self, i: usize, input: &[char], cursor: usize) -> Vec<usize> {
         let node = self.node(i);
-        let literals: Vec<usize> = node
+        let mut end = cursor;
+        let word = read_while(input, &mut end, |c| c != ' ');
+        let literal = node
             .children
             .iter()
             .copied()
-            .filter(|c| self.node(*c).is_literal())
-            .collect();
-        if literals.is_empty() {
-            return node
-                .children
-                .iter()
-                .copied()
-                .filter(|c| !self.node(*c).is_literal())
-                .collect();
-        }
-        let mut end = cursor;
-        while end < input.len() && input[end] != ' ' {
-            end += 1;
-        }
-        let word: String = input[cursor..end].iter().collect();
-        for c in literals {
-            if let NodeKind::Literal(name) = &self.node(c).kind
-                && *name == word
-            {
-                return vec![c];
-            }
+            .find(|&c| match &self.node(c).kind {
+                NodeKind::Literal(name) => name.chars().eq(word.iter().copied()),
+                _ => false,
+            });
+        if let Some(c) = literal {
+            return vec![c];
         }
         node.children
             .iter()
             .copied()
-            .filter(|c| !self.node(*c).is_literal())
+            .filter(|&c| !self.node(c).is_literal())
             .collect()
     }
 }

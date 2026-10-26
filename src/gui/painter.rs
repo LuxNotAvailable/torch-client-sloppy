@@ -125,6 +125,11 @@ impl<'a> Painter<'a> {
         }
     }
 
+    #[cfg(feature = "tutorial")]
+    pub fn xform(&self) -> (f32, f32, f32) {
+        self.xform
+    }
+
     pub fn into_buffers(self) -> PainterBuffers {
         PainterBuffers {
             positions: self.positions,
@@ -256,7 +261,6 @@ impl<'a> Painter<'a> {
             (u0, u1, v0, v1) = (nu0, nu1, nv0, nv1);
             (x, y, w, h) = (x0, y0, x1 - x0, y1 - y0);
         }
-        let base = self.positions.len() as u32;
         let bias = if unihex { UNIHEX_UV_BIAS } else { 0.0 };
         let ([mut au0, av0], [mut au1, av1]) = if unihex {
             (self.atlas.unihex_uv(u0, v0), self.atlas.unihex_uv(u1, v1))
@@ -271,16 +275,20 @@ impl<'a> Painter<'a> {
             self.place(x + w, y + h),
             self.place(x, y + h),
         ];
+        let uvs = [[au0, av0], [au1, av0], [au1, av1], [au0, av1]];
+        self.push_quad(corners, uvs, [color; 4]);
+    }
+
+    fn push_quad(&mut self, corners: [[f32; 3]; 4], uvs: [[f32; 2]; 4], colors: [[f32; 4]; 4]) {
+        let base = self.positions.len() as u32;
         self.positions.extend_from_slice(&corners);
-        self.uvs.push([au0, av0]);
-        self.uvs.push([au1, av0]);
-        self.uvs.push([au1, av1]);
-        self.uvs.push([au0, av1]);
-        for _ in 0..4 {
-            self.colors.push(color);
-        }
-        self.indices
-            .extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+        self.uvs.extend_from_slice(&uvs);
+        self.colors.extend_from_slice(&colors);
+        self.push_tris(&[[base, base + 2, base + 1], [base, base + 3, base + 2]]);
+    }
+
+    fn push_tris(&mut self, tris: &[[u32; 3]]) {
+        self.indices.extend(tris.iter().flatten());
     }
 
     pub fn fill(&mut self, x: f32, y: f32, w: f32, h: f32, argb: u32) {
@@ -293,7 +301,6 @@ impl<'a> Painter<'a> {
     pub fn gradient_v(&mut self, x: f32, y: f32, w: f32, h: f32, top: u32, bottom: u32) {
         let r = self.atlas.white;
         let (u, v) = (r.x as f32 + 0.5, r.y as f32 + 0.5);
-        let base = self.positions.len() as u32;
         let uv = self.atlas.uv(u, v);
         let corners = [
             self.place(x, y),
@@ -301,17 +308,34 @@ impl<'a> Painter<'a> {
             self.place(x + w, y + h),
             self.place(x, y + h),
         ];
-        self.positions.extend_from_slice(&corners);
-        for _ in 0..4 {
-            self.uvs.push(uv);
-        }
         let (t, b) = (unpack(top), unpack(bottom));
-        self.colors.push(t);
-        self.colors.push(t);
-        self.colors.push(b);
-        self.colors.push(b);
-        self.indices
-            .extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+        self.push_quad(corners, [uv; 4], [t, t, b, b]);
+    }
+
+    pub fn sprite_quad(
+        &mut self,
+        name: &str,
+        corners: [[f32; 2]; 4],
+        uv: [[f32; 2]; 4],
+        argb: u32,
+        additive: bool,
+    ) {
+        let Some(sp) = self.atlas.sprite(name).copied() else {
+            return;
+        };
+        let mut color = unpack(argb);
+        if additive {
+            color[3] = -1.0;
+        } else if color[3] <= 0.0 {
+            return;
+        }
+        let r = sp.region;
+        let positions = corners.map(|[x, y]| self.place(x, y));
+        let uvs = uv.map(|[u, v]| {
+            self.atlas
+                .uv(r.x as f32 + u * r.w as f32, r.y as f32 + v * r.h as f32)
+        });
+        self.push_quad(positions, uvs, [color; 4]);
     }
 
     fn region_part(
@@ -559,6 +583,16 @@ impl<'a> Painter<'a> {
 
     pub fn text_str(&mut self, s: &str, x: f32, y: f32, argb_rgb: u32, shadow: bool) -> f32 {
         self.text_plain(s, x, y, argb_rgb, shadow)
+    }
+
+    pub fn text_centered(&mut self, s: &str, cx: f32, y: f32, argb_rgb: u32, shadow: bool) -> f32 {
+        let x = self.centered_x(s, cx);
+        self.text_plain(s, x, y, argb_rgb, shadow);
+        x
+    }
+
+    pub fn centered_x(&self, s: &str, cx: f32) -> f32 {
+        (cx - self.atlas.font.width_str(s) / 2.0).floor()
     }
 
     fn draw_spans(&mut self, spans: &[Span], x: f32, y: f32, as_shadow: bool, alpha: f32) -> f32 {
@@ -936,15 +970,10 @@ impl<'a> Painter<'a> {
         let inner = base + 1;
         let outer = inner + CORNER_SEGMENTS as u32 + 1;
         for i in 0..CORNER_SEGMENTS as u32 {
-            self.indices
-                .extend_from_slice(&[base, inner + i, inner + i + 1]);
-            self.indices.extend_from_slice(&[
-                inner + i,
-                outer + i,
-                inner + i + 1,
-                inner + i + 1,
-                outer + i,
-                outer + i + 1,
+            self.push_tris(&[
+                [base, inner + i, inner + i + 1],
+                [inner + i, outer + i, inner + i + 1],
+                [inner + i + 1, outer + i, outer + i + 1],
             ]);
         }
     }

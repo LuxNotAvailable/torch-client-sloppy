@@ -134,7 +134,7 @@ mod tests {
             (
                 "a storage block indexed by gl_InstanceIndex",
                 "#version 450\nlayout(std430, set = 2, binding = 5) readonly buffer Slots { ivec4 words[]; };\n\
-                 void main() { gl_Position = vec4(words[gl_InstanceIndex * 4 + 2]); }\n",
+                 void main() { gl_Position = vec4(words[gl_InstanceIndex * 6 + 2]); }\n",
             ),
             (
                 "texelFetch from an integer texture",

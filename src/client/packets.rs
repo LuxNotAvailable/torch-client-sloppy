@@ -12,7 +12,7 @@ use crate::blockentities;
 use crate::client::tick::{held_item, item_id};
 use crate::client::tracking::{
     GAME_TIME, LOCAL_VEHICLE_ID, add_entity_data, anim_states, apply_map_patch, entity_anims,
-    equipment, head_yaws, mark_meta_dirty, max_healths, meta_index_18, on_grounds, on_living_anim,
+    equipment, head_yaws, mark_meta_dirty, meta_index_18, on_grounds, on_living_anim,
     overworld_clock, passengers, record_velocity,
 };
 use crate::client::{viewwindow, worldsync};
@@ -81,7 +81,8 @@ pub(crate) fn handle_packet(
     crate::client::bossbar::packet(shared, packet);
     crate::client::cooldowns::packet(packet);
     crate::client::advancements::packet(world, shared, packet);
-    crate::client::recipes::packet(shared, packet);
+    crate::client::recipes::packet(world, shared, packet);
+    crate::client::server_screens::packet(shared, packet);
 }
 
 static UNSECURE_SEEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -592,30 +593,6 @@ fn maps(shared: &Arc<SharedMutex>, packet: &ClientboundGamePacket) {
     }
 }
 
-fn attribute_total(
-    value: &azalea_protocol::packets::game::c_update_attributes::AttributeSnapshot,
-) -> f64 {
-    use azalea_core::attribute_modifier_operation::AttributeModifierOperation as Op;
-
-    let mut total = value.base;
-    for m in &value.modifiers {
-        if m.operation == Op::AddValue {
-            total += m.amount;
-        }
-    }
-    for m in &value.modifiers {
-        if m.operation == Op::AddMultipliedBase {
-            total += m.amount * value.base;
-        }
-    }
-    for m in &value.modifiers {
-        if m.operation == Op::AddMultipliedTotal {
-            total *= 1.0 + m.amount;
-        }
-    }
-    total
-}
-
 fn entity_state(packet: &ClientboundGamePacket) {
     use std::sync::atomic::Ordering;
 
@@ -638,28 +615,7 @@ fn entity_state(packet: &ClientboundGamePacket) {
             }
         }
         ClientboundGamePacket::UpdateAttributes(p) => {
-            use azalea_registry::builtin::Attribute as Attr;
-            for value in &p.values {
-                match value.attribute {
-                    Attr::MaxHealth => {
-                        max_healths()
-                            .lock()
-                            .unwrap()
-                            .insert(p.entity_id.0, attribute_total(value) as f32);
-                    }
-                    Attr::MovementSpeed | Attr::JumpStrength | Attr::StepHeight => {
-                        let total = attribute_total(value);
-                        let mut map = crate::client::tracking::mount_attributes().lock().unwrap();
-                        let entry = map.entry(p.entity_id.0).or_default();
-                        match value.attribute {
-                            Attr::MovementSpeed => entry.movement_speed = Some(total),
-                            Attr::JumpStrength => entry.jump_strength = Some(total),
-                            _ => entry.step_height = Some(total),
-                        }
-                    }
-                    _ => {}
-                }
-            }
+            crate::client::tracking::update_attributes(p);
         }
         ClientboundGamePacket::MoveVehicle(p) => {
             crate::play::riding::note_vehicle_correction(p.pos);
@@ -667,23 +623,15 @@ fn entity_state(packet: &ClientboundGamePacket) {
         ClientboundGamePacket::AddEntity(p) => {
             mark_meta_dirty(p.id.0);
             use azalea_registry::builtin::EntityKind;
-            match p.entity_type {
-                EntityKind::FallingBlock => {
-                    add_entity_data().lock().unwrap().insert(p.id.0, p.data);
-                }
-                EntityKind::ItemFrame | EntityKind::GlowItemFrame | EntityKind::Painting => {
-                    crate::log_debug!(
-                        "itemframe",
-                        "add_entity id={} kind={:?} data={} x_rot={} y_rot={}",
-                        p.id.0,
-                        p.entity_type,
-                        p.data,
-                        p.x_rot,
-                        p.y_rot
-                    );
-                    add_entity_data().lock().unwrap().insert(p.id.0, p.data);
-                }
-                _ => {}
+            if matches!(
+                p.entity_type,
+                EntityKind::FallingBlock
+                    | EntityKind::ItemFrame
+                    | EntityKind::GlowItemFrame
+                    | EntityKind::Painting
+                    | EntityKind::FishingBobber
+            ) {
+                add_entity_data().lock().unwrap().insert(p.id.0, p.data);
             }
             record_velocity(p.id.0, p.movement.to_vec3());
         }

@@ -15,11 +15,14 @@ pub(crate) fn atlas_once() {
     ONCE.call_once(|| {
         let dir = crate::textures_dir().to_string_lossy().into_owned();
         let textures = crate::renderer::Textures::blocks(&dir);
-        let (_image, map) = crate::renderer::build_block_atlas(&textures, &dir);
-        let rows = (1 + map.len() as u32).div_ceil(crate::renderer::ATLAS_COLS);
-        crate::TEXTURE_MAP.set(map).ok();
-        crate::ATLAS_ROWS.set(rows).ok();
+        let atlas = crate::renderer::build_block_atlas(&textures, &dir);
+        atlas.tables.publish();
+        super::install(super::Blocks::load(atlas.sprites));
     });
+}
+
+fn bake(model: &Resolved, rot: Rot) -> super::BakedModel {
+    bake_resolved(model, rot, super::registry().sprites())
 }
 
 fn assets() -> Assets {
@@ -310,7 +313,7 @@ fn a_rotated_quad_keeps_face_info_vertex_order() {
             uvlock: false,
         },
     ] {
-        let quad = &bake_resolved(&model, rot, 16).quads[0];
+        let quad = &bake(&model, rot).quads[0];
         let expected = crate::items::model::face_positions(
             [0.0, 0.0, 0.0],
             [1.0, 1.0, 1.0],
@@ -332,7 +335,7 @@ fn model_rotation_moves_positions_and_cullface() {
     atlas_once();
     let model = resolve_inline(NORTH_FACE_ONLY);
 
-    let plain = bake_resolved(&model, Rot::default(), 16);
+    let plain = bake(&model, Rot::default());
     assert_eq!(plain.quads.len(), 1);
     assert_eq!(plain.quads[0].cull, Some(2));
     assert!(
@@ -340,7 +343,7 @@ fn model_rotation_moves_positions_and_cullface() {
         "north face sits at z=0"
     );
 
-    let turned = bake_resolved(
+    let turned = bake(
         &model,
         Rot {
             x: 0,
@@ -348,7 +351,6 @@ fn model_rotation_moves_positions_and_cullface() {
             z: 0,
             uvlock: false,
         },
-        16,
     );
     assert_eq!(turned.quads[0].cull, Some(5), "north rotates to east");
     assert!(
@@ -357,7 +359,7 @@ fn model_rotation_moves_positions_and_cullface() {
     );
     assert!((turned.quads[0].normal[0] - 1.0).abs() < 1e-5);
 
-    let tipped = bake_resolved(
+    let tipped = bake(
         &model,
         Rot {
             x: 1,
@@ -365,7 +367,6 @@ fn model_rotation_moves_positions_and_cullface() {
             z: 0,
             uvlock: false,
         },
-        16,
     );
     assert_eq!(tipped.quads[0].cull, Some(0), "north rotates to down");
     assert!(tipped.quads[0].pos.iter().all(|p| p[1] == 0.0));
@@ -390,15 +391,14 @@ fn uvlock_keeps_the_texture_still_while_rotation_moves_it() {
         z: 0,
         uvlock: false,
     };
-    let plain = &bake_resolved(&model, Rot::default(), 16).quads[0];
-    let turned = &bake_resolved(&model, rot_y90, 16).quads[0];
-    let locked = &bake_resolved(
+    let plain = &bake(&model, Rot::default()).quads[0];
+    let turned = &bake(&model, rot_y90).quads[0];
+    let locked = &bake(
         &model,
         Rot {
             uvlock: true,
             ..rot_y90
         },
-        16,
     )
     .quads[0];
 
@@ -463,11 +463,12 @@ fn per_face_uv_and_rotation_land_where_the_maths_says() {
           }]
         }"##,
     );
-    let baked = bake_resolved(&model, Rot::default(), 16);
+    let baked = bake(&model, Rot::default());
     let quad = &baked.quads[0];
 
-    let tile = *crate::TEXTURE_MAP.get().unwrap().get("stone").unwrap();
-    let [au0, av0, au1, av1] = tile_uv_rect(tile, 16);
+    let blocks = super::registry();
+    let tile = blocks.sprites().tile("stone").unwrap();
+    let [au0, av0, au1, av1] = tile_uv_rect(tile, blocks.sprites().rows());
     let at = |u: f32, v: f32| [au0 + (au1 - au0) * u, av0 + (av1 - av0) * v];
 
     let expected = [at(0.0, 1.0), at(0.5, 1.0), at(0.5, 0.5), at(0.0, 0.5)];
@@ -497,7 +498,7 @@ fn element_rotation_rescale_stretches_the_plane_out_to_the_cell() {
           }]
         }"##,
     );
-    let baked = bake_resolved(&model, Rot::default(), 16);
+    let baked = bake(&model, Rot::default());
     assert_eq!(
         baked.quads.len(),
         2,
@@ -520,16 +521,18 @@ fn element_rotation_rescale_stretches_the_plane_out_to_the_cell() {
 fn a_full_opaque_cube_occludes_and_glass_does_not() {
     atlas_once();
     let assets = assets();
-    let stone = super::bake::bake_model(&assets, "block/stone", Rot::default(), 16);
+    let blocks = super::registry();
+    let sprites = blocks.sprites();
+    let stone = super::bake::bake_model(&assets, "block/stone", Rot::default(), sprites);
     assert!(stone.occludes, "stone is a full cube of opaque sprites");
-    let glass = super::bake::bake_model(&assets, "block/glass", Rot::default(), 16);
+    let glass = super::bake::bake_model(&assets, "block/glass", Rot::default(), sprites);
     assert!(
         !glass.occludes,
         "glass is a full cube, but its sprite has holes"
     );
-    let leaves = super::bake::bake_model(&assets, "block/oak_leaves", Rot::default(), 16);
+    let leaves = super::bake::bake_model(&assets, "block/oak_leaves", Rot::default(), sprites);
     assert!(!leaves.occludes);
-    let slab = super::bake::bake_model(&assets, "block/stone_slab", Rot::default(), 16);
+    let slab = super::bake::bake_model(&assets, "block/stone_slab", Rot::default(), sprites);
     assert!(
         !slab.occludes,
         "a half-height element cannot occlude the cell"
@@ -641,7 +644,8 @@ fn the_mesher_culls_a_face_against_a_solid_neighbour() {
             occ.set_solid(*x, *y, *z);
         }
         let blocks = vec![(0, 0, 0, stone.clone())];
-        let (opaque, water) = build_section_mesh(&blocks, 0, 0, 0, 16, &occ);
+        let tiles = super::registry().sprites().mesh_tiles();
+        let (opaque, water) = build_section_mesh(&blocks, 0, 0, 0, tiles, &occ);
         assert!(water.is_empty());
         assert_eq!(opaque.verts.len() % 4, 0);
         assert_eq!(

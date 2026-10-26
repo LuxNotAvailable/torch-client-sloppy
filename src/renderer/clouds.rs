@@ -4,6 +4,7 @@ use bevy::prelude::*;
 use bevy::transform::TransformSystems;
 
 use super::AppState;
+use super::mesh::QUAD_INDICES;
 use super::systems::WorldCamera;
 use super::timeline::{self, CLOUD_HEIGHT};
 use crate::direction::Direction;
@@ -127,6 +128,12 @@ impl Plugin for CloudPlugin {
             setup.run_if(resource_added::<crate::renderer::systems::AssetsReady>),
         )
         .add_systems(
+            Update,
+            reload_texture
+                .run_if(on_message::<crate::renderer::reload::AssetsReloaded>)
+                .run_if(resource_exists::<CloudAssets>),
+        )
+        .add_systems(
             PostUpdate,
             update_clouds
                 .before(TransformSystems::Propagate)
@@ -160,19 +167,32 @@ struct CloudAssets {
     painted: Option<(timeline::Argb, CloudStatus)>,
 }
 
+fn load_texture() -> Option<CloudTexture> {
+    let path = crate::textures_dir().join("environment/clouds.png");
+    match crate::platform::assets::open_image(&path) {
+        Ok(img) => Some(CloudTexture::new(&img.to_rgba8())),
+        Err(e) => {
+            crate::log_warn!(
+                "assets",
+                "clouds: {} could not be read ({e})",
+                path.display()
+            );
+            None
+        }
+    }
+}
+
+fn reload_texture(mut assets: ResMut<CloudAssets>) {
+    assets.texture = load_texture();
+    assets.built = None;
+}
+
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let path = crate::textures_dir().join("environment/clouds.png");
-    let texture = match crate::platform::assets::open_image(&path) {
-        Ok(img) => Some(CloudTexture::new(&img.to_rgba8())),
-        Err(e) => {
-            eprintln!("clouds: {} could not be read ({e})", path.display());
-            None
-        }
-    };
+    let texture = load_texture();
 
     let mesh = meshes.add(empty_mesh());
     let material = materials.add(StandardMaterial {
@@ -285,8 +305,7 @@ impl MeshBuilder {
                 base,
             ]);
         } else {
-            self.indices
-                .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+            self.indices.extend(QUAD_INDICES.map(|i| base + i));
         }
     }
 }
@@ -413,14 +432,14 @@ fn update_clouds(
     let Some((texture_cells_w, texture_cells_h)) =
         assets.texture.as_ref().map(|t| (t.width, t.height))
     else {
-        *visibility = Visibility::Hidden;
+        visibility.set_if_neq(Visibility::Hidden);
         return;
     };
     if status == CloudStatus::Off || color.alpha() == 0 {
-        *visibility = Visibility::Hidden;
+        visibility.set_if_neq(Visibility::Hidden);
         return;
     }
-    *visibility = Visibility::Visible;
+    visibility.set_if_neq(Visibility::Visible);
 
     let Ok(camera) = camera.single() else { return };
     let (cam_x, cam_y, cam_z) = (

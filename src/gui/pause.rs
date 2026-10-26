@@ -1,5 +1,5 @@
 use crate::gui::painter::Painter;
-use crate::gui::widgets::{self, Button, WIDGET_HEIGHT};
+use crate::gui::widgets::{Button, WIDGET_HEIGHT};
 use crate::gui::{GuiState, Screen, ScreenCtx};
 
 const TITLE: &str = "Game Menu";
@@ -47,7 +47,7 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     let (gx, gy) = grid_origin(ctx.vw, ctx.vh);
     let x = gx + BUTTON_PADDING;
 
-    widgets::draw_title(p, ctx.vw, TITLE_Y, TITLE);
+    p.text_centered(TITLE, ctx.vw / 2.0, TITLE_Y, 0xFFFFFF, true);
 
     let mut button = |i: usize, label: &'static str| {
         Button::new(

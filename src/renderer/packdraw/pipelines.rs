@@ -32,7 +32,7 @@ use crate::shaderpack::transform::ImageAccess;
 
 fn checked_shaders() -> bool {
     static CHECKED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *CHECKED.get_or_init(|| std::env::var_os("MC_SHADERPACK_CHECKED").is_some_and(|v| v != "0"))
+    *CHECKED.get_or_init(|| crate::platform::env::flag("MC_SHADERPACK_CHECKED"))
 }
 
 pub(super) struct Pipelines {

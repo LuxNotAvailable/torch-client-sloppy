@@ -7,7 +7,7 @@ use std::thread;
 
 use crate::SHARED;
 use crate::client::tracking::{
-    anim_states, current_world, equipment, head_yaws, max_healths, reset_chunk_tracking,
+    anim_states, attributes, current_world, equipment, head_yaws, reset_chunk_tracking,
     reset_chunk_tracking_best_effort,
 };
 use crate::client::{
@@ -52,14 +52,18 @@ async fn run_client(
                 .build()
                 .disable::<azalea::auto_reconnect::AutoReconnectPlugin>()
                 .disable::<azalea::auto_respawn::AutoRespawnPlugin>()
+                .disable::<azalea::accept_resource_packs::AcceptResourcePacksPlugin>()
         })
         .add_plugins(chat_sign::ChatSigningPlugin)
         .add_plugins(flight::FlightPlugin)
         .add_plugins(no_fall::NoFallPlugin)
+        .add_plugins(crate::play::vclip::VClipPlugin)
         .add_plugins(crate::play::riding::RidingPlugin)
         .add_plugins(PacketRelayPlugin)
         .add_plugins(ProtocolPlugin)
         .add_plugins(crate::client::dialogs::ConfigRelayPlugin)
+        .add_plugins(crate::client::server_packs::ServerPackPlugin)
+        .add_plugins(crate::client::server_screens::CodeOfConductPlugin)
         .add_plugins(BotHeartbeatPlugin)
         .set_handler(handle)
         .set_state(State { generation })
@@ -266,9 +270,13 @@ pub(crate) fn start_bot(address: String) {
         let mut s = shared.lock().unwrap();
         s.session.status = Some(format!("Connecting to {address}...").into());
         s.session.current_address = Some(address.clone());
+        s.session
+            .server_packs
+            .begin(crate::gui::serverlist::pack_policy(&address));
         s.disconnect_requested = false;
         s.quit_requested = false;
         s.reload_chunks_requested = false;
+        s.remesh_chunks_requested = false;
         s.session_ended = false;
         s.end_notice = None;
     }
@@ -544,7 +552,7 @@ fn reset_session_side_tables(blocking: bool) {
         anim_states().lock().unwrap().clear();
         head_yaws().lock().unwrap().clear();
         equipment().lock().unwrap().clear();
-        max_healths().lock().unwrap().clear();
+        attributes().lock().unwrap().clear();
     } else {
         if let Ok(mut world) = current_world().try_lock() {
             *world = None;
@@ -558,7 +566,7 @@ fn reset_session_side_tables(blocking: bool) {
         if let Ok(mut m) = equipment().try_lock() {
             m.clear();
         }
-        if let Ok(mut m) = max_healths().try_lock() {
+        if let Ok(mut m) = attributes().try_lock() {
             m.clear();
         }
     }
@@ -569,11 +577,10 @@ fn reset_session_side_tables(blocking: bool) {
             }
         }
         use crate::client::tracking::{
-            add_entity_data, crit_hits, entity_anims, meta_dirty, meta_index_18, mount_attributes,
-            on_grounds, passengers, velocities,
+            add_entity_data, crit_hits, entity_anims, meta_dirty, meta_index_18, on_grounds,
+            passengers, velocities,
         };
         clear(entity_anims());
-        clear(mount_attributes());
         clear(meta_index_18());
         clear(meta_dirty());
         clear(on_grounds());
@@ -592,6 +599,7 @@ fn reset_session_side_tables(blocking: bool) {
     cooldowns::reset();
     blockentities::feed::reset();
     crate::play::dialog::clear_tags();
+    crate::client::recipes::clear_item_tags();
     crate::client::packets::reset_unsecure_warning();
     crate::client::packets::reset_bad_light_layers();
     tick::reset_movement_warning();

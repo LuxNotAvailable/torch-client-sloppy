@@ -48,18 +48,13 @@ macro_rules! prof_span {
 use crate::session::SharedMutex;
 use azalea_protocol::packets::PROTOCOL_VERSION;
 use client::worker::JobQueue;
-use renderer::build_block_atlas;
 use std::{
-    collections::HashMap,
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
 };
 
 pub(crate) static SHARED: OnceLock<Arc<SharedMutex>> = OnceLock::new();
 pub(crate) static CHUNK_Q: OnceLock<Arc<JobQueue>> = OnceLock::new();
-
-pub(crate) static TEXTURE_MAP: OnceLock<HashMap<String, u32>> = OnceLock::new();
-pub(crate) static ATLAS_ROWS: OnceLock<u32> = OnceLock::new();
 
 #[allow(
     dead_code,
@@ -200,9 +195,9 @@ pub fn start_mesh_worker(assets: Vec<u8>) {
 pub(crate) fn bake_block_lookups() {
     let textures_dir = textures_dir().to_string_lossy().into_owned();
     let textures = renderer::Textures::blocks(&textures_dir);
-    let (atlas, tiles) = build_block_atlas(&textures, &textures_dir);
-    ATLAS_ROWS.set(renderer::atlas_rows(&atlas)).ok();
-    TEXTURE_MAP.set(tiles).ok();
+    let atlas = renderer::build_block_atlas(&textures, &textures_dir);
+    atlas.tables.publish();
+    blocks::install(blocks::Blocks::load(atlas.sprites));
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -304,6 +299,11 @@ fn android_main(app: bevy::android::android_activity::AndroidApp) {
     }
 
     step("event loop ended, finishing the activity");
+    finish_and_exit(&app);
+}
+
+#[cfg(target_os = "android")]
+pub(crate) fn finish_and_exit(app: &bevy::android::android_activity::AndroidApp) -> ! {
     unsafe extern "C" {
         fn ANativeActivity_finish(activity: *mut core::ffi::c_void);
     }
@@ -360,6 +360,8 @@ fn run(args: platform::cli::Args) -> eyre::Result<()> {
     diag::panic_report::install_panic_hook();
     client::bot::install_exit_signal_handlers();
     install_crypto_provider();
+    #[cfg(all(feature = "update_checker", not(target_arch = "wasm32")))]
+    client::update_checker::spawn();
     let cli_account = authenticate(&args);
     let online = cli_account.is_some();
     let account = cli_account
@@ -420,63 +422,18 @@ fn run(args: platform::cli::Args) -> eyre::Result<()> {
     if have_assets {
         resourcepacks::mount();
     }
-    let (atlas_image, tex_map, gui_atlas) = if have_assets {
+    let (atlas_image, gui_atlas) = if have_assets {
         step("building the atlases");
-        let started = platform::time::Instant::now();
-        let atlas_work = |assets_root: &std::path::Path| {
-            let t = platform::time::Instant::now();
-            let gui_atlas = gui::atlas::build_gui_atlas(assets_root);
-            log_info!(
-                "assets",
-                "gui atlas + item icons: {:.0} ms",
-                t.elapsed().as_secs_f32() * 1000.0
-            );
-            gui_atlas
-        };
-        let block_work = || {
-            let t = platform::time::Instant::now();
-            let textures = renderer::Textures::blocks(&textures_dir);
-            let decoded = t.elapsed();
-            let (atlas_image, tex_map) = build_block_atlas(&textures, &textures_dir);
-            log_info!(
-                "assets",
-                "block atlas: {:.0} ms ({:.0} ms decoding {} block sprites)",
-                t.elapsed().as_secs_f32() * 1000.0,
-                decoded.as_secs_f32() * 1000.0,
-                textures.block.len()
-            );
-            (atlas_image, tex_map)
-        };
-
-        #[cfg(target_arch = "wasm32")]
-        let (gui_atlas, (atlas_image, tex_map)) = (atlas_work(assets_root), block_work());
-        #[cfg(not(target_arch = "wasm32"))]
-        let (gui_atlas, (atlas_image, tex_map)) = std::thread::scope(|scope| {
-            let gui = scope.spawn(|| atlas_work(assets_root));
-            let rest = block_work();
-            (gui.join().expect("the gui atlas thread panicked"), rest)
-        });
-
-        log_info!(
-            "assets",
-            "atlases ready in {:.0} ms",
-            started.elapsed().as_secs_f32() * 1000.0
-        );
-        let gui_atlas = Arc::new(gui_atlas);
-        (atlas_image, tex_map, gui_atlas)
+        let (block, gui) = renderer::reload::build_atlases().install();
+        (block, Arc::new(gui))
     } else {
         log_info!("assets", "no asset set found; opening the download screen");
         step("no assets: building the boot atlas");
         (
             renderer::placeholder_atlas(),
-            HashMap::new(),
             Arc::new(gui::atlas::GuiAtlas::boot()),
         )
     };
-    if have_assets {
-        TEXTURE_MAP.set(tex_map.clone()).ok();
-        ATLAS_ROWS.set(renderer::atlas_rows(&atlas_image)).ok();
-    }
 
     let address = args.address;
 
@@ -543,13 +500,6 @@ fn run(args: platform::cli::Args) -> eyre::Result<()> {
     };
 
     step("handing off to the renderer");
-    renderer::run(
-        shared,
-        atlas_image,
-        tex_map,
-        gui_atlas,
-        startup,
-        have_assets,
-    );
+    renderer::run(shared, atlas_image, gui_atlas, startup, have_assets);
     Ok(())
 }

@@ -208,6 +208,7 @@ fn text_key(st: &BeState, front: bool) -> Option<u64> {
     let mut hasher = DefaultHasher::new();
     face.hash(&mut hasher);
     style.hash(&mut hasher);
+    crate::renderer::reload::generation().hash(&mut hasher);
     Some(GeomKey::new().mix(hasher.finish()).finish())
 }
 

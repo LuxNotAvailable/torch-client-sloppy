@@ -5,8 +5,6 @@ use bevy::prelude::*;
 use bevy::render::view::{ColorGrading, ColorGradingGlobal, ColorGradingSection, Hdr};
 
 #[cfg(feature = "builtin_shaders")]
-use super::hand::HandCamera;
-#[cfg(feature = "builtin_shaders")]
 use super::systems::WorldCamera;
 
 #[cfg(feature = "builtin_shaders")]
@@ -66,7 +64,7 @@ struct SunShaftVolume;
 fn shafts_enabled() -> bool {
     use std::sync::OnceLock;
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| matches!(std::env::var("MC_SHAFTS").as_deref(), Ok("1") | Ok("true")))
+    *ON.get_or_init(|| crate::platform::env::flag("MC_SHAFTS"))
 }
 
 #[cfg(all(feature = "builtin_shaders", not(target_arch = "wasm32")))]
@@ -95,7 +93,7 @@ fn post_enabled() -> bool {
 fn apply_pipeline(
     mut commands: Commands,
     cameras: Query<(Entity, Has<Hdr>), With<Camera>>,
-    mut hand: Query<(Entity, Has<Graded>, &mut Tonemapping), With<HandCamera>>,
+    mut world: Query<(Entity, Has<Graded>, &mut Tonemapping), With<WorldCamera>>,
 ) {
     let fancy = post_enabled();
     for (entity, hdr) in &cameras {
@@ -110,7 +108,7 @@ fn apply_pipeline(
     } else {
         Tonemapping::None
     };
-    for (entity, graded, mut tonemapping) in &mut hand {
+    for (entity, graded, mut tonemapping) in &mut world {
         if *tonemapping != wanted {
             *tonemapping = wanted;
         }
@@ -129,7 +127,7 @@ fn apply_pipeline(
 fn apply_bloom(
     mut commands: Commands,
     gui: Res<crate::gui::GuiState>,
-    cameras: Query<(Entity, Has<bevy::post_process::bloom::Bloom>), With<HandCamera>>,
+    cameras: Query<(Entity, Has<bevy::post_process::bloom::Bloom>), With<WorldCamera>>,
 ) {
     let wanted =
         post_enabled() && gui.options.shader_quality == super::terrain::ShaderQuality::Fancy;

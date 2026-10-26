@@ -298,6 +298,7 @@ impl Plugin for PackMaterialPlugin {
         app.add_plugins(MaterialPlugin::<PackMaterial>::default())
             .init_resource::<PackFrameSource>()
             .add_systems(Update, (read_camera, sync_compiled_pack).chain());
+        super::reload::touch_on_reload::<PackMaterial>(app);
     }
 }
 

@@ -9,6 +9,7 @@ struct SlotMeta {
     flags: u32,
     pool: u32,
     cutout_first: u32,
+    faces: array<vec4<u32>, 2>,
 }
 
 struct DrawIndexedIndirectArgs {
@@ -25,6 +26,8 @@ struct CullView {
     within_max: vec4<f32>,
     always_min: vec4<f32>,
     always_max: vec4<f32>,
+    fog: vec4<f32>,
+    eye: vec4<f32>,
     slot_cap: u32,
     view_index: u32,
     pool_count: u32,
@@ -43,6 +46,13 @@ const META_WATER: u32 = 2u;
 const VIEW_UNOCCLUDED: u32 = 2u;
 const VIEW_WITHIN: u32 = 4u;
 const VIEW_ALWAYS: u32 = 8u;
+const VIEW_FOG: u32 = 16u;
+const VIEW_FACES: u32 = 32u;
+const FACE_RUNS: u32 = 4u;
+const FACE_GROUPS: u32 = 7u;
+const ALL_GROUPS: u32 = 0x7Fu;
+const RANK_GROUP = array<u32, 7>(0u, 4u, 2u, 6u, 3u, 5u, 1u);
+const FILL_QUADS: u32 = 32u;
 
 @group(0) @binding(0) var<storage, read> metas: array<SlotMeta>;
 @group(0) @binding(1) var<storage, read> vis: array<u32>;
@@ -54,6 +64,12 @@ fn in_frustum(lo: vec3<f32>, hi: vec3<f32>) -> bool {
     if (cull.flags & VIEW_WITHIN) != 0u
         && (any(hi < cull.within_min.xyz) || any(lo > cull.within_max.xyz)) {
         return false;
+    }
+    if (cull.flags & VIEW_FOG) != 0u {
+        let d = min(max(cull.fog.xyz, lo), hi) - cull.fog.xyz;
+        if (max(length(d.xz), abs(d.y)) > cull.fog.w) {
+            return false;
+        }
     }
     if (cull.flags & VIEW_ALWAYS) != 0u
         && all(hi >= cull.always_min.xyz) && all(lo <= cull.always_max.xyz) {
@@ -69,14 +85,109 @@ fn in_frustum(lo: vec3<f32>, hi: vec3<f32>) -> bool {
     return true;
 }
 
+fn region_stride() -> u32 {
+    return cull.slot_cap * FACE_RUNS;
+}
+
 fn write_zero(region: u32, k: u32) {
-    commands[region * cull.slot_cap + k] = DrawIndexedIndirectArgs(0u, 1u, 0u, 0i, 0u);
+    commands[region * region_stride() + k] = DrawIndexedIndirectArgs(0u, 1u, 0u, 0i, 0u);
 }
 
 fn write_cmd(region: u32, k: u32, first_index: u32, count: u32, base_vertex: u32, slot: u32) {
-    commands[region * cull.slot_cap + k] = DrawIndexedIndirectArgs(
+    commands[region * region_stride() + k] = DrawIndexedIndirectArgs(
         count, 1u, first_index, i32(base_vertex), slot,
     );
+}
+
+fn face_count(m: SlotMeta, stream: u32, group: u32) -> u32 {
+    let k = stream * FACE_GROUPS + group;
+    let word = k / 2u;
+    var faces = m.faces;
+    return (faces[word / 4u][word % 4u] >> ((k % 2u) * 16u)) & 0xFFFFu;
+}
+
+fn face_mask(lo: vec3<f32>, hi: vec3<f32>) -> u32 {
+    if (cull.flags & VIEW_FACES) == 0u {
+        return ALL_GROUPS;
+    }
+    let eye = cull.eye.xyz;
+    var mask = 1u << 6u;
+    for (var a = 0u; a < 3u; a = a + 1u) {
+        if (eye[a] < hi[a] + 1.0) {
+            mask = mask | (1u << (a * 2u));
+        }
+        if (eye[a] > lo[a] - 1.0) {
+            mask = mask | (1u << (a * 2u + 1u));
+        }
+    }
+    return mask;
+}
+
+fn emit_run(region: u32, slot: u32, run: u32, first: u32, count: u32, base_vertex: u32) {
+    var k = slot * FACE_RUNS + run;
+    if (cull.compact != 0u) {
+        k = atomicAdd(&counts[region], 1u);
+    }
+    write_cmd(region, k, first, count, base_vertex, slot);
+}
+
+fn emit_stream(region: u32, m: SlotMeta, stream: u32, first: u32, count: u32, mask: u32, slot: u32) {
+    var total = 0u;
+    for (var g = 0u; g < FACE_GROUPS; g = g + 1u) {
+        total = total + face_count(m, stream, g) * 6u;
+    }
+    var runs = 0u;
+    if (total != count || (total != 0u && total < FILL_QUADS * 6u)) {
+        emit_run(region, slot, 0u, first, count, m.base_vertex);
+        runs = 1u;
+    } else {
+        var order = RANK_GROUP;
+        var at = first;
+        var run_first = first;
+        var run_count = 0u;
+        var gap = 0u;
+        for (var r = 0u; r < FACE_GROUPS; r = r + 1u) {
+            let g = order[r];
+            let n = face_count(m, stream, g) * 6u;
+            if (n == 0u) {
+                continue;
+            }
+            if (((mask >> g) & 1u) != 0u) {
+                if (run_count == 0u) {
+                    run_first = at;
+                } else {
+                    run_count = run_count + gap;
+                }
+                gap = 0u;
+                run_count = run_count + n;
+            } else if (run_count != 0u) {
+                if (gap + n <= FILL_QUADS * 6u) {
+                    gap = gap + n;
+                } else {
+                    emit_run(region, slot, runs, run_first, run_count, m.base_vertex);
+                    runs = runs + 1u;
+                    run_count = 0u;
+                    gap = 0u;
+                }
+            }
+            at = at + n;
+        }
+        if (run_count != 0u) {
+            emit_run(region, slot, runs, run_first, run_count, m.base_vertex);
+            runs = runs + 1u;
+        }
+    }
+    if (cull.compact == 0u) {
+        for (var r = runs; r < FACE_RUNS; r = r + 1u) {
+            write_zero(region, slot * FACE_RUNS + r);
+        }
+    }
+}
+
+fn zero_stream(region: u32, slot: u32) {
+    for (var r = 0u; r < FACE_RUNS; r = r + 1u) {
+        write_zero(region, slot * FACE_RUNS + r);
+    }
 }
 
 @compute @workgroup_size(64)
@@ -103,10 +214,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 
     var inside = false;
+    var mask = ALL_GROUPS;
     if (live && visible) {
         let lo = vec3<f32>(m.origin) + m.min;
         let hi = vec3<f32>(m.origin) + m.max;
         inside = in_frustum(lo, hi);
+        mask = face_mask(lo, hi);
     }
 
     let draws = live && visible && inside;
@@ -117,21 +230,16 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if (!compact) {
         for (var pool = 0u; pool < cull.pool_count; pool = pool + 1u) {
             let base = ((cull.view_index * cull.pool_count) + pool) * STREAMS;
-            if (draws && m.pool == pool) {
-                if (has_solid) {
-                    write_cmd(base + STREAM_SOLID, slot, m.first_index, m.solid_count, m.base_vertex, slot);
-                } else {
-                    write_zero(base + STREAM_SOLID, slot);
-                }
-                if (has_cutout) {
-                    write_cmd(base + STREAM_CUTOUT, slot, m.cutout_first,
-                        m.index_count - m.solid_count, m.base_vertex, slot);
-                } else {
-                    write_zero(base + STREAM_CUTOUT, slot);
-                }
+            if (has_solid && m.pool == pool) {
+                emit_stream(base + STREAM_SOLID, m, STREAM_SOLID, m.first_index, m.solid_count, mask, slot);
             } else {
-                write_zero(base + STREAM_SOLID, slot);
-                write_zero(base + STREAM_CUTOUT, slot);
+                zero_stream(base + STREAM_SOLID, slot);
+            }
+            if (has_cutout && m.pool == pool) {
+                emit_stream(base + STREAM_CUTOUT, m, STREAM_CUTOUT, m.cutout_first,
+                    m.index_count - m.solid_count, mask, slot);
+            } else {
+                zero_stream(base + STREAM_CUTOUT, slot);
             }
         }
         return;
@@ -142,13 +250,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let base = ((cull.view_index * cull.pool_count) + m.pool) * STREAMS;
     if (has_solid) {
-        let region = base + STREAM_SOLID;
-        let k = atomicAdd(&counts[region], 1u);
-        write_cmd(region, k, m.first_index, m.solid_count, m.base_vertex, slot);
+        emit_stream(base + STREAM_SOLID, m, STREAM_SOLID, m.first_index, m.solid_count, mask, slot);
     }
     if (has_cutout) {
-        let region = base + STREAM_CUTOUT;
-        let k = atomicAdd(&counts[region], 1u);
-        write_cmd(region, k, m.cutout_first, m.index_count - m.solid_count, m.base_vertex, slot);
+        emit_stream(base + STREAM_CUTOUT, m, STREAM_CUTOUT, m.cutout_first,
+            m.index_count - m.solid_count, mask, slot);
     }
 }

@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::Arc;
 
 use azalea_registry::builtin::EntityKind;
 use serde_json::Value;
@@ -9,6 +9,7 @@ use crate::entities::models::humanoid::armor;
 use crate::entities::registry::Registry;
 use crate::entities::state::EntityState;
 use crate::entities::{RenderSpec, TexturePath};
+use crate::util::reload::Reloadable;
 
 pub type ArmorLayers = [fn() -> LayerDef; 4];
 
@@ -128,9 +129,18 @@ const LAYER_TYPES: [&str; 3] = [LAYER_HUMANOID, LAYER_HUMANOID_LEGGINGS, LAYER_W
 
 pub(crate) const STACK_PREFIX: &str = "equipment_stack/";
 
-fn equipment_assets() -> &'static HashMap<String, EquipmentAsset> {
-    static ASSETS: OnceLock<HashMap<String, EquipmentAsset>> = OnceLock::new();
-    ASSETS.get_or_init(|| {
+static ASSETS: Reloadable<HashMap<String, EquipmentAsset>> = Reloadable::new(load_equipment_assets);
+
+pub(crate) fn reset() {
+    ASSETS.reset();
+}
+
+fn equipment_assets() -> Arc<HashMap<String, EquipmentAsset>> {
+    ASSETS.get()
+}
+
+fn load_equipment_assets() -> HashMap<String, EquipmentAsset> {
+    {
         let dir = crate::assets_root().join("equipment");
         let mut out = HashMap::new();
         for path in crate::platform::assets::read_dir(&dir) {
@@ -183,12 +193,13 @@ fn equipment_assets() -> &'static HashMap<String, EquipmentAsset> {
         }
         crate::log_info!("equipment", "{} equipment assets loaded", out.len());
         out
-    })
+    }
 }
 
 pub(crate) fn slot_texture(item: Option<&str>, layer_type: &str) -> String {
     let asset = equipment_asset(item);
-    let Some(layers) = equipment_assets().get(asset).map(|a| a.layers(layer_type)) else {
+    let assets = equipment_assets();
+    let Some(layers) = assets.get(asset).map(|a| a.layers(layer_type)) else {
         return format!("entity/equipment/{layer_type}/{asset}");
     };
     match layers {
@@ -217,7 +228,8 @@ pub(crate) fn leggings_layer_texture(item: Option<&str>) -> String {
 
 pub(crate) fn stack(rest: &str) -> Option<image::RgbaImage> {
     let (layer_type, asset) = rest.split_once('/')?;
-    let layers = equipment_assets().get(asset)?.layers(layer_type);
+    let assets = equipment_assets();
+    let layers = assets.get(asset)?.layers(layer_type);
     let (first, others) = layers.split_first()?;
 
     let sheet = |layer: &EquipmentLayer| {

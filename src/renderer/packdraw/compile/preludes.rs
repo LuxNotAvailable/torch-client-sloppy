@@ -1,6 +1,9 @@
 use super::TERRAIN_SET;
-use crate::renderer::terrain_pool::ORIGIN_ROW;
 use crate::renderer::terrain_pool::draw::SLOT_TABLE_BINDING;
+use crate::renderer::terrain_pool::{ORIGIN_ROW, SlotMeta};
+
+const SLOT_WORDS: usize = std::mem::size_of::<SlotMeta>() / 16;
+const _: () = assert!(std::mem::offset_of!(SlotMeta, origin) == 2 * 16);
 
 pub(crate) fn terrain_prelude(direct: bool) -> String {
     let origin = if direct {
@@ -17,7 +20,7 @@ pub(crate) fn terrain_prelude(direct: bool) -> String {
                  ivec4 iris_SlotWords[];\n\
              }};\n\
              ivec3 iris_origin() {{\n    \
-                 return iris_SlotWords[gl_InstanceIndex * 4 + 2].xyz;\n\
+                 return iris_SlotWords[gl_InstanceIndex * {SLOT_WORDS} + 2].xyz;\n\
              }}\n"
         )
     };

@@ -160,6 +160,8 @@ pub fn handle_interaction(bot: &Client, shared: &Arc<SharedMutex>) {
 
     crate::modules::auto_sell::tick(bot, shared);
 
+    crate::modules::spam::tick(shared);
+
     crate::modules::auto_totem::tick(bot, shared);
 
     let attack_held = crate::modules::auto_mine::tick(bot, shared, hit.as_ref()) || attack_held;

@@ -18,6 +18,8 @@ pub(crate) fn container_kind(menu: &Menu) -> ContainerKind {
         Menu::BlastFurnace { .. } => ContainerKind::Furnace(FurnaceKind::BlastFurnace),
         Menu::Smoker { .. } => ContainerKind::Furnace(FurnaceKind::Smoker),
         Menu::Hopper { .. } => ContainerKind::Hopper,
+        Menu::ShulkerBox { .. } => ContainerKind::ShulkerBox,
+        Menu::Generic3x3 { .. } => ContainerKind::Dispenser,
         Menu::Grindstone { .. } => ContainerKind::Grindstone,
         Menu::Enchantment { .. } => ContainerKind::Enchantment,
         Menu::Loom { .. } => ContainerKind::Loom,
@@ -29,7 +31,8 @@ pub(crate) fn container_kind(menu: &Menu) -> ContainerKind {
         Menu::Merchant { .. } => ContainerKind::Merchant,
         Menu::Lectern { .. } => ContainerKind::Lectern,
         Menu::Anvil { .. } => ContainerKind::Anvil,
-        _ => ContainerKind::None,
+        Menu::Crafter3x3 { .. } => ContainerKind::Crafter,
+        Menu::Player(_) => ContainerKind::None,
     }
 }
 
@@ -407,6 +410,7 @@ fn creative_stack(
 pub(crate) fn apply_inv_actions(bot: &Client, actions: Vec<InvAction>, horse: Option<HorseMenu>) {
     use azalea_protocol::packets::game::s_container_button_click::ServerboundContainerButtonClick;
     use azalea_protocol::packets::game::s_container_close::ServerboundContainerClose;
+    use azalea_protocol::packets::game::s_container_slot_state_changed::ServerboundContainerSlotStateChanged;
     use azalea_protocol::packets::game::s_rename_item::ServerboundRenameItem;
     use azalea_protocol::packets::game::s_select_trade::ServerboundSelectTrade;
     use azalea_protocol::packets::game::s_set_beacon::ServerboundSetBeacon;
@@ -475,6 +479,24 @@ pub(crate) fn apply_inv_actions(bot: &Client, actions: Vec<InvAction>, horse: Op
             }
             InvAction::RenameItem(name) => {
                 bot.write_packet(ServerboundRenameItem { name });
+            }
+            InvAction::SlotStateChanged { slot, enabled } => {
+                let window_id = bot
+                    .component::<azalea::entity::inventory::Inventory>()
+                    .map(|i| i.id)
+                    .unwrap_or(0);
+                if let Some(mut inv) = bot
+                    .ecs
+                    .write()
+                    .get_mut::<azalea::entity::inventory::Inventory>(bot.entity)
+                {
+                    inv.set_crafter_slot_disabled(slot as usize, !enabled);
+                }
+                bot.write_packet(ServerboundContainerSlotStateChanged {
+                    slot_id: slot as u32,
+                    container_id: window_id,
+                    new_state: enabled,
+                });
             }
             InvAction::Close => {
                 if let Some(horse) = horse.as_ref() {

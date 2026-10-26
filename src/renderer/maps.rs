@@ -76,6 +76,18 @@ impl MapTextures {
 }
 
 pub fn build_decoration_sheet(images: &mut Assets<Image>) -> Handle<Image> {
+    let sheet = decoration_pixels();
+    let handle = images.add(crate::renderer::rgba_image(
+        sheet.width(),
+        sheet.height(),
+        sheet.into_raw(),
+        RenderAssetUsages::RENDER_WORLD,
+    ));
+    crate::renderer::reload::track(&handle, || Some(decoration_pixels()));
+    handle
+}
+
+fn decoration_pixels() -> image::RgbaImage {
     let count = DECORATION_SPRITES.len() as u32;
     let width = count * DECORATION_PX;
     let mut pixels = vec![0u8; (width * DECORATION_PX * 4) as usize];
@@ -106,12 +118,7 @@ pub fn build_decoration_sheet(images: &mut Assets<Image>) -> Handle<Image> {
             pixels[dst..dst + row].copy_from_slice(&decoded.as_raw()[src..src + row]);
         }
     }
-    images.add(crate::renderer::rgba_image(
-        width,
-        DECORATION_PX,
-        pixels,
-        RenderAssetUsages::RENDER_WORLD,
-    ))
+    image::RgbaImage::from_raw(width, DECORATION_PX, pixels).expect("sized to the sheet")
 }
 
 pub fn decoration_uv(kind: u8) -> Option<(f32, f32)> {

@@ -59,10 +59,16 @@ struct Layout {
 struct Layouts {
     by_entity: HashMap<i32, Layout>,
     generation: u64,
+    fonts: u32,
 }
 
 impl Layouts {
     fn get(&mut self, id: i32, font: &Font, display: &Display) -> &Layout {
+        let fonts = crate::renderer::reload::generation();
+        if self.fonts != fonts {
+            self.fonts = fonts;
+            self.by_entity.clear();
+        }
         let generation = self.generation;
         let entry = self.by_entity.entry(id).or_insert_with(|| Layout {
             text: Vec::new(),

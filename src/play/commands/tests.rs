@@ -8,7 +8,7 @@ use super::parse::{parse, parse_argument};
 use super::usage::smart_usage;
 use super::*;
 
-fn literal(name: &str, children: Vec<u32>, executable: bool) -> BrigadierNodeStub {
+pub(crate) fn literal(name: &str, children: Vec<u32>, executable: bool) -> BrigadierNodeStub {
     BrigadierNodeStub {
         is_executable: executable,
         children,
@@ -20,7 +20,7 @@ fn literal(name: &str, children: Vec<u32>, executable: bool) -> BrigadierNodeStu
     }
 }
 
-fn argument(
+pub(crate) fn argument(
     name: &str,
     parser: BrigadierParser,
     children: Vec<u32>,
@@ -109,6 +109,7 @@ fn complete(value: &str) -> CommandInfo {
         cursor,
         &Source::default(),
         Options::CHAT,
+        None,
     )
 }
 
@@ -159,7 +160,14 @@ fn trailing_space_suggests_the_next_node() {
 #[test]
 fn cursor_mid_word_completes_that_word() {
     let value = "/gamemode cre extra";
-    let info = update_command_info(Some(&tree()), value, 13, &Source::default(), Options::CHAT);
+    let info = update_command_info(
+        Some(&tree()),
+        value,
+        13,
+        &Source::default(),
+        Options::CHAT,
+        None,
+    );
     assert_eq!(texts(&info.suggestions), vec!["creative".to_string()]);
     let applied = info.suggestions.list[0].apply(&chars(value));
     assert_eq!(applied, "/gamemode creative extra");
@@ -290,6 +298,7 @@ fn teleport_completes_its_second_argument() {
             value.chars().count(),
             &source,
             Options::CHAT,
+            None,
         )
     };
     let input = chars("/tp 1 2 3");
@@ -330,6 +339,7 @@ fn selectors_complete_from_the_at_sign() {
         5,
         &Source::default(),
         Options::CHAT,
+        None,
     );
     assert_eq!(
         texts(&info.suggestions),
@@ -348,6 +358,7 @@ fn selectors_complete_from_the_at_sign() {
         12,
         &Source::default(),
         Options::CHAT,
+        None,
     );
     assert_eq!(info.ask_server.as_deref(), Some("/tp @e[type="));
 }
@@ -431,12 +442,12 @@ fn plain_chat_completes_player_names() {
         player_names: vec!["Alex".to_string(), "Steve".to_string()],
         custom_completions: vec!["!help".to_string()],
     };
-    let info = update_command_info(None, "hey St", 6, &source, Options::CHAT);
+    let info = update_command_info(None, "hey St", 6, &source, Options::CHAT, None);
     assert!(!info.is_command);
     assert_eq!(texts(&info.suggestions), vec!["Steve".to_string()]);
     assert_eq!(info.suggestions.range, Range::between(4, 6));
     assert!(
-        update_command_info(None, "   ", 3, &source, Options::CHAT)
+        update_command_info(None, "   ", 3, &source, Options::CHAT, None)
             .suggestions
             .is_empty()
     );
@@ -478,6 +489,43 @@ fn stale_replies_are_discarded() {
     assert_eq!(
         client.reply_for("/team join re").map(texts),
         Some(vec!["red".to_string()])
+    );
+}
+
+#[test]
+fn held_reply_narrows_to_a_longer_word() {
+    let mut client = SuggestionClient::default();
+    let (id, _) = client.request("/time set ").unwrap();
+    let names = ["day", "midnight", "minecraft:night", "noon"];
+    let answer = Suggestions::create(
+        &chars("/time set "),
+        names
+            .iter()
+            .map(|n| Suggestion {
+                range: Range::at(10),
+                text: n.to_string(),
+                tooltip: None,
+            })
+            .collect(),
+    );
+    assert!(client.accept(id, answer));
+
+    let narrowed = client.narrow("/time set n").expect("a narrowed reply");
+    assert_eq!(
+        texts(&narrowed),
+        vec!["minecraft:night".to_string(), "noon".to_string()]
+    );
+    assert_eq!(narrowed.range, Range::between(10, 11));
+    assert!(client.narrow("/time set x").is_none());
+    assert!(client.narrow("/time set n ").is_none());
+    assert!(client.narrow("/time set").is_none());
+
+    let (id, _) = client.request("/time set n").unwrap();
+    assert!(client.accept(id, narrowed));
+    assert!(client.request("/time set ").is_none());
+    assert_eq!(
+        client.reply_for("/time set ").map(|s| s.list.len()),
+        Some(4)
     );
 }
 

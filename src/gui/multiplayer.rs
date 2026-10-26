@@ -1,7 +1,9 @@
 use crate::gui::focus;
+use crate::gui::options::{self, SCROLLBAR_GAP};
 use crate::gui::painter::Painter;
 use crate::gui::ping::{self, PingState};
-use crate::gui::serverlist::{self, ServerEntry};
+use crate::gui::serverlist::{self, PackPolicy, ServerEntry};
+use crate::gui::tooltip::label;
 use crate::gui::widgets::{self, Button, HeaderFooter, TextBox, WIDGET_HEIGHT, WIDGET_WIDTH_BIG};
 use crate::gui::{GuiState, Screen, ScreenCtx, menu};
 use crate::text::Style;
@@ -36,8 +38,6 @@ const TEXT_INSET: f32 = ICON_SIZE + 3.0;
 const PING_W: f32 = 10.0;
 const PING_H: f32 = 8.0;
 const SPACING: f32 = 5.0;
-const SCROLLBAR_W: f32 = 6.0;
-const SCROLLBAR_MIN_H: f32 = 32.0;
 const TOP_ROW_BUTTON_W: f32 = 100.0;
 const LOWER_ROW_BUTTON_W: f32 = 74.0;
 const BUTTON_GAP: f32 = 4.0;
@@ -56,10 +56,11 @@ pub struct MenuState {
     loaded: bool,
     pub selected: Option<usize>,
     pub scroll: f32,
-    scrollbar_drag: bool,
+    scrollbar_drag: Option<f32>,
     editing: Option<usize>,
     name: TextBox,
     address: TextBox,
+    resource_packs: PackPolicy,
     direct: TextBox,
     confirm_delete: Option<usize>,
     confirm_delete_text: String,
@@ -73,10 +74,11 @@ impl Default for MenuState {
             loaded: false,
             selected: None,
             scroll: 0.0,
-            scrollbar_drag: false,
+            scrollbar_drag: None,
             editing: None,
             name: TextBox::bordered(NAME_MAX_LEN, DEFAULT_NAME),
             address: TextBox::bordered(ADDRESS_MAX_LEN, ""),
+            resource_packs: PackPolicy::default(),
             direct: TextBox::bordered(ADDRESS_MAX_LEN, ""),
             confirm_delete: None,
             confirm_delete_text: String::new(),
@@ -102,8 +104,8 @@ impl MenuState {
         self.editing = None;
         self.name.set_text(DEFAULT_NAME);
         self.address.set_text("");
-        self.name.focus();
-        self.address.focused = false;
+        self.resource_packs = PackPolicy::default();
+        self.focus_name();
     }
 
     fn begin_edit(&mut self, index: usize) {
@@ -113,6 +115,23 @@ impl MenuState {
         self.editing = Some(index);
         self.name.set_text(&entry.name);
         self.address.set_text(&entry.address);
+        self.resource_packs = entry.resource_packs;
+        self.focus_name();
+    }
+
+    pub fn set_pack_policy(&mut self, address: &str, policy: PackPolicy) {
+        self.ensure_loaded();
+        let mut changed = false;
+        for entry in self.servers.iter_mut().filter(|e| e.address == address) {
+            changed |= entry.resource_packs != policy;
+            entry.resource_packs = policy;
+        }
+        if changed {
+            self.save();
+        }
+    }
+
+    fn focus_name(&mut self) {
         self.name.focus();
         self.address.focused = false;
     }
@@ -123,14 +142,23 @@ impl MenuState {
         if address.is_empty() {
             return;
         }
+        let resource_packs = self.resource_packs;
         match self.editing {
             Some(i) if i < self.servers.len() => {
                 ping::forget(&self.servers[i].address);
-                self.servers[i] = ServerEntry { name, address };
+                self.servers[i] = ServerEntry {
+                    name,
+                    address,
+                    resource_packs,
+                };
             }
             Some(_) => {}
             None => {
-                self.servers.push(ServerEntry { name, address });
+                self.servers.push(ServerEntry {
+                    name,
+                    address,
+                    resource_packs,
+                });
                 self.selected = Some(self.servers.len() - 1);
             }
         }
@@ -183,21 +211,17 @@ fn row_left(vw: f32) -> f32 {
     ((vw / 2.0).floor() - (ROW_W / 2.0).floor()).floor()
 }
 
-fn list_rect(vw: f32, vh: f32) -> (f32, f32, f32, f32) {
-    LAYOUT.content_rect(vw, vh)
-}
-
 fn scrollbar_x(vw: f32) -> f32 {
-    row_left(vw) + ROW_W + SCROLLBAR_W + 2.0
+    row_left(vw) + ROW_W + SCROLLBAR_GAP
 }
 
 pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     state.menu.ensure_loaded();
     menu::background(p, ctx.vw, ctx.vh);
 
-    widgets::draw_title(p, ctx.vw, LAYOUT.title_y(), TITLE);
+    p.text_centered(TITLE, ctx.vw / 2.0, LAYOUT.title_y(), 0xFFFFFF, true);
 
-    let (lx, ly, lw, lh) = list_rect(ctx.vw, ctx.vh);
+    let (lx, ly, lw, lh) = LAYOUT.content_rect(ctx.vw, ctx.vh);
     menu::list_background(p, lx, ly, lw, lh, state.menu.scroll);
 
     let confirming = state.menu.confirm_delete.is_some();
@@ -223,6 +247,11 @@ fn draw_version_menu(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx, loc
         .unwrap_or(version::NATIVE);
 
     let mut open = state.menu.version_open && !locked;
+    #[cfg(feature = "tutorial")]
+    crate::gui::tutorial::mark(
+        crate::gui::tutorial::Spot::Version,
+        crate::gui::hud_layout::Rect::new(VERSION_X, VERSION_Y, VERSION_W, WIDGET_HEIGHT),
+    );
     let head = Button {
         x: VERSION_X,
         y: VERSION_Y,
@@ -271,7 +300,7 @@ fn row_rect(vw: f32, ly: f32, scroll: f32, index: usize) -> (f32, f32) {
 }
 
 fn draw_rows(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx, locked: bool) {
-    let (lx, ly, lw, lh) = list_rect(ctx.vw, ctx.vh);
+    let (lx, ly, lw, lh) = LAYOUT.content_rect(ctx.vw, ctx.vh);
     let GuiState {
         menu: st,
         nav,
@@ -473,61 +502,50 @@ pub(in crate::gui) fn list_scrollbar(
     p: &mut Painter,
     ctx: &ScreenCtx,
     scroll: &mut f32,
-    bar_drag: &mut bool,
+    bar_drag: &mut Option<f32>,
     content_h: f32,
     list_h: f32,
     locked: bool,
 ) {
-    let (_, ly, _, _) = list_rect(ctx.vw, ctx.vh);
-    let max = (content_h - list_h).max(0.0);
+    let (_, ly, _, _) = LAYOUT.content_rect(ctx.vw, ctx.vh);
+    let left = scrollbar_x(ctx.vw) - SCROLLBAR_GAP;
+    if locked {
+        let max = (content_h - list_h).max(0.0);
+        *scroll = scroll.clamp(0.0, max);
+    } else {
+        options::scroll_input(scroll, bar_drag, ctx, left, 0.0, ly, list_h, content_h);
+    }
+    options::draw_scrollbar(p, *scroll, left, 0.0, ly, list_h, content_h);
+}
 
-    if !locked {
-        if ctx.input.scroll != 0.0 && ctx.mouse().is_some() {
-            *scroll -= ctx.input.scroll * (ROW_H / 2.0);
+fn footer_row<const N: usize>(
+    p: &mut Painter,
+    ctx: &ScreenCtx,
+    locked: bool,
+    w: f32,
+    y: f32,
+    buttons: [(&str, bool); N],
+) -> [bool; N] {
+    let step = w + BUTTON_GAP;
+    let x0 = widgets::centered_row_x(ctx.vw, N as f32 * step - BUTTON_GAP);
+    let mut clicked = [false; N];
+    for (i, (label, active)) in buttons.into_iter().enumerate() {
+        clicked[i] = Button {
+            x: x0 + i as f32 * step,
+            y,
+            w,
+            h: WIDGET_HEIGHT,
+            label,
+            active: active && !locked,
         }
-        if ctx.input.left_release {
-            *bar_drag = false;
-        }
+        .draw(p, ctx);
     }
-    if max <= 0.0 {
-        *scroll = 0.0;
-        *bar_drag = false;
-        return;
-    }
-
-    let x = scrollbar_x(ctx.vw);
-    let thumb_h = ((list_h * list_h) / content_h).clamp(SCROLLBAR_MIN_H, list_h - 8.0);
-
-    #[cfg(feature = "mobile_ui")]
-    if !locked {
-        let over_bar = ctx.hovering(x, ly, SCROLLBAR_W, list_h);
-        crate::gui::options::content_drag(scroll, ctx, ly, list_h, over_bar, max);
-    }
-
-    if !locked && ctx.input.left_click && ctx.hovering(x, ly, SCROLLBAR_W, list_h) {
-        *bar_drag = true;
-    }
-    if *bar_drag
-        && ctx.input.left_down
-        && let Some(m) = ctx.mouse()
-    {
-        let travel = (list_h - thumb_h).max(1.0);
-        *scroll = ((m.y - ly - thumb_h / 2.0) / travel * max).clamp(0.0, max);
-    }
-    *scroll = scroll.clamp(0.0, max);
-
-    let thumb_y = ly + *scroll / max * (list_h - thumb_h);
-    p.sprite("widget/scroller_background", x, ly, SCROLLBAR_W, list_h);
-    p.sprite("widget/scroller", x, thumb_y, SCROLLBAR_W, thumb_h);
+    clicked
 }
 
 fn draw_footer(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx, locked: bool) {
     let top = ctx.vh - FOOTER_H + ((FOOTER_H - 2.0 * WIDGET_HEIGHT - BUTTON_GAP) / 2.0).floor();
     let bottom = top + WIDGET_HEIGHT + BUTTON_GAP;
-
-    let row_w = |n: f32, w: f32| n * w + (n - 1.0) * BUTTON_GAP;
-    let top_x = ((ctx.vw - row_w(3.0, TOP_ROW_BUTTON_W)) / 2.0).floor();
-    let low_x = ((ctx.vw - row_w(4.0, LOWER_ROW_BUTTON_W)) / 2.0).floor();
 
     let selected = state
         .menu
@@ -535,68 +553,27 @@ fn draw_footer(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx, locked: b
         .filter(|i| *i < state.menu.servers.len());
     let has_selection = selected.is_some();
 
-    let button = |p: &mut Painter, x: f32, y: f32, w: f32, label: &str, active: bool| {
-        let b = Button {
-            x,
-            y,
-            w,
-            h: WIDGET_HEIGHT,
-            label,
-            active: active && !locked,
-        };
-        b.draw(p, ctx)
-    };
-
-    let join = button(p, top_x, top, TOP_ROW_BUTTON_W, JOIN, has_selection);
-    let direct = button(
+    let [join, direct, add] = footer_row(
         p,
-        top_x + TOP_ROW_BUTTON_W + BUTTON_GAP,
-        top,
+        ctx,
+        locked,
         TOP_ROW_BUTTON_W,
-        DIRECT,
-        true,
-    );
-    let add = button(
-        p,
-        top_x + 2.0 * (TOP_ROW_BUTTON_W + BUTTON_GAP),
         top,
-        TOP_ROW_BUTTON_W,
-        ADD,
-        true,
+        [(JOIN, has_selection), (DIRECT, true), (ADD, true)],
     );
-
-    let step = LOWER_ROW_BUTTON_W + BUTTON_GAP;
-    let edit = button(p, low_x, bottom, LOWER_ROW_BUTTON_W, EDIT, has_selection);
-    let delete = button(
+    let [edit, delete, refresh, back] = footer_row(
         p,
-        low_x + step,
-        bottom,
+        ctx,
+        locked,
         LOWER_ROW_BUTTON_W,
-        DELETE,
-        has_selection,
-    );
-    let refresh = button(
-        p,
-        low_x + 2.0 * step,
         bottom,
-        LOWER_ROW_BUTTON_W,
-        REFRESH,
-        true,
+        [
+            (EDIT, has_selection),
+            (DELETE, has_selection),
+            (REFRESH, true),
+            (BACK, true),
+        ],
     );
-    let back = button(
-        p,
-        low_x + 3.0 * step,
-        bottom,
-        LOWER_ROW_BUTTON_W,
-        BACK,
-        true,
-    );
-
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let path = serverlist::path();
-        if serverlist::is_temporary(&path) {}
-    }
 
     if join && let Some(i) = selected {
         state.connect = Some(state.menu.servers[i].address.clone());
@@ -662,25 +639,11 @@ fn draw_delete_confirm(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     p.fill(0.0, 0.0, ctx.vw, ctx.vh, 0xC0_000000);
 
     let cy = (ctx.vh / 2.0).floor();
-    let question_w = p.atlas.font.width_str(DELETE_QUESTION);
-    p.text_str(
-        DELETE_QUESTION,
-        ((ctx.vw - question_w) / 2.0).floor(),
-        cy - 40.0,
-        0xFFFFFF,
-        true,
-    );
-    let warning = &state.menu.confirm_delete_text;
-    let warn_w = p.atlas.font.width_str(warning);
-    p.text_str(
-        warning,
-        ((ctx.vw - warn_w) / 2.0).floor(),
-        cy - 25.0,
-        GREY,
-        true,
-    );
+    let mid = ctx.vw / 2.0;
+    p.text_centered(DELETE_QUESTION, mid, cy - 40.0, 0xFFFFFF, true);
+    p.text_centered(&state.menu.confirm_delete_text, mid, cy - 25.0, GREY, true);
 
-    let x = ((ctx.vw - WIDGET_WIDTH_BIG) / 2.0).floor();
+    let x = widgets::centered_x(ctx.vw);
     if Button::new(x, cy, WIDGET_WIDTH_BIG, WIDGET_HEIGHT, DELETE).draw(p, ctx) {
         state.menu.delete(index);
         state.menu.save();
@@ -693,97 +656,110 @@ fn draw_delete_confirm(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     }
 }
 
-pub fn draw_manage(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
+struct Form {
+    title: &'static str,
+    title_y: f32,
+    ok_label: &'static str,
+    button_y: f32,
+}
+
+fn draw_form(
+    p: &mut Painter,
+    state: &mut GuiState,
+    ctx: &ScreenCtx,
+    form: &Form,
+    fields: impl FnOnce(&mut Painter, &mut MenuState, &ScreenCtx, f32) -> bool,
+) -> (bool, bool) {
     state.menu.ensure_loaded();
     menu::background(p, ctx.vw, ctx.vh);
 
-    let x = ((ctx.vw - WIDGET_WIDTH_BIG) / 2.0).floor();
-    let title_w = p.atlas.font.width_str(MANAGE_TITLE);
-    p.text_str(
-        MANAGE_TITLE,
-        ((ctx.vw - title_w) / 2.0).floor(),
-        17.0,
-        0xFFFFFF,
-        true,
-    );
-    p.text_str(NAME_LABEL, x + 1.0, 53.0, 0xA0A0A0, true);
-    p.text_str(ADDRESS_LABEL, x + 1.0, 94.0, 0xA0A0A0, true);
+    let x = widgets::centered_x(ctx.vw);
+    p.text_centered(form.title, ctx.vw / 2.0, form.title_y, 0xFFFFFF, true);
+    let valid = fields(p, &mut state.menu, ctx, x);
 
-    let (name_y, address_y) = (66.0, 106.0);
-    state
-        .menu
-        .name
-        .update(p, ctx, x, name_y, WIDGET_WIDTH_BIG, WIDGET_HEIGHT);
-    state
-        .menu
-        .address
-        .update(p, ctx, x, address_y, WIDGET_WIDTH_BIG, WIDGET_HEIGHT);
-
-    let valid = valid_address(&state.menu.address.text);
-    let base = (ctx.vh / 4.0).floor();
-    let done = Button {
+    let base = (ctx.vh / 4.0).floor() + form.button_y;
+    let ok = Button {
         x,
-        y: base + 114.0,
+        y: base,
         w: WIDGET_WIDTH_BIG,
         h: WIDGET_HEIGHT,
-        label: DONE,
+        label: form.ok_label,
         active: valid,
     };
-    let cancel = Button::new(x, base + 138.0, WIDGET_WIDTH_BIG, WIDGET_HEIGHT, CANCEL);
+    let cancel = Button::new(x, base + 24.0, WIDGET_WIDTH_BIG, WIDGET_HEIGHT, CANCEL);
 
-    if (done.draw(p, ctx) || (ctx.input.enter && valid)) && valid {
+    let clicked = ok.draw(p, ctx);
+    let cancelled = cancel.draw(p, ctx) || ctx.input.escape;
+    ((clicked || ctx.input.enter) && valid, cancelled)
+}
+
+pub fn draw_manage(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
+    let form = Form {
+        title: MANAGE_TITLE,
+        title_y: 17.0,
+        ok_label: DONE,
+        button_y: 114.0,
+    };
+    let (confirmed, cancelled) = draw_form(p, state, ctx, &form, |p, menu, ctx, x| {
+        p.text_str(NAME_LABEL, x + 1.0, 53.0, 0xA0A0A0, true);
+        p.text_str(ADDRESS_LABEL, x + 1.0, 94.0, 0xA0A0A0, true);
+
+        let (name_y, address_y) = (66.0, 106.0);
+        menu.name
+            .update(p, ctx, x, name_y, WIDGET_WIDTH_BIG, WIDGET_HEIGHT);
+        menu.address
+            .update(p, ctx, x, address_y, WIDGET_WIDTH_BIG, WIDGET_HEIGHT);
+
+        let label = format!(
+            "{}: {}",
+            label!("manageServer.resourcePack"),
+            menu.resource_packs.caption()
+        );
+        let y = (ctx.vh / 4.0).floor() + 72.0;
+        if Button::new(x, y, WIDGET_WIDTH_BIG, WIDGET_HEIGHT, &label).draw(p, ctx) {
+            menu.resource_packs = menu.resource_packs.next();
+        }
+        valid_address(&menu.address.text)
+    });
+
+    if confirmed {
         state.menu.commit_form();
         state.menu.save();
         state.nav = Some(Screen::Multiplayer);
     }
-    if cancel.draw(p, ctx) || ctx.input.escape {
+    if cancelled {
         state.nav = Some(Screen::Multiplayer);
     }
 }
 
 pub fn draw_direct(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
-    state.menu.ensure_loaded();
-    menu::background(p, ctx.vw, ctx.vh);
+    let form = Form {
+        title: DIRECT,
+        title_y: 20.0,
+        ok_label: JOIN,
+        button_y: 108.0,
+    };
+    let (confirmed, cancelled) = draw_form(p, state, ctx, &form, direct_fields);
 
-    let x = ((ctx.vw - WIDGET_WIDTH_BIG) / 2.0).floor();
-    let title_w = p.atlas.font.width_str(DIRECT);
-    p.text_str(
-        DIRECT,
-        ((ctx.vw - title_w) / 2.0).floor(),
-        20.0,
-        0xFFFFFF,
-        true,
-    );
+    if confirmed {
+        state.connect = Some(state.menu.direct.text.trim().to_string());
+        state.nav = Some(Screen::None);
+    }
+    if cancelled {
+        state.nav = Some(Screen::Multiplayer);
+    }
+}
+
+fn direct_fields(p: &mut Painter, menu: &mut MenuState, ctx: &ScreenCtx, x: f32) -> bool {
     #[cfg(feature = "mobile_ui")]
     let (label_y, field_y) = (53.0, 66.0);
     #[cfg(not(feature = "mobile_ui"))]
     let (label_y, field_y) = (100.0, 116.0);
     p.text_str(ADDRESS_LABEL, x + 1.0, label_y, 0xA0A0A0, true);
 
-    state
-        .menu
-        .direct
+    menu.direct
         .update(p, ctx, x, field_y, WIDGET_WIDTH_BIG, WIDGET_HEIGHT);
-
-    let valid = valid_address(&state.menu.direct.text);
-    let base = (ctx.vh / 4.0).floor();
-    let join = Button {
-        x,
-        y: base + 108.0,
-        w: WIDGET_WIDTH_BIG,
-        h: WIDGET_HEIGHT,
-        label: JOIN,
-        active: valid,
-    };
-    let cancel = Button::new(x, base + 132.0, WIDGET_WIDTH_BIG, WIDGET_HEIGHT, CANCEL);
-
-    if (join.draw(p, ctx) || (ctx.input.enter && valid)) && valid {
-        state.connect = Some(state.menu.direct.text.trim().to_string());
-        state.nav = Some(Screen::None);
-    }
-    if cancel.draw(p, ctx) || ctx.input.escape {
-        state.nav = Some(Screen::Multiplayer);
-    }
+    valid_address(&menu.direct.text)
 }
 
 #[cfg(test)]
@@ -809,7 +785,7 @@ mod tests {
 
     #[test]
     fn list_fills_between_header_and_footer() {
-        let (x, y, w, h) = list_rect(854.0, 480.0);
+        let (x, y, w, h) = LAYOUT.content_rect(854.0, 480.0);
         assert_eq!((x, y, w), (0.0, 33.0, 854.0));
         assert_eq!(h, 480.0 - 33.0 - 60.0);
     }
@@ -822,6 +798,7 @@ mod tests {
             .map(|i| ServerEntry {
                 name: format!("s{i}"),
                 address: "localhost".into(),
+                ..Default::default()
             })
             .collect();
         assert_eq!(st.max_scroll(200.0), 10.0 * 36.0 + 4.0 - 200.0);
@@ -839,6 +816,7 @@ mod tests {
             .map(|n| ServerEntry {
                 name: n.to_string(),
                 address: format!("{n}.example.com"),
+                ..Default::default()
             })
             .collect();
         st.swap(2, -1);
@@ -856,6 +834,7 @@ mod tests {
         st.servers = vec![ServerEntry {
             name: "a".into(),
             address: "a.example.com".into(),
+            ..Default::default()
         }];
         st.begin_edit(0);
         st.servers.clear();

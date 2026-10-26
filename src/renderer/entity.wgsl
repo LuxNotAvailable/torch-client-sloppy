@@ -110,6 +110,9 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     out.world_position =
         mesh_functions::mesh_position_local_to_world(world_from_local, vec4(vertex.position, 1.0));
     out.clip_position = position_world_to_clip(out.world_position.xyz);
+#ifdef SEE_THROUGH
+    out.clip_position.z = out.clip_position.w * bitcast<f32>(#{HAND_BAND_FLOOR_BITS}u);
+#endif
     out.uv = vertex.uv;
 
     let normal = mesh_functions::mesh_normal_local_to_world(vertex.normal, vertex.instance_index);
@@ -193,7 +196,9 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @locatio
         color = vanilla_fog(color, in.world_position.xyz - view.world_position);
     }
 #ifdef TONEMAP_IN_SHADER
+#ifndef TONEMAP_METHOD_NONE
     color = tone_mapping(color, view.color_grading);
+#endif
 #endif
     return color;
 }

@@ -187,11 +187,7 @@ pub(crate) fn gather_inputs(
         let Ok(state) = shared.0.lock();
         let session = &state.session;
         let effect = |name: &str| {
-            session
-                .active_effects
-                .iter()
-                .find(|e| e.id == name)
-                .map(|e| e.duration)
+            crate::play::mob_effects::find(&session.active_effects, name).map(|e| e.duration)
         };
         let held = |slot: usize| {
             let item = session.hotbar.get(slot).map_or("", |s| s.item);

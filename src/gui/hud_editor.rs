@@ -2,9 +2,11 @@ use std::collections::VecDeque;
 
 use bevy::math::Vec2;
 
+#[cfg(feature = "mobile_ui")]
+use crate::gui::hud_layout::Area;
 use crate::gui::hud_layout::{
-    Anchor, COUNT, ElementId, Frames, GRIDS, Home, HudLayout, MAX_SCALE, MIN_SCALE, Place, Rect,
-    StackId, Visibility, snap_scale,
+    Anchor, COUNT, ElementId, Frames, GRIDS, Home, HudLayout, Layer, MAX_SCALE, MIN_SCALE, Panel,
+    Place, Rect, StackId, Visibility, snap_scale,
 };
 use crate::gui::painter::Painter;
 #[cfg(not(feature = "mobile_ui"))]
@@ -20,6 +22,8 @@ const BAR_H: f32 = if TOUCH { 16.0 } else { 10.0 };
 const DRAG_THRESHOLD: f32 = if TOUCH { 6.0 } else { 2.0 };
 #[cfg(feature = "mobile_ui")]
 const LONG_PRESS: f32 = 0.4;
+#[cfg(feature = "mobile_ui")]
+const EDGE_GRAB: f32 = 8.0;
 const UNDO_DEPTH: usize = 64;
 
 const OUTLINE: u32 = 0x70FF_FFFF;
@@ -33,21 +37,44 @@ const STACK_BAR: u32 = 0xD02A_4A80;
 const DROP: u32 = 0xFF5B_9BFF;
 const OVERLAP: u32 = 0xFFFF_AA00;
 const OVERLAP_FILL: u32 = 0x50FF_AA00;
-const PANEL: u32 = 0xD010_1010;
-const PANEL_HOT: u32 = 0xD040_4040;
+#[cfg(feature = "mobile_ui")]
+const AREA_FILL: u32 = 0x40FF_5555;
+#[cfg(feature = "mobile_ui")]
+const AREA_LINE: u32 = 0xC0FF_5555;
+#[cfg(feature = "mobile_ui")]
+const ZOOM_FILL: u32 = 0x4055_FF55;
+#[cfg(feature = "mobile_ui")]
+const ZOOM_LINE: u32 = 0xC055_FF55;
+const BACKDROP: bool = true;
+const PANEL: u32 = 0xFF10_1010;
+const PANEL_HOT: u32 = 0xFF30_3030;
 const LABEL_BG: u32 = 0xC000_0000;
 const HINT: u32 = 0xAAAAAA;
+
+const TOOLBAR_W: f32 = 300.0;
+const TOOLBAR_H: f32 = if TOUCH { 20.0 } else { 14.0 };
+const BUTTON_MIN: f32 = if TOUCH { 46.0 } else { 40.0 };
+const GRIP_H: f32 = if TOUCH { 14.0 } else { 8.0 };
+const GRIP_END: f32 = if TOUCH { 14.0 } else { 8.0 };
+const SIDE_GRAB: f32 = if TOUCH { 16.0 } else { 8.0 };
+const MENU_W: f32 = if TOUCH { 160.0 } else { 96.0 };
+const MENU_ROW: f32 = if TOUCH { 20.0 } else { 13.0 };
+const ADD_W: f32 = if TOUCH { 160.0 } else { 110.0 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Grab {
     Element(ElementId),
     Stack(StackId),
+    #[cfg(feature = "mobile_ui")]
+    Area(usize),
 }
 
 #[derive(Clone, Copy, PartialEq)]
 enum DragKind {
     Move,
     Scale,
+    #[cfg(feature = "mobile_ui")]
+    Resize(u8),
 }
 
 #[derive(Clone, Copy)]
@@ -107,6 +134,36 @@ enum Act {
     More,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum Tool {
+    Done,
+    Undo,
+    Grid,
+    #[cfg(feature = "mobile_ui")]
+    Snap,
+    #[cfg(not(feature = "mobile_ui"))]
+    Gui,
+    Add,
+    #[cfg(feature = "mobile_ui")]
+    NewArea,
+    Reset,
+}
+
+#[derive(Clone, Copy)]
+struct PanelDrag {
+    side: f32,
+    press: Vec2,
+    start: Rect,
+}
+
+#[cfg_attr(not(feature = "mobile_ui"), allow(dead_code))]
+#[derive(Clone, Copy)]
+struct PanelPinch {
+    start_dx: f32,
+    start_w: f32,
+    centre: Vec2,
+}
+
 #[derive(Clone, Copy)]
 struct Guide {
     vertical: bool,
@@ -131,6 +188,11 @@ pub struct EditorState {
     touches: Vec<Vec2>,
     pinch: Option<Pinch>,
     scaled_at: f32,
+    panel_drag: Option<PanelDrag>,
+    panel_pinch: Option<PanelPinch>,
+    bar_rect: Rect,
+    vw: f32,
+    vh: f32,
 }
 
 impl EditorState {
@@ -142,15 +204,15 @@ impl EditorState {
     }
 
     pub fn opened(&mut self) {
-        self.drag = None;
+        self.clear_hand();
         self.selected = None;
-        self.menu = None;
         self.undo.clear();
         self.scroll_run = None;
         self.guides = [None; 2];
-        self.drop = None;
         self.adding = false;
         self.pinch = None;
+        self.panel_drag = None;
+        self.panel_pinch = None;
         self.touches.clear();
     }
 
@@ -161,14 +223,34 @@ impl EditorState {
     }
 
     pub fn close(&mut self) {
-        self.drag = None;
-        self.menu = None;
-        self.drop = None;
+        self.clear_hand();
         self.layout.save();
     }
 
     pub fn escape(&mut self) -> bool {
         std::mem::take(&mut self.adding) || self.menu.take().is_some()
+    }
+
+    fn set_panel(&mut self, centre: Vec2, width: f32) {
+        let screen = Vec2::new(self.vw, self.vh).max(Vec2::ONE);
+        self.layout.panel = Some(Panel {
+            centre: centre / screen,
+            width: width.clamp(BUTTON_MIN, self.vw.max(BUTTON_MIN)).round(),
+        });
+    }
+
+    fn layer(&self) -> Layer {
+        self.frames.layer
+    }
+
+    fn active(&self, id: ElementId) -> bool {
+        id.layer() == self.layer()
+    }
+
+    fn clear_hand(&mut self) {
+        self.drag = None;
+        self.drop = None;
+        self.menu = None;
     }
 
     fn push_undo(&mut self) {
@@ -179,21 +261,38 @@ impl EditorState {
         self.scroll_run = None;
     }
 
-    fn stack_rect(&self, si: StackId) -> Option<Rect> {
-        self.frames.stack_rect(si)
+    fn undo(&mut self) {
+        if let Some(prev) = self.undo.pop_back() {
+            self.layout = prev;
+            self.clear_hand();
+            self.scroll_run = None;
+        }
     }
 
     fn rect_of(&self, g: Grab) -> Option<Rect> {
         match g {
             Grab::Element(id) => self.frames.screen[id.index()],
-            Grab::Stack(si) => self.stack_rect(si),
+            Grab::Stack(si) => self.frames.stack_rect(si),
+            #[cfg(feature = "mobile_ui")]
+            Grab::Area(i) => self.layout.areas.get(i).map(|a| a.rect(self.vw, self.vh)),
         }
+    }
+
+    fn scalable(&self, g: Grab) -> bool {
+        #[cfg(feature = "mobile_ui")]
+        if matches!(g, Grab::Area(_)) {
+            return false;
+        }
+        let _ = g;
+        true
     }
 
     fn scale_of(&self, g: Grab) -> f32 {
         match g {
             Grab::Element(id) => self.layout.scale_of(id),
             Grab::Stack(si) => self.layout.stack(si).map_or(1.0, |s| s.scale),
+            #[cfg(feature = "mobile_ui")]
+            Grab::Area(_) => 1.0,
         }
     }
 
@@ -204,13 +303,14 @@ impl EditorState {
         }
     }
 
-    fn place_element(&mut self, id: ElementId, rect: Rect, scale: f32, vw: f32, vh: f32) {
-        let anchor = Anchor::nearest(rect, vw, vh);
-        let offset = anchor.offset_for(vw, vh, rect.size(), rect.pos());
+    fn place_element(&mut self, id: ElementId, rect: Rect, scale: f32) {
+        let anchor = Anchor::nearest(rect, self.vw, self.vh);
+        let offset = anchor.offset_for(self.vw, self.vh, rect.size(), rect.pos());
         self.layout.set_free(id, anchor, offset, scale);
     }
 
-    fn place_stack(&mut self, si: StackId, rect: Rect, vw: f32, vh: f32) {
+    fn place_stack(&mut self, si: StackId, rect: Rect) {
+        let (vw, vh) = (self.vw, self.vh);
         let Some(stack) = self.layout.stack_mut(si) else {
             return;
         };
@@ -219,7 +319,7 @@ impl EditorState {
         stack.offset = stack.anchor.offset_for(vw, vh, rect.size(), rect.pos());
     }
 
-    fn set_scale(&mut self, g: Grab, scale: f32, vw: f32, vh: f32, now: f32) {
+    fn set_scale(&mut self, g: Grab, scale: f32, now: f32) {
         let scale = scale.clamp(MIN_SCALE, MAX_SCALE);
         match self.scale_target(g) {
             Grab::Stack(si) => {
@@ -235,14 +335,19 @@ impl EditorState {
                     let Some(rect) = self.frames.screen[id.index()] else {
                         return;
                     };
-                    self.place_element(id, rect, scale, vw, vh);
+                    self.place_element(id, rect, scale);
                 }
             },
+            #[cfg(feature = "mobile_ui")]
+            Grab::Area(_) => return,
         }
         self.scaled_at = now;
     }
 
     fn handle_for(&self, g: Grab) -> Option<(Rect, Grab)> {
+        if !self.scalable(g) {
+            return None;
+        }
         let target = self.scale_target(g);
         Some((handle_rect(self.rect_of(target)?), target))
     }
@@ -251,17 +356,31 @@ impl EditorState {
         match g {
             Grab::Stack(si) => Some(si),
             Grab::Element(id) => self.layout.stack_of(id),
+            #[cfg(feature = "mobile_ui")]
+            Grab::Area(_) => None,
         }
     }
 
-    fn hot_at(&self, m: Vec2, vh: f32) -> Option<Grab> {
-        for &(si, r) in &self.frames.stacks {
-            if bar_rect(r, vh).contains(m) {
-                return Some(Grab::Stack(si));
+    fn hot_at(&self, m: Vec2) -> Option<Grab> {
+        #[cfg(feature = "mobile_ui")]
+        if self.layer() == Layer::Areas {
+            return self
+                .layout
+                .areas
+                .iter()
+                .rposition(|a| a.rect(self.vw, self.vh).contains(m))
+                .map(Grab::Area);
+        }
+        if self.layer() == Layer::Extras {
+            for &(si, r) in &self.frames.stacks {
+                if bar_rect(r, self.vh).contains(m) {
+                    return Some(Grab::Stack(si));
+                }
             }
         }
         ElementId::ALL
             .into_iter()
+            .filter(|id| self.active(*id))
             .filter_map(|id| self.frames.screen[id.index()].map(|r| (id, r)))
             .filter(|(_, r)| r.contains(m))
             .min_by(|(_, a), (_, b)| (a.w * a.h).total_cmp(&(b.w * b.h)))
@@ -269,7 +388,7 @@ impl EditorState {
     }
 
     fn find_drop(&self, id: ElementId, m: Vec2) -> Option<Landing> {
-        if !id.stackable() {
+        if self.layer() != Layer::Extras || !id.stackable() {
             return None;
         }
         for &(si, r) in &self.frames.stacks {
@@ -295,27 +414,22 @@ impl EditorState {
                 line: Rect::new(r.x, at - 1.0, r.w, 2.0),
             });
         }
-        for other in ElementId::ALL {
+        ElementId::ALL.into_iter().find_map(|other| {
             let e = self.layout.get(other);
-            if other == id || !other.stackable() || e.visibility != Visibility::Shown {
-                continue;
-            }
-            if !matches!(e.place, Place::Free { .. }) {
-                continue;
-            }
-            if let Some(r) = self.frames.screen[other.index()]
-                && r.contains(m)
-            {
-                return Some(Landing::Pair {
-                    target: other,
-                    above: m.y < r.y + r.h / 2.0,
-                });
-            }
-        }
-        None
+            let pairable = other != id
+                && other.stackable()
+                && self.active(other)
+                && e.visibility == Visibility::Shown
+                && matches!(e.place, Place::Free { .. });
+            let r = self.frames.screen[other.index()].filter(|r| pairable && r.contains(m))?;
+            Some(Landing::Pair {
+                target: other,
+                above: m.y < r.y + r.h / 2.0,
+            })
+        })
     }
 
-    fn apply_drop(&mut self, id: ElementId, rect: Rect, drop: Landing, vw: f32, vh: f32) {
+    fn apply_drop(&mut self, id: ElementId, rect: Rect, drop: Landing) {
         match drop {
             Landing::Into { stack, index, .. } => self.layout.insert(id, stack, index),
             Landing::Pair { target, above } => {
@@ -323,16 +437,76 @@ impl EditorState {
                     return;
                 };
                 let top = if above { tr.y - rect.h } else { tr.y };
-                let size = Vec2::new(tr.w.max(rect.w), tr.h + rect.h);
-                let pos = Vec2::new(tr.x, top);
-                let r = Rect::new(pos.x, pos.y, size.x, size.y);
-                let anchor = Anchor::nearest(r, vw, vh);
-                let offset = anchor.offset_for(vw, vh, size, pos);
+                let r = Rect::new(tr.x, top, tr.w.max(rect.w), tr.h + rect.h);
+                let anchor = Anchor::nearest(r, self.vw, self.vh);
+                let offset = anchor.offset_for(self.vw, self.vh, r.size(), r.pos());
                 let scale = self.layout.scale_of(target);
                 let members = if above { [id, target] } else { [target, id] };
                 self.layout.new_stack(anchor, offset, scale, &members);
             }
         }
+    }
+
+    fn snap_targets(&self, exclude: &[ElementId], skip: Grab) -> Vec<Rect> {
+        let mut out: Vec<Rect> = ElementId::ALL
+            .into_iter()
+            .filter(|id| !exclude.contains(id))
+            .filter_map(|id| self.frames.screen[id.index()])
+            .collect();
+        out.extend(
+            self.frames
+                .stacks
+                .iter()
+                .filter(|(si, _)| skip != Grab::Stack(*si))
+                .map(|(_, r)| *r),
+        );
+        #[cfg(feature = "mobile_ui")]
+        if self.layer() == Layer::Areas {
+            out.extend(
+                (0..self.layout.areas.len())
+                    .filter(|i| skip != Grab::Area(*i))
+                    .filter_map(|i| self.rect_of(Grab::Area(i))),
+            );
+        }
+        out
+    }
+
+    fn remove(&mut self, g: Grab) {
+        self.push_undo();
+        let rects: [Option<Rect>; COUNT] = self.frames.screen;
+        match g {
+            Grab::Element(id) => self.layout.remove(id),
+            Grab::Stack(si) => self.layout.delete_stack(si, &rects, self.vw, self.vh),
+            #[cfg(feature = "mobile_ui")]
+            Grab::Area(i) => {
+                if self.layout.areas.get(i).is_some_and(|a| !a.zoom) {
+                    self.layout.areas.remove(i);
+                }
+            }
+        }
+        self.clear_hand();
+        self.selected = None;
+    }
+
+    fn reset(&mut self, g: Grab) {
+        match g {
+            Grab::Element(id) => {
+                self.push_undo();
+                self.layout.reset(id);
+            }
+            Grab::Stack(si) if self.layout.stack(si).is_some_and(|s| s.home.is_some()) => {
+                self.push_undo();
+                self.layout.reset_stack_position(si);
+            }
+            _ => {}
+        }
+    }
+
+    fn split(&mut self, si: StackId) {
+        self.push_undo();
+        let rects: [Option<Rect>; COUNT] = self.frames.screen;
+        self.layout.split(si, &rects, self.vw, self.vh);
+        self.selected = None;
     }
 }
 
@@ -347,6 +521,24 @@ fn bar_rect(r: Rect, vh: f32) -> Rect {
     } else {
         Rect::new(r.x, r.y + r.h + 1.0, w, BAR_H)
     }
+}
+
+#[cfg(feature = "mobile_ui")]
+fn edges_at(r: Rect, m: Vec2) -> u8 {
+    let gx = EDGE_GRAB.min(r.w / 3.0);
+    let gy = EDGE_GRAB.min(r.h / 3.0);
+    let mut mask = 0;
+    if m.x - r.x < gx {
+        mask |= 1;
+    } else if r.x + r.w - m.x < gx {
+        mask |= 4;
+    }
+    if m.y - r.y < gy {
+        mask |= 2;
+    } else if r.y + r.h - m.y < gy {
+        mask |= 8;
+    }
+    mask
 }
 
 fn snap_axis(lo: f32, len: f32, lines: &[(f32, u8)]) -> (f32, Option<f32>) {
@@ -383,41 +575,26 @@ fn grid_axis(lo: f32, len: f32, extent: f32, grid: f32) -> f32 {
     }
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one drag's whole snapping context"
-)]
 fn snap(
     pos: Vec2,
     size: Vec2,
-    exclude: &[ElementId],
-    skip_stack: Option<StackId>,
-    frames: &Frames,
+    others: &[Rect],
     vw: f32,
     vh: f32,
     grid: f32,
 ) -> (Vec2, [Option<Guide>; 2]) {
-    let mut xs: Vec<(f32, u8)> = vec![
+    let mut xs: Vec<(f32, u8)> = Vec::with_capacity(3 + others.len() * 5);
+    let mut ys: Vec<(f32, u8)> = Vec::with_capacity(3 + others.len() * 5);
+    xs.extend([
         (EDGE_MARGIN, 0),
         (vw - EDGE_MARGIN, 2),
         ((vw / 2.0).floor(), 1),
-    ];
-    let mut ys: Vec<(f32, u8)> = vec![
+    ]);
+    ys.extend([
         (EDGE_MARGIN, 0),
         (vh - EDGE_MARGIN, 2),
         ((vh / 2.0).floor(), 1),
-    ];
-    let others = ElementId::ALL
-        .into_iter()
-        .filter(|id| !exclude.contains(id))
-        .filter_map(|id| frames.screen[id.index()])
-        .chain(
-            frames
-                .stacks
-                .iter()
-                .filter(|(si, _)| Some(*si) != skip_stack)
-                .map(|(_, r)| *r),
-        );
+    ]);
     for r in others {
         xs.extend([
             (r.x, 0),
@@ -458,11 +635,7 @@ fn snap(
     )
 }
 
-fn action_bar(
-    st: &EditorState,
-    g: Grab,
-    vw: f32,
-) -> Option<(Rect, Vec<(Rect, &'static str, Act)>)> {
+fn action_bar(st: &EditorState, g: Grab) -> Option<(Rect, Vec<(Rect, &'static str, Act)>)> {
     let r = st.rect_of(g)?;
     let items: Vec<(&'static str, Act)> = match g {
         Grab::Element(id) if id.required() => vec![("Reset", Act::Reset), ("...", Act::More)],
@@ -487,18 +660,20 @@ fn action_bar(
             };
             vec![first, ("Delete", Act::Delete), ("...", Act::More)]
         }
+        #[cfg(feature = "mobile_ui")]
+        Grab::Area(_) => vec![("Delete", Act::Delete)],
     };
     const W: f32 = 40.0;
     const H: f32 = 18.0;
     let total = items.len() as f32 * (W + 2.0) - 2.0;
-    let x = r.x.clamp(0.0, (vw - total).max(0.0)).floor();
-    let above = matches!(g, Grab::Element(_)) && r.y >= H + 3.0;
+    let x = r.x.clamp(0.0, (st.vw - total).max(0.0)).floor();
+    let above = !matches!(g, Grab::Stack(_)) && r.y >= H + 3.0;
     let y = if above {
         r.y - H - 3.0
     } else {
         r.y + r.h + 3.0
-    }
-    .floor();
+    };
+    let y = y.clamp(0.0, (st.vh - H).max(0.0)).floor();
     let buttons = items
         .into_iter()
         .enumerate()
@@ -507,53 +682,45 @@ fn action_bar(
     Some((Rect::new(x, y, total, H), buttons))
 }
 
-fn act_on(st: &mut EditorState, g: Grab, act: Act, vw: f32, vh: f32) {
-    let rects: [Option<Rect>; COUNT] = st.frames.screen;
+fn act_on(st: &mut EditorState, g: Grab, act: Act) {
     match (act, g) {
         (Act::More, g) => {
             let (x, y) = st.rect_of(g).map_or((0.0, 0.0), |r| (r.x, r.y));
             st.menu = Some(Menu { grab: g, x, y });
-            return;
         }
         (Act::Hide, Grab::Element(id)) => {
             st.push_undo();
             st.layout.get_mut(id).toggle_hidden();
         }
-        (Act::Reset, Grab::Element(id)) => {
-            st.push_undo();
-            st.layout.reset(id);
-        }
-        (Act::Reset, Grab::Stack(si)) => {
-            st.push_undo();
-            st.layout.reset_stack_position(si);
-        }
-        (Act::Remove, Grab::Element(id)) => {
-            st.push_undo();
-            st.layout.remove(id);
-            st.selected = None;
-        }
-        (Act::Split, Grab::Stack(si)) => {
-            st.push_undo();
-            st.layout.split(si, &rects, vw, vh);
-            st.selected = None;
-        }
-        (Act::Delete, Grab::Stack(si)) => {
-            st.push_undo();
-            st.layout.delete_stack(si, &rects, vw, vh);
-            st.selected = None;
-        }
+        (Act::Reset, g) => st.reset(g),
+        (Act::Remove | Act::Delete, g) => st.remove(g),
+        (Act::Split, Grab::Stack(si)) => st.split(si),
         _ => {}
     }
 }
 
 fn button(p: &mut Painter, ctx: &ScreenCtx, r: Rect, label: &str) -> bool {
+    button_on(p, ctx, r, label, false)
+}
+
+fn button_on(p: &mut Painter, ctx: &ScreenCtx, r: Rect, label: &str, on: bool) -> bool {
     let hot = ctx.mouse().is_some_and(|m| r.contains(m));
-    p.fill(r.x, r.y, r.w, r.h, if hot { PANEL_HOT } else { PANEL });
-    p.outline(r.x, r.y, r.w, r.h, if hot { OUTLINE_HOT } else { OUTLINE });
-    let w = p.atlas.font.width_str(label);
-    p.text_plain(
+    p.fill(
+        r.x,
+        r.y,
+        r.w,
+        r.h,
+        if hot || on { PANEL_HOT } else { PANEL },
+    );
+    let line = match (on, hot) {
+        (true, _) => STACK,
+        (_, true) => OUTLINE_HOT,
+        _ => OUTLINE,
+    };
+    p.outline(r.x, r.y, r.w, r.h, line);
+    p.text_centered(
         label,
-        (r.x + (r.w - w) / 2.0).floor(),
+        r.x + r.w / 2.0,
         (r.y + (r.h - 8.0) / 2.0).floor(),
         0xFFFFFF,
         true,
@@ -569,36 +736,155 @@ fn tag(p: &mut Painter, text: &str, x: f32, y: f32, vw: f32, color: u32) {
     p.text_plain(text, x + 1.0, y + 1.0, color, false);
 }
 
-const TOOLBAR_W: f32 = 300.0;
-const TOOLBAR_BUTTONS: f32 = 6.0;
-const TOOLBAR_H: f32 = if TOUCH { 20.0 } else { 14.0 };
-#[cfg(feature = "mobile_ui")]
-const HINTS: [&str; 1] = ["Tap: select. Drag: move. Pinch: scale. Hold: options."];
-#[cfg(not(feature = "mobile_ui"))]
-const HINTS: [&str; 3] = [
-    "Drag: move. Drop on a stack or line: stack. Shift: free.",
-    "Scroll/corner: scale. Right-click: options. Bar: move stack.",
-    "H: hide. Del: remove/delete (Add restores). R: reset. Ctrl+Z: undo.",
-];
-const MENU_W: f32 = if TOUCH { 160.0 } else { 96.0 };
-const MENU_ROW: f32 = if TOUCH { 20.0 } else { 13.0 };
-
-const ADD_W: f32 = if TOUCH { 160.0 } else { 110.0 };
-
-fn add_rect(toolbar: Rect, removed: usize) -> Rect {
-    let h = MENU_ROW * (removed.max(1) as f32 + 1.0) + 2.0;
-    let bw = (TOOLBAR_W - 2.0 * (TOOLBAR_BUTTONS - 1.0)) / TOOLBAR_BUTTONS;
-    let x = toolbar.x + 4.0 * (bw + 2.0) + bw / 2.0 - ADD_W / 2.0;
-    Rect::new(x.floor(), toolbar.y - h - 2.0, ADD_W, h)
+fn hints(layer: Layer) -> &'static [&'static str] {
+    #[cfg(feature = "mobile_ui")]
+    return match layer {
+        Layer::Areas => &["Drag: move. Drag an edge: resize. Touches here only turn the camera."],
+        _ => &["Tap: select. Drag: move. Pinch: scale. Hold: options."],
+    };
+    #[cfg(not(feature = "mobile_ui"))]
+    match layer {
+        Layer::Extras => &[
+            "Drag: move. Drop on a stack or line: stack. Shift: free.",
+            "Scroll/corner: scale. Right-click: options. Bar: move stack.",
+            "H: hide. Del: remove/delete (Add restores). R: reset. Ctrl+Z: undo.",
+        ],
+        _ => &[
+            "Drag: move. Shift: free. Scroll/corner: scale. Right-click: options.",
+            "H: hide. Del: remove (Add restores). R: reset. Ctrl+Z: undo.",
+        ],
+    }
 }
 
-fn toolbar_rect(vw: f32, vh: f32) -> Rect {
-    Rect::new(
-        ((vw - TOOLBAR_W) / 2.0).floor(),
-        (vh / 2.0).floor() + 14.0,
-        TOOLBAR_W,
-        TOOLBAR_H + 2.0 + HINTS.len() as f32 * 10.0,
-    )
+struct Toolbar {
+    rect: Rect,
+    grip: Rect,
+    sides: [Rect; 2],
+    tabs: Vec<(Rect, Layer)>,
+    tools: Vec<(Rect, Tool)>,
+    hints: Vec<String>,
+    hint_y: f32,
+}
+
+pub(crate) fn wrap(p: &Painter, lines: &[&str], w: f32) -> Vec<String> {
+    let mut out = Vec::new();
+    for line in lines {
+        let mut cur = String::new();
+        for word in line.split(' ') {
+            let next = if cur.is_empty() {
+                word.to_owned()
+            } else {
+                format!("{cur} {word}")
+            };
+            if !cur.is_empty() && p.atlas.font.width_str(&next) > w - 4.0 {
+                out.push(std::mem::replace(&mut cur, word.to_owned()));
+            } else {
+                cur = next;
+            }
+        }
+        out.push(cur);
+    }
+    out
+}
+
+impl Toolbar {
+    fn new(p: &Painter, vw: f32, vh: f32, layer: Layer, panel: Option<Panel>) -> Toolbar {
+        let mut tools = vec![Tool::Done, Tool::Undo];
+        #[cfg(feature = "mobile_ui")]
+        tools.push(Tool::Snap);
+        #[cfg(not(feature = "mobile_ui"))]
+        tools.push(Tool::Gui);
+        tools.push(Tool::Grid);
+        match layer {
+            #[cfg(feature = "mobile_ui")]
+            Layer::Areas => tools.push(Tool::NewArea),
+            Layer::Controls => {}
+            _ => tools.push(Tool::Add),
+        }
+        tools.push(Tool::Reset);
+
+        let w = panel
+            .map_or(TOOLBAR_W, |pn| pn.width)
+            .clamp(BUTTON_MIN, vw.max(BUTTON_MIN))
+            .floor();
+        let cols = (((w + 2.0) / (BUTTON_MIN + 2.0)).floor() as usize).max(1);
+        let rows = |n: usize| n.div_ceil(cols.min(n).max(1));
+        let hints = wrap(p, hints(layer), w);
+        let button_rows = rows(Layer::ALL.len()) + rows(tools.len());
+        let h = button_rows as f32 * (TOOLBAR_H + 2.0) + hints.len() as f32 * 10.0 + GRIP_H;
+        let (x, y) = match panel {
+            Some(pn) => (pn.centre.x * vw - w / 2.0, pn.centre.y * vh - h / 2.0),
+            None => ((vw - w) / 2.0, (vh / 2.0).floor() + 14.0),
+        };
+        let x = x.min(vw - w).max(0.0).floor();
+        let y = y.min(vh - h).max(0.0).floor();
+
+        let grid = |n: usize, top: f32| {
+            let per = cols.min(n).max(1);
+            let bw = (w - 2.0 * (per as f32 - 1.0)) / per as f32;
+            (0..n)
+                .map(|i| {
+                    let (col, row) = (i % per, i / per);
+                    let in_row = per.min(n - row * per);
+                    let indent = (per - in_row) as f32 * (bw + 2.0) / 2.0;
+                    Rect::new(
+                        (x + indent + col as f32 * (bw + 2.0)).floor(),
+                        top + row as f32 * (TOOLBAR_H + 2.0),
+                        bw.floor(),
+                        TOOLBAR_H,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let tab_rects = grid(Layer::ALL.len(), y);
+        let tools_top = y + rows(Layer::ALL.len()) as f32 * (TOOLBAR_H + 2.0);
+        let tool_rects = grid(tools.len(), tools_top);
+        let hint_y = y + button_rows as f32 * (TOOLBAR_H + 2.0);
+        Toolbar {
+            rect: Rect::new(x, y, w, h),
+            grip: Rect::new(x, hint_y, w, y + h - hint_y),
+            sides: [
+                Rect::new(x - SIDE_GRAB, y, SIDE_GRAB, h),
+                Rect::new(x + w, y, SIDE_GRAB, h),
+            ],
+            tabs: tab_rects.into_iter().zip(Layer::ALL).collect(),
+            tools: tool_rects.into_iter().zip(tools).collect(),
+            hints,
+            hint_y,
+        }
+    }
+
+    fn tool(&self, t: Tool) -> Option<Rect> {
+        self.tools.iter().find(|(_, x)| *x == t).map(|(r, _)| *r)
+    }
+
+    fn handle_at(&self, m: Vec2) -> Option<f32> {
+        let g = self.grip;
+        if self.sides[0].contains(m) {
+            Some(-1.0)
+        } else if self.sides[1].contains(m) {
+            Some(1.0)
+        } else if !g.contains(m) {
+            None
+        } else if m.x < g.x + GRIP_END {
+            Some(-1.0)
+        } else if m.x >= g.x + g.w - GRIP_END {
+            Some(1.0)
+        } else {
+            Some(0.0)
+        }
+    }
+}
+
+fn add_rect(add: Rect, bar: Rect, rows: usize, vw: f32) -> Rect {
+    let h = MENU_ROW * (rows.max(1) as f32 + 1.0) + 2.0;
+    let x = (add.x + add.w / 2.0 - ADD_W / 2.0).min(vw - ADD_W).max(0.0);
+    let y = if bar.y >= h + 2.0 {
+        bar.y - h - 2.0
+    } else {
+        bar.y + bar.h + 2.0
+    };
+    Rect::new(x.floor(), y.floor(), ADD_W, h)
 }
 
 fn menu_rect(menu: Menu, vw: f32, vh: f32) -> Rect {
@@ -623,10 +909,13 @@ fn hairline(ctx: &ScreenCtx) -> f32 {
 }
 
 pub fn draw_under(p: &mut Painter, st: &EditorState, ctx: &ScreenCtx) {
+    if BACKDROP {
+        crate::gui::menu::dirt_background(p, ctx.vw, ctx.vh);
+    }
     let grid = GRIDS[st.layout.grid.min(GRIDS.len() - 1)];
     let moving = st
         .drag
-        .is_some_and(|d| d.kind == DragKind::Move && d.moving);
+        .is_some_and(|d| d.kind != DragKind::Scale && d.moving);
     if grid <= 0.0 || ctx.input.shift || st.free || !moving {
         return;
     }
@@ -677,34 +966,16 @@ fn step_gui_scale(value: u32, up: bool, ctx: &ScreenCtx) -> u32 {
     }
 }
 
-pub fn draw(
-    p: &mut Painter,
-    st: &mut EditorState,
-    options: &mut GuiOptions,
-    ctx: &ScreenCtx,
-) -> Option<Screen> {
-    let (vw, vh) = (ctx.vw, ctx.vh);
+fn keys(st: &mut EditorState, ctx: &ScreenCtx) {
     let input = ctx.input;
-    let now = input.time;
-    let mouse = ctx.mouse();
-    let grid = GRIDS[st.layout.grid.min(GRIDS.len() - 1)];
-    let free = input.shift || st.free;
-
-    if input.undo
-        && let Some(prev) = st.undo.pop_back()
-    {
-        st.layout = prev;
-        st.drag = None;
-        st.menu = None;
-        st.drop = None;
-        st.scroll_run = None;
+    if input.undo {
+        st.undo();
     }
-
     let target = st
         .drag
         .map(|d| d.grab)
         .or(st.selected)
-        .or_else(|| mouse.and_then(|m| st.hot_at(m, vh)));
+        .or_else(|| ctx.mouse().and_then(|m| st.hot_at(m)));
     if input.hud_hide
         && let Some(Grab::Element(id)) = target
         && !id.required()
@@ -718,58 +989,22 @@ pub fn draw(
         && let Some(g) = target
         && !matches!(g, Grab::Element(id) if id.required())
     {
-        st.push_undo();
-        match g {
-            Grab::Element(id) => st.layout.remove(id),
-            Grab::Stack(si) => {
-                let rects: [Option<Rect>; COUNT] = st.frames.screen;
-                st.layout.delete_stack(si, &rects, vw, vh);
-            }
-        }
-        st.drag = None;
-        st.drop = None;
-        st.menu = None;
-        st.selected = None;
+        st.remove(g);
     }
     if input.hud_reset {
-        match target {
-            Some(Grab::Element(id)) => {
-                st.push_undo();
-                st.layout.reset(id);
-            }
-            Some(Grab::Stack(si)) => {
-                if st.layout.stack(si).is_some_and(|s| s.home.is_some()) {
-                    st.push_undo();
-                    st.layout.reset_stack_position(si);
-                }
-            }
-            None => {}
+        if let Some(g) = target {
+            st.reset(g);
         }
-        st.drag = None;
-        st.drop = None;
-        st.menu = None;
+        st.clear_hand();
     }
+}
 
-    let starts_moving = st
-        .drag
-        .is_some_and(|d| !d.moving && mouse.is_some_and(|m| m.distance(d.press) >= DRAG_THRESHOLD));
-    if starts_moving && let Some(mut drag) = st.drag {
-        st.push_undo();
-        drag.moving = true;
-        if let (Grab::Element(id), DragKind::Move) = (drag.grab, drag.kind)
-            && !matches!(st.layout.get(id).place, Place::Free { .. })
-        {
-            let scale = st.layout.scale_of(id);
-            st.place_element(id, drag.start, scale, vw, vh);
-            drag.start_scale = scale;
-        }
-        st.drag = Some(drag);
-    }
-
-    #[cfg(feature = "mobile_ui")]
+#[cfg(feature = "mobile_ui")]
+fn gestures(st: &mut EditorState, ctx: &ScreenCtx) -> bool {
+    let now = ctx.input.time;
     if let Some(d) = st.drag
         && !d.moving
-        && input.left_down
+        && ctx.input.left_down
         && now - d.pressed_at >= LONG_PRESS
     {
         st.drag = None;
@@ -780,200 +1015,228 @@ pub fn draw(
             y: d.press.y,
         });
     }
-
-    #[cfg(feature = "mobile_ui")]
-    let pinching = if st.touches.len() >= 2 {
-        let (a, b) = (st.touches[0], st.touches[1]);
-        let dist = a.distance(b);
-        if st.pinch.is_none()
-            && dist > 1.0
-            && let Some(g) = st.selected.or_else(|| st.hot_at((a + b) / 2.0, vh))
-        {
-            let target = st.scale_target(g);
-            st.push_undo();
-            st.pinch = Some(Pinch {
-                target,
-                start_dist: dist,
-                start_scale: st.scale_of(target),
-            });
-        }
-        if let Some(pinch) = st.pinch {
-            let next = (pinch.start_scale * dist / pinch.start_dist * 20.0).round() / 20.0;
-            st.set_scale(pinch.target, next, vw, vh, now);
-        }
+    if st.touches.len() < 2 {
+        st.pinch = None;
+        st.panel_pinch = None;
+        return false;
+    }
+    let (a, b) = (st.touches[0], st.touches[1]);
+    if st.panel_pinch.is_none()
+        && st.pinch.is_none()
+        && st.bar_rect.contains(a)
+        && st.bar_rect.contains(b)
+    {
+        st.push_undo();
+        let r = st.bar_rect;
+        st.panel_pinch = Some(PanelPinch {
+            start_dx: (a.x - b.x).abs().max(8.0),
+            start_w: r.w,
+            centre: Vec2::new(r.x + r.w / 2.0, r.y + r.h / 2.0),
+        });
+    }
+    if let Some(pp) = st.panel_pinch {
+        let w = pp.start_w * (a.x - b.x).abs().max(1.0) / pp.start_dx;
+        st.set_panel(pp.centre, w);
+        st.panel_drag = None;
         st.drag = None;
         st.drop = None;
-        true
-    } else {
-        st.pinch = None;
-        false
-    };
-    #[cfg(not(feature = "mobile_ui"))]
-    let pinching = false;
-
-    st.guides = [None; 2];
-    if let Some(drag) = st.drag {
-        match mouse {
-            Some(_) if input.left_down && !drag.moving => {}
-            Some(m) if input.left_down => {
-                let size = drag.start.size();
-                let raw = m - drag.grip;
-                match (drag.grab, drag.kind) {
-                    (Grab::Element(id), DragKind::Move) => {
-                        let (pos, guides) = if free {
-                            (raw.round(), [None; 2])
-                        } else {
-                            snap(raw, size, &[id], None, &st.frames, vw, vh, grid)
-                        };
-                        st.guides = guides;
-                        let rect = Rect::new(pos.x, pos.y, size.x, size.y);
-                        st.place_element(id, rect, drag.start_scale, vw, vh);
-                        st.drop = if free { None } else { st.find_drop(id, m) };
-                    }
-                    (Grab::Stack(si), DragKind::Move) => {
-                        let members = st.layout.members(si);
-                        let (pos, guides) = if free {
-                            (raw.round(), [None; 2])
-                        } else {
-                            snap(raw, size, &members, Some(si), &st.frames, vw, vh, grid)
-                        };
-                        st.guides = guides;
-                        st.place_stack(si, Rect::new(pos.x, pos.y, size.x, size.y), vw, vh);
-                    }
-                    (grab, DragKind::Scale) => {
-                        let fx = (m.x - drag.start.x) / drag.start.w.max(1.0);
-                        let fy = (m.y - drag.start.y) / drag.start.h.max(1.0);
-                        let scale = (drag.start_scale * fx.max(fy)).clamp(MIN_SCALE, MAX_SCALE);
-                        let device = input.device_scale;
-                        let unit = drag.start.size() / snap_scale(drag.start_scale, device);
-                        let new = unit * snap_scale(scale, device);
-                        let rect = Rect::new(drag.start.x, drag.start.y, new.x, new.y);
-                        match grab {
-                            Grab::Element(id) => st.place_element(id, rect, scale, vw, vh),
-                            Grab::Stack(si) => {
-                                if let Some(s) = st.layout.stack_mut(si) {
-                                    s.scale = scale;
-                                }
-                                st.place_stack(si, rect, vw, vh);
-                            }
-                        }
-                        st.scaled_at = now;
-                    }
-                }
-            }
-            _ => {
-                if let (Grab::Element(id), DragKind::Move, true, Some(drop)) =
-                    (drag.grab, drag.kind, drag.moving, st.drop)
-                    && let Some(rect) = st.frames.screen[id.index()]
-                {
-                    st.apply_drop(id, rect, drop, vw, vh);
-                }
-                st.drag = None;
-                st.drop = None;
-            }
-        }
+        return true;
     }
-
-    let toolbar = toolbar_rect(vw, vh);
-    let menu_box = st.menu.map(|m| menu_rect(m, vw, vh));
-    let removed: Vec<Restore> = ElementId::ALL
-        .into_iter()
-        .filter(|id| st.layout.get(*id).visibility == Visibility::Removed)
-        .map(Restore::Element)
-        .chain(st.layout.removed_homes().map(Restore::Home))
-        .collect();
-    let add_box = st.adding.then(|| add_rect(toolbar, removed.len()));
-    let actions = if TOUCH && st.drag.is_none() && st.menu.is_none() && !st.adding && !pinching {
-        st.selected.and_then(|g| action_bar(st, g, vw))
-    } else {
-        None
-    };
-    let over_ui = mouse.is_some_and(|m| {
-        toolbar.contains(m)
-            || menu_box.is_some_and(|r| r.contains(m))
-            || add_box.is_some_and(|r| r.contains(m))
-            || actions.as_ref().is_some_and(|(r, _)| r.contains(m))
-    });
-    let hot = match st.drag {
-        Some(d) => Some(d.grab),
-        None if over_ui => None,
-        None => mouse.and_then(|m| st.hot_at(m, vh)),
-    };
-
-    let bw = (TOOLBAR_W - 2.0 * (TOOLBAR_BUTTONS - 1.0)) / TOOLBAR_BUTTONS;
-    let brect = |i: f32| Rect::new(toolbar.x + i * (bw + 2.0), toolbar.y, bw, TOOLBAR_H);
-    let clicked = input.left_click || input.right_click;
-    let inside = |r: Option<Rect>| mouse.is_some_and(|m| r.is_some_and(|r| r.contains(m)));
-    let click_away = (st.menu.is_some() && clicked && !inside(menu_box))
-        || (st.adding && clicked && !inside(add_box) && !inside(Some(brect(4.0))));
-    if click_away {
-        st.menu = None;
-        st.adding = false;
-    } else if st.drag.is_none()
-        && !over_ui
-        && !pinching
-        && let Some(m) = mouse
+    let dist = a.distance(b);
+    if st.pinch.is_none()
+        && dist > 1.0
+        && let Some(g) = st.selected.or_else(|| st.hot_at((a + b) / 2.0))
+        && st.scalable(g)
     {
-        if input.left_click {
-            st.selected = hot;
-            if let Some(g) = hot {
-                let (kind, grab) = match st.handle_for(g) {
-                    Some((hr, target)) if !TOUCH && hr.contains(m) => (DragKind::Scale, target),
-                    _ => (DragKind::Move, g),
-                };
-                if let Some(rect) = st.rect_of(grab) {
-                    st.drag = Some(Drag {
-                        grab,
-                        kind,
-                        grip: m - rect.pos(),
-                        start: rect,
-                        start_scale: st.scale_of(grab),
-                        press: m,
-                        pressed_at: now,
-                        moving: false,
-                    });
+        let target = st.scale_target(g);
+        st.push_undo();
+        st.pinch = Some(Pinch {
+            target,
+            start_dist: dist,
+            start_scale: st.scale_of(target),
+        });
+    }
+    if let Some(pinch) = st.pinch {
+        let next = (pinch.start_scale * dist / pinch.start_dist * 20.0).round() / 20.0;
+        st.set_scale(pinch.target, next, now);
+    }
+    st.drag = None;
+    st.drop = None;
+    true
+}
+
+fn follow_drag(st: &mut EditorState, ctx: &ScreenCtx, grid: f32, free: bool) {
+    let input = ctx.input;
+    let now = input.time;
+    st.guides = [None; 2];
+    let Some(drag) = st.drag else {
+        return;
+    };
+    let (vw, vh) = (st.vw, st.vh);
+    let m = match ctx.mouse() {
+        Some(m) if input.left_down => m,
+        _ => {
+            if let (Grab::Element(id), DragKind::Move, true, Some(drop)) =
+                (drag.grab, drag.kind, drag.moving, st.drop)
+                && let Some(rect) = st.frames.screen[id.index()]
+            {
+                st.apply_drop(id, rect, drop);
+            }
+            st.drag = None;
+            st.drop = None;
+            return;
+        }
+    };
+    if !drag.moving {
+        return;
+    }
+    let size = drag.start.size();
+    let raw = m - drag.grip;
+    let snapped = |st: &mut EditorState, exclude: &[ElementId]| {
+        if free {
+            return raw.round();
+        }
+        let others = st.snap_targets(exclude, drag.grab);
+        let (pos, guides) = snap(raw, size, &others, vw, vh, grid);
+        st.guides = guides;
+        pos
+    };
+    match (drag.grab, drag.kind) {
+        (Grab::Element(id), DragKind::Move) => {
+            let pos = snapped(st, &[id]);
+            st.place_element(
+                id,
+                Rect::new(pos.x, pos.y, size.x, size.y),
+                drag.start_scale,
+            );
+            st.drop = if free { None } else { st.find_drop(id, m) };
+        }
+        (Grab::Stack(si), DragKind::Move) => {
+            let members = st.layout.members(si);
+            let pos = snapped(st, &members[..]);
+            st.place_stack(si, Rect::new(pos.x, pos.y, size.x, size.y));
+        }
+        #[cfg(feature = "mobile_ui")]
+        (Grab::Area(i), DragKind::Move) => {
+            let pos = snapped(st, &[]);
+            if let Some(a) = st.layout.areas.get_mut(i) {
+                a.place(Rect::new(pos.x, pos.y, size.x, size.y), vw, vh);
+            }
+        }
+        #[cfg(feature = "mobile_ui")]
+        (Grab::Area(i), DragKind::Resize(mask)) => {
+            let s = drag.start;
+            let d = m - drag.press;
+            let edge = |v: f32, extent: f32| {
+                if free || grid <= 0.0 {
+                    v.round()
+                } else {
+                    lattice(v, extent, grid)
                 }
+            };
+            let (mut x0, mut y0, mut x1, mut y1) = (s.x, s.y, s.x + s.w, s.y + s.h);
+            if mask & 1 != 0 {
+                x0 = edge(x0 + d.x, vw).min(x1 - Area::MIN).max(0.0);
             }
-        } else if input.right_click {
-            st.selected = hot;
-            st.menu = hot.map(|grab| Menu {
-                grab,
-                x: m.x,
-                y: m.y,
-            });
-        } else if input.scroll != 0.0
-            && let Some(g) = hot
-        {
-            let g = st.scale_target(g);
-            if st.scroll_run != Some(g) {
-                st.push_undo();
-                st.scroll_run = Some(g);
+            if mask & 4 != 0 {
+                x1 = edge(x1 + d.x, vw).min(vw).max(x0 + Area::MIN);
             }
-            let step = SCALE_STEP * input.scroll.signum();
-            let next = ((st.scale_of(g) + step) * 10.0).round() / 10.0;
-            st.set_scale(g, next, vw, vh, now);
+            if mask & 2 != 0 {
+                y0 = edge(y0 + d.y, vh).min(y1 - Area::MIN).max(0.0);
+            }
+            if mask & 8 != 0 {
+                y1 = edge(y1 + d.y, vh).min(vh).max(y0 + Area::MIN);
+            }
+            if let Some(a) = st.layout.areas.get_mut(i) {
+                a.place(Rect::new(x0, y0, x1 - x0, y1 - y0), vw, vh);
+            }
         }
+        (grab, DragKind::Scale) => {
+            let fx = (m.x - drag.start.x) / drag.start.w.max(1.0);
+            let fy = (m.y - drag.start.y) / drag.start.h.max(1.0);
+            let scale = (drag.start_scale * fx.max(fy)).clamp(MIN_SCALE, MAX_SCALE);
+            let device = input.device_scale;
+            let unit = drag.start.size() / snap_scale(drag.start_scale, device);
+            let new = unit * snap_scale(scale, device);
+            let rect = Rect::new(drag.start.x, drag.start.y, new.x, new.y);
+            match grab {
+                Grab::Element(id) => st.place_element(id, rect, scale),
+                Grab::Stack(si) => {
+                    if let Some(s) = st.layout.stack_mut(si) {
+                        s.scale = scale;
+                    }
+                    st.place_stack(si, rect);
+                }
+                #[cfg(feature = "mobile_ui")]
+                Grab::Area(_) => {}
+            }
+            st.scaled_at = now;
+        }
+        #[cfg(feature = "mobile_ui")]
+        (_, DragKind::Resize(_)) => {}
     }
+}
 
-    if let Some(g) = st.drag.map(|d| d.grab).or(st.selected) {
-        let ids: Vec<ElementId> = match g {
-            Grab::Element(id) => vec![id],
-            Grab::Stack(si) => st.layout.members(si).to_vec(),
+fn press(st: &mut EditorState, ctx: &ScreenCtx, hot: Option<Grab>, m: Vec2) {
+    let input = ctx.input;
+    if input.left_click {
+        st.selected = hot;
+        let Some(g) = hot else {
+            return;
         };
-        raise(p, &st.frames, &ids);
-    }
-
-    let line = hairline(ctx);
-    for guide in st.guides.iter().flatten() {
-        if guide.vertical {
-            p.fill(guide.at, 0.0, line, vh, GUIDE);
-        } else {
-            p.fill(0.0, guide.at, vw, line, GUIDE);
+        let (kind, grab) = match st.handle_for(g) {
+            Some((hr, target)) if !TOUCH && hr.contains(m) => (DragKind::Scale, target),
+            _ => (DragKind::Move, g),
+        };
+        let Some(rect) = st.rect_of(grab) else {
+            return;
+        };
+        #[cfg(feature = "mobile_ui")]
+        let kind = match grab {
+            Grab::Area(_) => match edges_at(rect, m) {
+                0 => DragKind::Move,
+                mask => DragKind::Resize(mask),
+            },
+            _ => kind,
+        };
+        st.drag = Some(Drag {
+            grab,
+            kind,
+            grip: m - rect.pos(),
+            start: rect,
+            start_scale: st.scale_of(grab),
+            press: m,
+            pressed_at: input.time,
+            moving: false,
+        });
+    } else if input.right_click {
+        st.selected = hot;
+        st.menu = hot.map(|grab| Menu {
+            grab,
+            x: m.x,
+            y: m.y,
+        });
+    } else if input.scroll != 0.0
+        && let Some(g) = hot
+        && st.scalable(g)
+    {
+        let g = st.scale_target(g);
+        if st.scroll_run != Some(g) {
+            st.push_undo();
+            st.scroll_run = Some(g);
         }
+        let next = ((st.scale_of(g) + SCALE_STEP * input.scroll.signum()) * 10.0).round() / 10.0;
+        st.set_scale(g, next, input.time);
     }
+}
 
-    let mut boxes: Vec<Rect> = st.frames.stacks.iter().map(|(_, r)| *r).collect();
-    for id in ElementId::ALL {
+fn draw_overlap(p: &mut Painter, st: &EditorState) {
+    let mut boxes: Vec<Rect> = if st.layer() == Layer::Extras {
+        st.frames.stacks.iter().map(|(_, r)| *r).collect()
+    } else {
+        Vec::new()
+    };
+    for id in ElementId::ALL.into_iter().filter(|id| st.active(*id)) {
         let Some(r) = st.frames.screen[id.index()] else {
             continue;
         };
@@ -1001,12 +1264,64 @@ pub fn draw(
     for (r, _) in boxes.iter().zip(&clashing).filter(|(_, c)| **c) {
         p.outline(r.x - 1.0, r.y - 1.0, r.w + 2.0, r.h + 2.0, OVERLAP);
     }
+}
 
-    let is_hot = |g: Grab| hot == Some(g) || st.selected == Some(g);
-    for id in ElementId::ALL {
-        let Some(r) = st.frames.screen[id.index()] else {
+#[cfg(feature = "mobile_ui")]
+fn draw_areas(p: &mut Painter, st: &EditorState, hot: Option<Grab>) {
+    for i in 0..st.layout.areas.len() {
+        let Some(r) = st.rect_of(Grab::Area(i)) else {
             continue;
         };
+        let lit = hot == Some(Grab::Area(i)) || st.selected == Some(Grab::Area(i));
+        let (fill, line, label) = if st.layout.areas[i].zoom {
+            (ZOOM_FILL, ZOOM_LINE, "Zoom")
+        } else {
+            (AREA_FILL, AREA_LINE, "Look only")
+        };
+        #[cfg(feature = "tutorial")]
+        crate::gui::tutorial::mark(
+            if st.layout.areas[i].zoom {
+                crate::gui::tutorial::Spot::ZoomArea
+            } else {
+                crate::gui::tutorial::Spot::LookArea
+            },
+            r,
+        );
+        p.fill(r.x, r.y, r.w, r.h, fill);
+        p.outline(r.x, r.y, r.w, r.h, if lit { OUTLINE_HOT } else { line });
+        if lit {
+            for (x, y) in [
+                (r.x, r.y),
+                (r.x + r.w - HANDLE, r.y),
+                (r.x, r.y + r.h - HANDLE),
+            ] {
+                p.fill(x, y, HANDLE, HANDLE, OUTLINE_HOT);
+            }
+            let hr = handle_rect(r);
+            p.fill(hr.x, hr.y, hr.w, hr.h, OUTLINE_HOT);
+        }
+        let w = p.atlas.font.width_str(label);
+        if w + 4.0 <= r.w && r.h >= 12.0 {
+            p.text_centered(
+                label,
+                r.x + r.w / 2.0,
+                (r.y + (r.h - 8.0) / 2.0).floor(),
+                0xFFFFFF,
+                true,
+            );
+        }
+    }
+}
+
+fn draw_boxes(p: &mut Painter, st: &EditorState, hot: Option<Grab>, now: f32, vw: f32) {
+    let is_hot = |g: Grab| hot == Some(g) || st.selected == Some(g);
+    let ids = move || {
+        ElementId::ALL
+            .into_iter()
+            .filter(move |id| st.active(*id))
+            .filter_map(move |id| st.frames.screen[id.index()].map(|r| (id, r)))
+    };
+    for (id, r) in ids() {
         let (x, y, w, h) = (r.x - 1.0, r.y - 1.0, r.w + 2.0, r.h + 2.0);
         if st.layout.get(id).visibility != Visibility::Shown {
             p.fill(r.x, r.y, r.w, r.h, HIDDEN_FILL);
@@ -1016,19 +1331,17 @@ pub fn draw(
         }
     }
 
-    let hot_stack = hot
-        .or(st.selected)
-        .and_then(|g| st.stack_for(g))
-        .filter(|si| st.stack_rect(*si).is_some());
+    let hot_stack = (st.layer() == Layer::Extras)
+        .then(|| hot.or(st.selected).and_then(|g| st.stack_for(g)))
+        .flatten();
     if let Some(si) = hot_stack
-        && let Some(r) = st.stack_rect(si)
+        && let Some(r) = st.frames.stack_rect(si)
     {
         p.outline(r.x - 2.0, r.y - 2.0, r.w + 4.0, r.h + 4.0, STACK);
-        let bar = bar_rect(r, vh);
+        let bar = bar_rect(r, st.vh);
         p.fill(bar.x, bar.y, bar.w, bar.h, STACK_BAR);
         p.outline(bar.x, bar.y, bar.w, bar.h, STACK);
-        let n = st.layout.members(si).len();
-        let label = format!("Stack upwards ({n})");
+        let label = format!("Stack upwards ({})", st.layout.members(si).len());
         p.text_plain(&label, bar.x + 2.0, bar.y + 1.0, 0xFFFFFF, false);
         if !TOUCH {
             let hr = handle_rect(r);
@@ -1043,19 +1356,15 @@ pub fn draw(
         }
     }
 
-    for id in ElementId::ALL {
-        let Some(r) = st.frames.screen[id.index()] else {
-            continue;
-        };
-        if !is_hot(Grab::Element(id)) {
-            continue;
-        }
-        let (x, y, w, h) = (r.x - 1.0, r.y - 1.0, r.w + 2.0, r.h + 2.0);
+    for (id, r) in ids().filter(|(id, _)| is_hot(Grab::Element(*id))) {
         let shown = st.layout.get(id).visibility == Visibility::Shown;
         if shown {
-            p.outline(x, y, w, h, OUTLINE_HOT);
+            p.outline(r.x - 1.0, r.y - 1.0, r.w + 2.0, r.h + 2.0, OUTLINE_HOT);
         }
-        let stack = st.layout.stack_of(id);
+        let stack = st
+            .layout
+            .stack_of(id)
+            .filter(|_| st.layer() == Layer::Extras);
         if stack.is_none() && !TOUCH {
             let hr = handle_rect(r);
             p.fill(hr.x, hr.y, hr.w, hr.h, OUTLINE_HOT);
@@ -1088,7 +1397,7 @@ pub fn draw(
 
     match st.drop {
         Some(Landing::Into { stack, line, .. }) => {
-            if let Some(r) = st.stack_rect(stack) {
+            if let Some(r) = st.frames.stack_rect(stack) {
                 p.outline(r.x - 2.0, r.y - 2.0, r.w + 4.0, r.h + 4.0, DROP);
             }
             p.fill(line.x - 2.0, line.y, line.w + 4.0, line.h, DROP);
@@ -1102,104 +1411,383 @@ pub fn draw(
         }
         None => {}
     }
+}
+
+#[cfg(feature = "mobile_ui")]
+fn draw_status(p: &mut Painter, st: &EditorState, vw: f32) {
+    let status = if let Some(pinch) = st.pinch {
+        Some(format!("{:.2}x", st.scale_of(pinch.target)))
+    } else if let Some(d) = st.drag.filter(|d| d.moving) {
+        match (d.kind, st.drop) {
+            (DragKind::Resize(_), _) => st
+                .rect_of(d.grab)
+                .map(|r| format!("{:.0} x {:.0}", r.w, r.h)),
+            (_, Some(Landing::Into { .. })) => Some("Into stack".to_owned()),
+            (_, Some(Landing::Pair { target, .. })) => {
+                Some(format!("New stack with {}", target.label()))
+            }
+            _ if st.guides.iter().any(Option::is_some) => Some("Snapped".to_owned()),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    if let Some(text) = status {
+        let x = p.centered_x(&text, vw / 2.0);
+        tag(p, &text, x, 4.0, vw, 0xFFFF55);
+    }
+}
+
+fn draw_menu(p: &mut Painter, st: &mut EditorState, ctx: &ScreenCtx, menu: Menu, r: Rect) {
+    let now = ctx.input.time;
+    p.fill(r.x, r.y, r.w, r.h, PANEL);
+    p.outline(r.x, r.y, r.w, r.h, OUTLINE_HOT);
+    let row = |i: f32| Rect::new(r.x + 1.0, r.y + 1.0 + i * MENU_ROW, r.w - 2.0, MENU_ROW);
+    let title = match menu.grab {
+        Grab::Element(id) => id.label().to_owned(),
+        Grab::Stack(si) => format!("Stack upwards ({})", st.layout.members(si).len()),
+        #[cfg(feature = "mobile_ui")]
+        Grab::Area(_) => "Look-only area".to_owned(),
+    };
+    p.text_plain(&title, r.x + 3.0, r.y + 3.0, 0xFFFF55, true);
+
+    if let Grab::Element(id) = menu.grab
+        && !id.required()
+    {
+        let shown = st.layout.get(id).visibility == Visibility::Shown;
+        if button(p, ctx, row(1.0), if shown { "Hide" } else { "Show" }) {
+            st.push_undo();
+            st.layout.get_mut(id).toggle_hidden();
+        }
+    }
+
+    if st.scalable(menu.grab) {
+        let target = st.scale_target(menu.grab);
+        let sr = row(2.0);
+        let minus = Rect::new(sr.x, sr.y, 16.0, sr.h);
+        let plus = Rect::new(sr.x + sr.w - 16.0, sr.y, 16.0, sr.h);
+        let scale = st.scale_of(target);
+        let label = if matches!((menu.grab, target), (Grab::Element(_), Grab::Stack(_))) {
+            format!("Stack {scale:.1}x")
+        } else {
+            format!("{scale:.1}x")
+        };
+        p.text_centered(&label, sr.x + sr.w / 2.0, sr.y + 3.0, 0xFFFFFF, true);
+        for (rect, text, step) in [(minus, "-", -SCALE_STEP), (plus, "+", SCALE_STEP)] {
+            if button(p, ctx, rect, text) {
+                st.push_undo();
+                st.set_scale(target, ((scale + step) * 10.0).round() / 10.0, now);
+            }
+        }
+    }
+
+    match menu.grab {
+        Grab::Element(id) => {
+            if button(p, ctx, row(3.0), "Reset") {
+                st.push_undo();
+                st.layout.reset(id);
+                st.layout.get_mut(id).visibility = match id.default_visibility() {
+                    Visibility::Removed => Visibility::Shown,
+                    v => v,
+                };
+                st.menu = None;
+            }
+            if !id.required() && button(p, ctx, row(4.0), "Remove") {
+                st.remove(menu.grab);
+            }
+        }
+        Grab::Stack(si) => {
+            let home = st.layout.stack(si).is_some_and(|s| s.home.is_some());
+            if home && button(p, ctx, row(3.0), "Reset position") {
+                st.reset(menu.grab);
+                st.menu = None;
+            }
+            if !home && button(p, ctx, row(3.0), "Split") {
+                st.split(si);
+                st.menu = None;
+            }
+            if button(p, ctx, row(4.0), "Delete") {
+                st.remove(menu.grab);
+            }
+        }
+        #[cfg(feature = "mobile_ui")]
+        Grab::Area(_) => {
+            if button(p, ctx, row(1.0), "Delete") {
+                st.remove(menu.grab);
+            }
+        }
+    }
+}
+
+pub fn draw(
+    p: &mut Painter,
+    st: &mut EditorState,
+    options: &mut GuiOptions,
+    ctx: &ScreenCtx,
+) -> Option<Screen> {
+    let (vw, vh) = (ctx.vw, ctx.vh);
+    (st.vw, st.vh) = (vw, vh);
+    let input = ctx.input;
+    let now = input.time;
+    let mouse = ctx.mouse();
+    let grid = GRIDS[st.layout.grid.min(GRIDS.len() - 1)];
+    let free = input.shift || st.free;
+
+    keys(st, ctx);
+
+    if let Some(mut drag) = st.drag
+        && !drag.moving
+        && mouse.is_some_and(|m| m.distance(drag.press) >= DRAG_THRESHOLD)
+    {
+        st.push_undo();
+        drag.moving = true;
+        if let (Grab::Element(id), DragKind::Move) = (drag.grab, drag.kind)
+            && !matches!(st.layout.get(id).place, Place::Free { .. })
+        {
+            let scale = st.layout.scale_of(id);
+            st.place_element(id, drag.start, scale);
+            drag.start_scale = scale;
+        }
+        st.drag = Some(drag);
+    }
+
+    #[cfg(feature = "mobile_ui")]
+    let pinching = gestures(st, ctx);
+    #[cfg(not(feature = "mobile_ui"))]
+    let pinching = false;
+
+    follow_drag(st, ctx, grid, free);
+
+    if let Some(pd) = st.panel_drag {
+        match mouse {
+            Some(m) if input.left_down && !pinching => {
+                let centre = pd.start.pos() + pd.start.size() / 2.0;
+                if pd.side == 0.0 {
+                    st.set_panel(centre + m - pd.press, pd.start.w);
+                } else {
+                    st.set_panel(centre, pd.start.w + 2.0 * pd.side * (m.x - pd.press.x));
+                }
+            }
+            _ => st.panel_drag = None,
+        }
+    }
+
+    let layer = st.layer();
+    let bar = Toolbar::new(p, vw, vh, layer, st.layout.panel);
+    st.bar_rect = bar.rect;
+    let menu_box = st.menu.map(|m| menu_rect(m, vw, vh));
+    let removed: Vec<Restore> = ElementId::ALL
+        .into_iter()
+        .filter(|id| st.active(*id) && st.layout.get(*id).visibility == Visibility::Removed)
+        .map(Restore::Element)
+        .chain(
+            st.layout
+                .removed_homes()
+                .filter(|_| layer == Layer::Extras)
+                .map(Restore::Home),
+        )
+        .collect();
+    let add_button = bar.tool(Tool::Add);
+    let add_box = add_button
+        .filter(|_| st.adding)
+        .map(|b| add_rect(b, bar.rect, removed.len(), vw));
+    let actions = if TOUCH && st.drag.is_none() && st.menu.is_none() && !st.adding && !pinching {
+        st.selected.and_then(|g| action_bar(st, g))
+    } else {
+        None
+    };
+    let inside = |r: Option<Rect>| mouse.is_some_and(|m| r.is_some_and(|r| r.contains(m)));
+    let over_ui = st.panel_drag.is_some()
+        || inside(Some(bar.rect))
+        || bar.sides.iter().any(|r| inside(Some(*r)))
+        || inside(menu_box)
+        || inside(add_box)
+        || inside(actions.as_ref().map(|(r, _)| *r));
+    let hot = match st.drag {
+        Some(d) => Some(d.grab),
+        None if over_ui => None,
+        None => mouse.and_then(|m| st.hot_at(m)),
+    };
+
+    let clicked = input.left_click || input.right_click;
+    let click_away = (st.menu.is_some() && clicked && !inside(menu_box))
+        || (st.adding && clicked && !inside(add_box) && !inside(add_button));
+    if click_away {
+        st.menu = None;
+        st.adding = false;
+    } else if input.left_click
+        && st.drag.is_none()
+        && st.panel_drag.is_none()
+        && !pinching
+        && let Some(m) = mouse
+        && let Some(side) = bar.handle_at(m)
+    {
+        st.push_undo();
+        st.panel_drag = Some(PanelDrag {
+            side,
+            press: m,
+            start: bar.rect,
+        });
+    } else if st.drag.is_none()
+        && !over_ui
+        && !pinching
+        && let Some(m) = mouse
+    {
+        press(st, ctx, hot, m);
+    }
+
+    if let Some(g) = st.drag.map(|d| d.grab).or(st.selected) {
+        match g {
+            Grab::Element(id) => raise(p, &st.frames, &[id]),
+            Grab::Stack(si) => raise(p, &st.frames, &st.layout.members(si)),
+            #[cfg(feature = "mobile_ui")]
+            Grab::Area(_) => {}
+        }
+    }
+
+    let line = hairline(ctx);
+    for guide in st.guides.iter().flatten() {
+        if guide.vertical {
+            p.fill(guide.at, 0.0, line, vh, GUIDE);
+        } else {
+            p.fill(0.0, guide.at, vw, line, GUIDE);
+        }
+    }
+
+    #[cfg(feature = "mobile_ui")]
+    if layer == Layer::Areas {
+        draw_areas(p, st, hot);
+    }
+    draw_overlap(p, st);
+    draw_boxes(p, st, hot, now, vw);
 
     if let (Some((_, buttons)), Some(g)) = (&actions, st.selected) {
         for (r, label, act) in buttons {
             if button(p, ctx, *r, label) {
-                act_on(st, g, *act, vw, vh);
+                act_on(st, g, *act);
             }
         }
     }
 
-    if TOUCH {
-        let status = if let Some(pinch) = st.pinch {
-            Some(format!("{:.2}x", st.scale_of(pinch.target)))
-        } else if st.drag.is_some_and(|d| d.moving) {
-            match st.drop {
-                Some(Landing::Into { .. }) => Some("Into stack".to_owned()),
-                Some(Landing::Pair { target, .. }) => {
-                    Some(format!("New stack with {}", target.label()))
-                }
-                None if st.guides.iter().any(Option::is_some) => Some("Snapped".to_owned()),
-                None => None,
-            }
-        } else {
-            None
-        };
-        if let Some(text) = status {
-            let w = p.atlas.font.width_str(&text);
-            tag(p, &text, ((vw - w) / 2.0).floor(), 4.0, vw, 0xFFFF55);
+    #[cfg(feature = "mobile_ui")]
+    draw_status(p, st, vw);
+
+    let r = bar.rect;
+    p.fill(r.x - 2.0, r.y - 2.0, r.w + 4.0, r.h + 2.0, PANEL);
+    for &(r, l) in &bar.tabs {
+        #[cfg(feature = "tutorial")]
+        crate::gui::tutorial::mark(crate::gui::tutorial::Spot::Tab(l), r);
+        if button_on(p, ctx, r, l.label(), l == layer) && l != layer {
+            st.frames.layer = l;
+            st.selected = None;
+            st.adding = false;
+            st.clear_hand();
         }
     }
-
     let mut nav = None;
-    if button(p, ctx, brect(0.0), "Done") {
-        nav = Some(st.parent);
-    }
-    if button(p, ctx, brect(1.0), "Undo")
-        && let Some(prev) = st.undo.pop_back()
-    {
-        st.layout = prev;
-        st.scroll_run = None;
-    }
-    let grid_label = if grid > 0.0 {
-        format!("Grid: {grid:.0}")
-    } else {
-        "Grid: off".to_owned()
-    };
-    if button(p, ctx, brect(if TOUCH { 3.0 } else { 2.0 }), &grid_label) {
-        st.layout.grid = (st.layout.grid + 1) % GRIDS.len();
+    for &(r, tool) in &bar.tools {
+        #[cfg(feature = "tutorial")]
+        if let Some(spot) = match tool {
+            Tool::Done => Some(crate::gui::tutorial::Spot::Done),
+            Tool::Reset => Some(crate::gui::tutorial::Spot::Reset),
+            Tool::NewArea => Some(crate::gui::tutorial::Spot::NewArea),
+            _ => None,
+        } {
+            crate::gui::tutorial::mark(spot, r);
+        }
+        match tool {
+            Tool::Done => {
+                if button(p, ctx, r, "Done") {
+                    nav = Some(st.parent);
+                }
+            }
+            Tool::Undo => {
+                if button(p, ctx, r, "Undo") {
+                    st.undo();
+                }
+            }
+            Tool::Grid => {
+                let label = if grid > 0.0 {
+                    format!("Grid: {grid:.0}")
+                } else {
+                    "Grid: off".to_owned()
+                };
+                if button(p, ctx, r, &label) {
+                    st.layout.grid = (st.layout.grid + 1) % GRIDS.len();
+                }
+            }
+            #[cfg(feature = "mobile_ui")]
+            Tool::Snap => {
+                if button(p, ctx, r, if st.free { "Snap: off" } else { "Snap: on" }) {
+                    st.free = !st.free;
+                }
+            }
+            #[cfg(not(feature = "mobile_ui"))]
+            Tool::Gui => {
+                let label = match options.gui_scale {
+                    0 => "GUI: Auto".to_owned(),
+                    n => format!("GUI: {n}"),
+                };
+                let right = inside(Some(r)) && input.right_click;
+                let left = button(p, ctx, r, &label);
+                if left || right {
+                    options.gui_scale = step_gui_scale(options.gui_scale, left, ctx);
+                    crate::gui::save_options(options);
+                    st.drag = None;
+                    st.drop = None;
+                }
+            }
+            Tool::Add => {
+                let label = match removed.len() {
+                    0 => "Add".to_owned(),
+                    n => format!("Add ({n})"),
+                };
+                if button(p, ctx, r, &label) {
+                    st.adding = !st.adding;
+                    st.menu = None;
+                }
+            }
+            #[cfg(feature = "mobile_ui")]
+            Tool::NewArea => {
+                if button(p, ctx, r, "New area") {
+                    st.push_undo();
+                    let size = Vec2::new(80.0, 60.0);
+                    let pos = ((Vec2::new(vw, vh) - size) / 2.0).floor();
+                    st.layout
+                        .areas
+                        .push(Area::at(Rect::new(pos.x, pos.y, size.x, size.y), vw, vh));
+                    st.selected = Some(Grab::Area(st.layout.areas.len() - 1));
+                }
+            }
+            Tool::Reset => {
+                if button(p, ctx, r, "Reset") {
+                    st.push_undo();
+                    st.layout.reset_layer(layer);
+                    st.layout.panel = None;
+                    st.selected = None;
+                }
+            }
+        }
     }
     #[cfg(feature = "mobile_ui")]
-    {
-        let _ = options;
-        let label = if st.free { "Snap: off" } else { "Snap: on" };
-        if button(p, ctx, brect(2.0), label) {
-            st.free = !st.free;
-        }
+    let _ = options;
+    let g = bar.grip;
+    let lit = st.panel_drag.is_some() || st.panel_pinch.is_some();
+    if lit {
+        let r = bar.rect;
+        p.outline(r.x - 1.0, r.y - 1.0, r.w + 2.0, r.h + 2.0, STACK);
     }
-    #[cfg(not(feature = "mobile_ui"))]
-    let scale_label = match options.gui_scale {
-        0 => "GUI: Auto".to_owned(),
-        n => format!("GUI: {n}"),
-    };
-    #[cfg(not(feature = "mobile_ui"))]
-    let scale_rect = brect(3.0);
-    #[cfg(not(feature = "mobile_ui"))]
-    let scale_hot = mouse.is_some_and(|m| scale_rect.contains(m));
-    #[cfg(not(feature = "mobile_ui"))]
-    let left = button(p, ctx, scale_rect, &scale_label);
-    #[cfg(not(feature = "mobile_ui"))]
-    let right = scale_hot && input.right_click;
-    #[cfg(not(feature = "mobile_ui"))]
-    if left || right {
-        options.gui_scale = step_gui_scale(options.gui_scale, left, ctx);
-        crate::gui::save_options(options);
-        st.drag = None;
-        st.drop = None;
+    let knob = if lit { STACK } else { OUTLINE };
+    let mid = g.y + g.h - GRIP_H / 2.0 - 1.0;
+    p.fill((g.x + g.w / 2.0 - 12.0).floor(), mid, 24.0, 2.0, knob);
+    for x in [g.x + 2.0, g.x + g.w - 4.0] {
+        p.fill(x, mid - 3.0, 2.0, 8.0, knob);
     }
-    let add_label = if removed.is_empty() {
-        "Add".to_owned()
-    } else {
-        format!("Add ({})", removed.len())
-    };
-    if button(p, ctx, brect(4.0), &add_label) {
-        st.adding = !st.adding;
-        st.menu = None;
-    }
-    if button(p, ctx, brect(5.0), "Reset all") {
-        st.push_undo();
-        let grid = st.layout.grid;
-        st.layout = HudLayout::default();
-        st.layout.grid = grid;
-        st.selected = None;
-    }
-    for (i, hint) in HINTS.into_iter().enumerate() {
-        let w = p.atlas.font.width_str(hint);
-        p.text_plain(
+    for (i, hint) in bar.hints.iter().enumerate() {
+        p.text_centered(
             hint,
-            ((vw - w) / 2.0).floor(),
-            toolbar.y + TOOLBAR_H + 2.0 + i as f32 * 10.0,
+            g.x + g.w / 2.0,
+            bar.hint_y + i as f32 * 10.0,
             HINT,
             true,
         );
@@ -1247,98 +1835,7 @@ pub fn draw(
     }
 
     if let (Some(menu), Some(r)) = (st.menu, menu_box) {
-        p.fill(r.x, r.y, r.w, r.h, PANEL);
-        p.outline(r.x, r.y, r.w, r.h, OUTLINE_HOT);
-        let row = |i: f32| Rect::new(r.x + 1.0, r.y + 1.0 + i * MENU_ROW, r.w - 2.0, MENU_ROW);
-        let title = match menu.grab {
-            Grab::Element(id) => id.label().to_owned(),
-            Grab::Stack(si) => format!("Stack upwards ({})", st.layout.members(si).len()),
-        };
-        p.text_plain(&title, r.x + 3.0, r.y + 3.0, 0xFFFF55, true);
-
-        if let Grab::Element(id) = menu.grab
-            && !id.required()
-        {
-            let shown = st.layout.get(id).visibility == Visibility::Shown;
-            if button(p, ctx, row(1.0), if shown { "Hide" } else { "Show" }) {
-                st.push_undo();
-                st.layout.get_mut(id).toggle_hidden();
-            }
-        }
-
-        let target = st.scale_target(menu.grab);
-        let sr = row(2.0);
-        let minus = Rect::new(sr.x, sr.y, 16.0, sr.h);
-        let plus = Rect::new(sr.x + sr.w - 16.0, sr.y, 16.0, sr.h);
-        let scale = st.scale_of(target);
-        let label = if matches!((menu.grab, target), (Grab::Element(_), Grab::Stack(_))) {
-            format!("Stack {scale:.1}x")
-        } else {
-            format!("{scale:.1}x")
-        };
-        let lw = p.atlas.font.width_str(&label);
-        p.text_plain(
-            &label,
-            (sr.x + (sr.w - lw) / 2.0).floor(),
-            sr.y + 3.0,
-            0xFFFFFF,
-            true,
-        );
-        for (rect, text, step) in [(minus, "-", -SCALE_STEP), (plus, "+", SCALE_STEP)] {
-            if button(p, ctx, rect, text) {
-                st.push_undo();
-                let next = ((scale + step) * 10.0).round() / 10.0;
-                st.set_scale(target, next, vw, vh, now);
-            }
-        }
-
-        match menu.grab {
-            Grab::Element(id) => {
-                if button(p, ctx, row(3.0), "Reset") {
-                    st.push_undo();
-                    st.layout.reset(id);
-                    st.layout.get_mut(id).visibility = if id.default_enabled() {
-                        Visibility::Shown
-                    } else {
-                        Visibility::Hidden
-                    };
-                    st.menu = None;
-                }
-                if !id.required() && button(p, ctx, row(4.0), "Remove") {
-                    st.push_undo();
-                    st.layout.remove(id);
-                    st.menu = None;
-                    st.selected = None;
-                }
-            }
-            Grab::Stack(si) => match st.layout.stack(si).and_then(|s| s.home) {
-                Some(_) => {
-                    if button(p, ctx, row(3.0), "Reset position") {
-                        st.push_undo();
-                        st.layout.reset_stack_position(si);
-                        st.menu = None;
-                    }
-                }
-                None => {
-                    if button(p, ctx, row(3.0), "Split") {
-                        st.push_undo();
-                        let rects: [Option<Rect>; COUNT] = st.frames.screen;
-                        st.layout.split(si, &rects, vw, vh);
-                        st.menu = None;
-                        st.selected = None;
-                    }
-                }
-            },
-        }
-        if let Grab::Stack(si) = menu.grab
-            && button(p, ctx, row(4.0), "Delete")
-        {
-            st.push_undo();
-            let rects: [Option<Rect>; COUNT] = st.frames.screen;
-            st.layout.delete_stack(si, &rects, vw, vh);
-            st.menu = None;
-            st.selected = None;
-        }
+        draw_menu(p, st, ctx, menu, r);
     }
 
     nav

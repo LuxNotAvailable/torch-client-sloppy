@@ -130,6 +130,7 @@ struct Portals {
 
 pub fn plugin(app: &mut App) {
     embedded_asset!(app, "end_portal.wgsl");
+    crate::renderer::reload::touch_on_reload::<EndPortalMaterial>(app);
     app.add_plugins(MaterialPlugin::<EndPortalMaterial>::default())
         .init_resource::<Portals>()
         .add_systems(

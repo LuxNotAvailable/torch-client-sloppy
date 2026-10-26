@@ -1,6 +1,8 @@
 use bevy::asset::RenderAssetUsages;
-use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
+
+use crate::entities::geom;
+use crate::entities::quads::QuadMesh;
 
 pub const SKIN_W: f32 = 64.0;
 pub const SKIN_H: f32 = 64.0;
@@ -23,75 +25,22 @@ pub fn box_mesh(
     scale: f32,
     color: Option<[f32; 4]>,
 ) -> Mesh {
-    let (w, h, d) = (size[0], size[1], size[2]);
-    let min_x = (origin[0] - grow) * scale;
-    let min_y = (origin[1] - grow) * scale;
-    let min_z = (origin[2] - grow) * scale;
-    let max_x = (origin[0] + w + grow) * scale;
-    let max_y = (origin[1] + h + grow) * scale;
-    let max_z = (origin[2] + d + grow) * scale;
-
-    let t0 = [min_x, min_y, min_z];
-    let t1 = [max_x, min_y, min_z];
-    let t2 = [max_x, max_y, min_z];
-    let t3 = [min_x, max_y, min_z];
-    let l0 = [min_x, min_y, max_z];
-    let l1 = [max_x, min_y, max_z];
-    let l2 = [max_x, max_y, max_z];
-    let l3 = [min_x, max_y, max_z];
-
-    let u0 = tex[0];
-    let u1 = u0 + d;
-    let u2 = u0 + d + w;
-    let u22 = u0 + d + w + w;
-    let u3 = u0 + d + w + d;
-    let u4 = u0 + d + w + d + w;
-    let v0 = tex[1];
-    let v1 = v0 + d;
-    let v2 = v0 + d + h;
-
-    let mut pos: Vec<[f32; 3]> = Vec::with_capacity(24);
-    let mut nrm: Vec<[f32; 3]> = Vec::with_capacity(24);
-    let mut uvs: Vec<[f32; 2]> = Vec::with_capacity(24);
-    let mut idx: Vec<u32> = Vec::with_capacity(36);
-
-    let mut face =
-        |corners: [[f32; 3]; 4], normal: [f32; 3], ua: f32, va: f32, ub: f32, vb: f32| {
-            let base = pos.len() as u32;
-            let quad_uv = [
-                [ub / sheet[0], va / sheet[1]],
-                [ua / sheet[0], va / sheet[1]],
-                [ua / sheet[0], vb / sheet[1]],
-                [ub / sheet[0], vb / sheet[1]],
-            ];
-            for i in 0..4 {
-                pos.push(corners[i]);
-                nrm.push(normal);
-                uvs.push(quad_uv[i]);
-            }
-            idx.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
-        };
-
-    face([l1, l0, t0, t1], [0.0, -1.0, 0.0], u1, v0, u2, v1);
-    face([t2, t3, l3, l2], [0.0, 1.0, 0.0], u2, v1, u22, v0);
-    face([t0, l0, l3, t3], [-1.0, 0.0, 0.0], u0, v1, u1, v2);
-    face([t1, t0, t3, t2], [0.0, 0.0, -1.0], u1, v1, u2, v2);
-    face([l1, t1, t2, l2], [1.0, 0.0, 0.0], u2, v1, u3, v2);
-    face([l0, l1, l2, l3], [0.0, 0.0, 1.0], u3, v1, u4, v2);
-
-    let mut mesh = Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::default(),
-    );
-    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, nrm);
-
+    let cube = geom::CubeDef {
+        tex,
+        origin,
+        size,
+        grow: geom::Grow::all(grow),
+        mirror: false,
+        tex_scale: [1.0, 1.0],
+        faces: geom::Faces::ALL,
+    };
+    let mut out = QuadMesh::new();
+    geom::push_cube(&mut out, &cube, sheet, scale);
+    let mut mesh = out.into_mesh(RenderAssetUsages::default(), false);
     if let Some(color) = color {
-        mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![color; uvs.len()]);
+        let n = mesh.count_vertices();
+        mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![color; n]);
     }
-
-    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
-    mesh.insert_indices(Indices::U32(idx));
     mesh
 }
 
@@ -117,12 +66,16 @@ pub fn load_texture(images: &mut Assets<Image>, path: &str, who: &str) -> Option
         }
     };
 
-    Some(images.add(super::rgba_image(
+    let handle = images.add(super::rgba_image(
         decoded.width(),
         decoded.height(),
         decoded.into_raw(),
         RenderAssetUsages::default(),
-    )))
+    ));
+    super::reload::track(&handle, move || {
+        Some(crate::platform::assets::open_image(&path).ok()?.to_rgba8())
+    });
+    Some(handle)
 }
 
 #[cfg(feature = "skins")]

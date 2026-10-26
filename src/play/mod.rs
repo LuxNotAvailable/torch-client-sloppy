@@ -9,3 +9,4 @@ pub(crate) mod no_fall;
 pub(crate) mod placement;
 pub(crate) mod redstone;
 pub(crate) mod riding;
+pub(crate) mod vclip;

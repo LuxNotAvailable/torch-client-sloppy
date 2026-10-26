@@ -17,8 +17,12 @@ pub struct FrameView {
     pub player_pos: [f32; 3],
     pub player_lerp: [f32; 3],
     pub eye_height: f32,
+    pub camera_eye_height: f32,
     pub sleeping: bool,
     pub bed_orientation: Option<Direction>,
+    pub camera_distance: f32,
+    pub local_body: crate::session::PlayerBody,
+    pub nausea: f32,
     pub day_ticks: f64,
     pub day_rate: f32,
     pub biome: Option<BiomeLayer>,
@@ -56,8 +60,18 @@ impl FrameView {
         self.player_pos = cur;
         self.player_lerp = std::array::from_fn(|i| prev[i] + (cur[i] - prev[i]) * partial);
         self.eye_height = super::systems::session_eye_height(session);
+        self.camera_eye_height = session.camera_eye.sample(partial);
         self.sleeping = session.sleeping;
         self.bed_orientation = session.bed_orientation;
+        self.camera_distance = session
+            .camera_distance
+            .unwrap_or(crate::client::tracking::DEFAULT_CAMERA_DISTANCE as f32);
+        self.local_body = session.local_body;
+        self.nausea = crate::play::mob_effects::effect_blend_factor(
+            &session.active_effects,
+            "nausea",
+            partial,
+        );
         self.day_ticks = session.day_clock.at(partial);
         self.day_rate = session.day_clock.rate;
         self.biome = match (session.env_prev, session.env) {

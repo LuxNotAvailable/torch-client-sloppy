@@ -4,7 +4,7 @@ use crate::items::model::{
     Assets, Elem, FaceDef, Resolved, corner_uv, default_face_uv, face_positions,
 };
 use crate::items::raster;
-use crate::renderer::{ATLAS_COLS, TILE_PX};
+use crate::renderer::{ATLAS_COLS, Sprites, TILE_PX};
 
 use super::rotation::{self, Mat3};
 use super::state::{ModelRef, Rot, Slot};
@@ -24,16 +24,14 @@ pub fn tile_uv_rect(tile: u32, atlas_rows: u32) -> [f32; 4] {
     ]
 }
 
-fn tile_of(path: &str) -> Option<u32> {
-    let stem = path.rsplit('/').next()?;
-    crate::TEXTURE_MAP.get()?.get(stem).copied()
+fn tile_of(sprites: &Sprites, path: &str) -> Option<u32> {
+    sprites.tile(path.rsplit('/').next()?)
 }
 
-fn texture_is_opaque(path: &str) -> bool {
-    match path.rsplit('/').next() {
-        Some(stem) => crate::renderer::texture_is_opaque(stem),
-        None => false,
-    }
+fn texture_is_opaque(sprites: &Sprites, path: &str) -> bool {
+    path.rsplit('/')
+        .next()
+        .is_some_and(|stem| sprites.is_opaque(stem))
 }
 
 #[derive(Clone, Debug)]
@@ -136,17 +134,18 @@ pub fn bake_slot(slot: &Slot, mut resolve: impl FnMut(&ModelRef) -> Arc<BakedMod
     }
 }
 
-pub fn bake_model(assets: &Assets, model_path: &str, rot: Rot, atlas_rows: u32) -> BakedModel {
+pub fn bake_model(assets: &Assets, model_path: &str, rot: Rot, sprites: &Sprites) -> BakedModel {
     let resolved = assets.model(model_path);
-    bake_resolved(&resolved, rot, atlas_rows)
+    bake_resolved(&resolved, rot, sprites)
 }
 
-pub fn bake_resolved(resolved: &Resolved, rot: Rot, atlas_rows: u32) -> BakedModel {
+pub fn bake_resolved(resolved: &Resolved, rot: Rot, sprites: &Sprites) -> BakedModel {
+    let atlas_rows = sprites.rows();
     let matrix = rotation::model_matrix(rot);
     let identity = rot.is_identity();
     let particle_uv = resolved
         .texture_path("particle")
-        .and_then(|path| tile_of(&path))
+        .and_then(|path| tile_of(sprites, &path))
         .map(|tile| tile_uv_rect(tile, atlas_rows));
     let mut out = BakedModel {
         had_elements: !resolved.elements.is_empty(),
@@ -169,8 +168,10 @@ pub fn bake_resolved(resolved: &Resolved, rot: Rot, atlas_rows: u32) -> BakedMod
                 out.missing_textures += 1;
                 continue;
             };
-            match tile_of(&path) {
-                Some(tile) => faces[face.dir] = Some((face, tile, texture_is_opaque(&path))),
+            match tile_of(sprites, &path) {
+                Some(tile) => {
+                    faces[face.dir] = Some((face, tile, texture_is_opaque(sprites, &path)))
+                }
                 None => out.missing_textures += 1,
             }
         }

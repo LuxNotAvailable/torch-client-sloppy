@@ -370,7 +370,7 @@ fn print_dirs() {
     for slot in crate::platform::storage::ALL {
         let path = slot.path();
         let state = match std::fs::metadata(&path) {
-            Ok(meta) => human_size(meta.len()),
+            Ok(meta) => crate::util::bytes::Bytes(meta.len()).to_string(),
             Err(_) => "-".to_string(),
         };
         println!("  {:16}  {:>10}", slot.0, state);
@@ -386,7 +386,7 @@ fn print_dirs() {
 #[cfg(not(target_arch = "wasm32"))]
 fn row(label: &str, path: &std::path::Path, var: &str) {
     let state = match walk(path) {
-        Some((files, bytes)) => format!("{files} files, {}", human_size(bytes)),
+        Some((files, bytes)) => format!("{files} files, {}", crate::util::bytes::Bytes(bytes)),
         None => "missing".to_string(),
     };
     println!("  {label:8}  {}", path.display());
@@ -425,16 +425,6 @@ fn walk(dir: &std::path::Path) -> Option<(u64, u64)> {
         }
     }
     Some((files, bytes))
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn human_size(bytes: u64) -> String {
-    match bytes {
-        0..1_000 => format!("{bytes} B"),
-        1_000..1_000_000 => format!("{:.1} kB", bytes as f64 / 1e3),
-        1_000_000..1_000_000_000 => format!("{:.1} MB", bytes as f64 / 1e6),
-        _ => format!("{:.1} GB", bytes as f64 / 1e9),
-    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -485,7 +475,7 @@ fn delete(scope: Scope, assume_yes: bool) -> i32 {
     println!("This deletes:");
     for dir in &dirs {
         let state = walk(dir)
-            .map(|(count, bytes)| format!("{count} files, {}", human_size(bytes)))
+            .map(|(count, bytes)| format!("{count} files, {}", crate::util::bytes::Bytes(bytes)))
             .unwrap_or_else(|| "empty".to_string());
         println!("  {} ({state})", dir.display());
     }

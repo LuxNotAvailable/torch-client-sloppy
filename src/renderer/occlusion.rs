@@ -310,12 +310,7 @@ fn step(pos: (i32, i32, i32), face: Direction) -> (i32, i32, i32) {
 
 fn disabled() -> bool {
     static OFF: OnceLock<bool> = OnceLock::new();
-    *OFF.get_or_init(|| {
-        matches!(
-            std::env::var("MC_NO_OCCLUSION").as_deref(),
-            Ok("1") | Ok("true")
-        )
-    })
+    *OFF.get_or_init(|| crate::platform::env::flag("MC_NO_OCCLUSION"))
 }
 
 pub fn update_occlusion(

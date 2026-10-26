@@ -6,7 +6,7 @@ mod tree;
 mod usage;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 pub use candidates::Source;
 pub use suggestion::{Range, Suggestion, Suggestions};
@@ -14,7 +14,9 @@ pub use tree::CommandTree;
 
 use crate::text::Span;
 
-use candidates::{completion_suggestions, find_suggestion_context, matches_sub_str};
+use candidates::{
+    completion_suggestions, find_suggestion_context, local_suggestions, matches_sub_str,
+};
 use format::format_text;
 use parse::{Parse, ParseError, error_context, exception_message, parse};
 use usage::smart_usage;
@@ -52,6 +54,7 @@ pub fn update_command_info(
     cursor: usize,
     source: &Source,
     options: Options,
+    server_reply: Option<&Suggestions>,
 ) -> CommandInfo {
     let input: Vec<char> = value.chars().collect();
     let cursor = cursor.min(input.len());
@@ -67,17 +70,11 @@ pub fn update_command_info(
         let start = last_word_index(&input[..cursor]);
         let remaining: String = input[start..cursor].iter().collect();
         let lower = remaining.to_lowercase();
-        let items: Vec<Suggestion> = source
+        let values = source
             .custom_tab_suggestions()
             .into_iter()
-            .filter(|v| matches_sub_str(&lower, &v.to_lowercase()))
-            .filter(|v| *v != remaining)
-            .map(|text| Suggestion {
-                range: Range::between(start, cursor),
-                text,
-                tooltip: None,
-            })
-            .collect();
+            .filter(|v| matches_sub_str(&lower, &v.to_lowercase()));
+        let items = local_suggestions(values, &remaining, Range::between(start, cursor)).collect();
         info.suggestions = Suggestions::create(&input, items);
         return info;
     }
@@ -95,15 +92,24 @@ pub fn update_command_info(
     if cursor < show_from {
         return info;
     }
-    let (suggestions, ask_server) = completion_suggestions(tree, &parse, &input, cursor, source);
+    let (parent, start_pos) = find_suggestion_context(&parse, cursor);
+    let (suggestions, ask_server) =
+        completion_suggestions(tree, parent, start_pos, &input, cursor, source);
     info.suggestions = suggestions;
     if ask_server {
         info.ask_server = Some(input[..cursor].iter().collect());
+        let Some(reply) = server_reply else {
+            return info;
+        };
+        info.suggestions = Suggestions::merge(
+            &input,
+            vec![std::mem::take(&mut info.suggestions), reply.clone()],
+        );
     }
 
     let mut trailing_characters = false;
     if cursor == input.len() {
-        if info.suggestions.is_empty() && !ask_server && !parse.errors.is_empty() {
+        if info.suggestions.is_empty() && !parse.errors.is_empty() {
             let mut literals = 0;
             for (_, error) in &parse.errors {
                 if matches!(error, ParseError::LiteralIncorrect(_)) {
@@ -128,7 +134,6 @@ pub fn update_command_info(
         }
     }
 
-    let (parent, start_pos) = find_suggestion_context(&parse, cursor);
     if info.usage.is_empty() {
         let entries = smart_usage(tree, parent);
         if entries.is_empty() && trailing_characters {
@@ -159,35 +164,27 @@ fn parse_exception(parse: &Parse, input: &[char]) -> String {
     )
 }
 
-fn last_word_index(text: &[char]) -> usize {
-    let mut result = 0usize;
-    let mut i = 0usize;
-    while i < text.len() {
-        if text[i].is_whitespace() {
-            while i < text.len() && text[i].is_whitespace() {
-                i += 1;
-            }
-            result = i;
-        } else {
-            i += 1;
-        }
-    }
-    result
+pub(crate) fn last_word_index(text: &[char]) -> usize {
+    text.iter()
+        .rposition(|c| c.is_whitespace())
+        .map_or(0, |i| i + 1)
 }
 
 #[derive(Default)]
 pub struct SuggestionClient {
     next_id: u32,
     inflight: Option<(u32, String)>,
-    reply: Option<(String, Suggestions)>,
+    replies: Vec<(String, Suggestions)>,
 }
+
+const HELD_REPLIES: usize = 32;
 
 impl SuggestionClient {
     pub fn request(&mut self, command: &str) -> Option<(u32, String)> {
         if self.inflight.as_ref().is_some_and(|(_, s)| s == command) {
             return None;
         }
-        if self.reply.as_ref().is_some_and(|(s, _)| s == command) {
+        if self.reply_for(command).is_some() {
             return None;
         }
         self.next_id = self.next_id.wrapping_add(1);
@@ -199,7 +196,11 @@ impl SuggestionClient {
     pub fn accept(&mut self, id: u32, suggestions: Suggestions) -> bool {
         match self.inflight.take() {
             Some((pending, command)) if pending == id => {
-                self.reply = Some((command, suggestions));
+                self.replies.retain(|(s, _)| *s != command);
+                if self.replies.len() == HELD_REPLIES {
+                    self.replies.remove(0);
+                }
+                self.replies.push((command, suggestions));
                 true
             }
             other => {
@@ -210,9 +211,53 @@ impl SuggestionClient {
     }
 
     pub fn reply_for(&self, command: &str) -> Option<&Suggestions> {
-        match &self.reply {
-            Some((s, suggestions)) if s == command => Some(suggestions),
-            _ => None,
-        }
+        self.replies
+            .iter()
+            .find(|(s, _)| s == command)
+            .map(|(_, suggestions)| suggestions)
     }
+
+    pub fn narrow(&self, command: &str) -> Option<Suggestions> {
+        let mut held: Vec<&(String, Suggestions)> = self
+            .replies
+            .iter()
+            .filter(|(asked, _)| command.starts_with(asked.as_str()))
+            .collect();
+        held.sort_by_key(|(asked, _)| std::cmp::Reverse(asked.len()));
+        held.into_iter()
+            .find_map(|(asked, reply)| narrow_reply(asked, reply, command))
+    }
+}
+
+fn narrow_reply(asked: &str, reply: &Suggestions, command: &str) -> Option<Suggestions> {
+    let tail = command.strip_prefix(asked)?;
+    if reply.is_empty() || tail.chars().any(char::is_whitespace) {
+        return None;
+    }
+    let input: Vec<char> = command.chars().collect();
+    if reply.range.end != asked.chars().count() || reply.range.start > input.len() {
+        return None;
+    }
+    let range = Range::between(reply.range.start, input.len());
+    let typed: String = input[range.start..].iter().collect();
+    let lower = typed.to_lowercase();
+    let items: Vec<Suggestion> = reply
+        .list
+        .iter()
+        .filter(|s| s.text != typed)
+        .filter(|s| {
+            let text = s.text.to_lowercase();
+            let path = text.split_once(':').map_or(text.as_str(), |(_, p)| p);
+            matches_sub_str(&lower, &text) || matches_sub_str(&lower, path)
+        })
+        .map(|s| Suggestion {
+            range,
+            text: s.text.clone(),
+            tooltip: s.tooltip.clone(),
+        })
+        .collect();
+    if items.is_empty() {
+        return None;
+    }
+    Some(Suggestions::create(&input, items))
 }

@@ -3,7 +3,6 @@ use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 
 use super::frame_view::FrameView;
-use super::systems::BlockTileMap;
 use crate::renderer::{ATLAS_COLS, TILE_PX};
 use crate::session::{BreakingBlock, TargetedBlock};
 
@@ -23,6 +22,12 @@ pub struct BreakOverlay {
     pub(super) mesh: Handle<Mesh>,
     pub material: Handle<StandardMaterial>,
     pub(super) shown: Option<BreakingBlock>,
+}
+
+impl BreakOverlay {
+    pub(crate) fn forget_shown(&mut self) {
+        self.shown = None;
+    }
 }
 
 #[derive(Component)]
@@ -283,7 +288,6 @@ pub(super) fn update_break_overlay(
     view: Res<FrameView>,
     mut overlay: ResMut<BreakOverlay>,
     mut meshes: ResMut<Assets<Mesh>>,
-    tile_map: Res<BlockTileMap>,
     mut targets: Query<(&mut Transform, &mut Visibility), With<BreakOverlayMarker>>,
 ) {
     const STAGE_TEX: [&str; 10] = [
@@ -307,15 +311,15 @@ pub(super) fn update_break_overlay(
         return;
     };
 
+    let blocks = crate::blocks::registry();
     let tile = breaking
         .as_ref()
-        .and_then(|b| tile_map.0.get(STAGE_TEX[b.stage.min(9) as usize]).copied());
+        .and_then(|b| blocks.sprites().tile(STAGE_TEX[b.stage.min(9) as usize]));
 
     match (&breaking, tile) {
         (Some(b), Some(tile)) => {
-            let rows = crate::ATLAS_ROWS.get().copied().unwrap_or(1);
             if let Some(mesh) = meshes.get_mut(&overlay.mesh) {
-                *mesh = crumbling_mesh(&b.boxes, tile, rows);
+                *mesh = crumbling_mesh(&b.boxes, tile, blocks.sprites().rows());
             }
             transform.translation = Vec3::new(b.pos[0] as f32, b.pos[1] as f32, b.pos[2] as f32);
             *visibility = Visibility::Visible;
