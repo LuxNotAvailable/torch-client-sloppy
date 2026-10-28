@@ -185,12 +185,12 @@ pub fn build_block_atlas(textures: &Textures, textures_dir: &str) -> (Image, Has
     let opaque_count = opaque.len();
     OPAQUE_TEXTURES.set(opaque).ok();
 
-    let frames = animation_frames(&entries, textures_dir);
+    let (frames, strips) = animation_frames(&entries, textures_dir);
     let base_count = entries.len();
     let mut packed = entries.clone();
     packed.extend(frames.iter().map(|f| (f.name.as_str(), &f.image)));
     let (atlas_data, atlas_w, atlas_h, mut tex_to_tile) = pack_tiles(&packed);
-    publish_animations(&frames, &mut tex_to_tile, base_count + 1);
+    publish_animations(&frames, strips, &mut tex_to_tile, base_count + 1);
     let entity_textures = crate::blockentities::bake::textures(textures_dir);
     let (atlas_data, atlas_h, regions) =
         append_regions(atlas_data, atlas_w, atlas_h, &entity_textures);
@@ -251,14 +251,13 @@ struct AnimatedStrip {
     meta: super::block_anim::Meta,
 }
 
-static STRIPS: std::sync::Mutex<Vec<AnimatedStrip>> = std::sync::Mutex::new(Vec::new());
-
 /// Crops every frame but the first out of each animated strip. The first is
-/// what `blit_tile` already copies into the texture's own tile.
+/// what `blit_tile` already copies into the texture's own tile. The strips
+/// come back with the frames, so builds running at once never share them.
 fn animation_frames(
     entries: &[(&str, &image::RgbaImage)],
     textures_dir: &str,
-) -> Vec<AnimationFrame> {
+) -> (Vec<AnimationFrame>, Vec<AnimatedStrip>) {
     let mut frames = Vec::new();
     let mut strips = Vec::new();
     for (stem, rgba) in entries {
@@ -290,14 +289,14 @@ fn animation_frames(
             meta,
         });
     }
-    *STRIPS.lock().unwrap() = strips;
-    frames
+    (frames, strips)
 }
 
 /// Takes the frame tiles back out of the texture map, which only names real
 /// textures, and hands the playback order to the shader's remap table.
 fn publish_animations(
     frames: &[AnimationFrame],
+    strips: Vec<AnimatedStrip>,
     tiles: &mut HashMap<String, u32>,
     tile_count: usize,
 ) {
@@ -313,7 +312,6 @@ fn publish_animations(
             frame_tiles.insert((frame.stem.as_str(), index), tile);
         }
     }
-    let strips = std::mem::take(&mut *STRIPS.lock().unwrap());
     let mut animations = Vec::with_capacity(strips.len());
     for strip in &strips {
         let Some(&base) = tiles.get(&strip.stem) else {

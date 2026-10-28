@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI, TAU};
 
 use bevy::asset::RenderAssetUsages;
+use bevy::camera::visibility::RenderLayers;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 
@@ -922,6 +923,8 @@ struct Rig {
 pub(crate) struct PlayerRigs {
     entries: Vec<Rig>,
     local: Option<Rig>,
+    /// The local player again, for the inventory to show.
+    figure: Option<Rig>,
     scratch: SlotScratch,
 }
 
@@ -1025,14 +1028,28 @@ fn setup_player_model(
         armor: ARMOR_LAYERS.map(|layer| bake_armor(layer(), &mut meshes)),
     };
 
-    rigs.local = Some(spawn_rig(&mut commands, &assets, &mut materials));
+    rigs.local = Some(spawn_rig(
+        &mut commands,
+        &assets,
+        &mut materials,
+        RenderLayers::default(),
+    ));
+    rigs.figure = Some(spawn_rig(
+        &mut commands,
+        &assets,
+        &mut materials,
+        RenderLayers::layer(super::inventory_figure::FIGURE_LAYER),
+    ));
     commands.insert_resource(assets);
 }
 
+/// Spawns a player rig whose meshes draw on `layers`: the world's for the
+/// players in it, the inventory figure's for the copy the inventory shows.
 fn spawn_rig(
     commands: &mut Commands,
     assets: &PlayerModelAssets,
     materials: &mut Assets<EntityMaterial>,
+    layers: RenderLayers,
 ) -> Rig {
     let lit = Lit::full_bright();
     let skin_material = |materials: &mut Assets<EntityMaterial>| {
@@ -1095,6 +1112,7 @@ fn spawn_rig(
                 Transform::from_translation(Vec3::from(def.pivot)),
                 Visibility::Inherited,
                 RigPart,
+                layers.clone(),
                 Name::new(def.name),
             ))
             .id();
@@ -1118,6 +1136,7 @@ fn spawn_rig(
                     shown: HeldItem::default(),
                     blocking: false,
                 },
+                layers.clone(),
                 Name::new(if arm == PART_RIGHT_ARM {
                     "right_hand_item"
                 } else {
@@ -1150,6 +1169,7 @@ fn spawn_rig(
                 Transform::from_translation(Vec3::from(CAPE.pivot)),
                 Visibility::Hidden,
                 RigPart,
+                layers.clone(),
                 Name::new(CAPE.name),
             ))
             .id();
@@ -1178,6 +1198,7 @@ fn spawn_rig(
                 Transform::default(),
                 Visibility::Hidden,
                 RigPart,
+                layers.clone(),
                 Name::new(if i == 0 { "left_wing" } else { "right_wing" }),
             ))
             .id();
@@ -1206,6 +1227,7 @@ fn spawn_rig(
                         Transform::default(),
                         Visibility::Hidden,
                         RigArmor,
+                        layers.clone(),
                         Name::new(ARMOR_SLOT_NAMES[slot]),
                     ))
                     .id();
@@ -1346,7 +1368,6 @@ struct WornSkin {
 }
 
 fn sync_player_models(
-    shared: Res<crate::renderer::systems::Shared>,
     view: Res<crate::renderer::frame_view::FrameView>,
     freecam: Res<crate::renderer::input::FreecamState>,
     third_person: Res<crate::renderer::input::ThirdPersonState>,
@@ -1361,9 +1382,10 @@ fn sync_player_models(
     mut entity_materials: ResMut<Assets<EntityMaterial>>,
     mut armor_textures: ResMut<ArmorTextures>,
     #[cfg(feature = "skins")] mut skin_textures: ResMut<super::skin::SkinTextures>,
-    (lightmap, occlusion): (
+    (lightmap, occlusion, figure): (
         Res<crate::renderer::systems::LightmapState>,
         Res<crate::renderer::occlusion::OcclusionState>,
+        Res<super::inventory_figure::InventoryFigure>,
     ),
 ) {
     crate::prof_span!("render:sync_player_models");
@@ -1384,10 +1406,10 @@ fn sync_player_models(
     let dirs = diffuse_lights(crate::renderer::dimension::current());
 
     let partial = view.partial;
+    // The players of the tick being drawn, which `partial` is measured
+    // against; the session's own may already be a tick ahead.
     let players: Vec<(i32, [f32; 3], AnimSample, WornSkin)> = {
-        let s = shared.0.lock().unwrap();
-        s.session
-            .other_players
+        view.players
             .iter()
             .map(|p| {
                 (
@@ -1449,8 +1471,12 @@ fn sync_player_models(
         let slot = match free.pop() {
             Some(i) => i,
             None => {
-                rigs.entries
-                    .push(spawn_rig(&mut commands, &assets, items.entity_materials));
+                rigs.entries.push(spawn_rig(
+                    &mut commands,
+                    &assets,
+                    items.entity_materials,
+                    RenderLayers::default(),
+                ));
                 taken.push(false);
                 rigs.entries.len() - 1
             }
@@ -1498,6 +1524,41 @@ fn sync_player_models(
         }
     }
     rigs.scratch = scratch;
+
+    // The inventory figure: vanilla's world light at the player, under the
+    // inventory's own light directions.
+    if let Some(rig) = &mut rigs.figure {
+        match figure.0 {
+            Some(figure) => {
+                let pose = figure.pose(&local_pose);
+                let lit = Lit {
+                    dirs: super::inventory_figure::inventory_lights(),
+                    ..player_lit(&lightmap.current, local_pos, &local_pose, dirs)
+                };
+                let origin = super::inventory_figure::FIGURE_ORIGIN.to_array();
+                apply_rig(
+                    rig,
+                    origin,
+                    &pose,
+                    &local_skin,
+                    RigVisibility::Shown,
+                    lit,
+                    &mut queries,
+                    &mut items,
+                );
+                if let Ok((mut transform, _)) = queries.0.get_mut(rig.root) {
+                    transform.rotation = figure.lean() * transform.rotation;
+                }
+            }
+            None => {
+                if let Ok((_, mut vis)) = queries.0.get_mut(rig.root)
+                    && *vis != Visibility::Hidden
+                {
+                    *vis = Visibility::Hidden;
+                }
+            }
+        }
+    }
 
     if let Some(local) = &mut rigs.local {
         let lit = player_lit(&lightmap.current, local_pos, &local_pose, dirs);

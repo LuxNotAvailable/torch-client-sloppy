@@ -121,7 +121,8 @@ pub struct SessionState {
     pub flying: bool,
     pub auto_jump: bool,
     pub fov: FovState,
-    pub other_players: Vec<OtherPlayerInfo>,
+    pub view_bob: ViewBob,
+    pub other_players: std::sync::Arc<Vec<OtherPlayerInfo>>,
     pub menu_slots: Vec<SlotStack>,
     pub hotbar: std::sync::Arc<[SlotStack]>,
     pub armor: crate::renderer::Armor,
@@ -296,6 +297,42 @@ impl SessionState {
             self.title_times = None;
         }
         self.titles_clear = Some(reset_times);
+    }
+}
+
+/// `ClientAvatarState`'s walk distance and bob, which drive view bobbing.
+#[derive(Clone, Copy, Default, Debug, PartialEq)]
+pub struct ViewBob {
+    pub walk: f32,
+    pub walk_prev: f32,
+    pub bob: f32,
+    pub bob_prev: f32,
+}
+
+impl ViewBob {
+    /// One tick, as `AbstractClientPlayer` runs it: the bob eases 40% of the
+    /// way toward the horizontal speed (at most 0.1) while walking on the
+    /// ground, toward 0 otherwise, and the walk distance grows by 0.6 of the
+    /// horizontal distance moved. Riding drops the bob to 0 at once.
+    pub fn tick(&mut self, moved: f32, speed: f32, walking: bool, riding: bool) {
+        self.walk_prev = self.walk;
+        self.bob_prev = self.bob;
+        if riding {
+            self.bob = 0.0;
+        } else {
+            let target = if walking { speed.min(0.1) } else { 0.0 };
+            self.bob += (target - self.bob) * 0.4;
+        }
+        self.walk += moved * 0.6;
+    }
+
+    /// `getBackwardsInterpolatedWalkDistance` and `getInterpolatedBob`.
+    pub fn sample(&self, partial: f32) -> (f32, f32) {
+        let walked = self.walk - self.walk_prev;
+        (
+            -(self.walk + walked * partial),
+            self.bob_prev + (self.bob - self.bob_prev) * partial,
+        )
     }
 }
 

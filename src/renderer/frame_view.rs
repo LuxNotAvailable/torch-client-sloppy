@@ -24,6 +24,8 @@ pub struct FrameView {
     pub day_rate: f32,
     pub biome: Option<BiomeLayer>,
     pub fov_modifier: f32,
+    /// The backwards walk distance and the bob, for view bobbing.
+    pub view_bob: (f32, f32),
     pub camera_yaw: f32,
     pub camera_pitch: f32,
     pub in_world: bool,
@@ -35,6 +37,8 @@ pub struct FrameView {
     pub crosshair_entity: Option<i32>,
     pub main_hand_left: bool,
     pub entities: Arc<Vec<EntityAnim>>,
+    /// Other players, from the same tick as `entities` and `partial`.
+    pub players: Arc<Vec<crate::session::OtherPlayerInfo>>,
     pub block_entities:
         Arc<std::collections::HashMap<[i32; 3], crate::blockentities::feed::BlockEntityInfo>>,
     pub block_entities_version: u64,
@@ -64,7 +68,9 @@ struct TickInputs {
     env_prev: Option<BiomeLayer>,
     env: Option<BiomeLayer>,
     fov: crate::session::FovState,
+    view_bob: crate::session::ViewBob,
     entities: Arc<Vec<EntityAnim>>,
+    players: Arc<Vec<crate::session::OtherPlayerInfo>>,
     local_anim: crate::renderer::anim::HumanoidAnim,
 }
 
@@ -78,7 +84,9 @@ impl TickInputs {
             env_prev: session.env_prev,
             env: session.env,
             fov: session.fov,
+            view_bob: session.view_bob,
             entities: session.entities.clone(),
+            players: session.other_players.clone(),
             local_anim: session.local_anim.clone(),
         }
     }
@@ -210,6 +218,7 @@ impl FrameView {
             (_, now) => now,
         };
         self.fov_modifier = tick.fov.sample(partial);
+        self.view_bob = tick.view_bob.sample(partial);
         self.camera_yaw = s.camera_yaw;
         self.camera_pitch = s.camera_pitch;
         self.in_world = s.in_world;
@@ -221,6 +230,7 @@ impl FrameView {
         self.crosshair_entity = session.crosshair_entity;
         self.main_hand_left = s.skin_prefs.main_hand_left;
         self.entities = tick.entities;
+        self.players = tick.players;
         self.game_time = session.game_time;
         self.op_level = session.op_level;
         #[cfg(feature = "skins")]

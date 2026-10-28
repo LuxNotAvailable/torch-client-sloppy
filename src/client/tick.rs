@@ -884,6 +884,12 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
         ],
     );
 
+    let (bob_ground, bob_speed) = bot
+        .component::<azalea::entity::Physics>()
+        .map_or((false, 0.0), |p| {
+            (p.on_ground(), (p.velocity.x.powi(2) + p.velocity.z.powi(2)).sqrt() as f32)
+        });
+    let bob_riding = crate::client::tracking::local_vehicle_id().is_some();
     let (
         flags,
         auto_jump_enabled,
@@ -903,6 +909,12 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
         swap_hands,
     ) = {
         let mut s = shared.lock().unwrap();
+        {
+            let [px, _, pz] = s.session.player_pos;
+            let moved = ((pos.x as f32 - px).powi(2) + (pos.z as f32 - pz).powi(2)).sqrt();
+            let walking = bob_ground && !s.session.dead && !s.session.swimming;
+            s.session.view_bob.tick(moved, bob_speed, walking, bob_riding);
+        }
         s.session.player_pos_prev = s.session.player_pos;
         s.session.player_pos = [pos.x as f32, pos.y as f32, pos.z as f32];
         s.session.last_tick_time = Some(crate::platform::time::Instant::now());
@@ -913,7 +925,7 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
             s.session.env_prev = s.session.env.or(Some(env));
             s.session.env = Some(env);
         }
-        s.session.other_players = other_positions;
+        s.session.other_players = Arc::new(other_positions);
         s.session.local_anim = local_anim;
         #[cfg(feature = "skins")]
         {

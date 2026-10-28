@@ -31,6 +31,9 @@ pub const UNIHEX_UV_BIAS: f32 = 2.0;
 /// Added to `v` on the quads the GUI shader shades as enchantment glint.
 pub const GLINT_UV_BIAS: f32 = 2.0;
 
+/// Taken from `u` on the quad that shows the inventory's player figure.
+pub const FIGURE_UV_BIAS: f32 = 2.0;
+
 fn gui_vertex_layout() -> VertexBufferLayout {
     VertexBufferLayout {
         array_stride: GUI_VERTEX_STRIDE,
@@ -58,7 +61,7 @@ fn gui_vertex_layout() -> VertexBufferLayout {
 #[derive(Resource, Default)]
 pub struct GuiBindGroup {
     pub group: Option<BindGroup>,
-    key: Option<(TextureViewId, TextureViewId, TextureViewId)>,
+    key: Option<(TextureViewId, TextureViewId, TextureViewId, TextureViewId)>,
 }
 
 #[derive(Resource, Default)]
@@ -87,6 +90,8 @@ fn two_texture_layout() -> BindGroupLayoutDescriptor {
     let entries = BindGroupLayoutEntries::sequential(
         ShaderStages::FRAGMENT,
         (
+            texture_2d(TextureSampleType::Float { filterable: true }),
+            sampler(SamplerBindingType::Filtering),
             texture_2d(TextureSampleType::Float { filterable: true }),
             sampler(SamplerBindingType::Filtering),
             texture_2d(TextureSampleType::Float { filterable: true }),
@@ -173,6 +178,7 @@ fn prepare_gui_bind_group(
     pipeline_cache: Res<PipelineCache>,
     pipeline: Res<GuiPipeline>,
     textures: Option<Res<GuiTextures>>,
+    figure: Option<Res<crate::renderer::inventory_figure::FigureImage>>,
     images: Res<RenderAssets<GpuImage>>,
     mut bind_group: ResMut<GuiBindGroup>,
 ) {
@@ -187,11 +193,19 @@ fn prepare_gui_bind_group(
     let glint = images
         .get(&crate::renderer::entity_material::GLINT_ITEM)
         .unwrap_or(atlas);
+    // The inventory figure's texture, made the first time a figure shows;
+    // the GUI draws no figure quad before then.
+    let figure = figure
+        .as_ref()
+        .and_then(|f| f.0.as_ref())
+        .and_then(|handle| images.get(handle))
+        .unwrap_or(atlas);
 
     let key = (
         atlas.texture_view.id(),
         unihex.texture_view.id(),
         glint.texture_view.id(),
+        figure.texture_view.id(),
     );
     if bind_group.key == Some(key) && bind_group.group.is_some() {
         return;
@@ -208,6 +222,8 @@ fn prepare_gui_bind_group(
             &unihex.sampler,
             &glint.texture_view,
             &glint.sampler,
+            &figure.texture_view,
+            &figure.sampler,
         )),
     ));
     bind_group.key = Some(key);

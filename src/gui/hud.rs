@@ -1574,13 +1574,21 @@ fn draw_bar(
 /// nothing until a server's voice chat answers, then whether the
 /// microphone is sending, muted or off.
 #[cfg(voice)]
-pub fn draw_voice(p: &mut Painter, ctx: &ScreenCtx, display: crate::gui::VoiceStatusDisplay) {
+/// Voice chat's state, bottom left. `preview` shows it even when voice chat
+/// is not connected, for placing it in the HUD editor.
+pub fn draw_voice(
+    p: &mut Painter,
+    ctx: &ScreenCtx,
+    display: crate::gui::VoiceStatusDisplay,
+    preview: bool,
+) {
     use crate::gui::VoiceStatusDisplay;
     use crate::voice::{Activation, Status};
     if display == VoiceStatusDisplay::Off {
         return;
     }
     let (text, color) = match crate::voice::status() {
+        Status::Off | Status::Requested if preview => ("Voice chat", 0xAAAAAA),
         Status::Off | Status::Requested => return,
         _ if crate::voice::disabled() => ("Voice chat off", 0xFF5555),
         Status::Authenticating => ("Voice chat connecting", 0xAAAAAA),

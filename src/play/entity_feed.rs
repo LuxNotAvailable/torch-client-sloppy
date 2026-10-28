@@ -17,6 +17,7 @@ use crate::entities;
 pub(crate) mod entity_event {
     pub const JUMP: u8 = 1;
     pub const START_ATTACKING: u8 = 4;
+    pub const USE_ITEM_COMPLETE: u8 = 9;
     pub const SHAKE_WETNESS: u8 = 8;
     pub const EAT_GRASS: u8 = 10;
     pub const OFFER_FLOWER: u8 = 11;

@@ -382,13 +382,14 @@ pub struct GuiOptions {
     pub particles: crate::util::particles::ParticleStatus,
     pub render_distance: u32,
     pub gamma: u32,
-    pub antialiasing: bool,
+    pub antialiasing: crate::renderer::antialias::Antialiasing,
     pub smooth_lighting: bool,
     pub lighting_enabled: bool,
     pub max_fps: u32,
     pub vsync: bool,
     pub render_backend: RenderBackend,
     pub auto_jump: bool,
+    pub view_bobbing: bool,
     /// Vanilla `mouseSensitivity` as a percent: 0..=200, 100 is the default.
     pub mouse_sensitivity: u32,
     pub invert_x: bool,
@@ -626,9 +627,7 @@ impl Default for GuiOptions {
                 .map(|v| v as u32)
                 .unwrap_or(GAMMA_DEFAULT)
                 .min(GAMMA_MAX),
-            antialiasing: value("antialiasing")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false),
+            antialiasing: crate::renderer::antialias::Antialiasing::read(value),
             smooth_lighting: value("ao")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(SMOOTH_LIGHTING_DEFAULT),
@@ -646,6 +645,7 @@ impl Default for GuiOptions {
             render_backend: value("renderBackend")
                 .and_then(|v| v.as_str().and_then(RenderBackend::from_serialized_name))
                 .unwrap_or_default(),
+            view_bobbing: value("bobView").and_then(|v| v.as_bool()).unwrap_or(true),
             auto_jump: value("autoJump")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(AUTO_JUMP_DEFAULT),
@@ -788,13 +788,13 @@ pub fn save_options(options: &GuiOptions) {
         "particles": options.particles.serialized_name(),
         "renderDistance": options.render_distance,
         "gamma": options.gamma,
-        "antialiasing": options.antialiasing,
         "ao": options.smooth_lighting,
         "lightingEnabled": options.lighting_enabled,
         "maxFps": options.max_fps,
         "vsync": options.vsync,
         "renderBackend": options.render_backend.serialized_name(),
         "autoJump": options.auto_jump,
+        "bobView": options.view_bobbing,
         "mouseSensitivity": options.mouse_sensitivity as f64 / MOUSE_SENSITIVITY_MAX as f64,
         "invertXMouse": options.invert_x,
         "invertYMouse": options.invert_y,
@@ -853,6 +853,9 @@ pub fn save_options(options: &GuiOptions) {
             .collect();
         map.insert("voicePlayerVolumes".into(), serde_json::Value::Object(volumes));
     }
+    options
+        .antialiasing
+        .write(json.as_object_mut().expect("json! object literal"));
     json.as_object_mut()
         .expect("json! object literal")
         .insert("blockInfo".into(), options.block_info.save());

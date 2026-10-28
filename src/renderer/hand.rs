@@ -1265,7 +1265,12 @@ fn setup_hand(
             "decorations",
         );
         commands.entity(pose).add_child(map);
-        commands.entity(camera).add_children(&[pose, arm]);
+        // The poses hang from a node that carries the view bob.
+        let bob = commands
+            .spawn((crate::renderer::view_bob::HandBob, Transform::IDENTITY, Visibility::Inherited))
+            .add_children(&[pose, arm])
+            .id();
+        commands.entity(camera).add_child(bob);
 
         HandEntities {
             pose,
@@ -1284,7 +1289,7 @@ fn setup_hand(
     commands.insert_resource(assets);
 }
 
-fn follow_world_camera(
+pub(crate) fn follow_world_camera(
     world: Query<&Transform, With<crate::renderer::systems::WorldCamera>>,
     mut hand: Query<
         (&mut Transform, &mut Projection),

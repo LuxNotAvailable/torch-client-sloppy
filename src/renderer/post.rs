@@ -94,7 +94,10 @@ fn post_enabled() -> bool {
 #[allow(clippy::type_complexity)]
 fn apply_pipeline(
     mut commands: Commands,
-    cameras: Query<(Entity, Has<Hdr>), With<Camera>>,
+    cameras: Query<
+        (Entity, Has<Hdr>),
+        (With<Camera>, Without<super::inventory_figure::FigureCamera>),
+    >,
     mut hand: Query<(Entity, Has<Graded>, &mut Tonemapping), With<HandCamera>>,
 ) {
     let fancy = post_enabled();

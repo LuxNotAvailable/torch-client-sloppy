@@ -29,6 +29,7 @@ impl Plugin for ParticlePlugin {
             .add_systems(
                 Update,
                 (
+                    share_item_icons,
                     spawn_particles,
                     spawn_crit_particles,
                     animate_tick_particles,
@@ -196,8 +197,17 @@ struct BatchKey {
     block_light: u8,
     sky_light: u8,
     dim: u8,
-    terrain: bool,
+    source: Source,
     translucent: bool,
+}
+
+/// The texture a particle's sprite comes from.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Source {
+    Sheet,
+    Terrain,
+    /// Item icons in the GUI atlas, for item particles.
+    Items,
 }
 
 #[derive(Resource, Default)]
@@ -245,6 +255,67 @@ const TRANSLUCENT: u8 = 1 << 2;
 const FULLBRIGHT: u8 = 1 << 3;
 const CRIT_DECAY: u8 = 1 << 4;
 const FADE_OUT: u8 = 1 << 5;
+const ITEMS: u8 = 1 << 6;
+
+/// The GUI atlas, whose item icons item particles are cut from.
+static ITEM_ICONS: std::sync::RwLock<Option<std::sync::Arc<crate::gui::atlas::GuiAtlas>>> =
+    std::sync::RwLock::new(None);
+
+fn share_item_icons(assets: Option<Res<crate::gui::render::GuiAssets>>, mut done: Local<bool>) {
+    if *done {
+        return;
+    }
+    let Some(assets) = assets else { return };
+    *done = true;
+    if let Ok(mut icons) = ITEM_ICONS.write() {
+        *icons = Some(assets.atlas.clone());
+    }
+}
+
+/// An item's icon in the GUI atlas, as UVs.
+fn item_icon_uv(id: &str) -> Option<[f32; 4]> {
+    let icons = ITEM_ICONS.read().ok()?;
+    let atlas = icons.as_ref()?;
+    let region = atlas.item_for_size(id, 16.0)?;
+    let (w, h) = atlas.size();
+    let (w, h) = (w as f32, h as f32);
+    Some([
+        region.x as f32 / w,
+        region.y as f32 / h,
+        (region.x + region.w) as f32 / w,
+        (region.y + region.h) as f32 / h,
+    ])
+}
+
+/// `BreakingItemParticle`: a quarter of the item's icon, flung at the
+/// given speed with a little scatter, falling under full gravity.
+fn item_recipe(
+    stack: &azalea_inventory::ItemStack,
+    arg: Vec3,
+    rng: &mut JavaRandom,
+) -> Option<Recipe> {
+    let azalea_inventory::ItemStack::Present(data) = stack else {
+        return None;
+    };
+    let name = data.kind.to_string();
+    let [u0, v0, u1, v1] = item_icon_uv(name.strip_prefix("minecraft:").unwrap_or(&name))?;
+    let (tw, th) = ((u1 - u0) / 4.0, (v1 - v0) / 4.0);
+    let uo = rng.next_f32() * 3.0;
+    let vo = rng.next_f32() * 3.0;
+    // `getU0` is the right edge of the window and `getU1` the left, so the
+    // piece is mirrored, as vanilla draws it.
+    let uv = [
+        u0 + (uo + 1.0) * tw,
+        v0 + vo * th,
+        u0 + uo * tw,
+        v0 + (vo + 1.0) * th,
+    ];
+    let mut r = base_recipe(Sprite::Fixed(uv), rng);
+    r.velocity = base_velocity(Vec3::ZERO, rng) * 0.1 + arg;
+    r.size /= 2.0;
+    r.flags = PHYSICS | ITEMS;
+    Some(r)
+}
 
 const DESTROY_GRID: i32 = 4;
 
@@ -2055,7 +2126,8 @@ fn recipe(
             Some(r)
         }
 
-        P::Item(_) | P::ItemSlime | P::ItemSnowball | P::ItemCobweb => None,
+        P::Item(item) => item_recipe(&item.item, arg, rng),
+        P::ItemSlime | P::ItemSnowball | P::ItemCobweb => None,
         P::GustEmitterLarge | P::GustEmitterSmall => None,
 
         _ => generic_recipe(atlas, name, arg, rng),
@@ -2370,7 +2442,9 @@ fn tick_particles(time: Res<Time>, mut live: ResMut<LiveParticles>) {
 #[derive(Component)]
 pub(crate) struct ParticleBatch;
 
+#[allow(clippy::too_many_arguments)]
 fn draw_particles(
+    gui_assets: Option<Res<crate::gui::render::GuiAssets>>,
     lightmap: Res<LightmapState>,
     chunk_material: Res<ChunkMaterial>,
     standard: Res<Assets<StandardMaterial>>,
@@ -2403,6 +2477,7 @@ fn draw_particles(
     let dim = crate::renderer::dimension::current();
     let dirs = diffuse_lights(dim);
     let terrain_atlas = particle_atlas(&chunk_material, &standard);
+    let item_atlas = gui_assets.as_ref().map(|a| a.image.clone());
     let sheet = atlas.0.as_ref();
     let origin = (camera.translation() / 16.0).floor() * 16.0;
     let rotation = camera.rotation();
@@ -2423,11 +2498,19 @@ fn draw_particles(
             if particle.tick_acc < 0.0 {
                 continue;
             }
-            let terrain = particle.flags & TERRAIN != 0;
-            if terrain && terrain_atlas.is_none() {
-                continue;
-            }
-            if !terrain && sheet.is_none() {
+            let source = if particle.flags & TERRAIN != 0 {
+                Source::Terrain
+            } else if particle.flags & ITEMS != 0 {
+                Source::Items
+            } else {
+                Source::Sheet
+            };
+            let missing = match source {
+                Source::Terrain => terrain_atlas.is_none(),
+                Source::Items => item_atlas.is_none(),
+                Source::Sheet => sheet.is_none(),
+            };
+            if missing {
                 continue;
             }
             let (block_light, sky_light) = if particle.flags & FULLBRIGHT != 0 {
@@ -2443,7 +2526,7 @@ fn draw_particles(
                 block_light,
                 sky_light,
                 dim: dim as u8,
-                terrain,
+                source,
                 translucent: particle.flags & TRANSLUCENT != 0,
             };
             let slot = match index.get(&key) {
@@ -2472,10 +2555,19 @@ fn draw_particles(
 
     for slot in 0..used {
         let key = batches.keys[slot];
-        let image = match (key.terrain, terrain_atlas.as_ref(), sheet) {
-            (true, Some(atlas), _) => atlas.clone(),
-            (false, _, Some(sheet)) => sheet.image.clone(),
-            _ => continue,
+        let image = match key.source {
+            Source::Terrain => match terrain_atlas.as_ref() {
+                Some(atlas) => atlas.clone(),
+                None => continue,
+            },
+            Source::Items => match item_atlas.as_ref() {
+                Some(atlas) => atlas.clone(),
+                None => continue,
+            },
+            Source::Sheet => match sheet {
+                Some(sheet) => sheet.image.clone(),
+                None => continue,
+            },
         };
         let material = batch_material(
             &mut material_cache,

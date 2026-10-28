@@ -4,6 +4,13 @@
 @group(0) @binding(3) var unihex_sampler: sampler;
 @group(0) @binding(4) var glint_texture: texture_2d<f32>;
 @group(0) @binding(5) var glint_sampler: sampler;
+@group(0) @binding(6) var figure_texture: texture_2d<f32>;
+@group(0) @binding(7) var figure_sampler: sampler;
+
+// The inventory's player figure, drawn into its own texture: its quad's `u`
+// runs from -2 to -1.
+const FIGURE_UV_BIAS: f32 = 2.0;
+const FIGURE_UV_TEST: f32 = -0.5;
 
 const UNIHEX_UV_BIAS: f32 = 2.0;
 const UNIHEX_UV_TEST: f32 = 1.5;
@@ -62,6 +69,10 @@ fn glint(uv: vec2<f32>, phase: vec2<f32>) -> vec3<f32> {
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
+    if in.uv.x < FIGURE_UV_TEST {
+        let uv = vec2(in.uv.x + FIGURE_UV_BIAS, in.uv.y);
+        return in.color * textureSampleLevel(figure_texture, figure_sampler, uv, 0.0);
+    }
     if in.uv.y >= GLINT_UV_TEST {
         // Drawn over the icon itself, so it repaints the icon with the glint
         // added as vanilla's (SRC_COLOR, ONE) blend adds it: the glint squared

@@ -261,7 +261,10 @@ pub fn draw(
         hud::draw_overlays(p, &ctx, &state.hud_overlays, snap.gamemode, &mut elements);
         #[cfg(voice)]
         if state.screen != Screen::Chat {
-            hud::draw_voice(p, &ctx, state.options.voice.status);
+            let status = state.options.voice.status;
+            elements.draw(p, ctx.vw, ctx.vh, ElementId::Voice, |p| {
+                hud::draw_voice(p, &ctx, status, editing);
+            });
         }
     }
 
@@ -1220,6 +1223,15 @@ fn draw_inventory(
     let (left, top) = container::window_origin(Layout::PlayerMenu, ctx);
     dim_background(p, ctx.vw, ctx.vh);
     p.blit_sheet("container/inventory", 0.0, 0.0, INV_W, INV_H, left, top);
+    p.figure(crate::renderer::inventory_figure::Figure {
+        x0: left + 26.0,
+        y0: top + 8.0,
+        x1: left + 75.0,
+        y1: top + 78.0,
+        size: 30.0,
+        offset_y: 0.0625,
+        mouse: ctx.mouse(),
+    });
     let hovered = slots::panel(
         p,
         Layout::PlayerMenu,

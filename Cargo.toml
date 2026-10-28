@@ -8,7 +8,7 @@ name = "torch_client"
 crate-type = ["rlib"]
 
 [features]
-default = ["asset_download", "multiversion", "full_font", "skins", "online_mode", "shader_support", "audio", "voice"]
+default = ["asset_download", "multiversion", "full_font", "skins", "online_mode", "shader_support", "audio", "voice", "hud_editor"]
 
 skins = ["dep:reqwest", "dep:rustls"]
 
@@ -124,6 +124,7 @@ bevy = { version = "0.18", default-features = false, features = [
     "bevy_core_pipeline",
     "bevy_pbr",
     "bevy_light",
+    "bevy_anti_alias",
     "tonemapping_luts",
     "ktx2",
     "zstd_rust",

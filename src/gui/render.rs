@@ -695,6 +695,7 @@ pub(crate) fn draw_gui(
     time: Res<Time>,
     frames: Res<GuiFrames>,
     mut scratch: Local<crate::gui::painter::PainterBuffers>,
+    mut figure: ResMut<crate::renderer::inventory_figure::InventoryFigure>,
     #[cfg(feature = "skins")] mut faces: ResMut<crate::gui::player_faces::PlayerFaces>,
 ) {
     #[cfg(feature = "budget")]
@@ -720,6 +721,9 @@ pub(crate) fn draw_gui(
         #[cfg(feature = "skins")]
         &mut faces,
     );
+    if figure.0 != painter.figure {
+        figure.0 = painter.figure;
+    }
     let bufs = painter.into_buffers();
 
     frames.push(

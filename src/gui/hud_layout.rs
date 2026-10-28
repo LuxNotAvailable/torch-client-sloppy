@@ -86,6 +86,7 @@ elements! {
     UseButton = "use_button", "Use button";
     JumpButton = "jump_button", "Jump button";
     ChatButton = "chat_button", "Chat button";
+    Voice = "voice", "Voice status";
 }
 
 const _: () = assert!(COUNT <= 32);
@@ -115,6 +116,7 @@ impl ElementId {
                 | ElementId::UseButton
                 | ElementId::JumpButton
                 | ElementId::ChatButton
+                | ElementId::Voice
         )
     }
 
@@ -194,6 +196,8 @@ impl ElementId {
             ElementId::UseButton => Rect::new(vw - 60.0, vh - 80.0, 50.0, 50.0),
             ElementId::JumpButton => Rect::new(vw - 100.0, vh - 60.0, 30.0, 30.0),
             ElementId::ChatButton => Rect::new(vw - 30.0, 8.0, 24.0, 24.0),
+            // The icon's square, or the text line, in the bottom-left corner.
+            ElementId::Voice => Rect::new(2.0, vh.floor() - 13.0, 130.0, 11.0),
             _ => Rect::new(2.0, 2.0, 60.0, 9.0),
         }
     }

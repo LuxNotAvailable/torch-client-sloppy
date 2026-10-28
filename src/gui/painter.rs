@@ -1,5 +1,5 @@
 use crate::gui::atlas::{GuiAtlas, Region, Scaling};
-use crate::gui::draw::UNIHEX_UV_BIAS;
+use crate::gui::draw::{FIGURE_UV_BIAS, UNIHEX_UV_BIAS};
 use crate::text::{Glyph, Span, Style};
 use crate::util::mth::srgb_to_linear;
 
@@ -89,6 +89,8 @@ pub struct Painter<'a> {
     xform: (f32, f32, f32),
     /// The cosine and sine of the turn `rotated` applies about `xform`'s origin.
     turn: (f32, f32),
+    /// The inventory's player figure, when this frame draws one.
+    pub figure: Option<crate::renderer::inventory_figure::Figure>,
 }
 
 #[derive(Clone, Copy)]
@@ -125,6 +127,7 @@ impl<'a> Painter<'a> {
             clip: None,
             xform: (1.0, 0.0, 0.0),
             turn: (1.0, 0.0),
+            figure: None,
         }
     }
 
@@ -303,6 +306,34 @@ impl<'a> Painter<'a> {
         self.uvs.push([au0, av1]);
         for _ in 0..4 {
             self.colors.push(color);
+        }
+        self.indices
+            .extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+    }
+
+    /// The player figure in its box (`extractEntityInInventoryFollowsMouse`).
+    /// The renderer draws it into its own texture for the next frames; the
+    /// quad that shows it is drawn once that texture holds it.
+    pub fn figure(&mut self, figure: crate::renderer::inventory_figure::Figure) {
+        self.figure = Some(figure);
+        if !crate::renderer::inventory_figure::ready() {
+            return;
+        }
+        let (x, y) = (figure.x0, figure.y0);
+        let (w, h) = (figure.x1 - figure.x0, figure.y1 - figure.y0);
+        let base = self.positions.len() as u32;
+        let corners = [
+            self.place(x, y),
+            self.place(x + w, y),
+            self.place(x + w, y + h),
+            self.place(x, y + h),
+        ];
+        self.positions.extend_from_slice(&corners);
+        let (u0, u1) = (-FIGURE_UV_BIAS, 1.0 - FIGURE_UV_BIAS);
+        self.uvs
+            .extend_from_slice(&[[u0, 0.0], [u1, 0.0], [u1, 1.0], [u0, 1.0]]);
+        for _ in 0..4 {
+            self.colors.push([1.0; 4]);
         }
         self.indices
             .extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);

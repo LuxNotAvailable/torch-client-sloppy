@@ -773,6 +773,12 @@ fn session_state(world: &WorldHolder, shared: &Arc<SharedMutex>, packet: &Client
             shared.lock().unwrap().session.op_level =
                 p.event_id - entity_event::PERMISSION_LEVEL_ALL;
         }
+        ClientboundGamePacket::EntityEvent(p)
+            if p.event_id == entity_event::USE_ITEM_COMPLETE
+                && p.entity_id.0 == crate::client::tracking::local_entity_id() =>
+        {
+            crate::play::interaction::note_use_item_complete();
+        }
         ClientboundGamePacket::OpenSignEditor(p) => {
             use crate::blockentities::feed::{BlockEntityData, SignFace};
             use crate::session::SignEditKind;

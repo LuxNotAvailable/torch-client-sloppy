@@ -78,6 +78,7 @@ const SHADERS: &str = "Shaders";
 const PLAYER_SHADOWS: &str = "Player Shadows";
 
 const ANTIALIASING: &str = "Antialiasing";
+const AA_LEVEL: &str = "AA Level";
 
 const ON: &str = "ON";
 const OFF: &str = "OFF";
@@ -110,6 +111,7 @@ const CHECK_ASSETS: &str = "Install missing assets";
 const NOTHING_MISSING: &str = "Nothing is missing";
 
 const AUTO_JUMP: &str = "Auto-Jump";
+const VIEW_BOBBING: &str = "View Bobbing";
 
 const MAIN_HAND: &str = "Main Hand";
 const MAIN_HAND_LEFT: &str = "Left";
@@ -216,7 +218,8 @@ const Y_DISPLAY_ROW_0: f32 = Y_DISPLAY_HEADER + HEADER_H;
 const Y_DISPLAY_ROW_1: f32 = Y_DISPLAY_ROW_0 + ROW_H;
 const Y_DISPLAY_ROW_2: f32 = Y_DISPLAY_ROW_1 + ROW_H;
 const Y_DISPLAY_ROW_3: f32 = Y_DISPLAY_ROW_2 + ROW_H;
-const Y_QUALITY_HEADER: f32 = Y_DISPLAY_ROW_3 + ROW_H;
+const Y_DISPLAY_ROW_4: f32 = Y_DISPLAY_ROW_3 + ROW_H;
+const Y_QUALITY_HEADER: f32 = Y_DISPLAY_ROW_4 + ROW_H;
 const Y_QUALITY_ROW_0: f32 = Y_QUALITY_HEADER + HEADER_PAD_TOP + HEADER_H;
 const Y_QUALITY_ROW_1: f32 = Y_QUALITY_ROW_0 + ROW_H;
 const Y_QUALITY_ROW_2: f32 = Y_QUALITY_ROW_1 + ROW_H;
@@ -570,6 +573,7 @@ fn reset_video_options(o: &mut crate::gui::GuiOptions) {
     o.gui_scale = 0;
     o.fov = crate::renderer::systems::VANILLA_FOV_DEGREES as u32;
     o.fov_effects = crate::gui::FOV_EFFECTS_DEFAULT;
+    o.view_bobbing = true;
     o.clouds = if cfg!(feature = "mobile_ui") {
         crate::renderer::clouds::CloudStatus::Fast
     } else {
@@ -582,7 +586,7 @@ fn reset_video_options(o: &mut crate::gui::GuiOptions) {
     };
     o.render_distance = crate::gui::RENDER_DISTANCE_DEFAULT;
     o.gamma = crate::gui::GAMMA_DEFAULT;
-    o.antialiasing = false;
+    o.antialiasing = crate::renderer::antialias::Antialiasing::default();
     o.smooth_lighting = crate::gui::SMOOTH_LIGHTING_DEFAULT;
     o.lighting_enabled = crate::gui::LIGHTING_ENABLED_DEFAULT;
     o.max_fps = crate::gui::MAX_FPS_DEFAULT;
@@ -935,6 +939,11 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         }
     }
 
+    let at = cell(0.0, Y_DISPLAY_ROW_4);
+    if toggle(p, ctx, at, VIEW_BOBBING, &mut state.options.view_bobbing) {
+        crate::gui::save_options(&state.options);
+    }
+
     header(p, Y_QUALITY_HEADER, HEADER_PAD_TOP, QUALITY_HEADER);
 
     let (x, y) = cell(0.0, Y_QUALITY_ROW_0);
@@ -976,9 +985,42 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         crate::gui::save_options(&state.options);
     }
 
-    let at = cell(1.0, Y_QUALITY_ROW_1);
-    if toggle(p, ctx, at, ANTIALIASING, &mut state.options.antialiasing) {
-        crate::gui::save_options(&state.options);
+    // Antialiasing: the mode here, and its level in row 3's free right cell.
+    {
+        let aa = &mut state.options.antialiasing;
+        let (x, y) = cell(1.0, Y_QUALITY_ROW_1);
+        let label = format!("{ANTIALIASING}: {}", aa.mode.caption());
+        let mode_hovered = ctx.hovering(x, y, COLUMN_W, WIDGET_HEIGHT);
+        let mut changed = Button::new(x, y, COLUMN_W, WIDGET_HEIGHT, &label).draw(p, ctx);
+        if changed {
+            aa.mode = aa.mode.next();
+        }
+        let (x, y) = cell(1.0, Y_QUALITY_ROW_3);
+        let level_hovered = ctx.hovering(x, y, COLUMN_W, WIDGET_HEIGHT);
+        let level = aa.level_caption();
+        let label = format!("{AA_LEVEL}: {}", level.as_deref().unwrap_or("-"));
+        let mut button = Button::new(x, y, COLUMN_W, WIDGET_HEIGHT, &label);
+        button.active = level.is_some();
+        if button.draw(p, ctx) {
+            aa.next_level();
+            changed = true;
+        }
+        if changed {
+            crate::gui::save_options(&state.options);
+        }
+        #[cfg(feature = "shader_support")]
+        if (mode_hovered || level_hovered)
+            && crate::renderer::packvertex::active()
+            && matches!(
+                state.options.antialiasing.mode,
+                crate::renderer::antialias::AaMode::Msaa
+                    | crate::renderer::antialias::AaMode::Supersample
+            )
+        {
+            renderer_tip = Some("Off while a shader pack is on; FXAA still works".to_owned());
+        }
+        #[cfg(not(feature = "shader_support"))]
+        let _ = (mode_hovered, level_hovered);
     }
 
     let at = cell(0.0, Y_QUALITY_ROW_2);
@@ -1995,11 +2037,12 @@ mod tests {
         assert_eq!(Y_DISPLAY_ROW_1, 38.0);
         assert_eq!(Y_DISPLAY_ROW_2, 63.0);
         assert_eq!(Y_DISPLAY_ROW_3, 88.0);
-        assert_eq!(Y_QUALITY_HEADER, 113.0);
-        assert_eq!(Y_QUALITY_ROW_0, 144.0);
+        assert_eq!(Y_DISPLAY_ROW_4, 113.0);
+        assert_eq!(Y_QUALITY_HEADER, 138.0);
+        assert_eq!(Y_QUALITY_ROW_0, 169.0);
         const EXTRA_ROWS: f32 = cfg!(feature = "builtin_shaders") as u32 as f32
             + cfg!(feature = "shader_support") as u32 as f32;
-        assert_eq!(Y_RESET_ROW, 244.0 + EXTRA_ROWS * ROW_H);
+        assert_eq!(Y_RESET_ROW, 269.0 + EXTRA_ROWS * ROW_H);
         assert_eq!(VIDEO_CONTENT_H, Y_RESET_ROW + ROW_H);
     }
 

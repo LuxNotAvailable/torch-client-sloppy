@@ -1029,7 +1029,7 @@ fn collect_hud_info(
         };
         if let Some(projector) = &projector {
             collect_player_tags(
-                &s.session.other_players,
+                &view.players,
                 view.partial,
                 projector,
                 &mut nametags,
@@ -1329,13 +1329,10 @@ fn log_frame_rate(
     let c = crate::diag::counts();
     crate::log_info!(
         "render",
-        "render distance {} chunks, supersampling {}, frame cap {}",
+        "render distance {} chunks, antialiasing {} {}, frame cap {}",
         gui.options.render_distance,
-        if gui.options.antialiasing {
-            "on"
-        } else {
-            "off"
-        },
+        gui.options.antialiasing.mode.caption(),
+        gui.options.antialiasing.level_caption().unwrap_or_default(),
         if gui.options.max_fps >= crate::gui::MAX_FPS_UNLIMITED {
             "unlimited".to_string()
         } else {
@@ -2283,8 +2280,12 @@ pub fn run(
                 ),
                 ..default()
             })
-            .disable::<bevy::app::PanicHandlerPlugin>(),
+            .disable::<bevy::app::PanicHandlerPlugin>()
+            // Only FXAA is used. The bundle's TAA needs bevy_post_process's
+            // MotionBlur node, which the default build leaves out.
+            .disable::<bevy::anti_alias::AntiAliasPlugin>(),
     )
+    .add_plugins(bevy::anti_alias::fxaa::FxaaPlugin)
     .add_plugins(crate::diag::frame_profile::FrameProfilePlugin)
     .insert_resource(bevy::winit::WinitSettings {
         focused_mode: bevy::winit::UpdateMode::Continuous,
@@ -2309,6 +2310,9 @@ pub fn run(
     .add_plugins(crate::renderer::esp_material::EspMaterialPlugin)
     .add_plugins(crate::renderer::sky::SkyPlugin)
     .add_plugins(crate::renderer::ssaa::SsaaPlugin)
+    .add_plugins(crate::renderer::antialias::AntialiasPlugin)
+    .add_plugins(crate::renderer::view_bob::ViewBobPlugin)
+    .add_plugins(crate::renderer::inventory_figure::InventoryFigurePlugin)
     .add_plugins(crate::renderer::clouds::CloudPlugin)
     .add_plugins(crate::renderer::post::PostPlugin)
     .add_plugins(crate::entities::EntityPlugin)

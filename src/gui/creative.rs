@@ -494,6 +494,17 @@ pub fn draw(
     }
 
     draw_tab(p, &info, true, left, top);
+    if st.tab == TAB_INVENTORY {
+        p.figure(crate::renderer::inventory_figure::Figure {
+            x0: left + 73.0,
+            y0: top + 6.0,
+            x1: left + 105.0,
+            y1: top + 49.0,
+            size: 20.0,
+            offset_y: 0.0625,
+            mouse: ctx.mouse(),
+        });
+    }
 
     let mut clicked_tab = None;
     for i in 0..TAB_COUNT {
