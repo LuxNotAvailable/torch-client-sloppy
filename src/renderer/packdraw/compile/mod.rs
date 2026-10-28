@@ -4,7 +4,6 @@ use crate::shaderpack::options::{self, Values};
 use crate::shaderpack::pipeline::Layout;
 use crate::shaderpack::programs::{self, Geometry};
 use crate::shaderpack::{backend, discover, features, include, pipeline, properties, transform};
-use crate::util::pack::Source;
 
 use super::images::{CustomTexture, CustomTextures};
 use super::sources::TextureSource;
@@ -12,6 +11,7 @@ use super::uniforms::MatrixSet;
 use crate::renderer::dimension::Dimension;
 
 mod kinds;
+mod native;
 mod pack;
 mod preludes;
 mod program;
@@ -148,12 +148,16 @@ pub(crate) struct Frame {
     pub(crate) final_pass: Option<usize>,
     pub(crate) setup: Vec<usize>,
     pub(crate) shadow: Option<usize>,
+    /// The shadow program each terrain layer draws with, by [`Geometry`] slot.
+    pub(crate) shadow_streams: [Option<usize>; 3],
     pub(crate) shadowcomp: Vec<usize>,
     pub(crate) entities: [Option<usize>; EntityKind::COUNT],
     pub(crate) clouds_off: bool,
     pub(crate) sky_parts: SkyParts,
     pub(crate) shadow_casters: ShadowCasters,
     pub(crate) shadow_culling: ShadowCulling,
+    pub(crate) blends: Blends,
+    pub(crate) flips: FlipOverrides,
     pub(crate) targets: Targets,
     pub(crate) constants: Constants,
     pub(crate) customs: Customs,
@@ -192,7 +196,7 @@ pub(crate) fn compile_frame(
     values: Option<Values>,
     dimension: Dimension,
 ) -> Result<Frame, String> {
-    let source = Source::open(&discover::dir().join(name), crate::shaderpack::ROOT)?;
+    let source = discover::open(name)?;
     let files: Vec<String> = crate::shaderpack::include::option_texts(&source);
     let declared = options::discover(files.iter().map(String::as_str));
     let values = values.unwrap_or_else(|| {
@@ -246,12 +250,15 @@ pub(crate) fn compile_frame(
         final_pass: None,
         setup: Vec::new(),
         shadow: None,
+        shadow_streams: [None; 3],
         shadowcomp: Vec::new(),
         entities: [None; EntityKind::COUNT],
         clouds_off: clouds_off(&props.other),
         sky_parts: SkyParts::read(&props.other),
         shadow_casters: ShadowCasters::read(&props.other),
         shadow_culling: ShadowCulling::parse(props.other.get("shadow.culling").map(String::as_str)),
+        blends: Blends::read(&props.other),
+        flips: FlipOverrides::read(&props.other),
         targets: Targets::default(),
         constants: Constants::default(),
         customs,
@@ -391,19 +398,49 @@ pub(crate) fn compile_frame(
         }
     }
 
-    if frame.draws_terrain() && pack.has("shadow") {
-        let program_override = pack.alpha_tests.get("shadow").copied();
-        let tests: Vec<AlphaTest> = Geometry::ALL
-            .iter()
-            .filter_map(|g| alpha_for(program_override, geometry_alpha(*g, true)))
-            .collect();
-        match compile_program(&mut pack, "shadow", ProgramKind::Shadow, &tests, direct) {
-            Ok((compiled, sources)) => {
-                frame.shadow = Some(frame.push(&mut preprocessed, compiled, sources))
+    if frame.draws_terrain() {
+        // Each terrain layer takes `shadow_<layer>`, else `shadow`; the first
+        // one found also sets the shadow targets and the entity shadow pass.
+        let casters = frame.shadow_casters;
+        let mut compiled: Vec<(&'static str, usize)> = Vec::new();
+        let mut shadow_program = |frame: &mut Frame,
+                                  pack: &mut Pack,
+                                  preprocessed: &mut _,
+                                  name: &'static str| {
+            if let Some(&(_, index)) = compiled.iter().find(|(n, _)| *n == name) {
+                return Some(index);
             }
-            Err(e) => frame.notes.push(format!(
-                "no shadows: the shadow program did not compile: {e}"
-            )),
+            let program_override = pack.alpha_tests.get(name).copied();
+            let tests: Vec<AlphaTest> = Geometry::ALL
+                .iter()
+                .filter_map(|g| alpha_for(program_override, geometry_alpha(*g, true)))
+                .collect();
+            match compile_program(pack, name, ProgramKind::Shadow, &tests, direct) {
+                Ok((program, sources)) => {
+                    let index = frame.push(preprocessed, program, sources);
+                    compiled.push((name, index));
+                    Some(index)
+                }
+                Err(e) => {
+                    frame
+                        .notes
+                        .push(format!("no {name}: it did not compile: {e}"));
+                    None
+                }
+            }
+        };
+        for (slot, geometry) in Geometry::ALL.iter().enumerate() {
+            if !casters.terrain || (geometry.translucent() && !casters.translucent) {
+                continue;
+            }
+            if let Some(name) = shadow_chain(*geometry).into_iter().find(|n| pack.has(n)) {
+                frame.shadow_streams[slot] =
+                    shadow_program(&mut frame, &mut pack, &mut preprocessed, name);
+            }
+        }
+        frame.shadow = frame.shadow_streams.iter().flatten().next().copied();
+        if frame.shadow.is_none() && casters.any() && pack.has("shadow") {
+            frame.shadow = shadow_program(&mut frame, &mut pack, &mut preprocessed, "shadow");
         }
     }
 

@@ -28,6 +28,9 @@ use crate::renderer::ssaa::SceneImage;
 
 pub const UNIHEX_UV_BIAS: f32 = 2.0;
 
+/// Added to `v` on the quads the GUI shader shades as enchantment glint.
+pub const GLINT_UV_BIAS: f32 = 2.0;
+
 fn gui_vertex_layout() -> VertexBufferLayout {
     VertexBufferLayout {
         array_stride: GUI_VERTEX_STRIDE,
@@ -55,7 +58,7 @@ fn gui_vertex_layout() -> VertexBufferLayout {
 #[derive(Resource, Default)]
 pub struct GuiBindGroup {
     pub group: Option<BindGroup>,
-    key: Option<(TextureViewId, TextureViewId)>,
+    key: Option<(TextureViewId, TextureViewId, TextureViewId)>,
 }
 
 #[derive(Resource, Default)]
@@ -84,6 +87,8 @@ fn two_texture_layout() -> BindGroupLayoutDescriptor {
     let entries = BindGroupLayoutEntries::sequential(
         ShaderStages::FRAGMENT,
         (
+            texture_2d(TextureSampleType::Float { filterable: true }),
+            sampler(SamplerBindingType::Filtering),
             texture_2d(TextureSampleType::Float { filterable: true }),
             sampler(SamplerBindingType::Filtering),
             texture_2d(TextureSampleType::Float { filterable: true }),
@@ -177,7 +182,17 @@ fn prepare_gui_bind_group(
         return;
     };
 
-    let key = (atlas.texture_view.id(), unihex.texture_view.id());
+    // The glint texture arrives with the game assets; until then the atlas
+    // stands in, and the key change rebuilds the group once it lands.
+    let glint = images
+        .get(&crate::renderer::entity_material::GLINT_ITEM)
+        .unwrap_or(atlas);
+
+    let key = (
+        atlas.texture_view.id(),
+        unihex.texture_view.id(),
+        glint.texture_view.id(),
+    );
     if bind_group.key == Some(key) && bind_group.group.is_some() {
         return;
     }
@@ -191,6 +206,8 @@ fn prepare_gui_bind_group(
             &atlas.sampler,
             &unihex.texture_view,
             &unihex.sampler,
+            &glint.texture_view,
+            &glint.sampler,
         )),
     ));
     bind_group.key = Some(key);
@@ -314,6 +331,19 @@ struct GuiNode;
 
 impl Node for GuiNode {
     fn run<'w>(
+        &self,
+        graph: &mut RenderGraphContext,
+        render_context: &mut RenderContext<'w>,
+        world: &'w World,
+    ) -> Result<(), NodeRunError> {
+        crate::diag::frame_profile::timed(render_context, "gui", |render_context| {
+            self.run_untimed(graph, render_context, world)
+        })
+    }
+}
+
+impl GuiNode {
+    fn run_untimed<'w>(
         &self,
         _graph: &mut RenderGraphContext,
         render_context: &mut RenderContext<'w>,

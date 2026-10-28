@@ -98,6 +98,11 @@ impl Remap {
         self.spaces[space as usize].is_identity()
     }
 
+    /// How many ids this side of the remap has in `space`.
+    pub(crate) fn count(&self, space: IdSpace) -> i32 {
+        self.spaces[space as usize].count
+    }
+
     pub(crate) fn from(&self) -> ProtocolVersion {
         self.from
     }
@@ -106,12 +111,20 @@ impl Remap {
         self.to
     }
 
-    pub(crate) fn to_native() -> &'static Remap {
-        &pair().0
+    pub(crate) fn v774_to_v775() -> &'static Remap {
+        &pair_774().0
     }
 
-    pub(crate) fn from_native() -> &'static Remap {
-        &pair().1
+    pub(crate) fn v775_to_v774() -> &'static Remap {
+        &pair_774().1
+    }
+
+    pub(crate) fn v775_to_v777() -> &'static Remap {
+        &pair_775().0
+    }
+
+    pub(crate) fn v777_to_v775() -> &'static Remap {
+        &pair_775().1
     }
 
     fn parse(json: &str) -> Result<(Remap, Remap), String> {
@@ -181,11 +194,19 @@ impl Remap {
     }
 }
 
-fn pair() -> &'static (Remap, Remap) {
+fn pair_774() -> &'static (Remap, Remap) {
     static PAIR: OnceLock<(Remap, Remap)> = OnceLock::new();
     PAIR.get_or_init(|| {
         Remap::parse(include_str!("data/remap-774-775.json"))
             .unwrap_or_else(|e| panic!("embedded 774 -> 775 remap: {e}"))
+    })
+}
+
+fn pair_775() -> &'static (Remap, Remap) {
+    static PAIR: OnceLock<(Remap, Remap)> = OnceLock::new();
+    PAIR.get_or_init(|| {
+        Remap::parse(include_str!("data/remap-775-777.json"))
+            .unwrap_or_else(|e| panic!("embedded 775 -> 777 remap: {e}"))
     })
 }
 
@@ -195,7 +216,7 @@ mod tests {
 
     #[test]
     fn the_774_identities() {
-        let r = Remap::to_native();
+        let r = Remap::v774_to_v775();
         for space in [
             IdSpace::Attribute,
             IdSpace::BlockEntityType,
@@ -226,53 +247,77 @@ mod tests {
     }
 
     #[test]
-    fn the_block_runs_follow_azaleas_registry() {
+    fn the_775_pair_reaches_the_native_version() {
+        let forward = Remap::v775_to_v777();
+        assert_eq!(forward.from().protocol, 775);
+        assert_eq!(
+            forward.to().protocol,
+            super::super::version::NATIVE.protocol
+        );
+        assert_eq!(Remap::v777_to_v775().to().protocol, 775);
+    }
+
+    #[test]
+    fn the_775_block_states_land_on_azaleas_ids() {
         use azalea_registry::Registry as _;
         use azalea_registry::builtin::BlockKind;
-
-        let inserted = [
-            BlockKind::GoldenDandelion.to_u32() as i32,
-            BlockKind::PottedGoldenDandelion.to_u32() as i32,
-        ];
-        assert_eq!(inserted, [158, 424], "775 moved a block this remap pins");
-
-        let forward = Remap::to_native();
-        let back = Remap::from_native();
-        for id in inserted {
-            assert_eq!(back.map(IdSpace::Block, id), None);
-        }
-        for (wire, native) in [(157, 157), (158, 159), (422, 423), (423, 425)] {
-            assert_eq!(forward.map(IdSpace::Block, wire), Some(native));
-            assert_eq!(back.map(IdSpace::Block, native), Some(wire));
-        }
-        let last = (0u32..)
-            .take_while(|id| BlockKind::is_valid_id(*id))
-            .last()
-            .expect("the block registry is not empty") as i32;
+        let forward = Remap::v775_to_v777();
         assert_eq!(
-            back.map(IdSpace::Block, last),
-            Some(last - 2),
-            "775's last block is 774's last block"
+            forward.map(IdSpace::BlockState, 1),
+            Some(1),
+            "stone did not move"
         );
         assert_eq!(
-            forward.map(IdSpace::Block, last - 1),
-            None,
-            "774 has two fewer blocks, so its ids stop two short"
+            forward.map(IdSpace::BlockState, 10_771),
+            Some(12_514),
+            "the first acacia button state, from both versions' blocks.json"
+        );
+        let poplar = BlockKind::PoplarPlanks.to_u32() as i32;
+        assert_eq!(Remap::v777_to_v775().map(IdSpace::Block, poplar), None);
+    }
+
+    #[test]
+    fn what_777_added_that_775_cannot_receive() {
+        let back = Remap::v777_to_v775();
+        let missing = |space: IdSpace| {
+            (0..back.spaces[space as usize].count)
+                .filter(|id| back.map(space, *id).is_none())
+                .count()
+        };
+        assert_eq!(missing(IdSpace::Block), 1286 - 1168);
+        assert_eq!(missing(IdSpace::Item), 1658 - 1506);
+        assert_eq!(missing(IdSpace::EntityType), 161 - 157);
+        assert_eq!(missing(IdSpace::BlockState), 35_723 - 29_873);
+        let removed = Remap::v775_to_v777();
+        let dropped = |space: IdSpace| {
+            (0..removed.spaces[space as usize].count)
+                .filter(|id| removed.map(space, *id).is_none())
+                .count()
+        };
+        assert_eq!(
+            dropped(IdSpace::BlockEntityType),
+            1,
+            "beds stopped being block entities"
+        );
+        assert_eq!(
+            dropped(IdSpace::DataComponentType),
+            2,
+            "map_color and swing_animation"
         );
     }
 
     #[test]
     fn the_endpoints_are_the_two_versions() {
-        let r = Remap::to_native();
+        let r = Remap::v774_to_v775();
         assert_eq!(r.from().protocol, 774);
-        assert_eq!(r.to().protocol, super::super::version::NATIVE.protocol);
-        assert_eq!(Remap::from_native().from().protocol, 775);
-        assert_eq!(Remap::from_native().to().protocol, 774);
+        assert_eq!(r.to().protocol, 775);
+        assert_eq!(Remap::v775_to_v774().from().protocol, 775);
+        assert_eq!(Remap::v775_to_v774().to().protocol, 774);
     }
 
     #[test]
     fn known_boundaries() {
-        let r = Remap::to_native();
+        let r = Remap::v774_to_v775();
         assert_eq!(r.map(IdSpace::BlockState, 0), Some(0));
         assert_eq!(r.map(IdSpace::BlockState, 1380), Some(1380));
         assert_eq!(r.map(IdSpace::BlockState, 1381), Some(1581));
@@ -289,7 +334,7 @@ mod tests {
 
     #[test]
     fn an_id_out_of_range_does_not_map() {
-        let r = Remap::to_native();
+        let r = Remap::v774_to_v775();
         assert_eq!(r.map(IdSpace::BlockState, 29670), Some(29872));
         assert_eq!(r.map(IdSpace::BlockState, 29671), None);
         assert_eq!(r.map(IdSpace::BlockState, -1), None);
@@ -298,8 +343,8 @@ mod tests {
 
     #[test]
     fn every_id_round_trips() {
-        let forward = Remap::to_native();
-        let back = Remap::from_native();
+        let forward = Remap::v774_to_v775();
+        let back = Remap::v775_to_v774();
         for space in IdSpace::ALL {
             let count = forward.spaces[space as usize].count;
             for id in 0..count {
@@ -317,7 +362,7 @@ mod tests {
 
     #[test]
     fn no_two_ids_share_a_target() {
-        let r = Remap::to_native();
+        let r = Remap::v774_to_v775();
         for space in IdSpace::ALL {
             let count = r.spaces[space as usize].count;
             let mut taken = std::collections::HashMap::new();
@@ -332,7 +377,7 @@ mod tests {
 
     #[test]
     fn sound_events_were_reordered_not_just_inserted() {
-        let r = Remap::to_native();
+        let r = Remap::v774_to_v775();
         assert_eq!(r.map(IdSpace::SoundEvent, 280), Some(291));
         assert_eq!(
             r.map(IdSpace::SoundEvent, 281),
@@ -348,7 +393,7 @@ mod tests {
 
     #[test]
     fn an_id_775_added_has_nowhere_to_go_back_to() {
-        let back = Remap::from_native();
+        let back = Remap::v775_to_v774();
         assert_eq!(back.spaces[IdSpace::SoundEvent as usize].count, 1902);
         assert_eq!(back.spaces[IdSpace::BlockState as usize].count, 29_873);
         assert_eq!(back.map(IdSpace::BlockState, 29_872), Some(29_670));
@@ -359,7 +404,7 @@ mod tests {
 
     #[test]
     fn what_775_added_that_774_cannot_receive() {
-        let back = Remap::from_native();
+        let back = Remap::v775_to_v774();
         let missing = |space: IdSpace| {
             (0..back.spaces[space as usize].count)
                 .filter(|id| back.map(space, *id).is_none())

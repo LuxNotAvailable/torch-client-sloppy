@@ -2,7 +2,7 @@ use crate::platform::time::{SystemTime, UNIX_EPOCH};
 use crate::{log_debug, log_info};
 use azalea::client_chat::ChatPacket;
 use azalea::{Client, FormattedText};
-use azalea_core::bitset::BitSet;
+use azalea_core::bitset::JavaBitSet as BitSet;
 use azalea_protocol::packets::game::c_player_chat::{ClientboundPlayerChat, FilterMask};
 use azalea_registry::identifier::Identifier;
 use std::sync::Arc;
@@ -121,7 +121,7 @@ pub(crate) fn handle_chat(bot: &Client, shared: &Arc<SharedMutex>, m: ChatPacket
             match &p.filter_mask {
                 FilterMask::FullyFiltered => return,
                 FilterMask::PartiallyFiltered(bits) => {
-                    filtered = Some(filtered_spans(&p.body.content, bits));
+                    filtered = Some(filtered_spans(&p.body.content, &bits.clone().into()));
                 }
                 FilterMask::PassThrough => {}
             }

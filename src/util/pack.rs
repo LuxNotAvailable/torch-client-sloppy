@@ -12,6 +12,10 @@ pub(crate) enum Source {
         entries: Vec<zip::Entry>,
         index: HashMap<String, usize>,
     },
+    /// A pack compiled into the binary, as `(path, text)` pairs rooted at `/`.
+    Embedded {
+        files: &'static [(&'static str, &'static str)],
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -102,6 +106,10 @@ impl Source {
                 let entry = entries.get(*index.get(path)?)?;
                 zip::read(bytes, entry).ok()
             }
+            Source::Embedded { files } => files
+                .iter()
+                .find(|(at, _)| *at == path)
+                .map(|(_, text)| text.as_bytes().to_vec()),
         }
     }
 
@@ -122,6 +130,7 @@ impl Source {
                 out
             }
             Source::Archive { index, .. } => index.keys().cloned().collect(),
+            Source::Embedded { files } => files.iter().map(|(at, _)| (*at).to_owned()).collect(),
         }
     }
 
@@ -129,6 +138,7 @@ impl Source {
         match self {
             Source::Directory { root } => confined(root, path).is_some_and(|at| at.is_file()),
             Source::Archive { index, .. } => index.contains_key(path),
+            Source::Embedded { files } => files.iter().any(|(at, _)| *at == path),
         }
     }
 }

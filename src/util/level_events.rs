@@ -6,7 +6,7 @@ use azalea::entity::particle::Particle as P;
 use azalea::entity::particle::{BlockParticle, PowerParticle, SpellParticle};
 
 #[derive(Clone, Copy)]
-#[cfg_attr(not(feature = "audio"), allow(dead_code))]
+#[cfg_attr(not(audio), allow(dead_code))]
 enum Bus {
     Blocks,
     Hostile,
@@ -196,6 +196,25 @@ fn effects(event: &LevelEventEmit, ctx: &mut Emitter) {
         }
 
         2000 => shoot(ctx, cell, data, &P::Smoke),
+        // `PARTICLES_AND_SOUND_DESTROY_PROGRESS`: every fourth tick of
+        // mining, the block's hit sound (`ClientLevel.playBreakingSound`).
+        2020 => {
+            #[cfg(audio)]
+            {
+                use azalea::block::BlockTrait;
+                let pos = azalea_core::position::BlockPos::new(cell[0], cell[1], cell[2]);
+                let Some(state) = ctx.world.get_block_state(pos) else {
+                    return;
+                };
+                if state.is_air() {
+                    return;
+                }
+                let block: Box<dyn BlockTrait> = Box::<dyn BlockTrait>::from(state);
+                let group = crate::util::block_model::sound_group(block.id());
+                // A sound type's volume and pitch are 1: (1 + 1) / 8, 1 * 0.5.
+                sound(cell, group.hit_event, Bus::Blocks, 0.25, 0.5);
+            }
+        }
         2001 | 3008 => {
             let state = u16::try_from(data)
                 .ok()
@@ -676,7 +695,7 @@ fn break_block(ctx: &mut Emitter, cell: [i32; 3], state: azalea::block::BlockSta
     };
     spawn_block_break(&spawn, ctx.status, Some(ctx.world), ctx.live, ctx.rng);
 
-    #[cfg(feature = "audio")]
+    #[cfg(audio)]
     {
         use azalea::block::BlockTrait;
         let block: Box<dyn BlockTrait> = Box::<dyn BlockTrait>::from(state);
@@ -715,19 +734,19 @@ fn sound(cell: [i32; 3], event: &str, bus: Bus, volume: f32, pitch: f32) {
     play(event, bus, [at.x, at.y, at.z], volume, pitch);
 }
 
-#[cfg_attr(not(feature = "audio"), allow(unused_variables))]
+#[cfg_attr(not(audio), allow(unused_variables))]
 fn play(event: &str, bus: Bus, at: [f32; 3], volume: f32, pitch: f32) {
-    #[cfg(feature = "audio")]
+    #[cfg(audio)]
     crate::audio::play_at(event, bus.category(), at, volume, pitch);
 }
 
-#[cfg_attr(not(feature = "audio"), allow(unused_variables))]
+#[cfg_attr(not(audio), allow(unused_variables))]
 fn play_local(event: &str, bus: Bus, volume: f32, pitch: f32) {
-    #[cfg(feature = "audio")]
+    #[cfg(audio)]
     crate::audio::play(event, bus.category(), volume, pitch);
 }
 
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 impl Bus {
     fn category(self) -> crate::audio::SoundCategory {
         match self {

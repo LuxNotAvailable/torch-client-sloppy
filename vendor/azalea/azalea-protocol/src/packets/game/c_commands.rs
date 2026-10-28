@@ -105,7 +105,7 @@ pub enum BrigadierParser {
     BlockPredicate,
     ItemStack,
     ItemPredicate,
-    Color,
+    TeamColor,
     HexColor,
     FormattedText,
     Style,
@@ -144,7 +144,12 @@ pub enum BrigadierParser {
     LootTable,
     LootPredicate,
     LootModifier,
+    ContextFloatProvider,
+    ContextIntProvider,
+    SlotSource,
     Dialog,
+    Feature,
+    SwingAnimation,
     Uuid,
 }
 

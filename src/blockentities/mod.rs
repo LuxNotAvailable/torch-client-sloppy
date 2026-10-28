@@ -1,9 +1,11 @@
+pub mod bake;
 pub mod banner;
 pub mod feed;
 pub mod models;
 pub mod render;
 pub mod sim;
 pub mod text;
+pub mod transient;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -14,6 +16,8 @@ use bevy::prelude::*;
 use crate::entities::geom::{BakedModel, LayerDef, PartState, bake};
 use crate::entities::{Blend, CameraView, Carried, CarriedEntities, Carrier, EntityState};
 use crate::renderer::entity_material::{EntityMaterial, LightMode, Lit, diffuse_lights};
+use crate::renderer::rig_parts::{PartSlot, RigParts};
+use bevy::camera::primitives::Aabb;
 use feed::{BlockEntityData, BlockEntityInfo, BlockStateInfo};
 use sim::Anim;
 
@@ -120,6 +124,12 @@ pub struct BeSpec {
     pub view_distance: f32,
     pub depth_bias: i32,
     pub light: Option<LightMode>,
+    /// A beacon or gateway beam, which shader packs draw with
+    /// `gbuffers_beaconbeam`.
+    pub beam: bool,
+    /// Blends every alpha, however faint, instead of discarding below 0.1
+    /// (vanilla's pipelines without `ALPHA_CUTOUT`, such as banner patterns).
+    pub no_cutout: bool,
 }
 
 pub const DEFAULT_VIEW_DISTANCE: f32 = 64.0;
@@ -191,7 +201,19 @@ impl BeSpec {
             view_distance: DEFAULT_VIEW_DISTANCE,
             depth_bias: 0,
             light: None,
+            beam: false,
+            no_cutout: false,
         }
+    }
+
+    pub fn with_no_cutout(mut self) -> BeSpec {
+        self.no_cutout = true;
+        self
+    }
+
+    pub fn with_beam(mut self) -> BeSpec {
+        self.beam = true;
+        self
     }
 
     pub fn with_transform(mut self, transform: fn(&BeState) -> Transform) -> BeSpec {
@@ -497,6 +519,14 @@ impl SubmitCache {
 struct GpuModel {
     model: BakedModel,
     meshes: Vec<Option<Handle<Mesh>>>,
+    /// The whole model as one mesh posed on the GPU, built while the GPU path
+    /// is on.
+    rigged: Option<RiggedModel>,
+}
+
+struct RiggedModel {
+    mesh: Handle<Mesh>,
+    bounds: Vec<Option<(Vec3, Vec3)>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -535,6 +565,10 @@ impl BeAssets {
     ) -> &GpuModel {
         self.models.entry(key).or_insert_with(|| {
             let mut baked = bake(&(geom.layer)(st));
+            let rigged = crate::renderer::rig_parts::enabled().then(|| RiggedModel {
+                mesh: meshes.add(crate::entities::bake::rigged_mesh(&baked)),
+                bounds: crate::entities::bake::part_bounds(&baked),
+            });
             let handles = baked
                 .parts
                 .iter_mut()
@@ -543,6 +577,7 @@ impl BeAssets {
             GpuModel {
                 model: baked,
                 meshes: handles,
+                rigged,
             }
         })
     }
@@ -595,11 +630,9 @@ impl BeAssets {
             depth_bias: spec.depth_bias,
         };
         if let Some(shared) = self.materials.get_mut(&key) {
-            if shared.epoch != self.epoch
-                && let Some(material) = materials.get_mut(&shared.handle)
-            {
-                material.params.set(lit);
+            if shared.epoch != self.epoch {
                 shared.epoch = self.epoch;
+                crate::entities::refresh_params(materials, &shared.handle, lit);
             }
             return shared.handle.clone();
         }
@@ -634,6 +667,12 @@ struct PartNodes {
 
 enum RigBody {
     Parts(Vec<PartNodes>),
+    /// One node drawing the model's shared mesh, posed from `slot`'s matrices.
+    Posed {
+        node: Entity,
+        slot: PartSlot,
+        written: Vec<PartState>,
+    },
     Built {
         mesh: Option<Handle<Mesh>>,
         node: Entity,
@@ -674,6 +713,10 @@ impl BeRigs {
 #[derive(Component)]
 pub(crate) struct BeRigNode;
 
+/// Marks a beam's mesh, for shader packs' `gbuffers_beaconbeam`.
+#[derive(Component)]
+pub(crate) struct BeamNode;
+
 pub struct BlockEntityPlugin;
 
 impl Plugin for BlockEntityPlugin {
@@ -706,13 +749,28 @@ fn sync_block_entities(
     camera_q: Query<&GlobalTransform, With<crate::renderer::systems::WorldCamera>>,
     mut nodes: Query<(&mut Transform, &mut Visibility), With<BeRigNode>>,
     mut mats: Query<&mut MeshMaterial3d<EntityMaterial>>,
-    lightmap: Res<crate::renderer::systems::LightmapState>,
+    (lightmap, occlusion, mut rig_parts, mut aabbs, mut gpu_rigs_were): (
+        Res<crate::renderer::systems::LightmapState>,
+        Res<crate::renderer::occlusion::OcclusionState>,
+        ResMut<RigParts>,
+        Query<&mut Aabb, With<BeRigNode>>,
+        Local<Option<bool>>,
+    ),
     gui_state: Option<Res<crate::gui::GuiState>>,
     mut carried: ResMut<CarriedEntities>,
     #[cfg(feature = "skins")] skins: Res<crate::renderer::skin::SkinTextures>,
 ) {
     crate::prof_span!("render:sync_block_entities");
     let Some(gui) = gui else { return };
+    let gpu_rigs = crate::renderer::rig_parts::enabled();
+    if gpu_rigs_were.replace(gpu_rigs).is_some_and(|was| was != gpu_rigs) {
+        for (_, rig) in rigs.live.drain() {
+            for layer in &rig.layers {
+                despawn_layer(&mut commands, &mut rig_parts, layer);
+            }
+        }
+        assets.models.clear();
+    }
     let camera_view = camera_q
         .iter()
         .next()
@@ -757,7 +815,7 @@ fn sync_block_entities(
                 .is_some_and(|entry| camera.distance_squared(center_of(pos)) < entry.drop_sq);
         if !keep {
             for layer in &rig.layers {
-                commands.entity(layer.root).despawn();
+                despawn_layer(&mut commands, &mut rig_parts, layer);
             }
         }
         keep
@@ -845,7 +903,7 @@ fn sync_block_entities(
             }
             if let Some(old) = existing {
                 let layer = rig.layers.remove(old);
-                commands.entity(layer.root).despawn();
+                despawn_layer(&mut commands, &mut rig_parts, &layer);
             }
             let Some(key) = key else { continue };
             let layer = spawn_layer(
@@ -861,6 +919,7 @@ fn sync_block_entities(
                     meshes: &mut meshes,
                     images: &mut images,
                     materials: &mut materials,
+                    rig_parts: &mut rig_parts,
                     gui: &*gui,
                 },
             );
@@ -869,9 +928,13 @@ fn sync_block_entities(
             }
         }
 
+        let moving =
+            st.open > 0.0 || matches!(&st.anim, sim::Anim::Shulker(s) if s.progress(partial) > 0.0);
+        let open = in_open_view(info.kind, *pos, &occlusion)
+            && bake::rig_wanted(info.state.state_id, *pos, moving);
         for layer in &mut rig.layers {
             let spec = &registry.specs[layer.spec];
-            let show = distance_sq < spec.view_distance * spec.view_distance;
+            let show = open && distance_sq < spec.view_distance * spec.view_distance;
             if let Ok((_, mut visibility)) = nodes.get_mut(layer.root) {
                 let want = if show {
                     Visibility::Inherited
@@ -907,11 +970,39 @@ fn sync_block_entities(
                 set_layer_material(layer, &material, &mut mats);
             }
 
-            match (&spec.geom, &layer.body) {
+            match (&spec.geom, &mut layer.body) {
                 (BeGeom::Model(geom), RigBody::Parts(_)) => {
                     if let Some(gpu) = assets.models.get(&(layer.spec, layer.key)) {
                         gpu.model.reset_pose(&mut layer.states);
                         (geom.setup)(&gpu.model, &mut layer.states, &st);
+                    }
+                }
+                (
+                    BeGeom::Model(geom),
+                    RigBody::Posed {
+                        node,
+                        slot,
+                        written,
+                    },
+                ) => {
+                    if let Some(gpu) = assets.models.get(&(layer.spec, layer.key)) {
+                        gpu.model.reset_pose(&mut layer.states);
+                        (geom.setup)(&gpu.model, &mut layer.states, &st);
+                        if *written != layer.states
+                            && let Some(rigged) = &gpu.rigged
+                        {
+                            let aabb = pose_slot(
+                                &mut rig_parts,
+                                *slot,
+                                &gpu.model,
+                                rigged,
+                                &layer.states,
+                            );
+                            if let Ok(mut held) = aabbs.get_mut(*node) {
+                                *held = aabb;
+                            }
+                            written.clone_from(&layer.states);
+                        }
                     }
                 }
                 (
@@ -934,10 +1025,42 @@ fn sync_block_entities(
         }
     }
 
+    transient::each(|pos, state| {
+        let mut out = Submit {
+            pos,
+            light: -1,
+            slot: TRANSIENT_SLOT,
+            light_map: &light_map,
+            cache: submits,
+            states: carried,
+        };
+        out.block(
+            state,
+            Vec3::new(pos[0] as f32 + 0.5, pos[1] as f32, pos[2] as f32 + 0.5),
+        );
+    });
+
     submits.sweep(carried);
 }
 
+/// Submit slot for a transient block, clear of any block entity's own draws.
+const TRANSIENT_SLOT: u8 = 200;
+
 const DESPAWN_MARGIN: f32 = 1.1;
+
+/// Block entity culling against the terrain flood fill. Beams reach far past
+/// their own section, so beacons and gateways always draw.
+fn in_open_view(
+    kind: BlockEntityKind,
+    pos: [i32; 3],
+    occlusion: &crate::renderer::occlusion::OcclusionState,
+) -> bool {
+    if matches!(kind, BlockEntityKind::Beacon | BlockEntityKind::EndGateway) {
+        return true;
+    }
+    let corner = Vec3::new(pos[0] as f32, pos[1] as f32, pos[2] as f32);
+    occlusion.reaches_box(corner - Vec3::splat(0.5), corner + Vec3::splat(1.5))
+}
 
 const SIGN_OUTLINE_DISTANCE: f32 = 16.0;
 
@@ -957,6 +1080,7 @@ fn lit_for(
         dirs,
         overlay_alpha: 1.0,
         overlay_white: false,
+        glint: false,
     }
 }
 
@@ -980,9 +1104,36 @@ fn set_layer_material(
                 }
             }
         }
-        RigBody::Built { node, .. } => point_at(*node),
+        RigBody::Posed { node, .. } | RigBody::Built { node, .. } => point_at(*node),
     }
     layer.material = Some(material.clone());
+}
+
+fn despawn_layer(commands: &mut Commands, rig_parts: &mut RigParts, layer: &LayerRig) {
+    commands.entity(layer.root).despawn();
+    if let RigBody::Posed { slot, .. } = &layer.body {
+        rig_parts.release(*slot);
+    }
+}
+
+/// Writes a posed layer's part matrices and returns its bounds.
+fn pose_slot(
+    rig_parts: &mut RigParts,
+    slot: PartSlot,
+    model: &BakedModel,
+    rigged: &RiggedModel,
+    states: &[PartState],
+) -> Aabb {
+    let mut posed = Vec::new();
+    model.pose_parts(states, Mat4::IDENTITY, &mut posed);
+    rig_parts.write(
+        slot,
+        posed
+            .iter()
+            .zip(states)
+            .map(|(p, s)| crate::entities::bake::part_drawn(p, s).then_some(p.mat)),
+    );
+    crate::entities::bake::posed_aabb(&rigged.bounds, &posed, states)
 }
 
 fn combined_openness(
@@ -1026,6 +1177,7 @@ struct LayerSinks<'a> {
     meshes: &'a mut Assets<Mesh>,
     images: &'a mut Assets<Image>,
     materials: &'a mut Assets<EntityMaterial>,
+    rig_parts: &'a mut RigParts,
     gui: &'a crate::gui::render::GuiAssets,
 }
 
@@ -1045,6 +1197,7 @@ fn spawn_layer(
         meshes,
         images,
         materials,
+        rig_parts,
         gui,
     } = sinks;
     match &spec.geom {
@@ -1055,6 +1208,43 @@ fn spawn_layer(
             let material = assets.material(spec, Some(image.clone()), levels, lit, materials);
             let gpu = assets.model((idx, key), geom, st, meshes);
             let states = gpu.model.rest_pose();
+            let slot = gpu
+                .rigged
+                .as_ref()
+                .filter(|_| crate::renderer::rig_parts::enabled())
+                .and_then(|rigged| Some((rigged, rig_parts.alloc(states.len() as u32)?)));
+            if let Some((rigged, slot)) = slot {
+                let aabb = pose_slot(rig_parts, slot, &gpu.model, rigged, &states);
+                let mut spawned = commands.spawn((
+                    Mesh3d(rigged.mesh.clone()),
+                    MeshMaterial3d(material.clone()),
+                    bevy::mesh::MeshTag(slot.offset),
+                    aabb,
+                    // The shared mesh's own bounds are the unposed parts.
+                    bevy::camera::visibility::NoAutoAabb,
+                    Transform::default(),
+                    Visibility::Inherited,
+                    BeRigNode,
+                ));
+                #[cfg(feature = "builtin_shaders")]
+                spawned.insert(bevy::light::NotShadowCaster);
+                let posed = spawned.id();
+                commands.entity(node).add_child(posed);
+                return Some(LayerRig {
+                    spec: idx,
+                    root,
+                    node,
+                    body: RigBody::Posed {
+                        node: posed,
+                        slot,
+                        written: states.clone(),
+                    },
+                    key,
+                    texture: Some(image),
+                    material: Some(material),
+                    states,
+                });
+            }
             let mut parts: Vec<PartNodes> = Vec::with_capacity(gpu.model.parts.len());
             for (i, part) in gpu.model.parts.iter().enumerate() {
                 let part_node = commands
@@ -1120,6 +1310,9 @@ fn spawn_layer(
             ));
             #[cfg(feature = "builtin_shaders")]
             spawned.insert(bevy::light::NotShadowCaster);
+            if spec.beam {
+                spawned.insert(BeamNode);
+            }
             let geom_node = spawned.id();
             commands.entity(node).add_child(geom_node);
             Some(LayerRig {
@@ -1162,6 +1355,7 @@ fn blend_modes(spec: &BeSpec) -> (AlphaMode, f32) {
         Blend::Additive => (AlphaMode::Add, 0.0),
     };
     let cutoff = match &spec.geom {
+        _ if spec.no_cutout => 0.0,
         BeGeom::Built(_) => 0.0,
         BeGeom::Model(_) => cutoff,
     };
@@ -1322,7 +1516,6 @@ mod tests {
             BlockEntityKind::StructureBlock,
             BlockEntityKind::TestInstanceBlock,
             BlockEntityKind::ShulkerBox,
-            BlockEntityKind::Bed,
             BlockEntityKind::Conduit,
             BlockEntityKind::Bell,
             BlockEntityKind::Campfire,

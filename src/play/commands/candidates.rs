@@ -145,6 +145,9 @@ fn argument_candidates(
                 .into(),
         ),
         BrigadierParser::EntityAnchor => suggest(["eyes", "feet"].map(str::to_string).into()),
+        BrigadierParser::SwingAnimation => {
+            suggest(["none", "whack", "stab"].map(str::to_string).into())
+        }
         BrigadierParser::Operation => suggest(
             ["=", "+=", "-=", "*=", "/=", "%=", "><", "<", ">"]
                 .map(str::to_string)
@@ -170,7 +173,12 @@ fn argument_candidates(
             .map(str::to_string)
             .into(),
         ),
-        BrigadierParser::Color => suggest(CHAT_FORMATTING_COLORS.map(str::to_string).into()),
+        BrigadierParser::TeamColor => suggest(
+            CHAT_FORMATTING_COLORS[..16]
+                .iter()
+                .map(|c| c.to_string())
+                .collect(),
+        ),
         BrigadierParser::ScoreboardSlot => suggest(display_slots()),
         BrigadierParser::Entity(_)
         | BrigadierParser::GameProfile

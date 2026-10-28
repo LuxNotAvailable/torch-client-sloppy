@@ -2,29 +2,33 @@ from lib.utils import get_dir_location
 
 COLLISION_BLOCKS_RS_DIR = get_dir_location("../azalea-physics/src/collision/blocks.rs")
 
+
 def generate_block_shapes(pumpkin_blocks_data: dict, block_states_report, burger_data):
-    blocks, shapes = simplify_shapes(
-        pumpkin_blocks_data, burger_data[0]["blocks"]["block"]
-    )
+    blocks, shapes = simplify_shapes(pumpkin_blocks_data)
 
     code = generate_block_shapes_code(blocks, shapes, block_states_report)
     with open(COLLISION_BLOCKS_RS_DIR, "w") as f:
         f.write(code)
 
-def simplify_shapes(pumpkin_blocks: dict, burger_blocks: dict) -> tuple[dict, dict]:
+
+def simplify_shapes(pumpkin_blocks: dict) -> tuple[dict, dict]:
+    """
+    Returns new_blocks and new_shapes,
+    where new_blocks is like { grass_block: { collision: [1, 1], outline: [1, 1], offset_type: "XZ" } }
+    and new_shapes is like { 1: [ [0, 0, 0, 1, 1, 1] ] }
+    """
     new_blocks = {}
     new_shapes = {}
 
     all_shapes_ids = {}
 
-    for block_data in pumpkin_blocks["blocks"]:
+    for pumpkin_block_data in pumpkin_blocks["blocks"]:
         new_block_collision_shapes = []
         new_block_outline_shapes = []
 
-        block_id = block_data["name"]
-        burger_block_data = burger_blocks.get(block_id, {})
+        block_id = pumpkin_block_data["name"]
 
-        for state in block_data["states"]:
+        for state in pumpkin_block_data["states"]:
             collision_shape = []
             for box_id in state["collision_shapes"]:
                 box = pumpkin_blocks["shapes"][box_id]
@@ -58,22 +62,27 @@ def simplify_shapes(pumpkin_blocks: dict, burger_blocks: dict) -> tuple[dict, di
             "outline": new_block_outline_shapes,
         }
 
-        if "offset_type" in burger_block_data:
-            new_data_for_block["offset_type"] = burger_block_data["offset_type"]
+        if "offset_type" in pumpkin_block_data:
+            # don't waste space in `new_data_for_block` if there's no offset_type
+            new_data_for_block["offset_type"] = pumpkin_block_data["offset_type"]
 
         new_blocks[block_id] = new_data_for_block
 
     return new_blocks, new_shapes
 
+
 def generate_block_shapes_code(blocks: dict, shapes: dict, block_states_report):
+    # look at __cache__/generator-mod-*/blockCollisionShapes.json for format of blocks and shapes
 
     generated_shape_code = ""
     for shape_id, shape in sorted(shapes.items(), key=lambda shape: int(shape[0])):
         generated_shape_code += generate_code_for_shape(shape_id, shape)
 
+    # static COLLISION_SHAPES_MAP: [&LazyLock<VoxelShape>; 26644] = [&SHAPE0, &SHAPE1, &SHAPE1, ...]
     empty_shapes = []
     full_shapes = []
 
+    # the index into this list is the block state id
     collision_shapes_map = []
     outline_shapes_map = []
     random_shape_offsets_map = []
@@ -81,6 +90,7 @@ def generate_block_shapes_code(blocks: dict, shapes: dict, block_states_report):
     for block_id, shapes_data in blocks.items():
         collision_shapes = shapes_data["collision"]
         outline_shapes = shapes_data["outline"]
+        # None, XZ, or XYZ
         offset_type = shapes_data.get("offset_type")
 
         if isinstance(collision_shapes, int):
@@ -88,6 +98,9 @@ def generate_block_shapes_code(blocks: dict, shapes: dict, block_states_report):
         if isinstance(outline_shapes, int):
             outline_shapes = [outline_shapes]
 
+        # these are ids that we semi-arbitrarily chose. we'll have to check these ids in
+        # shape_offset.rs. btw, the reason we don't use an enum is because that'd generate too
+        # much code -- numbers are shorter.
         if offset_type is None:
             offset_type_id = 0
         elif offset_type == "XZ":
@@ -108,6 +121,7 @@ def generate_block_shapes_code(blocks: dict, shapes: dict, block_states_report):
             elif shape_id == 1:
                 full_shapes.append(block_state_id)
             while len(collision_shapes_map) <= block_state_id:
+                # default to shape 1 for missing shapes (full block)
                 collision_shapes_map.append(1)
             collision_shapes_map[block_state_id] = shape_id
         for possible_state, shape_id in zip(
@@ -115,11 +129,17 @@ def generate_block_shapes_code(blocks: dict, shapes: dict, block_states_report):
         ):
             block_state_id = possible_state["id"]
             while len(outline_shapes_map) <= block_state_id:
+                # default to shape 1 for missing shapes (full block)
                 outline_shapes_map.append(1)
 
+                # and default to random offset type 0. this is fine to put in the same loop because
+                # we expect them to end up as the same length and we only ever append to them here.
                 random_shape_offsets_map.append(0)
 
             outline_shapes_map[block_state_id] = shape_id
+            # yes, despite offsetTypes being per-blockkind, we make the map based on blockstates.
+            # this is because azalea usually keeps blocks as blockstates, and we'd like to avoid
+            # the conversion cost whenever possible.
             random_shape_offsets_map[block_state_id] = offset_type_id
 
     random_shape_offsets_map = ",".join(map(str, random_shape_offsets_map))
@@ -235,6 +255,7 @@ pub static RANDOM_SHAPE_OFFSETS_MAP: &[u8; {len(collision_shapes_map)}] = &[{ran
 {generated_map_code}
 """
 
+
 def generate_code_for_shape(shape_id: str, parts: list[list[float]]):
     def make_arguments(part: list[float]):
         return ", ".join(map(lambda n: str(n).rstrip("0"), part))
@@ -264,7 +285,9 @@ def generate_code_for_shape(shape_id: str, parts: list[list[float]]):
         code += "});\n"
     return code
 
+
 def convert_ints_to_rust_ranges(block_state_ids: list[int]) -> str:
+    # convert them into ranges (so like 1|2|3 is 1..=3 instead)
     block_state_ids_ranges = []
     range_start_block_state_id = None
     last_block_state_id = None
@@ -273,6 +296,7 @@ def convert_ints_to_rust_ranges(block_state_ids: list[int]) -> str:
             range_start_block_state_id = block_state_id
 
         if last_block_state_id is not None:
+            # check if the range is done
             if block_state_id - 1 != last_block_state_id:
                 block_state_ids_ranges.append(
                     f"{range_start_block_state_id}..={last_block_state_id}"

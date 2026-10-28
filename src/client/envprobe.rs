@@ -37,7 +37,7 @@ pub(crate) fn camera_has_precipitation() -> bool {
     crate::util::biome_color::env(row).has_precipitation
 }
 
-#[cfg(feature = "shader_support")]
+#[cfg(any(feature = "shader_support", audio))]
 pub(crate) fn camera_biome() -> Option<u8> {
     let row = CAMERA_BIOME.load(std::sync::atomic::Ordering::Relaxed);
     (row != UNRESOLVED).then_some(row)

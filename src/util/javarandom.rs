@@ -25,6 +25,11 @@ impl JavaRandom {
         (self.seed >> (48 - bits)) as i32
     }
 
+    /// `Random.nextLong`: two 32-bit draws, high then low.
+    pub fn next_long(&mut self) -> i64 {
+        ((self.next(32) as i64) << 32).wrapping_add(self.next(32) as i64)
+    }
+
     pub fn next_int(&mut self, bound: u32) -> u32 {
         if bound == 0 {
             return 0;
@@ -73,6 +78,12 @@ impl JavaRandom {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn next_long_is_javas() {
+        // new java.util.Random(0).nextLong()
+        assert_eq!(JavaRandom::new(0).next_long(), -4962768465676381896);
+    }
 
     #[test]
     fn the_generator_matches_java() {

@@ -572,12 +572,12 @@ fn system_lines(font: &Font, message: &[Span], multiline: bool) -> (Vec<Vec<Span
     (lines, width)
 }
 
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 fn play_ui(event: &str) {
     crate::audio::play(event, crate::audio::SoundCategory::Ambient, 1.0, 1.0);
 }
 
-#[cfg(not(feature = "audio"))]
+#[cfg(not(audio))]
 fn play_ui(_event: &str) {}
 
 pub fn draw(p: &mut Painter, ctx: &ScreenCtx, toasts: &mut Toasts, opts: ToastSettings) {

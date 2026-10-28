@@ -16,14 +16,30 @@ pub struct Entry {
     pub pitch: f32,
     weight: u32,
     pub stream: bool,
+    /// `attenuation_distance`: how far, at volume 1, the sound carries.
+    pub attenuation: f32,
     kind: EntryKind,
 }
 
-impl Entry {
+/// The file an event resolved to, as vanilla's `Sound` for it: an event
+/// entry multiplies its own volume and pitch into the file's, and the file
+/// keeps its attenuation (`SoundManager.Preparations`).
+#[derive(Clone, Debug)]
+pub struct Picked {
+    key: Arc<str>,
+    pub volume: f32,
+    pub pitch: f32,
+    pub stream: bool,
+    pub attenuation: f32,
+}
+
+impl Picked {
     pub fn object_key(&self) -> Arc<str> {
-        self.target.clone()
+        self.key.clone()
     }
 }
+
+pub const DEFAULT_ATTENUATION: f32 = 16.0;
 
 struct Event {
     entries: Vec<Entry>,
@@ -55,7 +71,7 @@ impl Defs {
             if entries.is_empty() {
                 continue;
             }
-            let total_weight = entries.iter().map(|e| e.weight).sum();
+            let total_weight = 0;
             events.insert(
                 name.clone(),
                 Event {
@@ -68,7 +84,53 @@ impl Defs {
                 },
             );
         }
-        Ok(Defs { events })
+        let mut defs = Defs { events };
+        defs.weigh();
+        Ok(defs)
+    }
+
+    /// Vanilla weighs an event entry by the whole event it names (the sum of
+    /// that event's weights, `WeighedSoundEvents.getWeight`), not by its own
+    /// `weight`; a missing event weighs nothing.
+    fn weigh(&mut self) {
+        fn weight_of(defs: &Defs, name: &str, depth: usize) -> u32 {
+            if depth >= MAX_INDIRECTION {
+                return 0;
+            }
+            let Some(event) = defs.events.get(name) else {
+                return 0;
+            };
+            event
+                .entries
+                .iter()
+                .map(|entry| match entry.kind {
+                    EntryKind::File => entry.weight,
+                    EntryKind::Event => weight_of(defs, &entry.target, depth + 1),
+                })
+                .sum()
+        }
+        let weighed: Vec<(String, Vec<u32>)> = self
+            .events
+            .iter()
+            .map(|(name, event)| {
+                let weights = event
+                    .entries
+                    .iter()
+                    .map(|entry| match entry.kind {
+                        EntryKind::File => entry.weight,
+                        EntryKind::Event => weight_of(self, &entry.target, 1),
+                    })
+                    .collect();
+                (name.clone(), weights)
+            })
+            .collect();
+        for (name, weights) in weighed {
+            let event = self.events.get_mut(&name).expect("named above");
+            for (entry, weight) in event.entries.iter_mut().zip(&weights) {
+                entry.weight = *weight;
+            }
+            event.total_weight = weights.iter().sum();
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -88,21 +150,39 @@ impl Defs {
         keys
     }
 
-    pub fn pick(&self, event: &str, roll: &mut impl FnMut(u32) -> u32) -> Option<&Entry> {
+    /// One of `event`'s files, chosen as `WeighedSoundEvents.getSound` does:
+    /// one roll of the event's total weight per level, from the same random.
+    pub fn pick(&self, event: &str, roll: &mut impl FnMut(u32) -> u32) -> Option<Picked> {
         let mut name = event;
+        let (mut volume, mut pitch, mut stream) = (1.0, 1.0, false);
         for _ in 0..MAX_INDIRECTION {
             let event = self.events.get(name)?;
-            let mut remaining = roll(event.total_weight.max(1)) as i64;
-            let mut chosen = event.entries.last()?;
+            if event.total_weight == 0 {
+                return None;
+            }
+            let mut remaining = roll(event.total_weight) as i64;
+            let mut chosen = None;
             for entry in &event.entries {
                 remaining -= entry.weight as i64;
                 if remaining < 0 {
-                    chosen = entry;
+                    chosen = Some(entry);
                     break;
                 }
             }
+            let chosen = chosen?;
+            volume *= chosen.volume;
+            pitch *= chosen.pitch;
+            stream |= chosen.stream;
             match chosen.kind {
-                EntryKind::File => return Some(chosen),
+                EntryKind::File => {
+                    return Some(Picked {
+                        key: chosen.target.clone(),
+                        volume,
+                        pitch,
+                        stream,
+                        attenuation: chosen.attenuation,
+                    });
+                }
                 EntryKind::Event => name = &chosen.target,
             }
         }
@@ -118,6 +198,7 @@ fn parse_entry(value: &Value) -> Option<Entry> {
             pitch: 1.0,
             weight: 1,
             stream: false,
+            attenuation: DEFAULT_ATTENUATION,
             kind: EntryKind::File,
         });
     }
@@ -147,6 +228,7 @@ fn parse_entry(value: &Value) -> Option<Entry> {
             .get("stream")
             .and_then(Value::as_bool)
             .unwrap_or(false),
+        attenuation: number("attenuation_distance", DEFAULT_ATTENUATION),
         kind,
     })
 }
@@ -220,6 +302,39 @@ mod tests {
             &*defs.pick("outer", &mut first).unwrap().object_key(),
             "sounds/real/file.ogg"
         );
+    }
+
+    #[test]
+    fn an_event_entry_weighs_what_its_event_does_and_multiplies_in() {
+        let defs = Defs::parse(
+            r#"{
+                "outer":{"sounds":[
+                    {"name":"one","weight":50},
+                    {"name":"inner","type":"event","weight":1,"volume":0.5,"pitch":2.0}
+                ]},
+                "inner":{"sounds":[
+                    {"name":"a","weight":3,"attenuation_distance":32},
+                    {"name":"b","weight":2,"volume":0.8}
+                ]}
+            }"#,
+        )
+        .unwrap();
+        // outer weighs 50 + (3 + 2); a roll of 50 skips "one" into "inner".
+        let mut rolls = vec![50u32, 4].into_iter();
+        let mut bounds = Vec::new();
+        let picked = defs
+            .pick("outer", &mut |bound| {
+                bounds.push(bound);
+                rolls.next().unwrap()
+            })
+            .unwrap();
+        assert_eq!(bounds, [55, 5]);
+        assert_eq!(&*picked.object_key(), "sounds/b.ogg");
+        assert!((picked.volume - 0.4).abs() < 1e-6);
+        assert_eq!(picked.pitch, 2.0);
+        assert_eq!(picked.attenuation, DEFAULT_ATTENUATION);
+        let a = defs.pick("inner", &mut |_| 0).unwrap();
+        assert_eq!(a.attenuation, 32.0);
     }
 
     #[test]

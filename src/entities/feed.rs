@@ -92,6 +92,8 @@ pub struct TickInput {
     pub is_passenger: bool,
     pub swell_dir: i32,
     pub ignited: bool,
+    /// `MaxFuse`, re-armed whenever it changes; -1 when unprimed.
+    pub max_fuse: i32,
     pub peek_target: f32,
     pub paddling_left: bool,
     pub paddling_right: bool,
@@ -139,6 +141,7 @@ impl TickInput {
             is_passenger: false,
             swell_dir: -1,
             ignited: false,
+            max_fuse: -1,
             peek_target: 0.0,
             paddling_left: false,
             paddling_right: false,
@@ -238,6 +241,7 @@ fn interpolation_for(kind: EntityKind, is_living: bool) -> Option<Interpolation>
                 | EntityKind::CherryBoat
                 | EntityKind::DarkOakBoat
                 | EntityKind::PaleOakBoat
+                | EntityKind::PoplarBoat
                 | EntityKind::MangroveBoat
                 | EntityKind::OakChestBoat
                 | EntityKind::SpruceChestBoat
@@ -247,6 +251,7 @@ fn interpolation_for(kind: EntityKind, is_living: bool) -> Option<Interpolation>
                 | EntityKind::CherryChestBoat
                 | EntityKind::DarkOakChestBoat
                 | EntityKind::PaleOakChestBoat
+                | EntityKind::PoplarChestBoat
                 | EntityKind::MangroveChestBoat
                 | EntityKind::BambooRaft
                 | EntityKind::BambooChestRaft
@@ -302,6 +307,8 @@ struct KindAnim {
     jump: f32,
     jump_old: f32,
     swell_counter: i32,
+    fuse: i32,
+    fuse_seen: i32,
     paddle: [f32; 2],
     paddle_old: [f32; 2],
     eat_ticks: i32,
@@ -399,6 +406,8 @@ impl KindAnim {
         jump: 0.0,
         jump_old: 0.0,
         swell_counter: 0,
+        fuse: -1,
+        fuse_seen: -1,
         paddle: [0.0; 2],
         paddle_old: [0.0; 2],
         eat_ticks: 0,
@@ -542,7 +551,7 @@ impl Sampled {
 pub struct EntityAnim {
     pub id: i32,
     pub kind: EntityKind,
-    pos: [f64; 3],
+    pub(crate) pos: [f64; 3],
     pos_old: [f64; 3],
     body_rot: f32,
     body_rot_old: f32,
@@ -634,6 +643,8 @@ impl EntityAnim {
                     jump: 0.0,
                     jump_old: 0.0,
                     swell_counter: 0,
+                    fuse: -1,
+                    fuse_seen: -1,
                     paddle: [0.0; 2],
                     paddle_old: [0.0; 2],
                     eat_ticks: 0,
@@ -948,6 +959,13 @@ impl EntityAnim {
                 k.swell_counter = (k.swell_counter + dir).clamp(0, MAX_SWELL);
             }
             k.swell = k.swell_counter as f32 / (MAX_SWELL - 2) as f32;
+
+            if input.max_fuse != k.fuse_seen {
+                k.fuse_seen = input.max_fuse;
+                k.fuse = input.max_fuse;
+            } else if k.fuse > 0 {
+                k.fuse -= 1;
+            }
 
             if k.peek > input.peek_target {
                 k.peek = (k.peek - 0.05).clamp(input.peek_target, 1.0);
@@ -1508,6 +1526,11 @@ impl EntityAnim {
 
         if let Some(k) = self.kind_state.as_deref() {
             extras.swell = lerp(partial, k.swell_old, k.swell);
+            extras.fuse_remaining = if k.fuse >= 0 {
+                k.fuse as f32 - partial + 1.0
+            } else {
+                0.0
+            };
             extras.peek = lerp(partial, k.peek_old, k.peek);
             extras.jump_progress = lerp(partial, k.jump_old, k.jump);
             extras.paddle_left = if self.sampled.paddling_left {
@@ -1992,6 +2015,24 @@ mod tests {
             anim.tick(input.clone());
         }
         assert!((anim.sample(1.0).extras.swell - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_primed_sulfur_cube_counts_its_fuse_down_on_the_client() {
+        let mut anim = EntityAnim::new(1, EntityKind::SulfurCube);
+        let mut input = TickInput::new();
+        anim.tick(input.clone());
+        assert_eq!(anim.sample(0.5).extras.fuse_remaining, 0.0);
+        input.max_fuse = 30;
+        anim.tick(input.clone());
+        assert_eq!(anim.sample(0.0).extras.fuse_remaining, 31.0);
+        for _ in 0..10 {
+            anim.tick(input.clone());
+        }
+        assert_eq!(anim.sample(0.5).extras.fuse_remaining, 20.5);
+        input.max_fuse = -1;
+        anim.tick(input);
+        assert_eq!(anim.sample(0.5).extras.fuse_remaining, 0.0);
     }
 
     #[test]

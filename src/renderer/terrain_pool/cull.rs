@@ -581,6 +581,7 @@ pub fn prepare_cull(
     #[cfg(feature = "builtin_shaders")] takeover: Option<Res<super::draw::PackTakeover>>,
     mut assigned: Local<Vec<AssignedView>>,
 ) {
+    crate::prof_span!("render:terrain_prepare_cull");
     #[cfg(feature = "builtin_shaders")]
     let cascades = !takeover.is_some_and(|t| t.0);
     views.index.clear();
@@ -798,9 +799,24 @@ impl ViewNode for TerrainCullNode {
 
     fn run<'w>(
         &self,
+        graph: &mut RenderGraphContext,
+        render_context: &mut RenderContext<'w>,
+        view: QueryItem<'w, '_, Self::ViewQuery>,
+        world: &'w World,
+    ) -> Result<(), NodeRunError> {
+        crate::diag::frame_profile::timed(render_context, "terrain_cull", |render_context| {
+            self.run_untimed(graph, render_context, view, world)
+        })
+    }
+}
+
+impl TerrainCullNode {
+
+    fn run_untimed<'w>(
+        &self,
         _graph: &mut RenderGraphContext,
         render_context: &mut RenderContext<'w>,
-        (_entity, view, is_terrain): QueryItem<'w, '_, Self::ViewQuery>,
+        (_entity, view, is_terrain): QueryItem<'w, '_, <Self as ViewNode>::ViewQuery>,
         world: &'w World,
     ) -> Result<(), NodeRunError> {
         if !is_terrain || !world.resource::<TerrainTier>().indirect {

@@ -53,6 +53,42 @@ const ORIGIN_ROW: i32 = 256;
 #else
 @group(2) @binding(5) var<storage, read> metas: array<SlotMeta>;
 #endif
+@group(2) @binding(6) var anim_table: texture_2d<u32>;
+
+const ATLAS_COLS: u32 = 16u;
+const ANIM_ROW: u32 = 256u;
+
+fn tile_cell(tile: u32) -> vec2<f32> {
+    return vec2(f32(tile % ATLAS_COLS), f32(tile / ATLAS_COLS));
+}
+
+// Samples the atlas through the animation table: the tile a mesh names is
+// swapped for whichever frame is showing, and blended into the next one for
+// interpolated textures. Unanimated tiles map to themselves.
+fn sample_atlas(uv: vec2<f32>, bias: f32) -> vec4<f32> {
+    let size = vec2<f32>(textureDimensions(atlas_texture, 0));
+    let tiles = vec2(f32(ATLAS_COLS), size.y * f32(ATLAS_COLS) / size.x);
+    let grid = uv * tiles;
+    let cell = clamp(floor(grid), vec2(0.0), tiles - 1.0);
+    let local = grid - cell;
+    let scale = exp2(bias);
+    let ddx = dpdx(uv) * scale;
+    let ddy = dpdy(uv) * scale;
+
+    let tile = u32(cell.y) * ATLAS_COLS + u32(cell.x);
+    let rows = textureDimensions(anim_table, 0).y;
+    var entry = vec4(tile, tile, 0u, 0u);
+    if tile / ANIM_ROW < rows {
+        entry = textureLoad(anim_table, vec2<i32>(i32(tile % ANIM_ROW), i32(tile / ANIM_ROW)), 0);
+    }
+    let a = textureSampleGrad(atlas_texture, atlas_sampler, (tile_cell(entry.x) + local) / tiles, ddx, ddy);
+    if entry.z == 0u {
+        return a;
+    }
+    let b = textureSampleGrad(atlas_texture, atlas_sampler, (tile_cell(entry.y) + local) / tiles, ddx, ddy);
+    return mix(a, b, f32(entry.z) / 65535.0);
+}
+
 fn section_origin(instance_index: u32, slot_lane: i32) -> vec3<f32> {
 #ifdef META_TEXTURE
     let slot = slot_lane & 0xFFFF;
@@ -278,7 +314,7 @@ fn fog_color(view_dir: vec3<f32>, sun_color: vec3<f32>, to_light: vec3<f32>, has
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
-    let texel = textureSampleBias(atlas_texture, atlas_sampler, in.uv, params.y);
+    let texel = sample_atlas(in.uv, params.y);
 #ifdef FANCY_SHADERS
     var color = vec4(texel.rgb * in.color.rgb, texel.a);
 #else

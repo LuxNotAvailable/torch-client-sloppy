@@ -80,7 +80,7 @@ fn update_environment(
         dim,
         ticks,
         &layer,
-        gui.options.render_distance as i32,
+        super::environment::effective_render_distance(gui.options.render_distance as i32),
         delta_ticks,
         || super::lightmap::levels_at([eye[0] as f32, eye[1] as f32, eye[2] as f32]).1 as f32,
         crate::client::envprobe::camera_has_precipitation(),
@@ -171,6 +171,8 @@ impl ChunkIndex {
         ops: &TerrainOps,
     ) {
         let origin = [cx * 16, sec_y, cz * 16];
+        crate::blockentities::transient::section_rebuilt(origin);
+        crate::blockentities::bake::section_rebuilt(origin);
         let Self {
             columns,
             free_slots,
@@ -259,6 +261,8 @@ impl ChunkIndex {
     }
 
     pub fn clear(&mut self, ops: &TerrainOps) {
+        crate::blockentities::transient::clear();
+        crate::blockentities::bake::clear();
         ops.push(TerrainOp::ClearAll);
         self.columns.clear();
         self.free_slots.clear();
@@ -361,6 +365,7 @@ fn setup(
     commands.insert_resource(super::terrain_pool::TerrainTextures {
         atlas: atlas.clone(),
         lightmap,
+        anim: images.add(super::block_anim::table_image()),
     });
 
     let break_mat = materials.add(StandardMaterial {
@@ -992,14 +997,17 @@ fn collect_hud_info(
     block_entity_rigs: Res<crate::blockentities::BeRigs>,
     images: Res<Assets<Image>>,
     mut state: ResMut<crate::gui::GuiState>,
-    (mut memory_cache, frame_gate, mut gated_ms, mut fps): (
+    (mut memory_cache, frame_gate, mut gated_ms, mut fps, diagnostics): (
         Local<Option<(Instant, crate::gui::hud::MemoryUse)>>,
         Res<FrameGate>,
         Local<f32>,
         Local<FpsWindow>,
+        Option<Res<bevy::diagnostic::DiagnosticsStore>>,
     ),
 ) {
     crate::prof_span!("render:collect_hud_info");
+    let profiling_page = prof.shown && prof.page == crate::gui::hud::DebugPage::Profiler;
+    crate::diag::frame_profile::set_enabled(profiling_page);
     let hud_visible = !state.in_menu() && !state.hide_gui;
     let camera = camera_q.single().ok();
     let mut nametags = std::mem::take(&mut state.hud.nametags);
@@ -1113,6 +1121,14 @@ fn collect_hud_info(
             pipeline: {
                 crate::prof_span!("hud:counts");
                 crate::diag::counts()
+            },
+            frame_profile: profiling_page
+                .then(crate::diag::frame_profile::report)
+                .flatten(),
+            passes: if profiling_page {
+                diagnostics.as_deref().map(render_passes).unwrap_or_default()
+            } else {
+                Vec::new()
             },
         }
     });
@@ -1380,7 +1396,7 @@ pub(super) fn apply_cursor(mut opts: Mut<CursorOptions>, grab: CursorGrabMode, v
     opts.visible = visible;
 }
 
-fn world_cursor() -> (CursorGrabMode, bool) {
+pub(super) fn world_cursor() -> (CursorGrabMode, bool) {
     #[cfg(feature = "mobile_ui")]
     {
         (CursorGrabMode::None, true)
@@ -1835,16 +1851,28 @@ fn sync_bot_options(
     s.session.fov.first_person = first_person;
 }
 
-#[cfg(feature = "audio")]
+/// `MusicManager.tick`, at the game's twenty ticks a second.
+#[cfg(audio)]
+fn tick_music(
+    time: Res<Time>,
+    state: Res<State<AppState>>,
+    mut owed: Local<f32>,
+) {
+    const TICK: f32 = 0.05;
+    *owed = (*owed + time.delta_secs()).min(TICK * 10.0);
+    let in_game = *state.get() == AppState::InGame;
+    while *owed >= TICK {
+        *owed -= TICK;
+        crate::audio::tick_music(in_game);
+    }
+}
+
+#[cfg(audio)]
 fn sync_audio_listener(camera_q: Query<&GlobalTransform, With<WorldCamera>>) {
     let Ok(transform) = camera_q.single() else {
         return;
     };
-    crate::audio::set_listener(
-        transform.translation().into(),
-        (*transform.forward()).into(),
-        (*transform.right()).into(),
-    );
+    crate::audio::set_listener(transform.translation().into(), (*transform.right()).into());
 }
 
 fn sync_smooth_lighting(state: Res<crate::gui::GuiState>, mut last: Local<Option<bool>>) {
@@ -2014,6 +2042,125 @@ fn dump_flamegraph(
     }
 }
 
+fn wgpu_settings() -> bevy::render::settings::WgpuSettings {
+    let mut settings = bevy::render::settings::WgpuSettings {
+        disabled_features: withheld_features(),
+        constrained_limits: constrained_limits(),
+        ..default()
+    };
+    if let Some(backends) = chosen_backends() {
+        settings.backends = Some(backends);
+    }
+    settings
+}
+
+static STARTED_BACKEND: std::sync::OnceLock<crate::gui::RenderBackend> =
+    std::sync::OnceLock::new();
+
+/// The Renderer setting this run started with, after any fallback.
+pub(crate) fn started_backend() -> crate::gui::RenderBackend {
+    STARTED_BACKEND.get().copied().unwrap_or_default()
+}
+
+/// The Renderer setting as wgpu backends; `None` leaves wgpu's own choice.
+/// A backend with no adapter falls back to that too, since starting on it
+/// would fail before any menu could undo the setting.
+fn chosen_backends() -> Option<bevy::render::settings::Backends> {
+    let chosen = resolve_backend();
+    let _ = STARTED_BACKEND.set(chosen.0);
+    chosen.1
+}
+
+fn resolve_backend() -> (
+    crate::gui::RenderBackend,
+    Option<bevy::render::settings::Backends>,
+) {
+    use crate::gui::RenderBackend;
+    use bevy::render::settings::Backends;
+
+    let wanted = RenderBackend::stored();
+    let backends = match wanted {
+        RenderBackend::Auto => return (RenderBackend::Auto, None),
+        RenderBackend::Vulkan => Backends::VULKAN,
+    };
+    if !has_adapter(backends) {
+        crate::log_warn!(
+            "render",
+            "no {} adapter on this machine; starting on the automatic renderer",
+            wanted.caption()
+        );
+        return (RenderBackend::Auto, None);
+    }
+    crate::log_info!("render", "renderer: {}", wanted.caption());
+    (wanted, Some(backends))
+}
+
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+fn has_adapter(backends: bevy::render::settings::Backends) -> bool {
+    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        backends,
+        ..default()
+    });
+    !instance.enumerate_adapters(backends).is_empty()
+}
+
+/// The setting is desktop-only; elsewhere the platform's renderer stands.
+#[cfg(any(target_arch = "wasm32", target_os = "android"))]
+fn has_adapter(_backends: bevy::render::settings::Backends) -> bool {
+    false
+}
+
+/// Render-graph passes from Bevy's render diagnostics: smoothed GPU time
+/// (when the device has timestamp queries) and CPU encode time, in ms.
+fn render_passes(
+    diagnostics: &bevy::diagnostic::DiagnosticsStore,
+) -> Vec<crate::gui::hud::PassTime> {
+    let mut passes: Vec<crate::gui::hud::PassTime> = Vec::new();
+    for diagnostic in diagnostics.iter() {
+        let path = diagnostic.path().as_str();
+        let Some(rest) = path.strip_prefix("render/") else {
+            continue;
+        };
+        let (name, gpu) = match (rest.strip_suffix("/elapsed_gpu"), rest.strip_suffix("/elapsed_cpu")) {
+            (Some(name), _) => (name, true),
+            (_, Some(name)) => (name, false),
+            _ => continue,
+        };
+        // A pass that stopped running (a shader pack turned off) keeps its
+        // last value in the store; only passes measured lately count.
+        let recent = diagnostic
+            .measurement()
+            .is_some_and(|m| m.time.elapsed() < std::time::Duration::from_secs(1));
+        let Some(ms) = diagnostic.smoothed().filter(|_| recent) else {
+            continue;
+        };
+        let slot = match passes.iter().position(|p| p.name == name) {
+            Some(i) => &mut passes[i],
+            None => {
+                passes.push(crate::gui::hud::PassTime {
+                    name: name.to_owned(),
+                    ..Default::default()
+                });
+                passes.last_mut().unwrap()
+            }
+        };
+        if gpu {
+            slot.gpu_ms = Some(ms as f32);
+        } else {
+            slot.cpu_ms = ms as f32;
+        }
+    }
+    // A node with nothing to do this frame (no pack installed) still opens
+    // its span; a pass at zero is not a pass worth a row.
+    passes.retain(|p| p.gpu_ms.unwrap_or(0.0).max(p.cpu_ms) >= 0.005);
+    passes.sort_by(|a, b| {
+        b.gpu_ms
+            .unwrap_or(b.cpu_ms)
+            .total_cmp(&a.gpu_ms.unwrap_or(a.cpu_ms))
+    });
+    passes
+}
+
 fn withheld_features() -> Option<bevy::render::settings::WgpuFeatures> {
     #[cfg(target_os = "android")]
     {
@@ -2080,13 +2227,14 @@ fn select_debug_page(
     if !held {
         return;
     }
-    const PAGES: [(KeyCode, crate::gui::hud::DebugPage); 7] = [
+    const PAGES: [(KeyCode, crate::gui::hud::DebugPage); 8] = [
         (KeyCode::Digit1, crate::gui::hud::DebugPage::Overview),
         (KeyCode::Digit2, crate::gui::hud::DebugPage::Performance),
         (KeyCode::Digit3, crate::gui::hud::DebugPage::World),
         (KeyCode::Digit4, crate::gui::hud::DebugPage::Network),
         (KeyCode::Digit5, crate::gui::hud::DebugPage::Workers),
         (KeyCode::Digit6, crate::gui::hud::DebugPage::Memory),
+        (KeyCode::Digit7, crate::gui::hud::DebugPage::Profiler),
         (KeyCode::Digit0, crate::gui::hud::DebugPage::Help),
     ];
     for (key, page) in PAGES {
@@ -2131,20 +2279,13 @@ pub fn run(
             })
             .set(bevy::render::RenderPlugin {
                 render_creation: bevy::render::settings::RenderCreation::Automatic(
-                    bevy::render::settings::WgpuSettings {
-                        disabled_features: withheld_features(),
-                        constrained_limits: constrained_limits(),
-                        ..default()
-                    },
+                    wgpu_settings(),
                 ),
                 ..default()
             })
             .disable::<bevy::app::PanicHandlerPlugin>(),
     )
-    .add_plugins((
-        #[cfg(feature = "budget")]
-        bevy::render::diagnostic::RenderDiagnosticsPlugin,
-    ))
+    .add_plugins(crate::diag::frame_profile::FrameProfilePlugin)
     .insert_resource(bevy::winit::WinitSettings {
         focused_mode: bevy::winit::UpdateMode::Continuous,
         unfocused_mode: unfocused_update_mode(),
@@ -2162,6 +2303,9 @@ pub fn run(
     .add_plugins(crate::renderer::terrain::TerrainMaterialPlugin)
     .add_plugins(crate::renderer::terrain_pool::TerrainPoolPlugin)
     .add_plugins(crate::renderer::entity_material::EntityMaterialPlugin)
+    .add_plugins(crate::renderer::glint::GlintPlugin)
+    .add_plugins(crate::renderer::screen_effects::ScreenEffectsPlugin)
+    .add_plugins(crate::renderer::post_effects::PostEffectsPlugin)
     .add_plugins(crate::renderer::esp_material::EspMaterialPlugin)
     .add_plugins(crate::renderer::sky::SkyPlugin)
     .add_plugins(crate::renderer::ssaa::SsaaPlugin)
@@ -2225,8 +2369,8 @@ pub fn run(
         Update,
         apply_fov.after(FrameViewSystems).before(collect_hud_info),
     );
-    #[cfg(feature = "audio")]
-    app.add_systems(Update, sync_audio_listener);
+    #[cfg(audio)]
+    app.add_systems(Update, (sync_audio_listener, tick_music));
     #[cfg(not(target_arch = "wasm32"))]
     app.add_systems(Update, sync_vsync);
     app.add_systems(Last, trace_reextracted_meshes)
@@ -2438,6 +2582,8 @@ pub fn run(
 
     #[cfg(not(target_arch = "wasm32"))]
     super::input::run_exit_tasks();
+    #[cfg(not(target_arch = "wasm32"))]
+    crate::diag::logfile::flush();
     #[cfg(resource_packs)]
     crate::resourcepacks::restart_if_requested();
 }

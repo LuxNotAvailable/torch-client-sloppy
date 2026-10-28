@@ -35,6 +35,18 @@ impl Registry {
         }
     }
 
+    /// Like [`Registry::add_many`], but a layer that several wearer sets share,
+    /// such as the elytra, keeps one spec and one baked model for all of them.
+    pub fn add_many_shared(&mut self, kinds: &[EntityKind], spec: RenderSpec) {
+        let idx = match self.specs.iter().position(|s| s.name == spec.name) {
+            Some(idx) => idx,
+            None => self.push(spec),
+        };
+        for kind in kinds {
+            self.slot(*kind).push(idx);
+        }
+    }
+
     pub fn add_carried(&mut self, carried: Carried, spec: RenderSpec) {
         let idx = self.push(spec);
         self.by_carried[carried as usize].push(idx);

@@ -147,18 +147,25 @@ async fn run_schedule_loop(
     loop {
         let now = Instant::now();
         if let Some(last_update) = last_update {
-            let elapsed = now.duration_since(last_update);
-            if elapsed < UPDATE_DURATION_TARGET {
-                crate::sleep(UPDATE_DURATION_TARGET - elapsed).await;
+            // Wake for whichever is due first. Waking only at update rate let
+            // a game tick slip by up to a whole update, so ticks landed
+            // unevenly and anything interpolating between them had to lag.
+            let mut wait = UPDATE_DURATION_TARGET.saturating_sub(now.duration_since(last_update));
+            if let Some(last_tick) = last_tick {
+                wait = wait.min((last_tick + GAME_TICK_DURATION_TARGET).saturating_duration_since(now));
+            }
+            if !wait.is_zero() {
+                crate::sleep(wait).await;
             }
         }
+        let now = Instant::now();
         last_update = Some(now);
 
         let mut ecs = ecs.write();
 
         ecs.run_schedule(outer_schedule_label);
         if last_tick
-            .map(|last_tick| last_tick.elapsed() > GAME_TICK_DURATION_TARGET)
+            .map(|last_tick| now.duration_since(last_tick) >= GAME_TICK_DURATION_TARGET)
             .unwrap_or(true)
         {
             if let Some(last_tick) = &mut last_tick {

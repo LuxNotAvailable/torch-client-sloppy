@@ -927,8 +927,7 @@ mod tests {
     }
 
     fn assets() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("reference/minecraft-26.1.1/assets/minecraft")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("reference/minecraft-26.3/assets/minecraft")
     }
 
     fn font() -> Font {

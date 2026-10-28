@@ -481,8 +481,10 @@ mod tests {
         let bucket = blend.bucket_for(0);
         blend.add_weight(bucket, 216.0);
         let layer = blend.resolve(&bases());
-        assert_eq!(layer.sky_color, bases().sky_color);
-        assert_eq!(layer.fog_distance, (0.0, 1024.0));
+        // Row 0 as the biome table has it now: the table is process-wide and
+        // another test may have loaded the real biomes into it.
+        let alone = BiomeLayer::fold(crate::util::biome_color::env(0), &bases());
+        assert_eq!(layer, alone);
     }
 
     #[test]
@@ -587,6 +589,23 @@ mod tests {
             precipitation_at(&warm, 63 + 17 + 521, 63),
             Precipitation::Snow
         );
+    }
+}
+
+/// The chunk radius the server streams, 0 until it says.
+static SERVER_CHUNK_RADIUS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+pub fn set_server_chunk_radius(radius: u32) {
+    SERVER_CHUNK_RADIUS.store(radius, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Vanilla's `getEffectiveRenderDistance`: terrain only reaches as far as
+/// the server streams it, so fog that ends at the client's own setting would
+/// leave the edge of the world bare.
+pub fn effective_render_distance(client: i32) -> i32 {
+    match SERVER_CHUNK_RADIUS.load(std::sync::atomic::Ordering::Relaxed) {
+        0 => client,
+        server => client.min(server as i32),
     }
 }
 

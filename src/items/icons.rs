@@ -1118,7 +1118,7 @@ pub fn bake_item_icons(assets: &Path) -> ItemIcons {
 mod tests {
     use super::*;
 
-    const ASSETS: &str = "reference/minecraft-26.1.1/assets/minecraft";
+    const ASSETS: &str = "reference/minecraft-26.3/assets/minecraft";
 
     #[test]
     fn parse_transformation_matches_vanillas_compose_order() {

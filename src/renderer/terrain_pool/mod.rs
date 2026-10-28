@@ -115,6 +115,8 @@ impl Default for TerrainParams {
 pub struct TerrainTextures {
     pub atlas: Handle<Image>,
     pub lightmap: Handle<Image>,
+    /// Which tile each atlas tile shows this tick; see `block_anim`.
+    pub anim: Handle<Image>,
 }
 
 #[derive(Component, Clone, Copy, Default, ExtractComponent)]

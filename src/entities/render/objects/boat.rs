@@ -17,6 +17,7 @@ pub(crate) const BOATS: &[EntityKind] = &[
     EntityKind::CherryBoat,
     EntityKind::DarkOakBoat,
     EntityKind::PaleOakBoat,
+    EntityKind::PoplarBoat,
     EntityKind::MangroveBoat,
 ];
 
@@ -29,6 +30,7 @@ pub(crate) const CHEST_BOATS: &[EntityKind] = &[
     EntityKind::CherryChestBoat,
     EntityKind::DarkOakChestBoat,
     EntityKind::PaleOakChestBoat,
+    EntityKind::PoplarChestBoat,
     EntityKind::MangroveChestBoat,
 ];
 
@@ -72,6 +74,7 @@ fn wood(kind: EntityKind) -> &'static str {
         EntityKind::CherryBoat | EntityKind::CherryChestBoat => "cherry",
         EntityKind::DarkOakBoat | EntityKind::DarkOakChestBoat => "dark_oak",
         EntityKind::PaleOakBoat | EntityKind::PaleOakChestBoat => "pale_oak",
+        EntityKind::PoplarBoat | EntityKind::PoplarChestBoat => "poplar",
         EntityKind::MangroveBoat | EntityKind::MangroveChestBoat => "mangrove",
         EntityKind::BambooRaft | EntityKind::BambooChestRaft => "bamboo",
         _ => "oak",

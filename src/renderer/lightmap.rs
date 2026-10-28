@@ -57,7 +57,7 @@ pub fn resolved_levels(levels: (u8, u8)) -> (u8, u8) {
     if crate::renderer::lighting_enabled() {
         levels
     } else {
-        (15, 15)
+        (0, 15)
     }
 }
 

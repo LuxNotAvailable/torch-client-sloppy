@@ -294,7 +294,7 @@ pub(super) fn mouse_look(
         let hand = if state.screen.is_open() || !crate::platform::pointer::is_locked() {
             Vec2::ZERO
         } else {
-            motion.delta * LOOK_SCALE
+            motion.delta * state.options.look_scale()
         };
         if hand == Vec2::ZERO && !crate::modules::hooks::drives_look() {
             return;
@@ -352,12 +352,20 @@ pub(crate) fn bot_movement_input(
     mut intent: ResMut<crate::renderer::intent::Intent>,
     mut last_forward_tap: Local<Option<f32>>,
     mut sprint_latch: Local<bool>,
+    mut toggled: Local<Toggled>,
 ) {
     if freecam.active || state.screen.is_open() || crate::gui::keyboard_elsewhere() {
         *last_forward_tap = None;
         *sprint_latch = false;
         return;
     }
+    let options = &state.options;
+    toggled.update(
+        options.toggle_crouch,
+        state.keybinds.just(Action::Sneak, &keys, &buttons),
+        options.toggle_sprint,
+        state.keybinds.just(Action::Sprint, &keys, &buttons),
+    );
     let binds = &state.keybinds;
     let down = |action| binds.down(action, &keys, &buttons);
     let fwd = down(Action::Forward);
@@ -365,8 +373,16 @@ pub(crate) fn bot_movement_input(
     let left = down(Action::Left);
     let right = down(Action::Right);
     let jump = down(Action::Jump);
-    let shift = down(Action::Sneak);
-    let sprint_key = down(Action::Sprint);
+    let shift = if options.toggle_crouch {
+        toggled.crouch
+    } else {
+        down(Action::Sneak)
+    };
+    let sprint_key = if options.toggle_sprint {
+        toggled.sprint
+    } else {
+        down(Action::Sprint)
+    };
 
     let flying = {
         let mut s = shared.0.lock().unwrap();
@@ -401,6 +417,21 @@ pub(crate) fn bot_movement_input(
     );
 }
 
+/// Latched sneak and sprint for the toggle options; a latch drops when its
+/// option is switched back to hold.
+#[derive(Default)]
+pub(super) struct Toggled {
+    crouch: bool,
+    sprint: bool,
+}
+
+impl Toggled {
+    fn update(&mut self, crouch_on: bool, crouch_tap: bool, sprint_on: bool, sprint_tap: bool) {
+        self.crouch = crouch_on && (self.crouch != crouch_tap);
+        self.sprint = sprint_on && (self.sprint != sprint_tap);
+    }
+}
+
 pub(super) const FLY_DOUBLE_TAP_SECS: f32 = 7.0 / 20.0;
 
 pub(super) fn flight_toggle_input(
@@ -432,15 +463,26 @@ pub(super) fn flight_toggle_input(
     }
 }
 
+/// Lets the cursor go when the window loses focus, and takes it back when
+/// the window regains focus with no screen open, so the game has the mouse
+/// again without a trip through the pause menu.
 pub(super) fn window_focus_cursor(
     mut events: bevy::ecs::message::MessageReader<WindowFocused>,
     mut cursor_opts: Query<&mut CursorOptions, With<PrimaryWindow>>,
+    state: Res<crate::gui::GuiState>,
 ) {
     for ev in events.read() {
+        let Ok(opts) = cursor_opts.single_mut() else {
+            continue;
+        };
         if !ev.focused {
-            if let Ok(opts) = cursor_opts.single_mut() {
-                super::systems::apply_cursor(opts, CursorGrabMode::None, true);
+            super::systems::apply_cursor(opts, CursorGrabMode::None, true);
+        } else if !state.screen.is_open() {
+            let (grab, visible) = super::systems::world_cursor();
+            if grab != CursorGrabMode::None {
+                crate::platform::pointer::lock();
             }
+            super::systems::apply_cursor(opts, grab, visible);
         }
     }
 }
@@ -744,7 +786,10 @@ pub(super) fn handle_spectator_action_key(
     }
 }
 
-pub(crate) fn wheel_notches(wheel: &AccumulatedMouseScroll) -> Vec2 {
+pub(crate) fn wheel_notches(
+    wheel: &AccumulatedMouseScroll,
+    options: &crate::gui::GuiOptions,
+) -> Vec2 {
     const PIXELS_PER_NOTCH: f32 = 100.0;
     #[cfg(target_arch = "wasm32")]
     const LINES_PER_NOTCH: f32 = 3.0;
@@ -755,7 +800,7 @@ pub(crate) fn wheel_notches(wheel: &AccumulatedMouseScroll) -> Vec2 {
         MouseScrollUnit::Line => LINES_PER_NOTCH,
         MouseScrollUnit::Pixel => PIXELS_PER_NOTCH,
     };
-    wheel.delta / per
+    options.scroll(wheel.delta / per)
 }
 
 pub(crate) fn accumulate_scroll(acc: &mut (f64, f64), dx: f64, dy: f64) -> (i32, i32) {
@@ -803,7 +848,7 @@ pub(super) fn handle_hotbar_scroll(
     if state.screen.is_open() {
         return;
     }
-    let notches = wheel_notches(&wheel);
+    let notches = wheel_notches(&wheel, &state.options);
     let (dx, dy) = (notches.x as f64, notches.y as f64);
     if dx == 0.0 && dy == 0.0 {
         return;
@@ -837,7 +882,7 @@ pub(super) fn handle_spectator_fly_speed_scroll(
     if state.screen.is_open() {
         return;
     }
-    let dy = wheel_notches(&wheel).y;
+    let dy = wheel_notches(&wheel, &state.options).y;
     if dy == 0.0 {
         return;
     }
@@ -959,12 +1004,17 @@ pub(super) fn toggle_screen(
             } else {
                 Some(match state.screen {
                     Screen::Options => state.options_parent,
+                    Screen::MouseSettings => Screen::Controls,
                     #[cfg(feature = "shader_support")]
                     Screen::ShaderPacks => Screen::VideoSettings,
                     #[cfg(feature = "shader_support")]
                     Screen::ShaderOptions => Screen::ShaderPacks,
                     #[cfg(explore_modrinth)]
                     Screen::ExplorePacks => Screen::ResourcePacks,
+                    #[cfg(voice)]
+                    Screen::VoiceChat => Screen::Options,
+                    #[cfg(voice)]
+                    Screen::VoicePlayers | Screen::VoiceGroups => Screen::VoiceChat,
                     s if s.is_options() => Screen::Options,
                     _ => Screen::None,
                 })
@@ -1130,6 +1180,29 @@ pub(super) fn handle_keybinds(
         state.tab_list_held = held;
     }
 
+    #[cfg(voice)]
+    {
+        // Push-to-talk and whisper are held; a screen open lets them go,
+        // as the mod's key handling does.
+        let in_game = !state.screen.is_open();
+        crate::voice::set_push_to_talk(
+            in_game && state.keybinds.down(Action::VoicePushToTalk, &keys, &buttons),
+        );
+        crate::voice::set_whisper(
+            in_game && state.keybinds.down(Action::VoiceWhisper, &keys, &buttons),
+        );
+        if in_game && state.keybinds.just(Action::VoiceMute, &keys, &buttons) {
+            state.options.voice.muted = !state.options.voice.muted;
+            state.options.voice.apply();
+            crate::gui::save_options(&state.options);
+        }
+        if in_game && state.keybinds.just(Action::VoiceDisable, &keys, &buttons) {
+            state.options.voice.disabled = !state.options.voice.disabled;
+            state.options.voice.apply();
+            crate::gui::save_options(&state.options);
+        }
+    }
+
     if state.screen.is_open() {
         return;
     }
@@ -1159,6 +1232,36 @@ pub(super) fn handle_keybinds(
 #[cfg(test)]
 mod tests {
     use super::{HOTBAR_SLOTS, accumulate_scroll, next_scroll_selection};
+
+    #[test]
+    fn a_toggle_latches_on_tap_and_drops_with_its_option() {
+        let mut t = super::Toggled::default();
+        t.update(true, true, false, true);
+        assert!(t.crouch && !t.sprint);
+        t.update(true, false, false, false);
+        assert!(t.crouch);
+        t.update(true, true, false, false);
+        assert!(!t.crouch);
+        t.update(true, true, false, false);
+        t.update(false, false, false, false);
+        assert!(!t.crouch);
+    }
+
+    #[test]
+    fn default_sensitivity_is_vanillas_look_scale() {
+        let mut o = crate::gui::GuiOptions::default();
+        o.mouse_sensitivity = crate::gui::MOUSE_SENSITIVITY_DEFAULT;
+        o.invert_x = false;
+        o.invert_y = true;
+        let k = o.look_scale();
+        assert!((k.x - super::LOOK_SCALE).abs() < 1e-6);
+        assert!((k.y + super::LOOK_SCALE).abs() < 1e-6);
+        o.discrete_scrolling = true;
+        assert_eq!(
+            o.scroll(bevy::math::Vec2::new(0.0, -2.5)),
+            bevy::math::Vec2::new(0.0, -1.0)
+        );
+    }
 
     #[test]
     fn scroll_direction_matches_vanilla() {

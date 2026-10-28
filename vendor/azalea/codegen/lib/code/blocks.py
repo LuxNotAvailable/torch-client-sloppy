@@ -2,6 +2,13 @@ from lib.utils import get_dir_location, to_camel_case
 
 BLOCKS_RS_DIR = get_dir_location("../azalea-block/src/generated.rs")
 
+# Terminology:
+# - Property: A property of a block, like "direction"
+# - Variant: A potential state of a property, like "up"
+# - State: A possible state of a block, a combination of variants
+# - Block: Has properties and states.
+
+
 def generate_blocks(
     blocks_report: dict,
     pumpkin_blocks_data: dict,
@@ -14,15 +21,15 @@ def generate_blocks(
     new_make_block_states_macro_code = []
     new_make_block_states_macro_code.append("make_block_states! {")
 
-    burger_blocks_data = burger_data[0]["blocks"]["block"]
-
     pumpkin_block_map = {}
     for block_data in pumpkin_blocks_data["blocks"]:
         block_id = block_data["name"]
         pumpkin_block_map[block_id] = block_data
 
+    # Find properties
     properties = {}
 
+    # This dict looks like { 'FloweringAzaleaLeavesDistance': 'distance' }
     property_struct_names_to_names = {}
     for block_id in ordered_blocks:
         block_data_report = blocks_report[f"minecraft:{block_id}"]
@@ -49,10 +56,17 @@ def generate_blocks(
 
         properties.update(block_properties)
 
+    # Property codegen
     new_make_block_states_macro_code.append("    Properties => {")
     for property_struct_name, property_variants in properties.items():
+        # "face" => Face {
+        #     Floor,
+        #     Wall,
+        #     Ceiling,
+        # },
         property_id = property_struct_names_to_names[property_struct_name]
 
+        # if the only variants are true and false, we make it unit struct with a boolean instead of an enum
         if property_variants == ["true", "false"]:
             property_shape_code = f"{property_struct_name}(bool)"
         else:
@@ -69,10 +83,10 @@ def generate_blocks(
 
     new_make_block_states_macro_code.append("    },")
 
+    # BlockKind codegen
     new_make_block_states_macro_code.append("    Blocks => {")
     for block_id in ordered_blocks:
         block_data_report = blocks_report["minecraft:" + block_id]
-        block_data_burger = burger_blocks_data.get(block_id, {})
         block_data_pumpkin = pumpkin_block_map[block_id]
 
         default_property_variants: dict[str, str] = {}
@@ -81,7 +95,7 @@ def generate_blocks(
                 default_property_variants = state.get("properties", {})
 
         properties_code = "{"
-        for property_id in list(block_data_report.get("properties", {}).keys()):
+        for property_id in sorted(block_data_report.get("properties", {}).keys()):
             property_default = default_property_variants.get(property_id)
             property_variants = block_data_report["properties"][property_id]
 
@@ -92,6 +106,8 @@ def generate_blocks(
             is_boolean_property = property_variants == ["true", "false"]
 
             if is_boolean_property:
+                # if it's a boolean, keep the type lowercase
+                # (so it's either `true` or `false`)
                 property_default_type = f"{property_struct_name}({property_default})"
             else:
                 property_default_type = (
@@ -103,14 +119,18 @@ def generate_blocks(
             this_property_code = f'"{property_id}": {property_default_type}'
 
             properties_code += f"\n            {this_property_code},"
+        # if there's nothing inside the properties, keep it in one line
         if properties_code == "{":
             properties_code += "}"
         else:
             properties_code += "\n        }"
 
+        # make the block behavior
         behavior_constructor = "BlockBehavior::new()"
-        if block_data_burger.get("requires_correct_tool_for_drops"):
+        # requires tool
+        if block_data_pumpkin.get("requires_correct_tool_for_drops"):
             behavior_constructor += ".requires_correct_tool_for_drops()"
+        # strength
         destroy_time = block_data_pumpkin.get("hardness")
         explosion_resistance = block_data_pumpkin.get("blast_resistance")
         if destroy_time and explosion_resistance:
@@ -119,18 +139,20 @@ def generate_blocks(
             behavior_constructor += f".destroy_time({destroy_time})"
         elif explosion_resistance:
             behavior_constructor += f".explosion_resistance({explosion_resistance})"
-        friction = block_data_burger.get("friction")
-        if friction is not None:
+        # friction
+        friction = block_data_pumpkin["friction"]
+        if friction != 0.6:
             behavior_constructor += f".friction({friction})"
 
         force_solid = None
-        if block_data_burger.get("force_solid_on"):
+        if block_data_pumpkin.get("force_solid_on"):
             force_solid = "true"
-        elif block_data_burger.get("force_solid_off"):
+        elif block_data_pumpkin.get("force_solid_off"):
             force_solid = "false"
         if force_solid is not None:
             behavior_constructor += f".force_solid({force_solid})"
 
+        # TODO: use burger to generate the blockbehavior
         new_make_block_states_macro_code.append(
             f"        {block_id} => {behavior_constructor}, {properties_code},"
         )
@@ -151,14 +173,18 @@ def generate_blocks(
         if in_macro:
             continue
         new_code.append(line)
+    # empty line at the end
     new_code.append("")
 
     with open(BLOCKS_RS_DIR, "w") as f:
         f.write("\n".join(new_code))
 
+
 def get_property_struct_name(
     block_id: str, property_id: str, property_variants: list[str]
 ) -> str:
+    # these are hardcoded because otherwise they cause conflicts
+    # some names inspired by https://github.com/feather-rs/feather/blob/main/feather/blocks/src/generated/table.rs
     if property_variants == ["north", "east", "south", "west", "up", "down"]:
         return "FacingCubic"
     if property_variants == ["north", "south", "west", "east"]:
@@ -218,10 +244,15 @@ def get_property_struct_name(
 
     return to_camel_case(property_id)
 
+
 def is_list_of_string_integers(list_to_check: list[str]) -> bool:
     return all(map(str.isdigit, list_to_check))
 
+
 def get_ordered_blocks(registries_report: dict[str, dict]) -> list[str]:
+    """
+    Returns a list of block ids (like ['air', 'stone', ...]) ordered by their protocol id.
+    """
     blocks_registry = registries_report["minecraft:block"]
 
     blocks_to_ids = {}

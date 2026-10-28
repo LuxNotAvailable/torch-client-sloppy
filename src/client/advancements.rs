@@ -4,7 +4,7 @@ use std::sync::Arc;
 use azalea::local_player::WorldHolder;
 use azalea_protocol::packets::game::ClientboundGamePacket;
 use azalea_protocol::packets::game::c_update_advancements::{
-    AdvancementHolder, AdvancementProgress, FrameType,
+    AdvancementProgress, FrameType, PositionedAdvancement,
 };
 use azalea_registry::identifier::Identifier;
 
@@ -83,9 +83,10 @@ struct Added {
 }
 
 fn convert(
-    holder: &AdvancementHolder,
+    entry: &PositionedAdvancement,
     registries: Option<&azalea_core::registry_holder::RegistryHolder>,
 ) -> Added {
+    let holder = &entry.advancement;
     let a = &holder.value;
     let display = a.display.as_ref().map(|d| {
         let frame = match d.frame {
@@ -107,8 +108,8 @@ fn convert(
             show_toast: d.show_toast,
             hidden: d.hidden,
             background: d.background.clone(),
-            x: d.x,
-            y: d.y,
+            x: entry.x,
+            y: entry.y,
         })
     });
     Added {
@@ -140,7 +141,13 @@ pub(crate) fn packet(
                     .collect()
             };
             let mut s = shared.lock().unwrap();
-            let toasts = update(&mut s.session, p.reset, &p.removed, added, &p.progress);
+            let toasts = update(
+                &mut s.session,
+                p.should_reset,
+                &p.removed,
+                added,
+                &p.progress,
+            );
             if p.show_advancements && !toasts.is_empty() {
                 crate::session::push_toasts(&mut s.session, toasts);
             }

@@ -26,7 +26,7 @@ pub(crate) fn program_folder(source: &Source, dimension: Dimension) -> String {
         files.iter().any(|f| {
             f.strip_prefix(&format!("/{folder}/")).is_some_and(|rest| {
                 !rest.contains('/')
-                    && [".vsh", ".fsh", ".csh", ".gsh"]
+                    && [".vsh", ".fsh", ".csh", ".gsh", super::native::EXTENSION]
                         .iter()
                         .any(|e| rest.ends_with(e))
             })
@@ -92,9 +92,20 @@ impl Pack {
     pub(super) fn has(&self, name: &str) -> bool {
         let folder = &self.folder;
         let key = format!("{}{name}", &folder[1..]);
-        self.source.contains(&format!("{folder}{name}.vsh"))
-            && self.source.contains(&format!("{folder}{name}.fsh"))
-            && self.enabled(&key)
+        let glsl = self.source.contains(&format!("{folder}{name}.vsh"))
+            && self.source.contains(&format!("{folder}{name}.fsh"));
+        (glsl || self.native_draw(name).is_some()) && self.enabled(&key)
+    }
+
+    /// `name`'s native drawing program, if the pack writes it in WGSL.
+    pub(super) fn native_draw(&self, name: &str) -> Option<String> {
+        self.native(name).filter(|(_, compute)| !compute).map(|(path, _)| path)
+    }
+
+    fn native(&self, name: &str) -> Option<(String, bool)> {
+        let path = format!("{}{name}{}", self.folder, super::native::EXTENSION);
+        let text = self.source.read_text(&path)?;
+        Some((path, super::native::is_compute(&text)))
     }
 
     pub(super) fn enabled(&self, key: &str) -> bool {
@@ -127,7 +138,12 @@ impl Pack {
 
     pub(super) fn compute_path(&self, name: &str) -> Option<String> {
         let path = format!("{}{name}.csh", self.folder);
-        self.source.contains(&path).then_some(path)
+        if self.source.contains(&path) {
+            return Some(path);
+        }
+        self.native(name)
+            .filter(|(_, compute)| *compute)
+            .map(|(path, _)| path)
     }
 
     pub(super) fn compute_array(&self, base: &str) -> Vec<String> {
@@ -151,7 +167,12 @@ impl Pack {
         let Some(path) = self.compute_path(name) else {
             return false;
         };
-        self.enabled(path.trim_start_matches('/').trim_end_matches(".csh"))
+        let key = path.trim_start_matches('/');
+        let key = key
+            .strip_suffix(".csh")
+            .or_else(|| key.strip_suffix(super::native::EXTENSION))
+            .unwrap_or(key);
+        self.enabled(key)
     }
 
     pub(super) fn stage(&mut self, program: &str, suffix: &str) -> Result<String, String> {
@@ -165,11 +186,12 @@ impl Pack {
             include::expand(&self.source, &path, &mut self.cache).map_err(|e| e.to_string())?;
         let applied = options::apply(&expanded.text, &self.declared, &self.values);
         let mut defines = self.environment.clone();
-        preprocess::preprocess(&applied, &mut defines).map_err(|e| {
+        let decided = preprocess::preprocess(&applied, &mut defines).map_err(|e| {
             match expanded.locate(e.line as u32) {
                 Some((file, line)) => format!("{file}:{line}: {}", e.message),
                 None => format!("{path}: {e}"),
             }
-        })
+        })?;
+        Ok(crate::shaderpack::macros::expand(&decided, &self.environment))
     }
 }

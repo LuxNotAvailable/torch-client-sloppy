@@ -1,5 +1,5 @@
 #import bevy_pbr::mesh_functions
-#import bevy_pbr::mesh_view_bindings::{view, fog}
+#import bevy_pbr::mesh_view_bindings::{view, fog, globals}
 #import bevy_pbr::view_transformations::position_world_to_clip
 
 #ifdef FANCY_SHADERS
@@ -63,6 +63,11 @@ const GROUND_TINT: vec3<f32> = vec3(0.85, 0.80, 0.68);
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var entity_texture: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(1) var entity_sampler: sampler;
 @group(#{MATERIAL_BIND_GROUP}) @binding(2) var<uniform> params: Params;
+#ifdef RIGGED
+@group(#{MATERIAL_BIND_GROUP}) @binding(3) var<storage, read> rig_parts: array<vec4<f32>>;
+#endif
+@group(#{MATERIAL_BIND_GROUP}) @binding(4) var glint_texture: texture_2d<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(5) var glint_sampler: sampler;
 
 struct Vertex {
     @builtin(instance_index) instance_index: u32,
@@ -70,6 +75,9 @@ struct Vertex {
     @location(1) normal: vec3<f32>,
     @location(2) uv: vec2<f32>,
     @location(3) color: vec4<f32>,
+#ifdef RIGGED
+    @location(4) part: u32,
+#endif
 };
 
 struct VertexOutput {
@@ -106,13 +114,31 @@ fn mix_light_separate(light: vec2<f32>) -> f32 {
 @vertex
 fn vertex(vertex: Vertex) -> VertexOutput {
     var out: VertexOutput;
+    var local_position = vertex.position;
+    var local_normal = vertex.normal;
+#ifdef RIGGED
+    // The part's matrix, stored as its top three rows; the normal goes through
+    // the cofactor matrix, the inverse transpose up to the determinant.
+    let row = (mesh_functions::get_tag(vertex.instance_index) + vertex.part) * 3u;
+    let r0 = rig_parts[row];
+    let r1 = rig_parts[row + 1u];
+    let r2 = rig_parts[row + 2u];
+    let p = vec4(vertex.position, 1.0);
+    local_position = vec3(dot(r0, p), dot(r1, p), dot(r2, p));
+    let c0 = vec3(r0.x, r1.x, r2.x);
+    let c1 = vec3(r0.y, r1.y, r2.y);
+    let c2 = vec3(r0.z, r1.z, r2.z);
+    let n = mat3x3(cross(c1, c2), cross(c2, c0), cross(c0, c1)) * vertex.normal;
+    let det = dot(c0, cross(c1, c2));
+    local_normal = select(vertex.normal, normalize(n) * sign(det), dot(n, n) > 1e-12);
+#endif
     let world_from_local = mesh_functions::get_world_from_local(vertex.instance_index);
     out.world_position =
-        mesh_functions::mesh_position_local_to_world(world_from_local, vec4(vertex.position, 1.0));
+        mesh_functions::mesh_position_local_to_world(world_from_local, vec4(local_position, 1.0));
     out.clip_position = position_world_to_clip(out.world_position.xyz);
     out.uv = vertex.uv;
 
-    let normal = mesh_functions::mesh_normal_local_to_world(vertex.normal, vertex.instance_index);
+    let normal = mesh_functions::mesh_normal_local_to_world(local_normal, vertex.instance_index);
     out.color = vertex.color;
     if params.mode == MODE_CARDINAL {
         let light = vec2(dot(params.light0.xyz, normal), dot(params.light1.xyz, normal));
@@ -166,6 +192,25 @@ fn lighting(in: VertexOutput, is_front: bool, shade: f32) -> vec3<f32> {
 }
 #endif
 
+// Vanilla's armor glint: the glint texture through
+// translate(-f, g) * rotateZ(pi / 18) * scale(0.16), where f and g cycle every
+// 110 s and 30 s of `millis * glintSpeed * 8` (glint speed 0.5), times the
+// default glint strength of 0.75.
+const GLINT_SCALE: f32 = 0.16;
+const GLINT_STRENGTH: f32 = 0.75;
+const GLINT_TICKS_PER_SEC: f32 = 4000.0;
+
+fn glint(uv: vec2<f32>) -> vec3<f32> {
+    let ticks = globals.time * GLINT_TICKS_PER_SEC;
+    let f = fract(ticks / 110000.0);
+    let g = fract(ticks / 30000.0);
+    let s = sin(3.14159265 / 18.0);
+    let c = cos(3.14159265 / 18.0);
+    let p = uv * GLINT_SCALE;
+    let st = vec2(c * p.x - s * p.y, s * p.x + c * p.y) + vec2(-f, g);
+    return textureSampleLevel(glint_texture, glint_sampler, st, 0.0).rgb * GLINT_STRENGTH;
+}
+
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
     var color = textureSampleLevel(entity_texture, entity_sampler, in.uv, 0.0);
@@ -188,6 +233,13 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @locatio
 #else
         color = vec4(color.rgb * params.light.rgb, color.a);
 #endif
+    }
+    if params.light_floor.w > 0.0 {
+        // Vanilla blends the glint with (SRC_COLOR, ONE) onto an sRGB
+        // framebuffer: it adds its own color squared to the encoded value.
+        let g = glint(in.uv);
+        let encoded = srgb_encode(clamp(color.rgb, vec3(0.0), vec3(1.0))) + g * g;
+        color = vec4(srgb_decode(min(encoded, vec3(1.0))), color.a);
     }
     if fog.mode != 0u {
         color = vanilla_fog(color, in.world_position.xyz - view.world_position);

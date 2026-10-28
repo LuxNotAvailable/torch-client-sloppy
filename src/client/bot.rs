@@ -595,6 +595,11 @@ fn reset_session_side_tables(blocking: bool) {
     crate::client::packets::reset_unsecure_warning();
     crate::client::packets::reset_bad_light_layers();
     tick::reset_movement_warning();
+    crate::play::looking::clear();
+    #[cfg(voice)]
+    crate::voice::on_leave();
+    #[cfg(audio)]
+    crate::audio::leave_world();
 }
 
 pub(crate) fn request_disconnect() {

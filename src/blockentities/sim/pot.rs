@@ -1,4 +1,4 @@
-use simdnbt::owned::Nbt;
+use simdnbt::owned::NbtCompound;
 
 pub const SIDES: usize = 4;
 
@@ -49,7 +49,7 @@ fn stem_of(item: &str) -> &'static str {
         .unwrap_or("")
 }
 
-pub fn decode(tag: &Nbt) -> Decorations {
+pub fn decode(tag: &NbtCompound) -> Decorations {
     let mut decorations = Decorations::default();
     if let Some(items) = tag.list("sherds").and_then(|list| list.strings()) {
         for (stem, item) in decorations.stems.iter_mut().zip(items) {

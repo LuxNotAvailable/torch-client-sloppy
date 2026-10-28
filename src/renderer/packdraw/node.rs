@@ -45,11 +45,27 @@ impl ViewNode for PackFrameNode {
 
     fn run<'w>(
         &self,
-        _graph: &mut RenderGraphContext,
+        graph: &mut RenderGraphContext,
         render_context: &mut RenderContext<'w>,
-        (view, view_target, is_terrain, fog): QueryItem<'w, '_, Self::ViewQuery>,
+        view: QueryItem<'w, '_, Self::ViewQuery>,
         world: &'w World,
     ) -> Result<(), NodeRunError> {
+        crate::diag::frame_profile::timed(render_context, "shaderpack", |render_context| {
+            self.run_untimed(graph, render_context, view, world)
+        })
+    }
+}
+
+impl PackFrameNode {
+
+    fn run_untimed<'w>(
+        &self,
+        _graph: &mut RenderGraphContext,
+        render_context: &mut RenderContext<'w>,
+        (view, view_target, is_terrain, fog): QueryItem<'w, '_, <Self as ViewNode>::ViewQuery>,
+        world: &'w World,
+    ) -> Result<(), NodeRunError> {
+        crate::prof_span!("render:pack_encode");
         if !is_terrain {
             return Ok(());
         }
@@ -301,11 +317,11 @@ impl ViewNode for PackFrameNode {
             };
             let key = pack_shadow_view(view.retained_view_entity);
             let streams = [
-                (STREAM_SOLID, &shadow.pipeline, true),
-                (STREAM_CUTOUT, &shadow.cutout, false),
-                (STREAM_WATER, &shadow.pipeline, false),
+                (STREAM_SOLID, &shadow.streams[0], true),
+                (STREAM_CUTOUT, &shadow.streams[1], false),
+                (STREAM_WATER, &shadow.streams[2], false),
             ];
-            for (stream, pipeline, first) in streams {
+            for (stream, program, first) in streams {
                 let water = stream == STREAM_WATER;
                 if water {
                     filter(render_context, 1);
@@ -345,12 +361,16 @@ impl ViewNode for PackFrameNode {
                     timestamp_writes: None,
                     occlusion_query_set: None,
                 });
-                encoder.set_render_pipeline(pipeline);
-                encoder.set_bind_group(PACK_SET as usize, &shadow.bind_group, &[]);
-                encoder.set_bind_group(TERRAIN_SET as usize, terrain_group, &[]);
-                draw_pools(&mut encoder, &sources, |encoder, pool| {
-                    let _ = draw_region(encoder, &sources, key, pool, stream);
-                });
+                // A layer with no shadow program still opens its pass, so the
+                // clears and the entity shadows after the cutout layer hold.
+                if let Some((pipeline, bind_group)) = program {
+                    encoder.set_render_pipeline(pipeline);
+                    encoder.set_bind_group(PACK_SET as usize, bind_group, &[]);
+                    encoder.set_bind_group(TERRAIN_SET as usize, terrain_group, &[]);
+                    draw_pools(&mut encoder, &sources, |encoder, pool| {
+                        let _ = draw_region(encoder, &sources, key, pool, stream);
+                    });
+                }
                 drop(encoder);
                 if stream == STREAM_CUTOUT {
                     entity_segment(render_context, Segment::Shadow);
@@ -457,6 +477,10 @@ impl ViewNode for PackFrameNode {
         entity_segment(render_context, Segment::WorldTranslucent);
         entity_segment(render_context, Segment::AfterTranslucent);
         entity_segment(render_context, Segment::HandTranslucent);
+        if let Some(center) = world.get_resource::<super::center_depth::CenterDepth>() {
+            let device = render_context.render_device().clone();
+            center.record(&device, render_context.command_encoder(), &targets.depth.view);
+        }
         span.end(render_context.command_encoder());
         let span = recorder.time_span(render_context.command_encoder(), "shaderpack/composite");
         steps(render_context, &plan.stages[ScreenStage::Composite.index()]);

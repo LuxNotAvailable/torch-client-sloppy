@@ -397,7 +397,7 @@ const CULL_NBR: [(i32, i32, i32); 6] = [
 ];
 
 pub fn build_section_mesh(
-    blocks: &[(i32, i32, i32, RenderedBlock)],
+    blocks: &[(i32, i32, i32, &RenderedBlock)],
     x_base: i32,
     y_base: i32,
     z_base: i32,
@@ -441,6 +441,10 @@ pub fn build_section_mesh(
             };
             buf.pack_block = Some(block);
             water.pack_block = Some(block);
+        }
+
+        if let Some(quads) = crate::blockentities::bake::quads_at(rb.state, [*bx, *by, *bz]) {
+            emit_block_entity(wx, wy, wz, &quads, occ, (*bx, *by, *bz), cardinal, &mut buf);
         }
 
         match &rb.geom {
@@ -594,7 +598,12 @@ fn emit_baked(
                 }
                 let neighbour_in_group = occ.same_cull_group(nx, ny, nz, rb.cull_group);
                 if rb.cull_group == crate::util::block_model::LEAVES_CULL_GROUP {
-                    if neighbour_in_group && cull % 2 == 0 {
+                    // Between two leaves one face of the pair is enough, and a face
+                    // with a second leaf or solid block behind its neighbour is
+                    // buried: no gap in the canopy shows it (MoreCulling's depth 2).
+                    if neighbour_in_group
+                        && (cull % 2 == 0 || leaf_buried(occ, (nx, ny, nz), (dx, dy, dz)))
+                    {
                         continue;
                     }
                 } else if neighbour_in_group {
@@ -627,6 +636,40 @@ fn emit_baked(
             buf.push_baked(quad, wx, wy, wz, &lit, quad_tint, material);
         }
     }
+}
+
+/// A baked block entity: flat-lit from its own cell, shaded by facing, like
+/// the entity lighting its rig would get.
+#[allow(clippy::too_many_arguments)]
+fn emit_block_entity(
+    wx: f32,
+    wy: f32,
+    wz: f32,
+    quads: &[crate::blocks::BakedQuad],
+    occ: &Occupancy,
+    at: (i32, i32, i32),
+    cardinal: &[f32; 6],
+    buf: &mut MeshBuf,
+) {
+    let light = flat_light_coords(occ, at, at);
+    for quad in quads {
+        let lit = QuadLight::flat(quad.shade(cardinal), light);
+        buf.push_baked(
+            quad,
+            wx,
+            wy,
+            wz,
+            &lit,
+            crate::util::biome_color::NEUTRAL,
+            MATERIAL_SOLID,
+        );
+    }
+}
+
+fn leaf_buried(occ: &Occupancy, (x, y, z): (i32, i32, i32), (dx, dy, dz): (i32, i32, i32)) -> bool {
+    let (x, y, z) = (x + dx, y + dy, z + dz);
+    occ.is_solid(x, y, z)
+        || occ.same_cull_group(x, y, z, crate::util::block_model::LEAVES_CULL_GROUP)
 }
 
 fn flat_light_coords(occ: &Occupancy, state: (i32, i32, i32), pos: (i32, i32, i32)) -> u32 {
@@ -976,7 +1019,7 @@ mod tests {
         let rb = crate::util::block_model::block_visual(BlockState::from(BlockKind::Stone));
         occ.set_solid(0, 0, 0);
         occ.set_full_cube(0, 0, 0);
-        let blocks = vec![(0, 0, 0, rb)];
+        let blocks = vec![(0, 0, 0, &rb)];
         let (buf, _) = build_section_mesh(&blocks, 0, 0, 0, 1, &occ);
         assert!(!buf.verts.is_empty(), "the block emitted no faces at all");
         for v in &buf.verts {
@@ -986,5 +1029,32 @@ mod tests {
                 "a vertex is lit in a cell with no light"
             );
         }
+    }
+
+    #[test]
+    fn a_leaf_buried_in_a_canopy_draws_nothing() {
+        use crate::util::block_model::LEAVES_CULL_GROUP;
+        crate::blocks::tests::atlas_once();
+        let rb = crate::util::block_model::block_visual(BlockState::from(BlockKind::OakLeaves));
+        assert_eq!(rb.cull_group, LEAVES_CULL_GROUP);
+        let mut occ = Occupancy::new(0, 0, -2, 20);
+        for x in 0..5 {
+            for y in 0..5 {
+                for z in 0..5 {
+                    occ.set_cull_group(x, y, z, LEAVES_CULL_GROUP);
+                }
+            }
+        }
+        let (buried, _) = build_section_mesh(&[(2, 2, 2, &rb)], 0, 0, 0, 1, &occ);
+        assert!(
+            buried.verts.is_empty(),
+            "a leaf two deep on every side drew faces"
+        );
+
+        let (rim, _) = build_section_mesh(&[(0, 2, 2, &rb)], 0, 0, 0, 1, &occ);
+        assert!(
+            !rim.verts.is_empty(),
+            "the canopy's outer face went missing"
+        );
     }
 }

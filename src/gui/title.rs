@@ -10,15 +10,13 @@ use crate::text::{Span, Style, texts};
 const MULTIPLAYER: &str = "Multiplayer";
 const OPTIONS: &str = "Options...";
 const QUIT: &str = "Quit Game";
-const EDIT_PROFILE: &str = "Edit Profile";
+const EDIT_PROFILE: &str = "Manage Profiles";
 const PROFILE_LABEL_PAD: f32 = 8.0;
 
+/// The logo is drawn as wide as vanilla's, its height kept to `logo.png`'s
+/// own proportions.
 const LOGO_W: f32 = 256.0;
-const LOGO_H: f32 = 44.0;
 const LOGO_Y: f32 = 30.0;
-const EDITION_W: f32 = 128.0;
-const EDITION_H: f32 = 14.0;
-const EDITION_OVERLAP: f32 = 7.0;
 
 const BOTTOM_ROW_STEP: f32 = 36.0;
 
@@ -38,21 +36,14 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     }
 
     let logo_x = (ctx.vw / 2.0 - LOGO_W / 2.0).floor();
-    p.sprite("title/minecraft", logo_x, LOGO_Y, LOGO_W, LOGO_H);
-    p.sprite(
-        "title/edition",
-        (ctx.vw / 2.0 - EDITION_W / 2.0).floor(),
-        LOGO_Y + LOGO_H - EDITION_OVERLAP,
-        EDITION_W,
-        EDITION_H,
-    );
+    let logo_h = p
+        .atlas
+        .sprite(crate::gui::atlas::TORCH_LOGO)
+        .map_or(44.0, |s| (LOGO_W * s.region.h as f32 / s.region.w.max(1) as f32).round());
+    p.sprite(crate::gui::atlas::TORCH_LOGO, logo_x, LOGO_Y, LOGO_W, logo_h);
 
     if let Some(splash) = session_splash() {
-        let splash_x = logo_x + LOGO_W * 0.7;
-        let splash_y = LOGO_Y + LOGO_H - 3.0;
-        p.scaled(1.5, splash_x, splash_y, |p| {
-            p.text_str(splash, 0.0, 0.0, 0xFFFF00, true);
-        });
+        draw_splash(p, ctx, splash);
     }
 
     let x = ((ctx.vw - WIDGET_WIDTH_BIG) / 2.0).floor();
@@ -156,7 +147,7 @@ fn credits_link(p: &mut Painter, ctx: &ScreenCtx, x: f32, y: f32) -> bool {
         && ctx.input.left_release
         && crate::gui::widgets::touch_tap::pressed_in(hx, hy, hw, hh)
         && !crate::gui::widgets::touch_tap::scrolled();
-    #[cfg(feature = "audio")]
+    #[cfg(audio)]
     if clicked {
         crate::gui::widgets::play_click();
     }
@@ -164,6 +155,21 @@ fn credits_link(p: &mut Painter, ctx: &ScreenCtx, x: f32, y: f32) -> bool {
 }
 
 const EAGLER_MODE: &str = "Eagler mode (wss:// enabled)";
+
+/// `SplashRenderer`: yellow, turned 20 degrees up, at the logo's right end,
+/// pulsing in size once a second and shrunk to fit long lines.
+fn draw_splash(p: &mut Painter, ctx: &ScreenCtx, splash: &str) {
+    let width = p.atlas.font.width_str(splash);
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() % 1000) as f32;
+    let phase = 1.8 - (millis / 1000.0 * std::f32::consts::TAU).sin().abs() * 0.1;
+    let scale = phase * 100.0 / (width + 32.0);
+    let radians = -std::f32::consts::PI / 9.0;
+    p.rotated(scale, radians, ctx.vw / 2.0 + 123.0, 69.0, |p| {
+        p.text_str(splash, (-width / 2.0).trunc(), -8.0, 0xFFFF00, true);
+    });
+}
 
 fn session_splash() -> Option<&'static str> {
     static SPLASH: OnceLock<Option<&'static str>> = OnceLock::new();

@@ -12,7 +12,7 @@ const ALL: &[Var] = &[
         default: if cfg!(feature = "asset_download") {
             "the downloaded asset set"
         } else {
-            "reference/minecraft-26.1.1/assets/minecraft in the checkout"
+            "reference/minecraft-26.3/assets/minecraft in the checkout"
         },
         enabled: true,
     },
@@ -22,7 +22,7 @@ const ALL: &[Var] = &[
         default: if cfg!(feature = "asset_download") {
             "the downloaded asset set"
         } else {
-            "reference/minecraft-26.1.1/data/minecraft in the checkout"
+            "reference/minecraft-26.3/data/minecraft in the checkout"
         },
         enabled: true,
     },
@@ -98,6 +98,12 @@ const ALL: &[Var] = &[
         enabled: true,
     },
     Var {
+        name: "MC_CPU_RIGS",
+        what: "pose mob models on the CPU, re-baking each mob's mesh, instead of in the vertex shader",
+        default: "off",
+        enabled: cfg!(not(target_arch = "wasm32")),
+    },
+    Var {
         name: "MC_COLLIDE_CHECK",
         what: "cross-check the fast collision path against the general one",
         default: "off",
@@ -158,6 +164,18 @@ const ALL: &[Var] = &[
         name: "MC_SHADERPACK_PASSES",
         what: "run only this many of a shader pack's full-screen passes (deferred, composite, final, in order) and show colortex0 as it stands, to find which pass misbehaves",
         default: "every pass",
+        enabled: cfg!(feature = "shader_support"),
+    },
+    Var {
+        name: "MC_SHADERPACK_TIMING",
+        what: "time each stage of a shader pack's frame on the GPU and log it",
+        default: "off",
+        enabled: cfg!(feature = "shader_support"),
+    },
+    Var {
+        name: "MC_SHADERPACK_CHECKED",
+        what: "compile shader pack modules through wgpu's validated path (bounds checks on) instead of the unchecked one, to chase GPU faults",
+        default: "off",
         enabled: cfg!(feature = "shader_support"),
     },
     Var {

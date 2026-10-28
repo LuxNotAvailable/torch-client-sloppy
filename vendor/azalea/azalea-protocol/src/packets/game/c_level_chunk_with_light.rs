@@ -4,11 +4,11 @@ use azalea_buf::AzBuf;
 use azalea_core::heightmap_kind::HeightmapKind;
 use azalea_protocol_macros::ClientboundGamePacket;
 use azalea_registry::builtin::BlockEntityKind;
-use simdnbt::owned::Nbt;
 
 use super::c_light_update::ClientboundLightUpdatePacketData;
+use crate::common::optional_compound_tag::OptionalNbtCompound;
 
-#[derive(AzBuf, ClientboundGamePacket, Clone, Debug, PartialEq)]
+#[derive(ClientboundGamePacket, AzBuf, Clone, Debug, PartialEq)]
 pub struct ClientboundLevelChunkWithLight {
     pub x: i32,
     pub z: i32,
@@ -19,7 +19,7 @@ pub struct ClientboundLevelChunkWithLight {
 #[derive(AzBuf, Clone, Debug, PartialEq)]
 pub struct ClientboundLevelChunkPacketData {
     pub heightmaps: Vec<(HeightmapKind, Box<[u64]>)>,
-    pub data: Arc<Box<[u8]>>,
+    pub buffer: Arc<Box<[u8]>>,
     pub block_entities: Vec<BlockEntity>,
 }
 
@@ -28,5 +28,5 @@ pub struct BlockEntity {
     pub packed_xz: u8,
     pub y: u16,
     pub kind: BlockEntityKind,
-    pub data: Nbt,
+    pub tag: OptionalNbtCompound,
 }

@@ -328,7 +328,7 @@ pub(crate) fn unpack(
     all(
         not(packed_assets),
         not(feature = "asset_download"),
-        not(feature = "audio")
+        not(audio)
     ),
     allow(dead_code)
 )]

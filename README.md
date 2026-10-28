@@ -2,7 +2,7 @@
 
 [Torch](https://torchclient.com) is a Minecraft client rebuilt from the ground up in Rust. No JVM, a third of the memory, and twice the frame performance of the vanilla Java client.
 
-**Supported versions:** `26.1.1` and `1.21.11`. One build joins both; there is no separate install per version.
+**Supported versions:** `26.3`, `26.1` – `26.1.2` and `1.21.11`. One build joins all of them; there is no separate install per version.
 
 > [!WARNING]
 > Torch is in early development. Some features are missing and things will break. [Report a bug or suggest a feature](https://github.com/torch-client/torch-client/issues/new/choose). Or join [the discord server](https://discord.gg/qqXSHEYXaq)
@@ -28,6 +28,13 @@ Builds for Linux and Windows are on the [releases page](https://github.com/torch
 git clone https://github.com/torch-client/torch-client.git
 cd client
 cargo build --release
+```
+
+Linux build (natively on Linux, or cross-built from Windows/macOS with [cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild)):
+
+```sh
+tools/build_linux.sh          # x86_64, writes dist/torch-client-linux-x86_64.tar.gz
+tools/build_linux.sh --arm    # aarch64
 ```
 
 See [CONTRIBUTING.md](.github/CONTRIBUTING.md#feature-system) to find out more about the projects cargo features

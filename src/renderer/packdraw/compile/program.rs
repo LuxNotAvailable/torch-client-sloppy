@@ -12,6 +12,10 @@ pub(super) fn compile_program(
     tests: &[AlphaTest],
     direct: bool,
 ) -> Result<(Program, [String; 2]), String> {
+    let glsl = pack.source.contains(&format!("{}{name}.vsh", pack.folder));
+    if !glsl && pack.native_draw(name).is_some() {
+        return super::native::compile_draw(pack, name, kind, tests, direct);
+    }
     let vertex_glsl = pack.stage(name, ".vsh")?;
     let fragment_glsl = pack.stage(name, ".fsh")?;
 
@@ -152,6 +156,9 @@ pub(super) fn compile_compute(pack: &mut Pack, name: &str) -> Result<(Program, S
     let path = pack
         .compute_path(name)
         .ok_or_else(|| format!("{name}.csh is missing"))?;
+    if path.ends_with(super::native::EXTENSION) {
+        return super::native::compile_compute(pack, name, &path);
+    }
     let glsl = pack.stage_at(&path)?;
     let dispatch = match directives::work_groups(&glsl) {
         Some(groups) => Dispatch::Fixed(groups),
@@ -241,7 +248,7 @@ fn image_formats<'p>(
         .collect())
 }
 
-fn undeclared_buffer(pack: &Pack, name: &str, layout: &Layout) -> Result<(), String> {
+pub(super) fn undeclared_buffer(pack: &Pack, name: &str, layout: &Layout) -> Result<(), String> {
     for binding in &layout.bindings {
         if let Binding::Buffer { index, .. } = binding
             && !pack.buffers.iter().any(|b| b.index == *index)
@@ -254,7 +261,7 @@ fn undeclared_buffer(pack: &Pack, name: &str, layout: &Layout) -> Result<(), Str
     Ok(())
 }
 
-fn used_bindings(wgsl: &str) -> Option<Vec<u32>> {
+pub(super) fn used_bindings(wgsl: &str) -> Option<Vec<u32>> {
     let module = naga::front::wgsl::parse_str(wgsl).ok()?;
     let info = naga::valid::Validator::new(
         naga::valid::ValidationFlags::all(),
@@ -278,7 +285,7 @@ fn used_bindings(wgsl: &str) -> Option<Vec<u32>> {
     Some(used)
 }
 
-fn texture_sources(
+pub(super) fn texture_sources(
     pack: &Pack,
     name: &str,
     kind: ProgramKind,

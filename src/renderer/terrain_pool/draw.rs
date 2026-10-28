@@ -157,7 +157,7 @@ pub struct TerrainParamsBuffer(pub Buffer);
 #[derive(Resource, Default)]
 pub struct TerrainBindGroup {
     pub group: Option<BindGroup>,
-    key: Option<(TextureViewId, TextureViewId, u64)>,
+    key: Option<(TextureViewId, TextureViewId, TextureViewId, u64)>,
 }
 
 #[derive(Resource)]
@@ -208,6 +208,7 @@ fn terrain_layouts() -> (BindGroupLayoutDescriptor, BindGroupLayoutDescriptor) {
             bevy::render::render_resource::binding_types::storage_buffer_read_only_sized(
                 false, meta_size,
             ),
+            texture_2d(TextureSampleType::Uint),
         ),
     );
     let direct = BindGroupLayoutEntries::sequential(
@@ -219,6 +220,7 @@ fn terrain_layouts() -> (BindGroupLayoutDescriptor, BindGroupLayoutDescriptor) {
             common.3,
             common.4,
             texture_2d(TextureSampleType::Sint),
+            texture_2d(TextureSampleType::Uint),
         ),
     );
     (
@@ -642,6 +644,7 @@ pub fn queue_terrain(
     ticks: SystemChangeTick,
     #[cfg(feature = "shader_support")] takeover: Option<Res<PackTakeover>>,
 ) {
+    crate::prof_span!("render:terrain_queue_terrain");
     if pools.pools.is_empty() {
         return;
     }
@@ -813,16 +816,20 @@ pub fn prepare_terrain_bind_group(
     params: Res<TerrainParamsBuffer>,
     mut bind_group: ResMut<TerrainBindGroup>,
 ) {
+    crate::prof_span!("render:terrain_prepare_terrain_bind_group");
     let Some(textures) = textures else { return };
-    let (Some(atlas), Some(lightmap)) =
-        (images.get(&textures.atlas), images.get(&textures.lightmap))
-    else {
+    let (Some(atlas), Some(lightmap), Some(anim)) = (
+        images.get(&textures.atlas),
+        images.get(&textures.lightmap),
+        images.get(&textures.anim),
+    ) else {
         return;
     };
 
     let key = (
         atlas.texture_view.id(),
         lightmap.texture_view.id(),
+        anim.texture_view.id(),
         pools.tables_generation,
     );
     if bind_group.key == Some(key) && bind_group.group.is_some() {
@@ -840,6 +847,7 @@ pub fn prepare_terrain_bind_group(
                 &lightmap.sampler,
                 params.0.as_entire_binding(),
                 meta.as_entire_binding(),
+                &anim.texture_view,
             )),
         ),
         SlotTable::Direct { origins_view, .. } => device.create_bind_group(
@@ -852,6 +860,7 @@ pub fn prepare_terrain_bind_group(
                 &lightmap.sampler,
                 params.0.as_entire_binding(),
                 origins_view,
+                &anim.texture_view,
             )),
         ),
     };

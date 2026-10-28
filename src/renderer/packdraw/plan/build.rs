@@ -43,6 +43,7 @@ pub(crate) fn prepare_plan(
     images: Res<RenderAssets<GpuImage>>,
     render: Option<ResMut<PackRender>>,
 ) {
+    crate::prof_span!("render:pack_prepare_plan");
     let Some(mut render) = render else { return };
     let PackRender {
         process, install, ..
@@ -468,6 +469,7 @@ impl PlanResources<'_> {
                 mipmaps: rebuilt(program.mipmapped, *flips),
             };
             flips.flip(&program.draw_buffers);
+            flips.flip(&installed.flips.toggles(&program.name, &program.draw_buffers));
             Some(pass)
         };
 
@@ -495,12 +497,15 @@ impl PlanResources<'_> {
         let begin = stage_passes(ScreenStage::Begin, &mut flips);
 
         let shadow = match (installed.shadow, pipelines.shadow.clone(), self.shadow) {
-            (Some(index), Some((pipeline, cutout)), Some(targets)) => {
+            (Some(index), Some(pipelines), Some(targets)) => {
                 let program = &installed.programs[index];
+                let streams = std::array::from_fn(|slot| {
+                    let stream = installed.shadow_streams[slot]?;
+                    let pipeline = pipelines[slot].clone()?;
+                    Some((pipeline, self.bind_group(stream, flips, 0, true)))
+                });
                 Some(ShadowPass {
-                    pipeline,
-                    cutout,
-                    bind_group: self.bind_group(index, flips, 0, true),
+                    streams,
                     attachments: shadow_attachments(targets, &program.draw_buffers),
                     copy_depth: self.usage.shadow_copy_opaque,
                     depth_source: self

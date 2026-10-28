@@ -84,6 +84,7 @@ fn is_living(kind: azalea_registry::builtin::EntityKind) -> bool {
             | EntityKind::MangroveBoat
             | EntityKind::OakBoat
             | EntityKind::PaleOakBoat
+            | EntityKind::PoplarBoat
             | EntityKind::SpruceBoat
             | EntityKind::AcaciaChestBoat
             | EntityKind::BambooChestRaft
@@ -94,6 +95,7 @@ fn is_living(kind: azalea_registry::builtin::EntityKind) -> bool {
             | EntityKind::MangroveChestBoat
             | EntityKind::OakChestBoat
             | EntityKind::PaleOakChestBoat
+            | EntityKind::PoplarChestBoat
             | EntityKind::SpruceChestBoat
             | EntityKind::Minecart
             | EntityKind::ChestMinecart
@@ -534,7 +536,7 @@ pub(crate) fn collect_entities(
 
             shared.powered = flag::<metadata::IsPowered>(eref);
 
-            shared.size = meta::<metadata::SlimeSize>(eref)
+            shared.size = meta::<metadata::AbstractCubeMobSize>(eref)
                 .or_else(|| meta::<metadata::PhantomSize>(eref))
                 .unwrap_or(1);
 
@@ -571,7 +573,9 @@ pub(crate) fn collect_entities(
             shared.attach_face = meta::<metadata::AttachFace>(eref)
                 .map(entities::Direction::from)
                 .unwrap_or(entities::Direction::Down);
-            shared.color = meta::<metadata::Color>(eref).unwrap_or(16);
+            shared.color = meta::<metadata::ShulkerColor>(eref)
+                .or_else(|| meta::<metadata::CushionColor>(eref).map(|c| c as u8))
+                .unwrap_or(16);
         }
         let peek_target = if living {
             meta::<metadata::Peek>(eref).unwrap_or(0) as f32 * 0.01
@@ -810,6 +814,9 @@ pub(crate) fn collect_entities(
         shared.leggings = worn.leggings;
         shared.boots = worn.boots;
         shared.body_armor = worn.body_armor;
+        shared.body_block = worn.body_block;
+        shared.armor_glint = worn.armor_glint;
+        shared.armor_trims = worn.armor_trims;
         if living {
             shared.left_handed = flag::<metadata::LeftHanded>(eref);
         }
@@ -976,6 +983,7 @@ pub(crate) fn collect_entities(
             is_passenger: riders.contains(&id),
             swell_dir,
             ignited,
+            max_fuse: meta::<metadata::MaxFuse>(eref).unwrap_or(-1),
             peek_target,
             paddling_left,
             paddling_right,

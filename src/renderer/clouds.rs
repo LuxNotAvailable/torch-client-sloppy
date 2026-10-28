@@ -182,6 +182,7 @@ fn setup(
         cull_mode: Some(bevy::render::render_resource::Face::Back),
         double_sided: false,
         fog_enabled: false,
+        depth_bias: super::sky::BIAS_CLOUDS,
         ..default()
     });
 
@@ -190,6 +191,8 @@ fn setup(
         MeshMaterial3d(material.clone()),
         Transform::from_xyz(0.0, CLOUD_HEIGHT, 0.0),
         Visibility::Hidden,
+        // The mesh is rebuilt in place, so its spawn-time bounds go stale.
+        bevy::camera::visibility::NoFrustumCulling,
         CloudLayer,
     ));
 

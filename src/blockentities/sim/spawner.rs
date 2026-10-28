@@ -1,5 +1,5 @@
 use azalea_registry::builtin::{BlockEntityKind, EntityKind};
-use simdnbt::owned::{Nbt, NbtCompound};
+use simdnbt::owned::NbtCompound;
 
 use super::TickCtx;
 use crate::blockentities::feed::BlockEntityData;
@@ -26,7 +26,7 @@ impl Default for Data {
     }
 }
 
-pub fn decode(kind: BlockEntityKind, tag: &Nbt) -> Data {
+pub fn decode(kind: BlockEntityKind, tag: &NbtCompound) -> Data {
     if kind == BlockEntityKind::TrialSpawner {
         return Data {
             display: spawn_data(tag, "spawn_data"),
@@ -115,7 +115,7 @@ impl Spin {
 
 #[cfg(test)]
 mod tests {
-    use simdnbt::owned::NbtTag;
+    use simdnbt::owned::{Nbt, NbtTag};
 
     use super::*;
     use crate::blockentities::sim::test_nbt::{compound, root, string};

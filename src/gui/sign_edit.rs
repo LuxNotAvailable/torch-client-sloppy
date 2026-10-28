@@ -11,11 +11,13 @@ use crate::platform::time::Instant;
 use crate::session::{SharedMutex, SignEditKind, SignEditRequest, SignUpdateRequest};
 use crate::text::{Span, Style};
 
-pub(crate) const SIGN_TEXTURE_WIDTH: u32 = 64;
+/// Width of `gui/signs/<wood>.png`: the 24x12 board with a 2x14 post under
+/// its middle.
+pub(crate) const SIGN_TEXTURE_WIDTH: u32 = 24;
 
-pub(crate) const BOARD_UV: [u32; 4] = [2, 2, 24, 12];
+pub(crate) const BOARD_UV: [u32; 4] = [0, 0, 24, 12];
 
-pub(crate) const STICK_UV: [u32; 4] = [2, 16, 2, 14];
+pub(crate) const STICK_UV: [u32; 4] = [11, 12, 2, 14];
 
 pub(crate) fn hanging_sprite(wood: &str) -> String {
     format!("sign_edit/hanging/{wood}")

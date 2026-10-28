@@ -109,6 +109,18 @@ pub struct DebugInfo {
     pub memory: MemoryUse,
     pub profiling: ChunkProfiling,
     pub pipeline: crate::diag::Counts,
+    /// Filled while the profiler page shows.
+    pub frame_profile: Option<std::sync::Arc<crate::diag::frame_profile::Report>>,
+    pub passes: Vec<PassTime>,
+}
+
+/// One render-graph pass's smoothed time, from Bevy's render diagnostics.
+#[derive(Clone, Default)]
+pub struct PassTime {
+    pub name: String,
+    /// `None` on a device without timestamp queries.
+    pub gpu_ms: Option<f32>,
+    pub cpu_ms: f32,
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -120,6 +132,7 @@ pub enum DebugPage {
     Network,
     Workers,
     Memory,
+    Profiler,
     Help,
 }
 
@@ -426,22 +439,22 @@ pub fn draw(
 }
 
 struct Row {
-    label: &'static str,
+    label: std::borrow::Cow<'static, str>,
     value: String,
     color: u32,
 }
 
-fn row(label: &'static str, value: String) -> Row {
+fn row(label: impl Into<std::borrow::Cow<'static, str>>, value: String) -> Row {
     Row {
-        label,
+        label: label.into(),
         value,
         color: VALUE_COLOR,
     }
 }
 
-fn row_c(label: &'static str, value: String, color: u32) -> Row {
+fn row_c(label: impl Into<std::borrow::Cow<'static, str>>, value: String, color: u32) -> Row {
     Row {
-        label,
+        label: label.into(),
         value,
         color,
     }
@@ -491,7 +504,7 @@ fn draw_section(p: &mut Painter, title: &str, items: &[Item], right_x: f32, top_
     let label_w = items
         .iter()
         .filter_map(|it| match it {
-            Item::Row(r) => Some(p.atlas.font.width_str(r.label)),
+            Item::Row(r) => Some(p.atlas.font.width_str(&r.label)),
             Item::Graph(_) | Item::Divider => None,
         })
         .fold(0.0_f32, f32::max);
@@ -535,7 +548,7 @@ fn draw_section(p: &mut Painter, title: &str, items: &[Item], right_x: f32, top_
         match item {
             Item::Row(r) => {
                 p.text_str(
-                    r.label,
+                    &r.label,
                     (box_x + PAD_X).floor(),
                     y.floor(),
                     LABEL_COLOR,
@@ -636,6 +649,7 @@ fn sections_for<'a>(info: &'a HudInfo, d: &DebugInfo) -> Vec<(&'static str, Vec<
         DebugPage::Network => vec![("NETWORK", network_items(info))],
         DebugPage::Workers => vec![("CHUNK WORKERS", workers_items(info, d))],
         DebugPage::Memory => vec![("MEMORY", memory_items(info, d))],
+        DebugPage::Profiler => profiler_sections(d),
         DebugPage::Help => vec![("F3 SHORTCUTS", help_items())],
     }
 }
@@ -648,11 +662,94 @@ fn help_items() -> Vec<Item<'static>> {
         row("F3+4", "Network".to_string()).into(),
         row("F3+5", "Workers".to_string()).into(),
         row("F3+6", "Memory".to_string()).into(),
+        row("F3+7", "Frame profiler".to_string()).into(),
         row("F3+0", "This page".to_string()).into(),
         Item::Divider,
         row("F3+H", "Advanced tooltips".to_string()).into(),
         row("F3+G", "Chunk borders".to_string()).into(),
         row("F3+A", "Reload chunks".to_string()).into(),
+    ]
+}
+
+/// Per-frame stage cost: red past a quarter of a 60 fps frame, yellow past
+/// a sixteenth.
+fn stage_color(ms: f32) -> u32 {
+    if ms >= 4.0 {
+        0xFF5555
+    } else if ms >= 1.0 {
+        0xFFFF55
+    } else {
+        VALUE_COLOR
+    }
+}
+
+fn avg_max(avg: f32, max: f32) -> String {
+    format!("{avg:.2} avg  {max:.2} max ms")
+}
+
+const PROFILER_SPANS: usize = 10;
+const PROFILER_PASSES: usize = 10;
+
+fn profiler_sections(d: &DebugInfo) -> Vec<(&'static str, Vec<Item<'static>>)> {
+    use crate::diag::frame_profile::Group;
+    let Some(report) = d.frame_profile.as_deref() else {
+        return vec![("FRAME PROFILER", vec![row("", "sampling...".to_string()).into()])];
+    };
+    let group = |g: Group| report.lines.iter().filter(move |l| l.group == g);
+    let stages = |g: Group| -> Vec<Item<'static>> {
+        let lines: Vec<_> = group(g).collect();
+        let total: f32 = lines.iter().map(|l| l.avg_ms).sum();
+        let mut items: Vec<Item<'static>> = lines
+            .iter()
+            .map(|l| row_c(l.name, avg_max(l.avg_ms, l.max_ms), stage_color(l.avg_ms)).into())
+            .collect();
+        if !items.is_empty() {
+            items.push(Item::Divider);
+            items.push(row("Total", format!("{total:.2} ms")).into());
+        }
+        items
+    };
+
+    let mut main = vec![
+        row(
+            "Window",
+            format!(
+                "{} frames / {} rendered in {:.0} ms",
+                report.frames, report.render_frames, report.window_ms
+            ),
+        )
+        .into(),
+        Item::Divider,
+    ];
+    main.extend(stages(Group::Main));
+
+    let gpu = d.passes.iter().any(|p| p.gpu_ms.is_some());
+    let mut passes: Vec<Item<'static>> = d
+        .passes
+        .iter()
+        .take(PROFILER_PASSES)
+        .map(|p| {
+            let value = match p.gpu_ms {
+                Some(gpu) => format!("{gpu:.2} gpu  {:.2} cpu ms", p.cpu_ms),
+                None => format!("{:.2} cpu ms", p.cpu_ms),
+            };
+            row_c(p.name.clone(), value, stage_color(p.gpu_ms.unwrap_or(p.cpu_ms))).into()
+        })
+        .collect();
+    if !gpu && !passes.is_empty() {
+        passes.push(row("", "no GPU timestamps on this device".to_string()).into());
+    }
+
+    let spans: Vec<Item<'static>> = group(Group::Span)
+        .take(PROFILER_SPANS)
+        .map(|l| row_c(l.name, avg_max(l.avg_ms, l.max_ms), stage_color(l.avg_ms)).into())
+        .collect();
+
+    vec![
+        ("MAIN WORLD (per frame)", main),
+        ("RENDER WORLD (per rendered frame)", stages(Group::Render)),
+        ("RENDER PASSES", passes),
+        ("SYSTEMS & WORKERS (all threads)", spans),
     ]
 }
 
@@ -1473,6 +1570,40 @@ fn draw_bar(
     }
 }
 
+/// Simple Voice Chat's state, bottom left where the mod draws its icons:
+/// nothing until a server's voice chat answers, then whether the
+/// microphone is sending, muted or off.
+#[cfg(voice)]
+pub fn draw_voice(p: &mut Painter, ctx: &ScreenCtx, display: crate::gui::VoiceStatusDisplay) {
+    use crate::gui::VoiceStatusDisplay;
+    use crate::voice::{Activation, Status};
+    if display == VoiceStatusDisplay::Off {
+        return;
+    }
+    let (text, color) = match crate::voice::status() {
+        Status::Off | Status::Requested => return,
+        _ if crate::voice::disabled() => ("Voice chat off", 0xFF5555),
+        Status::Authenticating => ("Voice chat connecting", 0xAAAAAA),
+        Status::Failed(_) => ("Voice chat disconnected", 0xFF5555),
+        Status::Connected if crate::voice::muted() => ("Microphone muted", 0xFF5555),
+        Status::Connected if crate::voice::talking() => ("Talking", 0x55FF55),
+        Status::Connected => match crate::voice::activation() {
+            Activation::PushToTalk => ("Voice chat (push to talk)", 0xAAAAAA),
+            Activation::Voice => ("Voice chat (voice activation)", 0xAAAAAA),
+        },
+    };
+    if display == VoiceStatusDisplay::Icon {
+        // A square in the bottom-left corner, below where chat lines sit.
+        const SIZE: f32 = 6.0;
+        let (x, y) = (3.0, gui_height(ctx) - SIZE - 3.0);
+        p.fill(x - 1.0, y - 1.0, SIZE + 2.0, SIZE + 2.0, 0xC000_0000);
+        p.fill(x, y, SIZE, SIZE, 0xFF00_0000 | color);
+        return;
+    }
+    let y = gui_height(ctx) - LINE_HEIGHT - 4.0;
+    p.text_str(text, 4.0, y, color, true);
+}
+
 pub fn draw_boss_bars(p: &mut Painter, ctx: &ScreenCtx, bars: &[crate::client::bossbar::BossBar]) {
     if bars.is_empty() {
         return;
@@ -1566,7 +1697,7 @@ pub fn draw_sidebar(p: &mut Painter, ctx: &ScreenCtx, sidebar: &crate::client::t
     }
 }
 
-fn gui_width(ctx: &ScreenCtx) -> f32 {
+pub(crate) fn gui_width(ctx: &ScreenCtx) -> f32 {
     ctx.vw.ceil()
 }
 
@@ -1764,6 +1895,7 @@ mod tests {
             color: 0,
             overlay: 0,
             darken: false,
+            music: false,
             fog: false,
         }
     }

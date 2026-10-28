@@ -165,6 +165,93 @@ pub(crate) enum Builtin {
     VehicleInWater,
     VehicleLookVector,
     RelativeVehiclePosition,
+    FogShape,
+    DarknessLightFactor,
+    BiomeCategory,
+    FogMode,
+    CloudHeight,
+    CenterDepthSmooth,
+}
+
+/// Iris's `biome_category` values: the 1.18 `Biome.BiomeCategory` order, which
+/// packs reach through the `CAT_*` names.
+pub(crate) const BIOME_CATEGORIES: [&str; 19] = [
+    "NONE",
+    "TAIGA",
+    "EXTREME_HILLS",
+    "JUNGLE",
+    "MESA",
+    "PLAINS",
+    "SAVANNA",
+    "ICY",
+    "THE_END",
+    "BEACH",
+    "FOREST",
+    "OCEAN",
+    "DESERT",
+    "RIVER",
+    "SWAMP",
+    "MUSHROOM",
+    "NETHER",
+    "UNDERGROUND",
+    "MOUNTAIN",
+];
+
+/// A biome's category by its name, as 1.18 filed the biomes that existed then
+/// and the nearest category for the ones added since.
+pub(crate) fn biome_category(name: &str) -> i32 {
+    let name = name.strip_prefix("minecraft:").unwrap_or(name);
+    let has = |parts: &[&str]| parts.iter().any(|p| name.contains(p));
+    let category = if name == "the_void" {
+        "NONE"
+    } else if name == "the_end" || has(&["end_"]) || name == "small_end_islands" {
+        "THE_END"
+    } else if has(&["nether", "soul_sand", "crimson", "warped", "basalt"]) {
+        "NETHER"
+    } else if has(&["mushroom"]) {
+        "MUSHROOM"
+    } else if has(&["ocean"]) {
+        "OCEAN"
+    } else if has(&["river"]) {
+        "RIVER"
+    } else if has(&["beach", "shore"]) {
+        "BEACH"
+    } else if has(&["swamp"]) {
+        "SWAMP"
+    } else if has(&["desert"]) {
+        "DESERT"
+    } else if has(&["badlands"]) {
+        "MESA"
+    } else if has(&["savanna"]) {
+        "SAVANNA"
+    } else if has(&["jungle"]) {
+        "JUNGLE"
+    } else if has(&["taiga"]) {
+        "TAIGA"
+    } else if has(&["caves", "deep_dark"]) {
+        "UNDERGROUND"
+    } else if has(&["windswept"]) {
+        "EXTREME_HILLS"
+    } else if has(&["peaks", "slopes", "meadow", "grove"]) {
+        "MOUNTAIN"
+    } else if has(&["snowy", "ice", "frozen"]) {
+        "ICY"
+    } else if has(&["forest", "garden"]) {
+        "FOREST"
+    } else if has(&["plains"]) {
+        "PLAINS"
+    } else {
+        "NONE"
+    };
+    BIOME_CATEGORIES
+        .iter()
+        .position(|c| *c == category)
+        .map_or(0, |i| i as i32)
+}
+
+/// The GLSL type of the builtin uniform `name`, as packs declare it.
+pub(crate) fn builtin_type(name: &str) -> Option<&'static str> {
+    BUILTINS.iter().find(|(n, _, _)| *n == name).map(|(_, t, _)| *t)
 }
 
 pub(crate) const BUILTINS: &[(&str, &str, Builtin)] = &[
@@ -304,6 +391,12 @@ pub(crate) const BUILTINS: &[(&str, &str, Builtin)] = &[
     ("vehicleId", "int", Builtin::VehicleId),
     ("vehicleInWater", "bool", Builtin::VehicleInWater),
     ("vehicleLookVector", "vec3", Builtin::VehicleLookVector),
+    ("fogShape", "int", Builtin::FogShape),
+    ("darknessLightFactor", "float", Builtin::DarknessLightFactor),
+    ("biome_category", "int", Builtin::BiomeCategory),
+    ("fogMode", "int", Builtin::FogMode),
+    ("cloudHeight", "float", Builtin::CloudHeight),
+    ("centerDepthSmooth", "float", Builtin::CenterDepthSmooth),
     (
         "relativeVehiclePosition",
         "vec3",
@@ -314,8 +407,15 @@ pub(crate) const BUILTINS: &[(&str, &str, Builtin)] = &[
 pub(super) fn builtin(name: &str, ty: &str) -> Option<Builtin> {
     BUILTINS
         .iter()
-        .find(|(n, t, _)| *n == name && *t == ty)
+        .find(|(n, t, _)| *n == name && (*t == ty || interchangeable(t, ty)))
         .map(|(_, _, b)| *b)
+}
+
+/// GL sets a `bool` uniform with `glUniform1i`, so Iris's int uniforms reach a
+/// pack that declares them `bool`, and its bool ones a pack that declares them
+/// `int`; both upload here as a 32-bit integer.
+fn interchangeable(supplied: &str, declared: &str) -> bool {
+    matches!((supplied, declared), ("int", "bool") | ("bool", "int"))
 }
 
 pub(crate) const IDS_PER_BUILTIN: usize = MATRIX_ELEMENT + 17;
@@ -331,6 +431,12 @@ pub(crate) fn resolve_input(name: &str, member: Option<usize>) -> Option<Resolve
         let row = crate::util::biome_color::biome_index(&biome.to_ascii_lowercase());
         return Some(Resolved::Constant(row.map_or(-1.0, f32::from)));
     }
+    if member.is_none()
+        && let Some(category) = name.strip_prefix("CAT_")
+        && let Some(i) = BIOME_CATEGORIES.iter().position(|c| *c == category)
+    {
+        return Some(Resolved::Constant(i as f32));
+    }
     let index = BUILTINS.iter().position(|(n, _, _)| *n == name)?;
     FrameValues::default()
         .get(BUILTINS[index].2)
@@ -341,6 +447,39 @@ pub(crate) fn resolve_input(name: &str, member: Option<usize>) -> Option<Resolve
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn biomes_file_under_iris_categories() {
+        let cat = |c: &str| BIOME_CATEGORIES.iter().position(|n| *n == c).unwrap() as i32;
+        for (biome, category) in [
+            ("minecraft:plains", "PLAINS"),
+            ("swamp", "SWAMP"),
+            ("mangrove_swamp", "SWAMP"),
+            ("eroded_badlands", "MESA"),
+            ("old_growth_spruce_taiga", "TAIGA"),
+            ("snowy_plains", "ICY"),
+            ("frozen_peaks", "MOUNTAIN"),
+            ("frozen_ocean", "OCEAN"),
+            ("crimson_forest", "NETHER"),
+            ("end_highlands", "THE_END"),
+            ("deep_dark", "UNDERGROUND"),
+            ("windswept_forest", "EXTREME_HILLS"),
+            ("birch_forest", "FOREST"),
+        ] {
+            assert_eq!(biome_category(biome), cat(category), "{biome}");
+        }
+        assert_eq!(
+            resolve_input("CAT_SWAMP", None),
+            Some(Resolved::Constant(cat("SWAMP") as f32))
+        );
+    }
+
+    #[test]
+    fn an_int_uniform_reaches_a_bool_declaration_and_back() {
+        assert_eq!(builtin("hideGUI", "bool"), Some(Builtin::HideGui));
+        assert_eq!(builtin("isSpectator", "int"), Some(Builtin::IsSpectator));
+        assert_eq!(builtin("hideGUI", "float"), None);
+    }
 
     #[test]
     fn custom_inputs_resolve_by_name_and_member() {
@@ -370,9 +509,9 @@ mod tests {
         );
         assert!(builtin("hasCeiling", "bool").is_some());
         assert_eq!(
-            builtin("hasCeiling", "int"),
+            builtin("hasCeiling", "float"),
             None,
-            "the declared type has to match"
+            "the declared type has to match, bool and int aside"
         );
         assert!(matches!(
             resolve_input("isRiding", None),

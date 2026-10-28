@@ -10,7 +10,7 @@ use azalea_protocol::{
         ConnectionProtocol, Packet,
         game::{
             ClientboundBlockUpdate, ClientboundPlayerPosition, ServerboundGamePacket,
-            ServerboundPlayerAction, ServerboundSwing, s_interact::InteractionHand,
+            ServerboundPlayerAction, ServerboundPunch, s_interact::InteractionHand,
             s_player_action,
         },
     },
@@ -78,15 +78,11 @@ fn test_mine_block_timing_hand() {
         .into_variant()
     });
     sent_packets.expect("Swing 1", |p| {
-        p == &ServerboundSwing {
-            hand: InteractionHand::MainHand,
-        }
+        p == &ServerboundPunch
         .into_variant()
     });
     sent_packets.expect("Swing 2", |p| {
-        p == &ServerboundSwing {
-            hand: InteractionHand::MainHand,
-        }
+        p == &ServerboundPunch
         .into_variant()
     });
     sent_packets.expect_tick_end();
@@ -95,9 +91,7 @@ fn test_mine_block_timing_hand() {
     for i in 3..=151 {
         simulation.tick();
         sent_packets.expect(&format!("Swing {i}"), |p| {
-            p == &ServerboundSwing {
-                hand: InteractionHand::MainHand,
-            }
+            p == &ServerboundPunch
             .into_variant()
         });
         sent_packets.maybe_expect(|p| matches!(p, ServerboundGamePacket::MovePlayerPos(_)));
@@ -117,9 +111,7 @@ fn test_mine_block_timing_hand() {
         },
     );
     sent_packets.expect("Last swing", |p| {
-        p == &ServerboundSwing {
-            hand: InteractionHand::MainHand,
-        }
+        p == &ServerboundPunch
         .into_variant()
     });
 

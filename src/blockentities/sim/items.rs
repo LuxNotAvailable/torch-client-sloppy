@@ -1,5 +1,5 @@
 use azalea_core::direction::Direction;
-use simdnbt::owned::{Nbt, NbtCompound, NbtTag};
+use simdnbt::owned::{NbtCompound, NbtTag};
 
 use crate::blocks::facing;
 use crate::items::potions::{self, PotionContents};
@@ -34,7 +34,7 @@ impl<const N: usize> Container<N> {
 
 pub type Campfire = Container<4>;
 
-pub fn campfire(tag: &Nbt) -> Campfire {
+pub fn campfire(tag: &NbtCompound) -> Campfire {
     Container::load(tag)
 }
 
@@ -44,7 +44,7 @@ pub struct Shelf {
     pub align_to_bottom: bool,
 }
 
-pub fn shelf(tag: &Nbt) -> Shelf {
+pub fn shelf(tag: &NbtCompound) -> Shelf {
     Shelf {
         slots: Container::load(tag),
         align_to_bottom: tag.byte("align_items_to_bottom").unwrap_or(0) != 0,
@@ -57,7 +57,7 @@ pub struct Brushable {
     pub hit_direction: Option<Direction>,
 }
 
-pub fn brushable(tag: &Nbt) -> Brushable {
+pub fn brushable(tag: &NbtCompound) -> Brushable {
     Brushable {
         item: tag.compound("item").map(stack).unwrap_or_default(),
         hit_direction: tag

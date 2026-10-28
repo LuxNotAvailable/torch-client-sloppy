@@ -42,7 +42,7 @@ pub fn draw(
             menu_slots,
             hotbar: s.session.hotbar.clone(),
             carried: s.session.carried.clone(),
-            selected: s.session.hotbar_selected,
+            selected: s.session.hotbar_target.unwrap_or(s.session.hotbar_selected),
             gamemode: s.session.gamemode,
             health: s.session.health,
             food: s.session.food,
@@ -184,7 +184,9 @@ pub fn draw(
     #[cfg(not(feature = "hud_editor"))]
     let editing = false;
     let hide_gui = state.hide_gui && !editing;
-    let hud_shown = !in_menu || editing;
+    // Nothing of the HUD until the server has put the player in the world.
+    let loading = !in_menu && !editing && !state.hud.in_world;
+    let hud_shown = (!in_menu || editing) && !loading;
     #[cfg(feature = "hud_editor")]
     if editing {
         crate::gui::hud_editor::draw_under(p, &state.hud_state, &ctx);
@@ -222,6 +224,18 @@ pub fn draw(
         elements.draw(p, ctx.vw, ctx.vh, ElementId::BossBars, |p| {
             hud::draw_boss_bars(p, &ctx, &snap.boss_bars);
         });
+        if snap.boss_bars.is_empty()
+            && let Some(looking) = crate::play::looking::current()
+        {
+            let sneaking = crate::play::looking::sneaking();
+            let settings = &state.options.block_info;
+            if settings.enabled {
+                let centre = (crate::gui::hud::gui_width(&ctx) / 2.0).floor();
+                elements.draw(p, ctx.vw, ctx.vh, ElementId::BlockInfo, |p| {
+                    crate::gui::block_info::draw(p, centre, 3.0, &looking, sneaking, settings);
+                });
+            }
+        }
         if snap.gamemode == crate::session::Gamemode::Spectator {
             elements.follow(p, ctx.vw, ctx.vh, ElementId::Hotbar, |p| {
                 spectator_menu::draw(
@@ -236,11 +250,19 @@ pub fn draw(
         }
     }
 
+    if loading {
+        draw_loading(p, &ctx, state.hud.status.as_deref());
+    }
+
     if !hide_gui && hud_shown {
         elements.draw(p, ctx.vw, ctx.vh, ElementId::Sidebar, |p| {
             hud::draw_sidebar(p, &ctx, &snap.sidebar);
         });
         hud::draw_overlays(p, &ctx, &state.hud_overlays, snap.gamemode, &mut elements);
+        #[cfg(voice)]
+        if state.screen != Screen::Chat {
+            hud::draw_voice(p, &ctx, state.options.voice.status);
+        }
     }
 
     if !in_menu {
@@ -374,6 +396,7 @@ pub fn draw(
         Screen::Options
         | Screen::VideoSettings
         | Screen::Controls
+        | Screen::MouseSettings
         | Screen::GameSettings
         | Screen::ManageStorage => {
             if state.in_menu() {
@@ -384,13 +407,14 @@ pub fn draw(
             match state.screen {
                 Screen::VideoSettings => options::draw_video(p, state, &ctx),
                 Screen::Controls => options::draw_controls(p, state, &ctx),
+                Screen::MouseSettings => options::draw_mouse(p, state, &ctx),
                 Screen::GameSettings => options::draw_game(p, state, &ctx),
                 Screen::ManageStorage => options::draw_manage_storage(p, state, &ctx),
                 _ => options::draw(p, state, &ctx),
             }
             None
         }
-        #[cfg(feature = "audio")]
+        #[cfg(audio)]
         Screen::AudioSettings => {
             if state.in_menu() {
                 crate::gui::menu::background(p, ctx.vw, ctx.vh);
@@ -398,6 +422,39 @@ pub fn draw(
                 dim_background(p, ctx.vw, ctx.vh);
             }
             options::draw_audio(p, state, &ctx);
+            None
+        }
+        #[cfg(voice)]
+        Screen::VoiceChat | Screen::VoiceGroups => {
+            if state.in_menu() {
+                crate::gui::menu::background(p, ctx.vw, ctx.vh);
+            } else {
+                dim_background(p, ctx.vw, ctx.vh);
+            }
+            if state.screen == Screen::VoiceChat {
+                crate::gui::voice_chat::draw_settings(p, state, &ctx);
+            } else {
+                crate::gui::voice_chat::draw_groups(p, state, &ctx);
+            }
+            None
+        }
+        #[cfg(voice)]
+        Screen::VoicePlayers => {
+            if state.in_menu() {
+                crate::gui::menu::background(p, ctx.vw, ctx.vh);
+            } else {
+                dim_background(p, ctx.vw, ctx.vh);
+            }
+            options::draw_voice_players(p, state, &ctx);
+            None
+        }
+        Screen::BlockInfoSettings => {
+            if state.in_menu() {
+                crate::gui::menu::background(p, ctx.vw, ctx.vh);
+            } else {
+                dim_background(p, ctx.vw, ctx.vh);
+            }
+            crate::gui::block_info::draw_settings(p, state, &ctx);
             None
         }
         #[cfg(resource_packs)]
@@ -757,6 +814,14 @@ impl HotbarGeom {
     pub(crate) fn slot_rect(&self, i: usize) -> (f32, f32, f32, f32) {
         (self.left + 1.0 + i as f32 * 20.0, self.top, 20.0, 22.0)
     }
+}
+
+/// What shows while joining: the menu background and how far the join is.
+fn draw_loading(p: &mut Painter, ctx: &ScreenCtx, status: Option<&str>) {
+    crate::gui::menu::background(p, ctx.vw, ctx.vh);
+    let text = status.filter(|s| !s.is_empty()).unwrap_or("Connecting...");
+    let w = p.atlas.font.width_str(text);
+    p.text_str(text, ((ctx.vw - w) / 2.0).floor(), (ctx.vh / 2.0 - 4.0).floor(), 0xFFFFFF, true);
 }
 
 fn draw_hud(

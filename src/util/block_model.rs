@@ -84,42 +84,48 @@ pub fn emissive_rendering(name: &str, props: &HashMap<&str, &str>) -> bool {
     }
 }
 
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 pub struct SoundGroup {
     pub break_event: &'static str,
     pub place_event: &'static str,
     pub step_event: &'static str,
+    /// Each fourth tick of mining it (`ClientLevel.playBreakingSound`).
+    pub hit_event: &'static str,
+    #[allow(dead_code, reason = "for landing from a fall, not played yet")]
+    pub fall_event: &'static str,
 }
 
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 macro_rules! sound_group {
     ($name:literal) => {
         SoundGroup {
             break_event: concat!("block.", $name, ".break"),
             place_event: concat!("block.", $name, ".place"),
             step_event: concat!("block.", $name, ".step"),
+            hit_event: concat!("block.", $name, ".hit"),
+            fall_event: concat!("block.", $name, ".fall"),
         }
     };
 }
 
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 static WOOD: SoundGroup = sound_group!("wood");
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 static SAND: SoundGroup = sound_group!("sand");
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 static GRAVEL: SoundGroup = sound_group!("gravel");
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 static GRASS: SoundGroup = sound_group!("grass");
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 static GLASS: SoundGroup = sound_group!("glass");
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 static METAL: SoundGroup = sound_group!("metal");
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 static WOOL: SoundGroup = sound_group!("wool");
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 static STONE: SoundGroup = sound_group!("stone");
 
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 pub fn sound_group(name: &str) -> &'static SoundGroup {
     if name.ends_with("_planks")
         || name.contains("_log")
@@ -156,7 +162,7 @@ pub fn sound_group(name: &str) -> &'static SoundGroup {
     }
 }
 
-#[cfg(all(test, feature = "audio"))]
+#[cfg(all(test, audio))]
 mod sound_group_tests {
     use super::*;
 
@@ -198,6 +204,9 @@ pub fn block_visual(state: azalea::block::BlockState) -> RenderedBlock {
             | "cherry_leaves"
             | "azalea_leaves"
             | "flowering_azalea_leaves"
+            | "red_poplar_leaves"
+            | "orange_poplar_leaves"
+            | "yellow_poplar_leaves"
             | "lily_pad"
     ) {
         TintKind::None
@@ -225,7 +234,6 @@ pub fn block_visual(state: azalea::block::BlockState) -> RenderedBlock {
             offset: ShapeOffset::None,
             #[cfg(feature = "builtin_shaders")]
             sways: false,
-            #[cfg(feature = "shader_support")]
             state: state.id(),
             #[cfg(feature = "shader_support")]
             translucent: false,
@@ -260,7 +268,6 @@ pub fn block_visual(state: azalea::block::BlockState) -> RenderedBlock {
             offset: ShapeOffset::None,
             #[cfg(feature = "builtin_shaders")]
             sways: false,
-            #[cfg(feature = "shader_support")]
             state: state.id(),
             #[cfg(feature = "shader_support")]
             translucent: false,
@@ -286,7 +293,6 @@ pub fn block_visual(state: azalea::block::BlockState) -> RenderedBlock {
         offset: ShapeOffset::for_block(name),
         #[cfg(feature = "builtin_shaders")]
         sways,
-        #[cfg(feature = "shader_support")]
         state: state.id(),
         #[cfg(feature = "shader_support")]
         translucent: translucent_layer(name),

@@ -105,7 +105,64 @@ fn read_tick_snapshot(bot: &Client, shared: &Arc<SharedMutex>) -> Option<TickSna
 
     let world = bot.world().ok();
 
-    #[cfg(feature = "audio")]
+    #[cfg(voice)]
+    {
+        use azalea::entity::{EntityUuid, Pose, Position};
+        let eye = |pose: Option<Pose>| {
+            crate::renderer::systems::eye_height(pose == Some(Pose::Crouching)) as f64
+        };
+        let mut eyes = std::collections::HashMap::new();
+        for player in bot.nearby_players().unwrap_or_default() {
+            let (Some(id), Some(at)) = (
+                player.get_component::<EntityUuid>(),
+                player.get_component::<Position>(),
+            ) else {
+                continue;
+            };
+            let y = at.y + eye(player.get_component::<Pose>().map(|p| *p));
+            eyes.insert(**id, [at.x as f32, y as f32, at.z as f32]);
+        }
+        let me = bot.component::<EntityUuid>().ok().map(|id| **id);
+        let own = eye(bot.component::<Pose>().ok().map(|p| *p));
+        crate::voice::tick(me, [pos.x as f32, (pos.y + own) as f32, pos.z as f32], eyes);
+    }
+
+    #[cfg(audio)]
+    world_sounds(bot, pos, &entity_anims);
+
+    #[cfg(audio)]
+    {
+        use azalea_registry::builtin::EntityKind;
+        crate::audio::remember_items(entity_anims.iter().filter_map(|e| {
+            let orb = match e.kind {
+                EntityKind::ExperienceOrb => true,
+                EntityKind::Item => false,
+                _ => return None,
+            };
+            let at = e.pos.map(|v| v as f32);
+            Some((e.id, crate::audio::EntityAt { at, orb }))
+        }));
+    }
+
+    #[cfg(audio)]
+    {
+        let ecs = bot.ecs.read();
+        let index = ecs.get::<azalea::entity::indexing::EntityIdIndex>(bot.entity);
+        crate::audio::tick_entities(|id| {
+            let entity =
+                index?.get_by_minecraft_entity(azalea_core::entity_id::MinecraftEntityId(id))?;
+            let at = ecs.get::<azalea::entity::Position>(entity)?;
+            let orb = ecs
+                .get::<azalea::entity::EntityKindComponent>(entity)
+                .is_some_and(|k| **k == azalea_registry::builtin::EntityKind::ExperienceOrb);
+            Some(crate::audio::EntityAt {
+                at: [at.x as f32, at.y as f32, at.z as f32],
+                orb,
+            })
+        });
+    }
+
+    #[cfg(audio)]
     {
         use std::sync::atomic::Ordering;
 
@@ -187,8 +244,21 @@ fn read_tick_snapshot(bot: &Client, shared: &Arc<SharedMutex>) -> Option<TickSna
                     .collect()
             })
             .unwrap_or_default();
-        let armor: crate::renderer::Armor =
-            std::array::from_fn(|i| player_slots.get(5 + i).and_then(item_id));
+        let armor = crate::renderer::Armor {
+            worn: std::array::from_fn(|i| player_slots.get(5 + i).and_then(item_id)),
+            glint: (0..4)
+                .filter(|&i| {
+                    matches!(player_slots.get(5 + i), Some(ItemStack::Present(d))
+                        if crate::play::inventory_bridge::has_glint(d))
+                })
+                .fold(0, |bits, i| bits | 1 << i),
+            trims: std::array::from_fn(|i| match (player_slots.get(5 + i), registries) {
+                (Some(ItemStack::Present(d)), Some(r)) => {
+                    crate::play::inventory_bridge::armor_trim(d, r)
+                }
+                _ => None,
+            }),
+        };
         let carried = inventory
             .as_ref()
             .map(|inv| slot_stack(&inv.carried, registries, advanced_tooltips))
@@ -464,9 +534,9 @@ struct Ticker {
 }
 static TICKER: std::sync::OnceLock<std::sync::Mutex<Ticker>> = std::sync::OnceLock::new();
 
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 static TRAVELLED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 static LAST_XZ: std::sync::Mutex<Option<(f64, f64)>> = std::sync::Mutex::new(None);
 
 pub(crate) fn reset_session_locals(blocking: bool) {
@@ -479,7 +549,7 @@ pub(crate) fn reset_session_locals(blocking: bool) {
     if let Some(mut ticker) = ticker {
         *ticker = Ticker::default();
     }
-    #[cfg(feature = "audio")]
+    #[cfg(audio)]
     {
         TRAVELLED.store(0, std::sync::atomic::Ordering::Relaxed);
         let last = if blocking {
@@ -616,8 +686,130 @@ fn block_distance_sqr(pos: AzBlockPos, point: [f64; 3]) -> f64 {
     dx * dx + dy * dy + dz * dz
 }
 
+/// Where rain fell near the camera this tick, as `tickRainParticles` picks
+/// it: a random column within ten blocks whose top is within ten blocks of
+/// the camera and where it rains rather than snows. Also whether that spot
+/// is above the camera with a roof over the camera (`weather.rain.above`).
+#[cfg(audio)]
+fn rain_spot(eye: [f64; 3]) -> Option<([f32; 3], bool)> {
+    use azalea_core::position::BlockPos;
+    const RADIUS: i32 = 10;
+    let rain = crate::renderer::environment::rain_level();
+    if rain <= 0.0 {
+        return None;
+    }
+    let biome = crate::client::envprobe::camera_biome()?;
+    let env = crate::util::biome_color::env(biome);
+    if !env.has_precipitation || env.frozen {
+        return None;
+    }
+    let world = crate::client::tracking::current_world().lock().unwrap().clone()?;
+    let world = world.read();
+    let camera = eye.map(|v| v.floor() as i32);
+    let top = |x: i32, z: i32, from: i32, to: i32| -> Option<i32> {
+        (to..=from).rev().find(|y| {
+            world
+                .get_block_state(BlockPos::new(x, *y, z))
+                .is_some_and(|s| !s.is_air())
+        })
+    };
+    // The share of columns that get a drop, as the particle count scales.
+    let tries = ((0.225 * 441.0 * rain * rain) as u32).clamp(1, 8);
+    let mut spot = None;
+    for _ in 0..tries {
+        let x = camera[0] + crate::audio::random_below((2 * RADIUS + 1) as u32) as i32 - RADIUS;
+        let z = camera[2] + crate::audio::random_below((2 * RADIUS + 1) as u32) as i32 - RADIUS;
+        let Some(y) = top(x, z, camera[1] + 10, camera[1] - 10) else {
+            continue;
+        };
+        // `coldEnoughToSnow`: biome temperature less 0.00125 a block above 80.
+        let temperature = env.temperature - (y - 80).max(0) as f32 * 0.00125;
+        if temperature < 0.15 {
+            continue;
+        }
+        spot = Some([x, y, z]);
+    }
+    let [x, y, z] = spot?;
+    let roofed = top(camera[0], camera[2], camera[1] + 64, camera[1] + 1).is_some();
+    Some(([x as f32 + 0.5, y as f32 + 1.0, z as f32 + 0.5], y > camera[1] + 1 && roofed))
+}
+
+/// The game tick's ambience and where the music should follow.
+#[cfg(audio)]
+fn world_sounds(
+    bot: &Client,
+    pos: azalea_core::position::Vec3,
+    entity_anims: &[crate::entities::feed::EntityAnim],
+) {
+    use azalea::entity::{Physics, PlayerAbilities, Pose};
+    use azalea_registry::builtin::EntityKind;
+    use crate::util::block_model::{EyeFluid, eye_fluid_at};
+    let pose = bot.component::<Pose>().ok().map(|p| *p);
+    let eye_y = pos.y + crate::renderer::systems::eye_height(pose == Some(Pose::Crouching)) as f64;
+    let feet = [pos.x, pos.y, pos.z];
+    let eye = [pos.x, eye_y, pos.z];
+    let underwater = eye_fluid_at(eye[0], eye[1], eye[2]) == Some(EyeFluid::Water);
+    let velocity = bot
+        .component::<Physics>()
+        .map_or([0.0; 3], |p| [p.velocity.x, p.velocity.y, p.velocity.z]);
+    let dimension = crate::renderer::dimension::current().registry_id();
+    let biome = crate::client::envprobe::camera_biome().and_then(crate::util::biome_color::biome_name);
+    let minecarts: Vec<(i32, [f64; 3])> = entity_anims
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.kind,
+                EntityKind::Minecart
+                    | EntityKind::ChestMinecart
+                    | EntityKind::FurnaceMinecart
+                    | EntityKind::HopperMinecart
+                    | EntityKind::TntMinecart
+                    | EntityKind::SpawnerMinecart
+                    | EntityKind::CommandBlockMinecart
+            )
+        })
+        .map(|e| (e.id, e.pos))
+        .collect();
+    let light = |p: [i32; 3]| crate::renderer::lightmap::levels_at(p.map(|v| v as f32));
+    let surroundings = crate::audio::ambience::Surroundings {
+        dimension,
+        biome,
+        feet,
+        eye,
+        underwater,
+        fall_flying: pose == Some(Pose::FallFlying),
+        velocity,
+        light: &light,
+        rain: rain_spot(eye),
+        minecarts: &minecarts,
+    };
+    let creative = bot
+        .component::<PlayerAbilities>()
+        .is_ok_and(|a| a.instant_break && a.can_fly);
+    let situation = crate::audio::music::Situation::InGame {
+        dimension: dimension.to_owned(),
+        biome: biome.map(str::to_owned),
+        creative,
+        underwater,
+        end_boss: crate::client::bossbar::plays_music(),
+    };
+    crate::audio::tick_world(&surroundings, situation);
+}
+
 pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
     let _ticking = crate::diag::TickGuard::new();
+
+    crate::play::looking::tick(bot);
+
+    #[cfg(voice)]
+    for (channel, payload) in crate::voice::take_outgoing() {
+        bot.write_packet(
+            azalea_protocol::packets::game::s_custom_payload::ServerboundCustomPayload {
+                identifier: channel.into(),
+                data: payload.into(),
+            },
+        );
+    }
 
     let (inv_actions, horse) = {
         let mut s = shared.lock().unwrap();
@@ -714,6 +906,7 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
         s.session.player_pos_prev = s.session.player_pos;
         s.session.player_pos = [pos.x as f32, pos.y as f32, pos.z as f32];
         s.session.last_tick_time = Some(crate::platform::time::Instant::now());
+        s.session.tick_seq = s.session.tick_seq.wrapping_add(1);
         s.session.game_time = s.session.game_time.wrapping_add(1);
         s.session.day_clock.advance();
         if let Some(env) = env {
@@ -822,7 +1015,9 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
             _ => 0,
         };
         s.session.merchant_future_xp = future_xp;
-        s.session.hotbar_selected = hotbar_sel;
+        // The target is taken below and applied this tick, so publish it now;
+        // the snapshot slot predates it and would bounce the HUD back a slot.
+        s.session.hotbar_selected = s.session.hotbar_target.unwrap_or(hotbar_sel);
         s.session.health = health;
         if dead && !s.session.dead && !s.session.show_death_screen {
             s.respawn_requested = true;
@@ -1188,7 +1383,11 @@ fn collect_other_players(bot: &Client) -> (Vec<OtherPlayerInfo>, HashSet<i32>) {
                 interpolated: true,
                 main_hand: worn.main_hand,
                 off_hand: worn.off_hand,
-                armor: [worn.helmet, worn.chestplate, worn.leggings, worn.boots],
+                armor: crate::renderer::Armor {
+                    worn: [worn.helmet, worn.chestplate, worn.leggings, worn.boots],
+                    glint: worn.armor_glint & 0xF,
+                    trims: worn.armor_trims,
+                },
                 using_offhand: eref
                     .get_component::<metadata::AbstractLivingUsingOffhand>()
                     .map(|c| c.0)
@@ -1307,6 +1506,7 @@ fn tick_local_anim(
                     tint: st.potion.as_ref().map(|c| c.color()),
                     map_id: st.map_id,
                     layers: st.banner_layers.clone(),
+                    glint: st.glint,
                 })
                 .unwrap_or_default()
         };
@@ -1430,6 +1630,7 @@ pub(crate) fn held_item(stack: &ItemStack) -> renderer::HeldItem {
         count: data.count.clamp(0, u8::MAX as i32) as u8,
         map_id: data.get_component::<comp::MapId>().map(|m| m.id),
         layers: None,
+        glint: crate::play::inventory_bridge::has_glint(data),
     }
 }
 
@@ -1520,6 +1721,7 @@ fn health_display(
             regenerating: has("regeneration"),
             hunger_effect: has("hunger"),
             ticks_frozen,
+            on_fire: bot.component::<metadata::OnFire>().is_ok_and(|f| f.0),
             vehicle,
         },
         jumpable,

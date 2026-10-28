@@ -77,6 +77,7 @@ elements! {
     Freecam = "freecam", "Freecam";
     Effects = "effects", "Effects";
     BossBars = "boss_bars", "Boss bars";
+    BlockInfo = "block_info", "Block info";
     Sidebar = "sidebar", "Scoreboard";
     Debug = "debug", "Debug (F3)";
     Hotbar = "hotbar", "Hotbar";
@@ -105,6 +106,7 @@ impl ElementId {
         !matches!(
             self,
             ElementId::BossBars
+                | ElementId::BlockInfo
                 | ElementId::Sidebar
                 | ElementId::Debug
                 | ElementId::Hotbar
@@ -180,6 +182,7 @@ impl ElementId {
         match self {
             ElementId::Effects => Rect::new(vw - 50.0, 1.0, 49.0, 24.0),
             ElementId::BossBars => Rect::new(center - 91.0, 3.0, 182.0, 14.0),
+            ElementId::BlockInfo => Rect::new(center - 60.0, 3.0, 120.0, 30.0),
             ElementId::Sidebar => Rect::new(vw - 62.0, (vh / 2.0).floor() - 30.0, 61.0, 60.0),
             ElementId::Debug => Rect::new(vw - 132.0, 2.0, 130.0, 80.0),
             ElementId::Hotbar => Rect::new(center - 91.0, vh.floor() - 49.0, 182.0, 49.0),

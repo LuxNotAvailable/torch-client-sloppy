@@ -29,7 +29,7 @@ slots! {
     MODRINTH_PACKS = "modrinth_packs.json";
     #[cfg(feature = "shader_support")]
     SHADER_PACK = "shaderpack.txt";
-    #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+    #[cfg(all(audio, not(target_arch = "wasm32")))]
     SOUNDS_SKIPPED = "sounds_skipped.txt";
 }
 
@@ -87,12 +87,19 @@ impl Slot {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(test)))]
 pub(crate) fn dir() -> std::path::PathBuf {
     match std::env::var_os("MC_CLIENT_CONFIG_DIR") {
         Some(p) => std::path::PathBuf::from(p),
         None => default_dir(),
     }
+}
+
+/// Tests keep their files apart from the player's: a test that saves
+/// accounts or options must never overwrite the real ones.
+#[cfg(all(not(target_arch = "wasm32"), test))]
+pub(crate) fn dir() -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("torch-client-test-{}", std::process::id()))
 }
 
 #[cfg(target_os = "windows")]

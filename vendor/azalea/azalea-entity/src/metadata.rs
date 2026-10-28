@@ -1,3 +1,5 @@
+
+
 #![allow(clippy::single_match, non_snake_case)]
 
 use azalea_chat::FormattedText;
@@ -5,7 +7,10 @@ use azalea_core::{
     direction::Direction,
     position::{BlockPos, Vec3f32},
 };
-use azalea_inventory::{ItemStack, components};
+use azalea_inventory::{
+    ItemStack,
+    components::{self, DyeColor},
+};
 use azalea_registry::{DataRegistry, builtin::EntityKind};
 use bevy_ecs::{bundle::Bundle, component::Component};
 use derive_more::{Deref, DerefMut};
@@ -213,6 +218,42 @@ impl Default for BreezeWindChargeMetadataBundle {
         Self {
             _marker: BreezeWindCharge,
             parent: Default::default(),
+        }
+    }
+}
+
+#[derive(Component, Deref, DerefMut, Clone, PartialEq)]
+pub struct CushionColor(pub DyeColor);
+#[derive(Component)]
+pub struct Cushion;
+impl Cushion {
+    fn apply_metadata(
+        entity: &mut bevy_ecs::system::EntityCommands,
+        d: EntityDataItem,
+    ) -> Result<(), UpdateMetadataError> {
+        match d.index {
+            0..=7 => AbstractEntity::apply_metadata(entity, d)?,
+            8 => {
+                entity.insert(CushionColor(d.value.into_dye_color()?));
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
+#[derive(Bundle)]
+pub struct CushionMetadataBundle {
+    _marker: Cushion,
+    parent: AbstractEntityMetadataBundle,
+    cushion_color: CushionColor,
+}
+impl Default for CushionMetadataBundle {
+    fn default() -> Self {
+        Self {
+            _marker: Cushion,
+            parent: Default::default(),
+            cushion_color: CushionColor(Default::default()),
         }
     }
 }
@@ -2073,71 +2114,6 @@ impl Default for PhantomMetadataBundle {
     }
 }
 
-#[derive(Component, Deref, DerefMut, Clone, PartialEq)]
-pub struct SlimeSize(pub i32);
-#[derive(Component)]
-pub struct Slime;
-impl Slime {
-    fn apply_metadata(
-        entity: &mut bevy_ecs::system::EntityCommands,
-        d: EntityDataItem,
-    ) -> Result<(), UpdateMetadataError> {
-        match d.index {
-            0..=15 => AbstractInsentient::apply_metadata(entity, d)?,
-            16 => {
-                entity.insert(SlimeSize(d.value.into_int()?));
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-}
-
-#[derive(Bundle)]
-pub struct SlimeMetadataBundle {
-    _marker: Slime,
-    parent: AbstractInsentientMetadataBundle,
-    slime_size: SlimeSize,
-}
-impl Default for SlimeMetadataBundle {
-    fn default() -> Self {
-        Self {
-            _marker: Slime,
-            parent: Default::default(),
-            slime_size: SlimeSize(1),
-        }
-    }
-}
-
-#[derive(Component)]
-pub struct MagmaCube;
-impl MagmaCube {
-    fn apply_metadata(
-        entity: &mut bevy_ecs::system::EntityCommands,
-        d: EntityDataItem,
-    ) -> Result<(), UpdateMetadataError> {
-        match d.index {
-            0..=16 => Slime::apply_metadata(entity, d)?,
-            _ => {}
-        }
-        Ok(())
-    }
-}
-
-#[derive(Bundle)]
-pub struct MagmaCubeMetadataBundle {
-    _marker: MagmaCube,
-    parent: SlimeMetadataBundle,
-}
-impl Default for MagmaCubeMetadataBundle {
-    fn default() -> Self {
-        Self {
-            _marker: MagmaCube,
-            parent: Default::default(),
-        }
-    }
-}
-
 #[derive(Component)]
 pub struct AbstractCreature;
 impl AbstractCreature {
@@ -2338,7 +2314,7 @@ pub struct AttachFace(pub Direction);
 #[derive(Component, Deref, DerefMut, Clone, PartialEq)]
 pub struct Peek(pub u8);
 #[derive(Component, Deref, DerefMut, Clone, PartialEq)]
-pub struct Color(pub u8);
+pub struct ShulkerColor(pub u8);
 #[derive(Component)]
 pub struct Shulker;
 impl Shulker {
@@ -2355,7 +2331,7 @@ impl Shulker {
                 entity.insert(Peek(d.value.into_byte()?));
             }
             18 => {
-                entity.insert(Color(d.value.into_byte()?));
+                entity.insert(ShulkerColor(d.value.into_byte()?));
             }
             _ => {}
         }
@@ -2369,7 +2345,7 @@ pub struct ShulkerMetadataBundle {
     parent: AbstractCreatureMetadataBundle,
     attach_face: AttachFace,
     peek: Peek,
-    color: Color,
+    shulker_color: ShulkerColor,
 }
 impl Default for ShulkerMetadataBundle {
     fn default() -> Self {
@@ -2378,7 +2354,7 @@ impl Default for ShulkerMetadataBundle {
             parent: Default::default(),
             attach_face: AttachFace(Default::default()),
             peek: Peek(0),
-            color: Color(16),
+            shulker_color: ShulkerColor(16),
         }
     }
 }
@@ -4278,6 +4254,143 @@ impl Default for ZombieNautilusMetadataBundle {
             zombie_nautilus_variant: ZombieNautilusVariant(
                 azalea_registry::data::ZombieNautilusVariant::new_raw(0),
             ),
+        }
+    }
+}
+
+#[derive(Component, Deref, DerefMut, Clone, PartialEq)]
+pub struct AbstractCubeMobSize(pub i32);
+#[derive(Component)]
+pub struct AbstractCubeMob;
+impl AbstractCubeMob {
+    fn apply_metadata(
+        entity: &mut bevy_ecs::system::EntityCommands,
+        d: EntityDataItem,
+    ) -> Result<(), UpdateMetadataError> {
+        match d.index {
+            0..=17 => AbstractAgeable::apply_metadata(entity, d)?,
+            18 => {
+                entity.insert(AbstractCubeMobSize(d.value.into_int()?));
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
+#[derive(Bundle)]
+pub struct AbstractCubeMobMetadataBundle {
+    _marker: AbstractCubeMob,
+    parent: AbstractAgeableMetadataBundle,
+    abstract_cube_mob_size: AbstractCubeMobSize,
+}
+impl Default for AbstractCubeMobMetadataBundle {
+    fn default() -> Self {
+        Self {
+            _marker: AbstractCubeMob,
+            parent: Default::default(),
+            abstract_cube_mob_size: AbstractCubeMobSize(1),
+        }
+    }
+}
+
+#[derive(Component)]
+pub struct MagmaCube;
+impl MagmaCube {
+    fn apply_metadata(
+        entity: &mut bevy_ecs::system::EntityCommands,
+        d: EntityDataItem,
+    ) -> Result<(), UpdateMetadataError> {
+        match d.index {
+            0..=18 => AbstractCubeMob::apply_metadata(entity, d)?,
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
+#[derive(Bundle)]
+pub struct MagmaCubeMetadataBundle {
+    _marker: MagmaCube,
+    parent: AbstractCubeMobMetadataBundle,
+}
+impl Default for MagmaCubeMetadataBundle {
+    fn default() -> Self {
+        Self {
+            _marker: MagmaCube,
+            parent: Default::default(),
+        }
+    }
+}
+
+#[derive(Component)]
+pub struct Slime;
+impl Slime {
+    fn apply_metadata(
+        entity: &mut bevy_ecs::system::EntityCommands,
+        d: EntityDataItem,
+    ) -> Result<(), UpdateMetadataError> {
+        match d.index {
+            0..=18 => AbstractCubeMob::apply_metadata(entity, d)?,
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
+#[derive(Bundle)]
+pub struct SlimeMetadataBundle {
+    _marker: Slime,
+    parent: AbstractCubeMobMetadataBundle,
+}
+impl Default for SlimeMetadataBundle {
+    fn default() -> Self {
+        Self {
+            _marker: Slime,
+            parent: Default::default(),
+        }
+    }
+}
+
+#[derive(Component, Deref, DerefMut, Clone, PartialEq)]
+pub struct MaxFuse(pub i32);
+#[derive(Component, Deref, DerefMut, Clone, PartialEq)]
+pub struct SulfurCubeFromBucket(pub bool);
+#[derive(Component)]
+pub struct SulfurCube;
+impl SulfurCube {
+    fn apply_metadata(
+        entity: &mut bevy_ecs::system::EntityCommands,
+        d: EntityDataItem,
+    ) -> Result<(), UpdateMetadataError> {
+        match d.index {
+            0..=18 => AbstractCubeMob::apply_metadata(entity, d)?,
+            19 => {
+                entity.insert(MaxFuse(d.value.into_int()?));
+            }
+            20 => {
+                entity.insert(SulfurCubeFromBucket(d.value.into_boolean()?));
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
+#[derive(Bundle)]
+pub struct SulfurCubeMetadataBundle {
+    _marker: SulfurCube,
+    parent: AbstractCubeMobMetadataBundle,
+    max_fuse: MaxFuse,
+    sulfur_cube_from_bucket: SulfurCubeFromBucket,
+}
+impl Default for SulfurCubeMetadataBundle {
+    fn default() -> Self {
+        Self {
+            _marker: SulfurCube,
+            parent: Default::default(),
+            max_fuse: MaxFuse(-1),
+            sulfur_cube_from_bucket: SulfurCubeFromBucket(false),
         }
     }
 }
@@ -6735,6 +6848,64 @@ impl Default for PaleOakChestBoatMetadataBundle {
 }
 
 #[derive(Component)]
+pub struct PoplarBoat;
+impl PoplarBoat {
+    fn apply_metadata(
+        entity: &mut bevy_ecs::system::EntityCommands,
+        d: EntityDataItem,
+    ) -> Result<(), UpdateMetadataError> {
+        match d.index {
+            0..=13 => AbstractBoat::apply_metadata(entity, d)?,
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
+#[derive(Bundle)]
+pub struct PoplarBoatMetadataBundle {
+    _marker: PoplarBoat,
+    parent: AbstractBoatMetadataBundle,
+}
+impl Default for PoplarBoatMetadataBundle {
+    fn default() -> Self {
+        Self {
+            _marker: PoplarBoat,
+            parent: Default::default(),
+        }
+    }
+}
+
+#[derive(Component)]
+pub struct PoplarChestBoat;
+impl PoplarChestBoat {
+    fn apply_metadata(
+        entity: &mut bevy_ecs::system::EntityCommands,
+        d: EntityDataItem,
+    ) -> Result<(), UpdateMetadataError> {
+        match d.index {
+            0..=13 => AbstractBoat::apply_metadata(entity, d)?,
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
+#[derive(Bundle)]
+pub struct PoplarChestBoatMetadataBundle {
+    _marker: PoplarChestBoat,
+    parent: AbstractBoatMetadataBundle,
+}
+impl Default for PoplarChestBoatMetadataBundle {
+    fn default() -> Self {
+        Self {
+            _marker: PoplarChestBoat,
+            parent: Default::default(),
+        }
+    }
+}
+
+#[derive(Component)]
 pub struct SpruceBoat;
 impl SpruceBoat {
     fn apply_metadata(
@@ -7230,6 +7401,11 @@ pub fn apply_metadata(
                 Creeper::apply_metadata(entity, d)?;
             }
         }
+        EntityKind::Cushion => {
+            for d in items {
+                Cushion::apply_metadata(entity, d)?;
+            }
+        }
         EntityKind::DarkOakBoat => {
             for d in items {
                 DarkOakBoat::apply_metadata(entity, d)?;
@@ -7605,6 +7781,16 @@ pub fn apply_metadata(
                 PolarBear::apply_metadata(entity, d)?;
             }
         }
+        EntityKind::PoplarBoat => {
+            for d in items {
+                PoplarBoat::apply_metadata(entity, d)?;
+            }
+        }
+        EntityKind::PoplarChestBoat => {
+            for d in items {
+                PoplarChestBoat::apply_metadata(entity, d)?;
+            }
+        }
         EntityKind::Pufferfish => {
             for d in items {
                 Pufferfish::apply_metadata(entity, d)?;
@@ -7723,6 +7909,11 @@ pub fn apply_metadata(
         EntityKind::Strider => {
             for d in items {
                 Strider::apply_metadata(entity, d)?;
+            }
+        }
+        EntityKind::SulfurCube => {
+            for d in items {
+                SulfurCube::apply_metadata(entity, d)?;
             }
         }
         EntityKind::Tadpole => {
@@ -7955,6 +8146,9 @@ pub fn apply_default_metadata(entity: &mut bevy_ecs::system::EntityCommands, kin
         EntityKind::Creeper => {
             entity.insert(CreeperMetadataBundle::default());
         }
+        EntityKind::Cushion => {
+            entity.insert(CushionMetadataBundle::default());
+        }
         EntityKind::DarkOakBoat => {
             entity.insert(DarkOakBoatMetadataBundle::default());
         }
@@ -8180,6 +8374,12 @@ pub fn apply_default_metadata(entity: &mut bevy_ecs::system::EntityCommands, kin
         EntityKind::PolarBear => {
             entity.insert(PolarBearMetadataBundle::default());
         }
+        EntityKind::PoplarBoat => {
+            entity.insert(PoplarBoatMetadataBundle::default());
+        }
+        EntityKind::PoplarChestBoat => {
+            entity.insert(PoplarChestBoatMetadataBundle::default());
+        }
         EntityKind::Pufferfish => {
             entity.insert(PufferfishMetadataBundle::default());
         }
@@ -8251,6 +8451,9 @@ pub fn apply_default_metadata(entity: &mut bevy_ecs::system::EntityCommands, kin
         }
         EntityKind::Strider => {
             entity.insert(StriderMetadataBundle::default());
+        }
+        EntityKind::SulfurCube => {
+            entity.insert(SulfurCubeMetadataBundle::default());
         }
         EntityKind::Tadpole => {
             entity.insert(TadpoleMetadataBundle::default());

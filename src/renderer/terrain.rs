@@ -568,6 +568,7 @@ impl Plugin for TerrainMaterialPlugin {
                     .before(bevy::light::SimulationLightSystems::UpdateLightFrusta),
             );
         }
+        app.add_systems(Update, super::block_anim::animate);
         app.add_plugins(bevy::render::extract_resource::ExtractResourcePlugin::<
             LightmapPixels,
         >::default());

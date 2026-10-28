@@ -99,6 +99,8 @@ impl Default for Display {
 #[derive(Clone, Debug)]
 pub struct Extras {
     pub swell: f32,
+    /// Sulfur cube fuse ticks left, partial-tick smooth; 0 when unprimed.
+    pub fuse_remaining: f32,
     pub peek: f32,
     pub render_offset: [f32; 3],
     pub eating: bool,
@@ -242,6 +244,11 @@ pub struct ExtrasShared {
     pub leggings: Option<&'static str>,
     pub boots: Option<&'static str>,
     pub body_armor: Option<&'static str>,
+    /// Block state of a block item in the body slot (a sulfur cube's catch).
+    pub body_block: Option<u32>,
+    /// [`glint_bit`] flags for enchanted armour.
+    pub armor_glint: u8,
+    pub armor_trims: [Option<crate::entities::render::humanoid::armor::Trim>; 4],
     pub left_handed: bool,
     pub name: Option<String>,
     pub name_spans: Vec<crate::text::Span>,
@@ -309,6 +316,7 @@ impl Extras {
     pub fn with_shared(shared: std::sync::Arc<ExtrasShared>) -> Extras {
         Extras {
             swell: 0.0,
+            fuse_remaining: 0.0,
             peek: 0.0,
             render_offset: [0.0; 3],
             eating: false,
@@ -462,6 +470,9 @@ impl Default for ExtrasShared {
             leggings: None,
             boots: None,
             body_armor: None,
+            body_block: None,
+            armor_glint: 0,
+            armor_trims: [None; 4],
             left_handed: false,
             name: None,
             name_spans: Vec::new(),
@@ -602,4 +613,12 @@ impl EntityState {
             carrier: None,
         }
     }
+}
+
+pub mod glint_bit {
+    pub const HEAD: u8 = 1;
+    pub const CHEST: u8 = 2;
+    pub const LEGS: u8 = 4;
+    pub const FEET: u8 = 8;
+    pub const BODY: u8 = 16;
 }

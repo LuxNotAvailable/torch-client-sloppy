@@ -87,6 +87,8 @@ pub struct Painter<'a> {
     rng: u32,
     clip: Option<[f32; 4]>,
     xform: (f32, f32, f32),
+    /// The cosine and sine of the turn `rotated` applies about `xform`'s origin.
+    turn: (f32, f32),
 }
 
 #[derive(Clone, Copy)]
@@ -122,6 +124,7 @@ impl<'a> Painter<'a> {
             rng: frame.wrapping_mul(0x9E37_79B9) | 1,
             clip: None,
             xform: (1.0, 0.0, 0.0),
+            turn: (1.0, 0.0),
         }
     }
 
@@ -160,7 +163,29 @@ impl<'a> Painter<'a> {
 
     fn place(&self, x: f32, y: f32) -> [f32; 3] {
         let (s, ox, oy) = self.xform;
-        [x * s + ox, y * s + oy, 0.0]
+        let (cos, sin) = self.turn;
+        let (x, y) = (x * s, y * s);
+        [x * cos - y * sin + ox, x * sin + y * cos + oy, 0.0]
+    }
+
+    /// Draws `f` scaled by `scale` and turned by `radians` (clockwise on
+    /// screen), both about `(x, y)`, which becomes `f`'s origin. Clipping is
+    /// off inside: a turned rectangle has no axis-aligned clip.
+    pub fn rotated<R>(
+        &mut self,
+        scale: f32,
+        radians: f32,
+        x: f32,
+        y: f32,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let saved = (self.xform, self.turn, self.clip);
+        self.xform = (scale.max(0.0), x, y);
+        self.turn = (radians.cos(), radians.sin());
+        self.clip = None;
+        let out = f(self);
+        (self.xform, self.turn, self.clip) = saved;
+        out
     }
 
     pub fn scaled<R>(&mut self, scale: f32, x: f32, y: f32, f: impl FnOnce(&mut Self) -> R) -> R {
@@ -666,6 +691,44 @@ impl<'a> Painter<'a> {
         );
     }
 
+    /// An icon with the enchantment shimmer over it: the icon again, flagged
+    /// for the shader, which keeps its alpha and paints the moving bands.
+    pub fn item_icon_glint(&mut self, id: &str, x: f32, y: f32) {
+        self.item_icon(id, x, y);
+        let Some(r) = self.atlas.item_for_size(id, ITEM_SIZE * self.scale) else {
+            return;
+        };
+        let (f, g) = glint_phase();
+        let first = self.uvs.len();
+        self.region_part(
+            r,
+            0.0,
+            0.0,
+            r.w as f32,
+            r.h as f32,
+            x,
+            y,
+            ITEM_SIZE,
+            ITEM_SIZE,
+            [f, g, 0.0, 1.0],
+        );
+        // Blue and alpha carry each corner's place in the icon, so the glint
+        // scales with the icon rather than with wherever the atlas packed it.
+        let span = |axis: usize| {
+            self.uvs[first..]
+                .iter()
+                .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), uv| {
+                    (lo.min(uv[axis]), hi.max(uv[axis]))
+                })
+        };
+        let (u, v) = (span(0), span(1));
+        for (uv, color) in self.uvs[first..].iter_mut().zip(&mut self.colors[first..]) {
+            color[2] = (uv[0] - u.0) / (u.1 - u.0).max(f32::EPSILON);
+            color[3] = (uv[1] - v.0) / (v.1 - v.0).max(f32::EPSILON);
+            uv[1] += crate::gui::draw::GLINT_UV_BIAS;
+        }
+    }
+
     fn potion_layers(&mut self, item: &str, color: u32, x: f32, y: f32) {
         use crate::items::potions::layer_key;
 
@@ -1001,4 +1064,19 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) -> u32 {
         _ => (v, p, q),
     };
     ((r * 255.0) as u32) << 16 | ((g * 255.0) as u32) << 8 | (b * 255.0) as u32
+}
+
+/// Vanilla's two glint scroll phases: `millis * glintSpeed * 8` (glint speed
+/// 0.5) through 110 000 and 30 000, as fractions of each cycle.
+fn glint_phase() -> (f32, f32) {
+    static START: std::sync::OnceLock<crate::platform::time::Instant> = std::sync::OnceLock::new();
+    let ticks = START
+        .get_or_init(crate::platform::time::Instant::now)
+        .elapsed()
+        .as_millis() as u64
+        * 4;
+    (
+        (ticks % 110_000) as f32 / 110_000.0,
+        (ticks % 30_000) as f32 / 30_000.0,
+    )
 }

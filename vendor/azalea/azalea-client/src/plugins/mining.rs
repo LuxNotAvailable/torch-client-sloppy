@@ -233,6 +233,7 @@ pub fn handle_mining_queued(
             &mut MineTicks,
             &mut MineItem,
             &mut MineBlockPos,
+            &mut MineDirection,
         ),
     )>,
 ) {
@@ -254,6 +255,7 @@ pub fn handle_mining_queued(
             mut mine_ticks,
             mut current_mining_item,
             mut current_mining_pos,
+            mut mine_direction,
         ),
     ) in query
     {
@@ -351,6 +353,7 @@ pub fn handle_mining_queued(
                 trace!("inserting mining component {mining:?} for entity {entity:?}");
                 commands.entity(entity).insert(mining);
                 **current_mining_pos = Some(mining_queued.position);
+                **mine_direction = Some(mining_queued.direction);
                 **current_mining_item = held_item.clone();
                 **mine_progress = 0.;
                 **mine_ticks = 0.;
@@ -404,6 +407,7 @@ pub struct MineBundle {
     pub progress: MineProgress,
     pub ticks: MineTicks,
     pub mining_pos: MineBlockPos,
+    pub mine_direction: MineDirection,
     pub mine_item: MineItem,
 }
 
@@ -428,6 +432,11 @@ pub struct MineTicks(pub f32);
 
 #[derive(Clone, Component, Debug, Default, Deref, DerefMut)]
 pub struct MineBlockPos(pub Option<BlockPos>);
+
+/// The face the server last heard we were mining. 26.3 servers are told when
+/// it changes partway through a block.
+#[derive(Clone, Component, Debug, Default, Deref, DerefMut)]
+pub struct MineDirection(pub Option<Direction>);
 
 #[derive(Clone, Component, Debug, Default, Deref, DerefMut)]
 pub struct MineItem(pub ItemStack);
@@ -558,7 +567,7 @@ pub fn continue_mining_block(
         &Physics,
         &Attributes,
         &Mining,
-        &mut MineDelay,
+        (&mut MineDelay, &mut MineDirection),
         &mut MineProgress,
         &mut MineTicks,
         &mut BlockStatePredictionHandler,
@@ -579,7 +588,7 @@ pub fn continue_mining_block(
         physics,
         attributes,
         mining,
-        mut mine_delay,
+        (mut mine_delay, mut mine_direction),
         mut mine_progress,
         mut mine_ticks,
         mut prediction_handler,
@@ -654,6 +663,18 @@ pub fn continue_mining_block(
                 **mine_progress = 0.;
                 **mine_ticks = 0.;
                 **mine_delay = 5;
+                **mine_direction = None;
+            } else if **mine_direction != Some(mining.dir) {
+                **mine_direction = Some(mining.dir);
+                commands.trigger(SendGamePacketEvent::new(
+                    entity,
+                    ServerboundPlayerAction {
+                        action: s_player_action::Action::ChangeDestroyDirection,
+                        pos: mining.pos,
+                        direction: mining.dir,
+                        seq: 0,
+                    },
+                ));
             }
 
             mine_block_progress_events.write(MineBlockProgressEvent {

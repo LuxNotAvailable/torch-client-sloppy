@@ -32,6 +32,11 @@ impl BlockCache {
         }
         self.0[id].get_or_insert_with(|| block_visual(state))
     }
+
+    #[inline]
+    fn peek(&self, state: BlockState) -> Option<&RenderedBlock> {
+        self.0.get(state.id() as usize)?.as_ref()
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -634,7 +639,10 @@ fn process_job(
     if crate::renderer::lighting_enabled() {
         fill_light(occ, &crate::client::worldsync::light_map().read());
     } else {
-        occ.fill_light_constant(15, 15);
+        // Open sky and no block light: the lightmap still darkens it at night
+        // and the brightness setting still lifts it, which full block light
+        // everywhere would wash out.
+        occ.fill_light_constant(0, 15);
     }
     for (dx, dz, arc) in neighbors.iter() {
         let (dx, dz) = (*dx, *dz);
@@ -665,7 +673,10 @@ fn process_job(
 
     let atlas_rows = ATLAS_ROWS.get().copied().unwrap_or(renderer::TILE_PX);
     let mut results: Vec<PendingSection> = Vec::with_capacity((sec_hi - sec_lo) as usize);
-    let mut blocks: Vec<(i32, i32, i32, RenderedBlock)> = Vec::with_capacity(4096);
+    // fill_occupancy has resolved every state in the window; from here the
+    // cache is only read, so the mesher can borrow blocks instead of cloning them.
+    let cache = &*cache;
+    let mut blocks: Vec<(i32, i32, i32, &RenderedBlock)> = Vec::with_capacity(4096);
     let mut stopped_at = sec_hi;
     let mut any_current = false;
     {
@@ -686,36 +697,14 @@ fn process_job(
             let Some(section) = chunk.sections.get(si as usize) else {
                 continue;
             };
-            blocks.clear();
-            if section.block_count != 0 {
-                for ly in 0u8..16 {
-                    let y = sec_y + ly as i32;
-                    for lx in 0u8..16 {
-                        let x = x_base + lx as i32;
-                        for lz in 0u8..16 {
-                            let state = section.get_block_state(ChunkSectionBlockPos {
-                                x: lx,
-                                y: ly,
-                                z: lz,
-                            });
-                            if state.is_air() {
-                                continue;
-                            }
-                            let z = z_base + lz as i32;
-                            let rb = cache.get(state);
-                            if rb.is_solid && occ.enclosed(x, y, z) {
-                                continue;
-                            }
-                            blocks.push((x, y, z, rb.clone()));
-                        }
-                    }
-                }
-            }
-            let (opaque, water) =
-                build_section_mesh(&blocks, x_base, sec_y, z_base, atlas_rows, &occ);
-            let vis = crate::renderer::visgraph::resolve(|lx, ly, lz| {
-                occ.is_solid(x_base + lx as i32, sec_y + ly as i32, z_base + lz as i32)
-            });
+            let (opaque, water, vis) = mesh_section(
+                section,
+                (x_base, sec_y, z_base),
+                atlas_rows,
+                occ,
+                cache,
+                &mut blocks,
+            );
             results.push(PendingSection {
                 chunk_x: job.chunk_x,
                 chunk_z: job.chunk_z,
@@ -751,6 +740,62 @@ fn process_job(
         seq: job.seq,
         sec_from: stopped_at,
     })
+}
+
+fn mesh_section<'c>(
+    section: &azalea_world::Section,
+    (x_base, sec_y, z_base): (i32, i32, i32),
+    atlas_rows: u32,
+    occ: &Occupancy,
+    cache: &'c BlockCache,
+    blocks: &mut Vec<(i32, i32, i32, &'c RenderedBlock)>,
+) -> (
+    renderer::MeshBuf,
+    renderer::MeshBuf,
+    renderer::visgraph::VisibilitySet,
+) {
+    blocks.clear();
+    if section.block_count != 0 {
+        let states = section_states(section);
+        for ly in 0..16 {
+            let y = sec_y + ly as i32;
+            for lx in 0..16 {
+                let x = x_base + lx as i32;
+                for lz in 0..16 {
+                    let state = states[section_index(lx, ly, lz)];
+                    if state.is_air() {
+                        continue;
+                    }
+                    let z = z_base + lz as i32;
+                    let Some(rb) = cache.peek(state) else {
+                        debug_assert!(false, "{state:?} was not resolved by fill_occupancy");
+                        continue;
+                    };
+                    if rb.is_solid && occ.enclosed(x, y, z) {
+                        continue;
+                    }
+                    blocks.push((x, y, z, rb));
+                }
+            }
+        }
+    }
+    let (opaque, water) = build_section_mesh(blocks, x_base, sec_y, z_base, atlas_rows, occ);
+    let vis = crate::renderer::visgraph::resolve(|lx, ly, lz| {
+        occ.is_solid(x_base + lx as i32, sec_y + ly as i32, z_base + lz as i32)
+    });
+    (opaque, water, vis)
+}
+
+/// A section's states in palette index order, decoded in one pass.
+fn section_states(section: &azalea_world::Section) -> [BlockState; 4096] {
+    let mut states = [BlockState::AIR; 4096];
+    section.states.copy_into(&mut states);
+    states
+}
+
+#[inline(always)]
+fn section_index(lx: usize, ly: usize, lz: usize) -> usize {
+    (ly << 8) | (lz << 4) | lx
 }
 
 fn fill_light(occ: &mut Occupancy, light: &crate::lighting::LightMap) {
@@ -844,6 +889,15 @@ fn fill_occupancy(
         if !occ.covers_y(sec_y) && !occ.covers_y(sec_y + 15) {
             continue;
         }
+        // A whole section is cheaper to decode in one pass; a neighbour's
+        // one-block rim is not worth it.
+        let whole = lx_range == (0, 16) && lz_range == (0, 16);
+        let mut states = [BlockState::AIR; 4096];
+        let mut section_biomes = [azalea_registry::data::Biome::default(); 64];
+        if whole {
+            section.states.copy_into(&mut states);
+            section.biomes.copy_into(&mut section_biomes);
+        }
         for ly in 0u8..16 {
             let y = sec_y + ly as i32;
             if !occ.covers_y(y) {
@@ -852,22 +906,32 @@ fn fill_occupancy(
             for lx in lx_range.0..lx_range.1 {
                 let x = ox + lx as i32;
                 for lz in lz_range.0..lz_range.1 {
-                    let state = section.get_block_state(ChunkSectionBlockPos {
-                        x: lx,
-                        y: ly,
-                        z: lz,
-                    });
+                    let state = if whole {
+                        states[section_index(lx as usize, ly as usize, lz as usize)]
+                    } else {
+                        section.get_block_state(ChunkSectionBlockPos {
+                            x: lx,
+                            y: ly,
+                            z: lz,
+                        })
+                    };
                     if state.is_air() {
                         continue;
                     }
                     let rb = cache.get(state);
                     let z = oz + lz as i32;
                     occ.set_cull_group(x, y, z, rb.cull_group);
-                    let biome = section.get_biome(ChunkSectionBiomePos {
-                        x: lx / 4,
-                        y: ly / 4,
-                        z: lz / 4,
-                    });
+                    let biome = if whole {
+                        section_biomes[((ly as usize >> 2) << 4)
+                            | ((lz as usize >> 2) << 2)
+                            | (lx as usize >> 2)]
+                    } else {
+                        section.get_biome(ChunkSectionBiomePos {
+                            x: lx / 4,
+                            y: ly / 4,
+                            z: lz / 4,
+                        })
+                    };
                     let idx = biomes
                         .get(biome.protocol_id() as usize)
                         .copied()
@@ -892,5 +956,169 @@ fn fill_occupancy(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod bench {
+    use super::*;
+    use azalea::registry::builtin::BlockKind;
+    use azalea_core::position::ChunkBlockPos;
+
+    fn hash(x: i32, y: i32, z: i32) -> u32 {
+        let mut h = (x as u32).wrapping_mul(0x9E37_79B1)
+            ^ (y as u32).wrapping_mul(0x85EB_CA77)
+            ^ (z as u32).wrapping_mul(0xC2B2_AE3D);
+        h ^= h >> 15;
+        h = h.wrapping_mul(0x2C1B_3C6D);
+        h ^ (h >> 12)
+    }
+
+    fn terrain(min_y: i32) -> Chunk {
+        let mut chunk = Chunk::default();
+        let state = |k: BlockKind| BlockState::from(k);
+        for x in 0..16 {
+            for z in 0..16 {
+                let height = 60 + (hash(x, 0, z) % 9) as i32;
+                for y in min_y..height + 8 {
+                    let k = if y < height - 4 {
+                        match hash(x, y, z) % 97 {
+                            0 => BlockKind::CoalOre,
+                            1..=6 => BlockKind::Andesite,
+                            7..=10 => continue,
+                            _ => BlockKind::Stone,
+                        }
+                    } else if y < height {
+                        BlockKind::Dirt
+                    } else if y == height {
+                        BlockKind::GrassBlock
+                    } else if y <= 62 {
+                        BlockKind::Water
+                    } else if y == height + 1 && hash(x, y, z) % 3 == 0 {
+                        BlockKind::ShortGrass
+                    } else if (x - 8).abs() < 3 && (z - 8).abs() < 3 && y > height + 3 {
+                        BlockKind::OakLeaves
+                    } else if x == 8 && z == 8 {
+                        BlockKind::OakLog
+                    } else {
+                        continue;
+                    };
+                    chunk.set_block_state(
+                        &ChunkBlockPos::new(x as u8, y, z as u8),
+                        state(k),
+                        min_y,
+                    );
+                }
+            }
+        }
+        for section in chunk.sections.iter_mut() {
+            section.block_count = (0..4096)
+                .filter(|&i| !section.states.get_at_index(i).is_air())
+                .count() as u16;
+        }
+        chunk
+    }
+
+    #[test]
+    #[ignore = "benchmark: cargo test --release --lib bench_mesh_column -- --ignored --nocapture"]
+    fn bench_mesh_column() {
+        crate::blocks::tests::atlas_once();
+        let min_y = -64;
+        let chunk = terrain(min_y);
+        let mut cache = BlockCache::new();
+        let mut occ = Occupancy::new(0, 0, 0, 1);
+        let sec_count = chunk.sections.len() as i32;
+        let mut run = || {
+            occ.reset(0, 0, min_y - 1, sec_count * 16 + 2);
+            fill_occupancy(
+                &mut occ,
+                &chunk,
+                min_y,
+                0,
+                0,
+                (0, 16),
+                (0, 16),
+                &mut cache,
+                &[],
+            );
+            for (dx, dz) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
+                let (lx, lz) = match (dx, dz) {
+                    (-1, 0) => ((15, 16), (0, 16)),
+                    (1, 0) => ((0, 1), (0, 16)),
+                    (0, -1) => ((0, 16), (15, 16)),
+                    _ => ((0, 16), (0, 1)),
+                };
+                fill_occupancy(
+                    &mut occ,
+                    &chunk,
+                    min_y,
+                    dx * 16,
+                    dz * 16,
+                    lx,
+                    lz,
+                    &mut cache,
+                    &[],
+                );
+            }
+            occ.fill_light_constant(15, 15);
+            let mut blocks = Vec::with_capacity(4096);
+            let mut verts = 0;
+            for (si, section) in chunk.sections.iter().enumerate() {
+                let sec_y = min_y + si as i32 * 16;
+                let (opaque, water, _) =
+                    mesh_section(section, (0, sec_y, 0), 16, &occ, &cache, &mut blocks);
+                verts += opaque.verts.len() + water.verts.len();
+            }
+            verts
+        };
+        let verts = run();
+        let iters = 200;
+        let start = std::time::Instant::now();
+        for _ in 0..iters {
+            std::hint::black_box(run());
+        }
+        let per = start.elapsed().as_secs_f64() * 1000.0 / iters as f64;
+        println!("bench_mesh_column: {per:.3} ms/column, {verts} verts");
+
+        // The same column on every core at once: shared refcounts and locks show here.
+        let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+        let start = std::time::Instant::now();
+        std::thread::scope(|s| {
+            for _ in 0..threads {
+                s.spawn(|| {
+                    let mut cache = BlockCache::new();
+                    let mut occ = Occupancy::new(0, 0, 0, 1);
+                    for _ in 0..iters {
+                        occ.reset(0, 0, min_y - 1, sec_count * 16 + 2);
+                        fill_occupancy(
+                            &mut occ,
+                            &chunk,
+                            min_y,
+                            0,
+                            0,
+                            (0, 16),
+                            (0, 16),
+                            &mut cache,
+                            &[],
+                        );
+                        occ.fill_light_constant(15, 15);
+                        let mut blocks = Vec::with_capacity(4096);
+                        for (si, section) in chunk.sections.iter().enumerate() {
+                            let sec_y = min_y + si as i32 * 16;
+                            std::hint::black_box(mesh_section(
+                                section,
+                                (0, sec_y, 0),
+                                16,
+                                &occ,
+                                &cache,
+                                &mut blocks,
+                            ));
+                        }
+                    }
+                });
+            }
+        });
+        let per = start.elapsed().as_secs_f64() * 1000.0 / iters as f64;
+        println!("bench_mesh_column x{threads} threads: {per:.3} ms per round");
     }
 }

@@ -347,8 +347,6 @@ const BASE_CLOUD_COLOR: Argb = Argb(0xCCFF_FFFF);
 
 pub const CLOUD_HEIGHT: f32 = 192.33;
 
-pub const HORIZON_HEIGHT: f64 = 63.0;
-
 struct Timeline {
     period: i32,
     numbers: std::collections::HashMap<String, Track<f32>>,

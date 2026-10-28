@@ -61,8 +61,18 @@ impl PacketTable {
     pub(crate) fn native() -> &'static PacketTable {
         static TABLE: OnceLock<PacketTable> = OnceLock::new();
         TABLE.get_or_init(|| {
-            Self::parse(include_str!("data/packets-26.1.1.json"), NATIVE)
+            Self::parse(include_str!("data/packets-26.3.json"), NATIVE)
                 .unwrap_or_else(|e| panic!("embedded {} packet table: {e}", NATIVE.name))
+        })
+    }
+
+    /// 26.1 through 26.1.2 share this table.
+    pub(crate) fn v26_1() -> &'static PacketTable {
+        static TABLE: OnceLock<PacketTable> = OnceLock::new();
+        TABLE.get_or_init(|| {
+            let version = ProtocolVersion::from_name("26.1.1").expect("26.1.1 is a known version");
+            Self::parse(include_str!("data/packets-26.1.1.json"), version)
+                .unwrap_or_else(|e| panic!("embedded 26.1.1 packet table: {e}"))
         })
     }
 
@@ -79,6 +89,7 @@ impl PacketTable {
     pub(crate) fn for_protocol(protocol: i32) -> Option<&'static PacketTable> {
         match protocol {
             p if p == NATIVE.protocol => Some(Self::native()),
+            775 => Some(Self::v26_1()),
             774 => Some(Self::v1_21_11()),
             _ => None,
         }
@@ -246,9 +257,9 @@ mod tests {
         assert_eq!(t.count(Phase::Login, Serverbound), 5);
         assert_eq!(t.count(Phase::Login, Clientbound), 6);
         assert_eq!(t.count(Phase::Configuration, Serverbound), 10);
-        assert_eq!(t.count(Phase::Configuration, Clientbound), 20);
+        assert_eq!(t.count(Phase::Configuration, Clientbound), 21);
         assert_eq!(t.count(Phase::Game, Serverbound), 69);
-        assert_eq!(t.count(Phase::Game, Clientbound), 141);
+        assert_eq!(t.count(Phase::Game, Clientbound), 144);
     }
 
     #[test]
@@ -259,12 +270,12 @@ mod tests {
             t.name_of(Phase::Game, Clientbound, 0),
             Some("bundle_delimiter")
         );
-        assert_eq!(t.id(Phase::Game, Clientbound, "level_particles"), Some(47));
+        assert_eq!(t.id(Phase::Game, Clientbound, "level_particles"), Some(48));
         assert_eq!(t.id(Phase::Game, Serverbound, "attack"), Some(1));
         assert_eq!(t.id(Phase::Handshake, Serverbound, "intention"), Some(0));
         assert_eq!(t.id(Phase::Login, Clientbound, "login_finished"), Some(2));
         assert_eq!(t.id(Phase::Game, Serverbound, "no_such_packet"), None);
-        assert_eq!(t.name_of(Phase::Game, Clientbound, 141), None);
+        assert_eq!(t.name_of(Phase::Game, Clientbound, 144), None);
     }
 
     #[test]
@@ -279,6 +290,7 @@ mod tests {
     #[test]
     fn the_embedded_protocols_have_tables() {
         assert!(PacketTable::for_protocol(NATIVE.protocol).is_some());
+        assert!(PacketTable::for_protocol(775).is_some());
         assert!(PacketTable::for_protocol(774).is_some());
         assert!(PacketTable::for_protocol(773).is_none());
     }
@@ -286,7 +298,7 @@ mod tests {
     #[test]
     fn what_moved_between_774_and_775() {
         let old = PacketTable::v1_21_11();
-        let new = PacketTable::native();
+        let new = PacketTable::v26_1();
         let moved = |phase, dir| {
             (0..old.count(phase, dir))
                 .filter(|id| {
@@ -315,7 +327,7 @@ mod tests {
     #[test]
     fn every_774_packet_still_exists_in_775() {
         let old = PacketTable::v1_21_11();
-        let new = PacketTable::native();
+        let new = PacketTable::v26_1();
         for phase in Phase::ALL {
             for dir in Direction::ALL {
                 for id in 0..old.count(phase, dir) {
@@ -325,6 +337,54 @@ mod tests {
                         "{name} exists in 774 and not in 775"
                     );
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn what_moved_between_775_and_777() {
+        let old = PacketTable::v26_1();
+        let new = PacketTable::native();
+        let moved = |phase, dir| {
+            (0..old.count(phase, dir))
+                .filter(|id| {
+                    old.name_of(phase, dir, *id as u32) != new.name_of(phase, dir, *id as u32)
+                })
+                .count()
+        };
+        use Direction::{Clientbound, Serverbound};
+        for phase in [Phase::Handshake, Phase::Status, Phase::Login] {
+            for dir in Direction::ALL {
+                assert_eq!(moved(phase, dir), 0, "{phase:?}/{dir:?} moved");
+            }
+        }
+        assert_eq!(
+            moved(Phase::Configuration, Clientbound),
+            10,
+            "post_effects went in"
+        );
+        assert_eq!(moved(Phase::Configuration, Serverbound), 0);
+        assert_eq!(moved(Phase::Game, Clientbound), 104);
+        assert_eq!(moved(Phase::Game, Serverbound), 18);
+        for gone in ["swing", "spectate_entity"] {
+            assert!(old.id(Phase::Game, Serverbound, gone).is_some());
+            assert!(new.id(Phase::Game, Serverbound, gone).is_none());
+        }
+    }
+
+    #[test]
+    fn every_775_clientbound_packet_still_exists_in_777() {
+        let old = PacketTable::v26_1();
+        let new = PacketTable::native();
+        for phase in Phase::ALL {
+            for id in 0..old.count(phase, Direction::Clientbound) {
+                let name = old
+                    .name_of(phase, Direction::Clientbound, id as u32)
+                    .unwrap();
+                assert!(
+                    new.id(phase, Direction::Clientbound, name).is_some(),
+                    "{name} exists in 775 and not in 777"
+                );
             }
         }
     }

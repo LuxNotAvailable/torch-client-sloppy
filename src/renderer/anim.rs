@@ -119,7 +119,28 @@ pub fn use_animation(id: &str) -> UseAnimation {
     }
 }
 
-pub type Armor = [Option<&'static str>; 4];
+/// Worn helmet, chestplate, leggings and boots, plus which of them glint
+/// (bit `i` for slot `i`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Armor {
+    pub worn: [Option<&'static str>; 4],
+    pub glint: u8,
+    pub trims: [Option<crate::entities::render::humanoid::armor::Trim>; 4],
+}
+
+impl Armor {
+    pub fn glints(&self, slot: usize) -> bool {
+        self.glint & (1 << slot) != 0
+    }
+}
+
+impl std::ops::Index<usize> for Armor {
+    type Output = Option<&'static str>;
+
+    fn index(&self, slot: usize) -> &Self::Output {
+        &self.worn[slot]
+    }
+}
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct HeldItem {
@@ -129,6 +150,7 @@ pub struct HeldItem {
     pub tint: Option<u32>,
     pub map_id: Option<i32>,
     pub layers: Option<Box<[crate::blockentities::banner::BannerLayer]>>,
+    pub glint: bool,
 }
 
 impl HeldItem {
@@ -682,7 +704,7 @@ impl HumanoidAnim {
             body_yaw,
             head_yaw: wrap_degrees(head_yaw - body_yaw),
             pitch: self.pitch_old + (self.pitch - self.pitch_old) * t,
-            attack_time: self.attack_anim_old + (self.attack_anim - self.attack_anim_old) * t,
+            attack_time: swing_lerp(self.attack_anim_old, self.attack_anim, t),
             attack_left: self.swing_left,
             swim_amount: self.swim_old + (self.swim - self.swim_old) * t,
             age_ticks: self.ticks as f32 + t,
@@ -724,8 +746,28 @@ pub use crate::util::mth::{rot_lerp, wrap_degrees};
 #[cfg(feature = "skins")]
 use crate::util::mth::DEG_TO_RAD;
 
+/// A swing restarting mid-arc wraps forward through 1.0 rather than snapping
+/// the arm back, which is what showed as a one-frame flicker on repeat hits.
+fn swing_lerp(old: f32, new: f32, t: f32) -> f32 {
+    let mut step = new - old;
+    if step < 0.0 {
+        step += 1.0;
+    }
+    old + step * t
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_restarted_swing_wraps_forward() {
+        assert!(
+            (swing_lerp(0.9, 0.1, 0.5) - 1.0).abs() < 1e-6,
+            "through the end, not back"
+        );
+        assert!((swing_lerp(0.2, 0.4, 0.5) - 0.3).abs() < 1e-6);
+    }
+
     use super::*;
 
     fn input(x: f64, z: f64) -> AnimInput {

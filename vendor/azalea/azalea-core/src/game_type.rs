@@ -1,6 +1,6 @@
 use std::io::{self, Cursor, Write};
 
-use azalea_buf::{AzBuf, AzBufVar, BufReadError};
+use azalea_buf::{AzBuf, AzBufVar, BufReadError, BufReadErrorRepr};
 use azalea_chat::translatable_component::TranslatableComponent;
 use bevy_ecs::component::Component;
 use tracing::debug;
@@ -99,7 +99,7 @@ impl AzBuf for GameMode {
         }))
     }
     fn azalea_write(&self, buf: &mut impl Write) -> io::Result<()> {
-        u8::azalea_write(&self.to_id(), buf)
+        u32::from(self.to_id()).azalea_write_var(buf)
     }
 }
 
@@ -118,12 +118,23 @@ impl From<OptionalGameType> for Option<GameMode> {
     }
 }
 
+/// Encoded as a VarInt where 0 means "none" and anything else is the game
+/// mode id plus one.
 impl AzBuf for OptionalGameType {
     fn azalea_read(buf: &mut Cursor<&[u8]>) -> Result<Self, BufReadError> {
-        let id = i8::azalea_read(buf)?;
-        GameMode::from_optional_id(id).ok_or(BufReadError::UnexpectedEnumVariant { id: id as i32 })
+        let id = u32::azalea_read_var(buf)?;
+        let Some(id) = id.checked_sub(1) else {
+            return Ok(OptionalGameType(None));
+        };
+        u8::try_from(id)
+            .ok()
+            .and_then(GameMode::from_id)
+            .map(|mode| OptionalGameType(Some(mode)))
+            .ok_or(BufReadErrorRepr::UnexpectedEnumVariant { id: id as i32 }.into())
     }
     fn azalea_write(&self, buf: &mut impl Write) -> io::Result<()> {
-        GameMode::to_optional_id(*self).azalea_write(buf)
+        self.0
+            .map_or(0, |mode| u32::from(mode.to_id()) + 1)
+            .azalea_write_var(buf)
     }
 }

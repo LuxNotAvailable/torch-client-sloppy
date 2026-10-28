@@ -33,6 +33,35 @@ pub(crate) fn container_kind(menu: &Menu) -> ContainerKind {
     }
 }
 
+/// `ItemStack.hasFoil`: the override when an item sets one, otherwise whether
+/// it carries enchantments.
+/// The worn trim, by registry key names (vanilla palettes share them).
+pub(crate) fn armor_trim(
+    data: &azalea_inventory::ItemStackData,
+    registries: &azalea_core::registry_holder::RegistryHolder,
+) -> Option<crate::entities::render::humanoid::armor::Trim> {
+    use azalea_core::data_registry::DataRegistryWithKey;
+    let trim = data.get_component::<azalea_inventory::components::Trim>()?;
+    fn name<K: azalea_registry::DataRegistryKey>(key: Option<K>) -> Option<String> {
+        Some(key?.into_ident().path().to_owned())
+    }
+    let pattern = name(trim.pattern.key_owned(registries))?;
+    let material = name(trim.material.key_owned(registries))?;
+    Some(crate::entities::render::humanoid::armor::Trim::new(
+        &pattern, &material,
+    ))
+}
+
+pub(crate) fn has_glint(data: &azalea_inventory::ItemStackData) -> bool {
+    use azalea_inventory::components as comp;
+    match data.get_component::<comp::EnchantmentGlintOverride>() {
+        Some(o) => o.show_glint,
+        None => data
+            .get_component::<comp::Enchantments>()
+            .is_some_and(|e| !e.levels.is_empty()),
+    }
+}
+
 pub(crate) fn slot_stack(
     stack: &ItemStack,
     registries: Option<&azalea_core::registry_holder::RegistryHolder>,
@@ -128,6 +157,7 @@ pub(crate) fn slot_stack(
         banner_patterns: banner_patterns(data, registries),
         banner_layers: banner_layers(data, registries),
         book: book(data).map(Box::new),
+        glint: has_glint(data),
     }
 }
 

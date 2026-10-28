@@ -14,10 +14,23 @@ const VIDEO: &str = "Video Settings...";
 
 const CONTROLS_TITLE: &str = "Controls";
 const CONTROLS: &str = "Controls...";
+const MOUSE_TITLE: &str = "Mouse Settings";
+const MOUSE_SETTINGS: &str = "Mouse Settings...";
+const SENSITIVITY: &str = "Sensitivity";
+const SCROLL_SENSITIVITY: &str = "Scroll Sensitivity";
+const INVERT_X: &str = "Invert Mouse X";
+const INVERT_Y: &str = "Invert Mouse Y";
+const DISCRETE_SCROLLING: &str = "Discrete Scrolling";
+const SNEAK: &str = "Sneak";
+const SPRINT: &str = "Sprint";
+const HOLD: &str = "Hold";
+const TOGGLE: &str = "Toggle";
+const MOUSE_SENSITIVITY_SLIDER_ID: u32 = 40;
+const SCROLL_SENSITIVITY_SLIDER_ID: u32 = 41;
 
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 const AUDIO_TITLE: &str = "Music & Sounds";
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 const AUDIO: &str = "Music & Sounds...";
 
 const GAME_TITLE: &str = "Game";
@@ -76,6 +89,8 @@ const UNLIMITED: &str = "Unlimited";
 const VSYNC: &str = "VSync";
 
 const FPS_COUNTER: &str = "FPS Counter";
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+const RENDERER: &str = "Renderer";
 
 #[cfg(feature = "mobile_ui")]
 const TOUCH_MOVEMENT: &str = "Movement";
@@ -170,7 +185,7 @@ const TOAST_TIME_SLIDER_ID: u32 = 5;
 
 const FOV_EFFECTS_SLIDER_ID: u32 = 6;
 
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 const VOLUME_SLIDER_ID_BASE: u32 = 7;
 
 const ROW_SPACING: f32 = 4.0;
@@ -454,21 +469,26 @@ const GAME_CONTENT_H: f32 = Y_GAME_RESET_ROW + ROW_H;
 
 const GAME_LIST_H: f32 = GAME_CONTENT_H + LIST_PAD_BOTTOM;
 
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 const Y_AUDIO_MASTER: f32 = 0.0;
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 const Y_AUDIO_ROW_0: f32 = Y_AUDIO_MASTER + ROW_H;
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 const Y_AUDIO_ROW_1: f32 = Y_AUDIO_ROW_0 + ROW_H;
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 const Y_AUDIO_ROW_2: f32 = Y_AUDIO_ROW_1 + ROW_H;
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 const Y_AUDIO_ROW_3: f32 = Y_AUDIO_ROW_2 + ROW_H;
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 const Y_AUDIO_ROW_4: f32 = Y_AUDIO_ROW_3 + ROW_H;
 
-#[cfg(feature = "audio")]
-const AUDIO_CONTENT_H: f32 = Y_AUDIO_ROW_4 + ROW_H;
+#[cfg(audio)]
+const Y_AUDIO_DEVICES: f32 = Y_AUDIO_ROW_4 + ROW_H;
+#[cfg(audio)]
+const AUDIO_CONTENT_H: f32 = Y_AUDIO_DEVICES + ROW_H;
+
+#[cfg(voice)]
+const VOICE_PLAYER_SLIDER_ID_BASE: u32 = 1000;
 
 fn fov_label(value: i32) -> String {
     match value {
@@ -510,7 +530,7 @@ fn gui_scale_label(value: i32) -> String {
     }
 }
 
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 fn volume_label(name: &str, value: i32) -> String {
     if value == 0 {
         format!("{name}: {OFF}")
@@ -588,7 +608,7 @@ fn reset_game_options(o: &mut crate::gui::GuiOptions) {
     o.toast_time = crate::gui::TOAST_TIME_DEFAULT;
 }
 
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 fn reset_audio_options(o: &mut crate::gui::GuiOptions) {
     o.volumes = [crate::gui::VOLUME_DEFAULT; crate::audio::category::SoundCategory::COUNT];
 }
@@ -609,10 +629,13 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         (CONTROLS, Entry::Screen(Screen::Controls)),
         (GAME, Entry::Screen(Screen::GameSettings)),
     ];
-    #[cfg(feature = "audio")]
+    #[cfg(audio)]
     entries.push((AUDIO, Entry::Screen(Screen::AudioSettings)));
+    #[cfg(voice)]
+    entries.push(("Voice Chat...", Entry::Screen(Screen::VoiceChat)));
     #[cfg(resource_packs)]
     entries.push((crate::gui::resourcepacks::RESOURCE_PACKS, Entry::Packs));
+    entries.push(("Block Info...", Entry::Screen(Screen::BlockInfoSettings)));
     #[cfg(feature = "hud_editor")]
     entries.push(("Edit HUD...", Entry::Hud));
     entries.push((MANAGE_STORAGE, Entry::Screen(Screen::ManageStorage)));
@@ -690,7 +713,7 @@ pub fn draw_manage_storage(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCt
     if Button::new(left, top, COLUMN_W, WIDGET_HEIGHT, RESET_ALL).draw(p, ctx) {
         reset_video_options(&mut state.options);
         reset_game_options(&mut state.options);
-        #[cfg(feature = "audio")]
+        #[cfg(audio)]
         {
             reset_audio_options(&mut state.options);
             crate::audio::set_volumes(&state.options.volumes);
@@ -885,6 +908,33 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         crate::gui::save_options(&state.options);
     }
 
+    #[cfg_attr(
+        any(target_arch = "wasm32", target_os = "android"),
+        allow(unused_mut)
+    )]
+    let mut renderer_tip: Option<String> = None;
+    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+    {
+        let backend = state.options.render_backend;
+        let pending = backend != crate::renderer::systems::started_backend();
+        let label = format!(
+            "{RENDERER}: {}{}",
+            backend.caption(),
+            if pending { "*" } else { "" }
+        );
+        let (x, y) = cell(1.0, Y_DISPLAY_ROW_3);
+        if Button::new(x, y, COLUMN_W, WIDGET_HEIGHT, &label).draw(p, ctx) {
+            state.options.render_backend = backend.next();
+            crate::gui::save_options(&state.options);
+        }
+        if pending && ctx.hovering(x, y, COLUMN_W, WIDGET_HEIGHT) {
+            renderer_tip = Some(format!(
+                "Restart to start on {}",
+                state.options.render_backend.caption()
+            ));
+        }
+    }
+
     header(p, Y_QUALITY_HEADER, HEADER_PAD_TOP, QUALITY_HEADER);
 
     let (x, y) = cell(0.0, Y_QUALITY_ROW_0);
@@ -1012,6 +1062,9 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     }
 
     p.pop_clip(clip);
+    if let (Some(tip), Some(m)) = (renderer_tip, ctx.mouse()) {
+        draw_bind_tooltip(p, &[tip], m.x, m.y, ctx.vw);
+    }
     draw_scrollbar(
         p,
         state.video_scroll,
@@ -1067,6 +1120,97 @@ const DUPLICATE: &str = "This key is also used for:";
 const FOOTER_GAP: f32 = 8.0;
 const FOOTER_BUTTON_W: f32 = 150.0;
 
+/// `0%` and `200%` read as vanilla's jokes.
+fn sensitivity_label(value: i32) -> String {
+    match value {
+        0 => format!("{SENSITIVITY}: *yawn*"),
+        200 => format!("{SENSITIVITY}: HYPERSPEED!!!"),
+        v => format!("{SENSITIVITY}: {v}%"),
+    }
+}
+
+fn scroll_label(value: i32) -> String {
+    format!("{SCROLL_SENSITIVITY}: {:.2}", value as f32 / 100.0)
+}
+
+pub fn draw_mouse(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
+    draw_title(p, ctx, MOUSE_TITLE);
+    let left = (ctx.vw / 2.0 - GRID_LEFT_OFFSET).floor();
+    let top = LAYOUT.content_y(ctx.vh, 3.0 * ROW_H);
+    let cell = |column: f32, row: f32| (left + column * COLUMN_STEP, top + row * ROW_H + ROW_INSET);
+    let o = &mut state.options;
+    let mut changed = false;
+
+    let (x, y) = cell(0.0, 0.0);
+    let sensitivity = Slider {
+        id: MOUSE_SENSITIVITY_SLIDER_ID,
+        x,
+        y,
+        w: COLUMN_W,
+        h: WIDGET_HEIGHT,
+        min: 0,
+        max: crate::gui::MOUSE_SENSITIVITY_MAX as i32,
+        value: o.mouse_sensitivity as i32,
+        label: sensitivity_label,
+    }
+    .draw(p, ctx)
+    .clamp(0, crate::gui::MOUSE_SENSITIVITY_MAX as i32) as u32;
+    changed |= sensitivity != o.mouse_sensitivity;
+    o.mouse_sensitivity = sensitivity;
+
+    let (x, y) = cell(1.0, 0.0);
+    let scroll = Slider {
+        id: SCROLL_SENSITIVITY_SLIDER_ID,
+        x,
+        y,
+        w: COLUMN_W,
+        h: WIDGET_HEIGHT,
+        min: crate::gui::SCROLL_SENSITIVITY_MIN as i32,
+        max: crate::gui::SCROLL_SENSITIVITY_MAX as i32,
+        value: o.scroll_sensitivity as i32,
+        label: scroll_label,
+    }
+    .draw(p, ctx)
+    .clamp(
+        crate::gui::SCROLL_SENSITIVITY_MIN as i32,
+        crate::gui::SCROLL_SENSITIVITY_MAX as i32,
+    ) as u32;
+    changed |= scroll != o.scroll_sensitivity;
+    o.scroll_sensitivity = scroll;
+
+    changed |= toggle(p, ctx, cell(0.0, 1.0), INVERT_X, &mut o.invert_x);
+    changed |= toggle(p, ctx, cell(1.0, 1.0), INVERT_Y, &mut o.invert_y);
+    changed |= toggle(
+        p,
+        ctx,
+        cell(0.0, 2.0),
+        DISCRETE_SCROLLING,
+        &mut o.discrete_scrolling,
+    );
+
+    if changed {
+        crate::gui::save_options(&state.options);
+    }
+    if draw_done(p, ctx) {
+        state.nav = Some(Screen::Controls);
+    }
+}
+
+fn hold_or_toggle(
+    p: &mut Painter,
+    ctx: &ScreenCtx,
+    (x, y, w): (f32, f32, f32),
+    label: &str,
+    value: &mut bool,
+) -> bool {
+    let caption = format!("{label}: {}", if *value { TOGGLE } else { HOLD });
+    if !Button::new(x, y, w, WIDGET_HEIGHT, &caption).draw(p, ctx) {
+        return false;
+    }
+    *value = !*value;
+    true
+}
+
 pub fn draw_controls(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     draw_title(p, ctx, CONTROLS_TITLE);
 
@@ -1099,6 +1243,26 @@ pub fn draw_controls(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         );
         if Button::new(x, list_y, COLUMN_W, WIDGET_HEIGHT, &label).draw(p, ctx) {
             state.options.touch_movement = state.options.touch_movement.next();
+            crate::gui::save_options(&state.options);
+        }
+        let advance = WIDGET_HEIGHT + ROW_SPACING;
+        (list_y + advance, (list_h - advance).max(0.0))
+    };
+
+    // Vanilla's controls header: mouse settings and the hold/toggle pair.
+    let (list_y, list_h) = {
+        let gap = ROW_SPACING;
+        let w = ((BIG_W - 2.0 * gap) / 3.0).floor();
+        let x = (ctx.vw / 2.0 - BIG_W / 2.0).floor();
+        if Button::new(x, list_y, w, WIDGET_HEIGHT, MOUSE_SETTINGS).draw(p, screen_ctx) {
+            state.nav = Some(Screen::MouseSettings);
+        }
+        let o = &mut state.options;
+        let sneak = (x + w + gap, list_y, w);
+        let sprint = (x + 2.0 * (w + gap), list_y, w);
+        if hold_or_toggle(p, screen_ctx, sneak, SNEAK, &mut o.toggle_crouch)
+            | hold_or_toggle(p, screen_ctx, sprint, SPRINT, &mut o.toggle_sprint)
+        {
             crate::gui::save_options(&state.options);
         }
         let advance = WIDGET_HEIGHT + ROW_SPACING;
@@ -1506,7 +1670,7 @@ pub fn draw_game(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     }
 }
 
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 pub fn draw_audio(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     use crate::audio::category::SoundCategory;
 
@@ -1570,8 +1734,155 @@ pub fn draw_audio(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         }
     }
 
+    draw_devices(p, state, ctx, &cell);
+
     if draw_done(p, ctx) {
         state.nav = Some(Screen::Options);
+    }
+}
+
+/// `name` cut to what fits `width` pixels, with an ellipsis where cut.
+#[cfg(audio)]
+pub(in crate::gui) fn fit(p: &Painter, label: &str, name: &str, width: f32) -> String {
+    let whole = format!("{label}: {name}");
+    if p.atlas.font.width_str(&whole) <= width {
+        return whole;
+    }
+    let mut cut: String = name.to_owned();
+    while !cut.is_empty() && p.atlas.font.width_str(&format!("{label}: {cut}...")) > width {
+        cut.pop();
+    }
+    format!("{label}: {cut}...")
+}
+
+/// The speaker and (with voice chat) the microphone. A click moves to the
+/// next device, after the last back to the system default; the list is
+/// read again on each click, so a device plugged in shows up.
+#[cfg(audio)]
+fn draw_devices(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx, cell: &dyn Fn(f32, f32) -> (f32, f32)) {
+    use crate::audio::devices;
+    const DEFAULT: &str = "Default";
+    let width = COLUMN_W - 8.0;
+
+    let (x, y) = cell(0.0, Y_AUDIO_DEVICES);
+    let name = state.options.sound_device.clone();
+    let caption = fit(p, "Speaker", name.as_deref().unwrap_or(DEFAULT), width);
+    if Button::new(x, y, COLUMN_W, WIDGET_HEIGHT, &caption).draw(p, ctx) {
+        let next = devices::next(name.as_deref(), &devices::outputs(true));
+        state.options.sound_device = next.clone();
+        crate::audio::set_output_device(next);
+        crate::gui::save_options(&state.options);
+    }
+
+}
+
+/// `AdjustVolumeSlider`'s caption: the change from normal, or muted at 0.
+#[cfg(voice)]
+fn player_volume_label(name: &str, percent: i32) -> String {
+    if percent <= 0 {
+        return format!("{name}: Muted");
+    }
+    let change = percent - 100;
+    format!("{name}: {}{change}%", if change > 0 { "+" } else { "" })
+}
+
+/// Every player with voice chat on this server, and every player given a
+/// volume before (offline ones greyed by name only), each with a slider from
+/// muted to four times as loud, as Simple Voice Chat's volume screen has.
+#[cfg(voice)]
+pub fn draw_voice_players(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
+    draw_title(p, ctx, "Player Volumes");
+
+    let online = crate::voice::voice_players();
+    let mut rows: Vec<(uuid::Uuid, String, bool)> =
+        online.iter().map(|(id, name)| (*id, name.clone(), true)).collect();
+    for (id, (name, _)) in &state.options.voice.player_volumes {
+        if !online.iter().any(|(o, _)| o == id) {
+            rows.push((*id, name.clone(), false));
+        }
+    }
+
+    let left = (ctx.vw / 2.0 - GRID_LEFT_OFFSET).floor();
+    let (list_x, list_y, list_w, list_h) = LAYOUT.content_rect(ctx.vw, ctx.vh);
+    let content_h = rows.len() as f32 * ROW_H;
+    scroll_input(
+        &mut state.voice_scroll,
+        &mut state.voice_scroll_drag,
+        ctx,
+        left,
+        BIG_W,
+        list_y,
+        list_h,
+        content_h,
+    );
+    let top = (list_y - state.voice_scroll).floor();
+
+    if rows.is_empty() {
+        let text = "No other players have voice chat here";
+        let w = p.atlas.font.width_str(text);
+        p.text_str(text, ((ctx.vw - w) / 2.0).floor(), list_y + ROW_INSET + 6.0, 0xAAAAAA, true);
+    }
+
+    let over_list = ctx.hovering(list_x, list_y, list_w, list_h);
+    let dragging_bar = state.voice_scroll_drag.is_some();
+    let mut list_input = ctx.input.clone();
+    if dragging_bar || (!over_list && !widgets::slider_dragging()) {
+        list_input.mouse = None;
+    }
+    if dragging_bar || !over_list {
+        list_input.left_click = false;
+    }
+    let list_ctx = &ScreenCtx {
+        input: &list_input,
+        vw: ctx.vw,
+        vh: ctx.vh,
+    };
+    let clip = p.push_clip(list_x, list_y, list_w, list_h);
+    let mut changed = false;
+    for (i, (id, name, online)) in rows.iter().enumerate() {
+        let current = state
+            .options
+            .voice
+            .player_volumes
+            .get(id)
+            .map_or(100, |(_, v)| *v);
+        let shown = if *online {
+            name.clone()
+        } else {
+            format!("{name} (offline)")
+        };
+        let value = Slider {
+            id: VOICE_PLAYER_SLIDER_ID_BASE + i as u32,
+            x: left,
+            y: top + i as f32 * ROW_H + ROW_INSET,
+            w: BIG_W,
+            h: WIDGET_HEIGHT,
+            min: 0,
+            max: 400,
+            value: current as i32,
+            label: |v| player_volume_label(&shown, v),
+        }
+        .draw(p, list_ctx)
+        .clamp(0, 400) as u32;
+        if value != current {
+            state
+                .options
+                .voice
+                .player_volumes
+                .insert(*id, (name.clone(), value));
+            changed = true;
+        }
+    }
+    p.pop_clip(clip);
+    draw_scrollbar(p, state.voice_scroll, left, BIG_W, list_y, list_h, content_h);
+
+    if changed {
+        state.options.voice.apply();
+        crate::gui::save_options(&state.options);
+    }
+
+    if draw_done(p, ctx) {
+        state.nav = Some(Screen::VoiceChat);
     }
 }
 
@@ -1753,7 +2064,7 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "audio")]
+    #[cfg(audio)]
     #[test]
     fn a_zero_volume_reads_as_off() {
         assert_eq!(volume_label("Master Volume", 0), "Master Volume: OFF");
@@ -1761,7 +2072,7 @@ mod tests {
         assert_eq!(volume_label("Voice", 100), "Voice: 100%");
     }
 
-    #[cfg(feature = "audio")]
+    #[cfg(audio)]
     #[test]
     fn saved_volume_keys_match_vanillas_sound_category_names() {
         use crate::audio::category::SoundCategory;
@@ -1779,7 +2090,7 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "audio")]
+    #[cfg(audio)]
     #[test]
     fn a_saved_volume_percentage_round_trips_through_json() {
         use crate::audio::category::SoundCategory;

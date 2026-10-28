@@ -102,9 +102,9 @@ pub(super) struct EntityPass {
 }
 
 pub(super) struct ShadowPass {
-    pub(super) pipeline: RenderPipeline,
-    pub(super) cutout: RenderPipeline,
-    pub(super) bind_group: BindGroup,
+    /// Per terrain layer (solid, cutout, water): its program's pipeline and
+    /// bind group, `None` where that layer casts no shadow.
+    pub(super) streams: [Option<(RenderPipeline, BindGroup)>; 3],
     pub(super) attachments: Vec<Attachment>,
     pub(super) copy_depth: bool,
     pub(super) depth_source: Option<BindGroup>,

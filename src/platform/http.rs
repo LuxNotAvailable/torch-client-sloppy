@@ -69,7 +69,7 @@ mod imp {
         Ok(Fetched::Body(out))
     }
 
-    #[cfg(feature = "audio")]
+    #[cfg(audio)]
     pub(super) fn get_bytes_blocking(url: &str) -> Result<Vec<u8>, String> {
         client()
             .get(url)
@@ -184,7 +184,7 @@ pub(crate) async fn get_bytes(
     imp::get_bytes(url, expected, progress).await
 }
 
-#[cfg(all(not(target_arch = "wasm32"), feature = "audio"))]
+#[cfg(all(not(target_arch = "wasm32"), audio))]
 pub(crate) fn get_bytes_blocking(url: &str) -> Result<Vec<u8>, String> {
     imp::get_bytes_blocking(url)
 }

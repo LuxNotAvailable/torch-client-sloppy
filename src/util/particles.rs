@@ -614,12 +614,10 @@ fn spawn_level_particle(
         override_limiter: emit.override_limiter || overrides_limiter(&emit.particle),
         always_show: emit.always_show,
     };
+    let dist = Vec3::from_array(emit.dist);
+    let speed = Vec3::from_array(emit.max_speed);
     if emit.count == 0 {
-        let arg = Vec3::new(
-            emit.dist[0] * emit.max_speed,
-            emit.dist[1] * emit.max_speed,
-            emit.dist[2] * emit.max_speed,
-        );
+        let arg = dist * speed;
         add_level_particle(
             live,
             atlas,
@@ -634,21 +632,36 @@ fn spawn_level_particle(
         );
         return;
     }
+    use azalea_protocol::packets::game::c_level_particles::ParticleRandomization;
+    fn gaussian(rng: &mut JavaRandom) -> Vec3 {
+        Vec3::new(
+            rng.next_gaussian() as f32,
+            rng.next_gaussian() as f32,
+            rng.next_gaussian() as f32,
+        )
+    }
+    fn uniform(rng: &mut JavaRandom) -> Vec3 {
+        Vec3::new(
+            rng.next_f64() as f32,
+            rng.next_f64() as f32,
+            rng.next_f64() as f32,
+        )
+    }
     for _ in 0..emit.count.min(MAX_EMIT_COUNT) {
         if live.len() >= MAX_LIVE_PARTICLES {
             break;
         }
-        let pos = base
-            + Vec3::new(
-                rng.next_gaussian() as f32 * emit.dist[0],
-                rng.next_gaussian() as f32 * emit.dist[1],
-                rng.next_gaussian() as f32 * emit.dist[2],
-            );
-        let arg = Vec3::new(
-            rng.next_gaussian() as f32 * emit.max_speed,
-            rng.next_gaussian() as f32 * emit.max_speed,
-            rng.next_gaussian() as f32 * emit.max_speed,
-        );
+        let (pos, arg) = match emit.randomization {
+            ParticleRandomization::Default => {
+                let pos = base + gaussian(rng) * dist;
+                (pos, gaussian(rng) * speed)
+            }
+            ParticleRandomization::Alternative => (base + uniform(rng) * dist, speed),
+            ParticleRandomization::AlternativeWithSpeed => {
+                let pos = base + uniform(rng) * dist;
+                (pos, uniform(rng) * speed)
+            }
+        };
         add_level_particle(
             live,
             atlas,
@@ -1227,6 +1240,9 @@ fn emit_ambient(
                     }
                     Leaf::Cherry => P::CherryLeaves,
                     Leaf::PaleOak => P::PaleOakLeaves,
+                    Leaf::RedPoplar => P::RedPoplarLeaves,
+                    Leaf::OrangePoplar => P::OrangePoplarLeaves,
+                    Leaf::YellowPoplar => P::YellowPoplarLeaves,
                 };
                 ctx.below(&particle);
             }
@@ -1654,6 +1670,17 @@ fn particle_name(particle: &azalea::entity::particle::Particle) -> &'static str 
         Particle::Infested => "infested",
         Particle::CherryLeaves => "cherry_leaves",
         Particle::PaleOakLeaves => "pale_oak_leaves",
+        Particle::RedPoplarLeaves => "red_poplar_leaves",
+        Particle::OrangePoplarLeaves => "orange_poplar_leaves",
+        Particle::YellowPoplarLeaves => "yellow_poplar_leaves",
+        Particle::SulfurBubbles => "sulfur_bubbles",
+        Particle::NoxiousGas => "noxious_gas",
+        Particle::NoxiousGasCloud => "noxious_gas_cloud",
+        Particle::Geyser(_) => "geyser",
+        Particle::GeyserBase(_) => "geyser_base",
+        Particle::GeyserPoof(_) => "geyser_poof",
+        Particle::GeyserPlume(_) => "geyser_plume",
+        Particle::SulfurCubeGoo => "sulfur_cube_goo",
         Particle::TintedLeaves(_) => "tinted_leaves",
         Particle::SculkSoul => "sculk_soul",
         Particle::SculkCharge(_) => "sculk_charge",
@@ -2516,6 +2543,7 @@ fn draw_particles(
             dirs,
             overlay_alpha: 1.0,
             overlay_white: false,
+            glint: false,
         });
     }
 }
@@ -2571,8 +2599,12 @@ fn batch_material(
                 dirs,
                 overlay_alpha: 1.0,
                 overlay_white: false,
+                glint: false,
             },
         ),
+        #[cfg(not(target_arch = "wasm32"))]
+        rig_parts: crate::renderer::rig_parts::PARTS,
+        glint: crate::renderer::entity_material::GLINT,
         alpha_mode: if key.translucent {
             AlphaMode::Blend
         } else {
@@ -2694,7 +2726,7 @@ fn particle_atlas(
         .and_then(|m| m.base_color_texture.clone())
 }
 
-fn particle_uv(state: azalea::block::BlockState) -> Option<[f32; 4]> {
+pub(crate) fn particle_uv(state: azalea::block::BlockState) -> Option<[f32; 4]> {
     use azalea::block::BlockTrait;
 
     if state.is_air() {

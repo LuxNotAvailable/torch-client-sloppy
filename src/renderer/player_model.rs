@@ -807,12 +807,8 @@ fn bake_armor(layer: geom::LayerDef, meshes: &mut Assets<Mesh>) -> Vec<ArmorMesh
     out
 }
 
-fn armor_texture(slot: usize, item: &str) -> String {
-    if slot == LEGGINGS_SLOT {
-        armor_tex::leggings_layer_texture(Some(item))
-    } else {
-        armor_tex::humanoid_texture(Some(item))
-    }
+fn armor_texture(slot: usize, item: &str, trim: Option<armor_tex::Trim>) -> String {
+    armor_tex::armor_slot_texture(slot, Some(item), trim)
 }
 
 #[derive(Resource, Default)]
@@ -878,6 +874,8 @@ struct ArmorSlotRig {
     boxes: Vec<Entity>,
     material: Handle<EntityMaterial>,
     worn: Option<&'static str>,
+    trim: Option<armor_tex::Trim>,
+    glint: bool,
 }
 
 struct HeldRig {
@@ -1217,6 +1215,8 @@ fn spawn_rig(
             .collect(),
         material: armor_materials[slot].clone(),
         worn: None,
+        trim: None,
+        glint: false,
     });
 
     Rig {
@@ -1361,7 +1361,10 @@ fn sync_player_models(
     mut entity_materials: ResMut<Assets<EntityMaterial>>,
     mut armor_textures: ResMut<ArmorTextures>,
     #[cfg(feature = "skins")] mut skin_textures: ResMut<super::skin::SkinTextures>,
-    lightmap: Res<crate::renderer::systems::LightmapState>,
+    (lightmap, occlusion): (
+        Res<crate::renderer::systems::LightmapState>,
+        Res<crate::renderer::occlusion::OcclusionState>,
+    ),
 ) {
     crate::prof_span!("render:sync_player_models");
     let Some(assets) = assets else { return };
@@ -1456,16 +1459,29 @@ fn sync_player_models(
         assign[k] = Some(slot);
     }
 
+    #[cfg(feature = "shader_support")]
+    let pose_hidden = crate::renderer::packvertex::player_shadow();
+    #[cfg(not(feature = "shader_support"))]
+    let pose_hidden = false;
     for ((id, feet, sample, worn), slot) in players.iter().zip(assign.iter()) {
         let Some(slot) = *slot else { continue };
         rigs.entries[slot].id = Some(*id);
         let lit = player_lit(&lightmap.current, *feet, sample, dirs);
+        let f = Vec3::from_array(*feet);
+        let shown =
+            if occlusion.reaches_box(f - Vec3::new(0.5, 0.5, 0.5), f + Vec3::new(0.5, 2.3, 0.5)) {
+                RigVisibility::Shown
+            } else if pose_hidden {
+                RigVisibility::HiddenPosed
+            } else {
+                RigVisibility::Hidden
+            };
         apply_rig(
             &mut rigs.entries[slot],
             *feet,
             sample,
             worn,
-            RigVisibility::Shown,
+            shown,
             lit,
             &mut queries,
             &mut items,
@@ -1483,10 +1499,6 @@ fn sync_player_models(
     }
     rigs.scratch = scratch;
 
-    #[cfg(feature = "shader_support")]
-    let pose_hidden = crate::renderer::packvertex::player_shadow();
-    #[cfg(not(feature = "shader_support"))]
-    let pose_hidden = false;
     if let Some(local) = &mut rigs.local {
         let lit = player_lit(&lightmap.current, local_pos, &local_pose, dirs);
         let shown = if freecam.active || third_person.active {
@@ -1766,6 +1778,7 @@ fn player_lit(
         dirs,
         overlay_alpha: if sample.has_red_overlay { 0.698 } else { 1.0 },
         overlay_white: false,
+        glint: false,
     }
 }
 
@@ -1856,14 +1869,27 @@ fn apply_rig(
     update_armor(rig, &sample.armor, items, &mut queries.4);
     update_wings(rig, &sample.armor, items, &mut queries.5);
 
-    if lit != rig.lit {
+    let glint_changed = rig
+        .armor
+        .iter()
+        .enumerate()
+        .any(|(i, s)| s.glint != sample.armor.glints(i));
+    if lit != rig.lit || glint_changed {
         for handle in [&rig.base, &rig.overlay, &rig.wings.material]
             .into_iter()
             .chain(rig.held.iter().map(|held| &held.material))
-            .chain(rig.armor.iter().map(|slot| &slot.material))
         {
             if let Some(material) = items.entity_materials.get_mut(handle) {
                 material.params.set(lit);
+            }
+        }
+        for (i, slot) in rig.armor.iter_mut().enumerate() {
+            slot.glint = sample.armor.glints(i);
+            if let Some(material) = items.entity_materials.get_mut(&slot.material) {
+                material.params.set(Lit {
+                    glint: slot.glint,
+                    ..lit
+                });
             }
         }
         rig.lit = lit;
@@ -1880,14 +1906,15 @@ fn update_armor(
     >,
 ) {
     for (index, slot) in rig.armor.iter_mut().enumerate() {
-        if slot.worn == armor[index] {
+        if slot.worn == armor[index] && slot.trim == armor.trims[index] {
             continue;
         }
         slot.worn = armor[index];
+        slot.trim = armor.trims[index];
 
         let texture = match &armor[index] {
             Some(item) => {
-                let path = armor_texture(index, item);
+                let path = armor_texture(index, item, slot.trim);
                 items.armor_textures.get(&path, items.images)
             }
             None => None,

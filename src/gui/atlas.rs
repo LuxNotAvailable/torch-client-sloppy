@@ -445,6 +445,9 @@ struct Extra {
     scaling: Scaling,
 }
 
+/// The atlas key of the client's logo (`logo.png` at the repository root).
+pub const TORCH_LOGO: &str = "torch_logo";
+
 const EXTRAS: &[Extra] = &[
     Extra {
         key: "menu_background",
@@ -713,6 +716,16 @@ pub fn build_gui_atlas(assets: &Path) -> GuiAtlas {
         });
     }
 
+    // The client's own logo, drawn on the title screen in place of vanilla's.
+    if let Ok(img) = image::load_from_memory(include_bytes!("../../logo.png")) {
+        entries.push(Entry {
+            kind: Kind::Sprite,
+            key: TORCH_LOGO.to_string(),
+            image: img.to_rgba8(),
+            scaling: Scaling::Stretch,
+        });
+    }
+
     for extra in EXTRAS {
         let Some(img) = load_extra(&textures, extra) else {
             continue;
@@ -763,12 +776,11 @@ pub fn build_gui_atlas(assets: &Path) -> GuiAtlas {
             }),
             Err(_) => eprintln!("[GuiAtlas] missing {}", hanging.display()),
         }
-        let plain = textures.join(format!("entity/signs/{wood}.png"));
-        let Ok(img) = crate::platform::assets::open_image(&plain) else {
+        let plain = textures.join(format!("gui/signs/{wood}.png"));
+        let Ok(mut img) = crate::platform::assets::open_gui_image(&plain) else {
             eprintln!("[GuiAtlas] missing {}", plain.display());
             continue;
         };
-        let mut img = img.to_rgba8();
         let k = (img.width() / crate::gui::sign_edit::SIGN_TEXTURE_WIDTH).max(1);
         for (key, [u, v, w, h]) in [
             (

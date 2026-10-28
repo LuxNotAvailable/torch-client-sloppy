@@ -453,7 +453,7 @@ mod tests {
     use super::*;
     use crate::items::model::DisplayContext;
 
-    const ASSETS: &str = "reference/minecraft-26.1.1/assets/minecraft";
+    const ASSETS: &str = "reference/minecraft-26.3/assets/minecraft";
 
     fn meshes() -> Option<ItemMeshes> {
         if !std::path::Path::new(ASSETS).exists() {

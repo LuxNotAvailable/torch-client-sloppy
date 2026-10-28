@@ -843,9 +843,14 @@ struct HandItemNode;
 #[derive(Component)]
 struct HandMapNode;
 
+/// The shimmer drawn over hand `.0`'s item when it is enchanted.
+#[derive(Component)]
+struct HandGlint(usize);
+
 struct HandEntities {
     pose: Entity,
     item: Entity,
+    glint: Entity,
     arm: Entity,
     sleeve: Entity,
     map: Entity,
@@ -887,10 +892,10 @@ impl HandState {
 
 #[derive(Resource)]
 struct HandRig {
+    glint: [bool; 2],
     hands: [HandState; 2],
     x_bob: ViewBob,
     y_bob: ViewBob,
-    shown_slot: u8,
     last_tick: Option<f32>,
     main_arm_worn: Option<bool>,
     #[cfg(feature = "skins")]
@@ -905,8 +910,8 @@ impl HandRig {
             hands: hands.map(HandState::new),
             x_bob: ViewBob::default(),
             y_bob: ViewBob::default(),
-            shown_slot: 0,
             last_tick: None,
+            glint: [false; 2],
             main_arm_worn: None,
             #[cfg(feature = "skins")]
             skin_worn: None,
@@ -959,6 +964,12 @@ impl Plugin for HandPlugin {
             bind_hand_arms
                 .after(crate::renderer::frame_view::FrameViewSystems)
                 .before(sync_hands)
+                .run_if(in_state(AppState::InGame)),
+        );
+        app.add_systems(
+            Update,
+            sync_hand_glint
+                .after(sync_hands)
                 .run_if(in_state(AppState::InGame)),
         );
     }
@@ -1172,6 +1183,19 @@ fn setup_hand(
             ))
             .id();
         commands.entity(pose).add_child(item);
+        let glint = commands
+            .spawn((
+                Mesh3d::default(),
+                MeshMaterial3d::<crate::renderer::glint::GlintMaterial>::default(),
+                Transform::default(),
+                Visibility::Hidden,
+                RenderLayers::layer(HAND_LAYER),
+                NoFrustumCulling,
+                HandGlint(hand.index()),
+                Name::new(format!("{name}_glint")),
+            ))
+            .id();
+        commands.entity(item).add_child(glint);
 
         let index = hand.index();
         let side = hand.is_left(false) as usize;
@@ -1246,6 +1270,7 @@ fn setup_hand(
         HandEntities {
             pose,
             item,
+            glint,
             arm,
             sleeve,
             map,
@@ -1363,9 +1388,9 @@ fn sync_hands(
 
     let sample = &frame_view.local;
     let partial = frame_view.partial;
-    let slot = frame_view.hotbar_selected;
     let spectator = frame_view.gamemode == Gamemode::Spectator;
     let item_used = frame_view.item_used;
+    let attack_strength = frame_view.attack_strength;
     let live_pitch = -frame_view.camera_pitch;
     let live_yaw = wrap_degrees(-frame_view.camera_yaw - 180.0);
     let feet = frame_view.player_pos;
@@ -1400,8 +1425,14 @@ fn sync_hands(
             )
             .id,
         ) == UseAnimation::Spyglass;
-    let view_yaw = wrap_degrees(sample.body_yaw + sample.head_yaw);
-    advance_ticked_state(&mut rig, sample, slot, view_yaw, item_used);
+    advance_ticked_state(
+        &mut rig,
+        sample,
+        partial,
+        [live_pitch, live_yaw],
+        item_used,
+        attack_strength,
+    );
     let view_lag_x = rig.x_bob.lag(live_pitch, partial);
     let view_lag_y = rig.y_bob.lag(live_yaw, partial);
 
@@ -1423,6 +1454,7 @@ fn sync_hands(
         && rig.hands[Hand::Off.index()].shown.is_empty();
     for hand in [Hand::Off, Hand::Main] {
         let index = hand.index();
+        rig.glint[index] = false;
         if !match hand {
             Hand::Main => selection.main,
             Hand::Off => selection.off,
@@ -1499,6 +1531,7 @@ fn sync_hands(
             );
             continue;
         }
+        rig.glint[index] = frame.item.glint;
         let state = &mut rig.hands[index];
         set_visible(&mut nodes, state.nodes.arm, false);
         set_visible(&mut nodes, state.nodes.map, false);
@@ -1627,11 +1660,15 @@ fn display_transform(gpu: &ItemGpu, hand: Hand, main_arm_left: bool) -> ItemTran
 fn advance_ticked_state(
     rig: &mut HandRig,
     sample: &AnimSample,
-    slot: u8,
-    view_yaw: f32,
+    partial: f32,
+    view_rot: [f32; 2],
     item_used: [u32; 2],
+    attack_strength: f32,
 ) {
-    let tick = sample.age_ticks.floor();
+    // Strip the partial back off rather than flooring: a late tick pins it at
+    // 1.0, which would count the tick a frame early and then snap the lag back.
+    let tick = (sample.age_ticks - partial).round();
+    let [view_pitch, view_yaw] = view_rot;
     let steps = match rig.last_tick {
         Some(last) => ((tick - last).max(0.0) as u32).min(20),
         None => {
@@ -1644,10 +1681,9 @@ fn advance_ticked_state(
                 };
                 state.item_used_seen = item_used[hand.index()];
             }
-            rig.shown_slot = slot;
             rig.x_bob = ViewBob {
-                angle: sample.pitch,
-                old: sample.pitch,
+                angle: view_pitch,
+                old: view_pitch,
             };
             rig.y_bob = ViewBob {
                 angle: view_yaw,
@@ -1659,23 +1695,26 @@ fn advance_ticked_state(
     rig.last_tick = Some(tick);
 
     for _ in 0..steps {
-        rig.x_bob.advance(sample.pitch);
+        // Chase the live camera like vanilla does at tick time; the sampled
+        // entity rotation is interpolated and trails it by a frame-dependent amount.
+        rig.x_bob.advance(view_pitch);
         rig.y_bob.advance(view_yaw);
         for hand in [Hand::Main, Hand::Off] {
             let next = held(sample, hand);
-            let shown_slot = rig.shown_slot;
             let state = &mut rig.hands[hand.index()];
-            let changed = state.shown.id != next.id || (hand == Hand::Main && shown_slot != slot);
+            // The same item, from any slot, swaps in place: only a different
+            // item is worth lowering the hand for.
+            let changed = state.shown.id != next.id;
             if !changed {
                 state.shown = next.clone();
             }
-            let target = if changed { 0.0 } else { 1.0 };
-            state.ramp.advance(target);
+            let raised = match hand {
+                Hand::Main => attack_strength.clamp(0.0, 1.0).powi(3),
+                Hand::Off => 1.0,
+            };
+            state.ramp.advance(if changed { 0.0 } else { raised });
             if state.ramp.hidden_enough() {
                 state.shown = next.clone();
-                if hand == Hand::Main {
-                    rig.shown_slot = slot;
-                }
             }
         }
     }
@@ -1718,6 +1757,55 @@ fn write(nodes: &mut NodeQuery, entity: Entity, transform: Transform, visible: b
         };
         if *visibility != wanted {
             *visibility = wanted;
+        }
+    }
+}
+
+/// Mirrors each hand item onto its glint child, which only shows while that
+/// item is enchanted.
+#[allow(clippy::type_complexity)]
+fn sync_hand_glint(
+    rig: Option<Res<HandRig>>,
+    items: Query<(&Mesh3d, &MeshMaterial3d<StandardMaterial>, &Visibility), With<HandItemNode>>,
+    mut glints: Query<
+        (
+            &HandGlint,
+            &ChildOf,
+            &mut Mesh3d,
+            &mut MeshMaterial3d<crate::renderer::glint::GlintMaterial>,
+            &mut Visibility,
+        ),
+        Without<HandItemNode>,
+    >,
+    standard: Res<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<crate::renderer::glint::GlintMaterial>>,
+    mut cache: ResMut<crate::renderer::glint::GlintMaterials>,
+) {
+    let Some(rig) = rig else { return };
+    for (glint, parent, mut mesh, mut material, mut visibility) in &mut glints {
+        let wanted = rig.glint[glint.0]
+            .then(|| items.get(parent.parent()).ok())
+            .flatten()
+            .filter(|(_, _, shown)| **shown != Visibility::Hidden)
+            .and_then(|(item_mesh, item_material, _)| {
+                let texture = standard.get(&item_material.0)?.base_color_texture.clone()?;
+                Some((item_mesh.0.clone(), texture))
+            });
+        let Some((item_mesh, texture)) = wanted else {
+            if *visibility != Visibility::Hidden {
+                *visibility = Visibility::Hidden;
+            }
+            continue;
+        };
+        if mesh.0 != item_mesh {
+            mesh.0 = item_mesh;
+        }
+        let handle = cache.for_texture(&texture, &mut materials);
+        if material.0 != handle {
+            material.0 = handle;
+        }
+        if *visibility != Visibility::Inherited {
+            *visibility = Visibility::Inherited;
         }
     }
 }
@@ -2152,6 +2240,7 @@ mod tests {
         let mut rig = HandRig::new(std::array::from_fn(|_| HandEntities {
             pose: Entity::PLACEHOLDER,
             item: Entity::PLACEHOLDER,
+            glint: Entity::PLACEHOLDER,
             arm: Entity::PLACEHOLDER,
             sleeve: Entity::PLACEHOLDER,
             map: Entity::PLACEHOLDER,
@@ -2171,7 +2260,7 @@ mod tests {
             ..Default::default()
         };
 
-        advance_ticked_state(&mut rig, &sample, 0, 0.0, [1, 0]);
+        advance_ticked_state(&mut rig, &sample, 0.0, [0.0, 0.0], [1, 0], 1.0);
         assert_eq!(rig.hands[0].ramp.height, 0.0);
         assert_eq!(
             rig.hands[0].ramp.old, 1.0,
@@ -2186,7 +2275,7 @@ mod tests {
             age_ticks: 2.0,
             ..Default::default()
         };
-        advance_ticked_state(&mut rig, &sample, 0, 0.0, [1, 0]);
+        advance_ticked_state(&mut rig, &sample, 0.0, [0.0, 0.0], [1, 0], 1.0);
         assert!(
             rig.hands[0].ramp.height > 0.0,
             "the ramp must climb back out of view"
@@ -2226,7 +2315,10 @@ mod tests {
             .translation;
         let left = map_hand(&base, Hand::Off, false).transforms().0.translation;
         assert!(right.x > 0.0 && left.x < 0.0, "{right} {left}");
-        assert!((right.x + left.x).abs() < 1e-5, "the pair is not symmetric");
+        // Vanilla turns both arms by 92 degrees, not 90, so they are mirrors
+        // only to within that 2 degree skew (about 0.014 apart here).
+        assert_eq!(right.y, left.y);
+        assert!((right.x + left.x).abs() < 0.03, "the pair is not symmetric: {right} {left}");
     }
 
     #[test]

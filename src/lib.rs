@@ -1,6 +1,6 @@
 #![cfg_attr(target_arch = "wasm32", feature(alloc_error_hook))]
 
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 mod audio;
 mod blockentities;
 mod blocks;
@@ -29,10 +29,21 @@ mod session;
 mod shaderpack;
 mod text;
 mod util;
+#[cfg(voice)]
+mod voice;
 
 #[cfg(feature = "alloc_diag")]
 #[global_allocator]
 static ALLOC: diag::alloc::Counting = diag::alloc::Counting;
+
+// Per-thread free lists: the mesher threads allocate every section's buffers.
+#[cfg(all(
+    not(feature = "alloc_diag"),
+    not(target_arch = "wasm32"),
+    not(target_os = "android")
+))]
+#[global_allocator]
+static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 #[macro_export]
 macro_rules! prof_span {
@@ -42,6 +53,7 @@ macro_rules! prof_span {
             static PROF_SPAN_ID: ::std::sync::OnceLock<u32> = ::std::sync::OnceLock::new();
             $crate::diag::profiling::span_cached(&PROF_SPAN_ID, $name)
         };
+        let _frame_span = $crate::diag::frame_profile::span($name);
     };
 }
 
@@ -67,7 +79,7 @@ pub(crate) static ATLAS_ROWS: OnceLock<u32> = OnceLock::new();
 )]
 const ASSET_PROBE: &str = "font/default.json";
 
-pub(crate) const ASSET_VERSION: &str = "26.1.1";
+pub(crate) const ASSET_VERSION: &str = "26.3";
 
 pub(crate) fn assets_root() -> &'static Path {
     static ROOT: OnceLock<PathBuf> = OnceLock::new();
@@ -84,7 +96,7 @@ fn pack_root() -> PathBuf {
     }
     #[cfg(not(feature = "asset_download"))]
     {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("reference/minecraft-26.1.1")
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("reference/minecraft-26.3")
     }
 }
 
@@ -355,8 +367,11 @@ fn authenticate(args: &platform::cli::Args) -> Option<String> {
 }
 
 fn run(args: platform::cli::Args) -> eyre::Result<()> {
+    platform::time::fine_timer();
     diag::alloc::label_thread(diag::alloc::Site::Render);
     diag::alloc::init_task_pools();
+    #[cfg(not(target_arch = "wasm32"))]
+    diag::logfile::init();
     diag::panic_report::install_panic_hook();
     client::bot::install_exit_signal_handlers();
     install_crypto_provider();
@@ -374,7 +389,11 @@ fn run(args: platform::cli::Args) -> eyre::Result<()> {
         "Torch Client ({} mode)",
         if online { "online" } else { "offline" }
     );
-    log_info!("net", "protocol {PROTOCOL_VERSION} (MC 26.1.2)");
+    log_info!(
+        "net",
+        "protocol {PROTOCOL_VERSION} (MC {})",
+        azalea_protocol::packets::VERSION_NAME
+    );
     if needs_account {
         log_info!("net", "no account yet: opening the account screen");
     } else {

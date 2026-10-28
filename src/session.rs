@@ -161,6 +161,9 @@ pub struct SessionState {
     pub player_pos_prev: [f32; 3],
     pub game_time: u64,
     pub last_tick_time: Option<crate::platform::time::Instant>,
+    /// Client ticks handled, so the renderer can pace them by count rather
+    /// than by when each one happened to land.
+    pub tick_seq: u64,
     pub hotbar_target: Option<u8>,
     pub spectator_teleport_target: Option<u128>,
     pub fly_speed_scroll: f32,
@@ -296,6 +299,7 @@ impl SessionState {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct FovState {
     pub prev: f32,
     pub cur: f32,
@@ -488,8 +492,9 @@ pub struct LevelParticle {
     pub particle: azalea::entity::particle::Particle,
     pub pos: [f64; 3],
     pub dist: [f32; 3],
-    pub max_speed: f32,
+    pub max_speed: [f32; 3],
     pub count: u32,
+    pub randomization: azalea_protocol::packets::game::c_level_particles::ParticleRandomization,
     pub override_limiter: bool,
     pub always_show: bool,
 }
@@ -528,6 +533,7 @@ pub struct SlotStack {
     pub banner_patterns: Option<Box<[Box<str>]>>,
     pub book: Option<Box<Book>>,
     pub banner_layers: Option<Box<[crate::blockentities::banner::BannerLayer]>>,
+    pub glint: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -844,6 +850,7 @@ pub struct HealthDisplay {
     pub regenerating: bool,
     pub hunger_effect: bool,
     pub ticks_frozen: i32,
+    pub on_fire: bool,
     pub vehicle: Option<(f32, f32)>,
 }
 

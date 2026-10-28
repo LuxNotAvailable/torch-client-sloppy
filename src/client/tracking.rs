@@ -77,7 +77,11 @@ pub struct Equipment {
     pub leggings: Option<&'static str>,
     pub boots: Option<&'static str>,
     pub body_armor: Option<&'static str>,
+    pub body_block: Option<u32>,
     pub saddle: Option<&'static str>,
+    /// Enchanted armour, one `glint_bit` per slot.
+    pub armor_glint: u8,
+    pub armor_trims: [Option<crate::entities::render::humanoid::armor::Trim>; 4],
 }
 
 static EQUIPMENT: OnceLock<SideMutex<HashMap<i32, Equipment>>> = OnceLock::new();

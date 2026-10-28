@@ -1060,6 +1060,16 @@ pub fn biome_index(name: &str) -> Option<u8> {
     TABLE.get()?.index_by_name.get(name).copied()
 }
 
+/// The biome's name (`plains`, `minecraft:plains` as loaded) by its row.
+pub fn biome_name(idx: u8) -> Option<&'static str> {
+    TABLE
+        .get()?
+        .index_by_name
+        .iter()
+        .find(|(_, row)| **row == idx)
+        .map(|(name, _)| name.as_str())
+}
+
 pub fn env(idx: u8) -> &'static BiomeEnv {
     static NONE: BiomeEnv = BiomeEnv::NONE;
     TABLE

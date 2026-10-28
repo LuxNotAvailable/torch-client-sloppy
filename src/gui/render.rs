@@ -134,8 +134,12 @@ pub struct AfterDownloadScreen(pub crate::gui::Screen);
 impl Plugin for GuiPlugin {
     fn build(&self, app: &mut App) {
         let options = crate::gui::GuiOptions::default();
-        #[cfg(feature = "audio")]
+        #[cfg(audio)]
         crate::audio::set_volumes(&options.volumes);
+        #[cfg(audio)]
+        crate::audio::set_output_device(options.sound_device.clone());
+        #[cfg(voice)]
+        options.voice.apply();
         app.init_resource::<GuiFrames>().add_plugins(
             bevy::render::extract_resource::ExtractResourcePlugin::<GuiTextures>::default(),
         );
@@ -442,7 +446,7 @@ pub(crate) fn collect_input(
     input.middle_down = buttons.pressed(MouseButton::Middle);
     input.left_release = buttons.just_released(MouseButton::Left) || touch_release;
     input.right_release = buttons.just_released(MouseButton::Right);
-    let notches = crate::renderer::input::wheel_notches(&wheel);
+    let notches = crate::renderer::input::wheel_notches(&wheel, &state.options);
     let (_, wy) = crate::renderer::input::accumulate_scroll(
         &mut wheel_acc,
         notches.x as f64,

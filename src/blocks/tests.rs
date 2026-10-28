@@ -15,8 +15,8 @@ pub(crate) fn atlas_once() {
     ONCE.call_once(|| {
         let dir = crate::textures_dir().to_string_lossy().into_owned();
         let textures = crate::renderer::Textures::blocks(&dir);
-        let (_image, map) = crate::renderer::build_block_atlas(&textures, &dir);
-        let rows = (1 + map.len() as u32).div_ceil(crate::renderer::ATLAS_COLS);
+        let (image, map) = crate::renderer::build_block_atlas(&textures, &dir);
+        let rows = crate::renderer::atlas_rows(&image);
         crate::TEXTURE_MAP.set(map).ok();
         crate::ATLAS_ROWS.set(rows).ok();
     });
@@ -640,7 +640,7 @@ fn the_mesher_culls_a_face_against_a_solid_neighbour() {
         for (x, y, z) in occupied {
             occ.set_solid(*x, *y, *z);
         }
-        let blocks = vec![(0, 0, 0, stone.clone())];
+        let blocks = vec![(0, 0, 0, &stone)];
         let (opaque, water) = build_section_mesh(&blocks, 0, 0, 0, 16, &occ);
         assert!(water.is_empty());
         assert_eq!(opaque.verts.len() % 4, 0);

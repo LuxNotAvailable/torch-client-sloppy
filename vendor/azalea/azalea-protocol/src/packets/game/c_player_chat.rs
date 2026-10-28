@@ -9,7 +9,6 @@ use azalea_chat::{
     translatable_component::{PrimitiveOrComponent, TranslatableComponent},
 };
 use azalea_core::{
-    bitset::BitSet,
     data_registry::{DataRegistryWithKey, ResolvableDataRegistry},
     registry_holder::{RegistryHolder, RegistryType, dimension_type::ChatTypeElement, nbt_entry_as},
 };
@@ -60,7 +59,7 @@ pub enum PackedMessageSignature {
 pub enum FilterMask {
     PassThrough,
     FullyFiltered,
-    PartiallyFiltered(BitSet),
+    PartiallyFiltered(crate::common::bitset::BitSet),
 }
 
 #[derive(AzBuf, Clone, Debug, PartialEq)]

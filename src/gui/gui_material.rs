@@ -69,3 +69,17 @@ impl Plugin for GuiMaterialPlugin {
         app.add_plugins(MaterialPlugin::<GuiMaterial>::default());
     }
 }
+
+#[cfg(all(test, feature = "shader_support"))]
+mod tests {
+    #[test]
+    fn the_gui_shader_validates() {
+        let module = naga::front::wgsl::parse_str(include_str!("gui.wgsl")).expect("parses");
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::empty(),
+        )
+        .validate(&module)
+        .expect("validates");
+    }
+}

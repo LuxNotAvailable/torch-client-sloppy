@@ -327,6 +327,7 @@ impl Bridge {
         if let Login::Hello(_) = self.login {
             let packet = azalea_protocol::packets::Packet::into_variant(ClientboundLoginFinished {
                 game_profile: self.profile.clone(),
+                session_id: uuid::Uuid::nil(),
             });
             let raw = azalea_protocol::write::serialize_packet(&packet)
                 .map_err(|e| io::Error::other(format!("eagler: {e}")))?;

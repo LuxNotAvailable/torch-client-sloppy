@@ -16,6 +16,7 @@ pub mod silverfish;
 pub mod slime;
 pub mod snow_golem;
 pub mod spider;
+pub mod sulfur_cube;
 pub mod warden;
 pub mod wither;
 
@@ -34,6 +35,7 @@ pub fn register(registry: &mut Registry) {
     shulker::register(registry);
     silverfish::register(registry);
     slime::register(registry);
+    sulfur_cube::register(registry);
     snow_golem::register(registry);
     spider::register(registry);
     warden::register(registry);
@@ -48,16 +50,18 @@ mod tests {
     use crate::entities::state::{Direction, EntityState, Pose};
     use crate::entities::{CameraView, Geom};
 
-    fn model_geom(spec: &crate::entities::RenderSpec) -> &crate::entities::ModelGeom {
+    fn model_geom(spec: &crate::entities::RenderSpec) -> Option<&crate::entities::ModelGeom> {
         match &spec.geom {
-            Geom::Model(geom) => geom,
-            Geom::Item(_) | Geom::Block(_) | Geom::Built(_) => {
+            Geom::Model(geom) => Some(geom),
+            // A block layer (the sulfur cube's catch) has no parts to animate.
+            Geom::Block(_) => None,
+            Geom::Item(_) | Geom::Built(_) => {
                 panic!("{} is not a Geom::Model spec", spec.name)
             }
         }
     }
 
-    const EXPECTED: [(EntityKind, usize); 22] = [
+    const EXPECTED: [(EntityKind, usize); 23] = [
         (EntityKind::Creeper, 2),
         (EntityKind::Spider, 2),
         (EntityKind::CaveSpider, 2),
@@ -67,6 +71,7 @@ mod tests {
         (EntityKind::Blaze, 1),
         (EntityKind::Slime, 2),
         (EntityKind::MagmaCube, 1),
+        (EntityKind::SulfurCube, 5),
         (EntityKind::Guardian, 1),
         (EntityKind::ElderGuardian, 1),
         (EntityKind::Shulker, 1),
@@ -96,7 +101,9 @@ mod tests {
         for (kind, _) in EXPECTED {
             for &i in registry.specs_for(kind) {
                 let spec = &registry.specs[i];
-                let geom = model_geom(spec);
+                let Some(geom) = model_geom(spec) else {
+                    continue;
+                };
                 let model = crate::entities::geom::bake(&(geom.layer)());
                 let mut parts = model.rest_pose();
                 let camera = CameraView::default();
@@ -157,7 +164,10 @@ mod tests {
         let registry = Registry::build();
         let check = |kind: EntityKind, st: &EntityState| {
             for &i in registry.specs_for(kind) {
-                let path = (model_geom(&registry.specs[i]).texture)(st);
+                let Some(geom) = model_geom(&registry.specs[i]) else {
+                    continue;
+                };
+                let path = (geom.texture)(st);
                 let file = crate::assets_root().join(format!("textures/{path}.png"));
                 assert!(file.exists(), "{path} missing for {kind:?}");
             }

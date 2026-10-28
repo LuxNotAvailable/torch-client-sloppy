@@ -313,6 +313,9 @@ fn setup(
         let material = materials.add(EntityMaterial {
             texture: Some(gui.image.clone()),
             params: EntityParams::new(LightMode::Text, 0.0, Lit::full_bright()),
+            #[cfg(not(target_arch = "wasm32"))]
+            rig_parts: crate::renderer::rig_parts::PARTS,
+            glint: crate::renderer::entity_material::GLINT,
             alpha_mode: AlphaMode::Blend,
             depth_bias: 0,
             see_through,

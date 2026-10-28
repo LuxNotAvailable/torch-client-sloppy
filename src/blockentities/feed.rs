@@ -8,7 +8,7 @@ use azalea_protocol::packets::game::c_block_entity_data::ClientboundBlockEntityD
 use azalea_protocol::packets::game::c_block_event::ClientboundBlockEvent;
 use azalea_protocol::packets::game::c_level_chunk_with_light::BlockEntity as PacketBlockEntity;
 use azalea_registry::builtin::BlockEntityKind;
-use simdnbt::owned::{Nbt, NbtCompound, NbtTag};
+use simdnbt::owned::{NbtCompound, NbtTag};
 
 use super::sim::{self, Anim, TickCtx};
 use crate::text::{Span, Style};
@@ -177,11 +177,16 @@ fn store() -> MutexGuard<'static, Store> {
 
 pub fn on_chunk(chunk_x: i32, chunk_z: i32, entities: &[PacketBlockEntity]) {
     let mut store = store();
+    let empty = NbtCompound::default();
     for entity in entities {
         let x = chunk_x * 16 + ((entity.packed_xz >> 4) & 15) as i32;
         let z = chunk_z * 16 + (entity.packed_xz & 15) as i32;
         let y = entity.y as i16 as i32;
-        store.insert([x, y, z], entity.kind, &entity.data);
+        store.insert(
+            [x, y, z],
+            entity.kind,
+            entity.tag.0.as_ref().unwrap_or(&empty),
+        );
     }
 }
 
@@ -249,7 +254,7 @@ impl Store {
             .or_insert_with(|| kind_for_block(Box::<dyn BlockTrait>::from(state).id()))
     }
 
-    fn insert(&mut self, pos: [i32; 3], kind: BlockEntityKind, tag: &Nbt) {
+    fn insert(&mut self, pos: [i32; 3], kind: BlockEntityKind, tag: &NbtCompound) {
         self.put(pos, kind, decode(kind, tag));
     }
 
@@ -305,7 +310,6 @@ pub(crate) fn kind_for_block(id: &str) -> Option<BlockEntityKind> {
         _ if id.ends_with("copper_chest") => BlockEntityKind::Chest,
         _ if id.ends_with("_hanging_sign") => BlockEntityKind::HangingSign,
         _ if id.ends_with("_sign") => BlockEntityKind::Sign,
-        _ if id.ends_with("_bed") => BlockEntityKind::Bed,
         _ if id.ends_with("_banner") => BlockEntityKind::Banner,
         _ if id.ends_with("shulker_box") => BlockEntityKind::ShulkerBox,
         _ if id.ends_with("campfire") => BlockEntityKind::Campfire,
@@ -316,7 +320,7 @@ pub(crate) fn kind_for_block(id: &str) -> Option<BlockEntityKind> {
     Some(kind)
 }
 
-fn decode(kind: BlockEntityKind, tag: &Nbt) -> BlockEntityData {
+fn decode(kind: BlockEntityKind, tag: &NbtCompound) -> BlockEntityData {
     match kind {
         BlockEntityKind::Sign | BlockEntityKind::HangingSign => {
             BlockEntityData::Sign(sign_data(tag))
@@ -344,7 +348,7 @@ fn decode(kind: BlockEntityKind, tag: &Nbt) -> BlockEntityData {
 }
 
 #[cfg(feature = "skins")]
-fn skull_data(tag: &Nbt) -> SkullData {
+fn skull_data(tag: &NbtCompound) -> SkullData {
     let Some(profile) = tag.compound("profile") else {
         return SkullData::default();
     };
@@ -382,7 +386,7 @@ fn skull_data(tag: &Nbt) -> SkullData {
     SkullData { skin }
 }
 
-fn sign_data(tag: &Nbt) -> SignData {
+fn sign_data(tag: &NbtCompound) -> SignData {
     SignData {
         front: tag
             .compound("front_text")
@@ -410,7 +414,7 @@ fn sign_face(tag: &NbtCompound) -> SignFace {
     face
 }
 
-fn banner_layers(tag: &Nbt) -> Vec<super::banner::BannerLayer> {
+fn banner_layers(tag: &NbtCompound) -> Vec<super::banner::BannerLayer> {
     let Some(patterns) = tag.list("patterns") else {
         return Vec::new();
     };

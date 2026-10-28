@@ -26,6 +26,7 @@ static USE_ITEM: Mutex<UseItem> = Mutex::new(UseItem {
     started: false,
     item: None,
     remaining: 0,
+    unconfirmed: None,
 });
 static SERVER_USING_ITEM: AtomicBool = AtomicBool::new(false);
 
@@ -33,7 +34,16 @@ struct UseItem {
     started: bool,
     item: Option<ItemKind>,
     remaining: i32,
+    /// Ticks since this client started the use without the server reporting
+    /// it; `None` once the server does.
+    unconfirmed: Option<u32>,
 }
+
+/// How long a use this client started may go unconfirmed. A server that
+/// turned it down (a restart landing just as the last item finished, or a
+/// hunger update still in flight) never raises its using flag, so without
+/// this the held key would never try again.
+const USE_CONFIRM_TICKS: u32 = 20;
 static WAS_MINING: AtomicBool = AtomicBool::new(false);
 
 static LOCAL_BREAK: Mutex<Option<(BlockPos, crate::platform::time::Instant)>> = Mutex::new(None);
@@ -74,6 +84,7 @@ pub(crate) fn reset_session_state() {
         use_item.started = false;
         use_item.item = None;
         use_item.remaining = 0;
+        use_item.unconfirmed = None;
     }
     let local_break = match LOCAL_BREAK.try_lock() {
         Ok(guard) => Some(guard),
@@ -416,7 +427,7 @@ fn apply_place(bot: &Client, shared: &Arc<SharedMutex>, held: bool, clicked: boo
     );
     PLACE_DELAY.store(delay, Ordering::Relaxed);
     if swing {
-        swing_main_hand(bot, shared);
+        swing_main_hand(shared);
     }
 }
 
@@ -453,6 +464,9 @@ fn use_item(bot: &Client, shared: &Arc<SharedMutex>) -> bool {
         return false;
     }
     start_using_item(kind, duration);
+    if !SERVER_USING_ITEM.load(Ordering::Relaxed) {
+        USE_ITEM.lock().unwrap().unconfirmed.get_or_insert(0);
+    }
     item_used(shared);
     false
 }
@@ -500,6 +514,7 @@ fn stop_using_item() {
     use_item.started = false;
     use_item.item = None;
     use_item.remaining = 0;
+    use_item.unconfirmed = None;
 }
 
 fn release_using_item(bot: &Client) {
@@ -520,11 +535,23 @@ fn updating_using_item(bot: &Client) {
     if !started {
         return;
     }
-    if held_item_kind(bot) != item {
+    tick_using_item(held_item_kind(bot) == item);
+}
+
+fn tick_using_item(still_held: bool) {
+    if !still_held {
         stop_using_item();
         return;
     }
-    USE_ITEM.lock().unwrap().remaining -= 1;
+    let mut use_item = USE_ITEM.lock().unwrap();
+    use_item.remaining -= 1;
+    if let Some(ticks) = use_item.unconfirmed.as_mut() {
+        *ticks += 1;
+        if *ticks > USE_CONFIRM_TICKS {
+            drop(use_item);
+            stop_using_item();
+        }
+    }
 }
 
 fn sync_server_using_item(bot: &Client) {
@@ -532,6 +559,9 @@ fn sync_server_using_item(bot: &Client) {
         .component::<azalea::entity::metadata::AbstractLivingUsingItem>()
         .map(|using| using.0)
         .unwrap_or(false);
+    if server_using {
+        USE_ITEM.lock().unwrap().unconfirmed = None;
+    }
     if SERVER_USING_ITEM.swap(server_using, Ordering::Relaxed) == server_using {
         return;
     }
@@ -643,13 +673,8 @@ fn predict_open_toggle(bot: &Client, hit: &BlockHitResult) {
     }
 }
 
-fn swing_main_hand(bot: &Client, shared: &Arc<SharedMutex>) {
-    use azalea_protocol::packets::game::{s_interact::InteractionHand, s_swing::ServerboundSwing};
-
+fn swing_main_hand(shared: &Arc<SharedMutex>) {
     crate::client::tick::swing_local_player(false, shared);
-    bot.write_packet(ServerboundSwing {
-        hand: InteractionHand::MainHand,
-    });
 }
 
 fn item_used(shared: &Arc<SharedMutex>) {
@@ -765,6 +790,14 @@ fn predict_place(bot: &Client, secondary_use: bool) -> bool {
     let Some(predicted) = predict_use(bot, UseKind::Place, secondary_use) else {
         return false;
     };
+    #[cfg(audio)]
+    {
+        let clicked = predicted.hit.block_pos;
+        crate::client::worldsync::note_local_place([
+            clicked,
+            clicked + predicted.hit.direction.normal(),
+        ]);
+    }
 
     bot.write_packet(ServerboundUseItemOn {
         hand: InteractionHand::MainHand,
@@ -956,7 +989,7 @@ fn predict_use(bot: &Client, kind: UseKind, secondary_use: bool) -> Option<Predi
 
     match bucket_action {
         Some(BucketAction::Empty(_is_lava)) => {
-            #[cfg(feature = "audio")]
+            #[cfg(audio)]
             {
                 let at = [pos.x as f32 + 0.5, pos.y as f32 + 0.5, pos.z as f32 + 0.5];
                 let event = if _is_lava {
@@ -969,7 +1002,7 @@ fn predict_use(bot: &Client, kind: UseKind, secondary_use: bool) -> Option<Predi
         }
         Some(BucketAction::Fill(is_lava)) => {
             fill_held_bucket(bot, is_lava);
-            #[cfg(feature = "audio")]
+            #[cfg(audio)]
             {
                 let at = [pos.x as f32 + 0.5, pos.y as f32 + 0.5, pos.z as f32 + 0.5];
                 let event = if is_lava {
@@ -1215,6 +1248,30 @@ mod tests {
         assert!(!is_using_item());
         assert_eq!(USE_ITEM.lock().unwrap().item, None);
         assert_eq!(USE_ITEM.lock().unwrap().remaining, 0);
+    }
+
+    #[test]
+    fn a_use_the_server_never_confirms_ends_so_a_held_key_retries() {
+        stop_using_item();
+        start_using_item(ItemKind::Bread, 32);
+        USE_ITEM.lock().unwrap().unconfirmed = Some(0);
+        for _ in 0..USE_CONFIRM_TICKS {
+            tick_using_item(true);
+            assert!(is_using_item());
+        }
+        tick_using_item(true);
+        assert!(!is_using_item());
+    }
+
+    #[test]
+    fn a_confirmed_use_outlasts_the_confirm_window() {
+        stop_using_item();
+        start_using_item(ItemKind::Bread, 32);
+        for _ in 0..USE_CONFIRM_TICKS * 2 {
+            tick_using_item(true);
+        }
+        assert!(is_using_item(), "only the server ends a use it confirmed");
+        stop_using_item();
     }
 
     #[test]

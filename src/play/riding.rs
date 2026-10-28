@@ -415,6 +415,7 @@ fn ride_pre_travel(
         ServerboundMoveVehicle {
             pos: **position,
             look_direction: *direction,
+            on_ground: physics.on_ground(),
         },
     ));
 }

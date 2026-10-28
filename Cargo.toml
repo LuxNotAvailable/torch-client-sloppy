@@ -8,7 +8,7 @@ name = "torch_client"
 crate-type = ["rlib"]
 
 [features]
-default = ["asset_download", "multiversion", "full_font", "skins", "online_mode"]
+default = ["asset_download", "multiversion", "full_font", "skins", "online_mode", "shader_support", "audio", "voice"]
 
 skins = ["dep:reqwest", "dep:rustls"]
 
@@ -49,6 +49,13 @@ online_mode = [
 asset_download = ["dep:flate2", "dep:reqwest", "dep:rustls"]
 multiversion = ["azalea/multiversion"]
 
+# Simple Voice Chat, when the server runs it (see src/voice): voices played at
+# the players speaking, and the microphone by push-to-talk or voice
+# activation. Desktop only (build.rs); needs `audio` for the mixer.
+voice = ["audio", "dep:aes-gcm", "dep:unsafe-libopus"]
+
+# Sound, desktop only: on the web and Android the feature does nothing (see
+# build.rs). Downloads about 332 MB of sounds on first run, which can be skipped.
 audio = ["asset_download", "dep:rodio"]
 
 eagler = [
@@ -69,6 +76,10 @@ opt-level = 3
 strip = false
 
 [profile.android]
+inherits = "release"
+strip = true
+
+[profile.linux]
 inherits = "release"
 strip = true
 
@@ -128,9 +139,6 @@ uuid = "1"
 
 reqwest = { version = "0.13", default-features = false, optional = true }
 
-rodio = { version = "0.20", default-features = false, features = [
-    "vorbis",
-], optional = true }
 
 flate2 = { version = "1", optional = true }
 naga = { version = "27", default-features = false, features = [
@@ -199,6 +207,13 @@ version = "0.18"
 default-features = false
 features = ["multi_threaded", "x11", "wayland"]
 
+# Load libwayland at runtime: no link-time dependency, so the binary also runs
+# on X11-only systems and cross-builds without a Linux sysroot.
+[target.'cfg(all(target_os = "linux", not(target_os = "android")))'.dependencies.winit]
+version = "0.30"
+default-features = false
+features = ["wayland-dlopen"]
+
 [target.'cfg(target_os = "android")'.dependencies.bevy]
 version = "0.18"
 default-features = false
@@ -225,7 +240,21 @@ default-features = false
 features = ["sync", "macros", "rt", "time"]
 
 [target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))'.dependencies]
+rodio = { version = "0.20", default-features = false, features = [
+    "vorbis",
+], optional = true }
+# libopus 1.3.1 translated to Rust: no C toolchain to build it.
+unsafe-libopus = { version = "0.2", optional = true }
+aes-gcm = { version = "0.10", default-features = false, features = [
+    "aes",
+    "alloc",
+    "getrandom",
+], optional = true }
 arboard = { version = "3.6", default-features = false }
+mimalloc = { version = "0.1", default-features = false }
+# Bevy's wgpu, for the startup probe that checks the Renderer setting's
+# backend has an adapter.
+wgpu = { version = "27", default-features = false, features = ["vulkan"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 reqwest = { version = "0.13", default-features = false, features = [

@@ -15,6 +15,13 @@ pub enum Particle {
     Block(BlockParticle),
     BlockMarker(BlockParticle),
     Bubble,
+    SulfurBubbles,
+    NoxiousGas,
+    NoxiousGasCloud,
+    Geyser(GeyserParticle),
+    GeyserBase(GeyserBaseParticle),
+    GeyserPoof(GeyserBaseParticle),
+    GeyserPlume(GeyserParticle),
     Cloud,
     CopperFireFlame,
     Crit,
@@ -47,6 +54,9 @@ pub enum Particle {
     Infested,
     CherryLeaves,
     PaleOakLeaves,
+    RedPoplarLeaves,
+    OrangePoplarLeaves,
+    YellowPoplarLeaves,
     TintedLeaves(ColorParticle),
     SculkSoul,
     SculkCharge(SculkChargeParticle),
@@ -128,6 +138,7 @@ pub enum Particle {
     TrialOmen,
     BlockCrumble(BlockParticle),
     Firefly,
+    SulfurCubeGoo,
 }
 
 impl From<ParticleKind> for Particle {
@@ -252,6 +263,17 @@ impl From<ParticleKind> for Particle {
             ParticleKind::CopperFireFlame => Self::CopperFireFlame,
             ParticleKind::PauseMobGrowth => Self::PauseMobGrowth,
             ParticleKind::ResetMobGrowth => Self::ResetMobGrowth,
+            ParticleKind::SulfurBubbles => Self::SulfurBubbles,
+            ParticleKind::NoxiousGas => Self::NoxiousGas,
+            ParticleKind::NoxiousGasCloud => Self::NoxiousGasCloud,
+            ParticleKind::Geyser => Self::Geyser(GeyserParticle::default()),
+            ParticleKind::GeyserBase => Self::GeyserBase(GeyserBaseParticle::default()),
+            ParticleKind::GeyserPoof => Self::GeyserPoof(GeyserBaseParticle::default()),
+            ParticleKind::GeyserPlume => Self::GeyserPlume(GeyserParticle::default()),
+            ParticleKind::SulfurCubeGoo => Self::SulfurCubeGoo,
+            ParticleKind::RedPoplarLeaves => Self::RedPoplarLeaves,
+            ParticleKind::OrangePoplarLeaves => Self::OrangePoplarLeaves,
+            ParticleKind::YellowPoplarLeaves => Self::YellowPoplarLeaves,
         }
     }
 }
@@ -303,9 +325,19 @@ pub struct ColorParticle {
     pub color: RgbColor,
 }
 
-#[derive(AzBuf, Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct ItemParticle {
     pub item: ItemStack,
+}
+impl AzBuf for ItemParticle {
+    fn azalea_read(buf: &mut std::io::Cursor<&[u8]>) -> Result<Self, azalea_buf::BufReadError> {
+        Ok(Self {
+            item: ItemStack::read_template(buf)?,
+        })
+    }
+    fn azalea_write(&self, buf: &mut impl std::io::Write) -> std::io::Result<()> {
+        self.item.write_template(buf)
+    }
 }
 
 #[derive(AzBuf, Clone, Debug, Default, PartialEq)]
@@ -337,6 +369,18 @@ pub struct SculkChargeParticle {
 
 #[derive(AzBuf, Clone, Debug, Default, PartialEq)]
 pub struct ShriekParticle {
+    /// The time in ticks before the particle is displayed.
     #[var]
     pub delay: i32,
+}
+
+#[derive(AzBuf, Clone, Debug, Default, PartialEq)]
+pub struct GeyserParticle {
+    pub water_blocks: i32,
+}
+
+#[derive(AzBuf, Clone, Debug, Default, PartialEq)]
+pub struct GeyserBaseParticle {
+    pub water_blocks: i32,
+    pub burst_impulse_base: f32,
 }

@@ -965,7 +965,7 @@ fn trim_to_width(font: &crate::text::Font, s: &str, max: f32) -> String {
     out
 }
 
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 pub(in crate::gui) fn play_click() {
     crate::audio::play(
         "ui.button.click",
@@ -1166,7 +1166,7 @@ pub(in crate::gui) fn draw_button_spans(
         focus::claim();
     }
     let pressed = clicked || (active && focused && ctx.input.select);
-    #[cfg(feature = "audio")]
+    #[cfg(audio)]
     if pressed {
         play_click();
     }
@@ -1221,7 +1221,7 @@ impl<'a> Button<'a> {
             focus::claim();
         }
         let pressed = clicked || (self.active && focused && ctx.input.select);
-        #[cfg(feature = "audio")]
+        #[cfg(audio)]
         if pressed {
             play_click();
         }

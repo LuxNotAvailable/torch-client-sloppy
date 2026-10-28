@@ -8,6 +8,7 @@ use crate::entities::geom::{BakedModel, LayerDef, PartState};
 use crate::entities::models::humanoid::armor;
 use crate::entities::registry::Registry;
 use crate::entities::state::EntityState;
+use crate::entities::state::glint_bit;
 use crate::entities::{RenderSpec, TexturePath};
 
 pub type ArmorLayers = [fn() -> LayerDef; 4];
@@ -76,11 +77,18 @@ pub fn register_set(
         leggings_texture,
         boots_texture,
     ];
+    const GLINT: [fn(&EntityState) -> bool; 4] = [
+        |st| st.extras.armor_glint & glint_bit::HEAD != 0,
+        |st| st.extras.armor_glint & glint_bit::CHEST != 0,
+        |st| st.extras.armor_glint & glint_bit::LEGS != 0,
+        |st| st.extras.armor_glint & glint_bit::FEET != 0,
+    ];
     for slot in 0..4 {
         registry.add_many(
             kinds,
             RenderSpec::new(names[slot], layers[slot], TEXTURES[slot], setup)
-                .with_visible(visible[slot]),
+                .with_visible(visible[slot])
+                .with_glint(GLINT[slot]),
         );
     }
     super::elytra::register(registry, kinds);
@@ -112,6 +120,37 @@ struct EquipmentLayer {
 
 struct EquipmentAsset {
     layers: HashMap<String, Vec<EquipmentLayer>>,
+    /// Trim material -> palette, for materials matching the armour itself.
+    trim_overrides: HashMap<String, String>,
+}
+
+/// An armour trim, by pattern and material asset name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Trim {
+    pub pattern: &'static str,
+    pub material: &'static str,
+}
+
+impl Trim {
+    pub fn new(pattern: &str, material: &str) -> Trim {
+        Trim {
+            pattern: intern(pattern),
+            material: intern(material),
+        }
+    }
+}
+
+/// Trim names come from the server's registries, so they are interned once.
+fn intern(name: &str) -> &'static str {
+    static NAMES: OnceLock<std::sync::Mutex<std::collections::HashSet<&'static str>>> =
+        OnceLock::new();
+    let mut names = NAMES.get_or_init(Default::default).lock().unwrap();
+    if let Some(&known) = names.get(name) {
+        return known;
+    }
+    let leaked: &'static str = Box::leak(name.into());
+    names.insert(leaked);
+    leaked
 }
 
 impl EquipmentAsset {
@@ -168,9 +207,21 @@ fn equipment_assets() -> &'static HashMap<String, EquipmentAsset> {
                     })
                     .collect()
             };
+            let trim_overrides = json
+                .get("trim_overrides")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|o| {
+                    let material = crate::util::datapack::bare_id(o.get("when")?.get("material")?)?;
+                    let palette = crate::util::datapack::bare_id(o.get("palette")?)?;
+                    Some((material.to_owned(), palette.to_owned()))
+                })
+                .collect();
             out.insert(
                 id.to_owned(),
                 EquipmentAsset {
+                    trim_overrides,
                     layers: LAYER_TYPES
                         .iter()
                         .filter_map(|name| {
@@ -187,7 +238,24 @@ fn equipment_assets() -> &'static HashMap<String, EquipmentAsset> {
 }
 
 pub(crate) fn slot_texture(item: Option<&str>, layer_type: &str) -> String {
+    trimmed_texture(item, layer_type, None)
+}
+
+/// Trims bake into the armour sheet, so a trimmed piece always goes through
+/// [`stack`], keyed by pattern and palette.
+pub(crate) fn trimmed_texture(item: Option<&str>, layer_type: &str, trim: Option<Trim>) -> String {
     let asset = equipment_asset(item);
+    if let Some(trim) = trim.filter(|_| item.is_some()) {
+        let palette = equipment_assets()
+            .get(asset)
+            .and_then(|a| a.trim_overrides.get(trim.material))
+            .cloned()
+            .unwrap_or_else(|| format!("trim/{}", trim.material));
+        return format!(
+            "{STACK_PREFIX}{layer_type}/{asset}+{}+{palette}",
+            trim.pattern
+        );
+    }
     let Some(layers) = equipment_assets().get(asset).map(|a| a.layers(layer_type)) else {
         return format!("entity/equipment/{layer_type}/{asset}");
     };
@@ -207,18 +275,77 @@ pub(crate) fn has_layer(item: Option<&str>, layer_type: &str) -> bool {
         .is_some_and(|asset| !asset.layers(layer_type).is_empty())
 }
 
-pub(crate) fn humanoid_texture(item: Option<&str>) -> String {
-    slot_texture(item, LAYER_HUMANOID)
-}
-
-pub(crate) fn leggings_layer_texture(item: Option<&str>) -> String {
-    slot_texture(item, LAYER_HUMANOID_LEGGINGS)
+/// Sheet for armour slot `slot` (0 helmet .. 3 boots).
+pub(crate) fn armor_slot_texture(slot: usize, item: Option<&str>, trim: Option<Trim>) -> String {
+    let layer = if slot == 2 {
+        LAYER_HUMANOID_LEGGINGS
+    } else {
+        LAYER_HUMANOID
+    };
+    trimmed_texture(item, layer, trim)
 }
 
 pub(crate) fn stack(rest: &str) -> Option<image::RgbaImage> {
-    let (layer_type, asset) = rest.split_once('/')?;
-    let layers = equipment_assets().get(asset)?.layers(layer_type);
-    let (first, others) = layers.split_first()?;
+    let (layer_type, rest) = rest.split_once('/')?;
+    let mut parts = rest.split('+');
+    let asset = parts.next()?;
+    let mut base = layered(layer_type, asset)?;
+    if let (Some(pattern), Some(palette)) = (parts.next(), parts.next()) {
+        match trim_overlay(layer_type, pattern, palette) {
+            Some(trim) if trim.dimensions() == base.dimensions() => over_onto(&mut base, &trim),
+            Some(trim) => crate::log_warn!(
+                "equipment",
+                "trim {pattern} is {:?}, armour is {:?}",
+                trim.dimensions(),
+                base.dimensions()
+            ),
+            None => crate::log_warn!(
+                "equipment",
+                "trim not found: {layer_type}/{pattern}+{palette}"
+            ),
+        }
+    }
+    Some(base)
+}
+
+/// Recolours a grey trim sheet through `palette`: each grey of the shared
+/// base palette maps to the colour at the same index.
+fn trim_overlay(layer_type: &str, pattern: &str, palette: &str) -> Option<image::RgbaImage> {
+    let open = |path: String| {
+        crate::platform::assets::open_image(&crate::assets_root().join(path))
+            .ok()
+            .map(|img| img.to_rgba8())
+    };
+    let mut sheet = open(format!("textures/trims/entity/{layer_type}/{pattern}.png"))?;
+    let keys = open("textures/palettes/trim_base.png".into())?;
+    let colours = open(format!("textures/palettes/{palette}.png"))?;
+    let map: HashMap<[u8; 3], [u8; 3]> = keys
+        .pixels()
+        .zip(colours.pixels())
+        .map(|(k, c)| ([k[0], k[1], k[2]], [c[0], c[1], c[2]]))
+        .collect();
+    for pixel in sheet.pixels_mut() {
+        if let Some(c) = map.get(&[pixel[0], pixel[1], pixel[2]]) {
+            pixel[0] = c[0];
+            pixel[1] = c[1];
+            pixel[2] = c[2];
+        }
+    }
+    Some(sheet)
+}
+
+fn layered(layer_type: &str, asset: &str) -> Option<image::RgbaImage> {
+    let layers = equipment_assets()
+        .get(asset)
+        .map_or(&[][..], |a| a.layers(layer_type));
+    let Some((first, others)) = layers.split_first() else {
+        let file = crate::assets_root().join(format!(
+            "textures/entity/equipment/{layer_type}/{asset}.png"
+        ));
+        return crate::platform::assets::open_image(&file)
+            .ok()
+            .map(|img| img.to_rgba8());
+    };
 
     let sheet = |layer: &EquipmentLayer| {
         let file = crate::assets_root().join(format!(
@@ -288,19 +415,19 @@ fn over_onto(under: &mut image::RgbaImage, over: &image::RgbaImage) {
 }
 
 fn helmet_texture(st: &EntityState) -> TexturePath {
-    humanoid_texture(st.extras.helmet.as_deref()).into()
+    armor_slot_texture(0, st.extras.helmet.as_deref(), st.extras.armor_trims[0]).into()
 }
 
 fn chestplate_texture(st: &EntityState) -> TexturePath {
-    humanoid_texture(st.extras.chestplate.as_deref()).into()
+    armor_slot_texture(1, st.extras.chestplate.as_deref(), st.extras.armor_trims[1]).into()
 }
 
 fn leggings_texture(st: &EntityState) -> TexturePath {
-    leggings_layer_texture(st.extras.leggings.as_deref()).into()
+    armor_slot_texture(2, st.extras.leggings.as_deref(), st.extras.armor_trims[2]).into()
 }
 
 fn boots_texture(st: &EntityState) -> TexturePath {
-    humanoid_texture(st.extras.boots.as_deref()).into()
+    armor_slot_texture(3, st.extras.boots.as_deref(), st.extras.armor_trims[3]).into()
 }
 
 pub const FILLED: [fn(&EntityState) -> bool; 4] =
@@ -411,15 +538,15 @@ mod tests {
 
     #[test]
     fn only_a_layered_or_dyed_asset_takes_a_stack_name() {
-        assert!(!humanoid_texture(Some("iron_helmet")).starts_with(STACK_PREFIX));
-        assert!(!humanoid_texture(None).starts_with(STACK_PREFIX));
+        assert!(!armor_slot_texture(0, Some("iron_helmet"), None).starts_with(STACK_PREFIX));
+        assert!(!armor_slot_texture(0, None, None).starts_with(STACK_PREFIX));
         if equipment_assets().contains_key("leather") {
             assert_eq!(
-                humanoid_texture(Some("leather_boots")),
+                armor_slot_texture(0, Some("leather_boots"), None),
                 format!("{STACK_PREFIX}humanoid/leather")
             );
             assert_eq!(
-                leggings_layer_texture(Some("leather_leggings")),
+                armor_slot_texture(2, Some("leather_leggings"), None),
                 format!("{STACK_PREFIX}humanoid_leggings/leather")
             );
             assert!(stack("humanoid/leather").is_some());
@@ -440,5 +567,28 @@ mod tests {
             assert_eq!(equipment_asset(Some(item)), asset, "{item}");
         }
         assert_eq!(equipment_asset(None), "iron");
+    }
+
+    #[test]
+    fn a_trim_on_its_own_material_takes_the_darker_palette_and_bakes_in() {
+        let trim = Some(Trim::new("bolt", "gold"));
+        let path = armor_slot_texture(1, Some("golden_chestplate"), trim);
+        assert_eq!(
+            path,
+            format!("{STACK_PREFIX}humanoid/gold+bolt+trim/gold_darker")
+        );
+        let iron = armor_slot_texture(2, Some("iron_leggings"), trim);
+        assert_eq!(
+            iron,
+            format!("{STACK_PREFIX}humanoid_leggings/iron+bolt+trim/gold")
+        );
+
+        let plain = layered("humanoid", "gold").expect("gold armour sheet");
+        let trimmed = stack("humanoid/gold+bolt+trim/gold_darker").expect("trimmed sheet");
+        assert_eq!(plain.dimensions(), trimmed.dimensions());
+        assert_ne!(plain, trimmed);
+        let grey = |p: &image::Rgba<u8>| p[3] > 0 && p[0] == p[1] && p[1] == p[2];
+        let overlay = trim_overlay("humanoid", "bolt", "trim/gold_darker").unwrap();
+        assert!(!overlay.pixels().any(grey), "every trim grey is recoloured");
     }
 }

@@ -355,7 +355,9 @@ mod tests {
         assert_eq!(step(180.0), (0, 1), "south");
         assert_eq!(step(-180.0), (0, 1), "south the other way round");
         assert_eq!(step(90.0), (-1, 0), "west");
-        assert_eq!(step(400.0), (-1, 0), "past a full turn");
+        // 400 is a full turn plus 40, nearest north; 450 is a turn plus west.
+        assert_eq!(step(400.0), (0, -1), "past a full turn");
+        assert_eq!(step(450.0), (-1, 0), "west past a full turn");
     }
 
     #[test]

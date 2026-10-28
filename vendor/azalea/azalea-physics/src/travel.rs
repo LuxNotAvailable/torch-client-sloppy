@@ -209,13 +209,19 @@ fn travel_in_air(ctx: &mut MoveCtx) {
         || block_pos_below.y < ctx.world.chunks.min_y()
         || block_pos_below.y >= ctx.world.chunks.min_y() + ctx.world.chunks.height() as i32;
     let block_below: Box<dyn BlockTrait> = block_state_below.unwrap_or(BlockState::AIR).into();
-    let block_friction = block_below.behavior().friction;
+    let block_friction = modified_friction(
+        block_below.behavior().friction,
+        ctx.attributes.friction_modifier.calculate(),
+    );
+    let drag_modifier = ctx.attributes.air_drag_modifier.calculate();
+    let air_drag = modified_friction(0.91, drag_modifier);
 
     let inertia = if ctx.physics.on_ground() {
-        block_friction * 0.91
+        block_friction * air_drag
     } else {
-        0.91
+        air_drag
     };
+    let vertical_drag = f64::from(modified_friction(0.98, drag_modifier));
 
     let mut movement = handle_relative_friction_and_calculate_movement(ctx, block_friction);
 
@@ -234,9 +240,15 @@ fn travel_in_air(ctx: &mut MoveCtx) {
 
     ctx.physics.velocity = Vec3 {
         x: movement.x * inertia as f64,
-        y: movement.y * 0.9800000190734863f64,
+        y: movement.y * vertical_drag,
         z: movement.z * inertia as f64,
     };
+}
+
+/// `LivingEntity.computeModifiedFriction`: a modifier of 1 leaves friction as
+/// it is, 0 removes it and 2 doubles how much speed it takes away.
+fn modified_friction(friction: f32, modifier: f64) -> f32 {
+    (1.0 - (1.0 - friction) * modifier as f32).clamp(0.0, 1.0)
 }
 
 fn travel_in_fluid(ctx: &mut MoveCtx) {

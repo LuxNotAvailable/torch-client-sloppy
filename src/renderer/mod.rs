@@ -1,11 +1,13 @@
 pub mod anim;
 mod atlas;
+mod block_anim;
 pub mod clouds;
 pub mod dimension;
 pub mod entity_material;
 pub mod environment;
 pub mod esp_material;
 pub mod frame_view;
+pub mod glint;
 pub mod hand;
 pub mod input;
 pub mod intent;
@@ -24,6 +26,9 @@ pub mod packvertex;
 pub mod panorama;
 pub mod player_model;
 pub mod post;
+pub mod post_effects;
+pub mod rig_parts;
+pub mod screen_effects;
 mod screenshot;
 pub mod skin;
 pub mod sky;
@@ -123,7 +128,6 @@ pub struct RenderedBlock {
     pub offset: crate::blocks::rand::ShapeOffset,
     #[cfg(feature = "builtin_shaders")]
     pub sways: bool,
-    #[cfg(feature = "shader_support")]
     pub state: u16,
     #[cfg(feature = "shader_support")]
     pub translucent: bool,

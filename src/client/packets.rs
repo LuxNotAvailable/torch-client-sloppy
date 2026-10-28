@@ -1,6 +1,6 @@
 use azalea::local_player::WorldHolder;
-use azalea_core::bitset::BitSet;
 use azalea_core::position::ChunkPos;
+use azalea_protocol::common::bitset::BitSet as WireBitSet;
 use azalea_protocol::packets::game::ClientboundGamePacket;
 use azalea_protocol::packets::game::c_block_entity_data::ClientboundBlockEntityData;
 use azalea_protocol::packets::game::c_game_event::EventType;
@@ -32,6 +32,15 @@ pub(crate) fn handle_packet(
     shared: &Arc<SharedMutex>,
     packet: &ClientboundGamePacket,
 ) {
+    #[cfg(voice)]
+    match packet {
+        ClientboundGamePacket::Login(_) => crate::voice::on_join(),
+        ClientboundGamePacket::CustomPayload(p) => {
+            let host = shared.lock().unwrap().session.current_address.clone();
+            crate::voice::on_payload(&p.identifier.to_string(), &p.data, host.as_deref());
+        }
+        _ => {}
+    }
     if let ClientboundGamePacket::Login(p) = packet {
         let mut s = shared.lock().unwrap();
         s.session.enforces_secure_chat = p.enforces_secure_chat;
@@ -57,6 +66,8 @@ pub(crate) fn handle_packet(
     }
 
     trace(packet);
+    #[cfg(audio)]
+    sounds(packet);
     #[cfg(target_arch = "wasm32")]
     match packet {
         ClientboundGamePacket::BlockUpdate(_) => {
@@ -174,17 +185,19 @@ pub(crate) fn server_light(data: &ClientboundLightUpdatePacketData) -> ServerLig
 }
 
 fn read_section_list(
-    y_mask: &BitSet,
-    empty_mask: &BitSet,
+    y_mask: &WireBitSet,
+    empty_mask: &WireBitSet,
     updates: &[Box<[u8]>],
 ) -> Vec<Option<DataLayer>> {
-    let count = y_mask.len().max(empty_mask.len());
+    let bit =
+        |mask: &WireBitSet, i: usize| mask.data.get(i / 8).is_some_and(|b| b >> (i % 8) & 1 != 0);
+    let count = y_mask.data.len().max(empty_mask.data.len()) * 8;
     let mut next = updates.iter();
     let mut out = Vec::with_capacity(count);
 
     for i in 0..count {
-        let have_data = y_mask.get(i).unwrap_or(false);
-        let have_empty = empty_mask.get(i).unwrap_or(false);
+        let have_data = bit(y_mask, i);
+        let have_empty = bit(empty_mask, i);
         out.push(match (have_data, have_empty) {
             (true, _) => next.next().and_then(|bytes| layer_from_bytes(bytes)),
             (false, true) => Some(DataLayer::empty()),
@@ -501,19 +514,28 @@ fn animations(packet: &ClientboundGamePacket) {
                 }
                 _ => {}
             }
-            let left = match p.action {
-                AnimationAction::SwingMainHand => Some(false),
-                AnimationAction::SwingOffHand => Some(true),
-                _ => None,
-            };
-            if let Some(left) = left {
+        }
+        ClientboundGamePacket::PostEffects(p) => {
+            crate::renderer::post_effects::set(p.post_effects.iter().map(|id| id.path()));
+        }
+        ClientboundGamePacket::AddTransientBlock(p) => {
+            crate::blockentities::transient::add(
+                [p.pos.x, p.pos.y, p.pos.z],
+                p.block_state.id() as u32,
+            );
+        }
+        ClientboundGamePacket::SwingAnimation(p) => {
+            use azalea_inventory::components::SwingAnimationKind;
+            use azalea_protocol::packets::game::s_interact::InteractionHand;
+            if p.animation.kind != SwingAnimationKind::None {
+                let left = p.hand == InteractionHand::OffHand;
                 anim_states()
                     .lock()
                     .unwrap()
-                    .entry(p.id.0)
+                    .entry(p.entity_id.0)
                     .or_default()
                     .swing(left);
-                if let Some(anim) = entity_anims().lock().unwrap().get_mut(&p.id.0) {
+                if let Some(anim) = entity_anims().lock().unwrap().get_mut(&p.entity_id.0) {
                     anim.swing(left);
                 }
             }
@@ -717,13 +739,13 @@ fn entity_state(packet: &ClientboundGamePacket) {
             on_grounds()
                 .lock()
                 .unwrap()
-                .insert(p.entity_id.0, p.on_ground);
+                .insert(p.entity_id.0, p.properties.on_ground());
         }
         ClientboundGamePacket::MoveEntityPosRot(p) => {
             on_grounds()
                 .lock()
                 .unwrap()
-                .insert(p.entity_id.0, p.on_ground);
+                .insert(p.entity_id.0, p.properties.on_ground());
         }
         ClientboundGamePacket::MoveEntityRot(p) => {
             on_grounds()
@@ -902,6 +924,24 @@ fn session_state(world: &WorldHolder, shared: &Arc<SharedMutex>, packet: &Client
             let mut map = equipment().lock().unwrap();
             let entry = map.entry(p.entity_id.0).or_default();
             for (slot, stack) in &p.slots.slots {
+                if let Some(bit) = armor_glint_bit(*slot) {
+                    let glint = matches!(stack, azalea_inventory::ItemStack::Present(d)
+                        if crate::play::inventory_bridge::has_glint(d));
+                    entry.armor_glint = (entry.armor_glint & !bit) | if glint { bit } else { 0 };
+                    if let Some(i) = (bit < crate::entities::state::glint_bit::BODY)
+                        .then(|| bit.trailing_zeros() as usize)
+                    {
+                        entry.armor_trims[i] = match stack {
+                            azalea_inventory::ItemStack::Present(d) => {
+                                crate::play::inventory_bridge::armor_trim(
+                                    d,
+                                    &world.shared.read().registries,
+                                )
+                            }
+                            _ => None,
+                        };
+                    }
+                }
                 match slot {
                     EquipmentSlot::Mainhand => entry.main_hand = held_item(stack),
                     EquipmentSlot::Offhand => entry.off_hand = held_item(stack),
@@ -909,7 +949,10 @@ fn session_state(world: &WorldHolder, shared: &Arc<SharedMutex>, packet: &Client
                     EquipmentSlot::Chest => entry.chestplate = item_id(stack),
                     EquipmentSlot::Legs => entry.leggings = item_id(stack),
                     EquipmentSlot::Feet => entry.boots = item_id(stack),
-                    EquipmentSlot::Body => entry.body_armor = item_id(stack),
+                    EquipmentSlot::Body => {
+                        entry.body_armor = item_id(stack);
+                        entry.body_block = entry.body_armor.and_then(block_of_item);
+                    }
                     EquipmentSlot::Saddle => entry.saddle = item_id(stack),
                 }
             }
@@ -995,6 +1038,71 @@ fn session_state(world: &WorldHolder, shared: &Arc<SharedMutex>, packet: &Client
     }
 }
 
+/// The server's sounds, as `ClientPacketListener.handleSoundEvent`,
+/// `handleSoundEntityEvent` and `handleStopSoundEvent` play them.
+#[cfg(audio)]
+fn sounds(packet: &ClientboundGamePacket) {
+    use azalea_protocol::packets::game::c_sound::SoundSource;
+    use azalea_registry::Holder;
+    use crate::audio::SoundCategory;
+    let category = |source: SoundSource| match source {
+        SoundSource::Master => SoundCategory::Master,
+        SoundSource::Music => SoundCategory::Music,
+        SoundSource::Records => SoundCategory::Records,
+        SoundSource::Weather => SoundCategory::Weather,
+        SoundSource::Blocks => SoundCategory::Blocks,
+        SoundSource::Hostile => SoundCategory::Hostile,
+        SoundSource::Neutral => SoundCategory::Neutral,
+        SoundSource::Players => SoundCategory::Players,
+        SoundSource::Ambient => SoundCategory::Ambient,
+        SoundSource::Voice => SoundCategory::Voice,
+    };
+    let name = |sound: &Holder<
+        azalea_registry::builtin::SoundEvent,
+        azalea_core::sound::CustomSound,
+    >| match sound {
+        Holder::Reference(event) => crate::audio::event_name(event.to_str()).to_owned(),
+        Holder::Direct(custom) => {
+            crate::audio::event_name(&custom.sound_id.to_string()).to_owned()
+        }
+    };
+    match packet {
+        ClientboundGamePacket::Sound(p) => {
+            // The position is sent in eighths of a block.
+            let at = [p.x as f32 / 8.0, p.y as f32 / 8.0, p.z as f32 / 8.0];
+            crate::audio::play_seeded_at(
+                &name(&p.sound),
+                category(p.source),
+                at,
+                p.volume,
+                p.pitch,
+                p.seed,
+            );
+        }
+        ClientboundGamePacket::SoundEntity(p) => {
+            crate::audio::play_on_entity(
+                &name(&p.sound),
+                category(p.source),
+                p.id.0,
+                p.volume,
+                p.pitch,
+                p.seed,
+            );
+        }
+        ClientboundGamePacket::TakeItemEntity(p) => {
+            crate::audio::on_take_item(p.item_id as i32);
+        }
+        ClientboundGamePacket::StopSound(p) => {
+            let event = p.name.as_ref().map(|id| id.to_string());
+            crate::audio::stop(
+                p.source.map(category),
+                event.as_deref().map(crate::audio::event_name),
+            );
+        }
+        _ => {}
+    }
+}
+
 fn level_particles(
     shared: &Arc<SharedMutex>,
     p: &azalea_protocol::packets::game::c_level_particles::ClientboundLevelParticles,
@@ -1006,8 +1114,9 @@ fn level_particles(
             particle: p.particle.clone(),
             pos: [p.pos.x, p.pos.y, p.pos.z],
             dist: [p.x_dist, p.y_dist, p.z_dist],
-            max_speed: p.max_speed,
+            max_speed: [p.max_speed.x, p.max_speed.y, p.max_speed.z],
             count: p.count,
+            randomization: p.randomization,
             override_limiter: p.override_limiter,
             always_show: p.always_show,
         }),
@@ -1063,12 +1172,18 @@ fn level_lifecycle(world: &WorldHolder, shared: &Arc<SharedMutex>, packet: &Clie
             worldsync::forget_chunk(world, shared, p.pos.x, p.pos.z);
         }
         ClientboundGamePacket::Respawn(p) => {
-            worldsync::set_dimension(&p.common);
+            worldsync::set_dimension(world, &p.common);
+            crate::renderer::post_effects::set([]);
             worldsync::reset_level(shared);
         }
         ClientboundGamePacket::Login(p) => {
-            worldsync::set_dimension(&p.common);
+            worldsync::set_dimension(world, &p.common);
+            crate::renderer::post_effects::set([]);
             worldsync::reset_level(shared);
+            crate::renderer::environment::set_server_chunk_radius(p.chunk_radius);
+        }
+        ClientboundGamePacket::SetChunkCacheRadius(p) => {
+            crate::renderer::environment::set_server_chunk_radius(p.radius);
         }
         _ => {}
     }
@@ -1119,4 +1234,25 @@ mod merchant_price_tests {
         assert_eq!(modified_cost_count(2, 1, f32::NAN, 0), 2);
         assert_eq!(modified_cost_count(2, 1, f32::NEG_INFINITY, 0), 2);
     }
+}
+
+fn armor_glint_bit(slot: azalea_inventory::components::EquipmentSlot) -> Option<u8> {
+    use crate::entities::state::glint_bit as b;
+    use azalea_inventory::components::EquipmentSlot as S;
+    match slot {
+        S::Head => Some(b::HEAD),
+        S::Chest => Some(b::CHEST),
+        S::Legs => Some(b::LEGS),
+        S::Feet => Some(b::FEET),
+        S::Body => Some(b::BODY),
+        _ => None,
+    }
+}
+
+/// Default state of the block an item places, if it is a block item.
+fn block_of_item(item: &str) -> Option<u32> {
+    use azalea::block::BlockState;
+    let kind: azalea_registry::builtin::BlockKind = item.parse().ok()?;
+    let state = BlockState::from(kind);
+    (!state.is_air()).then_some(state.id() as u32)
 }

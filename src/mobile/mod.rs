@@ -379,6 +379,7 @@ fn swallow_click(input: &mut crate::gui::render::GuiInput) {
 fn close_target(gui: &mut GuiState) -> Screen {
     match gui.screen {
         Screen::Options => gui.options_parent,
+        Screen::MouseSettings => Screen::Controls,
         Screen::VideoSettings | Screen::Controls | Screen::GameSettings | Screen::ManageStorage => {
             Screen::Options
         }

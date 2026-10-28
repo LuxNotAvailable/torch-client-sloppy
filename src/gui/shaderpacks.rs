@@ -6,7 +6,7 @@ use crate::shaderpack::lang::{self, Lang};
 use crate::shaderpack::options::{Kind, Opt, Options, Values};
 use crate::shaderpack::properties::{self, Element, Properties, ROOT_SCREEN};
 use crate::shaderpack::{discover, features};
-use crate::util::pack::{Pack, Source};
+use crate::util::pack::Pack;
 
 use super::options::{
     BIG_W, COLUMN_STEP, COLUMN_W, GRID_LEFT_OFFSET, LAYOUT, ROW_H, ROW_INSET, draw_title,
@@ -156,7 +156,7 @@ impl State {
 }
 
 fn load(name: &str) -> Result<Loaded, String> {
-    let source = Source::open(&discover::dir().join(name), crate::shaderpack::ROOT)?;
+    let source = discover::open(name)?;
 
     let texts: Vec<String> = crate::shaderpack::include::option_texts(&source);
     let options = crate::shaderpack::options::discover(texts.iter().map(String::as_str));

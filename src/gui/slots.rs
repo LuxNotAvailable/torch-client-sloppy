@@ -1513,7 +1513,11 @@ pub fn draw_stack(p: &mut Painter, stack: &SlotStack, x: f32, y: f32) {
     if stack.is_empty() {
         return;
     }
-    p.item_icon(&stack.model_key(), x, y);
+    if stack.glint {
+        p.item_icon_glint(&stack.model_key(), x, y);
+    } else {
+        p.item_icon(&stack.model_key(), x, y);
+    }
     p.item_decorations(x, y, stack.count, stack.damage, stack.max_damage);
     p.item_cooldown(x, y, stack.cooldown);
 }

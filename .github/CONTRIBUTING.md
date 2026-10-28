@@ -27,7 +27,7 @@ Optional features are listed under [Feature system](#feature-system). If your ch
 Parts of the client are Cargo features. These will be cleaned up in the future as they become more solid.
 
 ```sh
-cargo build --release --features builtin_shaders,audio
+cargo build --release --features builtin_shaders,click_gui
 tools/build_web.sh --features webgpu
 ```
 
@@ -39,8 +39,9 @@ tools/build_web.sh --features webgpu
 | `skins` | on | Player skins and capes. Without it, everyone gets one of the built-in default skins. |
 | `online_mode` | on | Microsoft account sign-in, for servers that require it. |
 | `builtin_shaders` | off | Built-in shaders: sun shadows, reflective water, waving foliage, height fog and bloom. |
-| `shader_support` | off | Loads Iris/OptiFine-style shader packs from a `shaders/` folder. |
-| `audio` | off | Sound. Desktop only; downloads about 332 MB of sounds. |
+| `shader_support` | on | Loads Iris/OptiFine-style shader packs from a `shaders/` folder. |
+| `audio` | on | Sound. Desktop only (does nothing on the web or Android); downloads about 332 MB of sounds on first run, which can be skipped. |
+| `voice` | on | Simple Voice Chat on servers that run it: voices heard at the players speaking, and the microphone by push-to-talk (Caps Lock) or voice activation. Desktop only; settings on the Music & Sounds screen. |
 | `eagler` | off | Joins Eaglercraft servers over `wss://`. |
 | `webgpu` | off | Browser build only. Uses WebGPU instead of WebGL2, with no fallback. |
 | `mobile_ui` | off | On-screen touch controls. The Android build turns this on itself. |

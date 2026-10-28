@@ -317,6 +317,7 @@ pub struct TerrainPools {
     pub tables_generation: u64,
     pub draw_end: u32,
     pub water_slots: Vec<u32>,
+    water_sort: std::collections::HashMap<u32, WaterSort>,
 
     slots: Vec<Option<SlotState>>,
     live_slots: usize,
@@ -409,6 +410,7 @@ impl TerrainPools {
             tables_generation: 0,
             draw_end: 0,
             water_slots: Vec::new(),
+            water_sort: std::collections::HashMap::new(),
             slots: vec![None; slot_cap as usize],
             live_slots: 0,
             used_bytes: 0,
@@ -558,6 +560,7 @@ impl TerrainPools {
     }
 
     fn retire_slot(&mut self, slot: u32) {
+        self.water_sort.remove(&slot);
         if let Some(state) = self.slots[slot as usize].take() {
             self.retired_this_frame.push(Retired {
                 pool: state.pool,
@@ -629,7 +632,136 @@ pub fn build(app: &mut App, stats: TerrainStats) {
         .insert_resource(stats)
         .init_resource::<TerrainOpQueue>()
         .add_systems(ExtractSchedule, extract_ops)
-        .add_systems(Render, apply_ops.in_set(RenderSystems::PrepareResources));
+        .add_systems(
+            Render,
+            (apply_ops, sort_water)
+                .chain()
+                .in_set(RenderSystems::PrepareResources),
+        );
+}
+
+/// A water section's quads, kept to re-sort them back to front as the camera
+/// moves. Water writes depth (so the sky and particles stay behind it) and its
+/// sides are two-sided, so drawn in mesh order a near face could hide the far
+/// side of the same column or not, block by block. Vanilla sorts each
+/// translucent section the same way.
+struct WaterSort {
+    pool: u32,
+    first_index: u32,
+    origin: [i32; 3],
+    /// Quad centres relative to `origin`.
+    centres: Vec<Vec3>,
+    /// The section's index list as uploaded, six per quad.
+    indices: Vec<u32>,
+    /// The eye block it was last sorted for.
+    sorted_for: Option<IVec3>,
+}
+
+impl WaterSort {
+    fn new(pool: u32, first_index: u32, origin: [i32; 3], mesh: &crate::renderer::mesh::MeshBuf) -> Self {
+        let indices: Vec<u32> = mesh.idx.iter().chain(&mesh.cutout_idx).copied().collect();
+        // A quad's six indices name its four vertices in any order (fluid
+        // quads start at their third), so its first vertex is the lowest.
+        let base = indices.iter().copied().min().unwrap_or(0);
+        let centres = indices
+            .chunks_exact(6)
+            .map(|quad| {
+                let first = (quad.iter().copied().min().unwrap_or(base) - base) as usize;
+                let corners = mesh.verts.get(first..first + 4).unwrap_or(&[]);
+                let sum = corners.iter().fold(Vec3::ZERO, |acc, v| {
+                    acc + Vec3::new(v.pos[0] as f32, v.pos[1] as f32, v.pos[2] as f32)
+                });
+                sum / (corners.len().max(1) as f32 * 256.0)
+            })
+            .collect();
+        WaterSort {
+            pool,
+            first_index,
+            origin,
+            centres,
+            indices,
+            sorted_for: None,
+        }
+    }
+
+    /// The index list with the quads farthest from `eye` (relative to the
+    /// origin) first.
+    fn back_to_front(&self, eye: Vec3, order: &mut Vec<(f32, u32)>, out: &mut Vec<u32>) {
+        order.clear();
+        order.extend(
+            self.centres
+                .iter()
+                .enumerate()
+                .map(|(i, c)| (c.distance_squared(eye), i as u32)),
+        );
+        order.sort_unstable_by(|a, b| b.0.total_cmp(&a.0));
+        out.clear();
+        out.extend(order.iter().flat_map(|&(_, quad)| {
+            let at = quad as usize * 6;
+            self.indices[at..at + 6].iter().copied()
+        }));
+    }
+
+    fn eye_from(&self, eye: bevy::math::DVec3) -> Vec3 {
+        (eye - IVec3::from(self.origin).as_dvec3()).as_vec3()
+    }
+}
+
+/// Sections nearer than this re-sort whenever the eye enters a new block;
+/// farther ones only when it enters a new section.
+const WATER_SORT_NEAR: f32 = 48.0;
+/// Quads re-sorted per frame at most; the rest wait, nearest first.
+const WATER_SORT_BUDGET: usize = 65_536;
+
+fn sort_water(
+    mut pools: ResMut<TerrainPools>,
+    render_queue: Res<RenderQueue>,
+    views: Query<&bevy::render::view::ExtractedView, With<super::TerrainView>>,
+    mut scratch: Local<(Vec<(f32, u32)>, Vec<(f32, u32)>, Vec<u32>)>,
+) {
+    let Some(view) = views.iter().next() else {
+        return;
+    };
+    let eye = view.world_from_view.translation().as_dvec3();
+    let eye_block = eye.floor().as_ivec3();
+    let (due, order, out) = &mut *scratch;
+
+    due.clear();
+    for (&slot, sort) in &pools.water_sort {
+        let rel = sort.eye_from(eye);
+        let distance = (rel - Vec3::splat(8.0)).length();
+        let stale = match sort.sorted_for {
+            None => true,
+            Some(at) if distance < WATER_SORT_NEAR => at != eye_block,
+            Some(at) => at >> 4 != eye_block >> 4,
+        };
+        if stale {
+            due.push((distance, slot));
+        }
+    }
+    due.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+
+    let mut budget = WATER_SORT_BUDGET;
+    for &(_, slot) in due.iter() {
+        let pools = &mut *pools;
+        let Some(sort) = pools.water_sort.get_mut(&slot) else {
+            continue;
+        };
+        if sort.centres.len() > budget && budget < WATER_SORT_BUDGET {
+            break;
+        }
+        budget = budget.saturating_sub(sort.centres.len());
+
+        sort.back_to_front(sort.eye_from(eye), order, out);
+        if let Some(pool) = pools.pools.get(sort.pool as usize) {
+            render_queue.write_buffer(
+                &pool.indices,
+                sort.first_index as u64 * 4,
+                bytemuck::cast_slice(out),
+            );
+        }
+        sort.sorted_for = Some(eye_block);
+    }
 }
 
 fn extract_ops(main_ops: Extract<Res<TerrainOps>>, mut queue: ResMut<TerrainOpQueue>) {
@@ -778,6 +910,13 @@ pub fn apply_ops(
                     }
                 }
 
+                if water {
+                    pools.water_sort.insert(
+                        slot,
+                        WaterSort::new(pool_index, first_index, origin, &mesh),
+                    );
+                }
+
                 let (min, max) = mesh.bounds();
                 pools.meta_cpu[slot as usize] = SlotMeta {
                     min,
@@ -861,4 +1000,65 @@ pub fn apply_ops(
     }
 
     pools.publish_stats();
+}
+
+#[cfg(test)]
+mod water_sort_tests {
+    use super::*;
+    use crate::renderer::mesh::{MeshBuf, PackedVertex};
+
+    fn quad_at(mesh: &mut MeshBuf, x: f32) {
+        let base = mesh.verts.len() as u32;
+        for (dx, dy) in [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)] {
+            mesh.verts.push(PackedVertex {
+                pos: [((x + dx) * 256.0) as i16, (dy * 256.0) as i16, 0, 0],
+                ..Default::default()
+            });
+        }
+        mesh.idx
+            .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+
+    #[test]
+    fn the_farther_quad_draws_first_from_either_side() {
+        let mut mesh = MeshBuf::default();
+        quad_at(&mut mesh, 0.0);
+        quad_at(&mut mesh, 10.0);
+        let sort = WaterSort::new(0, 0, [0, 0, 0], &mesh);
+        assert_eq!(sort.centres[1], Vec3::new(10.5, 0.5, 0.0));
+        let (mut order, mut out) = (Vec::new(), Vec::new());
+
+        sort.back_to_front(Vec3::new(-5.0, 0.5, 0.0), &mut order, &mut out);
+        assert_eq!(&out[..6], &mesh.idx[6..12], "seen from -x, the quad at x=10 is behind");
+
+        sort.back_to_front(Vec3::new(20.0, 0.5, 0.0), &mut order, &mut out);
+        assert_eq!(&out[..6], &mesh.idx[..6], "seen from +x, the quad at x=0 is behind");
+    }
+
+    #[test]
+    fn centres_ignore_a_vertex_offset_baked_into_the_indices() {
+        let mut mesh = MeshBuf::default();
+        quad_at(&mut mesh, 3.0);
+        for i in &mut mesh.idx {
+            *i += 4096;
+        }
+        let sort = WaterSort::new(0, 0, [0, 0, 0], &mesh);
+        assert_eq!(sort.centres[0], Vec3::new(3.5, 0.5, 0.0));
+    }
+
+    #[test]
+    fn a_fluid_quad_starting_at_its_third_vertex_finds_its_first() {
+        // `MeshBuf::push_quad` (fluids) winds a quad from its third vertex,
+        // so the last quad's first index points two past its start.
+        let mut mesh = MeshBuf::default();
+        quad_at(&mut mesh, 0.0);
+        quad_at(&mut mesh, 5.0);
+        for quad in mesh.idx.chunks_exact_mut(6) {
+            let base = quad[0];
+            quad.copy_from_slice(&[base + 2, base + 1, base, base + 3, base + 2, base]);
+        }
+        let sort = WaterSort::new(0, 0, [0, 0, 0], &mesh);
+        assert_eq!(sort.centres[0], Vec3::new(0.5, 0.5, 0.0));
+        assert_eq!(sort.centres[1], Vec3::new(5.5, 0.5, 0.0));
+    }
 }

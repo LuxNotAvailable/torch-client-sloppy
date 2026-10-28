@@ -21,6 +21,10 @@ pub struct Attributes {
     pub entity_interaction_range: AttributeInstance,
 
     pub step_height: AttributeInstance,
+
+    pub friction_modifier: AttributeInstance,
+    pub air_drag_modifier: AttributeInstance,
+    pub bounciness: AttributeInstance,
 }
 
 impl Attributes {
@@ -37,6 +41,9 @@ impl Attributes {
             Attribute::EntityInteractionRange => &mut self.entity_interaction_range,
             Attribute::StepHeight => &mut self.step_height,
             Attribute::BlockBreakSpeed => &mut self.block_break_speed,
+            Attribute::FrictionModifier => &mut self.friction_modifier,
+            Attribute::AirDragModifier => &mut self.air_drag_modifier,
+            Attribute::Bounciness => &mut self.bounciness,
             _ => return None,
         };
         Some(value)

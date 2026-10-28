@@ -1,6 +1,7 @@
 mod atomics;
 mod builtins;
 pub(crate) mod declarations;
+mod functions;
 mod indices;
 mod interface;
 pub(crate) mod lexer;
@@ -227,6 +228,7 @@ pub(crate) fn transform(
     };
 
     wrap::version(&mut tokens);
+    functions::drop_unused_functions(&mut tokens);
     if let Some(parity) = target.frame_parity {
         indices::fold_frame_parity(&mut tokens, parity);
     }

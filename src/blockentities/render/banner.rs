@@ -8,6 +8,7 @@ use crate::blockentities::feed::BlockEntityData;
 use crate::blockentities::models;
 use crate::blockentities::render::chest::facing_y_rot;
 use crate::blockentities::{BeRegistry, BeSpec, BeState, GeomKey, no_anim};
+use crate::entities::Blend;
 use crate::entities::geom::{BakedModel, LayerDef, PartState};
 use crate::util::dye::linear_diffuse;
 
@@ -22,11 +23,15 @@ pub fn register(registry: &mut BeRegistry) {
         BeSpec::model("banner_cloth", flag_key, flag_layer, base_texture, wave)
             .with_transform(transform),
     );
+    // Vanilla's `bannerPattern`: translucent, no cutout, no depth write,
+    // drawn over the cloth in submission order (base 1, patterns 2..).
     registry.add(
         BlockEntityKind::Banner,
         BeSpec::model("banner_base", flag_key, flag_layer, mask_texture, wave)
             .with_transform(transform)
             .with_tint(base_tint)
+            .with_blend(Blend::Translucent)
+            .with_no_cutout()
             .with_depth_bias(1),
     );
     register_pattern_layers(registry);
@@ -101,6 +106,8 @@ macro_rules! pattern_layers {
                 )
                 .with_transform(transform)
                 .with_tint(pattern_tint::<$slot>)
+                .with_blend(Blend::Translucent)
+                .with_no_cutout()
                 .with_depth_bias(2 + $slot),
             );
         )*

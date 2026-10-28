@@ -126,9 +126,7 @@ impl<S: PalletedContainerKind> PalettedContainer<S> {
             Ok(storage) => storage,
             Err(e) => {
                 warn!("Failed to create bit storage: {:?}", e);
-                return Err(BufReadError::Custom(
-                    "Failed to create bit storage".to_owned(),
-                ));
+                return Err(BufReadError::custom("Failed to create bit storage"));
             }
         };
 
@@ -163,6 +161,30 @@ impl<S: PalletedContainerKind> PalettedContainer<S> {
     pub fn get_at_index(&self, index: usize) -> S {
         let paletted_value = self.storage.get(index);
         self.palette.value_for(paletted_value as usize)
+    }
+
+    /// Decodes every value into `out`, in index order, much faster than calling
+    /// `get_at_index` for each one.
+    pub fn copy_into(&self, out: &mut [S]) {
+        if self.storage.data.is_empty() {
+            out.fill(self.palette.value_for(0));
+            return;
+        }
+        match &self.palette {
+            Palette::SingleValue(v) => out.fill(*v),
+            Palette::Linear(values) | Palette::Hashmap(values) => {
+                self.storage.for_each_value(|i, id| {
+                    if let Some(slot) = out.get_mut(i) {
+                        *slot = values.get(id as usize).copied().unwrap_or_default();
+                    }
+                });
+            }
+            Palette::Global => self.storage.for_each_value(|i, id| {
+                if let Some(slot) = out.get_mut(i) {
+                    *slot = S::try_from(id as u32).unwrap_or_default();
+                }
+            }),
+        }
     }
 
     pub fn get(&self, pos: S::SectionPos) -> S {
