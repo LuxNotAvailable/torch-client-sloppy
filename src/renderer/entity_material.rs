@@ -121,11 +121,6 @@ fn shader() -> ShaderRef {
     super::embedded_shader("renderer/entity.wgsl")
 }
 
-#[cfg(feature = "builtin_shaders")]
-fn prepass_shader() -> ShaderRef {
-    super::embedded_shader("renderer/entity_prepass.wgsl")
-}
-
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
 #[bind_group_data(EntityMaterialKey)]
 pub struct EntityMaterial {
@@ -149,7 +144,6 @@ pub struct EntityMaterial {
 pub struct EntityMaterialKey {
     depth_bias: i32,
     see_through: bool,
-    fancy: bool,
 }
 
 impl From<&EntityMaterial> for EntityMaterialKey {
@@ -157,7 +151,6 @@ impl From<&EntityMaterial> for EntityMaterialKey {
         EntityMaterialKey {
             depth_bias: material.depth_bias,
             see_through: material.see_through,
-            fancy: crate::renderer::terrain::builtin_shaders_enabled(),
         }
     }
 }
@@ -211,17 +204,7 @@ impl Material for EntityMaterial {
     }
 
     fn enable_shadows() -> bool {
-        cfg!(feature = "builtin_shaders")
-    }
-
-    #[cfg(feature = "builtin_shaders")]
-    fn prepass_vertex_shader() -> ShaderRef {
-        prepass_shader()
-    }
-
-    #[cfg(feature = "builtin_shaders")]
-    fn prepass_fragment_shader() -> ShaderRef {
-        prepass_shader()
+        false
     }
 
     fn specialize(
@@ -250,12 +233,6 @@ impl Material for EntityMaterial {
             if key.bind_group_data.see_through {
                 depth_stencil.depth_compare =
                     bevy::render::render_resource::CompareFunction::Always;
-            }
-        }
-        if key.bind_group_data.fancy {
-            descriptor.vertex.shader_defs.push("FANCY_SHADERS".into());
-            if let Some(fragment) = descriptor.fragment.as_mut() {
-                fragment.shader_defs.push("FANCY_SHADERS".into());
             }
         }
         Ok(())
@@ -325,8 +302,6 @@ pub struct EntityMaterialPlugin;
 impl Plugin for EntityMaterialPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "entity.wgsl");
-        #[cfg(feature = "builtin_shaders")]
-        embedded_asset!(app, "entity_prepass.wgsl");
         app.add_plugins((
             super::rig_parts::RigPartsPlugin,
             MaterialPlugin::<EntityMaterial>::default(),

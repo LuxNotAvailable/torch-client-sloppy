@@ -86,15 +86,6 @@ const CLOUDS: &str = "Clouds";
 
 const PARTICLES: &str = "Particles";
 
-#[cfg(feature = "builtin_shaders")]
-const SHADER_QUALITY: &str = "Shader Quality";
-
-#[cfg(feature = "builtin_shaders")]
-const SHADERS: &str = "Shaders";
-
-#[cfg(feature = "builtin_shaders")]
-const PLAYER_SHADOWS: &str = "Player Shadows";
-
 const ANTIALIASING: &str = "Antialiasing";
 const AA_LEVEL: &str = "AA Level";
 
@@ -532,9 +523,6 @@ fn reset_video_options(o: &mut crate::gui::GuiOptions) {
     o.max_fps = crate::gui::MAX_FPS_DEFAULT;
     o.vsync = crate::gui::VSYNC_DEFAULT;
     o.fps_counter = crate::gui::FPS_COUNTER_DEFAULT;
-    o.shaders_enabled = false;
-    o.shader_quality = Default::default();
-    o.player_shadows = false;
     o.touch_movement = Default::default();
 }
 
@@ -843,21 +831,13 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
             f.mark_changed();
         }
         f.toggle(SMOOTH_LIGHTING, &mut o.smooth_lighting);
-        // Antialiasing: the mode here, and its level in row 3's free right cell.
+        f.toggle(LIGHTING_ENGINE, &mut o.lighting_enabled);
+        // Antialiasing: the mode, and its level beside it.
         let (x, y) = f.cell();
         let mode_hovered = f.ctx().hovering(x, y, COLUMN_W, WIDGET_HEIGHT);
         let label = format!("{ANTIALIASING}: {}", o.antialiasing.mode.caption());
         if f.draw(Button::new(x, y, COLUMN_W, WIDGET_HEIGHT, &label)) {
             o.antialiasing.mode = o.antialiasing.mode.next();
-            f.mark_changed();
-        }
-        f.toggle(LIGHTING_ENGINE, &mut o.lighting_enabled);
-        #[cfg(feature = "builtin_shaders")]
-        f.toggle(SHADERS, &mut o.shaders_enabled);
-        #[cfg(not(feature = "builtin_shaders"))]
-        f.skip();
-        if f.button(&format!("{PARTICLES}: {}", o.particles.caption())) {
-            o.particles = o.particles.next();
             f.mark_changed();
         }
         let (x, y) = f.cell();
@@ -885,25 +865,11 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         }
         #[cfg(not(feature = "shader_support"))]
         let _ = (mode_hovered, level_hovered);
-
-        #[cfg(feature = "builtin_shaders")]
-        {
-            let enabled = o.shaders_enabled;
-            let label = format!("{SHADER_QUALITY}: {}", o.shader_quality.caption());
-            if f.button_active(&label, enabled) {
-                o.shader_quality = o.shader_quality.next();
-                f.mark_changed();
-            }
-            let label = format!(
-                "{PLAYER_SHADOWS}: {}",
-                if o.player_shadows { ON } else { OFF }
-            );
-            if f.button_active(&label, enabled) {
-                o.player_shadows = !o.player_shadows;
-                f.mark_changed();
-            }
+        if f.button(&format!("{PARTICLES}: {}", o.particles.caption())) {
+            o.particles = o.particles.next();
+            f.mark_changed();
         }
-
+        f.new_row();
         f.toggle(ENTITY_SHADOWS, &mut o.entity_shadows);
         f.slider(&mut o.shadow_opacity, 0, 100, shadow_opacity_label);
         #[cfg(feature = "shader_support")]
@@ -1886,8 +1852,8 @@ mod tests {
     #[test]
     fn video_grid_stacks_like_the_options_list() {
         // Display: header and four rows; Quality: header (spaced) and four
-        // rows, the shader row when built in; then entity shadows, the shader
-        // packs button when built in, and reset.
+        // rows; then entity shadows, the shader packs button when built in,
+        // and reset.
         let atlas = crate::gui::atlas::build_gui_atlas(&crate::assets_root());
         let mut p = Painter::new(&atlas, 0);
         let mut state = GuiState::default();
@@ -1898,8 +1864,7 @@ mod tests {
             vh: 240.0,
         };
         draw_video(&mut p, &mut state, &ctx);
-        const EXTRA_ROWS: f32 = cfg!(feature = "builtin_shaders") as u32 as f32
-            + cfg!(feature = "shader_support") as u32 as f32;
+        const EXTRA_ROWS: f32 = cfg!(feature = "shader_support") as u32 as f32;
         let reset_row = 244.0 + (EXTRA_ROWS + 1.0) * ROW_H;
         assert_eq!(
             state.video_list.content_h,

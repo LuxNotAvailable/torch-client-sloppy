@@ -1323,28 +1323,12 @@ pub(crate) fn follow_world_camera(
 fn light_hand(
     lightmap: &crate::renderer::systems::LightmapState,
     eye: [f32; 3],
-    #[cfg(feature = "builtin_shaders")] daylight: Option<&crate::renderer::terrain::Daylight>,
     assets: &HandAssets,
     materials: &mut Assets<StandardMaterial>,
 ) {
     let cell = crate::renderer::lightmap::entity_light(&lightmap.current, eye, false);
 
-    #[cfg(not(feature = "builtin_shaders"))]
     let lit = cell.color;
-
-    #[cfg(feature = "builtin_shaders")]
-    let lit = if !crate::renderer::terrain::builtin_shaders_enabled() {
-        cell.color
-    } else {
-        use crate::renderer::terrain::BLOCK_GAIN;
-        let sky = Vec3::from(cell.sky);
-        let mut sum = Vec3::from(cell.floor) + Vec3::from(cell.block) * BLOCK_GAIN;
-        if let Some(day) = daylight {
-            let n_o_l = day.to_light.y.max(0.0);
-            sum += sky * (day.ambient + day.sun * n_o_l);
-        }
-        sum.to_array()
-    };
 
     let want = Color::linear_rgb(lit[0], lit[1], lit[2]);
     for handle in [
@@ -1381,7 +1365,6 @@ fn sync_hands(
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     lightmap: Res<crate::renderer::systems::LightmapState>,
-    #[cfg(feature = "builtin_shaders")] daylight: Option<Res<crate::renderer::terrain::Daylight>>,
     mut nodes: NodeQuery,
     mut item_nodes: Query<(&mut Mesh3d, &mut MeshMaterial3d<StandardMaterial>), With<HandItemNode>>,
     mut map_nodes: Query<
@@ -1412,15 +1395,6 @@ fn sync_hands(
     ];
 
     if let Some(hand_assets) = hand_assets.as_deref() {
-        #[cfg(feature = "builtin_shaders")]
-        light_hand(
-            &lightmap,
-            eye,
-            daylight.as_deref(),
-            hand_assets,
-            &mut materials,
-        );
-        #[cfg(not(feature = "builtin_shaders"))]
         light_hand(&lightmap, eye, hand_assets, &mut materials);
     }
 

@@ -221,14 +221,6 @@ impl Plugin for ShaderPackPlugin {
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };
-        #[cfg(feature = "builtin_shaders")]
-        render_app.add_systems(
-            Render,
-            frame::hide_world_shadows
-                .in_set(RenderSystems::ManageViews)
-                .after(bevy::pbr::prepare_lights)
-                .before(bevy::pbr::specialize_shadows),
-        );
         render_app
             .add_systems(
                 ExtractSchedule,

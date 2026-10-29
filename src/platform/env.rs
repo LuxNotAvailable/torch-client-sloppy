@@ -207,15 +207,6 @@ const ALL: &[Var] = &[
         enabled: cfg!(feature = "shader_support"),
     },
     Var {
-        name: "MC_SHAFTS",
-        what: "volumetric light shafts in the post-processing chain",
-        default: "off",
-        enabled: cfg!(all(
-            feature = "builtin_shaders",
-            not(target_arch = "wasm32")
-        )),
-    },
-    Var {
         name: "MC_AUTO_LOOK",
         what: "degrees per second the camera turns on its own, for capture runs",
         default: "0",

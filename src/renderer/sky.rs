@@ -7,16 +7,6 @@ use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
-#[cfg(feature = "builtin_shaders")]
-use bevy::{
-    asset::{Asset, embedded_asset},
-    mesh::{MeshBuilder, MeshVertexBufferLayoutRef, SphereKind, SphereMeshBuilder},
-    pbr::{Material, MaterialPipeline, MaterialPlugin},
-    render::render_resource::{
-        AsBindGroup, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
-    },
-    shader::ShaderRef,
-};
 
 use super::AppState;
 use super::dimension::{self, Skybox};
@@ -40,55 +30,6 @@ const STAR_SEED: i64 = 10842;
 const DISC_SIDES: usize = 8;
 
 const DISC_RINGS: usize = 16;
-
-#[cfg(feature = "builtin_shaders")]
-#[derive(Clone, Copy, PartialEq, ShaderType)]
-pub struct SkyParams {
-    pub sun: Vec4,
-    pub tuning: Vec4,
-    pub sky_color: Vec4,
-    pub fog_color: Vec4,
-}
-
-#[cfg(feature = "builtin_shaders")]
-#[derive(Asset, TypePath, AsBindGroup, Clone)]
-pub struct SkyMaterial {
-    #[uniform(0)]
-    pub params: SkyParams,
-}
-
-#[cfg(feature = "builtin_shaders")]
-impl Material for SkyMaterial {
-    fn fragment_shader() -> ShaderRef {
-        super::embedded_shader("renderer/sky.wgsl")
-    }
-
-    fn alpha_mode(&self) -> AlphaMode {
-        AlphaMode::Blend
-    }
-
-    fn depth_bias(&self) -> f32 {
-        BIAS_SKY_DOME
-    }
-
-    fn enable_prepass() -> bool {
-        false
-    }
-
-    fn enable_shadows() -> bool {
-        false
-    }
-
-    fn specialize(
-        _pipeline: &MaterialPipeline,
-        descriptor: &mut RenderPipelineDescriptor,
-        _layout: &MeshVertexBufferLayoutRef,
-        _key: bevy::pbr::MaterialPipelineKey<Self>,
-    ) -> Result<(), SpecializedMeshPipelineError> {
-        descriptor.primitive.cull_mode = None;
-        Ok(())
-    }
-}
 
 /// What a sky part draws with: its source material's look, pinned behind the
 /// world. The parts are real geometry around the camera, and the sunrise fan
@@ -195,21 +136,7 @@ fn mirror_sky_materials(
     }
 }
 
-#[cfg(feature = "builtin_shaders")]
-#[derive(Component)]
-struct SkyDome;
-
-#[cfg(feature = "builtin_shaders")]
-const DOME_SECTORS: u32 = 48;
-#[cfg(feature = "builtin_shaders")]
-const DOME_STACKS: u32 = 24;
-
-#[cfg(feature = "builtin_shaders")]
-const GLARE_GAIN: f32 = 6.0;
-
 const BIAS_SKY_DISC: f32 = 0.0;
-#[cfg(feature = "builtin_shaders")]
-const BIAS_SKY_DOME: f32 = -1000.0 * SKY_SCALE;
 const BIAS_END_SKY: f32 = 0.0;
 const BIAS_SUNRISE: f32 = 1000.0 * SKY_SCALE;
 const BIAS_SUN: f32 = 2000.0 * SKY_SCALE;
@@ -224,11 +151,6 @@ pub struct SkyPlugin;
 
 impl Plugin for SkyPlugin {
     fn build(&self, app: &mut App) {
-        #[cfg(feature = "builtin_shaders")]
-        {
-            embedded_asset!(app, "sky.wgsl");
-            app.add_plugins(MaterialPlugin::<SkyMaterial>::default());
-        }
         bevy::asset::embedded_asset!(app, "sky_part.wgsl");
         app.add_plugins(bevy::pbr::MaterialPlugin::<SkyPartMaterial>::default())
             .add_systems(
@@ -248,10 +170,6 @@ impl Plugin for SkyPlugin {
 
 #[derive(Component)]
 pub struct SkyRoot;
-
-fn dome_sky() -> bool {
-    crate::renderer::terrain::builtin_world_shading()
-}
 
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SkyPart {
@@ -280,7 +198,6 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut part_materials: ResMut<Assets<SkyPartMaterial>>,
-    #[cfg(feature = "builtin_shaders")] mut sky_materials: ResMut<Assets<SkyMaterial>>,
     mut images: ResMut<Assets<Image>>,
 ) {
     let celestial = crate::textures_dir().join("environment/celestial");
@@ -288,35 +205,6 @@ fn setup(
     let root = commands
         .spawn((SkyRoot, Transform::IDENTITY, Visibility::Hidden))
         .id();
-
-    #[cfg(feature = "builtin_shaders")]
-    commands.spawn((
-        Mesh3d(
-            meshes.add(
-                SphereMeshBuilder::new(
-                    SKY_DISC_RADIUS,
-                    SphereKind::Uv {
-                        sectors: DOME_SECTORS,
-                        stacks: DOME_STACKS,
-                    },
-                )
-                .build(),
-            ),
-        ),
-        MeshMaterial3d(sky_materials.add(SkyMaterial {
-            params: SkyParams {
-                sun: Vec4::new(0.0, 1.0, 0.0, 1.0),
-                tuning: Vec4::new(1.0, GLARE_GAIN, 0.0, 0.0),
-                sky_color: Vec4::ONE,
-                fog_color: Vec4::ONE,
-            },
-        })),
-        Transform::IDENTITY,
-        ChildOf(root),
-        NotShadowCaster,
-        NoFrustumCulling,
-        SkyDome,
-    ));
 
     let sky_material = materials.add(StandardMaterial {
         depth_bias: BIAS_SKY_DISC,
@@ -752,16 +640,6 @@ fn update_sky(
     mut assets: ResMut<SkyAssets>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    #[cfg(feature = "builtin_shaders")] mut sky_materials: ResMut<Assets<SkyMaterial>>,
-    #[cfg(feature = "builtin_shaders")] mut dome: Query<
-        (&MeshMaterial3d<SkyMaterial>, &mut Visibility),
-        (
-            With<SkyDome>,
-            Without<SkyPart>,
-            Without<WorldCamera>,
-            Without<SkyRoot>,
-        ),
-    >,
     world_camera: Query<&Transform, (With<WorldCamera>, Without<SkyRoot>, Without<SkyPart>)>,
     mut world_view: Query<(&mut DistanceFog, &mut Camera), With<WorldCamera>>,
     mut root: Query<&mut Transform, (With<SkyRoot>, Without<WorldCamera>, Without<SkyPart>)>,
@@ -833,47 +711,6 @@ fn update_sky(
 
     let sunrise_alpha = sky.sunrise_color.alpha() as f32 / 255.0;
 
-    #[cfg(feature = "builtin_shaders")]
-    if let Ok((handle, mut dome_visibility)) = dome.single_mut() {
-        let fancy = dome_sky();
-        *dome_visibility = if skybox == Skybox::Overworld && fancy {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        };
-        if fancy {
-            let to_sun = (yaw * Quat::from_rotation_x(sky.sun_angle)) * Vec3::Y;
-            let sky_rgba = sky.sky_color.to_rgba_f32();
-            let fog_rgba = sky.fog_color.to_rgba_f32();
-            let linear = |c: [f32; 4]| {
-                Vec4::new(
-                    crate::util::mth::srgb_to_linear(c[0]),
-                    crate::util::mth::srgb_to_linear(c[1]),
-                    crate::util::mth::srgb_to_linear(c[2]),
-                    1.0,
-                )
-            };
-            let params = SkyParams {
-                sun: to_sun.extend(to_sun.y.max(0.0)),
-                tuning: Vec4::new(
-                    ((to_sun.y + 0.15) * 3.0).clamp(0.0, 1.0),
-                    GLARE_GAIN,
-                    0.0,
-                    0.0,
-                ),
-                sky_color: linear(sky_rgba),
-                fog_color: linear(fog_rgba),
-            };
-            if sky_materials
-                .get(&handle.0)
-                .is_some_and(|m| m.params != params)
-                && let Some(material) = sky_materials.get_mut(&handle.0)
-            {
-                material.params = params;
-            }
-        }
-    }
-
     for (part, mut transform, mut visibility, mut material) in parts.iter_mut() {
         if *part == SkyPart::EndSky {
             *visibility = if skybox == Skybox::End {
@@ -884,10 +721,6 @@ fn update_sky(
             continue;
         }
         if skybox != Skybox::Overworld {
-            *visibility = Visibility::Hidden;
-            continue;
-        }
-        if dome_sky() && matches!(part, SkyPart::SkyDisc | SkyPart::DarkDisc) {
             *visibility = Visibility::Hidden;
             continue;
         }

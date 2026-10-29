@@ -1863,8 +1863,6 @@ fn spawn_model_rig(
         Name::new(name),
         bake::empty_aabb(),
     ));
-    #[cfg(feature = "builtin_shaders")]
-    node.insert(bevy::light::NotShadowCaster);
     if let Some(material) = &material {
         node.insert(MeshMaterial3d(material.clone()));
     }
@@ -1910,8 +1908,6 @@ fn spawn_single_rig(
             EntityRigNode,
             Name::new(name),
         ));
-        #[cfg(feature = "builtin_shaders")]
-        node.insert(bevy::light::NotShadowCaster);
         let node = node.id();
         return LayerRig {
             spec: idx,
@@ -1950,8 +1946,6 @@ fn spawn_single_rig(
     let copies: Vec<Entity> = (0..copy_count)
         .map(|_| {
             let copy = commands.spawn((Transform::default(), Visibility::Hidden, EntityRigNode));
-            #[cfg(feature = "builtin_shaders")]
-            copy.insert(bevy::light::NotShadowCaster);
             let copy = copy.id();
             commands.entity(node).add_child(copy);
             copy

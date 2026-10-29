@@ -365,27 +365,6 @@ pub(crate) fn take_over_view(
     }
 }
 
-#[cfg(feature = "builtin_shaders")]
-pub(crate) fn hide_world_shadows(
-    takeover: Option<Res<PackTakeover>>,
-    cameras: Query<&bevy::pbr::ViewLightEntities, With<TerrainView>>,
-    lights: Query<&ExtractedView, With<bevy::pbr::LightEntity>>,
-    mut shadows: ResMut<ViewBinnedRenderPhases<bevy::pbr::Shadow>>,
-) {
-    if !takeover.is_some_and(|t| t.0) {
-        return;
-    }
-    for view_lights in &cameras {
-        for light in view_lights
-            .lights
-            .iter()
-            .filter_map(|entity| lights.get(*entity).ok())
-        {
-            shadows.remove(&light.retained_view_entity);
-        }
-    }
-}
-
 pub(crate) fn prepare_uniforms(
     queue: Res<RenderQueue>,
     views: Query<&ExtractedView, With<TerrainView>>,

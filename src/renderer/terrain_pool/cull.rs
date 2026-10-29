@@ -26,9 +26,6 @@ use bytemuck::{Pod, Zeroable};
 use super::pools::{SlotTable, TerrainPools};
 use super::{MAX_VIEWS, SLOTS_INITIAL, STREAMS, TerrainTier, TerrainView};
 
-#[cfg(feature = "builtin_shaders")]
-use bevy::pbr::{LightEntity, ViewLightEntities};
-
 pub const MAX_CULL_PLANES: usize = 13;
 
 #[repr(C)]
@@ -508,11 +505,6 @@ pub fn build(app: &mut App) {
                 bevy::core_pipeline::core_3d::graph::Node3d::StartMainPass,
             ),
         );
-    #[cfg(feature = "builtin_shaders")]
-    render_app.add_render_graph_edges(
-        bevy::core_pipeline::core_3d::graph::Core3d,
-        (TerrainCullLabel, bevy::pbr::graph::NodePbr::EarlyShadowPass),
-    );
 }
 
 pub fn finish(app: &mut App) {
@@ -575,22 +567,16 @@ pub fn prepare_cull(
     mut views: ResMut<TerrainViews>,
     mut lists: ResMut<DirectLists>,
     cameras: Query<(Entity, &ExtractedView, Has<TerrainView>)>,
-    #[cfg(feature = "builtin_shaders")] view_lights: Query<&ViewLightEntities>,
-    #[cfg(feature = "builtin_shaders")] lights: Query<(&ExtractedView, &LightEntity)>,
     #[cfg(feature = "shader_support")] pack_view: Option<Res<PackCullView>>,
-    #[cfg(feature = "builtin_shaders")] takeover: Option<Res<super::draw::PackTakeover>>,
     mut assigned: Local<Vec<AssignedView>>,
 ) {
     crate::prof_span!("render:terrain_prepare_cull");
-    #[cfg(feature = "builtin_shaders")]
-    let cascades = !takeover.is_some_and(|t| t.0);
     views.index.clear();
     views.count = 0;
 
     assigned.clear();
 
     for (entity, view, is_terrain) in cameras.iter() {
-        #[cfg(not(feature = "builtin_shaders"))]
         let _ = entity;
         if !is_terrain || views.count >= MAX_VIEWS {
             continue;
@@ -622,31 +608,6 @@ pub fn prepare_cull(
                 flags: PACK_SHADOW_FLAGS,
                 eye,
             });
-        }
-
-        #[cfg(feature = "builtin_shaders")]
-        if cascades && let Ok(view_lights) = view_lights.get(entity) {
-            for &light_entity in &view_lights.lights {
-                if views.count >= MAX_VIEWS {
-                    break;
-                }
-                let Ok((light_view, light_kind)) = lights.get(light_entity) else {
-                    continue;
-                };
-                if !matches!(light_kind, LightEntity::Directional { .. }) {
-                    continue;
-                }
-                let slot = views.count;
-                views.count += 1;
-                views.index.insert(light_view.retained_view_entity, slot);
-                assigned.push(AssignedView {
-                    slot,
-                    key: light_view.retained_view_entity,
-                    shape: CullShape::frustum(frustum_planes(light_view)),
-                    flags: 0,
-                    eye,
-                });
-            }
         }
     }
 

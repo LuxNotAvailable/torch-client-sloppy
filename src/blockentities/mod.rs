@@ -1224,8 +1224,6 @@ fn spawn_layer(
                     Visibility::Inherited,
                     BeRigNode,
                 ));
-                #[cfg(feature = "builtin_shaders")]
-                spawned.insert(bevy::light::NotShadowCaster);
                 let posed = spawned.id();
                 commands.entity(node).add_child(posed);
                 return Some(LayerRig {
@@ -1261,8 +1259,6 @@ fn spawn_layer(
                         Visibility::Inherited,
                         BeRigNode,
                     ));
-                    #[cfg(feature = "builtin_shaders")]
-                    spawned.insert(bevy::light::NotShadowCaster);
                     let entity = spawned.id();
                     commands.entity(part_node).add_child(entity);
                     entity
@@ -1306,8 +1302,6 @@ fn spawn_layer(
                 Visibility::Inherited,
                 BeRigNode,
             ));
-            #[cfg(feature = "builtin_shaders")]
-            spawned.insert(bevy::light::NotShadowCaster);
             if spec.beam {
                 spawned.insert(BeamNode);
             }

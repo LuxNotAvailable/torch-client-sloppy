@@ -328,8 +328,6 @@ fn setup(
             Visibility::Visible,
             NoFrustumCulling,
         ));
-        #[cfg(feature = "builtin_shaders")]
-        spawned.insert(bevy::light::NotShadowCaster);
     }
     [handles[0].clone(), handles[1].clone()]
 }

@@ -584,9 +584,6 @@ fn emit_baked(
         };
     }
 
-    #[cfg(feature = "builtin_shaders")]
-    let sways = rb.sways;
-    #[cfg(not(feature = "builtin_shaders"))]
     let sways = false;
     let material = if rb.emission > 0 {
         MATERIAL_EMISSIVE_BASE + rb.emission.min(15)

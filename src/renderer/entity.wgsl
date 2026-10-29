@@ -2,11 +2,6 @@
 #import bevy_pbr::mesh_view_bindings::{view, fog, globals}
 #import bevy_pbr::view_transformations::position_world_to_clip
 
-#ifdef FANCY_SHADERS
-#import bevy_pbr::mesh_view_bindings::lights
-#import bevy_pbr::mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT
-#import bevy_pbr::shadows
-#endif
 
 #ifdef TONEMAP_IN_SHADER
 #import bevy_core_pipeline::tonemapping::tone_mapping
@@ -52,13 +47,6 @@ struct Params {
     mode: u32,
 };
 
-#ifdef FANCY_SHADERS
-const SUN_GAIN: f32 = 1.60;
-const AMBIENT_GAIN: f32 = 0.31;
-const BLOCK_GAIN: f32 = 2.20;
-const AMBIENT_SHADE_MIX: f32 = 0.55;
-const GROUND_TINT: vec3<f32> = vec3(0.85, 0.80, 0.68);
-#endif
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var entity_texture: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(1) var entity_sampler: sampler;
@@ -86,9 +74,6 @@ struct VertexOutput {
     @location(1) uv: vec2<f32>,
     @location(2) color: vec4<f32>,
     @location(3) accum: vec2<f32>,
-#ifdef FANCY_SHADERS
-    @location(4) world_normal: vec3<f32>,
-#endif
 };
 
 fn srgb_encode(c: vec3<f32>) -> vec3<f32> {
@@ -150,47 +135,9 @@ fn vertex(vertex: Vertex) -> VertexOutput {
         out.accum = vec2(vertex.color.a, vertex.color.a);
         out.color = vec4(vertex.color.rgb, 1.0);
     }
-#ifdef FANCY_SHADERS
-    out.world_normal = normal;
-#endif
     return out;
 }
 
-#ifdef FANCY_SHADERS
-fn lighting(in: VertexOutput, is_front: bool, shade: f32) -> vec3<f32> {
-    let n = normalize(select(-in.world_normal, in.world_normal, is_front));
-
-    var sun_visibility = 0.0;
-    var sun_color = vec3(0.0);
-    if lights.n_directional_lights > 0u {
-        let light = &lights.directional_lights[0];
-        sun_color = (*light).color.rgb;
-        let n_o_l = saturate(dot(n, (*light).direction_to_light));
-        if n_o_l > 0.0 {
-            var shadow = 1.0;
-            if ((*light).flags & DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u {
-                let view_z = dot(vec4(
-                    view.view_from_world[0].z,
-                    view.view_from_world[1].z,
-                    view.view_from_world[2].z,
-                    view.view_from_world[3].z,
-                ), in.world_position);
-                shadow = shadows::fetch_directional_shadow(
-                    0u, in.world_position, n, view_z);
-            }
-            sun_visibility = n_o_l * shadow;
-        }
-    }
-
-    let sky = params.light_sky.rgb;
-    let hemisphere = mix(GROUND_TINT, lights.ambient_color.rgb, n.y * 0.5 + 0.5);
-    let ambient = sky * AMBIENT_GAIN * hemisphere * mix(1.0, shade, AMBIENT_SHADE_MIX);
-    let direct = sky * SUN_GAIN * sun_color * sun_visibility;
-    return (params.light_floor.rgb + params.light_block.rgb * BLOCK_GAIN) * shade
-        + ambient
-        + direct;
-}
-#endif
 
 // Vanilla's armor glint: the glint texture through
 // translate(-f, g) * rotateZ(pi / 18) * scale(0.16), where f and g cycle every
@@ -219,20 +166,14 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @locatio
     }
     let shade = select(in.accum.y, in.accum.x, is_front);
     color = color * in.color * params.tint;
-#ifndef FANCY_SHADERS
     color = vec4(color.rgb * shade, color.a);
-#endif
     if params.light1.w < 1.0 {
         let overlay_color = mix(vec3(1.0, 0.0, 0.0), vec3(1.0), params.light0.w);
         let mixed_srgb = mix(overlay_color, srgb_encode(color.rgb), params.light1.w);
         color = vec4(srgb_decode(mixed_srgb), color.a);
     }
     if params.mode != MODE_EMISSIVE {
-#ifdef FANCY_SHADERS
-        color = vec4(color.rgb * lighting(in, is_front, shade), color.a);
-#else
         color = vec4(color.rgb * params.light.rgb, color.a);
-#endif
     }
     if params.light_floor.w > 0.0 {
         // Vanilla blends the glint with (SRC_COLOR, ONE) onto an sRGB

@@ -27,8 +27,6 @@ click_gui = []
 
 hud_editor = []
 
-builtin_shaders = ["bevy/bevy_anti_alias", "bevy/bevy_post_process"]
-
 shader_support = ["dep:flate2", "dep:naga", "dep:wgpu"]
 
 resourcepacks = ["dep:flate2"]

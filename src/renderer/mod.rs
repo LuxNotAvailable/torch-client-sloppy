@@ -132,8 +132,6 @@ pub struct RenderedBlock {
     pub cull_group: u32,
     pub tint_kind: TintKind,
     pub offset: crate::blocks::rand::ShapeOffset,
-    #[cfg(feature = "builtin_shaders")]
-    pub sways: bool,
     pub state: u16,
     #[cfg(feature = "shader_support")]
     pub translucent: bool,

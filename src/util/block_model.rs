@@ -19,35 +19,6 @@ fn bool_prop(props: &HashMap<&str, &str>, key: &str) -> bool {
 
 const IMPLICIT_WATER: &[&str] = &["kelp", "kelp_plant", "seagrass", "tall_seagrass"];
 
-#[cfg(feature = "builtin_shaders")]
-const NON_SWAYING_CUTOUTS: &[&str] = &[
-    "cauldron",
-    "water_cauldron",
-    "lava_cauldron",
-    "powder_snow_cauldron",
-    "hopper",
-    "comparator",
-    "repeater",
-    "redstone_wire",
-    "lever",
-    "ladder",
-    "rail",
-    "powered_rail",
-    "detector_rail",
-    "activator_rail",
-    "tripwire",
-    "tripwire_hook",
-    "iron_bars",
-    "glass_pane",
-    "fire",
-    "soul_fire",
-    "resin_clump",
-    "sculk_vein",
-    "glow_lichen",
-    "frogspawn",
-    "sugar_cane",
-];
-
 const SKIP_SAME: &[&str] = &[
     "glass",
     "tinted_glass",
@@ -216,11 +187,6 @@ pub fn block_visual(state: azalea::block::BlockState) -> RenderedBlock {
         TintKind::None
     };
 
-    #[cfg(feature = "builtin_shaders")]
-    let sways = |ambient_occlusion: bool| -> bool {
-        !ambient_occlusion && !NON_SWAYING_CUTOUTS.contains(&name) && !name.ends_with("_pane")
-    };
-
     if matches!(name, "air" | "cave_air" | "void_air") {
         return RenderedBlock {
             geom: BlockGeom::Model(Default::default()),
@@ -232,8 +198,6 @@ pub fn block_visual(state: azalea::block::BlockState) -> RenderedBlock {
             cull_group,
             tint_kind,
             offset: ShapeOffset::None,
-            #[cfg(feature = "builtin_shaders")]
-            sways: false,
             state: state.id(),
             #[cfg(feature = "shader_support")]
             translucent: false,
@@ -266,8 +230,6 @@ pub fn block_visual(state: azalea::block::BlockState) -> RenderedBlock {
             cull_group,
             tint_kind: TintKind::None,
             offset: ShapeOffset::None,
-            #[cfg(feature = "builtin_shaders")]
-            sways: false,
             state: state.id(),
             #[cfg(feature = "shader_support")]
             translucent: false,
@@ -277,8 +239,6 @@ pub fn block_visual(state: azalea::block::BlockState) -> RenderedBlock {
     let baked = crate::blocks::registry().baked(state.id(), name, &props);
     let is_solid = baked.is_solid;
     let full_cube = baked.full_cube;
-    #[cfg(feature = "builtin_shaders")]
-    let sways = sways(baked.ambient_occlusion);
     let light = crate::lighting::props::of(state);
     RenderedBlock {
         geom: BlockGeom::Model(baked),
@@ -291,8 +251,6 @@ pub fn block_visual(state: azalea::block::BlockState) -> RenderedBlock {
         cull_group,
         tint_kind,
         offset: ShapeOffset::for_block(name),
-        #[cfg(feature = "builtin_shaders")]
-        sways,
         state: state.id(),
         #[cfg(feature = "shader_support")]
         translucent: translucent_layer(name),

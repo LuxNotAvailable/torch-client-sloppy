@@ -429,7 +429,6 @@ crate::serialized_option!(
     crate::renderer::clouds::CloudStatus,
     crate::util::particles::ParticleStatus,
     RenderBackend,
-    crate::renderer::terrain::ShaderQuality,
     TouchMovement,
 );
 
@@ -492,9 +491,6 @@ crate::options! {
         #[cfg(feature = "skins")]
         pub skin_parts: u8 = 0x7F => custom(read_skin_parts, write_skin_parts),
         pub fps_counter: bool = FPS_COUNTER_DEFAULT => key("fpsCounter"),
-        pub shader_quality: crate::renderer::terrain::ShaderQuality = Default::default() => key("shaderQuality"),
-        pub shaders_enabled: bool = false => key("shaders"),
-        pub player_shadows: bool = false => key("playerShadows"),
         /// Round shadows under entities (`entityShadows`), and how dark they
         /// are, in percent.
         pub entity_shadows: bool = true => key("entityShadows"),

@@ -48,19 +48,6 @@ use super::{
     TerrainTextures, TerrainTier, TerrainView,
 };
 
-#[cfg(feature = "builtin_shaders")]
-use bevy::core_pipeline::core_3d::CORE_3D_DEPTH_FORMAT;
-#[cfg(feature = "builtin_shaders")]
-use bevy::pbr::{
-    LightEntity, LightKeyCache, PrepassPipeline, SetPrepassViewBindGroup,
-    SetPrepassViewEmptyBindGroup, Shadow, ShadowBatchSetKey, ShadowBinKey, ViewLightEntities,
-};
-#[cfg(feature = "builtin_shaders")]
-use bevy::render::render_resource::{
-    CompareFunction, DepthStencilState, FragmentState, MultisampleState, PrimitiveState,
-    StencilFaceState, StencilState, VertexState,
-};
-
 pub const TERRAIN_GROUP: usize = 2;
 
 const VERTEX_STRIDE: u64 = 20;
@@ -144,13 +131,6 @@ impl TerrainItem for Transparent3d {
     }
 }
 
-#[cfg(feature = "builtin_shaders")]
-impl TerrainItem for Shadow {
-    fn pool_stream(&self) -> (u32, u32) {
-        decode_asset_id(self.bin_key.asset_id)
-    }
-}
-
 #[derive(Resource)]
 pub struct TerrainParamsBuffer(pub Buffer);
 
@@ -163,8 +143,6 @@ pub struct TerrainBindGroup {
 #[derive(Resource)]
 pub struct TerrainPipeline {
     mesh_pipeline: MeshPipeline,
-    #[cfg(feature = "builtin_shaders")]
-    prepass: PrepassPipeline,
     shader: Handle<Shader>,
     shadow_shader: Handle<Shader>,
     vertex_layout_ref: MeshVertexBufferLayoutRef,
@@ -181,8 +159,6 @@ pub struct TerrainPipelineKey {
     pub stream: u32,
     pub direct: bool,
     pub shadow: bool,
-    pub fancy: bool,
-    pub specular: bool,
 }
 
 #[cfg(feature = "shader_support")]
@@ -248,8 +224,6 @@ impl FromWorld for TerrainPipeline {
         ));
         Self {
             mesh_pipeline: world.resource::<MeshPipeline>().clone(),
-            #[cfg(feature = "builtin_shaders")]
-            prepass: world.resource::<PrepassPipeline>().clone(),
             shader: shaders.terrain,
             shadow_shader: shaders.prepass,
             vertex_layout_ref,
@@ -270,12 +244,6 @@ impl TerrainPipeline {
 
     fn terrain_defs(key: TerrainPipelineKey) -> Vec<ShaderDefVal> {
         let mut defs = Vec::new();
-        if key.fancy {
-            defs.push("FANCY_SHADERS".into());
-        }
-        if key.specular {
-            defs.push("SUN_SPECULAR".into());
-        }
         if key.stream == STREAM_CUTOUT {
             defs.push("ALPHA_CUTOUT".into());
         }
@@ -338,87 +306,12 @@ impl TerrainPipeline {
 
         descriptor
     }
-
-    #[cfg(feature = "builtin_shaders")]
-    fn specialize_shadow(&self, key: TerrainPipelineKey) -> RenderPipelineDescriptor {
-        let mut shader_defs: Vec<ShaderDefVal> = vec![
-            "PREPASS_PIPELINE".into(),
-            "DEPTH_PREPASS".into(),
-            "VERTEX_OUTPUT_INSTANCE_INDEX".into(),
-            "MAY_DISCARD".into(),
-        ];
-        shader_defs.extend(Self::terrain_defs(key));
-
-        let unclipped = key.view.contains(MeshPipelineKey::UNCLIPPED_DEPTH_ORTHO);
-        let emulate = unclipped && !self.prepass.depth_clip_control_supported;
-        if emulate {
-            shader_defs.push("UNCLIPPED_DEPTH_ORTHO_EMULATION".into());
-            shader_defs.push("PREPASS_FRAGMENT".into());
-        }
-
-        RenderPipelineDescriptor {
-            label: Some(
-                if key.stream == STREAM_CUTOUT {
-                    "terrain_shadow_cutout"
-                } else {
-                    "terrain_shadow_solid"
-                }
-                .into(),
-            ),
-            layout: vec![
-                self.prepass.view_layout_no_motion_vectors.clone(),
-                self.prepass.empty_layout.clone(),
-                self.terrain_layout(key.direct),
-            ],
-            push_constant_ranges: vec![],
-            vertex: VertexState {
-                shader: self.shadow_shader.clone(),
-                shader_defs: shader_defs.clone(),
-                entry_point: None,
-                buffers: vec![packed_vertex_layout()],
-            },
-            primitive: PrimitiveState {
-                topology: PrimitiveTopology::TriangleList,
-                cull_mode: Some(Face::Back),
-                unclipped_depth: unclipped && self.prepass.depth_clip_control_supported,
-                ..default()
-            },
-            depth_stencil: Some(DepthStencilState {
-                format: CORE_3D_DEPTH_FORMAT,
-                depth_write_enabled: true,
-                depth_compare: CompareFunction::GreaterEqual,
-                stencil: StencilState {
-                    front: StencilFaceState::IGNORE,
-                    back: StencilFaceState::IGNORE,
-                    read_mask: 0,
-                    write_mask: 0,
-                },
-                bias: super::super::terrain::shadow_depth_bias(),
-            }),
-            multisample: MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            fragment: Some(FragmentState {
-                shader: self.shadow_shader.clone(),
-                shader_defs,
-                entry_point: Some("fragment".into()),
-                targets: vec![],
-            }),
-            zero_initialize_workgroup_memory: false,
-        }
-    }
 }
 
 impl SpecializedRenderPipeline for TerrainPipeline {
     type Key = TerrainPipelineKey;
 
     fn specialize(&self, key: Self::Key) -> RenderPipelineDescriptor {
-        #[cfg(feature = "builtin_shaders")]
-        if key.shadow {
-            return self.specialize_shadow(key);
-        }
         self.specialize_main(key)
     }
 }
@@ -610,18 +503,6 @@ pub type DrawTerrainMain = (
     DrawTerrain,
 );
 
-#[cfg(feature = "builtin_shaders")]
-pub type DrawTerrainShadow = (
-    SetItemPipeline,
-    SetPrepassViewBindGroup<0>,
-    SetPrepassViewEmptyBindGroup<1>,
-    SetTerrainBindGroup<TERRAIN_GROUP>,
-    DrawTerrain,
-);
-
-#[cfg(feature = "builtin_shaders")]
-type ViewLights = Option<&'static ViewLightEntities>;
-#[cfg(not(feature = "builtin_shaders"))]
 type ViewLights = ();
 
 #[allow(clippy::too_many_arguments)]
@@ -639,13 +520,6 @@ pub fn queue_terrain(
     mut alpha_phases: ResMut<ViewBinnedRenderPhases<AlphaMask3d>>,
     mut transparent_phases: ResMut<ViewSortedRenderPhases<Transparent3d>>,
     views: Query<(&ExtractedView, Has<TerrainView>, ViewLights)>,
-    #[cfg(feature = "builtin_shaders")]
-    (light_key_cache, shadow_draws, mut shadow_phases, light_views): (
-        Res<LightKeyCache>,
-        Res<DrawFunctions<Shadow>>,
-        ResMut<ViewBinnedRenderPhases<Shadow>>,
-        Query<(&ExtractedView, &LightEntity)>,
-    ),
     ticks: SystemChangeTick,
     #[cfg(feature = "shader_support")] takeover: Option<Res<PackTakeover>>,
 ) {
@@ -654,12 +528,8 @@ pub fn queue_terrain(
         return;
     }
     let direct = !tier.indirect;
-    let fancy = crate::renderer::terrain::builtin_world_shading();
-    let specular = fancy && crate::renderer::terrain::sun_specular_enabled();
     let change_tick = ticks.this_run();
     let transparent_draw = transparent_draws.read().id::<DrawTerrainMain>();
-    #[cfg(feature = "builtin_shaders")]
-    let shadow_draw = shadow_draws.read().id::<DrawTerrainShadow>();
 
     let opaque_draw = opaque_draws.read().id::<DrawTerrainMain>();
     let alpha_draw = alpha_draws.read().id::<DrawTerrainMain>();
@@ -687,8 +557,6 @@ pub fn queue_terrain(
                         stream,
                         direct,
                         shadow,
-                        fancy,
-                        specular,
                     },
                 )
             };
@@ -745,57 +613,6 @@ pub fn queue_terrain(
             }
         }
 
-        #[cfg(feature = "builtin_shaders")]
-        if fancy {
-            let Some(lights) = lights else { continue };
-            for &light_entity in &lights.lights {
-                let Ok((light_view, kind)) = light_views.get(light_entity) else {
-                    continue;
-                };
-                if !matches!(kind, LightEntity::Directional { .. }) {
-                    continue;
-                }
-                let Some(phase) = shadow_phases.get_mut(&light_view.retained_view_entity) else {
-                    continue;
-                };
-                let Some(&light_key) = light_key_cache.get(&light_view.retained_view_entity) else {
-                    continue;
-                };
-                for pool in 0..pools.pools.len() as u32 {
-                    for stream in [STREAM_SOLID, STREAM_CUTOUT] {
-                        let pipeline = pipelines.specialize(
-                            &pipeline_cache,
-                            &terrain_pipeline,
-                            TerrainPipelineKey {
-                                view: light_key,
-                                stream,
-                                direct,
-                                shadow: true,
-                                fancy,
-                                specular: false,
-                            },
-                        );
-                        phase.add(
-                            ShadowBatchSetKey {
-                                pipeline,
-                                draw_function: shadow_draw,
-                                material_bind_group_index: None,
-                                vertex_slab: SlabId::default(),
-                                index_slab: None,
-                            },
-                            ShadowBinKey {
-                                asset_id: item_asset_id(pool, stream),
-                            },
-                            item_entity(pool, stream),
-                            InputUniformIndex::default(),
-                            BinnedRenderPhaseType::NonMesh,
-                            change_tick,
-                        );
-                    }
-                }
-            }
-        }
-        #[cfg(not(feature = "builtin_shaders"))]
         let _ = lights;
     }
 }
@@ -898,14 +715,6 @@ pub fn build(app: &mut App) {
         ),
     );
 
-    #[cfg(feature = "builtin_shaders")]
-    render_app
-        .add_render_command::<Shadow, DrawTerrainShadow>()
-        .add_systems(
-            RenderStartup,
-            init_terrain_pipeline.after(bevy::pbr::init_prepass_pipeline),
-        );
-    #[cfg(not(feature = "builtin_shaders"))]
     render_app.add_systems(RenderStartup, init_terrain_pipeline);
 }
 

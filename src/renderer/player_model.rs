@@ -1080,31 +1080,6 @@ impl Plugin for PlayerModelPlugin {
         #[cfg(feature = "skins")]
         app.init_resource::<super::skin::SkinTextures>()
             .add_systems(Update, super::skin::upload_skins);
-
-        #[cfg(feature = "builtin_shaders")]
-        app.add_systems(Update, sync_player_shadows);
-    }
-}
-
-#[cfg(feature = "builtin_shaders")]
-#[allow(clippy::type_complexity)]
-fn sync_player_shadows(
-    mut commands: Commands,
-    gui: Res<crate::gui::GuiState>,
-    nodes: Query<
-        (Entity, Has<bevy::light::NotShadowCaster>),
-        Or<(With<RigPart>, With<RigArmor>, With<HeldItemNode>)>,
-    >,
-) {
-    let cast = gui.options.player_shadows;
-    for (entity, blocked) in &nodes {
-        if cast && blocked {
-            commands
-                .entity(entity)
-                .remove::<bevy::light::NotShadowCaster>();
-        } else if !cast && !blocked {
-            commands.entity(entity).insert(bevy::light::NotShadowCaster);
-        }
     }
 }
 

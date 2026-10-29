@@ -153,8 +153,6 @@ pub(super) fn draw_particles(
                     NoFrustumCulling,
                 ))
                 .id();
-            #[cfg(feature = "builtin_shaders")]
-            commands.entity(entity).insert(bevy::light::NotShadowCaster);
             batches.pool.push((entity, mesh));
         } else if let Ok((mut transform, mut mesh_material, mut visibility)) =
             drawn.get_mut(batches.pool[slot].0)

@@ -12,7 +12,7 @@ tools/build_web.sh             # browser
 tools/build_android.sh         # Android APK
 ```
 
-Optional features are listed under [Feature system](#feature-system). If your change touches code behind a feature, build with that feature on (for example `--features builtin_shaders`), since code behind a feature that is off is not compiled at all.
+Optional features are listed under [Feature system](#feature-system). If your change touches code behind a feature, build with that feature on (for example `--features click_gui`), since code behind a feature that is off is not compiled at all.
 
 ## Pull requests
 
@@ -27,7 +27,7 @@ Optional features are listed under [Feature system](#feature-system). If your ch
 Parts of the client are Cargo features. These will be cleaned up in the future as they become more solid.
 
 ```sh
-cargo build --release --features builtin_shaders,click_gui
+cargo build --release --features click_gui
 tools/build_web.sh --features webgpu
 ```
 
@@ -38,7 +38,6 @@ tools/build_web.sh --features webgpu
 | `full_font` | on | Draws every Unicode character instead of a missing-glyph box. |
 | `skins` | on | Player skins and capes. Without it, everyone gets one of the built-in default skins. |
 | `online_mode` | on | Microsoft account sign-in, for servers that require it. |
-| `builtin_shaders` | off | Built-in shaders: sun shadows, reflective water, waving foliage, height fog and bloom. |
 | `shader_support` | on | Loads Iris/OptiFine-style shader packs from a `shaders/` folder. |
 | `audio` | on | Sound. Desktop only (does nothing on the web or Android); downloads about 332 MB of sounds on first run, which can be skipped. |
 | `voice` | on | Simple Voice Chat on servers that run it: voices heard at the players speaking, and the microphone by push-to-talk (Caps Lock) or voice activation. Desktop only; settings under Options > Voice Chat. |
