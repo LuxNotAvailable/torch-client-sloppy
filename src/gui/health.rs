@@ -386,8 +386,10 @@ pub fn draw(
     if survival {
         draw_armor(p, snap.health_display.armor, rows, left, base);
         draw_hearts(p, snap, rows, blink, left, base, rng);
+        crate::gui::appleskin::draw_health_preview(p, snap, rows, left, base);
         if hearts == 0 {
             draw_food(p, snap, right, base, tick, rng);
+            crate::gui::appleskin::draw_food_overlay(p, snap, right, base);
         }
     }
     if let Some((health, _)) = vehicle

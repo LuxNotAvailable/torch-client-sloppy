@@ -1,3 +1,4 @@
+pub mod dispatch;
 pub mod icons;
 pub(crate) mod json;
 pub mod mesh;

@@ -404,6 +404,64 @@ mod tests {
     }
 
     #[test]
+    fn preview_appleskin() {
+        let atlas = build_gui_atlas(&crate::assets_root());
+        let (vw, vh) = (427.0_f32, 240.0_f32);
+        let shared = shared_with(demo_menu(), Gamemode::Survival);
+        {
+            let mut s = shared.lock().unwrap();
+            s.session.hotbar_selected = 3;
+            s.session.food = 17;
+            s.session.saturation = 3.0;
+        }
+        let mut state = GuiState::default();
+        let mut p = Painter::new(&atlas, 0);
+        screens::draw(
+            &mut p,
+            &mut state,
+            &input(vw, vh, None),
+            &shared,
+            #[cfg(feature = "skins")]
+            &mut Default::default(),
+        );
+        save(
+            &rasterize_scaled(&p, vw as u32, vh as u32, SCALE, [70, 110, 170, 255]),
+            "gui_appleskin_hud.png",
+        );
+        // The bars alone, drawn straight from a snapshot.
+        let mut hotbar = vec![SlotStack::default(); 10];
+        hotbar[0] = stack("cooked_beef", 4);
+        let snap = crate::gui::Snapshot {
+            hotbar: Arc::from(hotbar),
+            selected: 0,
+            gamemode: Gamemode::Survival,
+            health: 13.0,
+            food: 17,
+            saturation: 3.0,
+            health_display: crate::session::HealthDisplay { max_health: 20.0, ..Default::default() },
+            ..Default::default()
+        };
+        let mut p = Painter::new(&atlas, 0);
+        let rows = crate::gui::health::Rows::new(&snap, 13, 0);
+        let mut rng = crate::util::javarandom::JavaRandom::new(1);
+        crate::gui::health::draw(&mut p, &snap, &rows, false, 1, 10.0, 200.0, 30.0, true, &mut rng);
+        save(&rasterize_scaled(&p, 210, 45, 4, [70, 110, 170, 255]), "gui_appleskin_bars.png");
+
+        let mut p = Painter::new(&atlas, 0);
+        let beef = crate::session::SlotStack { item: "cooked_beef", count: 12, ..Default::default() };
+        crate::gui::tooltip::draw(&mut p, &beef, 150.0, 100.0, vw, vh, false);
+        save(
+            &rasterize_scaled(&p, vw as u32, vh as u32, SCALE, [70, 110, 170, 255]),
+            "gui_appleskin_tooltip.png",
+        );
+    }
+
+    #[test]
+    #[ignore = "writes preview images"]
+    fn preview_appleskin_test() {
+        preview_appleskin();
+    }
+
     fn preview_screens() {
         let atlas = build_gui_atlas(&crate::assets_root());
         let (vw, vh) = (427.0_f32, 240.0_f32);

@@ -453,14 +453,38 @@ pub fn draw(
             });
         }
         if let Some(c) = cache.as_ref() {
-            draw_lines(p, &c.lines, mx, my, vw, vh);
+            match crate::gui::appleskin::tooltip_food(stack.item) {
+                // AppleSkin's row: a blank line wide enough for the icons,
+                // with the icons drawn over it.
+                Some(food) => {
+                    let mut lines = c.lines.clone();
+                    let width = crate::gui::appleskin::tooltip_row_width(food);
+                    let space = p.atlas.font.width(&[Span { text: " ".into(), style: Default::default() }]).max(1.0);
+                    let spaces = " ".repeat((width / space).ceil() as usize);
+                    lines.push(vec![Span { text: spaces, style: Default::default() }]);
+                    if let Some((x, y)) = draw_lines(p, &lines, mx, my, vw, vh) {
+                        crate::gui::appleskin::draw_tooltip_row(p, food, x, y - 1.0);
+                    }
+                }
+                None => {
+                    draw_lines(p, &c.lines, mx, my, vw, vh);
+                }
+            }
         }
     });
 }
 
-pub(crate) fn draw_lines(p: &mut Painter, lines: &[Vec<Span>], mx: f32, my: f32, vw: f32, vh: f32) {
+/// Draws a tooltip; returns where its last line sits (left, top).
+pub(crate) fn draw_lines(
+    p: &mut Painter,
+    lines: &[Vec<Span>],
+    mx: f32,
+    my: f32,
+    vw: f32,
+    vh: f32,
+) -> Option<(f32, f32)> {
     if lines.is_empty() {
-        return;
+        return None;
     }
 
     let w = lines
@@ -476,10 +500,13 @@ pub(crate) fn draw_lines(p: &mut Painter, lines: &[Vec<Span>], mx: f32, my: f32,
     p.sprite("tooltip/frame", bx, by, bw, bh);
 
     let mut row_y = y;
+    let mut last = (x, y);
     for (i, line) in lines.iter().enumerate() {
         p.text(line, x, row_y, true);
+        last = (x, row_y);
         row_y += ROW_HEIGHT + if i == 0 { TITLE_GAP } else { 0.0 };
     }
+    Some(last)
 }
 
 #[cfg(test)]

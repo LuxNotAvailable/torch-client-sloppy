@@ -111,6 +111,12 @@ impl ItemMeshes {
 
     pub fn build(&self, id: &str, ctx: &str, using: bool) -> Option<ItemMesh> {
         let assets = self.assets;
+        // `item@path`: the draw-time choices, as the icon took them. A model
+        // that also turns on where it is drawn takes its own branches there.
+        let (id, path) = match super::dispatch::parse_path_key(id) {
+            Some((item, path)) => (item, Some(path)),
+            None => (id, None),
+        };
         let (id, banner_layers) = match crate::blockentities::banner::parse_model_key(id) {
             Some((item, layers)) => (item, layers),
             None => (id, Vec::new()),
@@ -124,7 +130,26 @@ impl ItemMeshes {
             .get("model")
             .cloned()?;
         let mut parts: Vec<Part> = Vec::new();
-        collect_parts(assets, &root, ctx, using, Mat4::IDENTITY, &mut parts, 0);
+        match path.filter(|_| !super::icons::depends_on_display_context(&root, 0)) {
+            Some(path) => {
+                let mut k = 0;
+                super::icons::collect_parts_with(
+                    assets,
+                    &root,
+                    ctx,
+                    using,
+                    Mat4::IDENTITY,
+                    &mut parts,
+                    0,
+                    &mut |_| {
+                        let choice = path.get(k).copied().unwrap_or(0) as usize;
+                        k += 1;
+                        Some(choice)
+                    },
+                );
+            }
+            None => collect_parts(assets, &root, ctx, using, Mat4::IDENTITY, &mut parts, 0),
+        }
         if let Some(tint) = tint_override {
             for part in &mut parts {
                 if let Some(first) = part.tints.first_mut() {

@@ -158,7 +158,86 @@ pub(crate) fn slot_stack(
         banner_layers: banner_layers(data, registries),
         book: book(data).map(Box::new),
         glint: has_glint(data),
+        model_data: model_data(data, registries).map(Box::new),
     }
+}
+
+/// What the item model reads from the stack's components; `None` when it
+/// reads nothing.
+fn model_data(
+    data: &azalea_inventory::ItemStackData,
+    registries: Option<&azalea_core::registry_holder::RegistryHolder>,
+) -> Option<crate::items::dispatch::ModelData> {
+    use azalea_inventory::components as comp;
+    let mut out = crate::items::dispatch::ModelData::default();
+    if let Some(cmd) = data.get_component::<comp::CustomModelData>() {
+        out.cmd_floats = cmd.floats.clone();
+        out.cmd_flags = cmd.flags.clone();
+        out.cmd_strings = cmd.strings.clone();
+    }
+    if let (Some(trim), Some(registries)) = (data.get_component::<comp::Trim>(), registries) {
+        use azalea_core::data_registry::DataRegistryWithKey;
+        out.trim_material = trim
+            .material
+            .key_owned(registries)
+            .map(|k| azalea_registry::DataRegistryKey::into_ident(k).to_string());
+    }
+    if let Some(charged) = data.get_component::<comp::ChargedProjectiles>() {
+        out.charge = charged.items.first().map(|stack| match stack.kind() {
+            azalea_registry::builtin::ItemKind::FireworkRocket => "rocket",
+            _ => "arrow",
+        });
+    }
+    if let Some(bundle) = data.get_component::<comp::BundleContents>() {
+        // `BundleContents.weight`: each item takes 1/64 of the bundle, or
+        // 1/16 when it stacks to 16, or the whole of it when it can't stack.
+        let weight: f32 = bundle
+            .items
+            .iter()
+            .map(|stack| {
+                let max = stack
+                    .as_present()
+                    .and_then(|d| d.get_component::<comp::MaxStackSize>().map(|m| m.count))
+                    .unwrap_or(64)
+                    .max(1);
+                stack.count() as f32 / max as f32
+            })
+            .sum();
+        out.bundle_fullness = weight.clamp(0.0, 1.0);
+    }
+    if let Some(tracker) = data.get_component::<comp::LodestoneTracker>()
+        && let Some(target) = &tracker.target
+    {
+        out.lodestone = Some((
+            [target.pos.x, target.pos.y, target.pos.z],
+            target.dimension.to_string(),
+        ));
+    }
+    if let Some(model) = data.get_component::<comp::ItemModel>() {
+        let id = model.resource_location.to_string();
+        if id.trim_start_matches("minecraft:") != data.kind.to_str().trim_start_matches("minecraft:") {
+            out.item_model = Some(id);
+        }
+    }
+    out.quick_charge = data
+        .get_component::<comp::Enchantments>()
+        .and_then(|e| {
+            registries.and_then(|r| {
+                use azalea_core::data_registry::DataRegistryWithKey;
+                e.levels.iter().find_map(|(e, level)| {
+                    let key = e.key_owned(r)?;
+                    (azalea_registry::DataRegistryKey::into_ident(key).path() == "quick_charge")
+                        .then_some(*level as u8)
+                })
+            })
+        })
+        .unwrap_or(0);
+    out.components = data
+        .component_patch
+        .iter()
+        .map(|(kind, _)| kind.to_str().trim_start_matches("minecraft:").to_owned())
+        .collect();
+    (out != crate::items::dispatch::ModelData::default()).then_some(out)
 }
 
 pub(crate) fn slot_stack_nbt(item: &simdnbt::owned::NbtCompound) -> Option<SlotStack> {

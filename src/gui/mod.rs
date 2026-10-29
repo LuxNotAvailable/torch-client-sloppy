@@ -9,6 +9,7 @@ pub mod atlas_writes;
 pub mod banner_icons;
 pub mod block_info;
 pub mod book;
+pub mod appleskin;
 pub mod chat;
 pub mod clickevent;
 #[cfg(feature = "click_gui")]
@@ -104,6 +105,8 @@ pub enum Screen {
     ZoomSettings,
     /// Inventory sorting's settings, under Features.
     InventorySortSettings,
+    /// AppleSkin's settings, under Features.
+    AppleSkinSettings,
     /// Signed chat and toasts.
     ChatSettings,
     /// The skin's layers and the main hand (vanilla's
@@ -247,6 +250,7 @@ impl Screen {
                 | Screen::ZoomSettings
                 | Screen::Features
                 | Screen::InventorySortSettings
+                | Screen::AppleSkinSettings
                 | Screen::ChatSettings
                 | Screen::SkinCustomisation
                 | Screen::ManageStorage
@@ -412,6 +416,7 @@ pub struct GuiOptions {
     pub view_bobbing: bool,
     pub zoom: ZoomOptions,
     pub chat: ChatOptions,
+    pub appleskin: appleskin::AppleSkinOptions,
     /// The sort and transfer buttons on inventories.
     pub sort_buttons: bool,
     /// Whether sorting and storing take in the hotbar.
@@ -843,6 +848,15 @@ impl Default for GuiOptions {
             view_bobbing: value("bobView").and_then(|v| v.as_bool()).unwrap_or(true),
             zoom: ZoomOptions::read(&value),
             chat: ChatOptions::read(&value),
+            appleskin: {
+                let flag = |key: &str| value(key).and_then(|v| v.as_bool()).unwrap_or(true);
+                appleskin::AppleSkinOptions {
+                    saturation_overlay: flag("appleskinSaturationOverlay"),
+                    food_preview: flag("appleskinFoodPreview"),
+                    health_preview: flag("appleskinHealthPreview"),
+                    tooltip: flag("appleskinTooltip"),
+                }
+            },
             sort_buttons: value("sortButtons").and_then(|v| v.as_bool()).unwrap_or(true),
             sort_hotbar: value("sortHotbar").and_then(|v| v.as_bool()).unwrap_or(false),
             auto_jump: value("autoJump")
@@ -1028,6 +1042,11 @@ pub fn save_options(options: &GuiOptions) {
     {
         let map = json.as_object_mut().expect("json! object literal");
         let chat = &options.chat;
+        let skin = &options.appleskin;
+        map.insert("appleskinSaturationOverlay".to_owned(), serde_json::json!(skin.saturation_overlay));
+        map.insert("appleskinFoodPreview".to_owned(), serde_json::json!(skin.food_preview));
+        map.insert("appleskinHealthPreview".to_owned(), serde_json::json!(skin.health_preview));
+        map.insert("appleskinTooltip".to_owned(), serde_json::json!(skin.tooltip));
         map.insert("chatVisibility".to_owned(), serde_json::json!(chat.shown.id()));
         map.insert("chatColors".to_owned(), serde_json::json!(chat.colors));
         map.insert("chatLinks".to_owned(), serde_json::json!(chat.links));

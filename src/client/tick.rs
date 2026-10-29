@@ -1547,6 +1547,11 @@ fn tick_local_anim(
                     map_id: st.map_id,
                     layers: st.banner_layers.clone(),
                     glint: st.glint,
+                    variant: {
+                        let key = st.model_key();
+                        (key != st.item && key.contains('@') || st.model_data.as_ref().is_some_and(|d| d.item_model.is_some()))
+                            .then(|| std::sync::Arc::from(key.as_ref()))
+                    },
                 })
                 .unwrap_or_default()
         };
@@ -1681,6 +1686,12 @@ pub(crate) fn held_item(stack: &ItemStack) -> renderer::HeldItem {
         map_id: data.get_component::<comp::MapId>().map(|m| m.id),
         layers: None,
         glint: crate::play::inventory_bridge::has_glint(data),
+        // Custom model data, trims, a loaded crossbow: the stack's variant.
+        variant: {
+            let slot = crate::play::inventory_bridge::slot_stack(stack, None, false);
+            let key = slot.model_key();
+            key.contains('@').then(|| std::sync::Arc::from(key.as_ref()))
+        },
     }
 }
 

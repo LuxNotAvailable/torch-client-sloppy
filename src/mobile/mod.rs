@@ -380,7 +380,10 @@ fn close_target(gui: &mut GuiState) -> Screen {
     match gui.screen {
         Screen::Options => gui.options_parent,
         Screen::MouseSettings => Screen::Controls,
-        Screen::ZoomSettings | Screen::BlockInfoSettings | Screen::InventorySortSettings => {
+        Screen::ZoomSettings
+        | Screen::BlockInfoSettings
+        | Screen::InventorySortSettings
+        | Screen::AppleSkinSettings => {
             Screen::Features
         }
         Screen::VideoSettings

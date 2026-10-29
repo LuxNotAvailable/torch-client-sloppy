@@ -273,6 +273,7 @@ pub fn draw(
         let placed = !focused && hud_visible && elements.shown(ElementId::Chat);
         let visible = hud_visible && (focused || placed);
         chat::apply_options(&state.options.chat);
+        crate::gui::appleskin::apply_options(&state.options.appleskin);
         macro_rules! draw_chat {
             ($p:expr) => {
                 chat::draw(
@@ -404,6 +405,7 @@ pub fn draw(
         | Screen::ZoomSettings
         | Screen::Features
         | Screen::InventorySortSettings
+        | Screen::AppleSkinSettings
         | Screen::ChatSettings
         | Screen::SkinCustomisation
         | Screen::ManageStorage => {
@@ -419,6 +421,7 @@ pub fn draw(
                 Screen::ZoomSettings => options::draw_zoom(p, state, &ctx),
                 Screen::Features => options::draw_features(p, state, &ctx),
                 Screen::InventorySortSettings => options::draw_inventory_sort(p, state, &ctx),
+                Screen::AppleSkinSettings => options::draw_appleskin(p, state, &ctx),
                 Screen::ChatSettings => options::draw_chat(p, state, &ctx),
                 Screen::SkinCustomisation => options::draw_skin(p, state, &ctx),
                 Screen::ManageStorage => options::draw_manage_storage(p, state, &ctx),

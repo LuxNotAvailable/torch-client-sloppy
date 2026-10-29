@@ -377,6 +377,11 @@ fn item_kind_id(kind: &azalea_registry::builtin::ItemKind) -> &'static str {
     kind.to_str().trim_start_matches("minecraft:")
 }
 
+/// A dimension and block, for the compasses.
+fn global_pos(pos: Option<&azalea_core::position::GlobalPos>) -> Option<([i32; 3], String)> {
+    pos.map(|p| ([p.pos.x, p.pos.y, p.pos.z], p.dimension.to_string()))
+}
+
 fn slot_display_stack(
     display: &azalea_protocol::common::recipe::SlotDisplayData,
     registries: Option<&azalea_core::registry_holder::RegistryHolder>,
@@ -1199,11 +1204,13 @@ fn level_lifecycle(world: &WorldHolder, shared: &Arc<SharedMutex>, packet: &Clie
         }
         ClientboundGamePacket::Respawn(p) => {
             crate::renderer::view_bob::reset_hurt();
+            crate::items::dispatch::set_death(global_pos(p.common.last_death_location.as_ref()));
             worldsync::set_dimension(world, &p.common);
             crate::renderer::post_effects::set([]);
             worldsync::reset_level(shared);
         }
         ClientboundGamePacket::Login(p) => {
+            crate::items::dispatch::set_death(global_pos(p.common.last_death_location.as_ref()));
             worldsync::set_dimension(world, &p.common);
             crate::renderer::post_effects::set([]);
             worldsync::reset_level(shared);
@@ -1211,6 +1218,9 @@ fn level_lifecycle(world: &WorldHolder, shared: &Arc<SharedMutex>, packet: &Clie
         }
         ClientboundGamePacket::SetChunkCacheRadius(p) => {
             crate::renderer::environment::set_server_chunk_radius(p.radius);
+        }
+        ClientboundGamePacket::SetDefaultSpawnPosition(p) => {
+            crate::items::dispatch::set_spawn(global_pos(Some(&p.global_pos)));
         }
         _ => {}
     }

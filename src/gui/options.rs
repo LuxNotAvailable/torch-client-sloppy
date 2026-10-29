@@ -1291,6 +1291,7 @@ pub fn draw_features(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         (ZOOM_SETTINGS, Screen::ZoomSettings),
         ("Block Info...", Screen::BlockInfoSettings),
         (INVENTORY_SORT, Screen::InventorySortSettings),
+        ("AppleSkin...", Screen::AppleSkinSettings),
     ];
     #[cfg(feature = "hud_editor")]
     entries.push(("Edit HUD...", Screen::HudEditor));
@@ -1330,6 +1331,30 @@ pub fn draw_inventory_sort(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCt
         &mut o.sort_hotbar,
     );
     if changed {
+        crate::gui::save_options(&state.options);
+    }
+    if draw_done(p, ctx) {
+        state.nav = Some(Screen::Features);
+    }
+}
+
+/// AppleSkin's additions, each on or off.
+pub fn draw_appleskin(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
+    draw_title(p, ctx, "AppleSkin");
+    let left = (ctx.vw / 2.0 - GRID_LEFT_OFFSET).floor();
+    let top = LAYOUT.content_y(ctx.vh, 3.0 * ROW_H);
+    let cell = |column: f32, row: f32| (left + column * COLUMN_STEP, top + row * ROW_H + ROW_INSET);
+    let before = state.options.appleskin;
+    let o = &mut state.options.appleskin;
+    toggle(p, ctx, cell(0.0, 0.0), "Saturation Overlay", &mut o.saturation_overlay);
+    toggle(p, ctx, cell(1.0, 0.0), "Held Food Preview", &mut o.food_preview);
+    toggle(p, ctx, cell(0.0, 1.0), "Health Preview", &mut o.health_preview);
+    toggle(p, ctx, cell(1.0, 1.0), "Food Tooltips", &mut o.tooltip);
+    let (x, y) = cell(0.0, 2.0);
+    if Button::new(x, y, BIG_W, WIDGET_HEIGHT, "Reset AppleSkin Settings").draw(p, ctx) {
+        *o = crate::gui::appleskin::AppleSkinOptions::default();
+    }
+    if state.options.appleskin != before {
         crate::gui::save_options(&state.options);
     }
     if draw_done(p, ctx) {

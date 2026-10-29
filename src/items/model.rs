@@ -357,9 +357,43 @@ impl Assets {
         loaded
     }
 
+    /// The items atlas's `paletted_permutations` source: an armour trim's
+    /// grey sheet recoloured through a material's palette, as
+    /// `trims/items/chestplate_trim_quartz`.
+    fn trim_permutation(&self, path: &str) -> Option<image::RgbaImage> {
+        let rest = path.strip_prefix("trims/items/")?;
+        let (base, material) = ["helmet_trim", "chestplate_trim", "leggings_trim", "boots_trim"]
+            .iter()
+            .find_map(|base| Some((*base, rest.strip_prefix(base)?.strip_prefix('_')?)))?;
+        let open = |relative: String| {
+            crate::platform::assets::open_image(&self.root.join(relative))
+                .ok()
+                .map(|img| img.to_rgba8())
+        };
+        let mut sheet = open(format!("textures/trims/items/{base}.png"))?;
+        let keys = open("textures/palettes/trim_base.png".into())?;
+        let colours = open(format!("textures/palettes/trim/{material}.png"))?;
+        let map: HashMap<[u8; 3], [u8; 3]> = keys
+            .pixels()
+            .zip(colours.pixels())
+            .map(|(k, c)| ([k[0], k[1], k[2]], [c[0], c[1], c[2]]))
+            .collect();
+        for pixel in sheet.pixels_mut() {
+            if let Some(c) = map.get(&[pixel[0], pixel[1], pixel[2]]) {
+                pixel[0] = c[0];
+                pixel[1] = c[1];
+                pixel[2] = c[2];
+            }
+        }
+        Some(sheet)
+    }
+
     fn decode_texture(&self, path: &str) -> Option<Tex> {
         let file = self.root.join(format!("textures/{}.png", path));
-        let img = crate::platform::assets::open_image(&file).ok()?.to_rgba8();
+        let img = match crate::platform::assets::open_image(&file) {
+            Ok(img) => img.to_rgba8(),
+            Err(_) => self.trim_permutation(path)?,
+        };
         let (w, mut h) = (img.width(), img.height());
         if w == 0 || h == 0 {
             return None;

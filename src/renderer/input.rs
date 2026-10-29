@@ -1173,7 +1173,8 @@ pub(super) fn toggle_screen(
                     Screen::MouseSettings => Screen::Controls,
                     Screen::ZoomSettings
                     | Screen::BlockInfoSettings
-                    | Screen::InventorySortSettings => Screen::Features,
+                    | Screen::InventorySortSettings
+                    | Screen::AppleSkinSettings => Screen::Features,
                     #[cfg(feature = "shader_support")]
                     Screen::ShaderPacks => Screen::VideoSettings,
                     #[cfg(feature = "shader_support")]

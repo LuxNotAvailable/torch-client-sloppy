@@ -531,6 +531,16 @@ fn can_consume(bot: &Client) -> bool {
     bot.hunger().is_ok_and(|hunger| hunger.food < 20)
 }
 
+/// The item in use and how many ticks it has been used, for item models.
+pub(crate) fn using_item() -> Option<(String, i32)> {
+    let use_item = USE_ITEM.lock().unwrap();
+    if !use_item.started {
+        return None;
+    }
+    let item = use_item.item?;
+    Some((item.to_str().trim_start_matches("minecraft:").to_owned(), use_item.held))
+}
+
 pub(crate) fn is_using_item() -> bool {
     USE_ITEM.lock().unwrap().started
 }

@@ -138,6 +138,7 @@ impl Plugin for TethersPlugin {
                 setup.run_if(not(resource_exists::<Layers>)),
                 draw.after(super::frame_view::FrameViewSystems)
                     .run_if(resource_exists::<Layers>),
+                update_item_context.after(super::frame_view::FrameViewSystems),
             )
                 .run_if(resource_exists::<super::systems::AssetsReady>),
         );
@@ -161,6 +162,26 @@ fn tiled(path: &str, images: &mut Assets<Image>) -> Option<Handle<Image>> {
 /// alpha: rain, snow and shadows.
 #[derive(Component)]
 pub struct WeatherLayer;
+
+/// The holder and world item models read: the local player, now.
+fn update_item_context(view: Res<FrameView>) {
+    let dimension = crate::renderer::dimension::current().registry_id().to_owned();
+    let dimension = if dimension.contains(':') { dimension } else { format!("minecraft:{dimension}") };
+    let local = crate::client::tracking::local_entity_id();
+    crate::items::dispatch::set_context(crate::items::dispatch::WorldContext {
+        in_world: view.in_world,
+        game_time: view.game_time as i64,
+        day_ticks: view.day_ticks,
+        pos: view.player_lerp.map(f64::from),
+        yaw: view.camera_yaw,
+        dimension,
+        spawn: crate::items::dispatch::spawn(),
+        death: crate::items::dispatch::death(),
+        using: crate::play::interaction::using_item(),
+        left_handed: view.main_hand_left,
+        casting: casting(&view, local),
+    });
+}
 
 fn setup(
     mut commands: Commands,

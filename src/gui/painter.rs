@@ -705,7 +705,11 @@ impl<'a> Painter<'a> {
 
     pub fn item_icon(&mut self, id: &str, x: f32, y: f32) {
         let target_px = ITEM_SIZE * self.scale;
-        let Some(r) = self.atlas.item_for_size(id, target_px) else {
+        let found = self.atlas.item_for_size(id, target_px).or_else(|| {
+            let (item, _) = id.split_once('@')?;
+            self.atlas.item_for_size(item, target_px)
+        });
+        let Some(r) = found else {
             if let Some((item, color)) = crate::items::potions::parse_tint_key(id) {
                 self.potion_layers(item, color, x, y);
                 return;

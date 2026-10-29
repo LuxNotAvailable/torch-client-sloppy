@@ -232,10 +232,36 @@ pub(super) fn collect_parts(
     out: &mut Vec<Part>,
     depth: u32,
 ) {
+    collect_parts_with(assets, node, ctx, using, parent, out, depth, &mut |_| None);
+}
+
+/// A choice for each draw-time node (`dispatch::is_runtime`), in walk
+/// order; `None` keeps the baked default.
+pub(super) type Chooser<'a> = dyn FnMut(&Json) -> Option<usize> + 'a;
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn collect_parts_with(
+    assets: &Assets,
+    node: &Json,
+    ctx: &str,
+    using: bool,
+    parent: Mat4,
+    out: &mut Vec<Part>,
+    depth: u32,
+    choose: &mut Chooser,
+) {
     if depth > 8 || out.len() > 8 {
         return;
     }
     let local = parent * parse_transformation(node);
+    if super::dispatch::is_runtime(node)
+        && let Some(choice) = choose(node)
+    {
+        if let Some(branch) = super::dispatch::branch(node, choice) {
+            collect_parts_with(assets, branch, ctx, using, local, out, depth + 1, choose);
+        }
+        return;
+    }
     match Dispatch::of(node) {
         Dispatch::Model => {
             let Some(model) = node.get("model").and_then(Json::as_str) else {
@@ -330,7 +356,7 @@ pub(super) fn collect_parts(
         }
         Dispatch::Composite => {
             for child in node.get("models").map(Json::arr).unwrap_or_default() {
-                collect_parts(assets, child, ctx, using, local, out, depth + 1);
+                collect_parts_with(assets, child, ctx, using, local, out, depth + 1, choose);
             }
         }
         Dispatch::Select => {
@@ -352,7 +378,7 @@ pub(super) fn collect_parts(
                 })
             });
             if let Some(branch) = branch {
-                collect_parts(assets, branch, ctx, using, local, out, depth + 1);
+                collect_parts_with(assets, branch, ctx, using, local, out, depth + 1, choose);
             }
         }
         Dispatch::Condition => {
@@ -362,7 +388,7 @@ pub(super) fn collect_parts(
                 node.get("on_false").or_else(|| node.get("on_true"))
             };
             if let Some(branch) = branch {
-                collect_parts(assets, branch, ctx, using, local, out, depth + 1);
+                collect_parts_with(assets, branch, ctx, using, local, out, depth + 1, choose);
             }
         }
         Dispatch::RangeDispatch => {
@@ -372,7 +398,7 @@ pub(super) fn collect_parts(
                     .and_then(|e| e.get("model"))
             });
             if let Some(branch) = branch {
-                collect_parts(assets, branch, ctx, using, local, out, depth + 1);
+                collect_parts_with(assets, branch, ctx, using, local, out, depth + 1, choose);
             }
         }
         Dispatch::Bundle | Dispatch::Unknown => {}
@@ -831,6 +857,75 @@ fn bake_one(
     id: &str,
     block_gui: Transform,
 ) -> (Vec<(u32, RgbaImage)>, Dispatch, Source) {
+    bake_path(assets, id, block_gui, None)
+}
+
+/// Every path through `root`'s draw-time choices, up to `limit`: an
+/// odometer over the choices, each run walking the tree as drawing will.
+pub(super) fn enumerate_paths(assets: &Assets, root: &Json, limit: usize) -> Vec<Vec<u16>> {
+    let mut out = Vec::new();
+    let mut path: Vec<u16> = Vec::new();
+    loop {
+        let mut taken: Vec<u16> = Vec::new();
+        let mut arities: Vec<usize> = Vec::new();
+        let mut parts = Vec::new();
+        collect_parts_with(assets, root, "gui", false, Mat4::IDENTITY, &mut parts, 0, &mut |node| {
+            let choice = path.get(taken.len()).copied().unwrap_or(0);
+            taken.push(choice);
+            arities.push(super::dispatch::arity(node));
+            Some(choice as usize)
+        });
+        if taken.is_empty() {
+            return out;
+        }
+        out.push(taken.clone());
+        if out.len() >= limit {
+            return out;
+        }
+        let mut i = taken.len();
+        loop {
+            if i == 0 {
+                return out;
+            }
+            i -= 1;
+            if (taken[i] as usize) + 1 < arities[i] {
+                path = taken[..i].to_vec();
+                path.push(taken[i] + 1);
+                break;
+            }
+        }
+    }
+}
+
+/// The path this stack takes through `id`'s model now, if its model has
+/// draw-time choices.
+pub fn runtime_path(
+    id: &str,
+    stack: &super::dispatch::StackView,
+    ctx: &super::dispatch::WorldContext,
+) -> Option<Vec<u16>> {
+    let assets = super::model::shared();
+    let root = assets.json(&format!("items/{}.json", id))?.get("model").cloned()?;
+    let mut taken: Vec<u16> = Vec::new();
+    let mut parts = Vec::new();
+    collect_parts_with(assets, &root, "gui", false, Mat4::IDENTITY, &mut parts, 0, &mut |node| {
+        let choice = super::dispatch::decide(node, stack, ctx);
+        taken.push(choice as u16);
+        Some(choice)
+    });
+    (!taken.is_empty()).then_some(taken)
+}
+
+/// Most variants baked for one item: a clock's 64 faces in each of its
+/// dimensions' branches fit.
+const MAX_VARIANTS: usize = 256;
+
+fn bake_path(
+    assets: &Assets,
+    id: &str,
+    block_gui: Transform,
+    path: Option<&[u16]>,
+) -> (Vec<(u32, RgbaImage)>, Dispatch, Source) {
     let root = assets
         .json(&format!("items/{}.json", id))
         .and_then(|doc| doc.get("model").cloned().map(Arc::new));
@@ -841,7 +936,17 @@ fn bake_one(
 
     let mut parts = Vec::new();
     if let Some(node) = &root {
-        collect_parts(assets, node, "gui", false, Mat4::IDENTITY, &mut parts, 0);
+        match path {
+            Some(path) => {
+                let mut k = 0;
+                collect_parts_with(assets, node, "gui", false, Mat4::IDENTITY, &mut parts, 0, &mut |_| {
+                    let choice = path.get(k).copied().unwrap_or(0) as usize;
+                    k += 1;
+                    Some(choice)
+                });
+            }
+            None => collect_parts(assets, node, "gui", false, Mat4::IDENTITY, &mut parts, 0),
+        }
     }
 
     let mut quads: Vec<Quad> = Vec::new();
@@ -1031,7 +1136,23 @@ pub fn bake_item_icons(assets: &Path) -> ItemIcons {
         ));
     }
 
-    let variants = bake_potion_variants(&cache);
+    let mut variants = bake_potion_variants(&cache);
+    // Every draw-time variant of every item with draw-time choices.
+    let mut model_variants = 0usize;
+    for id in ids.clone() {
+        let Some(root) = cache.json(&format!("items/{id}.json")).and_then(|d| d.get("model").cloned()) else {
+            continue;
+        };
+        for path in enumerate_paths(&cache, &root, MAX_VARIANTS) {
+            let baked = bake_path(&cache, &id, block_gui, Some(&path));
+            if baked.2 == Source::Checker {
+                continue;
+            }
+            variants.push((super::dispatch::path_key(&id, &path), baked));
+            model_variants += 1;
+        }
+    }
+    eprintln!("item icons: {model_variants} model variants");
     let variant_count = variants.len();
     ids.reserve(variants.len());
     results.reserve(variants.len());
@@ -1218,6 +1339,47 @@ mod tests {
         assert_eq!(black.get(46, 10), plain.get(46, 10), "pole was dyed");
         assert_eq!(black.get(10, 44), plain.get(10, 44), "bar was dyed");
         assert!(black.get(20, 20)[0] < plain.get(20, 20)[0]);
+    }
+
+    #[test]
+    fn dynamic_items_bake_their_variants() {
+        let assets = Path::new(ASSETS);
+        if !assets.exists() {
+            return;
+        }
+        let icons = bake_item_icons(assets);
+        let count = |item: &str| icons.map.keys().filter(|k| k.starts_with(&format!("{item}@"))).count();
+        for (item, at_least) in [("compass", 32), ("clock", 64), ("recovery_compass", 32), ("bow", 4), ("crossbow", 5), ("elytra", 2), ("bundle", 2)] {
+            eprintln!("{item}: {} variants", count(item));
+            assert!(count(item) >= at_least, "{item} has {} variants", count(item));
+        }
+        // A strip of some variants, to look at.
+        let mut keys: Vec<&String> = icons.map.keys().filter(|k| {
+            ["compass@", "clock@", "bow@", "crossbow@", "elytra@", "iron_chestplate@", "netherite_helmet@"]
+                .iter()
+                .any(|p| k.starts_with(p))
+        }).collect();
+        keys.sort();
+        // A few of each.
+        let mut seen: HashMap<&str, usize> = HashMap::new();
+        keys.retain(|k| {
+            let n = seen.entry(k.split('@').next().unwrap_or("")).or_default();
+            *n += 1;
+            *n <= 6
+        });
+        let mut strip = RgbaImage::new(16 * keys.len() as u32, 16);
+        for (i, key) in keys.iter().enumerate() {
+            let (_, [x, y, w, h]) = icons.map[*key][0];
+            let icon = image::imageops::crop_imm(&icons.image, x, y, w, h).to_image();
+            let icon = image::imageops::resize(&icon, 16, 16, image::imageops::FilterType::Nearest);
+            image::imageops::overlay(&mut strip, &icon, i as i64 * 16, 0);
+        }
+        let out = crate::gui::preview::output_dir();
+        std::fs::create_dir_all(&out).unwrap();
+        image::imageops::resize(&strip, strip.width() * 3, 48, image::imageops::FilterType::Nearest)
+            .save(out.join("item_variants.png"))
+            .unwrap();
+        eprintln!("{:?}", keys);
     }
 
     #[test]

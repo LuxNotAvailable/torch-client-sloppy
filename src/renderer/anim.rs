@@ -151,6 +151,8 @@ pub struct HeldItem {
     pub map_id: Option<i32>,
     pub layers: Option<Box<[crate::blockentities::banner::BannerLayer]>>,
     pub glint: bool,
+    /// The item model's draw-time variant (`item@path`), when it has one.
+    pub variant: Option<std::sync::Arc<str>>,
 }
 
 impl HeldItem {
@@ -164,9 +166,10 @@ impl HeldItem {
         {
             return crate::blockentities::banner::model_key(self.id, layers);
         }
-        match self.tint {
-            Some(color) => crate::items::potions::tint_key(self.id, color),
-            None => self.id.to_string(),
+        match (self.tint, &self.variant) {
+            (Some(color), _) => crate::items::potions::tint_key(self.id, color),
+            (None, Some(variant)) => variant.to_string(),
+            (None, None) => self.id.to_string(),
         }
     }
 
@@ -174,7 +177,7 @@ impl HeldItem {
         fn layers(item: &HeldItem) -> Option<&[crate::blockentities::banner::BannerLayer]> {
             item.layers.as_deref().filter(|l| !l.is_empty())
         }
-        if self.id != other.id {
+        if self.id != other.id || self.variant != other.variant {
             return false;
         }
         match (layers(self), layers(other)) {

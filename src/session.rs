@@ -580,6 +580,9 @@ pub struct SlotStack {
     pub book: Option<Box<Book>>,
     pub banner_layers: Option<Box<[crate::blockentities::banner::BannerLayer]>>,
     pub glint: bool,
+    /// What the item model reads beyond the fields above: custom model
+    /// data, trim, charge, bundle fill, lodestone, `item_model`.
+    pub model_data: Option<Box<crate::items::dispatch::ModelData>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -619,7 +622,31 @@ impl SlotStack {
             Some(contents) if potions::is_potion_item(self.item) => {
                 Cow::Owned(potions::tint_key(self.item, contents.color()))
             }
-            _ => Cow::Borrowed(self.item),
+            _ => self.variant_key().map_or(Cow::Borrowed(self.item), Cow::Owned),
+        }
+    }
+
+    /// The model this stack draws now, `item@path`, when its model has
+    /// draw-time choices (or an `item_model` names another one).
+    fn variant_key(&self) -> Option<String> {
+        use crate::items::dispatch;
+        let data = self.model_data.as_deref();
+        let base = data
+            .and_then(|d| d.item_model.as_deref())
+            .map(crate::items::model::strip_namespace)
+            .unwrap_or(self.item);
+        let view = dispatch::StackView {
+            item: self.item,
+            count: self.count,
+            damage: self.damage,
+            max_damage: self.max_damage,
+            cooldown: self.cooldown,
+            charged: self.charged,
+            data,
+        };
+        match crate::items::icons::runtime_path(base, &view, &dispatch::context()) {
+            Some(path) => Some(dispatch::path_key(base, &path)),
+            None => (base != self.item).then(|| base.to_owned()),
         }
     }
 }
