@@ -71,7 +71,15 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         state.advancements.parent = Screen::Pause;
         state.nav = Some(Screen::Advancements);
     }
-    if Button::new(x + half + BUTTON_PADDING, gy + BUTTON_TOPS[1], half, WIDGET_HEIGHT, STATISTICS).draw(p, ctx) {
+    if Button::new(
+        x + half + BUTTON_PADDING,
+        gy + BUTTON_TOPS[1],
+        half,
+        WIDGET_HEIGHT,
+        STATISTICS,
+    )
+    .draw(p, ctx)
+    {
         state.stats = Default::default();
         crate::client::bus::request(crate::client::bus::ClientRequest::RequestStats);
         state.nav = Some(Screen::Statistics);

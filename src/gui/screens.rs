@@ -44,7 +44,11 @@ pub fn draw(
             menu_slots,
             hotbar: s.session.inventory.hotbar.clone(),
             carried: s.session.inventory.carried.clone(),
-            selected: s.session.inventory.hotbar_target.unwrap_or(s.session.inventory.hotbar_selected),
+            selected: s
+                .session
+                .inventory
+                .hotbar_target
+                .unwrap_or(s.session.inventory.hotbar_selected),
             gamemode: s.session.gamemode,
             health: s.session.vitals.health,
             food: s.session.vitals.food,
@@ -75,7 +79,9 @@ pub fn draw(
                 Default::default()
             },
             enchant_clues: match state.screen {
-                Screen::Container(ContainerKind::Enchantment) => s.session.container.enchant_clues.clone(),
+                Screen::Container(ContainerKind::Enchantment) => {
+                    s.session.container.enchant_clues.clone()
+                }
                 _ => Default::default(),
             },
             merchant: match state.screen {
@@ -539,7 +545,8 @@ pub fn draw(
                 .find(|r| r.name.iter().map(|s| s.text.as_str()).collect::<String>() == me)
                 .map_or(0, |r| r.uuid);
             let tab_list = snap.tab_list.clone();
-            if let Some(next) = crate::gui::social::draw(p, &mut state.social, &ctx, &tab_list, own) {
+            if let Some(next) = crate::gui::social::draw(p, &mut state.social, &ctx, &tab_list, own)
+            {
                 state.nav = Some(next);
             }
             None
@@ -737,7 +744,8 @@ pub fn draw(
         let mut s = shared.lock().unwrap();
         for action in &actions {
             if let InvAction::CreativeSet { slot, stack } = action
-                && let Some(dst) = std::sync::Arc::make_mut(&mut s.session.inventory.menu_slots).get_mut(*slot as usize)
+                && let Some(dst) = std::sync::Arc::make_mut(&mut s.session.inventory.menu_slots)
+                    .get_mut(*slot as usize)
             {
                 *dst = local_stack(stack);
             }
@@ -863,7 +871,13 @@ fn draw_loading(p: &mut Painter, ctx: &ScreenCtx, status: Option<&str>) {
     crate::gui::menu::background(p, ctx.vw, ctx.vh);
     let text = status.filter(|s| !s.is_empty()).unwrap_or("Connecting...");
     let w = p.atlas.font.width_str(text);
-    p.text_str(text, ((ctx.vw - w) / 2.0).floor(), (ctx.vh / 2.0 - 4.0).floor(), 0xFFFFFF, true);
+    p.text_str(
+        text,
+        ((ctx.vw - w) / 2.0).floor(),
+        (ctx.vh / 2.0 - 4.0).floor(),
+        0xFFFFFF,
+        true,
+    );
 }
 
 /// `extractPortalOverlay`: the portal's texture over the whole screen,
@@ -871,7 +885,12 @@ fn draw_loading(p: &mut Painter, ctx: &ScreenCtx, status: Option<&str>) {
 /// `ScreenEffectRenderer.renderItemActivationAnimation`: the item thrown at
 /// the camera and back, spinning, drawn as the 3D item would project with a
 /// 70 degree field of view; the spin about its upright shows as a squash.
-fn draw_item_activation(p: &mut Painter, effects: &mut crate::gui::ScreenEffects, vw: f32, vh: f32) {
+fn draw_item_activation(
+    p: &mut Painter,
+    effects: &mut crate::gui::ScreenEffects,
+    vw: f32,
+    vh: f32,
+) {
     use std::f32::consts::PI;
     let Some((t, off_x, off_y, item)) = effects.activation() else {
         return;
@@ -887,7 +906,11 @@ fn draw_item_activation(p: &mut Painter, effects: &mut crate::gui::ScreenEffects
     let x = off_x * 0.3 * aspect * drift / (half_tan * distance * aspect) * vw / 2.0;
     let y = off_y * 0.3 * drift / (half_tan * distance) * vh / 2.0;
     let size = 0.8 / view_h * vh;
-    let spin = (900.0 * pi_scale.sin().abs()).to_radians().cos().abs().max(0.05);
+    let spin = (900.0 * pi_scale.sin().abs())
+        .to_radians()
+        .cos()
+        .abs()
+        .max(0.05);
     let (w, h) = (size * spin, size);
     p.item_icon_sized(item, vw / 2.0 + x - w / 2.0, vh / 2.0 - y - h / 2.0, w, h);
 }
@@ -923,7 +946,14 @@ fn draw_portal_overlay(p: &mut Painter, vw: f32, vh: f32) {
         alpha = alpha * 0.8 + 0.2;
     }
     let a = (alpha * 255.0).round() as u32;
-    p.sprite_tinted("nether_portal_overlay", 0.0, 0.0, vw, vh, a << 24 | 0x00FF_FFFF);
+    p.sprite_tinted(
+        "nether_portal_overlay",
+        0.0,
+        0.0,
+        vw,
+        vh,
+        a << 24 | 0x00FF_FFFF,
+    );
 }
 
 /// `extractSpyglassOverlay`: the scope, growing from half the screen to

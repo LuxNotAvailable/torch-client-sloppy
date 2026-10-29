@@ -157,14 +157,16 @@ fn frame_done(now: u64) {
         Group::Span => 2,
     };
     lines.sort_by(|a, b| {
-        rank(a.1.group).cmp(&rank(b.1.group)).then_with(|| match a.1.group {
-            // Spans by cost; stages in the order the pipeline runs them, which
-            // first appearance is not when a window opens mid-frame.
-            Group::Span => b.1.avg_ms.total_cmp(&a.1.avg_ms),
-            Group::Main | Group::Render => {
-                stage_order(a.1.name).cmp(&stage_order(b.1.name)).then(a.0.cmp(&b.0))
-            }
-        })
+        rank(a.1.group)
+            .cmp(&rank(b.1.group))
+            .then_with(|| match a.1.group {
+                // Spans by cost; stages in the order the pipeline runs them, which
+                // first appearance is not when a window opens mid-frame.
+                Group::Span => b.1.avg_ms.total_cmp(&a.1.avg_ms),
+                Group::Main | Group::Render => stage_order(a.1.name)
+                    .cmp(&stage_order(b.1.name))
+                    .then(a.0.cmp(&b.0)),
+            })
     });
     let report = Report {
         frames: window.frames,
@@ -226,7 +228,11 @@ pub fn span(name: &'static str) -> Option<Span> {
 
 impl Drop for Span {
     fn drop(&mut self) {
-        record(Group::Span, self.name, self.start.elapsed().as_nanos() as u64);
+        record(
+            Group::Span,
+            self.name,
+            self.start.elapsed().as_nanos() as u64,
+        );
     }
 }
 
@@ -311,7 +317,14 @@ pub struct FrameProfilePlugin;
 impl Plugin for FrameProfilePlugin {
     fn build(&self, app: &mut App) {
         use MainProbe::*;
-        for probe in [Start, AfterFirst, AfterPreUpdate, AfterUpdate, AfterPostUpdate, AfterLast] {
+        for probe in [
+            Start,
+            AfterFirst,
+            AfterPreUpdate,
+            AfterUpdate,
+            AfterPostUpdate,
+            AfterLast,
+        ] {
             app.add_systems(probe, move || main_probe(probe));
         }
         {

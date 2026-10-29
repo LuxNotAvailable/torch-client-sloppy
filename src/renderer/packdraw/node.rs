@@ -57,7 +57,6 @@ impl ViewNode for PackFrameNode {
 }
 
 impl PackFrameNode {
-
     fn run_untimed<'w>(
         &self,
         _graph: &mut RenderGraphContext,
@@ -479,7 +478,11 @@ impl PackFrameNode {
         entity_segment(render_context, Segment::HandTranslucent);
         if let Some(center) = world.get_resource::<super::center_depth::CenterDepth>() {
             let device = render_context.render_device().clone();
-            center.record(&device, render_context.command_encoder(), &targets.depth.view);
+            center.record(
+                &device,
+                render_context.command_encoder(),
+                &targets.depth.view,
+            );
         }
         span.end(render_context.command_encoder());
         let span = recorder.time_span(render_context.command_encoder(), "shaderpack/composite");

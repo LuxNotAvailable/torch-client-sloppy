@@ -9,7 +9,8 @@ use crate::gui::painter::Painter;
 use crate::gui::widgets::{self, Button, HeaderFooter, WIDGET_HEIGHT, WIDGET_WIDTH_BIG};
 use crate::gui::{Screen, ScreenCtx};
 
-const LAYOUT: HeaderFooter = HeaderFooter::new(HeaderFooter::DEFAULT_H + 24.0, HeaderFooter::DEFAULT_H);
+const LAYOUT: HeaderFooter =
+    HeaderFooter::new(HeaderFooter::DEFAULT_H + 24.0, HeaderFooter::DEFAULT_H);
 const ROW: f32 = 24.0;
 const TABS: [&str; 2] = ["All", "Hidden"];
 
@@ -22,7 +23,11 @@ pub fn reset() {
 
 /// Whether this player's chat is hidden.
 pub fn is_hidden(uuid: u128) -> bool {
-    HIDDEN.lock().unwrap().as_ref().is_some_and(|h| h.contains(&uuid))
+    HIDDEN
+        .lock()
+        .unwrap()
+        .as_ref()
+        .is_some_and(|h| h.contains(&uuid))
 }
 
 fn set_hidden(uuid: u128, hidden: bool) {
@@ -64,12 +69,31 @@ pub fn draw(
         .filter(|r| state.tab == 0 || is_hidden(r.uuid))
         .collect();
     let content_h = rows.len() as f32 * ROW;
-    crate::gui::options::scroll_input(&mut state.scroll, &mut state.drag, ctx, left, width, list_y, list_h, content_h);
+    crate::gui::options::scroll_input(
+        &mut state.scroll,
+        &mut state.drag,
+        ctx,
+        left,
+        width,
+        list_y,
+        list_h,
+        content_h,
+    );
     let clip = p.push_clip(list_x, list_y, list_w, list_h);
     if rows.is_empty() {
-        let text = if state.tab == 0 { "No other players online" } else { "No hidden players" };
+        let text = if state.tab == 0 {
+            "No other players online"
+        } else {
+            "No hidden players"
+        };
         let w = p.atlas.font.width_str(text);
-        p.text_str(text, ((ctx.vw - w) / 2.0).floor(), list_y + 12.0, 0xA0A0A0, true);
+        p.text_str(
+            text,
+            ((ctx.vw - w) / 2.0).floor(),
+            list_y + 12.0,
+            0xA0A0A0,
+            true,
+        );
     }
     for (i, row) in rows.iter().enumerate() {
         let y = list_y - state.scroll + i as f32 * ROW;
@@ -87,6 +111,13 @@ pub fn draw(
     p.pop_clip(clip);
     crate::gui::options::draw_scrollbar(p, state.scroll, left, width, list_y, list_h, content_h);
     let x = widgets::centered_x(ctx.vw);
-    let pressed = Button::new(x, LAYOUT.footer_y(ctx.vh), WIDGET_WIDTH_BIG, WIDGET_HEIGHT, "Done").draw(p, ctx);
+    let pressed = Button::new(
+        x,
+        LAYOUT.footer_y(ctx.vh),
+        WIDGET_WIDTH_BIG,
+        WIDGET_HEIGHT,
+        "Done",
+    )
+    .draw(p, ctx);
     (pressed || ctx.input.escape).then_some(Screen::None)
 }

@@ -51,7 +51,12 @@ impl WinState {
             let mut line = raw.replace("PLAYERNAME", player);
             while let Some(at) = line.find(TOKEN) {
                 let n = 3 + random.next_int(4) as usize;
-                line = format!("{}\u{a7}f\u{a7}k{}{}", &line[..at], &"XXXXXXXX"[..n], &line[at + TOKEN.len()..]);
+                line = format!(
+                    "{}\u{a7}f\u{a7}k{}{}",
+                    &line[..at],
+                    &"XXXXXXXX"[..n],
+                    &line[at + TOKEN.len()..]
+                );
             }
             let spans = crate::text::parse_formatted(&line);
             for wrapped in font.wrap(&spans, WIDTH) {
@@ -66,10 +71,17 @@ impl WinState {
 
     /// `addCreditsFile`: sections, disciplines, titles and names.
     fn add_credits(&mut self, json: &str) {
-        let Ok(serde_json::Value::Array(sections)) = serde_json::from_str::<serde_json::Value>(json) else {
+        let Ok(serde_json::Value::Array(sections)) =
+            serde_json::from_str::<serde_json::Value>(json)
+        else {
             return;
         };
-        let plain = |text: &str, color: u32| vec![Span { text: text.to_owned(), style: Style::colored(color) }];
+        let plain = |text: &str, color: u32| {
+            vec![Span {
+                text: text.to_owned(),
+                style: Style::colored(color),
+            }]
+        };
         let heading = "============";
         for section in &sections {
             let name = section["section"].as_str().unwrap_or("");
@@ -86,7 +98,10 @@ impl WinState {
                     self.empty();
                 }
                 for title in discipline["titles"].as_array().into_iter().flatten() {
-                    self.lines.push((plain(title["title"].as_str().unwrap_or(""), 0xAAAAAA), false));
+                    self.lines.push((
+                        plain(title["title"].as_str().unwrap_or(""), 0xAAAAAA),
+                        false,
+                    ));
                     for name in title["names"].as_array().into_iter().flatten() {
                         let name = format!("           {}", name.as_str().unwrap_or(""));
                         self.lines.push((plain(&name, 0xFFFFFF), false));
@@ -117,7 +132,9 @@ pub fn draw(p: &mut Painter, state: &mut WinState, ctx: &ScreenCtx) -> Option<Sc
     let logo_h = p
         .atlas
         .sprite(crate::gui::atlas::TORCH_LOGO)
-        .map_or(44.0, |s| (256.0 * s.region.h as f32 / s.region.w.max(1) as f32).round());
+        .map_or(44.0, |s| {
+            (256.0 * s.region.h as f32 / s.region.w.max(1) as f32).round()
+        });
     p.sprite(crate::gui::atlas::TORCH_LOGO, logo_x, logo_y, 256.0, logo_h);
     let mut y = ctx.vh + 150.0 - state.scroll;
     let count = state.lines.len();
@@ -136,6 +153,7 @@ pub fn draw(p: &mut Painter, state: &mut WinState, ctx: &ScreenCtx) -> Option<Sc
         }
         y += LINE;
     }
-    let rolled_out = ctx.vh + 150.0 + count as f32 * LINE - state.scroll < ctx.vh / 2.0 - 6.0 - 200.0;
+    let rolled_out =
+        ctx.vh + 150.0 + count as f32 * LINE - state.scroll < ctx.vh / 2.0 - 6.0 - 200.0;
     (rolled_out || ctx.input.escape).then_some(Screen::None)
 }

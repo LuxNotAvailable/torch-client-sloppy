@@ -143,7 +143,12 @@ pub(crate) fn tick(bot: &Client) {
     };
     w.nausea_old = w.nausea;
     let target = if has { 1.0 } else { 0.0 };
-    let per_tick = 1.0 / if has { NAUSEA_BLEND_IN } else { NAUSEA_BLEND_OUT };
+    let per_tick = 1.0
+        / if has {
+            NAUSEA_BLEND_IN
+        } else {
+            NAUSEA_BLEND_OUT
+        };
     w.nausea += (target - w.nausea).clamp(-per_tick, per_tick);
 
     // `tickSpinningEffect`.
@@ -168,7 +173,11 @@ pub fn view_warp(sample: Sample) -> Option<bevy::math::Mat4> {
     }
     let mut skew = 5.0 / (intensity * intensity + 5.0) - intensity * 0.04;
     skew *= skew;
-    let axis = Vec3::new(0.0, std::f32::consts::FRAC_1_SQRT_2, std::f32::consts::FRAC_1_SQRT_2);
+    let axis = Vec3::new(
+        0.0,
+        std::f32::consts::FRAC_1_SQRT_2,
+        std::f32::consts::FRAC_1_SQRT_2,
+    );
     let angle = sample.angle.to_radians();
     Some(
         Mat4::from_axis_angle(axis, angle)
@@ -188,7 +197,12 @@ mod tests {
 
     #[test]
     fn a_full_portal_squashes_the_view() {
-        let m = view_warp(Sample { portal: 1.0, nausea: 0.0, angle: 0.0 }).unwrap();
+        let m = view_warp(Sample {
+            portal: 1.0,
+            nausea: 0.0,
+            angle: 0.0,
+        })
+        .unwrap();
         // skew = (5/6 - 0.04)^2; x stretches by its inverse.
         let skew = (5.0f32 / 6.0 - 0.04).powi(2);
         assert!((m.x_axis.x - 1.0 / skew).abs() < 1e-4, "{m:?}");

@@ -220,17 +220,45 @@ pub(super) fn emit_ambient(
 ) {
     use crate::blocks::ambient::Ambient as A;
     match ambient {
-        A::Torch { .. } | A::Candle { .. } | A::Fire { .. } | A::Campfire { .. } | A::Furnace { .. } | A::BrewingStand { .. } => fire_and_light(ambient, state, ctx),
-        A::WitherRose { .. } | A::EndPortal { .. } | A::NetherPortal { .. } | A::EnderChest { .. } | A::RespawnAnchor { .. } | A::EnchantingTable { .. } | A::EndRod { .. } => magic_and_portals(ambient, state, ctx),
-        A::Mycelium { .. } | A::Leaves { .. } | A::SporeBlossom { .. } | A::FireflyBush { .. } => plants(ambient, state, ctx),
-        A::WetSponge { .. } | A::Beehive { .. } | A::CryingObsidian { .. } | A::PointedDripstone { .. } | A::BubbleColumn { .. } | A::DriedGhast { .. } | A::FallingDust { .. } => water_and_drips(ambient, state, ctx),
-        A::SculkSensor { .. } | A::RedstoneWire { .. } | A::RedstoneTorch { .. } | A::RedstoneOre { .. } | A::Repeater { .. } | A::Lever { .. } => redstone_and_sculk(ambient, state, ctx),
+        A::Torch { .. }
+        | A::Candle { .. }
+        | A::Fire { .. }
+        | A::Campfire { .. }
+        | A::Furnace { .. }
+        | A::BrewingStand { .. } => fire_and_light(ambient, state, ctx),
+        A::WitherRose { .. }
+        | A::EndPortal { .. }
+        | A::NetherPortal { .. }
+        | A::EnderChest { .. }
+        | A::RespawnAnchor { .. }
+        | A::EnchantingTable { .. }
+        | A::EndRod { .. } => magic_and_portals(ambient, state, ctx),
+        A::Mycelium { .. } | A::Leaves { .. } | A::SporeBlossom { .. } | A::FireflyBush { .. } => {
+            plants(ambient, state, ctx)
+        }
+        A::WetSponge { .. }
+        | A::Beehive { .. }
+        | A::CryingObsidian { .. }
+        | A::PointedDripstone { .. }
+        | A::BubbleColumn { .. }
+        | A::DriedGhast { .. }
+        | A::FallingDust { .. } => water_and_drips(ambient, state, ctx),
+        A::SculkSensor { .. }
+        | A::RedstoneWire { .. }
+        | A::RedstoneTorch { .. }
+        | A::RedstoneOre { .. }
+        | A::Repeater { .. }
+        | A::Lever { .. } => redstone_and_sculk(ambient, state, ctx),
     }
 }
 
 /// Flames, smoke and furnaces.
 #[allow(unused_variables, unused_imports)]
-fn fire_and_light(ambient: crate::blocks::ambient::Ambient, state: azalea::block::BlockState, ctx: &mut Emitter) {
+fn fire_and_light(
+    ambient: crate::blocks::ambient::Ambient,
+    state: azalea::block::BlockState,
+    ctx: &mut Emitter,
+) {
     use crate::blocks::ambient::{Ambient, Flame, Furnace, HORIZONTAL, Leaf, WireSide};
 
     let cell = ctx.cell;
@@ -311,7 +339,11 @@ fn fire_and_light(ambient: crate::blocks::ambient::Ambient, state: azalea::block
 
 /// Portals, enchanting and the End.
 #[allow(unused_variables, unused_imports)]
-fn magic_and_portals(ambient: crate::blocks::ambient::Ambient, state: azalea::block::BlockState, ctx: &mut Emitter) {
+fn magic_and_portals(
+    ambient: crate::blocks::ambient::Ambient,
+    state: azalea::block::BlockState,
+    ctx: &mut Emitter,
+) {
     use crate::blocks::ambient::{Ambient, Flame, Furnace, HORIZONTAL, Leaf, WireSide};
 
     let cell = ctx.cell;
@@ -447,7 +479,11 @@ fn magic_and_portals(ambient: crate::blocks::ambient::Ambient, state: azalea::bl
 
 /// Leaves, spores, mycelium and fireflies.
 #[allow(unused_variables, unused_imports)]
-fn plants(ambient: crate::blocks::ambient::Ambient, state: azalea::block::BlockState, ctx: &mut Emitter) {
+fn plants(
+    ambient: crate::blocks::ambient::Ambient,
+    state: azalea::block::BlockState,
+    ctx: &mut Emitter,
+) {
     use crate::blocks::ambient::{Ambient, Flame, Furnace, HORIZONTAL, Leaf, WireSide};
 
     let cell = ctx.cell;
@@ -537,7 +573,11 @@ fn plants(ambient: crate::blocks::ambient::Ambient, state: azalea::block::BlockS
 
 /// Drips, sponges, bubbles and falling dust.
 #[allow(unused_variables, unused_imports)]
-fn water_and_drips(ambient: crate::blocks::ambient::Ambient, state: azalea::block::BlockState, ctx: &mut Emitter) {
+fn water_and_drips(
+    ambient: crate::blocks::ambient::Ambient,
+    state: azalea::block::BlockState,
+    ctx: &mut Emitter,
+) {
     use crate::blocks::ambient::{Ambient, Flame, Furnace, HORIZONTAL, Leaf, WireSide};
 
     let cell = ctx.cell;
@@ -645,7 +685,11 @@ fn water_and_drips(ambient: crate::blocks::ambient::Ambient, state: azalea::bloc
 
 /// Redstone parts and sculk.
 #[allow(unused_variables, unused_imports)]
-fn redstone_and_sculk(ambient: crate::blocks::ambient::Ambient, state: azalea::block::BlockState, ctx: &mut Emitter) {
+fn redstone_and_sculk(
+    ambient: crate::blocks::ambient::Ambient,
+    state: azalea::block::BlockState,
+    ctx: &mut Emitter,
+) {
     use crate::blocks::ambient::{Ambient, Flame, Furnace, HORIZONTAL, Leaf, WireSide};
 
     let cell = ctx.cell;
@@ -764,7 +808,6 @@ fn redstone_and_sculk(ambient: crate::blocks::ambient::Ambient, state: azalea::b
     }
 }
 
-
 pub(super) fn wire_line(
     ctx: &mut Emitter,
     color: [f32; 3],
@@ -832,7 +875,10 @@ pub(super) fn random_open_face(ctx: &mut Emitter, inset: f32) -> Option<Vec3> {
     Some(rel(cell, [x, y, z]))
 }
 
-pub(super) fn emit_fluid_ambient(fluid: &azalea::block::fluid_state::FluidState, ctx: &mut Emitter) {
+pub(super) fn emit_fluid_ambient(
+    fluid: &azalea::block::fluid_state::FluidState,
+    ctx: &mut Emitter,
+) {
     use azalea::block::fluid_state::FluidKind;
 
     let cell = ctx.cell;

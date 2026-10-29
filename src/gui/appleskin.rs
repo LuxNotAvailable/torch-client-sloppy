@@ -19,12 +19,18 @@ const GOLD: [u8; 4] = [255, 200, 50, 255];
 pub fn outline_of(icon: &image::RgbaImage) -> image::RgbaImage {
     let (w, h) = icon.dimensions();
     let solid = |x: i64, y: i64| {
-        x >= 0 && y >= 0 && x < w as i64 && y < h as i64 && icon.get_pixel(x as u32, y as u32)[3] > 0
+        x >= 0
+            && y >= 0
+            && x < w as i64
+            && y < h as i64
+            && icon.get_pixel(x as u32, y as u32)[3] > 0
     };
     image::RgbaImage::from_fn(w, h, |x, y| {
         let (x, y) = (x as i64, y as i64);
         let edge = solid(x, y)
-            && [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().any(|(dx, dy)| !solid(x + dx, y + dy));
+            && [(1, 0), (-1, 0), (0, 1), (0, -1)]
+                .iter()
+                .any(|(dx, dy)| !solid(x + dx, y + dy));
         image::Rgba(if edge { GOLD } else { [0; 4] })
     })
 }
@@ -102,7 +108,10 @@ pub fn food_values(item: &str) -> Option<(i32, f32)> {
 
 /// The food in hand: the main hand's, or else the off hand's.
 fn held_food(snap: &Snapshot) -> Option<(i32, f32)> {
-    let main = snap.hotbar.get(snap.selected as usize).and_then(|s| food_values(s.item));
+    let main = snap
+        .hotbar
+        .get(snap.selected as usize)
+        .and_then(|s| food_values(s.item));
     main.or_else(|| snap.hotbar.get(9).and_then(|s| food_values(s.item)))
 }
 
@@ -155,7 +164,6 @@ fn white(alpha: f32) -> u32 {
     ((alpha.clamp(0.0, 1.0) * 255.0) as u32) << 24 | 0x00FF_FFFF
 }
 
-
 /// Saturation as gold outlines over the hunger bar, a quarter icon at a time
 /// (each icon stands for 2 saturation), filling from the right as the bar
 /// does.
@@ -193,7 +201,11 @@ pub fn draw_food_overlay(p: &mut Painter, snap: &Snapshot, right: f32, top: f32)
             continue;
         }
         let x = right - i as f32 * STRIDE - ICON;
-        let sprite = if halves < after { "hud/food_full" } else { "hud/food_half" };
+        let sprite = if halves < after {
+            "hud/food_full"
+        } else {
+            "hud/food_half"
+        };
         p.sprite_tinted(sprite, x, top, ICON, ICON, white(alpha));
     }
     if options.saturation_overlay && after_saturation > snap.saturation {
@@ -231,7 +243,11 @@ pub fn draw_health_preview(
         }
         let x = left + (index % 10) as f32 * STRIDE;
         let y = top - (index / 10) as f32 * rows.row_height;
-        let sprite = if halves + 1 < target { "hud/heart/full" } else { "hud/heart/half" };
+        let sprite = if halves + 1 < target {
+            "hud/heart/full"
+        } else {
+            "hud/heart/half"
+        };
         p.sprite_tinted(sprite, x, y, ICON, ICON, alpha);
     }
 }
@@ -261,7 +277,17 @@ pub fn draw_tooltip_row(p: &mut Painter, food: (i32, f32), x: f32, y: f32) {
         let at = x + i as f32 * STRIDE;
         p.sprite("hud/food_empty", at, y, ICON, ICON);
         let half = i * 2 + 1 == nutrition;
-        p.sprite(if half { "hud/food_half" } else { "hud/food_full" }, at, y, ICON, ICON);
+        p.sprite(
+            if half {
+                "hud/food_half"
+            } else {
+                "hud/food_full"
+            },
+            at,
+            y,
+            ICON,
+            ICON,
+        );
     }
     let start = x + hunger as f32 * STRIDE + 4.0;
     for i in 0..sat {

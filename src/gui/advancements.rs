@@ -648,7 +648,8 @@ fn select(shared: &SharedMutex, tree: &AdvancementTree, root: Option<u32>) {
     session.progress.advancement_tab = root;
     if let Some(root) = root {
         session
-            .progress.seen_advancements
+            .progress
+            .seen_advancements
             .push(Some(tree.nodes[root as usize].id.clone()));
     }
 }

@@ -27,18 +27,30 @@ pub(super) enum Command {
         buffer: Arc<StreamBuffer>,
     },
     /// Puts a voice somewhere else, or at the listener.
-    Relocate { id: u64, place: Place },
+    Relocate {
+        id: u64,
+        place: Place,
+    },
     /// A tickable sound's new volume and pitch (`AbstractTickableSoundInstance`).
-    Tune { id: u64, volume: f32, pitch: f32 },
+    Tune {
+        id: u64,
+        volume: f32,
+        pitch: f32,
+    },
     /// Moves a positioned voice (one following an entity).
-    Move { id: u64, at: [f32; 3] },
+    Move {
+        id: u64,
+        at: [f32; 3],
+    },
     /// `SoundManager.stop(name, source)`: every voice of `event` in
     /// `category`, either left out meaning any.
     Stop {
         category: Option<SoundCategory>,
         event: Option<Arc<str>>,
     },
-    StopVoice { id: u64 },
+    StopVoice {
+        id: u64,
+    },
     /// The speaker changed: everything playing stops, and the mixer opens
     /// the new one (`SoundEngine.reload` on a `soundDevice` change).
     Reopen,
@@ -216,7 +228,13 @@ impl Iterator for Streamed {
             self.control.done.store(true, Ordering::Relaxed);
             return None;
         }
-        let sample = match self.buffer.samples.lock().ok().and_then(|mut q| q.pop_front()) {
+        let sample = match self
+            .buffer
+            .samples
+            .lock()
+            .ok()
+            .and_then(|mut q| q.pop_front())
+        {
             Some(sample) => sample,
             None if self.buffer.closed.load(Ordering::Relaxed) => {
                 self.control.done.store(true, Ordering::Relaxed);
@@ -456,7 +474,8 @@ impl Playing {
             at[1] - listener.position[1],
             at[2] - listener.position[2],
         ];
-        let distance = (offset[0] * offset[0] + offset[1] * offset[1] + offset[2] * offset[2]).sqrt();
+        let distance =
+            (offset[0] * offset[0] + offset[1] * offset[1] + offset[2] * offset[2]).sqrt();
         let falloff = (1.0 - distance / range.max(1e-3)).clamp(0.0, 1.0);
         let side = if distance > 1e-4 {
             let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -467,7 +486,10 @@ impl Playing {
         let angle = (side + 1.0) * std::f32::consts::FRAC_PI_4;
         // Centred, each ear hears what an unpositioned sound gives both.
         let level = gain * falloff * std::f32::consts::SQRT_2;
-        [(level * angle.cos()).min(1.0), (level * angle.sin()).min(1.0)]
+        [
+            (level * angle.cos()).min(1.0),
+            (level * angle.sin()).min(1.0),
+        ]
     }
 }
 
@@ -768,8 +790,22 @@ mod tests {
 
     #[test]
     fn a_positioned_sound_falls_off_linearly_to_its_range() {
-        let near = voice(Place::World { at: [0.0, 0.0, -4.0], range: 16.0 }, true).gains(&LISTENER);
-        let edge = voice(Place::World { at: [0.0, 0.0, -16.0], range: 16.0 }, true).gains(&LISTENER);
+        let near = voice(
+            Place::World {
+                at: [0.0, 0.0, -4.0],
+                range: 16.0,
+            },
+            true,
+        )
+        .gains(&LISTENER);
+        let edge = voice(
+            Place::World {
+                at: [0.0, 0.0, -16.0],
+                range: 16.0,
+            },
+            true,
+        )
+        .gains(&LISTENER);
         // Ahead: centred, so each ear gets the same; 1 - 4/16 of full power.
         assert!((near[0] - near[1]).abs() < 1e-5);
         assert!((near[0] - 0.75).abs() < 1e-5, "{near:?}");
@@ -778,14 +814,29 @@ mod tests {
 
     #[test]
     fn a_sound_to_the_right_is_heard_on_the_right() {
-        let g = voice(Place::World { at: [4.0, 0.0, 0.0], range: 16.0 }, true).gains(&LISTENER);
+        let g = voice(
+            Place::World {
+                at: [4.0, 0.0, 0.0],
+                range: 16.0,
+            },
+            true,
+        )
+        .gains(&LISTENER);
         assert!(g[1] > 0.7 && g[0] < 1e-5, "{g:?}");
     }
 
     #[test]
     fn stereo_files_and_the_interface_are_not_positioned() {
-        let _serial = super::super::VOLUME_TESTS.lock().unwrap_or_else(|e| e.into_inner());
-        let stereo = voice(Place::World { at: [40.0, 0.0, 0.0], range: 16.0 }, false);
+        let _serial = super::super::VOLUME_TESTS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let stereo = voice(
+            Place::World {
+                at: [40.0, 0.0, 0.0],
+                range: 16.0,
+            },
+            false,
+        );
         let ui = voice(Place::Listener, true);
         let full = super::super::category_gain(SoundCategory::Blocks);
         assert_eq!(stereo.gains(&LISTENER), [full; 2]);

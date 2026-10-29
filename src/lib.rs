@@ -281,7 +281,10 @@ pub fn load_assets(packed: Vec<u8>) -> Result<(), String> {
     platform::assets::archive::load(packed)
 }
 
-#[allow(unsafe_code, reason = "the Android entry point is called by name from native code")]
+#[allow(
+    unsafe_code,
+    reason = "the Android entry point is called by name from native code"
+)]
 #[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 fn android_main(app: bevy::android::android_activity::AndroidApp) {

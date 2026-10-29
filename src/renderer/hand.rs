@@ -1267,7 +1267,11 @@ fn setup_hand(
         commands.entity(pose).add_child(map);
         // The poses hang from a node that carries the view bob.
         let bob = commands
-            .spawn((crate::renderer::view_bob::HandBob, Transform::IDENTITY, Visibility::Inherited))
+            .spawn((
+                crate::renderer::view_bob::HandBob,
+                Transform::IDENTITY,
+                Visibility::Inherited,
+            ))
             .add_children(&[pose, arm])
             .id();
         commands.entity(camera).add_child(bob);
@@ -2327,7 +2331,10 @@ mod tests {
         // Vanilla turns both arms by 92 degrees, not 90, so they are mirrors
         // only to within that 2 degree skew (about 0.014 apart here).
         assert_eq!(right.y, left.y);
-        assert!((right.x + left.x).abs() < 0.03, "the pair is not symmetric: {right} {left}");
+        assert!(
+            (right.x + left.x).abs() < 0.03,
+            "the pair is not symmetric: {right} {left}"
+        );
     }
 
     #[test]

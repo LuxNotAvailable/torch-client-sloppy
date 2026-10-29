@@ -190,7 +190,8 @@ pub(crate) fn gather_inputs(
         let session = &state.session;
         let effect = |name: &str| {
             session
-                .vitals.active_effects
+                .vitals
+                .active_effects
                 .iter()
                 .find(|e| e.id == name)
                 .map(|e| e.duration)
@@ -204,18 +205,25 @@ pub(crate) fn gather_inputs(
         };
         let light = |slot: usize| {
             session
-                .inventory.hotbar
+                .inventory
+                .hotbar
                 .get(slot)
                 .map_or(0, |s| held_block_light(s.item))
         };
-        let (main, off) = (light(usize::from(session.inventory.hotbar_selected)), light(9));
+        let (main, off) = (
+            light(usize::from(session.inventory.hotbar_selected)),
+            light(9),
+        );
         (
             (
                 effect("blindness"),
                 effect("night_vision"),
                 effect("darkness"),
             ),
-            [held(usize::from(session.inventory.hotbar_selected)), held(9)],
+            [
+                held(usize::from(session.inventory.hotbar_selected)),
+                held(9),
+            ],
             [if old_hand_light { main.max(off) } else { main }, off],
             Vitals::of(
                 session.gamemode.is_survival(),

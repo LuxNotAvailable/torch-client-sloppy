@@ -9,8 +9,8 @@ use crate::shaderpack::pipeline::UniformLayout;
 mod builtins;
 mod values;
 
-pub(crate) use builtins::{builtin_type, resolve_input};
 use builtins::{Builtin, Value, builtin};
+pub(crate) use builtins::{builtin_type, resolve_input};
 pub(crate) use values::{FrameValues, History};
 
 #[repr(C)]

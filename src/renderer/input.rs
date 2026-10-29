@@ -114,7 +114,6 @@ pub(super) fn apply_gui_nav(
             container_id: s.session.container.container_id,
             container_kind: s.session.container.container_kind,
 
-
             sleeping: s.session.sleeping,
             dead,
             death_opening: death_opening.then(|| {
@@ -176,7 +175,9 @@ pub(super) fn apply_gui_nav(
                 state.nav = Some(Screen::OpBlock);
             }
             ClientEvent::TotemActivated => state.effects.totem(),
-            ClientEvent::ElderGuardian => state.effects.elder = Some(crate::platform::time::Instant::now()),
+            ClientEvent::ElderGuardian => {
+                state.effects.elder = Some(crate::platform::time::Instant::now())
+            }
             ClientEvent::OpenCommandBlock(req) => command_block_open = Some(req),
             ClientEvent::OpenSignEditor(req) => sign_editor_open = Some(req),
             ClientEvent::OpenBook(hand) => book_open = Some(hand),
@@ -208,7 +209,8 @@ pub(super) fn apply_gui_nav(
             let selected = s.session.inventory.hotbar_selected;
             let book_of = |hand: crate::session::InteractionHand| {
                 s.session
-                    .inventory.hotbar
+                    .inventory
+                    .hotbar
                     .get(hand.hotbar_index(selected))
                     .and_then(|slot| slot.book.as_deref())
                     .cloned()
@@ -226,7 +228,6 @@ pub(super) fn apply_gui_nav(
             state.nav = Some(Screen::BookEdit);
         }
     }
-
 
     if let Some(dialog) = dialog_show {
         let current = state.screen;
@@ -276,7 +277,8 @@ pub(super) fn apply_gui_nav(
             .lock()
             .unwrap()
             .session
-            .inventory.inv_actions
+            .inventory
+            .inv_actions
             .push(InvAction::Close);
     }
     if state.screen == Screen::Dialog && next != Screen::Dialog {
@@ -291,7 +293,8 @@ pub(super) fn apply_gui_nav(
         let mut s = shared.0.lock().unwrap();
         let rev = s
             .session
-            .world.block_entities
+            .world
+            .block_entities
             .get(&state.sign_edit.key())
             .map(|info| info.rev);
         s.session.editors.sign_update = Some(state.sign_edit.close(rev));
@@ -316,7 +319,9 @@ pub(super) fn mouse_look(
 ) {
     #[cfg(feature = "mobile_ui")]
     {
-        let _ = (motion, angles, shared, freecam, camera, state, time, boat_turn, zoom);
+        let _ = (
+            motion, angles, shared, freecam, camera, state, time, boat_turn, zoom,
+        );
         return;
     }
     // The boat being steered turns the view with it. Minecraft's yaw runs
@@ -382,7 +387,9 @@ impl BoatTurn {
         }
         // At least the last tick's pace; a backlog drains within a tick.
         let rate = self.rate.max(self.remaining.abs() / TICK_SECONDS);
-        let turn = (rate * dt).min(self.remaining.abs()).copysign(self.remaining);
+        let turn = (rate * dt)
+            .min(self.remaining.abs())
+            .copysign(self.remaining);
         self.remaining -= turn;
         if self.remaining.abs() < 1e-4 {
             self.remaining = 0.0;
@@ -413,9 +420,7 @@ pub(crate) fn apply_look(
     angles.pitch = (angles.pitch - dy).clamp(-89., 89.);
     // `Entity.turn` then `onPassengerTurned`: a boat's driver looks no more
     // than 105° off its bow. Minecraft's yaw is -camera yaw - 180.
-    if !freecam_active
-        && let Some(boat_yaw) = shared.0.lock().unwrap().session.steered_boat_yaw
-    {
+    if !freecam_active && let Some(boat_yaw) = shared.0.lock().unwrap().session.steered_boat_yaw {
         let yaw = crate::play::boat::clamp_driver_yaw(-angles.yaw - 180.0, boat_yaw);
         angles.yaw = -yaw - 180.0;
     }
@@ -992,7 +997,8 @@ const ZOOM_STEP: f32 = 1.2;
 impl ZoomState {
     /// One wheel movement while zoomed: up zooms in, down zooms out.
     pub(crate) fn scroll(&mut self, notches: f32) {
-        self.divisor = (self.divisor * ZOOM_STEP.powf(notches)).clamp(ZOOM_MIN, self.max.max(ZOOM_MIN));
+        self.divisor =
+            (self.divisor * ZOOM_STEP.powf(notches)).clamp(ZOOM_MIN, self.max.max(ZOOM_MIN));
     }
 }
 
@@ -1049,7 +1055,11 @@ pub(super) fn handle_hotbar_scroll(
     }
     let notches = if wy == 0 { -wx } else { wy };
 
-    let current = s.session.inventory.hotbar_target.unwrap_or(s.session.inventory.hotbar_selected) as i32;
+    let current = s
+        .session
+        .inventory
+        .hotbar_target
+        .unwrap_or(s.session.inventory.hotbar_selected) as i32;
     let next = next_scroll_selection(notches as f64, current, HOTBAR_SLOTS);
     if next != current {
         s.session.inventory.hotbar_target = Some(next as u8);
@@ -1243,7 +1253,14 @@ pub(super) fn toggle_screen(
         } else if close_key && state.chat.hide_suggestions() {
         } else if submit_key {
             if let Some(line) = state.chat.submit() {
-                shared.0.lock().unwrap().session.chat.outgoing_chat.push(line);
+                shared
+                    .0
+                    .lock()
+                    .unwrap()
+                    .session
+                    .chat
+                    .outgoing_chat
+                    .push(line);
             }
         } else if close_key {
             crate::client::bus::request(crate::client::bus::ClientRequest::LeaveBed);
@@ -1278,7 +1295,10 @@ pub(super) fn toggle_screen(
     } else if state.keybinds.just(Action::Advancements, &keys, &buttons) {
         state.advancements.parent = Screen::None;
         Some(Screen::Advancements)
-    } else if state.keybinds.just(Action::SocialInteractions, &keys, &buttons) {
+    } else if state
+        .keybinds
+        .just(Action::SocialInteractions, &keys, &buttons)
+    {
         Some(Screen::SocialInteractions)
     } else if state.keybinds.just(Action::Chat, &keys, &buttons) {
         state.chat.open("");
@@ -1303,7 +1323,8 @@ pub(super) fn toggle_screen(
             .lock()
             .unwrap()
             .session
-            .inventory.inv_actions
+            .inventory
+            .inv_actions
             .push(InvAction::Close);
     }
     enter_screen(next, &mut state, &shared, &mut windows);
@@ -1357,7 +1378,10 @@ pub(super) fn game_mode_switcher(
     };
     state.switcher.note_mode(current);
     if state.screen == Screen::GameModeSwitcher {
-        if state.keybinds.just(Action::GameModeSwitcher, &keys, &buttons) {
+        if state
+            .keybinds
+            .just(Action::GameModeSwitcher, &keys, &buttons)
+        {
             state.switcher.next();
         }
         if !state.keybinds.down(Action::DebugModifier, &keys, &buttons) {
@@ -1366,15 +1390,18 @@ pub(super) fn game_mode_switcher(
                 if op_level >= 2 {
                     s.session.chat.outgoing_chat.push(format!("/{command}"));
                 } else {
-                    s.session.chat.chat_incoming.push(crate::session::ChatEntry {
-                        spans: vec![crate::text::Span {
-                            text: "Unable to switch game mode; no permission".into(),
-                            style: crate::text::Style::colored(0xFF5555),
-                        }],
-                        events: None,
-                        tag: crate::session::ChatTag::System,
-                        original: None,
-                    });
+                    s.session
+                        .chat
+                        .chat_incoming
+                        .push(crate::session::ChatEntry {
+                            spans: vec![crate::text::Span {
+                                text: "Unable to switch game mode; no permission".into(),
+                                style: crate::text::Style::colored(0xFF5555),
+                            }],
+                            events: None,
+                            tag: crate::session::ChatTag::System,
+                            original: None,
+                        });
                 }
             }
             drop(s);
@@ -1428,7 +1455,10 @@ pub(super) fn handle_keybinds(
         // as the mod's key handling does.
         let in_game = !state.screen.is_open();
         crate::voice::set_push_to_talk(
-            in_game && state.keybinds.down(Action::VoicePushToTalk, &keys, &buttons),
+            in_game
+                && state
+                    .keybinds
+                    .down(Action::VoicePushToTalk, &keys, &buttons),
         );
         crate::voice::set_whisper(
             in_game && state.keybinds.down(Action::VoiceWhisper, &keys, &buttons),
@@ -1500,7 +1530,6 @@ mod tests {
         t.step(4.0, 0.0);
         assert!((t.step(0.0, 0.05) - 8.0).abs() < 1e-4);
     }
-
 
     use super::{HOTBAR_SLOTS, accumulate_scroll, next_scroll_selection};
 
@@ -1593,4 +1622,3 @@ mod tests {
         assert_eq!(slot, 1);
     }
 }
-

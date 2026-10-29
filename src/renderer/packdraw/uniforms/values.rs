@@ -124,7 +124,8 @@ impl FrameValues {
         let focal = view.clip_from_view.y_axis.y.max(f32::EPSILON);
         let fov = 2.0 * (1.0 / focal).atan();
         let far_plane = (far * FAR_PLANE_PER_BLOCK).max(NEAR * 2.0);
-        let projection = Mat4::perspective_rh_gl(fov, size.x / size.y, NEAR, far_plane) * inputs.warp;
+        let projection =
+            Mat4::perspective_rh_gl(fov, size.x / size.y, NEAR, far_plane) * inputs.warp;
         let camera = view.world_from_view.translation();
 
         let (previous_view_rotation, previous_projection) =
@@ -323,7 +324,9 @@ impl FrameValues {
             B::FogShape => Value::Int(i32::from(inputs.eye_in == super::super::inputs::EyeIn::Air)),
             // Vanilla's darkness pulse on the lightmap.
             B::DarknessLightFactor => Value::Float(
-                (self.time_counter * 20.0 * std::f32::consts::PI * 0.025).cos().max(0.0)
+                (self.time_counter * 20.0 * std::f32::consts::PI * 0.025)
+                    .cos()
+                    .max(0.0)
                     * 0.45
                     * inputs.darkness,
             ),

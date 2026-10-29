@@ -258,12 +258,28 @@ mod tests {
             bevy::asset::RenderAssetUsages::MAIN_WORLD,
         );
         let cpu_aabb = layer(&mut cpu, &model, &posed, &states);
-        let cpu_pos = cpu.attribute(Mesh::ATTRIBUTE_POSITION).unwrap().as_float3().unwrap();
-        let cpu_nrm = cpu.attribute(Mesh::ATTRIBUTE_NORMAL).unwrap().as_float3().unwrap();
+        let cpu_pos = cpu
+            .attribute(Mesh::ATTRIBUTE_POSITION)
+            .unwrap()
+            .as_float3()
+            .unwrap();
+        let cpu_nrm = cpu
+            .attribute(Mesh::ATTRIBUTE_NORMAL)
+            .unwrap()
+            .as_float3()
+            .unwrap();
 
         let rigged = rigged_mesh(&model);
-        let pos = rigged.attribute(Mesh::ATTRIBUTE_POSITION).unwrap().as_float3().unwrap();
-        let nrm = rigged.attribute(Mesh::ATTRIBUTE_NORMAL).unwrap().as_float3().unwrap();
+        let pos = rigged
+            .attribute(Mesh::ATTRIBUTE_POSITION)
+            .unwrap()
+            .as_float3()
+            .unwrap();
+        let nrm = rigged
+            .attribute(Mesh::ATTRIBUTE_NORMAL)
+            .unwrap()
+            .as_float3()
+            .unwrap();
         let Some(VertexAttributeValues::Uint32(parts)) = rigged.attribute(ATTRIBUTE_PART) else {
             panic!("rigged mesh has no part attribute");
         };
@@ -281,8 +297,14 @@ mod tests {
                 continue;
             }
             let (p, n) = shade(rows, Vec3::from(pos[i]), Vec3::from(nrm[i]));
-            assert!((p - Vec3::from(cpu_pos[drawn])).length() < 1e-5, "vertex {i}");
-            assert!((n - Vec3::from(cpu_nrm[drawn])).length() < 1e-5, "normal {i}");
+            assert!(
+                (p - Vec3::from(cpu_pos[drawn])).length() < 1e-5,
+                "vertex {i}"
+            );
+            assert!(
+                (n - Vec3::from(cpu_nrm[drawn])).length() < 1e-5,
+                "normal {i}"
+            );
             drawn += 1;
         }
         assert_eq!(drawn, cpu_pos.len());

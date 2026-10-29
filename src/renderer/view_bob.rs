@@ -65,7 +65,8 @@ pub fn hurt_pose(hurt_ticks: Option<(f32, f32)>, death_ticks: f32) -> Quat {
         let turn = Quat::from_rotation_y((-dir).to_radians());
         // `damageTiltStrength`.
         let strength = crate::gui::more_options::accessibility().damage_tilt as f32 / 100.0;
-        rotation *= turn * Quat::from_rotation_z((-hurt * 14.0 * strength).to_radians()) * turn.inverse();
+        rotation *=
+            turn * Quat::from_rotation_z((-hurt * 14.0 * strength).to_radians()) * turn.inverse();
     }
     rotation
 }
@@ -76,7 +77,11 @@ fn hurt_now() -> Option<(f32, f32)> {
     Some((HURT_TICKS - at.elapsed().as_secs_f32() * 20.0, dir))
 }
 
-fn current_pose(view: &FrameView, state: &crate::gui::GuiState, freecam: &FreecamState) -> Transform {
+fn current_pose(
+    view: &FrameView,
+    state: &crate::gui::GuiState,
+    freecam: &FreecamState,
+) -> Transform {
     if freecam.active || !view.in_world {
         return Transform::IDENTITY;
     }
@@ -128,7 +133,9 @@ fn bob_hand(
 /// on the world's projection.
 pub(crate) fn current_warp(view: &FrameView) -> Mat4 {
     view.in_world
-        .then(|| crate::play::screen_warp::view_warp(crate::play::screen_warp::sample(view.partial)))
+        .then(|| {
+            crate::play::screen_warp::view_warp(crate::play::screen_warp::sample(view.partial))
+        })
         .flatten()
         .unwrap_or(Mat4::IDENTITY)
 }
@@ -145,7 +152,9 @@ fn snapshot_warp(view: Res<FrameView>, mut warp: ResMut<ViewWarp>) {
 /// itself stays rigid for everything that reads its transform.
 fn warp_projection(
     warp: bevy::render::Extract<Res<ViewWarp>>,
-    camera: bevy::render::Extract<Query<&bevy::render::sync_world::RenderEntity, With<WorldCamera>>>,
+    camera: bevy::render::Extract<
+        Query<&bevy::render::sync_world::RenderEntity, With<WorldCamera>>,
+    >,
     mut views: Query<&mut bevy::render::view::ExtractedView>,
 ) {
     if warp.0 == Mat4::IDENTITY {
@@ -170,7 +179,8 @@ impl Plugin for ViewBobPlugin {
                 .before(TransformSystems::Propagate)
                 .run_if(in_state(AppState::InGame)),
         );
-        app.init_resource::<ViewWarp>().add_systems(PostUpdate, snapshot_warp);
+        app.init_resource::<ViewWarp>()
+            .add_systems(PostUpdate, snapshot_warp);
         if let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) {
             render_app.add_systems(
                 bevy::render::ExtractSchedule,

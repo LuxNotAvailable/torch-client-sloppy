@@ -15,7 +15,6 @@ use crate::renderer::systems::{ChunkMaterial, LightmapState, Shared, WorldCamera
 use crate::util::javarandom::JavaRandom;
 use crate::util::particle_assets;
 
-
 // What the rest of the client reaches by `crate::util::particles::...`.
 pub(crate) use ambient::{Emitter, block_at, rel};
 pub(crate) use draw::{ParticleBatch, particle_uv};
@@ -311,9 +310,19 @@ enum Behavior {
     Snowflake,
     /// `FlyStraightTowardsParticle`: from the start toward the spot, the
     /// colour sliding from one to the other.
-    FlyStraight { start: [f32; 3], offset: [f32; 3], from: u32, to: u32 },
+    FlyStraight {
+        start: [f32; 3],
+        offset: [f32; 3],
+        from: u32,
+        to: u32,
+    },
     /// `SulfurBubbleParticle`: rises through still water, swelling.
-    Bubble { y_start: f32, y_end: f32, y_prev: f32, size_start: f32 },
+    Bubble {
+        y_start: f32,
+        y_end: f32,
+        y_prev: f32,
+        size_start: f32,
+    },
 }
 
 /// `FireworkParticles.SparkParticle`'s state beyond a plain particle.
@@ -866,7 +875,9 @@ impl Particle {
             behavior: match recipe.behavior {
                 // `FlyStraightTowardsParticle` starts its offset away and
                 // comes in.
-                Behavior::FlyStraight { offset, from, to, .. } => Behavior::FlyStraight {
+                Behavior::FlyStraight {
+                    offset, from, to, ..
+                } => Behavior::FlyStraight {
                     start: pos.to_array(),
                     offset,
                     from,
@@ -1053,7 +1064,13 @@ fn tick_particles(
                 #[cfg(audio)]
                 if let Some((sound, at)) = after.sound {
                     let volume = 0.3 + rng.next_f32() * 0.7;
-                    crate::audio::play_at(sound, crate::audio::category::SoundCategory::Blocks, at.to_array(), volume, 1.0);
+                    crate::audio::play_at(
+                        sound,
+                        crate::audio::category::SoundCategory::Blocks,
+                        at.to_array(),
+                        volume,
+                        1.0,
+                    );
                 }
                 #[cfg(not(audio))]
                 let _ = after.sound;
@@ -1068,7 +1085,9 @@ fn tick_particles(
     live.0.extend(trails);
     if let Some(atlas) = atlas.0.as_ref() {
         for (kind, pos) in chained {
-            let Some(recipe) = recipe(&kind, atlas, Vec3::ZERO, rng) else { continue };
+            let Some(recipe) = recipe(&kind, atlas, Vec3::ZERO, rng) else {
+                continue;
+            };
             live.0.push(Particle::from_recipe(recipe, pos, 0.0));
         }
     }

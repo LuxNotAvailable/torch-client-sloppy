@@ -169,7 +169,10 @@ fn trace(packet: &ClientboundGamePacket) {
 /// `ClientPacketListener.handleGameEvent`, beyond the weather.
 fn game_event(shared: &Arc<SharedMutex>, event: EventType, param: f32) {
     let system = |text: String| crate::session::ChatEntry {
-        spans: vec![crate::text::Span { text, style: Default::default() }],
+        spans: vec![crate::text::Span {
+            text,
+            style: Default::default(),
+        }],
         events: None,
         tag: crate::session::ChatTag::System,
         original: None,
@@ -183,7 +186,13 @@ fn game_event(shared: &Arc<SharedMutex>, event: EventType, param: f32) {
     match event {
         EventType::NoRespawnBlockAvailable => {
             let text = translate("block.minecraft.spawn.not_valid");
-            shared.lock().unwrap().session.chat.chat_incoming.push(system(text));
+            shared
+                .lock()
+                .unwrap()
+                .session
+                .chat
+                .chat_incoming
+                .push(system(text));
         }
         EventType::WinGame => {
             let s = shared.lock().unwrap();
@@ -203,21 +212,45 @@ fn game_event(shared: &Arc<SharedMutex>, event: EventType, param: f32) {
                 104 => "demo.day.6",
                 _ => return,
             };
-            shared.lock().unwrap().session.chat.chat_incoming.push(system(translate(key)));
+            shared
+                .lock()
+                .unwrap()
+                .session
+                .chat
+                .chat_incoming
+                .push(system(translate(key)));
         }
         EventType::ArrowHitPlayer => {
             #[cfg(audio)]
-            crate::audio::play_at("entity.arrow.hit_player", crate::audio::category::SoundCategory::Players, at, 0.18, 0.45);
+            crate::audio::play_at(
+                "entity.arrow.hit_player",
+                crate::audio::category::SoundCategory::Players,
+                at,
+                0.18,
+                0.45,
+            );
         }
         EventType::PufferFishSting => {
             #[cfg(audio)]
-            crate::audio::play_at("entity.puffer_fish.sting", crate::audio::category::SoundCategory::Neutral, at, 1.0, 1.0);
+            crate::audio::play_at(
+                "entity.puffer_fish.sting",
+                crate::audio::category::SoundCategory::Neutral,
+                at,
+                1.0,
+                1.0,
+            );
         }
         EventType::GuardianElderEffect => {
             crate::play::event_particles::elder_guardian();
             #[cfg(audio)]
             if param == 1.0 {
-                crate::audio::play_at("entity.elder_guardian.curse", crate::audio::category::SoundCategory::Hostile, at, 1.0, 1.0);
+                crate::audio::play_at(
+                    "entity.elder_guardian.curse",
+                    crate::audio::category::SoundCategory::Hostile,
+                    at,
+                    1.0,
+                    1.0,
+                );
             }
         }
         EventType::ImmediateRespawn => {
@@ -754,7 +787,10 @@ fn entity_state(packet: &ClientboundGamePacket) {
                             .unwrap()
                             .insert(p.entity_id.0, attribute_total(value) as f32);
                     }
-                    Attr::MovementSpeed | Attr::JumpStrength | Attr::StepHeight | Attr::FlyingSpeed => {
+                    Attr::MovementSpeed
+                    | Attr::JumpStrength
+                    | Attr::StepHeight
+                    | Attr::FlyingSpeed => {
                         let total = attribute_total(value);
                         let mut map = crate::client::tracking::mount_attributes().lock().unwrap();
                         let entry = map.entry(p.entity_id.0).or_default();
@@ -879,7 +915,6 @@ fn session_state(world: &WorldHolder, shared: &Arc<SharedMutex>, packet: &Client
             use crate::blockentities::feed::{BlockEntityData, SignFace};
             use crate::session::SignEditKind;
             let world_block = {
-                
                 world
                     .shared
                     .read()
@@ -910,13 +945,15 @@ fn session_state(world: &WorldHolder, shared: &Arc<SharedMutex>, packet: &Client
                     _ => None,
                 })
                 .unwrap_or_else(SignFace::default);
-            crate::client::bus::emit(crate::client::bus::ClientEvent::OpenSignEditor(crate::session::SignEditRequest {
-                pos: p.pos,
-                front: p.is_front_text,
-                kind,
-                wood,
-                face,
-            }));
+            crate::client::bus::emit(crate::client::bus::ClientEvent::OpenSignEditor(
+                crate::session::SignEditRequest {
+                    pos: p.pos,
+                    front: p.is_front_text,
+                    kind,
+                    wood,
+                    face,
+                },
+            ));
         }
         ClientboundGamePacket::OpenBook(p) => {
             crate::client::bus::emit(crate::client::bus::ClientEvent::OpenBook(hand(p.hand)));
@@ -1011,11 +1048,13 @@ fn session_state(world: &WorldHolder, shared: &Arc<SharedMutex>, packet: &Client
             match p.action {
                 Action::Add => s
                     .session
-                    .chat.custom_completions
+                    .chat
+                    .custom_completions
                     .extend(p.entries.iter().cloned()),
                 Action::Remove => s
                     .session
-                    .chat.custom_completions
+                    .chat
+                    .custom_completions
                     .retain(|e| !p.entries.contains(e)),
                 Action::Set => s.session.chat.custom_completions = p.entries.clone(),
             }
@@ -1144,9 +1183,9 @@ fn session_state(world: &WorldHolder, shared: &Arc<SharedMutex>, packet: &Client
 /// `handleSoundEntityEvent` and `handleStopSoundEvent` play them.
 #[cfg(audio)]
 fn sounds(packet: &ClientboundGamePacket) {
+    use crate::audio::SoundCategory;
     use azalea_protocol::packets::game::c_sound::SoundSource;
     use azalea_registry::Holder;
-    use crate::audio::SoundCategory;
     let category = |source: SoundSource| match source {
         SoundSource::Master => SoundCategory::Master,
         SoundSource::Music => SoundCategory::Music,
@@ -1164,9 +1203,7 @@ fn sounds(packet: &ClientboundGamePacket) {
         azalea_core::sound::CustomSound,
     >| match sound {
         Holder::Reference(event) => crate::audio::event_name(event.to_str()).to_owned(),
-        Holder::Direct(custom) => {
-            crate::audio::event_name(&custom.sound_id.to_string()).to_owned()
-        }
+        Holder::Direct(custom) => crate::audio::event_name(&custom.sound_id.to_string()).to_owned(),
     };
     match packet {
         ClientboundGamePacket::Sound(p) => {

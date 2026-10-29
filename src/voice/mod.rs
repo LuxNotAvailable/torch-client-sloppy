@@ -23,8 +23,8 @@ use uuid::Uuid;
 use connection::Connection;
 pub(crate) use mic::Activation;
 use playback::{Listening, Playback};
-pub(crate) use wire::{Group, GroupType};
 use wire::PlayerState;
+pub(crate) use wire::{Group, GroupType};
 
 /// Where voice chat stands on this server.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -274,7 +274,10 @@ pub(crate) fn advertised() -> bool {
 }
 
 /// What the server last said about `player`'s voice chat.
-#[allow(dead_code, reason = "for the speaking and muted icons over players, not drawn yet")]
+#[allow(
+    dead_code,
+    reason = "for the speaking and muted icons over players, not drawn yet"
+)]
 pub(crate) fn player_state(player: Uuid) -> Option<PlayerState> {
     with(|session| session.players.get(&player).cloned()).flatten()
 }
@@ -438,7 +441,10 @@ pub(crate) fn join_group(group: Uuid, password: Option<&str>) {
 pub(crate) fn create_group(name: &str, password: Option<&str>, kind: GroupType) {
     let name: String = name.chars().take(wire::MAX_GROUP_NAME).collect();
     let password: Option<String> = password.map(|p| p.chars().take(wire::MAX_GROUP_NAME).collect());
-    queue(wire::CREATE_GROUP, wire::create_group(&name, password.as_deref(), kind));
+    queue(
+        wire::CREATE_GROUP,
+        wire::create_group(&name, password.as_deref(), kind),
+    );
 }
 
 pub(crate) fn leave_group() {

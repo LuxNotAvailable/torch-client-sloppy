@@ -257,7 +257,11 @@ impl Secret {
         }
         let (name, at) = split_host(host);
         (
-            if name.is_empty() { game_host.to_owned() } else { name.to_owned() },
+            if name.is_empty() {
+                game_host.to_owned()
+            } else {
+                name.to_owned()
+            },
             at.filter(|p| *p > 0).unwrap_or(port),
         )
     }
@@ -311,7 +315,9 @@ impl PlayerState {
     pub(crate) fn read_all(bytes: &[u8]) -> Result<Vec<PlayerState>, Short> {
         let mut r = Reader::new(bytes);
         let count = usize::try_from(r.i32()?).map_err(|_| Short)?;
-        (0..count.min(4096)).map(|_| PlayerState::read(&mut r)).collect()
+        (0..count.min(4096))
+            .map(|_| PlayerState::read(&mut r))
+            .collect()
     }
 }
 
@@ -685,7 +691,10 @@ mod tests {
         w.bytes.extend_from_slice(&KEY);
         w.i32(24454).uuid(player).u8(1).i32(1024);
         w.bytes.extend_from_slice(&48.0f64.to_be_bytes());
-        w.i32(1000).bool(true).byte_array(b"voice.example.net:25000").bool(false);
+        w.i32(1000)
+            .bool(true)
+            .byte_array(b"voice.example.net:25000")
+            .bool(false);
         let secret = Secret::read(&w.bytes).unwrap();
         assert_eq!(secret.secret, KEY);
         assert_eq!(secret.port, 24454);
@@ -728,8 +737,17 @@ mod tests {
         let g = Uuid::from_u128(2);
         let mut w = Writer::default();
         w.i32(2);
-        w.bool(false).bool(false).uuid(a).byte_array(b"Lux").bool(true).uuid(g);
-        w.bool(true).bool(true).uuid(a).byte_array(b"Jet").bool(false);
+        w.bool(false)
+            .bool(false)
+            .uuid(a)
+            .byte_array(b"Lux")
+            .bool(true)
+            .uuid(g);
+        w.bool(true)
+            .bool(true)
+            .uuid(a)
+            .byte_array(b"Jet")
+            .bool(false);
         let states = PlayerState::read_all(&w.bytes).unwrap();
         assert_eq!(states.len(), 2);
         assert_eq!(states[0].group, Some(g));
@@ -740,7 +758,14 @@ mod tests {
     #[test]
     fn a_client_packet_seals_as_write_client_does() {
         let player = Uuid::from_u128(7);
-        let sealed = seal(player, &KEY, &Packet::Authenticate { player, secret: KEY });
+        let sealed = seal(
+            player,
+            &KEY,
+            &Packet::Authenticate {
+                player,
+                secret: KEY,
+            },
+        );
         let mut r = Reader::new(&sealed);
         assert_eq!(r.u8().unwrap(), MAGIC);
         assert_eq!(r.uuid().unwrap(), player);
@@ -754,8 +779,14 @@ mod tests {
 
     #[test]
     fn server_packets_open_and_a_wrong_secret_does_not() {
-        assert_eq!(open(&KEY, &from_server(&[0x6])), Some(Packet::AuthenticateAck));
-        assert_eq!(open(&KEY, &from_server(&[0xA])), Some(Packet::ConnectionCheckAck));
+        assert_eq!(
+            open(&KEY, &from_server(&[0x6])),
+            Some(Packet::AuthenticateAck)
+        );
+        assert_eq!(
+            open(&KEY, &from_server(&[0xA])),
+            Some(Packet::ConnectionCheckAck)
+        );
         assert_eq!(open(&[0; SECRET_LEN], &from_server(&[0x6])), None);
         assert_eq!(open(&KEY, b"\x00junk"), None);
     }
@@ -795,7 +826,11 @@ mod tests {
         w.byte_array(&[9]).i64(-1);
         w.bytes.extend_from_slice(&8.0f32.to_be_bytes());
         w.u8(0);
-        let Some(Packet::LocationSound { sound, at, distance }) = open(&KEY, &from_server(&w.bytes))
+        let Some(Packet::LocationSound {
+            sound,
+            at,
+            distance,
+        }) = open(&KEY, &from_server(&w.bytes))
         else {
             panic!("not a location sound");
         };
@@ -816,7 +851,12 @@ mod tests {
     fn group_packets_read_and_write_as_the_mod_does() {
         let id = Uuid::from_u128(5);
         let mut w = Writer::default();
-        w.uuid(id).utf("Builders").bool(true).bool(false).bool(false).i16(2);
+        w.uuid(id)
+            .utf("Builders")
+            .bool(true)
+            .bool(false)
+            .bool(false)
+            .i16(2);
         let group = Group::read(&w.bytes).unwrap();
         assert_eq!(group.name, "Builders");
         assert!(group.has_password);

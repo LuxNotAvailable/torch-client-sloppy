@@ -311,7 +311,10 @@ static SKY_FLASH: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::n
 
 /// Ticks of lightning flash left (`ClientLevel.skyFlashTime`).
 pub fn set_sky_flash(ticks: f32) {
-    SKY_FLASH.store(ticks.max(0.0).to_bits(), std::sync::atomic::Ordering::Relaxed);
+    SKY_FLASH.store(
+        ticks.max(0.0).to_bits(),
+        std::sync::atomic::Ordering::Relaxed,
+    );
 }
 
 pub fn sky_flash() -> f32 {
@@ -707,7 +710,9 @@ impl Environment {
         apply_weather(&mut sky, rain, thunder);
         apply_sky_flash(
             &mut sky,
-            dim.can_have_weather() && sky_flash() > 0.0 && !crate::gui::more_options::accessibility().hide_lightning,
+            dim.can_have_weather()
+                && sky_flash() > 0.0
+                && !crate::gui::more_options::accessibility().hide_lightning,
         );
 
         self.rain_fog

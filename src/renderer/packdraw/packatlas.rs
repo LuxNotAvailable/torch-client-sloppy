@@ -136,18 +136,21 @@ fn animate(pack: &mut PackAtlas, device: &RenderDevice, queue: &RenderQueue, atl
         return;
     }
     pack.animated_at = Some(tick);
-    let Some(set) = block_anim::current() else { return };
+    let Some(set) = block_anim::current() else {
+        return;
+    };
     if set.animations().is_empty() {
         return;
     }
     let size = atlas.texture.size();
     let levels = atlas.texture.mip_level_count();
     let tile_px = size.width / crate::renderer::ATLAS_COLS;
-    let mut encoder = device
-        .wgpu_device()
-        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some(gpu_label!("atlas animation")),
-        });
+    let mut encoder =
+        device
+            .wgpu_device()
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some(gpu_label!("atlas animation")),
+            });
     let origin = |tile: u16, side: u32| wgpu::Origin3d {
         x: (u32::from(tile) % crate::renderer::ATLAS_COLS) * side,
         y: (u32::from(tile) / crate::renderer::ATLAS_COLS) * side,

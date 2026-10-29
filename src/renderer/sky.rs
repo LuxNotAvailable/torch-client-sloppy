@@ -452,7 +452,10 @@ fn drawn(
         .get(&source)
         .map(SkyPartMaterial::of)
         .expect("a sky material is added before its part spawns");
-    (SkySource(source), MeshMaterial3d(part_materials.add(mirror)))
+    (
+        SkySource(source),
+        MeshMaterial3d(part_materials.add(mirror)),
+    )
 }
 
 fn sky_material_props() -> StandardMaterial {
@@ -763,12 +766,7 @@ fn update_sky(
     mut world_view: Query<(&mut DistanceFog, &mut Camera), With<WorldCamera>>,
     mut root: Query<&mut Transform, (With<SkyRoot>, Without<WorldCamera>, Without<SkyPart>)>,
     mut parts: Query<
-        (
-            &SkyPart,
-            &mut Transform,
-            &mut Visibility,
-            &mut SkySource,
-        ),
+        (&SkyPart, &mut Transform, &mut Visibility, &mut SkySource),
         (Without<WorldCamera>, Without<SkyRoot>),
     >,
 ) {

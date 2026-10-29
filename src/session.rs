@@ -251,7 +251,9 @@ pub struct SessionWorld {
     pub day_clock: WorldClock,
     pub env: Option<crate::renderer::environment::BiomeLayer>,
     pub env_prev: Option<crate::renderer::environment::BiomeLayer>,
-    pub block_entities: std::sync::Arc<std::collections::HashMap<[i32; 3], crate::blockentities::feed::BlockEntityInfo>>,
+    pub block_entities: std::sync::Arc<
+        std::collections::HashMap<[i32; 3], crate::blockentities::feed::BlockEntityInfo>,
+    >,
     pub block_entities_version: u64,
 }
 
@@ -678,7 +680,9 @@ impl SlotStack {
             Some(contents) if potions::is_potion_item(self.item) => {
                 Cow::Owned(potions::tint_key(self.item, contents.color()))
             }
-            _ => self.variant_key().map_or(Cow::Borrowed(self.item), Cow::Owned),
+            _ => self
+                .variant_key()
+                .map_or(Cow::Borrowed(self.item), Cow::Owned),
         }
     }
 
@@ -775,8 +779,7 @@ pub enum FurnaceKind {
     Smoker,
 }
 
-impl FurnaceKind {
-}
+impl FurnaceKind {}
 
 pub type ContainerData = [i16; CONTAINER_DATA_LEN];
 

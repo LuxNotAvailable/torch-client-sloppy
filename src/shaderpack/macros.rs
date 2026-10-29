@@ -28,7 +28,9 @@ enum Line {
 }
 
 fn is_ident(name: &str) -> bool {
-    name.chars().next().is_some_and(|c| c == '_' || c.is_ascii_alphabetic())
+    name.chars()
+        .next()
+        .is_some_and(|c| c == '_' || c.is_ascii_alphabetic())
         && name.chars().all(|c| c == '_' || c.is_ascii_alphanumeric())
 }
 
@@ -37,8 +39,14 @@ fn body(text: &str) -> Vec<Token> {
         .into_iter()
         .filter(|t| t.kind != Kind::Comment)
         .collect();
-    let first = tokens.iter().position(|t| !t.is_trivia()).unwrap_or(tokens.len());
-    let last = tokens.iter().rposition(|t| !t.is_trivia()).map_or(first, |i| i + 1);
+    let first = tokens
+        .iter()
+        .position(|t| !t.is_trivia())
+        .unwrap_or(tokens.len());
+    let last = tokens
+        .iter()
+        .rposition(|t| !t.is_trivia())
+        .map_or(first, |i| i + 1);
     tokens[first..last].to_vec()
 }
 
@@ -253,7 +261,9 @@ mod tests {
     #[test]
     fn object_and_function_macros_expand_in_code() {
         assert_eq!(
-            run("#define tex colortex0\n#define SQ(x) ((x) * (x))\nvec4 c = texture(tex, uv) * SQ(a + 1);\n"),
+            run(
+                "#define tex colortex0\n#define SQ(x) ((x) * (x))\nvec4 c = texture(tex, uv) * SQ(a + 1);\n"
+            ),
             "vec4 c = texture( colortex0 , uv) * (( a + 1 ) * ( a + 1 )) ;"
         );
     }
@@ -271,7 +281,9 @@ mod tests {
     #[test]
     fn nested_calls_and_arguments_expand() {
         assert_eq!(
-            run("#define ONE 1.0\n#define ADD(p, q) (p + q)\n#define TWICE(v) ADD(v, v)\nfloat y = TWICE(ONE);\n"),
+            run(
+                "#define ONE 1.0\n#define ADD(p, q) (p + q)\n#define TWICE(v) ADD(v, v)\nfloat y = TWICE(ONE);\n"
+            ),
             "float y = ( 1.0 + 1.0 ) ;"
         );
     }
@@ -284,7 +296,8 @@ mod tests {
 
     #[test]
     fn pasting_and_undef_are_respected() {
-        let out = run("#define CAT(a, b) a##b\n#define K 2\nint CAT(x, y) = K;\n#undef K\nint z = K;\n");
+        let out =
+            run("#define CAT(a, b) a##b\n#define K 2\nint CAT(x, y) = K;\n#undef K\nint z = K;\n");
         assert!(out.contains("#define CAT(a, b) a##b"), "{out}");
         assert!(out.contains("int CAT(x, y) = 2"), "{out}");
         assert!(out.ends_with("int z = K;"), "{out}");

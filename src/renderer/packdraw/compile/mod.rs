@@ -3,9 +3,9 @@ use crate::shaderpack::expressions::Customs;
 use crate::shaderpack::options::{self, Values};
 use crate::shaderpack::pipeline::Layout;
 use crate::shaderpack::programs::{self, Geometry};
-use crate::shaderpack::{discover, features, include, properties};
 #[cfg(test)]
 use crate::shaderpack::{backend, pipeline, transform};
+use crate::shaderpack::{discover, features, include, properties};
 
 use super::images::{CustomTexture, CustomTextures};
 use super::sources::TextureSource;
@@ -405,32 +405,30 @@ pub(crate) fn compile_frame(
         // one found also sets the shadow targets and the entity shadow pass.
         let casters = frame.shadow_casters;
         let mut compiled: Vec<(&'static str, usize)> = Vec::new();
-        let mut shadow_program = |frame: &mut Frame,
-                                  pack: &mut Pack,
-                                  preprocessed: &mut _,
-                                  name: &'static str| {
-            if let Some(&(_, index)) = compiled.iter().find(|(n, _)| *n == name) {
-                return Some(index);
-            }
-            let program_override = pack.alpha_tests.get(name).copied();
-            let tests: Vec<AlphaTest> = Geometry::ALL
-                .iter()
-                .filter_map(|g| alpha_for(program_override, geometry_alpha(*g, true)))
-                .collect();
-            match compile_program(pack, name, ProgramKind::Shadow, &tests, direct) {
-                Ok((program, sources)) => {
-                    let index = frame.push(preprocessed, program, sources);
-                    compiled.push((name, index));
-                    Some(index)
+        let mut shadow_program =
+            |frame: &mut Frame, pack: &mut Pack, preprocessed: &mut _, name: &'static str| {
+                if let Some(&(_, index)) = compiled.iter().find(|(n, _)| *n == name) {
+                    return Some(index);
                 }
-                Err(e) => {
-                    frame
-                        .notes
-                        .push(format!("no {name}: it did not compile: {e}"));
-                    None
+                let program_override = pack.alpha_tests.get(name).copied();
+                let tests: Vec<AlphaTest> = Geometry::ALL
+                    .iter()
+                    .filter_map(|g| alpha_for(program_override, geometry_alpha(*g, true)))
+                    .collect();
+                match compile_program(pack, name, ProgramKind::Shadow, &tests, direct) {
+                    Ok((program, sources)) => {
+                        let index = frame.push(preprocessed, program, sources);
+                        compiled.push((name, index));
+                        Some(index)
+                    }
+                    Err(e) => {
+                        frame
+                            .notes
+                            .push(format!("no {name}: it did not compile: {e}"));
+                        None
+                    }
                 }
-            }
-        };
+            };
         for (slot, geometry) in Geometry::ALL.iter().enumerate() {
             if !casters.terrain || (geometry.translucent() && !casters.translucent) {
                 continue;

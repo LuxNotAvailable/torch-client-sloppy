@@ -128,7 +128,11 @@ pub(crate) struct FileLayer;
 struct Message(String);
 
 impl bevy::log::tracing::field::Visit for Message {
-    fn record_debug(&mut self, field: &bevy::log::tracing::field::Field, value: &dyn std::fmt::Debug) {
+    fn record_debug(
+        &mut self,
+        field: &bevy::log::tracing::field::Field,
+        value: &dyn std::fmt::Debug,
+    ) {
         use std::fmt::Write as _;
         if field.name() == "message" {
             let _ = write!(self.0, "{value:?}");
@@ -177,6 +181,9 @@ mod tests {
         }
         let recent = recent();
         assert_eq!(recent.len(), RECENT);
-        assert_eq!(recent.last().map(String::as_str), Some(format!("line {}", RECENT + 4).as_str()));
+        assert_eq!(
+            recent.last().map(String::as_str),
+            Some(format!("line {}", RECENT + 4).as_str())
+        );
     }
 }

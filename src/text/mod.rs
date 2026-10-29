@@ -541,7 +541,9 @@ impl Font {
     }
 
     pub fn is_unihex(&self, c: char) -> bool {
-        if FORCE_UNICODE.load(std::sync::atomic::Ordering::Relaxed) && self.unihex_glyphs.contains_key(&c) {
+        if FORCE_UNICODE.load(std::sync::atomic::Ordering::Relaxed)
+            && self.unihex_glyphs.contains_key(&c)
+        {
             return true;
         }
         if let Some(Some(_)) = self.ascii.get(c as usize) {

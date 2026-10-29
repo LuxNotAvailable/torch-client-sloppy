@@ -71,14 +71,25 @@ pub fn draw_settings(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     {
         let voice = &mut state.options.voice;
 
-        if button(p, cell(0.0, 0.0), &format!("Voice Chat: {}", on_off(!voice.disabled))) {
+        if button(
+            p,
+            cell(0.0, 0.0),
+            &format!("Voice Chat: {}", on_off(!voice.disabled)),
+        ) {
             voice.disabled = !voice.disabled;
         }
         let device = voice.input_device.clone();
-        let caption = fit(p, "Microphone", device.as_deref().unwrap_or("Default"), COLUMN_W - 8.0);
+        let caption = fit(
+            p,
+            "Microphone",
+            device.as_deref().unwrap_or("Default"),
+            COLUMN_W - 8.0,
+        );
         if button(p, cell(1.0, 0.0), &caption) {
-            voice.input_device =
-                crate::audio::devices::next(device.as_deref(), &crate::audio::devices::inputs(true));
+            voice.input_device = crate::audio::devices::next(
+                device.as_deref(),
+                &crate::audio::devices::inputs(true),
+            );
         }
 
         let mode = if voice.voice_activation {
@@ -89,7 +100,11 @@ pub fn draw_settings(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         if button(p, cell(0.0, 1.0), &format!("Activation: {mode}")) {
             voice.voice_activation = !voice.voice_activation;
         }
-        if button(p, cell(1.0, 1.0), &format!("Microphone Muted: {}", on_off(voice.muted))) {
+        if button(
+            p,
+            cell(1.0, 1.0),
+            &format!("Microphone Muted: {}", on_off(voice.muted)),
+        ) {
             voice.muted = !voice.muted;
         }
 
@@ -122,7 +137,11 @@ pub fn draw_settings(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         .draw(p, ctx)
         .clamp(-127, 0);
 
-        if button(p, cell(0.0, 3.0), &format!("Status on HUD: {}", voice.status.caption())) {
+        if button(
+            p,
+            cell(0.0, 3.0),
+            &format!("Status on HUD: {}", voice.status.caption()),
+        ) {
             voice.status = voice.status.next();
         }
         if button(p, cell(1.0, 3.0), "Player Volumes...") {
@@ -205,7 +224,8 @@ pub fn draw_groups(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
             .map_or(String::new(), |g| g.name.clone());
         line(p, &format!("Password for {name}"), y, 0xFFFFFF);
         y += 12.0;
-        gs.join_password.update(p, ctx, x, y, WIDGET_WIDTH_BIG, WIDGET_HEIGHT);
+        gs.join_password
+            .update(p, ctx, x, y, WIDGET_WIDTH_BIG, WIDGET_HEIGHT);
         y += ROW_H;
         let half = (WIDGET_WIDTH_BIG - 4.0) / 2.0;
         if Button::new(x, y, half, WIDGET_HEIGHT, "Join").draw(p, ctx) || ctx.input.enter {
@@ -230,7 +250,11 @@ pub fn draw_groups(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
 
     // The groups to join.
     let bottom = list_y + list_h;
-    let joinable: Vec<_> = groups.list.iter().filter(|g| Some(g.id) != groups.current).collect();
+    let joinable: Vec<_> = groups
+        .list
+        .iter()
+        .filter(|g| Some(g.id) != groups.current)
+        .collect();
     if joinable.is_empty() {
         line(p, "No other groups", y + 2.0, 0xAAAAAA);
         y += 14.0;
@@ -239,7 +263,11 @@ pub fn draw_groups(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         if y + WIDGET_HEIGHT > bottom - 3.0 * ROW_H {
             break;
         }
-        let lock = if group.has_password { " (password)" } else { "" };
+        let lock = if group.has_password {
+            " (password)"
+        } else {
+            ""
+        };
         let caption = format!("Join {}{lock} - {}", group.name, kind_caption(group.kind));
         if Button::new(x, y, WIDGET_WIDTH_BIG, WIDGET_HEIGHT, &caption).draw(p, ctx) {
             if group.has_password {
@@ -259,9 +287,18 @@ pub fn draw_groups(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     y += 12.0;
     let half = (WIDGET_WIDTH_BIG - 4.0) / 2.0;
     gs.name.update(p, ctx, x, y, half, WIDGET_HEIGHT);
-    gs.password.update(p, ctx, x + half + 4.0, y, half, WIDGET_HEIGHT);
+    gs.password
+        .update(p, ctx, x + half + 4.0, y, half, WIDGET_HEIGHT);
     y += ROW_H;
-    if Button::new(x, y, half, WIDGET_HEIGHT, &format!("Type: {}", kind_caption(gs.kind))).draw(p, ctx) {
+    if Button::new(
+        x,
+        y,
+        half,
+        WIDGET_HEIGHT,
+        &format!("Type: {}", kind_caption(gs.kind)),
+    )
+    .draw(p, ctx)
+    {
         gs.kind = next_kind(gs.kind);
     }
     let name = gs.name.text.trim().to_owned();
@@ -271,7 +308,11 @@ pub fn draw_groups(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     };
     if create.draw(p, ctx) && !name.is_empty() {
         let password = gs.password.text.trim().to_owned();
-        crate::voice::create_group(&name, (!password.is_empty()).then_some(password.as_str()), gs.kind);
+        crate::voice::create_group(
+            &name,
+            (!password.is_empty()).then_some(password.as_str()),
+            gs.kind,
+        );
         gs.name.clear();
         gs.password.clear();
     }

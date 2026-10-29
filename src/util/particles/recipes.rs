@@ -231,35 +231,54 @@ pub(super) fn recipe(
 
 /// Block pieces, flames and smoke. `None` when the particle isn't one of these.
 #[allow(clippy::redundant_closure_call)]
-fn terrain_fire_and_smoke(particle: &azalea::entity::particle::Particle, atlas: &Atlas, name: &str, arg: Vec3, rng: &mut JavaRandom) -> Option<Option<Recipe>> {
+fn terrain_fire_and_smoke(
+    particle: &azalea::entity::particle::Particle,
+    atlas: &Atlas,
+    name: &str,
+    arg: Vec3,
+    rng: &mut JavaRandom,
+) -> Option<Option<Recipe>> {
     use azalea::entity::particle::Particle as P;
     Some(match particle {
-        P::Block(b) | P::BlockMarker(b) | P::FallingDust(b) => (|| -> Option<Recipe> {
-            terrain_recipe(b.block_state, arg, rng)
-        })(),
+        P::Block(b) | P::BlockMarker(b) | P::FallingDust(b) => {
+            (|| -> Option<Recipe> { terrain_recipe(b.block_state, arg, rng) })()
+        }
 
-        P::Flame | P::SoulFireFlame | P::CopperFireFlame => (|| -> Option<Recipe> {
-            flame_recipe(atlas, name, arg, rng, 1.0)
-        })(),
+        P::Flame | P::SoulFireFlame | P::CopperFireFlame => {
+            (|| -> Option<Recipe> { flame_recipe(atlas, name, arg, rng, 1.0) })()
+        }
         P::SmallFlame => (|| -> Option<Recipe> { flame_recipe(atlas, name, arg, rng, 0.5) })(),
 
-        P::Smoke | P::WhiteSmoke => (|| -> Option<Recipe> { ash_smoke_recipe(atlas, name, arg, rng, 1.0, 0.3) })(),
-        P::LargeSmoke => (|| -> Option<Recipe> { ash_smoke_recipe(atlas, name, arg, rng, 2.5, 0.3) })(),
-        P::Ash | P::WhiteAsh | P::CrimsonSpore | P::WarpedSpore | P::SporeBlossomAir => (|| -> Option<Recipe> {
-            ash_smoke_recipe(atlas, name, arg, rng, 1.0, 1.0)
-        })(),
-        P::CampfireCosySmoke => (|| -> Option<Recipe> { campfire_recipe(atlas, name, arg, rng, 80, 0.9) })(),
-        P::CampfireSignalSmoke => (|| -> Option<Recipe> { campfire_recipe(atlas, name, arg, rng, 280, 0.95) })(),
+        P::Smoke | P::WhiteSmoke => {
+            (|| -> Option<Recipe> { ash_smoke_recipe(atlas, name, arg, rng, 1.0, 0.3) })()
+        }
+        P::LargeSmoke => {
+            (|| -> Option<Recipe> { ash_smoke_recipe(atlas, name, arg, rng, 2.5, 0.3) })()
+        }
+        P::Ash | P::WhiteAsh | P::CrimsonSpore | P::WarpedSpore | P::SporeBlossomAir => {
+            (|| -> Option<Recipe> { ash_smoke_recipe(atlas, name, arg, rng, 1.0, 1.0) })()
+        }
+        P::CampfireCosySmoke => {
+            (|| -> Option<Recipe> { campfire_recipe(atlas, name, arg, rng, 80, 0.9) })()
+        }
+        P::CampfireSignalSmoke => {
+            (|| -> Option<Recipe> { campfire_recipe(atlas, name, arg, rng, 280, 0.95) })()
+        }
         _ => return None,
     })
 }
 
 /// Particles ported from their own vanilla classes. `None` when the particle isn't one of these.
 #[allow(clippy::redundant_closure_call)]
-fn ported_classes(particle: &azalea::entity::particle::Particle, atlas: &Atlas, name: &str, arg: Vec3, rng: &mut JavaRandom) -> Option<Option<Recipe>> {
+fn ported_classes(
+    particle: &azalea::entity::particle::Particle,
+    atlas: &Atlas,
+    name: &str,
+    arg: Vec3,
+    rng: &mut JavaRandom,
+) -> Option<Option<Recipe>> {
     use azalea::entity::particle::Particle as P;
     Some(match particle {
-
         P::Poof => (|| -> Option<Recipe> {
             let mut r = base_recipe(Sprite::Animated(atlas.sheet_index(name)?), rng);
             r.velocity = arg
@@ -290,11 +309,17 @@ fn ported_classes(particle: &azalea::entity::particle::Particle, atlas: &Atlas, 
             r.flags = FULLBRIGHT;
             Some(r)
         })(),
-        _ if Drip::of(particle).is_some() => (|| -> Option<Recipe> { drip_recipe(atlas, name, Drip::of(particle)?, rng) })(),
-        P::CherryLeaves => (|| -> Option<Recipe> { leaf_recipe(atlas, name, rng, 0.25, 2.0, false, true, 1.0, 0.0) })(),
-        P::PaleOakLeaves | P::RedPoplarLeaves | P::OrangePoplarLeaves | P::YellowPoplarLeaves => (|| -> Option<Recipe> {
-            leaf_recipe(atlas, name, rng, 0.07, 10.0, true, false, 2.0, 0.021)
+        _ if Drip::of(particle).is_some() => {
+            (|| -> Option<Recipe> { drip_recipe(atlas, name, Drip::of(particle)?, rng) })()
+        }
+        P::CherryLeaves => (|| -> Option<Recipe> {
+            leaf_recipe(atlas, name, rng, 0.25, 2.0, false, true, 1.0, 0.0)
         })(),
+        P::PaleOakLeaves | P::RedPoplarLeaves | P::OrangePoplarLeaves | P::YellowPoplarLeaves => {
+            (|| -> Option<Recipe> {
+                leaf_recipe(atlas, name, rng, 0.07, 10.0, true, false, 2.0, 0.021)
+            })()
+        }
         P::Snowflake => (|| -> Option<Recipe> {
             let mut r = base_recipe(Sprite::Animated(atlas.sheet_index(name)?), rng);
             r.velocity = arg
@@ -319,14 +344,24 @@ fn ported_classes(particle: &azalea::entity::particle::Particle, atlas: &Atlas, 
             r.friction = 0.96;
             r.size *= 1.5;
             r.lifetime = (8.0 / (rng.next_f32() * 0.8 + 0.2)) as u32 + 4;
-            r.flags = PHYSICS | TRANSLUCENT | if matches!(particle, P::SculkSoul) { FULLBRIGHT } else { 0 };
+            r.flags = PHYSICS
+                | TRANSLUCENT
+                | if matches!(particle, P::SculkSoul) {
+                    FULLBRIGHT
+                } else {
+                    0
+                };
             Some(r)
         })(),
         P::Gust | P::SmallGust => (|| -> Option<Recipe> {
             let mut r = base_recipe(Sprite::Animated(atlas.sheet_index(name)?), rng);
             r.gravity = 0.0;
             r.lifetime = 12 + rng.next_int(4);
-            r.size = if matches!(particle, P::SmallGust) { 0.15 } else { 1.0 };
+            r.size = if matches!(particle, P::SmallGust) {
+                0.15
+            } else {
+                1.0
+            };
             r.flags = FULLBRIGHT;
             Some(r)
         })(),
@@ -357,18 +392,20 @@ fn ported_classes(particle: &azalea::entity::particle::Particle, atlas: &Atlas, 
             r.lifetime = (16.0 / (rng.next_f32() * 0.8 + 0.2)) as u32 + 2;
             Some(r)
         })(),
-        P::SquidInk | P::GlowSquidInk if matches!(particle, P::SquidInk) => (|| -> Option<Recipe> {
-            let mut r = base_recipe(Sprite::Animated(atlas.sheet_index(name)?), rng);
-            r.velocity = arg;
-            r.gravity = 0.0;
-            r.friction = 0.92;
-            r.size = 0.5;
-            r.tint = [0.0, 0.0, 0.0, 1.0];
-            r.lifetime = ((0.5 * 12.0 / (rng.next_f32() * 0.8 + 0.2)) as u32).max(1);
-            r.flags = TRANSLUCENT | FADE_OUT;
-            r.behavior = Behavior::SquidInk;
-            Some(r)
-        })(),
+        P::SquidInk | P::GlowSquidInk if matches!(particle, P::SquidInk) => {
+            (|| -> Option<Recipe> {
+                let mut r = base_recipe(Sprite::Animated(atlas.sheet_index(name)?), rng);
+                r.velocity = arg;
+                r.gravity = 0.0;
+                r.friction = 0.92;
+                r.size = 0.5;
+                r.tint = [0.0, 0.0, 0.0, 1.0];
+                r.lifetime = ((0.5 * 12.0 / (rng.next_f32() * 0.8 + 0.2)) as u32).max(1);
+                r.flags = TRANSLUCENT | FADE_OUT;
+                r.behavior = Behavior::SquidInk;
+                Some(r)
+            })()
+        }
         // `WakeParticle`: a fishing bobber's trail.
         P::Fishing => (|| -> Option<Recipe> {
             let mut r = base_recipe(Sprite::Animated(atlas.sheet_index(name)?), rng);
@@ -391,7 +428,11 @@ fn ported_classes(particle: &azalea::entity::particle::Particle, atlas: &Atlas, 
         P::PauseMobGrowth | P::ResetMobGrowth => (|| -> Option<Recipe> {
             let uv = random_frame(atlas, name, rng)?;
             let mut r = base_recipe(Sprite::Fixed(uv), rng);
-            let up = if matches!(particle, P::ResetMobGrowth) { 0.03 } else { -0.03 };
+            let up = if matches!(particle, P::ResetMobGrowth) {
+                0.03
+            } else {
+                -0.03
+            };
             r.velocity = arg + Vec3::new(0.0, up, 0.0);
             r.gravity = 0.0;
             r.size *= rng.next_f32() * 0.6 + 0.5;
@@ -467,7 +508,12 @@ fn ported_classes(particle: &azalea::entity::particle::Particle, atlas: &Atlas, 
             let size_start = 0.02 + 0.02 * rng.next_f32();
             r.size = size_start;
             r.lifetime = 20 * 60;
-            r.behavior = Behavior::Bubble { y_start: 0.0, y_end: 0.0, y_prev: f32::MIN, size_start };
+            r.behavior = Behavior::Bubble {
+                y_start: 0.0,
+                y_end: 0.0,
+                y_prev: f32::MIN,
+                size_start,
+            };
             Some(r)
         })(),
         // `ElderGuardianParticle`: the face, drawn over the screen.
@@ -481,7 +527,13 @@ fn ported_classes(particle: &azalea::entity::particle::Particle, atlas: &Atlas, 
 
 /// Explosions, water, bubbles and dust. `None` when the particle isn't one of these.
 #[allow(clippy::redundant_closure_call)]
-fn explosions_water_and_dust(particle: &azalea::entity::particle::Particle, atlas: &Atlas, name: &str, arg: Vec3, rng: &mut JavaRandom) -> Option<Option<Recipe>> {
+fn explosions_water_and_dust(
+    particle: &azalea::entity::particle::Particle,
+    atlas: &Atlas,
+    name: &str,
+    arg: Vec3,
+    rng: &mut JavaRandom,
+) -> Option<Option<Recipe>> {
     use azalea::entity::particle::Particle as P;
     Some(match particle {
         P::Explosion => (|| -> Option<Recipe> {
@@ -509,21 +561,23 @@ fn explosions_water_and_dust(particle: &azalea::entity::particle::Particle, atla
             r.lifetime = short_lifetime(rng);
             Some(r)
         })(),
-        P::Bubble | P::BubblePop | P::CurrentDown | P::BubbleColumnUp | P::Underwater => (|| -> Option<Recipe> {
-            let uv = random_frame(atlas, name, rng)?;
-            let mut r = base_recipe(Sprite::Fixed(uv), rng);
-            r.size = 0.02 * (rng.next_f32() * 0.6 + 0.2);
-            r.velocity = arg * 0.2
-                + Vec3::new(
-                    (rng.next_f32() - 0.5) * 0.04,
-                    (rng.next_f32() - 0.5) * 0.04,
-                    (rng.next_f32() - 0.5) * 0.04,
-                );
-            r.gravity = -0.05;
-            r.friction = 0.85;
-            r.lifetime = short_lifetime(rng);
-            Some(r)
-        })(),
+        P::Bubble | P::BubblePop | P::CurrentDown | P::BubbleColumnUp | P::Underwater => {
+            (|| -> Option<Recipe> {
+                let uv = random_frame(atlas, name, rng)?;
+                let mut r = base_recipe(Sprite::Fixed(uv), rng);
+                r.size = 0.02 * (rng.next_f32() * 0.6 + 0.2);
+                r.velocity = arg * 0.2
+                    + Vec3::new(
+                        (rng.next_f32() - 0.5) * 0.04,
+                        (rng.next_f32() - 0.5) * 0.04,
+                        (rng.next_f32() - 0.5) * 0.04,
+                    );
+                r.gravity = -0.05;
+                r.friction = 0.85;
+                r.lifetime = short_lifetime(rng);
+                Some(r)
+            })()
+        }
 
         P::Dust(dust) => (|| -> Option<Recipe> {
             let color = [
@@ -541,20 +595,28 @@ fn explosions_water_and_dust(particle: &azalea::entity::particle::Particle, atla
             ];
             dust_recipe(atlas, name, arg, rng, color, dust.scale)
         })(),
-        P::DustPlume => (|| -> Option<Recipe> { dust_recipe(atlas, name, arg, rng, [0.75, 0.65, 0.5], 1.0) })(),
+        P::DustPlume => {
+            (|| -> Option<Recipe> { dust_recipe(atlas, name, arg, rng, [0.75, 0.65, 0.5], 1.0) })()
+        }
         _ => return None,
     })
 }
 
 /// Moods, notes, portals, spells and fireworks. `None` when the particle isn't one of these.
 #[allow(clippy::redundant_closure_call)]
-fn moods_and_magic(particle: &azalea::entity::particle::Particle, atlas: &Atlas, name: &str, arg: Vec3, rng: &mut JavaRandom) -> Option<Option<Recipe>> {
+fn moods_and_magic(
+    particle: &azalea::entity::particle::Particle,
+    atlas: &Atlas,
+    name: &str,
+    arg: Vec3,
+    rng: &mut JavaRandom,
+) -> Option<Option<Recipe>> {
     use azalea::entity::particle::Particle as P;
     Some(match particle {
-
-        P::HappyVillager | P::Composter | P::EggCrack => (|| -> Option<Recipe> {
-            suspended_recipe(atlas, name, arg, rng, [1.0, 1.0, 1.0, 1.0])
-        })(),
+        P::HappyVillager | P::Composter | P::EggCrack => {
+            (|| -> Option<Recipe> { suspended_recipe(atlas, name, arg, rng, [1.0, 1.0, 1.0, 1.0]) })(
+            )
+        }
         P::Mycelium => (|| -> Option<Recipe> {
             let grey = rng.next_f32() * 0.1 + 0.2;
             suspended_recipe(atlas, name, arg, rng, [grey, grey, grey, 1.0])
@@ -658,21 +720,23 @@ fn moods_and_magic(particle: &azalea::entity::particle::Particle, atlas: &Atlas,
             Some(r)
         })(),
 
-        P::Effect(_) | P::InstantEffect(_) | P::Infested | P::RaidOmen | P::TrialOmen => (|| -> Option<Recipe> {
-            spell_recipe(atlas, name, arg, rng, [1.0, 1.0, 1.0, 1.0])
+        P::Effect(_) | P::InstantEffect(_) | P::Infested | P::RaidOmen | P::TrialOmen => {
+            (|| -> Option<Recipe> { spell_recipe(atlas, name, arg, rng, [1.0, 1.0, 1.0, 1.0]) })()
+        }
+        P::EntityEffect(color) => (|| -> Option<Recipe> {
+            spell_recipe(
+                atlas,
+                name,
+                arg,
+                rng,
+                [
+                    color.color.red() as f32 / 255.0,
+                    color.color.green() as f32 / 255.0,
+                    color.color.blue() as f32 / 255.0,
+                    1.0,
+                ],
+            )
         })(),
-        P::EntityEffect(color) => (|| -> Option<Recipe> { spell_recipe(
-            atlas,
-            name,
-            arg,
-            rng,
-            [
-                color.color.red() as f32 / 255.0,
-                color.color.green() as f32 / 255.0,
-                color.color.blue() as f32 / 255.0,
-                1.0,
-            ],
-        ) })(),
         P::Witch => (|| -> Option<Recipe> {
             let br = rng.next_f32() * 0.5 + 0.35;
             spell_recipe(atlas, name, arg, rng, [br, 0.0, br, 1.0])
@@ -704,31 +768,38 @@ fn moods_and_magic(particle: &azalea::entity::particle::Particle, atlas: &Atlas,
 
 /// Glows, wax, sparks, crits and items. `None` when the particle isn't one of these.
 #[allow(clippy::redundant_closure_call)]
-fn glows_and_hits(particle: &azalea::entity::particle::Particle, atlas: &Atlas, name: &str, arg: Vec3, rng: &mut JavaRandom) -> Option<Option<Recipe>> {
+fn glows_and_hits(
+    particle: &azalea::entity::particle::Particle,
+    atlas: &Atlas,
+    name: &str,
+    arg: Vec3,
+    rng: &mut JavaRandom,
+) -> Option<Option<Recipe>> {
     use azalea::entity::particle::Particle as P;
     Some(match particle {
-
-        P::Glow | P::GlowSquidInk | P::WaxOn | P::WaxOff | P::ElectricSpark | P::Scrape => (|| -> Option<Recipe> {
-            let mut r = base_recipe(Sprite::Animated(atlas.sheet_index(name)?), rng);
-            r.velocity = arg * 0.25;
-            r.gravity = 0.0;
-            r.friction = 0.96;
-            r.size *= 0.75;
-            r.lifetime = match particle {
-                P::ElectricSpark => rng.next_int(2) + 2,
-                P::Glow | P::GlowSquidInk => short_lifetime(rng),
-                _ => rng.next_int(30) + 10,
-            };
-            r.tint = match particle {
-                P::WaxOn => [0.91, 0.55, 0.08, 1.0],
-                P::WaxOff | P::ElectricSpark => [1.0, 0.9, 1.0, 1.0],
-                P::Scrape => [0.29, 0.58, 0.51, 1.0],
-                _ if rng.next_int(2) == 0 => [0.6, 1.0, 0.8, 1.0],
-                _ => [0.08, 0.4, 0.4, 1.0],
-            };
-            r.flags = FULLBRIGHT;
-            Some(r)
-        })(),
+        P::Glow | P::GlowSquidInk | P::WaxOn | P::WaxOff | P::ElectricSpark | P::Scrape => {
+            (|| -> Option<Recipe> {
+                let mut r = base_recipe(Sprite::Animated(atlas.sheet_index(name)?), rng);
+                r.velocity = arg * 0.25;
+                r.gravity = 0.0;
+                r.friction = 0.96;
+                r.size *= 0.75;
+                r.lifetime = match particle {
+                    P::ElectricSpark => rng.next_int(2) + 2,
+                    P::Glow | P::GlowSquidInk => short_lifetime(rng),
+                    _ => rng.next_int(30) + 10,
+                };
+                r.tint = match particle {
+                    P::WaxOn => [0.91, 0.55, 0.08, 1.0],
+                    P::WaxOff | P::ElectricSpark => [1.0, 0.9, 1.0, 1.0],
+                    P::Scrape => [0.29, 0.58, 0.51, 1.0],
+                    _ if rng.next_int(2) == 0 => [0.6, 1.0, 0.8, 1.0],
+                    _ => [0.08, 0.4, 0.4, 1.0],
+                };
+                r.flags = FULLBRIGHT;
+                Some(r)
+            })()
+        }
 
         P::Crit | P::EnchantedHit | P::DamageIndicator => (|| -> Option<Recipe> {
             let mut r = base_recipe(Sprite::Fixed(atlas.crit?), rng);
@@ -754,7 +825,6 @@ fn glows_and_hits(particle: &azalea::entity::particle::Particle, atlas: &Atlas, 
         _ => return None,
     })
 }
-
 
 pub(super) fn terrain_recipe(
     state: azalea::block::BlockState,
@@ -927,7 +997,12 @@ pub(super) fn animated_recipe(
 
 /// `DripParticle` and its providers: colour, gravity (per tick, as vanilla
 /// subtracts it whole) and lifetime per kind.
-pub(super) fn drip_recipe(atlas: &Atlas, name: &str, drip: Drip, rng: &mut JavaRandom) -> Option<Recipe> {
+pub(super) fn drip_recipe(
+    atlas: &Atlas,
+    name: &str,
+    drip: Drip,
+    rng: &mut JavaRandom,
+) -> Option<Recipe> {
     let mut r = base_recipe(Sprite::Animated(atlas.sheet_index(name)?), rng);
     let ranged = |rng: &mut JavaRandom, n: f32| (n / (rng.next_f32() * 0.8 + 0.2)) as u32;
     let mut gravity = 0.06;
@@ -964,7 +1039,10 @@ pub(super) fn drip_recipe(atlas: &Atlas, name: &str, drip: Drip, rng: &mut JavaR
         }
         Drip::SporeFall => {
             gravity = 0.005;
-            ([0.32, 0.5, 0.22], (64.0 / (0.1 + rng.next_f32() * 0.8)) as u32)
+            (
+                [0.32, 0.5, 0.22],
+                (64.0 / (0.1 + rng.next_f32() * 0.8)) as u32,
+            )
         }
         Drip::LavaLand => (Drip::LAVA, ranged(rng, 16.0)),
         Drip::HoneyLand => ([0.522, 0.408, 0.082], ranged(rng, 128.0)),
@@ -1019,7 +1097,12 @@ pub(super) fn leaf_recipe(
     Some(r)
 }
 
-pub(super) fn generic_recipe(atlas: &Atlas, name: &str, arg: Vec3, rng: &mut JavaRandom) -> Option<Recipe> {
+pub(super) fn generic_recipe(
+    atlas: &Atlas,
+    name: &str,
+    arg: Vec3,
+    rng: &mut JavaRandom,
+) -> Option<Recipe> {
     let sheet = atlas.sheet_index(name)?;
     let animated = atlas.sheets[sheet as usize].len() > 1;
     let sprite = if animated {

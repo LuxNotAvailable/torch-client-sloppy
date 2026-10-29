@@ -31,7 +31,12 @@ impl Drip {
     pub(super) fn hangs(self) -> bool {
         matches!(
             self,
-            Drip::WaterHang | Drip::LavaHang | Drip::HoneyHang | Drip::TearHang | Drip::DripstoneWaterHang | Drip::DripstoneLavaHang
+            Drip::WaterHang
+                | Drip::LavaHang
+                | Drip::HoneyHang
+                | Drip::TearHang
+                | Drip::DripstoneWaterHang
+                | Drip::DripstoneLavaHang
         )
     }
 
@@ -60,8 +65,15 @@ impl Drip {
     /// The fluid it vanishes into: 1 water, 2 lava, 0 none.
     pub(super) fn fluid(self) -> u8 {
         match self {
-            Drip::WaterHang | Drip::DripstoneWaterHang | Drip::WaterFall | Drip::DripstoneWaterFall => 1,
-            Drip::LavaHang | Drip::DripstoneLavaHang | Drip::LavaFall | Drip::DripstoneLavaFall | Drip::LavaLand => 2,
+            Drip::WaterHang
+            | Drip::DripstoneWaterHang
+            | Drip::WaterFall
+            | Drip::DripstoneWaterFall => 1,
+            Drip::LavaHang
+            | Drip::DripstoneLavaHang
+            | Drip::LavaFall
+            | Drip::DripstoneLavaFall
+            | Drip::LavaLand => 2,
             _ => 0,
         }
     }
@@ -102,8 +114,14 @@ impl Drip {
 pub(super) fn in_fluid(world: Option<&azalea_world::World>, pos: Vec3, fluid: u8) -> bool {
     use azalea::block::fluid_state::{FluidKind, FluidState};
     let Some(world) = world else { return false };
-    let cell = azalea_core::position::BlockPos::new(pos.x.floor() as i32, pos.y.floor() as i32, pos.z.floor() as i32);
-    let Some(state) = world.get_block_state(cell) else { return false };
+    let cell = azalea_core::position::BlockPos::new(
+        pos.x.floor() as i32,
+        pos.y.floor() as i32,
+        pos.z.floor() as i32,
+    );
+    let Some(state) = world.get_block_state(cell) else {
+        return false;
+    };
     let f = FluidState::from(state);
     let kind = match fluid {
         1 => FluidKind::Water,
@@ -115,7 +133,11 @@ pub(super) fn in_fluid(world: Option<&azalea_world::World>, pos: Vec3, fluid: u8
 
 pub(super) fn is_air_at(world: Option<&azalea_world::World>, pos: Vec3) -> bool {
     let Some(world) = world else { return true };
-    let cell = azalea_core::position::BlockPos::new(pos.x.floor() as i32, pos.y.floor() as i32, pos.z.floor() as i32);
+    let cell = azalea_core::position::BlockPos::new(
+        pos.x.floor() as i32,
+        pos.y.floor() as i32,
+        pos.z.floor() as i32,
+    );
     world.get_block_state(cell).is_none_or(|s| s.is_air())
 }
 
@@ -128,8 +150,17 @@ pub(super) struct After {
 
 /// A behaviour's tick, after the plain motion; `on_ground` is that
 /// motion's landing.
-pub(super) fn tick_behavior(p: &mut Particle, world: Option<&azalea_world::World>, on_ground: bool, rng: &mut JavaRandom) -> After {
-    let mut after = After { remove: false, spawn: None, sound: None };
+pub(super) fn tick_behavior(
+    p: &mut Particle,
+    world: Option<&azalea_world::World>,
+    on_ground: bool,
+    rng: &mut JavaRandom,
+) -> After {
+    let mut after = After {
+        remove: false,
+        spawn: None,
+        sound: None,
+    };
     match &mut p.behavior {
         Behavior::None | Behavior::Spark(_) => {}
         Behavior::Drip(drip) => {
@@ -138,7 +169,12 @@ pub(super) fn tick_behavior(p: &mut Particle, world: Option<&azalea_world::World
                 p.velocity *= 0.02;
                 if drip.cools() {
                     let left = p.lifetime.saturating_sub(p.age) as f32;
-                    p.tint = [1.0, 16.0 / (40.0 - left + 16.0), 4.0 / (40.0 - left + 8.0), 1.0];
+                    p.tint = [
+                        1.0,
+                        16.0 / (40.0 - left + 16.0),
+                        4.0 / (40.0 - left + 8.0),
+                        1.0,
+                    ];
                 }
                 if p.age >= p.lifetime {
                     after.spawn = drip.next().map(|n| (n, p.pos));
@@ -207,7 +243,12 @@ pub(super) fn tick_behavior(p: &mut Particle, world: Option<&azalea_world::World
             p.velocity.y *= 0.9;
             p.velocity.z *= 0.95;
         }
-        Behavior::FlyStraight { start, offset, from, to } => {
+        Behavior::FlyStraight {
+            start,
+            offset,
+            from,
+            to,
+        } => {
             let t = p.age as f32 / p.lifetime.max(1) as f32;
             let left = 1.0 - t;
             p.pos = Vec3::from(*start) + Vec3::from(*offset) * left;
@@ -219,7 +260,12 @@ pub(super) fn tick_behavior(p: &mut Particle, world: Option<&azalea_world::World
             p.tint = [lerp(16), lerp(8), lerp(0), lerp(24)];
             p.velocity = Vec3::ZERO;
         }
-        Behavior::Bubble { y_start, y_end, y_prev, size_start } => {
+        Behavior::Bubble {
+            y_start,
+            y_end,
+            y_prev,
+            size_start,
+        } => {
             if *y_prev == f32::MIN {
                 *y_start = p.prev.y;
                 *y_end = p.prev.y + 3.0;
@@ -228,7 +274,9 @@ pub(super) fn tick_behavior(p: &mut Particle, world: Option<&azalea_world::World
             if !in_fluid(world, p.pos, 1) || p.pos.y >= *y_end || p.pos.y <= *y_prev {
                 after.remove = true;
             }
-            let wiggle = |rng: &mut JavaRandom| rng.next_f32() * 0.003 * if rng.next_int(2) == 0 { 1.0 } else { -1.0 } * 0.5;
+            let wiggle = |rng: &mut JavaRandom| {
+                rng.next_f32() * 0.003 * if rng.next_int(2) == 0 { 1.0 } else { -1.0 } * 0.5
+            };
             p.velocity.x += wiggle(rng);
             p.velocity.z += wiggle(rng);
             let progress = (p.pos.y - *y_start) / (*y_end - *y_start).max(1e-3);
@@ -265,7 +313,10 @@ pub(super) fn tick_spark(p: &mut Particle, spark: Spark, trails: &mut Vec<Partic
             grow: p.grow,
             sprite: p.sprite,
             flags: p.flags,
-            behavior: Behavior::Spark(Spark { trail: false, ..spark }),
+            behavior: Behavior::Spark(Spark {
+                trail: false,
+                ..spark
+            }),
         };
         copy.age = copy.lifetime / 2;
         trails.push(copy);

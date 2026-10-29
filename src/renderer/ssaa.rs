@@ -157,8 +157,16 @@ mod tests {
     #[test]
     fn supersampling_scales_physical_pixels_at_any_display_scaling() {
         for factor in [1.0, 1.25, 1.5, 2.0, 2.625, 3.5] {
-            assert_eq!(render_scale(Some(1.5), factor), 1.5, "scale factor {factor}");
-            assert_eq!(render_scale(Some(2.0), factor), 2.0, "scale factor {factor}");
+            assert_eq!(
+                render_scale(Some(1.5), factor),
+                1.5,
+                "scale factor {factor}"
+            );
+            assert_eq!(
+                render_scale(Some(2.0), factor),
+                2.0,
+                "scale factor {factor}"
+            );
         }
     }
 
@@ -168,9 +176,18 @@ mod tests {
         for step in 1..=80 {
             let factor = step as f32 * 0.1;
             let scale = render_scale(None, factor);
-            assert!(scale >= test_floor() - 1e-6, "factor {factor}: {scale} is below the floor");
-            assert!(scale <= 1.0 + 1e-6, "factor {factor}: {scale} is above one per pixel");
-            assert!(scale <= previous + 1e-6, "factor {factor}: {scale} rose above {previous}");
+            assert!(
+                scale >= test_floor() - 1e-6,
+                "factor {factor}: {scale} is below the floor"
+            );
+            assert!(
+                scale <= 1.0 + 1e-6,
+                "factor {factor}: {scale} is above one per pixel"
+            );
+            assert!(
+                scale <= previous + 1e-6,
+                "factor {factor}: {scale} rose above {previous}"
+            );
             previous = scale;
         }
     }

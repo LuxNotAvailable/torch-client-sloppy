@@ -23,7 +23,10 @@ pub fn reset() {
 }
 
 pub fn store_tag(pos: [i32; 3], tag: &NbtCompound) {
-    TAGS.lock().unwrap().get_or_insert_with(HashMap::new).insert(pos, tag.clone());
+    TAGS.lock()
+        .unwrap()
+        .get_or_insert_with(HashMap::new)
+        .insert(pos, tag.clone());
 }
 
 fn tag_at(pos: BlockPos) -> NbtCompound {
@@ -120,7 +123,8 @@ const JOINTS: [&str; 2] = ["rollable", "aligned"];
 const TEST_MODES: [&str; 4] = ["start", "log", "fail", "accept"];
 
 fn string(tag: &NbtCompound, key: &str, default: &str) -> String {
-    tag.string(key).map_or_else(|| default.to_owned(), |s| s.to_string())
+    tag.string(key)
+        .map_or_else(|| default.to_owned(), |s| s.to_string())
 }
 
 fn int(tag: &NbtCompound, key: &str, default: i32) -> i32 {
@@ -132,13 +136,20 @@ fn flag(tag: &NbtCompound, key: &str) -> bool {
 }
 
 fn index_of(options: &[&str], value: &str) -> usize {
-    options.iter().position(|o| o.eq_ignore_ascii_case(value)).unwrap_or(0)
+    options
+        .iter()
+        .position(|o| o.eq_ignore_ascii_case(value))
+        .unwrap_or(0)
 }
 
 impl OpBlockState {
     pub fn open(&mut self, kind: OpBlock, pos: BlockPos) {
         let tag = tag_at(pos);
-        *self = OpBlockState { kind, pos, ..Default::default() };
+        *self = OpBlockState {
+            kind,
+            pos,
+            ..Default::default()
+        };
         match kind {
             OpBlock::Structure => {
                 self.fields = vec![
@@ -149,40 +160,86 @@ impl OpBlockState {
                     Field::new("Size X", &int(&tag, "sizeX", 0).to_string(), 15),
                     Field::new("Size Y", &int(&tag, "sizeY", 0).to_string(), 15),
                     Field::new("Size Z", &int(&tag, "sizeZ", 0).to_string(), 15),
-                    Field::new("Integrity", &format!("{}", tag.float("integrity").unwrap_or(1.0)), 15),
+                    Field::new(
+                        "Integrity",
+                        &format!("{}", tag.float("integrity").unwrap_or(1.0)),
+                        15,
+                    ),
                     Field::new("Seed", &tag.long("seed").unwrap_or(0).to_string(), 31),
                     Field::new("Custom Data Tag Name", &string(&tag, "metadata", ""), 128),
                 ];
                 self.cycles = vec![
-                    ("Mode", STRUCTURE_MODES.to_vec(), index_of(&STRUCTURE_MODES, &string(&tag, "mode", "data"))),
-                    ("Mirror", MIRRORS.to_vec(), index_of(&MIRRORS, &string(&tag, "mirror", "none"))),
-                    ("Rotation", ROTATIONS.to_vec(), index_of(&ROTATIONS, &string(&tag, "rotation", "none"))),
+                    (
+                        "Mode",
+                        STRUCTURE_MODES.to_vec(),
+                        index_of(&STRUCTURE_MODES, &string(&tag, "mode", "data")),
+                    ),
+                    (
+                        "Mirror",
+                        MIRRORS.to_vec(),
+                        index_of(&MIRRORS, &string(&tag, "mirror", "none")),
+                    ),
+                    (
+                        "Rotation",
+                        ROTATIONS.to_vec(),
+                        index_of(&ROTATIONS, &string(&tag, "rotation", "none")),
+                    ),
                 ];
                 self.toggles = vec![
                     ("Include Entities", !flag(&tag, "ignoreEntities")),
                     ("Show Air", flag(&tag, "showair")),
-                    ("Show Bounding Box", tag.byte("showboundingbox").is_none_or(|b| b != 0)),
+                    (
+                        "Show Bounding Box",
+                        tag.byte("showboundingbox").is_none_or(|b| b != 0),
+                    ),
                     ("Strict Placement", flag(&tag, "strict")),
                 ];
             }
             OpBlock::Jigsaw => {
                 self.fields = vec![
                     Field::new("Name", &string(&tag, "name", "minecraft:empty"), 128),
-                    Field::new("Target Name", &string(&tag, "target", "minecraft:empty"), 128),
+                    Field::new(
+                        "Target Name",
+                        &string(&tag, "target", "minecraft:empty"),
+                        128,
+                    ),
                     Field::new("Target Pool", &string(&tag, "pool", "minecraft:empty"), 128),
-                    Field::new("Turns into", &string(&tag, "final_state", "minecraft:air"), 256),
-                    Field::new("Selection Priority", &int(&tag, "selection_priority", 0).to_string(), 10),
-                    Field::new("Placement Priority", &int(&tag, "placement_priority", 0).to_string(), 10),
+                    Field::new(
+                        "Turns into",
+                        &string(&tag, "final_state", "minecraft:air"),
+                        256,
+                    ),
+                    Field::new(
+                        "Selection Priority",
+                        &int(&tag, "selection_priority", 0).to_string(),
+                        10,
+                    ),
+                    Field::new(
+                        "Placement Priority",
+                        &int(&tag, "placement_priority", 0).to_string(),
+                        10,
+                    ),
                 ];
-                self.cycles = vec![("Joint Type", JOINTS.to_vec(), index_of(&JOINTS, &string(&tag, "joint", "rollable")))];
+                self.cycles = vec![(
+                    "Joint Type",
+                    JOINTS.to_vec(),
+                    index_of(&JOINTS, &string(&tag, "joint", "rollable")),
+                )];
             }
             OpBlock::Test => {
                 self.fields = vec![Field::new("Message", &string(&tag, "message", ""), 128)];
-                self.cycles = vec![("Mode", TEST_MODES.to_vec(), index_of(&TEST_MODES, &string(&tag, "mode", "start")))];
+                self.cycles = vec![(
+                    "Mode",
+                    TEST_MODES.to_vec(),
+                    index_of(&TEST_MODES, &string(&tag, "mode", "start")),
+                )];
             }
             OpBlock::TestInstance => {
                 let data = tag.compound("data").cloned().unwrap_or_default();
-                let size = data.int_array("size").map(|a| a.to_vec()).unwrap_or_default();
+                let size = data
+                    .int_array("size")
+                    .map(|a| a.to_vec())
+                    .unwrap_or_default();
                 let axis = |i: usize| size.get(i).copied().unwrap_or(0).to_string();
                 self.fields = vec![
                     Field::new("Test", &string(&data, "test", ""), 256),
@@ -190,7 +247,11 @@ impl OpBlockState {
                     Field::new("Size Y", &axis(1), 15),
                     Field::new("Size Z", &axis(2), 15),
                 ];
-                self.cycles = vec![("Rotation", ROTATIONS.to_vec(), index_of(&ROTATIONS, &string(&data, "rotation", "none")))];
+                self.cycles = vec![(
+                    "Rotation",
+                    ROTATIONS.to_vec(),
+                    index_of(&ROTATIONS, &string(&data, "rotation", "none")),
+                )];
                 self.toggles = vec![("Include Entities", !flag(&data, "ignore_entities"))];
             }
         }
@@ -231,8 +292,16 @@ impl OpBlockState {
                 _ => StructureMode::Data,
             },
             name: self.text(0).to_owned(),
-            offset: BytePosition { x: byte(1), y: byte(2), z: byte(3) },
-            size: BytePosition { x: size(4), y: size(5), z: size(6) },
+            offset: BytePosition {
+                x: byte(1),
+                y: byte(2),
+                z: byte(3),
+            },
+            size: BytePosition {
+                x: size(4),
+                y: size(5),
+                z: size(6),
+            },
             mirror: match self.cycle(1) {
                 1 => Mirror::LeftRight,
                 2 => Mirror::FrontBack,
@@ -245,7 +314,12 @@ impl OpBlockState {
                 _ => Rotation::None,
             },
             data: self.text(9).to_owned(),
-            integrity: self.text(7).trim().parse::<f32>().unwrap_or(1.0).clamp(0.0, 1.0),
+            integrity: self
+                .text(7)
+                .trim()
+                .parse::<f32>()
+                .unwrap_or(1.0)
+                .clamp(0.0, 1.0),
             seed: self.text(8).trim().parse::<i64>().unwrap_or(0) as u64,
             flags: Flags {
                 ignore_entities: !self.toggle(0),
@@ -259,7 +333,8 @@ impl OpBlockState {
         use azalea_protocol::packets::game::s_set_jigsaw_block::ServerboundSetJigsawBlock;
         let id = |i: usize| {
             let text = self.text(i).trim();
-            text.parse().unwrap_or_else(|_| "minecraft:empty".parse().unwrap())
+            text.parse()
+                .unwrap_or_else(|_| "minecraft:empty".parse().unwrap())
         };
         OpBlockSend::Jigsaw(ServerboundSetJigsawBlock {
             pos: self.pos,
@@ -274,7 +349,9 @@ impl OpBlockState {
     }
 
     fn test(&self) -> OpBlockSend {
-        use azalea_protocol::packets::game::s_set_test_block::{ServerboundSetTestBlock, TestBlockMode};
+        use azalea_protocol::packets::game::s_set_test_block::{
+            ServerboundSetTestBlock, TestBlockMode,
+        };
         OpBlockSend::Test(ServerboundSetTestBlock {
             position: self.pos,
             mode: match self.cycle(0) {
@@ -310,9 +387,17 @@ pub fn draw(p: &mut Painter, state: &mut OpBlockState, ctx: &ScreenCtx) -> Optio
     let frame = p.frame;
     for (i, field) in state.fields.iter_mut().enumerate() {
         let wide = i == 0 || field.input.max_len > 64;
-        let (x, w) = if wide { (left, full_w) } else if (i % 2 == 1) == (state.kind != OpBlock::TestInstance) { (left, col_w) } else { (left + 154.0, col_w) };
+        let (x, w) = if wide {
+            (left, full_w)
+        } else if (i % 2 == 1) == (state.kind != OpBlock::TestInstance) {
+            (left, col_w)
+        } else {
+            (left + 154.0, col_w)
+        };
         p.text_str(field.label, x + 1.0, y, 0xA0A0A0, true);
-        field.input.handle_mouse(ctx.input, &p.atlas.font, x, y + 10.0, w, WIDGET_HEIGHT);
+        field
+            .input
+            .handle_mouse(ctx.input, &p.atlas.font, x, y + 10.0, w, WIDGET_HEIGHT);
         if field.input.focused {
             field.input.handle_input(ctx.input);
         }
@@ -369,7 +454,9 @@ pub fn draw(p: &mut Painter, state: &mut OpBlockState, ctx: &ScreenCtx) -> Optio
                 send(state.structure(update));
                 close = true;
             }
-            if mode == 0 && Button::new(left + 102.0, y, 100.0, WIDGET_HEIGHT, "Detect").draw(p, ctx) {
+            if mode == 0
+                && Button::new(left + 102.0, y, 100.0, WIDGET_HEIGHT, "Detect").draw(p, ctx)
+            {
                 send(state.structure(3));
             }
         }
@@ -378,7 +465,10 @@ pub fn draw(p: &mut Painter, state: &mut OpBlockState, ctx: &ScreenCtx) -> Optio
             if Button::new(left, y, 100.0, WIDGET_HEIGHT, &label).draw(p, ctx) {
                 state.levels = (state.levels + 1) % 21;
             }
-            let keep = format!("Keep Jigsaws: {}", if state.keep_jigsaws { "ON" } else { "OFF" });
+            let keep = format!(
+                "Keep Jigsaws: {}",
+                if state.keep_jigsaws { "ON" } else { "OFF" }
+            );
             if Button::new(left + 102.0, y, 100.0, WIDGET_HEIGHT, &keep).draw(p, ctx) {
                 state.keep_jigsaws = !state.keep_jigsaws;
             }
@@ -398,7 +488,13 @@ pub fn draw(p: &mut Painter, state: &mut OpBlockState, ctx: &ScreenCtx) -> Optio
         // azalea's test instance packet carries the test's type, not its
         // id, so sending it would clear the block's test: shown, not sent.
         OpBlock::TestInstance => {
-            p.text_str("Editing test instances isn't supported yet", left, y + 6.0, 0xFF5555, true);
+            p.text_str(
+                "Editing test instances isn't supported yet",
+                left,
+                y + 6.0,
+                0xFF5555,
+                true,
+            );
         }
     }
 
@@ -414,7 +510,9 @@ pub fn draw(p: &mut Painter, state: &mut OpBlockState, ctx: &ScreenCtx) -> Optio
         });
         close = true;
     }
-    if Button::new(cx + 4.0, bottom, 150.0, WIDGET_HEIGHT, "Cancel").draw(p, ctx) || ctx.input.escape {
+    if Button::new(cx + 4.0, bottom, 150.0, WIDGET_HEIGHT, "Cancel").draw(p, ctx)
+        || ctx.input.escape
+    {
         close = true;
     }
     close.then_some(Screen::None)

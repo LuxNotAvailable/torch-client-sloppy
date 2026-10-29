@@ -104,10 +104,7 @@ pub(crate) fn plan(
                 .map(|s| s.kind)
                 .collect();
             for i in source {
-                if planner
-                    .present(i)
-                    .is_some_and(|s| kinds.contains(&s.kind))
-                {
+                if planner.present(i).is_some_and(|s| kinds.contains(&s.kind)) {
                     planner.shift(i);
                 }
             }
@@ -201,7 +198,9 @@ impl Planner<'_> {
         let mut variants: Vec<ItemStackData> = Vec::new();
         let mut stacks: Vec<(u32, usize, Reverse<i32>, ItemStackData)> = Vec::new();
         for &i in slots {
-            let Some(stack) = self.present(i) else { continue };
+            let Some(stack) = self.present(i) else {
+                continue;
+            };
             let variant = match variants
                 .iter()
                 .position(|v| v.is_same_item_and_components(stack))
@@ -212,7 +211,12 @@ impl Planner<'_> {
                     variants.len() - 1
                 }
             };
-            stacks.push((stack.kind.to_u32(), variant, Reverse(stack.count), stack.clone()));
+            stacks.push((
+                stack.kind.to_u32(),
+                variant,
+                Reverse(stack.count),
+                stack.clone(),
+            ));
         }
         stacks.sort_by(|a, b| (a.0, a.1, a.2).cmp(&(b.0, b.1, b.2)));
         let mut targets: Vec<Option<ItemStackData>> =
@@ -227,7 +231,9 @@ impl Planner<'_> {
     /// every click swaps or places and puts one more slot right.
     fn arrange(&mut self, slots: &[usize], targets: &[Option<ItemStackData>]) {
         for start in 0..slots.len() {
-            if self.holds(slots[start], targets[start].as_ref()) || self.present(slots[start]).is_none() {
+            if self.holds(slots[start], targets[start].as_ref())
+                || self.present(slots[start]).is_none()
+            {
                 continue;
             }
             self.left(slots[start]);
@@ -273,7 +279,9 @@ impl Planner<'_> {
                 })
                 .map(|j| slots[j])
                 .collect();
-            let Some((&last, rest)) = group.split_last() else { continue };
+            let Some((&last, rest)) = group.split_last() else {
+                continue;
+            };
             let part = rest
                 .iter()
                 .copied()
@@ -372,7 +380,10 @@ mod tests {
     fn a_part_stack_ahead_of_a_full_one_moves_behind_it() {
         let mut inv = chest(&[(0, ItemKind::Stone, 5), (1, ItemKind::Stone, 64)]);
         run(&mut inv, SortRequest::Sort(SortSide::Container));
-        assert_eq!(contents(&inv, 0..27), vec![(ItemKind::Stone, 64), (ItemKind::Stone, 5)]);
+        assert_eq!(
+            contents(&inv, 0..27),
+            vec![(ItemKind::Stone, 64), (ItemKind::Stone, 5)]
+        );
     }
 
     #[test]
@@ -398,7 +409,12 @@ mod tests {
             (30, ItemKind::Stone, 20),
             (31, ItemKind::Dirt, 20),
         ]);
-        run(&mut inv, SortRequest::MoveMatching { from: SortSide::Player });
+        run(
+            &mut inv,
+            SortRequest::MoveMatching {
+                from: SortSide::Player,
+            },
+        );
         assert_eq!(contents(&inv, 0..27), vec![(ItemKind::Stone, 30)]);
         assert_eq!(total(&inv, ItemKind::Dirt), 20);
         assert_eq!(contents(&inv, 27..63), vec![(ItemKind::Dirt, 20)]);
@@ -409,7 +425,12 @@ mod tests {
         let mut stuff: Vec<_> = (27..63).map(|i| (i, ItemKind::Dirt, 64)).collect();
         stuff.push((0, ItemKind::Stone, 5));
         let mut inv = chest(&stuff);
-        run(&mut inv, SortRequest::MoveAll { from: SortSide::Container });
+        run(
+            &mut inv,
+            SortRequest::MoveAll {
+                from: SortSide::Container,
+            },
+        );
         assert_eq!(contents(&inv, 0..27), vec![(ItemKind::Stone, 5)]);
         assert_eq!(total(&inv, ItemKind::Dirt), 36 * 64);
     }
@@ -462,6 +483,13 @@ mod tests {
     fn nothing_happens_while_an_item_is_held() {
         let mut inv = chest(&[(3, ItemKind::Dirt, 10)]);
         inv.carried = ItemStack::new(ItemKind::Stone, 1);
-        assert!(plan(&inv, &PlayerAbilities::default(), SortRequest::Sort(SortSide::Container)).is_empty());
+        assert!(
+            plan(
+                &inv,
+                &PlayerAbilities::default(),
+                SortRequest::Sort(SortSide::Container)
+            )
+            .is_empty()
+        );
     }
 }

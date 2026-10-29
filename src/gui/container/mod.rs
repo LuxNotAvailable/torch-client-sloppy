@@ -198,7 +198,13 @@ fn sort_buttons(
             let row = if flip { 4 - row } else { row };
             for (column, pixel) in line.bytes().enumerate() {
                 if pixel == b'#' {
-                    p.fill(x + 2.0 + column as f32, y + 2.0 + row as f32, 1.0, 1.0, color);
+                    p.fill(
+                        x + 2.0 + column as f32,
+                        y + 2.0 + row as f32,
+                        1.0,
+                        1.0,
+                        color,
+                    );
                 }
             }
         }
@@ -227,9 +233,27 @@ fn storage_sort_buttons(
     crate::play::inventory_sort::set_include_hotbar(state.options.sort_hotbar);
     let held = !state.slots.cursor(snap).is_empty();
     let right = left + SLOTS_RIGHT;
-    sort_buttons(p, ctx, held, right, top + 5.0, SortSide::Container, true, out);
+    sort_buttons(
+        p,
+        ctx,
+        held,
+        right,
+        top + 5.0,
+        SortSide::Container,
+        true,
+        out,
+    );
     let label_y = top + img_h - 94.0;
-    sort_buttons(p, ctx, held, right, label_y - 1.0, SortSide::Player, true, out);
+    sort_buttons(
+        p,
+        ctx,
+        held,
+        right,
+        label_y - 1.0,
+        SortSide::Player,
+        true,
+        out,
+    );
 }
 
 /// Where the last slot column's frame ends, from the panel's left.
@@ -250,7 +274,16 @@ pub fn inventory_sort_button(
     }
     crate::play::inventory_sort::set_include_hotbar(state.options.sort_hotbar);
     let held = !state.slots.cursor(snap).is_empty();
-    sort_buttons(p, ctx, held, left + SLOTS_RIGHT, top + 72.0, SortSide::Player, false, out);
+    sort_buttons(
+        p,
+        ctx,
+        held,
+        left + SLOTS_RIGHT,
+        top + 72.0,
+        SortSide::Player,
+        false,
+        out,
+    );
 }
 
 fn error_icon(p: &mut Painter, sprite: &str, x: f32, y: f32) {

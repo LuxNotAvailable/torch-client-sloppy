@@ -99,7 +99,9 @@ impl Pack {
 
     /// `name`'s native drawing program, if the pack writes it in WGSL.
     pub(super) fn native_draw(&self, name: &str) -> Option<String> {
-        self.native(name).filter(|(_, compute)| !compute).map(|(path, _)| path)
+        self.native(name)
+            .filter(|(_, compute)| !compute)
+            .map(|(path, _)| path)
     }
 
     fn native(&self, name: &str) -> Option<(String, bool)> {
@@ -186,12 +188,15 @@ impl Pack {
             include::expand(&self.source, &path, &mut self.cache).map_err(|e| e.to_string())?;
         let applied = options::apply(&expanded.text, &self.declared, &self.values);
         let mut defines = self.environment.clone();
-        let decided = preprocess::preprocess(&applied, &mut defines).map_err(|e| {
-            match expanded.locate(e.line as u32) {
-                Some((file, line)) => format!("{file}:{line}: {}", e.message),
-                None => format!("{path}: {e}"),
-            }
+        let decided = preprocess::preprocess(&applied, &mut defines).map_err(|e| match expanded
+            .locate(e.line as u32)
+        {
+            Some((file, line)) => format!("{file}:{line}: {}", e.message),
+            None => format!("{path}: {e}"),
         })?;
-        Ok(crate::shaderpack::macros::expand(&decided, &self.environment))
+        Ok(crate::shaderpack::macros::expand(
+            &decided,
+            &self.environment,
+        ))
     }
 }

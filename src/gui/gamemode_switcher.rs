@@ -2,8 +2,8 @@
 //! through them, and letting go of F3 switches to the one picked with
 //! `/gamemode`.
 
-use crate::gui::painter::Painter;
 use crate::gui::ScreenCtx;
+use crate::gui::painter::Painter;
 use crate::session::Gamemode;
 
 const SLOT: f32 = 26.0;
@@ -11,10 +11,25 @@ const STRIDE: f32 = 31.0;
 
 /// The modes in the switcher's order, with their names, commands and icons.
 const MODES: [(Gamemode, &str, &str, &str); 4] = [
-    (Gamemode::Creative, "Creative Mode", "creative", "grass_block"),
-    (Gamemode::Survival, "Survival Mode", "survival", "iron_sword"),
+    (
+        Gamemode::Creative,
+        "Creative Mode",
+        "creative",
+        "grass_block",
+    ),
+    (
+        Gamemode::Survival,
+        "Survival Mode",
+        "survival",
+        "iron_sword",
+    ),
     (Gamemode::Adventure, "Adventure Mode", "adventure", "map"),
-    (Gamemode::Spectator, "Spectator Mode", "spectator", "ender_eye"),
+    (
+        Gamemode::Spectator,
+        "Spectator Mode",
+        "spectator",
+        "ender_eye",
+    ),
 ];
 
 #[derive(Default)]
@@ -68,7 +83,15 @@ impl SwitcherState {
 
 pub fn draw(p: &mut Painter, state: &mut SwitcherState, ctx: &ScreenCtx, current: Gamemode) {
     let (cx, cy) = ((ctx.vw / 2.0).floor(), (ctx.vh / 2.0).floor());
-    p.sprite_part("gamemode_switcher_bg", 0.0, 0.0, 125.0, 75.0, cx - 62.0, cy - 31.0 - 27.0);
+    p.sprite_part(
+        "gamemode_switcher_bg",
+        0.0,
+        0.0,
+        125.0,
+        75.0,
+        cx - 62.0,
+        cy - 31.0 - 27.0,
+    );
     let total = MODES.len() as f32 * STRIDE - 5.0;
     let x0 = cx - (total / 2.0).floor();
     let y = cy - 31.0;
@@ -95,7 +118,13 @@ pub fn draw(p: &mut Painter, state: &mut SwitcherState, ctx: &ScreenCtx, current
     }
     let name = MODES[state.hovered].1;
     let w = p.atlas.font.width_str(name);
-    p.text_str(name, cx - (w / 2.0).floor(), cy - 31.0 - 20.0, 0xFFFFFF, true);
+    p.text_str(
+        name,
+        cx - (w / 2.0).floor(),
+        cy - 31.0 - 20.0,
+        0xFFFFFF,
+        true,
+    );
     let hint = "[ F4 ] Next";
     let w = p.atlas.font.width_str(hint);
     p.text_str(hint, cx - (w / 2.0).floor(), cy + 5.0, 0xAAAAAA, true);

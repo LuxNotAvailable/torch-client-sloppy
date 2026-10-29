@@ -80,7 +80,11 @@ fn block(bot: &Client, pos: azalea_core::position::BlockPos) -> Option<Looking> 
         block.property_map().into_iter().collect();
     properties.sort_unstable();
     let progress = (bot.component::<MineBlockPos>().ok().and_then(|p| p.0) == Some(pos))
-        .then(|| bot.component::<MineProgress>().ok().map(|p| p.0.clamp(0.0, 1.0)))
+        .then(|| {
+            bot.component::<MineProgress>()
+                .ok()
+                .map(|p| p.0.clamp(0.0, 1.0))
+        })
         .flatten();
     let harvestable = block.behavior().requires_correct_tool_for_drops.then(|| {
         bot.component::<azalea::entity::inventory::Inventory>()

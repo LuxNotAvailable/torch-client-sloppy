@@ -26,7 +26,7 @@ use crate::shaderpack::directives;
 use crate::shaderpack::pipeline::{self, Layout};
 use crate::shaderpack::transform::declarations::{PackUniform, std140_size};
 use crate::shaderpack::transform::lexer::{self, Kind};
-use crate::shaderpack::transform::{Interface, Sampler, StorageBuffer, UNIFORMS, UNIFORM_BINDING};
+use crate::shaderpack::transform::{Interface, Sampler, StorageBuffer, UNIFORM_BINDING, UNIFORMS};
 
 pub(super) const EXTENSION: &str = ".wgsl";
 
@@ -109,16 +109,13 @@ fn declare(pack: &Pack, program: &str, text: &str, outputs: u32) -> Result<Decla
         if token.kind != Kind::Word {
             continue;
         }
-        let member = (token.text == "frame"
-            && tokens.get(at + 1).is_some_and(|t| t.is_punct('.')))
-        .then(|| tokens.get(at + 2))
-        .flatten()
-        .filter(|t| t.kind == Kind::Word);
+        let member = (token.text == "frame" && tokens.get(at + 1).is_some_and(|t| t.is_punct('.')))
+            .then(|| tokens.get(at + 2))
+            .flatten()
+            .filter(|t| t.kind == Kind::Word);
         if let Some(member) = member {
             let name = member.text.as_str();
-            if UNIFORMS.iter().any(|(n, _)| *n == name)
-                || uniforms.iter().any(|u| u.name == name)
-            {
+            if UNIFORMS.iter().any(|(n, _)| *n == name) || uniforms.iter().any(|u| u.name == name) {
                 continue;
             }
             let ty = super::super::uniforms::builtin_type(name)
@@ -285,7 +282,10 @@ fn common_prelude(variant: Variant) -> String {
          }}\n",
         variant.upright, variant.linear
     );
-    for (id, name) in crate::shaderpack::features::RENDER_STAGES.iter().enumerate() {
+    for (id, name) in crate::shaderpack::features::RENDER_STAGES
+        .iter()
+        .enumerate()
+    {
         out.push_str(&format!("const MC_RENDER_STAGE_{name}: i32 = {id};\n"));
     }
     out
@@ -662,7 +662,10 @@ mod tests {
                 read_only: false,
             },
         ];
-        let out = bind_buffers("@binding(IRIS_BUFFER_12) x; @binding(IRIS_BUFFER_1) y;", &buffers);
+        let out = bind_buffers(
+            "@binding(IRIS_BUFFER_12) x; @binding(IRIS_BUFFER_1) y;",
+            &buffers,
+        );
         assert_eq!(out, "@binding(8) x; @binding(7) y;");
     }
 

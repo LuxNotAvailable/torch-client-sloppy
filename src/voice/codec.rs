@@ -38,9 +38,8 @@ impl Decoder {
         };
         // SAFETY: `pcm` holds FRAME samples, the size passed; `data` is
         // `len` bytes or null for concealment.
-        let got = unsafe {
-            opus::opus_decode(self.state, data, len, pcm.as_mut_ptr(), FRAME as i32, 0)
-        };
+        let got =
+            unsafe { opus::opus_decode(self.state, data, len, pcm.as_mut_ptr(), FRAME as i32, 0) };
         pcm.truncate(usize::try_from(got).unwrap_or(0));
         pcm
     }
@@ -120,8 +119,7 @@ mod tests {
     fn a_frame_survives_a_round_trip_and_a_loss_is_concealed() {
         let mut encoder = Encoder::new(Codec::Voip).unwrap();
         let mut decoder = Decoder::new().unwrap();
-        let tone: [i16; FRAME] =
-            std::array::from_fn(|i| ((i as f32 * 0.06).sin() * 8000.0) as i16);
+        let tone: [i16; FRAME] = std::array::from_fn(|i| ((i as f32 * 0.06).sin() * 8000.0) as i16);
         let mut heard = Vec::new();
         for _ in 0..5 {
             let packet = encoder.encode(&tone);

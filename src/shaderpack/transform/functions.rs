@@ -177,7 +177,8 @@ mod tests {
 
     #[test]
     fn declarations_that_merely_look_like_calls_stay() {
-        let source = "layout(location = 0) out vec4 c;\nuniform float w;\nvoid main() { c = vec4(w); }\n";
+        let source =
+            "layout(location = 0) out vec4 c;\nuniform float w;\nvoid main() { c = vec4(w); }\n";
         assert_eq!(dropped(source), source);
     }
 }

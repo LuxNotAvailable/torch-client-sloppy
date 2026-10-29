@@ -20,7 +20,11 @@ fn names(devices: Result<impl Iterator<Item = cpal::Device>, cpal::DevicesError>
     names
 }
 
-fn listed(cache: &Mutex<Option<Vec<String>>>, refresh: bool, list: impl FnOnce() -> Vec<String>) -> Vec<String> {
+fn listed(
+    cache: &Mutex<Option<Vec<String>>>,
+    refresh: bool,
+    list: impl FnOnce() -> Vec<String>,
+) -> Vec<String> {
     let Ok(mut cache) = cache.lock() else {
         return Vec::new();
     };
@@ -32,12 +36,16 @@ fn listed(cache: &Mutex<Option<Vec<String>>>, refresh: bool, list: impl FnOnce()
 
 /// The speakers' names; `refresh` lists them again.
 pub fn outputs(refresh: bool) -> Vec<String> {
-    listed(&OUTPUTS, refresh, || names(cpal::default_host().output_devices()))
+    listed(&OUTPUTS, refresh, || {
+        names(cpal::default_host().output_devices())
+    })
 }
 
 /// The microphones' names; `refresh` lists them again.
 pub fn inputs(refresh: bool) -> Vec<String> {
-    listed(&INPUTS, refresh, || names(cpal::default_host().input_devices()))
+    listed(&INPUTS, refresh, || {
+        names(cpal::default_host().input_devices())
+    })
 }
 
 /// The speaker called `name`, or the default with none named or that one gone.

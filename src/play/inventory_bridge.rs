@@ -66,13 +66,17 @@ pub(crate) fn has_glint(data: &azalea_inventory::ItemStackData) -> bool {
 /// while the stack itself stays the same.
 pub(crate) fn slot_cooldown(stack: &ItemStack) -> u8 {
     use azalea_inventory::components as comp;
-    let ItemStack::Present(data) = stack else { return 0 };
+    let ItemStack::Present(data) = stack else {
+        return 0;
+    };
     if !crate::client::cooldowns::any_active() {
         return 0;
     }
     let item = data.kind.to_str().trim_start_matches("minecraft:");
     let use_cooldown = data.get_component::<comp::UseCooldown>();
-    let group = use_cooldown.as_ref().and_then(|c| c.cooldown_group.as_ref());
+    let group = use_cooldown
+        .as_ref()
+        .and_then(|c| c.cooldown_group.as_ref());
     crate::client::cooldowns::percent(group, item)
 }
 
@@ -191,7 +195,9 @@ pub(crate) fn variant_key(data: &azalea_inventory::ItemStackData) -> Option<std:
         count: data.count.clamp(0, 255) as u8,
         damage: get(|d| d.get_component::<comp::Damage>().map(|c| c.amount)) as u16,
         max_damage: get(|d| d.get_component::<comp::MaxDamage>().map(|c| c.amount)) as u16,
-        charged: data.get_component::<comp::ChargedProjectiles>().is_some_and(|c| !c.items.is_empty()),
+        charged: data
+            .get_component::<comp::ChargedProjectiles>()
+            .is_some_and(|c| !c.items.is_empty()),
         model_data: model_data(data, None).map(Box::new),
         ..Default::default()
     };
@@ -252,7 +258,9 @@ fn model_data(
     }
     if let Some(model) = data.get_component::<comp::ItemModel>() {
         let id = model.resource_location.to_string();
-        if id.trim_start_matches("minecraft:") != data.kind.to_str().trim_start_matches("minecraft:") {
+        if id.trim_start_matches("minecraft:")
+            != data.kind.to_str().trim_start_matches("minecraft:")
+        {
             out.item_model = Some(id);
         }
     }

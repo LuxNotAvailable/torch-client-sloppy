@@ -35,7 +35,11 @@ pub(crate) fn reset_fireworks() {
 }
 
 /// A rocket exploded (entity event 17) at `pos` moving at `velocity`.
-pub(crate) fn start_firework(pos: [f64; 3], velocity: [f64; 3], explosions: Vec<FireworkExplosion>) {
+pub(crate) fn start_firework(
+    pos: [f64; 3],
+    velocity: [f64; 3],
+    explosions: Vec<FireworkExplosion>,
+) {
     let pos = Vec3::new(pos[0] as f32, pos[1] as f32, pos[2] as f32);
     let velocity = Vec3::new(velocity[0] as f32, velocity[1] as f32, velocity[2] as f32);
     if explosions.is_empty() {
@@ -74,8 +78,18 @@ pub(crate) fn start_firework(pos: [f64; 3], velocity: [f64; 3], explosions: Vec<
 }
 
 pub(super) const CREEPER_COORDS: [[f32; 2]; 12] = [
-    [0.0, 0.2], [0.2, 0.2], [0.2, 0.6], [0.6, 0.6], [0.6, 0.2], [0.2, 0.2],
-    [0.2, 0.0], [0.4, 0.0], [0.4, -0.6], [0.2, -0.6], [0.2, -0.4], [0.0, -0.4],
+    [0.0, 0.2],
+    [0.2, 0.2],
+    [0.2, 0.6],
+    [0.6, 0.6],
+    [0.6, 0.2],
+    [0.2, 0.2],
+    [0.2, 0.0],
+    [0.4, 0.0],
+    [0.4, -0.6],
+    [0.2, -0.6],
+    [0.2, -0.4],
+    [0.0, -0.4],
 ];
 
 pub(super) const STAR_COORDS: [[f32; 2]; 6] = [
@@ -106,8 +120,9 @@ pub(super) fn spark(
 ) -> Option<Particle> {
     let mut r = base_recipe(Sprite::Animated(atlas.sheet_index("firework")?), rng);
     let color = colors[rng.next_int(colors.len() as u32) as usize];
-    let fade = (!explosion.fade_colors.is_empty())
-        .then(|| rgb(explosion.fade_colors[rng.next_int(explosion.fade_colors.len() as u32) as usize]));
+    let fade = (!explosion.fade_colors.is_empty()).then(|| {
+        rgb(explosion.fade_colors[rng.next_int(explosion.fade_colors.len() as u32) as usize])
+    });
     r.size *= 0.75;
     let [cr, cg, cb] = rgb(color);
     Some(Particle {
@@ -132,9 +147,19 @@ pub(super) fn spark(
     })
 }
 
-pub(super) fn explode(starter: &Starter, explosion: &FireworkExplosion, atlas: &Atlas, rng: &mut JavaRandom, out: &mut Vec<Particle>) {
+pub(super) fn explode(
+    starter: &Starter,
+    explosion: &FireworkExplosion,
+    atlas: &Atlas,
+    rng: &mut JavaRandom,
+    out: &mut Vec<Particle>,
+) {
     let black = [0x1E1B1B];
-    let colors: &[i32] = if explosion.colors.is_empty() { &black } else { &explosion.colors };
+    let colors: &[i32] = if explosion.colors.is_empty() {
+        &black
+    } else {
+        &explosion.colors
+    };
     let at = starter.pos;
     let add = |out: &mut Vec<Particle>, rng: &mut JavaRandom, v: Vec3| {
         if let Some(p) = spark(atlas, rng, at, v, explosion, colors) {
@@ -143,7 +168,11 @@ pub(super) fn explode(starter: &Starter, explosion: &FireworkExplosion, atlas: &
     };
     match explosion.shape {
         0 | 1 => {
-            let (speed, steps) = if explosion.shape == 0 { (0.25f64, 2i32) } else { (0.5, 4) };
+            let (speed, steps) = if explosion.shape == 0 {
+                (0.25f64, 2i32)
+            } else {
+                (0.5, 4)
+            };
             for y in -steps..=steps {
                 for x in -steps..=steps {
                     let mut z = -steps;
@@ -151,8 +180,13 @@ pub(super) fn explode(starter: &Starter, explosion: &FireworkExplosion, atlas: &
                         let xa = x as f64 + (rng.next_f64() - rng.next_f64()) * 0.5;
                         let ya = y as f64 + (rng.next_f64() - rng.next_f64()) * 0.5;
                         let za = z as f64 + (rng.next_f64() - rng.next_f64()) * 0.5;
-                        let len = (xa * xa + ya * ya + za * za).sqrt() / speed + rng.next_gaussian() * 0.05;
-                        add(out, rng, Vec3::new((xa / len) as f32, (ya / len) as f32, (za / len) as f32));
+                        let len = (xa * xa + ya * ya + za * za).sqrt() / speed
+                            + rng.next_gaussian() * 0.05;
+                        add(
+                            out,
+                            rng,
+                            Vec3::new((xa / len) as f32, (ya / len) as f32, (za / len) as f32),
+                        );
                         if y != -steps && y != steps && x != -steps && x != steps {
                             z += steps * 2 - 1;
                         }
@@ -162,11 +196,19 @@ pub(super) fn explode(starter: &Starter, explosion: &FireworkExplosion, atlas: &
             }
         }
         2 | 3 => {
-            let coords: &[[f32; 2]] = if explosion.shape == 2 { &STAR_COORDS } else { &CREEPER_COORDS };
+            let coords: &[[f32; 2]] = if explosion.shape == 2 {
+                &STAR_COORDS
+            } else {
+                &CREEPER_COORDS
+            };
             let flat = explosion.shape == 3;
             let speed = 0.5f64;
             let (sx, sy) = (coords[0][0] as f64, coords[0][1] as f64);
-            add(out, rng, Vec3::new((sx * speed) as f32, (sy * speed) as f32, 0.0));
+            add(
+                out,
+                rng,
+                Vec3::new((sx * speed) as f32, (sy * speed) as f32, 0.0),
+            );
             let base = rng.next_f32() as f64 * std::f64::consts::PI;
             let modifier = if flat { 0.034 } else { 0.34 };
             for step in 0..3 {
@@ -181,7 +223,11 @@ pub(super) fn explode(starter: &Starter, explosion: &FireworkExplosion, atlas: &
                         let za = xa * angle.sin();
                         let xa = xa * angle.cos();
                         for flip in [-1.0, 1.0] {
-                            add(out, rng, Vec3::new((xa * flip) as f32, ya as f32, (za * flip) as f32));
+                            add(
+                                out,
+                                rng,
+                                Vec3::new((xa * flip) as f32, ya as f32, (za * flip) as f32),
+                            );
                         }
                         sub += 0.25;
                     }
@@ -233,8 +279,14 @@ pub(super) fn tick_fireworks(
     if starters.is_empty() {
         return;
     }
-    let Some(atlas) = atlas.0.as_ref() else { return };
-    let eye = camera.iter().next().map(GlobalTransform::translation).unwrap_or(Vec3::ZERO);
+    let Some(atlas) = atlas.0.as_ref() else {
+        return;
+    };
+    let eye = camera
+        .iter()
+        .next()
+        .map(GlobalTransform::translation)
+        .unwrap_or(Vec3::ZERO);
     let dt = time.delta_secs();
     let rng = &mut particle_rng.0;
     starters.retain_mut(|starter| {
@@ -244,7 +296,8 @@ pub(super) fn tick_fireworks(
             let far = starter.pos.distance_squared(eye) >= 256.0;
             let at = starter.pos.to_array();
             if starter.life == 0 {
-                let large = starter.explosions.len() >= 3 || starter.explosions.iter().any(|e| e.shape == 1);
+                let large = starter.explosions.len() >= 3
+                    || starter.explosions.iter().any(|e| e.shape == 1);
                 let sound = match (large, far) {
                     (true, true) => "entity.firework_rocket.large_blast_far",
                     (true, false) => "entity.firework_rocket.large_blast",
@@ -252,7 +305,13 @@ pub(super) fn tick_fireworks(
                     (false, false) => "entity.firework_rocket.blast",
                 };
                 #[cfg(audio)]
-                crate::audio::play_at(sound, crate::audio::category::SoundCategory::Ambient, at, 20.0, 0.95 + rng.next_f32() * 0.1);
+                crate::audio::play_at(
+                    sound,
+                    crate::audio::category::SoundCategory::Ambient,
+                    at,
+                    20.0,
+                    0.95 + rng.next_f32() * 0.1,
+                );
                 #[cfg(not(audio))]
                 let _ = (sound, at);
             }
@@ -265,9 +324,19 @@ pub(super) fn tick_fireworks(
             starter.life += 1;
             if starter.life > starter.lifetime {
                 if starter.twinkle_delay {
-                    let sound = if far { "entity.firework_rocket.twinkle_far" } else { "entity.firework_rocket.twinkle" };
+                    let sound = if far {
+                        "entity.firework_rocket.twinkle_far"
+                    } else {
+                        "entity.firework_rocket.twinkle"
+                    };
                     #[cfg(audio)]
-                    crate::audio::play_at(sound, crate::audio::category::SoundCategory::Ambient, at, 20.0, 0.9 + rng.next_f32() * 0.15);
+                    crate::audio::play_at(
+                        sound,
+                        crate::audio::category::SoundCategory::Ambient,
+                        at,
+                        20.0,
+                        0.9 + rng.next_f32() * 0.15,
+                    );
                     #[cfg(not(audio))]
                     let _ = sound;
                 }

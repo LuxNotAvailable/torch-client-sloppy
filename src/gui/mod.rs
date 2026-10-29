@@ -1,6 +1,6 @@
-
 pub mod accountlist;
 pub mod advancements;
+pub mod appleskin;
 #[cfg(feature = "asset_download")]
 pub mod assetdownload;
 pub mod atlas;
@@ -8,16 +8,7 @@ pub mod atlas_writes;
 pub mod banner_icons;
 pub mod block_info;
 pub mod book;
-pub mod appleskin;
 pub mod chat;
-pub mod form;
-pub mod option_codec;
-pub mod more_options;
-pub mod op_blocks;
-pub mod social;
-pub mod stats;
-pub mod gamemode_switcher;
-pub mod win;
 pub mod clickevent;
 #[cfg(feature = "click_gui")]
 pub mod clickgui;
@@ -34,6 +25,8 @@ pub mod draw;
 #[cfg(explore_modrinth)]
 pub mod explore_packs;
 pub mod focus;
+pub mod form;
+pub mod gamemode_switcher;
 pub mod health;
 pub mod hud;
 #[cfg(feature = "hud_editor")]
@@ -41,7 +34,10 @@ pub mod hud_editor;
 pub mod hud_layout;
 pub mod keybinds;
 pub mod menu;
+pub mod more_options;
 pub mod multiplayer;
+pub mod op_blocks;
+pub mod option_codec;
 pub mod options;
 pub mod painter;
 pub mod pause;
@@ -63,15 +59,18 @@ pub mod sign_edit;
 pub mod signedchat;
 pub mod sleep;
 pub mod slots;
+pub mod social;
 pub mod spectator_menu;
+pub mod stats;
 pub mod suggestions;
 pub mod tablist;
 pub mod title;
-#[cfg(voice)]
-pub mod voice_chat;
 pub mod toast;
 pub mod tooltip;
+#[cfg(voice)]
+pub mod voice_chat;
 pub mod widgets;
+pub mod win;
 
 use bevy::prelude::*;
 
@@ -552,7 +551,9 @@ fn write_skin_parts(map: &mut serde_json::Map<String, serde_json::Value>, parts:
 }
 
 #[cfg(audio)]
-fn read_volumes(value: option_codec::Lookup) -> [u32; crate::audio::category::SoundCategory::COUNT] {
+fn read_volumes(
+    value: option_codec::Lookup,
+) -> [u32; crate::audio::category::SoundCategory::COUNT] {
     let mut volumes = [VOLUME_DEFAULT; crate::audio::category::SoundCategory::COUNT];
     for category in crate::audio::category::SoundCategory::ALL {
         volumes[category.index()] = value(&format!("soundCategory_{}", category.key()))
@@ -570,7 +571,10 @@ fn write_volumes(
     volumes: &[u32; crate::audio::category::SoundCategory::COUNT],
 ) {
     for category in crate::audio::category::SoundCategory::ALL {
-        map.insert(format!("soundCategory_{}", category.key()), serde_json::json!(volumes[category.index()]));
+        map.insert(
+            format!("soundCategory_{}", category.key()),
+            serde_json::json!(volumes[category.index()]),
+        );
     }
 }
 
@@ -578,8 +582,12 @@ fn write_volumes(
 impl VoiceOptions {
     fn read(value: option_codec::Lookup) -> VoiceOptions {
         VoiceOptions {
-            disabled: value("voiceDisabled").and_then(|v| v.as_bool()).unwrap_or(false),
-            muted: value("voiceMuted").and_then(|v| v.as_bool()).unwrap_or(false),
+            disabled: value("voiceDisabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            muted: value("voiceMuted")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
             voice_activation: value("voiceActivation")
                 .and_then(|v| v.as_str().map(|s| s == "voice"))
                 .unwrap_or(false),
@@ -593,7 +601,10 @@ impl VoiceOptions {
                 .and_then(|v| v.as_str().map(str::to_owned))
                 .filter(|s| !s.is_empty()),
             status: VoiceStatusDisplay::from_key(
-                value("voiceStatus").and_then(|v| v.as_str().map(str::to_owned)).as_deref().unwrap_or("icon"),
+                value("voiceStatus")
+                    .and_then(|v| v.as_str().map(str::to_owned))
+                    .as_deref()
+                    .unwrap_or("icon"),
             ),
             player_volumes: value("voicePlayerVolumes")
                 .and_then(|v| {
@@ -619,7 +630,11 @@ impl VoiceOptions {
         map.insert("voiceMuted".into(), serde_json::json!(voice.muted));
         map.insert(
             "voiceActivation".into(),
-            serde_json::json!(if voice.voice_activation { "voice" } else { "ptt" }),
+            serde_json::json!(if voice.voice_activation {
+                "voice"
+            } else {
+                "ptt"
+            }),
         );
         map.insert("voiceThreshold".into(), serde_json::json!(voice.threshold));
         map.insert("voiceVolume".into(), serde_json::json!(voice.volume));
@@ -638,7 +653,10 @@ impl VoiceOptions {
                 )
             })
             .collect();
-        map.insert("voicePlayerVolumes".into(), serde_json::Value::Object(volumes));
+        map.insert(
+            "voicePlayerVolumes".into(),
+            serde_json::Value::Object(volumes),
+        );
     }
 }
 
@@ -917,7 +935,6 @@ impl ZoomOptions {
     }
 }
 
-
 /// Effects drawn over the game for a moment: the item activation
 /// (`ItemActivation`) and the elder guardian's face.
 #[derive(Default)]
@@ -932,7 +949,12 @@ impl ScreenEffects {
         let seed = crate::platform::time::Instant::now().elapsed().as_nanos() as i64 ^ 0x5DEECE66D;
         let mut rng = crate::util::javarandom::JavaRandom::new(seed);
         let (x, y) = (rng.next_f32() * 2.0 - 1.0, rng.next_f32() * 2.0 - 1.0);
-        self.activation = Some((crate::platform::time::Instant::now(), x, y, "totem_of_undying"));
+        self.activation = Some((
+            crate::platform::time::Instant::now(),
+            x,
+            y,
+            "totem_of_undying",
+        ));
     }
 
     /// How far through the activation (0 to 1), its drift and item.
@@ -960,7 +982,8 @@ impl ScreenEffects {
 /// The options as last saved, for code outside the GUI (the renderer,
 /// items, chat drawing): one shared copy, swapped when options are saved,
 /// instead of each part keeping its own.
-static CURRENT_OPTIONS: std::sync::RwLock<Option<std::sync::Arc<GuiOptions>>> = std::sync::RwLock::new(None);
+static CURRENT_OPTIONS: std::sync::RwLock<Option<std::sync::Arc<GuiOptions>>> =
+    std::sync::RwLock::new(None);
 
 pub fn current_options() -> std::sync::Arc<GuiOptions> {
     if let Some(current) = CURRENT_OPTIONS.read().unwrap().as_ref() {

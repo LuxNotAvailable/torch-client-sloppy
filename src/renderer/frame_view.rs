@@ -5,9 +5,9 @@ use bevy::prelude::*;
 
 use crate::direction::Direction;
 use crate::entities::feed::EntityAnim;
+use crate::platform::time::Instant;
 use crate::renderer::anim::AnimSample;
 use crate::renderer::environment::BiomeLayer;
-use crate::platform::time::Instant;
 use crate::session::{BreakingBlock, Gamemode, SharedState, TargetedBlock};
 
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
@@ -140,8 +140,8 @@ impl TickPacer {
     fn landed(&mut self, seq: u64, at: Instant) -> bool {
         let offset = self.secs(at) - seq as f64 * TICK_SECS;
         let late = offset - self.base;
-        let restart =
-            self.seq.is_none_or(|last| seq <= last) || !(-Self::RESYNC..=Self::RESYNC).contains(&late);
+        let restart = self.seq.is_none_or(|last| seq <= last)
+            || !(-Self::RESYNC..=Self::RESYNC).contains(&late);
         self.seq = Some(seq);
         if restart {
             self.base = offset;
@@ -151,7 +151,9 @@ impl TickPacer {
             self.base = offset;
             self.lateness = (self.lateness - late).min(Self::MAX_LATENESS);
         } else {
-            self.lateness = late.max(self.lateness * Self::DECAY).min(Self::MAX_LATENESS);
+            self.lateness = late
+                .max(self.lateness * Self::DECAY)
+                .min(Self::MAX_LATENESS);
             self.base += late * Self::CREEP;
         }
         restart
@@ -162,7 +164,9 @@ impl TickPacer {
     fn clock(&mut self, now: Instant) -> f64 {
         let now = self.secs(now);
         let target = self.base + self.lateness + Self::MARGIN;
-        let room = self.last_now.map_or(0.0, |last| (now - last).max(0.0) * Self::SLEW);
+        let room = self
+            .last_now
+            .map_or(0.0, |last| (now - last).max(0.0) * Self::SLEW);
         self.lag += (target - self.lag).clamp(-room, room);
         self.last_now = Some(now);
         (now - self.lag) / TICK_SECS - 1.0
@@ -193,10 +197,13 @@ pub(crate) fn sample_entities(view: Res<FrameView>, mut out: ResMut<SampledEntit
     let out = &mut *out;
     out.states.clear();
     out.index.clear();
-    out.states.extend(view.entities.iter().map(|e| e.sample(partial)));
-    out.index.extend(view.entities.iter().enumerate().map(|(i, e)| (e.id, i)));
+    out.states
+        .extend(view.entities.iter().map(|e| e.sample(partial)));
+    out.index
+        .extend(view.entities.iter().enumerate().map(|(i, e)| (e.id, i)));
     out.players.clear();
-    out.players.extend(view.players.iter().map(|p| p.anim.sample(partial)));
+    out.players
+        .extend(view.players.iter().map(|p| p.anim.sample(partial)));
 }
 
 impl FrameView {

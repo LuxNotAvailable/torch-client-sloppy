@@ -37,7 +37,8 @@ static ENGLISH: LazyLock<HashMap<String, String>> = LazyLock::new(|| {
 });
 
 /// The chosen language over English; leaked, as it changes rarely.
-static LANG_MAP: std::sync::RwLock<Option<&'static HashMap<String, String>>> = std::sync::RwLock::new(None);
+static LANG_MAP: std::sync::RwLock<Option<&'static HashMap<String, String>>> =
+    std::sync::RwLock::new(None);
 
 fn lang() -> &'static HashMap<String, String> {
     if let Some(map) = *LANG_MAP.read().unwrap() {
@@ -478,9 +479,19 @@ pub fn draw(
                 Some(food) => {
                     let mut lines = c.lines.clone();
                     let width = crate::gui::appleskin::tooltip_row_width(food);
-                    let space = p.atlas.font.width(&[Span { text: " ".into(), style: Default::default() }]).max(1.0);
+                    let space = p
+                        .atlas
+                        .font
+                        .width(&[Span {
+                            text: " ".into(),
+                            style: Default::default(),
+                        }])
+                        .max(1.0);
                     let spaces = " ".repeat((width / space).ceil() as usize);
-                    lines.push(vec![Span { text: spaces, style: Default::default() }]);
+                    lines.push(vec![Span {
+                        text: spaces,
+                        style: Default::default(),
+                    }]);
                     if let Some((x, y)) = draw_lines(p, &lines, mx, my, vw, vh) {
                         crate::gui::appleskin::draw_tooltip_row(p, food, x, y - 1.0);
                     }

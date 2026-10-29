@@ -66,7 +66,12 @@ struct SunShaftVolume;
 fn shafts_enabled() -> bool {
     use std::sync::OnceLock;
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| matches!(crate::platform::env::var("MC_SHAFTS").as_deref(), Ok("1") | Ok("true")))
+    *ON.get_or_init(|| {
+        matches!(
+            crate::platform::env::var("MC_SHAFTS").as_deref(),
+            Ok("1") | Ok("true")
+        )
+    })
 }
 
 #[cfg(all(feature = "builtin_shaders", not(target_arch = "wasm32")))]

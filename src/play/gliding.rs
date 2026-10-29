@@ -49,7 +49,10 @@ fn usable_glider(stack: &ItemStack) -> bool {
     if stack.get_component::<Glider>().is_none() {
         return false;
     }
-    match (stack.get_component::<Damage>(), stack.get_component::<MaxDamage>()) {
+    match (
+        stack.get_component::<Damage>(),
+        stack.get_component::<MaxDamage>(),
+    ) {
         (Some(damage), Some(max)) => damage.amount < max.amount - 1,
         _ => true,
     }
@@ -158,7 +161,15 @@ fn boost(look: Vec3, velocity: Vec3) -> Vec3 {
 #[allow(clippy::type_complexity)]
 fn firework_boost(
     rockets: Query<(&EntityKindComponent, &AttachedToTarget), Without<LocalEntity>>,
-    mut local: Query<(&MinecraftEntityId, &mut Physics, &LookDirection, Option<&FallFlying>), With<LocalEntity>>,
+    mut local: Query<
+        (
+            &MinecraftEntityId,
+            &mut Physics,
+            &LookDirection,
+            Option<&FallFlying>,
+        ),
+        With<LocalEntity>,
+    >,
 ) {
     let Ok((id, mut physics, direction, gliding)) = local.single_mut() else {
         return;
@@ -206,14 +217,38 @@ mod tests {
         };
         assert!(ready.may_start());
         for blocked in [
-            GlideCheck { on_ground: true, ..ready },
-            GlideCheck { riding: true, ..ready },
-            GlideCheck { flying: true, ..ready },
-            GlideCheck { in_liquid: true, ..ready },
-            GlideCheck { levitating: true, ..ready },
-            GlideCheck { on_climbable: true, ..ready },
-            GlideCheck { already_gliding: true, ..ready },
-            GlideCheck { has_glider: false, ..ready },
+            GlideCheck {
+                on_ground: true,
+                ..ready
+            },
+            GlideCheck {
+                riding: true,
+                ..ready
+            },
+            GlideCheck {
+                flying: true,
+                ..ready
+            },
+            GlideCheck {
+                in_liquid: true,
+                ..ready
+            },
+            GlideCheck {
+                levitating: true,
+                ..ready
+            },
+            GlideCheck {
+                on_climbable: true,
+                ..ready
+            },
+            GlideCheck {
+                already_gliding: true,
+                ..ready
+            },
+            GlideCheck {
+                has_glider: false,
+                ..ready
+            },
         ] {
             assert!(!blocked.may_start(), "{blocked:?}");
         }
@@ -226,7 +261,10 @@ mod tests {
         assert!(usable_glider(&elytra));
         let worn = elytra.clone().with_component(Damage { amount: 431 });
         assert!(!usable_glider(&worn));
-        assert!(!usable_glider(&ItemStack::new(ItemKind::DiamondChestplate, 1)));
+        assert!(!usable_glider(&ItemStack::new(
+            ItemKind::DiamondChestplate,
+            1
+        )));
     }
 
     #[test]

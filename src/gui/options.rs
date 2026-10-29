@@ -670,7 +670,10 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     #[cfg(resource_packs)]
     entries.push((crate::gui::resourcepacks::RESOURCE_PACKS, Entry::Packs));
     entries.push(("Language...", Entry::Screen(Screen::Language)));
-    entries.push(("Accessibility Settings...", Entry::Screen(Screen::AccessibilitySettings)));
+    entries.push((
+        "Accessibility Settings...",
+        Entry::Screen(Screen::AccessibilitySettings),
+    ));
     entries.push(("Online...", Entry::Screen(Screen::OnlineSettings)));
     entries.push(("Debug Options...", Entry::Screen(Screen::DebugOptions)));
     entries.push((MANAGE_STORAGE, Entry::Screen(Screen::ManageStorage)));
@@ -686,7 +689,10 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         })
         .collect();
     if let Some((label, entry)) = &header_entry {
-        buttons.insert(0, (left + MENU_COLUMN_STEP, MENU_HEADER_ROW_Y, *label, entry));
+        buttons.insert(
+            0,
+            (left + MENU_COLUMN_STEP, MENU_HEADER_ROW_Y, *label, entry),
+        );
     }
 
     for (x, y, label, entry) in buttons {
@@ -941,10 +947,7 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         crate::gui::save_options(&state.options);
     }
 
-    #[cfg_attr(
-        any(target_arch = "wasm32", target_os = "android"),
-        allow(unused_mut)
-    )]
+    #[cfg_attr(any(target_arch = "wasm32", target_os = "android"), allow(unused_mut))]
     let mut renderer_tip: Option<String> = None;
     #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
     {
@@ -1105,7 +1108,13 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     }
 
     let at = cell(0.0, Y_SHADOW_ROW);
-    if toggle(p, ctx, at, ENTITY_SHADOWS, &mut state.options.entity_shadows) {
+    if toggle(
+        p,
+        ctx,
+        at,
+        ENTITY_SHADOWS,
+        &mut state.options.entity_shadows,
+    ) {
         crate::gui::save_options(&state.options);
     }
     let (x, y) = cell(1.0, Y_SHADOW_ROW);
@@ -1239,11 +1248,26 @@ pub fn draw_zoom(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     let mut form = crate::gui::form::Form::new(p, ctx, ZOOM_TITLE, 3, ZOOM_DEFAULT_SLIDER_ID);
     let z = &mut state.options.zoom;
     let max = z.max_tenths;
-    form.slider(&mut z.default_tenths, ZOOM_TENTHS_MIN, max, zoom_default_label);
-    form.slider(&mut z.max_tenths, ZOOM_TENTHS_MIN, ZOOM_TENTHS_MAX, zoom_max_label);
+    form.slider(
+        &mut z.default_tenths,
+        ZOOM_TENTHS_MIN,
+        max,
+        zoom_default_label,
+    );
+    form.slider(
+        &mut z.max_tenths,
+        ZOOM_TENTHS_MIN,
+        ZOOM_TENTHS_MAX,
+        zoom_max_label,
+    );
     // The default can't sit past the maximum.
     z.default_tenths = z.default_tenths.min(z.max_tenths);
-    form.slider(&mut z.smoothing_ms, 0, ZOOM_SMOOTHING_MAX_MS, zoom_smoothing_label);
+    form.slider(
+        &mut z.smoothing_ms,
+        0,
+        ZOOM_SMOOTHING_MAX_MS,
+        zoom_smoothing_label,
+    );
     form.slider(&mut z.sensitivity, 0, 100, zoom_sensitivity_label);
     if form.wide_button(RESET_ZOOM) {
         *z = ZoomOptions::default();
@@ -1922,10 +1946,16 @@ fn draw_chat_options(
         .draw(p, ctx)
         .clamp(min as i32, max as i32) as u32;
     };
-    slider(4, &mut c.opacity, 0, 100, |v| format!("Chat Text Opacity: {v}%"));
-    slider(5, &mut c.background, 0, 100, |v| format!("Text Background Opacity: {v}%"));
+    slider(4, &mut c.opacity, 0, 100, |v| {
+        format!("Chat Text Opacity: {v}%")
+    });
+    slider(5, &mut c.background, 0, 100, |v| {
+        format!("Text Background Opacity: {v}%")
+    });
     slider(6, &mut c.scale, 0, 100, |v| format!("Chat Text Size: {v}%"));
-    slider(7, &mut c.line_spacing, 0, 100, |v| format!("Line Spacing: {v}%"));
+    slider(7, &mut c.line_spacing, 0, 100, |v| {
+        format!("Line Spacing: {v}%")
+    });
     slider(8, &mut c.delay_tenths, 0, CHAT_DELAY_MAX_TENTHS, |v| {
         if v == 0 {
             "Chat Delay: None".to_owned()
@@ -1934,9 +1964,19 @@ fn draw_chat_options(
         }
     });
     slider(9, &mut c.width, 40, 320, |v| format!("Width: {v}px"));
-    slider(10, &mut c.focused_height, 20, 180, |v| format!("Focused Height: {v}px"));
-    slider(11, &mut c.unfocused_height, 20, 180, |v| format!("Unfocused Height: {v}px"));
-    toggle(p, ctx, at(12), "Command Suggestions", &mut c.auto_suggestions);
+    slider(10, &mut c.focused_height, 20, 180, |v| {
+        format!("Focused Height: {v}px")
+    });
+    slider(11, &mut c.unfocused_height, 20, 180, |v| {
+        format!("Unfocused Height: {v}px")
+    });
+    toggle(
+        p,
+        ctx,
+        at(12),
+        "Command Suggestions",
+        &mut c.auto_suggestions,
+    );
     toggle(p, ctx, at(13), "Only Show Secure Chat", &mut c.only_secure);
 
     if options.chat != before {
@@ -2033,7 +2073,12 @@ pub(in crate::gui) fn fit(p: &Painter, label: &str, name: &str, width: f32) -> S
 /// next device, after the last back to the system default; the list is
 /// read again on each click, so a device plugged in shows up.
 #[cfg(audio)]
-fn draw_devices(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx, cell: &dyn Fn(f32, f32) -> (f32, f32)) {
+fn draw_devices(
+    p: &mut Painter,
+    state: &mut GuiState,
+    ctx: &ScreenCtx,
+    cell: &dyn Fn(f32, f32) -> (f32, f32),
+) {
     use crate::audio::devices;
     const DEFAULT: &str = "Default";
     let width = COLUMN_W - 8.0;
@@ -2047,7 +2092,6 @@ fn draw_devices(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx, cell: &d
         crate::audio::set_output_device(next);
         crate::gui::save_options(&state.options);
     }
-
 }
 
 /// `AdjustVolumeSlider`'s caption: the change from normal, or muted at 0.
@@ -2068,8 +2112,10 @@ pub fn draw_voice_players(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx
     draw_title(p, ctx, "Player Volumes");
 
     let online = crate::voice::voice_players();
-    let mut rows: Vec<(uuid::Uuid, String, bool)> =
-        online.iter().map(|(id, name)| (*id, name.clone(), true)).collect();
+    let mut rows: Vec<(uuid::Uuid, String, bool)> = online
+        .iter()
+        .map(|(id, name)| (*id, name.clone(), true))
+        .collect();
     for (id, (name, _)) in &state.options.voice.player_volumes {
         if !online.iter().any(|(o, _)| o == id) {
             rows.push((*id, name.clone(), false));
@@ -2094,7 +2140,13 @@ pub fn draw_voice_players(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx
     if rows.is_empty() {
         let text = "No other players have voice chat here";
         let w = p.atlas.font.width_str(text);
-        p.text_str(text, ((ctx.vw - w) / 2.0).floor(), list_y + ROW_INSET + 6.0, 0xAAAAAA, true);
+        p.text_str(
+            text,
+            ((ctx.vw - w) / 2.0).floor(),
+            list_y + ROW_INSET + 6.0,
+            0xAAAAAA,
+            true,
+        );
     }
 
     let over_list = ctx.hovering(list_x, list_y, list_w, list_h);
@@ -2148,7 +2200,15 @@ pub fn draw_voice_players(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx
         }
     }
     p.pop_clip(clip);
-    draw_scrollbar(p, state.voice_scroll, left, BIG_W, list_y, list_h, content_h);
+    draw_scrollbar(
+        p,
+        state.voice_scroll,
+        left,
+        BIG_W,
+        list_y,
+        list_h,
+        content_h,
+    );
 
     if changed {
         state.options.voice.apply();

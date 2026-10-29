@@ -102,7 +102,12 @@ impl Ambience {
 
     /// Stops everything this keeps playing (leaving the world).
     pub fn stop(&mut self) {
-        for fading in self.loops.drain().map(|(_, f)| f).chain(self.underwater_loop.take()) {
+        for fading in self
+            .loops
+            .drain()
+            .map(|(_, f)| f)
+            .chain(self.underwater_loop.take())
+        {
             super::stop_voice(fading.voice);
         }
         if let Some(elytra) = self.elytra.take() {
@@ -202,7 +207,13 @@ impl Ambience {
     /// and `UnderLiquidAmbientSoundInstance`.
     fn underwater(&mut self, s: &Surroundings) {
         if s.underwater && !self.was_underwater {
-            super::play_at("ambient.underwater.enter", SoundCategory::Ambient, at(s.feet), 1.0, 1.0);
+            super::play_at(
+                "ambient.underwater.enter",
+                SoundCategory::Ambient,
+                at(s.feet),
+                1.0,
+                1.0,
+            );
             if self.underwater_loop.is_none()
                 && let Some(voice) = super::start(
                     "ambient.underwater.loop",
@@ -221,7 +232,13 @@ impl Ambience {
             }
         }
         if !s.underwater && self.was_underwater {
-            super::play_at("ambient.underwater.exit", SoundCategory::Ambient, at(s.feet), 1.0, 1.0);
+            super::play_at(
+                "ambient.underwater.exit",
+                SoundCategory::Ambient,
+                at(s.feet),
+                1.0,
+                1.0,
+            );
         }
         self.was_underwater = s.underwater;
         if let Some(fading) = &mut self.underwater_loop {
@@ -229,7 +246,12 @@ impl Ambience {
                 super::stop_voice(fading.voice);
                 self.underwater_loop = None;
             } else {
-                fading.fade = if s.underwater { fading.fade + 1 } else { fading.fade - 2 }.min(FADE);
+                fading.fade = if s.underwater {
+                    fading.fade + 1
+                } else {
+                    fading.fade - 2
+                }
+                .min(FADE);
                 let volume = (fading.fade as f32 / FADE as f32).clamp(0.0, 1.0);
                 super::tune(fading.voice, volume, 1.0);
             }
@@ -286,7 +308,9 @@ impl Ambience {
             .map(|voice| Elytra { voice, time: 0 });
         }
         self.was_flying = s.fall_flying;
-        let Some(elytra) = &mut self.elytra else { return };
+        let Some(elytra) = &mut self.elytra else {
+            return;
+        };
         elytra.time += 1;
         if elytra.time <= 20 || s.fall_flying {
             super::move_voice(elytra.voice, at(s.feet));
@@ -301,7 +325,11 @@ impl Ambience {
             } else if elytra.time < 40 {
                 volume *= (elytra.time - 20) as f32 / 20.0;
             }
-            let pitch = if volume > 0.8 { 1.0 + (volume - 0.8) } else { 1.0 };
+            let pitch = if volume > 0.8 {
+                1.0 + (volume - 0.8)
+            } else {
+                1.0
+            };
             super::tune(elytra.voice, volume, pitch);
         } else {
             super::stop_voice(elytra.voice);
@@ -344,7 +372,8 @@ impl Ambience {
                     })
                 }
             };
-            let speed = ((pos[0] - cart.last[0]).powi(2) + (pos[2] - cart.last[2]).powi(2)).sqrt() as f32;
+            let speed =
+                ((pos[0] - cart.last[0]).powi(2) + (pos[2] - cart.last[2]).powi(2)).sqrt() as f32;
             cart.last = pos;
             let volume = if speed >= 0.01 {
                 cart.pitch = (cart.pitch + 0.0025).clamp(0.0, 1.0);

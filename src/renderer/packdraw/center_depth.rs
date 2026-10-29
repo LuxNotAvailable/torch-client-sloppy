@@ -10,9 +10,8 @@ use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 
 use bevy::prelude::*;
 use bevy::render::render_resource::{
-    BindGroup, BindGroupEntries, BindGroupLayout, BindGroupLayoutEntries, Buffer,
-    BufferDescriptor, BufferUsages, CommandEncoder, ComputePipeline, MapMode, ShaderStages,
-    TextureView,
+    BindGroup, BindGroupEntries, BindGroupLayout, BindGroupLayoutEntries, Buffer, BufferDescriptor,
+    BufferUsages, CommandEncoder, ComputePipeline, MapMode, ShaderStages, TextureView,
     binding_types::{storage_buffer_sized, texture_depth_2d},
 };
 use bevy::render::renderer::RenderDevice;
@@ -172,12 +171,14 @@ pub(super) fn read_back(center: Option<Res<CenterDepth>>, device: Res<RenderDevi
             COPIED => {
                 slot.state.store(MAPPING, Ordering::Release);
                 let state = slot.state.clone();
-                slot.buffer.slice(..).map_async(MapMode::Read, move |result| {
-                    state.store(
-                        if result.is_ok() { MAPPED } else { IDLE },
-                        Ordering::Release,
-                    );
-                });
+                slot.buffer
+                    .slice(..)
+                    .map_async(MapMode::Read, move |result| {
+                        state.store(
+                            if result.is_ok() { MAPPED } else { IDLE },
+                            Ordering::Release,
+                        );
+                    });
             }
             MAPPED => {
                 let bytes = slot.buffer.slice(..).get_mapped_range();

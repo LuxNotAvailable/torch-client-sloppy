@@ -233,7 +233,16 @@ pub fn start(
         StreamPlace::Listener => None,
         StreamPlace::At { at, .. } => Some(at),
     };
-    submit_looping(event, category, volume, pitch, at, roll_seed(), false, looping)
+    submit_looping(
+        event,
+        category,
+        volume,
+        pitch,
+        at,
+        roll_seed(),
+        false,
+        looping,
+    )
 }
 
 /// Stops one sound `start` returned.
@@ -280,7 +289,12 @@ impl StreamPlace {
 }
 
 /// A new stream in `category`, or `None` with no mixer.
-pub fn open_stream(category: SoundCategory, volume: f32, place: StreamPlace, rate: u32) -> Option<Stream> {
+pub fn open_stream(
+    category: SoundCategory,
+    volume: f32,
+    place: StreamPlace,
+    rate: u32,
+) -> Option<Stream> {
     DEFS.get()?;
     let id = NEXT_VOICE.fetch_add(1, Ordering::Relaxed);
     let buffer = Arc::new(StreamBuffer::default());
@@ -307,7 +321,8 @@ impl Stream {
 
     /// Queues 16-bit samples to play next.
     pub fn push(&self, pcm: &[i16]) {
-        self.buffer.push(pcm.iter().map(|s| f32::from(*s) / 32768.0));
+        self.buffer
+            .push(pcm.iter().map(|s| f32::from(*s) / 32768.0));
     }
 
     pub fn place(&self, place: StreamPlace) {
@@ -438,7 +453,10 @@ pub fn tick_entities(entity: impl Fn(i32) -> Option<EntityAt>) {
     let last = LAST_ITEMS.lock().ok();
     for item in pickups {
         let Some(found) = entity(item).or_else(|| {
-            last.as_ref()?.get(&item).map(|e| EntityAt { at: e.at, orb: e.orb })
+            last.as_ref()?.get(&item).map(|e| EntityAt {
+                at: e.at,
+                orb: e.orb,
+            })
         }) else {
             continue;
         };
@@ -504,7 +522,9 @@ static AMBIENCE: std::sync::LazyLock<Mutex<ambience::Ambience>> =
     std::sync::LazyLock::new(|| Mutex::new(ambience::Ambience::default()));
 
 static MUSIC: std::sync::LazyLock<Mutex<(music::MusicManager, music::Situation)>> =
-    std::sync::LazyLock::new(|| Mutex::new((music::MusicManager::default(), music::Situation::Menu)));
+    std::sync::LazyLock::new(|| {
+        Mutex::new((music::MusicManager::default(), music::Situation::Menu))
+    });
 
 /// Each game tick: the ambience, and where the music should follow.
 pub fn tick_world(surroundings: &ambience::Surroundings, situation: music::Situation) {
@@ -572,7 +592,10 @@ mod tests {
 
     #[test]
     fn a_registry_name_loses_its_namespace() {
-        assert_eq!(event_name("minecraft:entity.pig.ambient"), "entity.pig.ambient");
+        assert_eq!(
+            event_name("minecraft:entity.pig.ambient"),
+            "entity.pig.ambient"
+        );
         assert_eq!(event_name("mymod:thing"), "mymod:thing");
     }
 }

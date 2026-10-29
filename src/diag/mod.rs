@@ -14,10 +14,10 @@ macro_rules! counted {
 
 pub(crate) mod alloc;
 pub(crate) mod budget;
+pub(crate) mod frame_profile;
 mod layer;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod logfile;
-pub(crate) mod frame_profile;
 pub(crate) mod panic_report;
 #[cfg(feature = "profiling")]
 pub(crate) mod profiling;

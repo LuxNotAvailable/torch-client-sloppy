@@ -214,10 +214,14 @@ mod tests {
     /// keep-alive and a voice, as the real one would.
     #[test]
     fn the_handshake_runs_against_a_loopback_server() {
-        let _serial = super::super::TEST_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let _serial = super::super::TEST_SERIAL
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         use super::super::wire::{Codec, Writer};
         let server = UdpSocket::bind("127.0.0.1:0").unwrap();
-        server.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        server
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
         let port = server.local_addr().unwrap().port();
         let key = *b"fedcba9876543210";
         let player = uuid::Uuid::from_u128(99);
@@ -274,7 +278,13 @@ mod tests {
         };
 
         let (first, from) = read(&mut buf);
-        assert_eq!(first, Packet::Authenticate { player, secret: key });
+        assert_eq!(
+            first,
+            Packet::Authenticate {
+                player,
+                secret: key
+            }
+        );
         reply(from, &[0x6]);
         let (check, from) = read(&mut buf);
         assert_eq!(check, Packet::ConnectionCheck);

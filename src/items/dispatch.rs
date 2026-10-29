@@ -218,13 +218,25 @@ fn compass(node: &Json, stack: &StackView, ctx: &WorldContext) -> f32 {
     let wobbles = node.get("wobble").and_then(Json::as_bool).unwrap_or(true);
     let factor = if wobbles { 0.8 } else { 0.0 };
     let valid = pos.as_ref().filter(|(at, dimension)| {
-        let (dx, dz) = (at[0] as f64 + 0.5 - ctx.pos[0], at[2] as f64 + 0.5 - ctx.pos[2]);
+        let (dx, dz) = (
+            at[0] as f64 + 0.5 - ctx.pos[0],
+            at[2] as f64 + 0.5 - ctx.pos[2],
+        );
         *dimension == ctx.dimension && dx * dx + dz * dz >= 1.0e-5
     });
     let Some((at, _)) = valid else {
         // `getRandomlySpinningRotation`: a new random heading each tick.
         let spin = crate::util::javarandom::JavaRandom::new(ctx.game_time).next_f32();
-        let target = if wobbles { wobble(&format!("compass:none:{}", stack.item), ctx.game_time, spin, factor) } else { spin };
+        let target = if wobbles {
+            wobble(
+                &format!("compass:none:{}", stack.item),
+                ctx.game_time,
+                spin,
+                factor,
+            )
+        } else {
+            spin
+        };
         return target.rem_euclid(1.0);
     };
     let angle = ((at[2] as f64 + 0.5 - ctx.pos[2]).atan2(at[0] as f64 + 0.5 - ctx.pos[0])
@@ -232,7 +244,12 @@ fn compass(node: &Json, stack: &StackView, ctx: &WorldContext) -> f32 {
     let yaw = (ctx.yaw / 360.0).rem_euclid(1.0);
     let facing = 0.5 - (yaw - 0.25);
     let facing = if wobbles {
-        wobble(&format!("compass:{target}:{}", stack.item), ctx.game_time, facing, factor)
+        wobble(
+            &format!("compass:{target}:{}", stack.item),
+            ctx.game_time,
+            facing,
+            factor,
+        )
     } else {
         facing
     };
@@ -243,7 +260,10 @@ fn time(node: &Json, ctx: &WorldContext) -> f32 {
     if !ctx.in_world {
         return 0.0;
     }
-    let source = node.get("source").and_then(Json::as_str).unwrap_or("daytime");
+    let source = node
+        .get("source")
+        .and_then(Json::as_str)
+        .unwrap_or("daytime");
     let target = match source {
         "moon_phase" => ((ctx.day_ticks / 24000.0).floor().rem_euclid(8.0) / 8.0) as f32,
         "random" => crate::util::javarandom::JavaRandom::new(ctx.game_time).next_f32(),
@@ -264,13 +284,20 @@ fn used_ticks(stack: &StackView, ctx: &WorldContext) -> Option<i32> {
 
 /// `range_dispatch`'s value for `node`, before its scale.
 fn number(node: &Json, stack: &StackView, ctx: &WorldContext) -> f32 {
-    let normalize = node.get("normalize").and_then(Json::as_bool).unwrap_or(true);
+    let normalize = node
+        .get("normalize")
+        .and_then(Json::as_bool)
+        .unwrap_or(true);
     match property(node) {
         "compass" => compass(node, stack, ctx),
         "time" => time(node, ctx),
         "use_duration" => used_ticks(stack, ctx).map_or(0.0, |t| t as f32),
         "use_cycle" => {
-            let period = node.get("period").and_then(Json::as_f32).unwrap_or(1.0).max(1.0e-3);
+            let period = node
+                .get("period")
+                .and_then(Json::as_f32)
+                .unwrap_or(1.0)
+                .max(1.0e-3);
             used_ticks(stack, ctx).map_or(0.0, |t| (t as f32).rem_euclid(period))
         }
         "crossbow/pull" => {
@@ -279,26 +306,43 @@ fn number(node: &Json, stack: &StackView, ctx: &WorldContext) -> f32 {
             }
             let quick = stack.data.map_or(0, |d| d.quick_charge) as i32;
             let duration = (25 - 5 * quick).max(0) as f32;
-            used_ticks(stack, ctx).map_or(0.0, |t| if duration > 0.0 { t as f32 / duration } else { 1.0 })
+            used_ticks(stack, ctx).map_or(0.0, |t| {
+                if duration > 0.0 {
+                    t as f32 / duration
+                } else {
+                    1.0
+                }
+            })
         }
         "damage" => {
             let max = stack.max_damage as f32;
             let damage = stack.damage as f32;
             if normalize {
-                if max > 0.0 { (damage / max).clamp(0.0, 1.0) } else { 0.0 }
+                if max > 0.0 {
+                    (damage / max).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                }
             } else {
                 damage.clamp(0.0, max)
             }
         }
         "count" => {
             let count = stack.count as f32;
-            if normalize { (count / 64.0).clamp(0.0, 1.0) } else { count }
+            if normalize {
+                (count / 64.0).clamp(0.0, 1.0)
+            } else {
+                count
+            }
         }
         "cooldown" => stack.cooldown as f32 / 100.0,
         "bundle/fullness" => stack.data.map_or(0.0, |d| d.bundle_fullness),
         "custom_model_data" => {
             let index = node.get("index").and_then(Json::as_i32).unwrap_or(0).max(0) as usize;
-            stack.data.and_then(|d| d.cmd_floats.get(index).copied()).unwrap_or(0.0)
+            stack
+                .data
+                .and_then(|d| d.cmd_floats.get(index).copied())
+                .unwrap_or(0.0)
         }
         _ => 0.0,
     }
@@ -309,7 +353,11 @@ fn word(node: &Json, stack: &StackView, ctx: &WorldContext) -> Option<String> {
     match property(node) {
         "trim_material" => stack.data.and_then(|d| d.trim_material.clone()),
         "charge_type" => Some(if stack.charged {
-            stack.data.and_then(|d| d.charge).unwrap_or("arrow").to_owned()
+            stack
+                .data
+                .and_then(|d| d.charge)
+                .unwrap_or("arrow")
+                .to_owned()
         } else {
             "none".to_owned()
         }),
@@ -330,7 +378,9 @@ fn same_id(a: &str, b: &str) -> bool {
 
 fn when_matches(case: &Json, value: &str) -> bool {
     match case.get("when") {
-        Some(Json::Arr(values)) => values.iter().any(|v| v.as_str().is_some_and(|s| same_id(s, value))),
+        Some(Json::Arr(values)) => values
+            .iter()
+            .any(|v| v.as_str().is_some_and(|s| same_id(s, value))),
         Some(v) => v.as_str().is_some_and(|s| same_id(s, value)),
         None => false,
     }
@@ -344,11 +394,20 @@ fn condition(node: &Json, stack: &StackView, ctx: &WorldContext) -> bool {
         "fishing_rod/cast" => ctx.casting,
         "custom_model_data" => {
             let index = node.get("index").and_then(Json::as_i32).unwrap_or(0).max(0) as usize;
-            stack.data.and_then(|d| d.cmd_flags.get(index).copied()).unwrap_or(false)
+            stack
+                .data
+                .and_then(|d| d.cmd_flags.get(index).copied())
+                .unwrap_or(false)
         }
         "has_component" => {
-            let wanted = node.get("component").and_then(Json::as_str).map(strip_namespace).unwrap_or("");
-            stack.data.is_some_and(|d| d.components.iter().any(|c| c == wanted))
+            let wanted = node
+                .get("component")
+                .and_then(Json::as_str)
+                .map(strip_namespace)
+                .unwrap_or("");
+            stack
+                .data
+                .is_some_and(|d| d.components.iter().any(|c| c == wanted))
         }
         "view_entity" => true,
         _ => false,
@@ -404,7 +463,9 @@ pub fn parse_path_key(key: &str) -> Option<(&str, Vec<u16>)> {
     let path = if path.is_empty() {
         Vec::new()
     } else {
-        path.split('.').map(|s| s.parse().ok()).collect::<Option<Vec<u16>>>()?
+        path.split('.')
+            .map(|s| s.parse().ok())
+            .collect::<Option<Vec<u16>>>()?
     };
     Some((item, path))
 }
@@ -425,7 +486,10 @@ mod tests {
     fn noon_and_midnight_sit_half_a_turn_apart() {
         let noon = time_of_day(6000.0);
         let midnight = time_of_day(18000.0);
-        assert!((noon - 0.0).abs() < 1e-4 || (noon - 1.0).abs() < 1e-4, "{noon}");
+        assert!(
+            (noon - 0.0).abs() < 1e-4 || (noon - 1.0).abs() < 1e-4,
+            "{noon}"
+        );
         assert!((midnight - 0.5).abs() < 1e-4, "{midnight}");
     }
 

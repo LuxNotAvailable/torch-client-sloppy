@@ -490,10 +490,12 @@ impl Blends {
                 continue;
             };
             let (program, buffer) = match rest.rsplit_once('.') {
-                Some((program, buffer)) => match crate::shaderpack::directives::target_index(buffer) {
-                    Some(index) => (program, Some(index as u8)),
-                    None => (rest, None),
-                },
+                Some((program, buffer)) => {
+                    match crate::shaderpack::directives::target_index(buffer) {
+                        Some(index) => (program, Some(index as u8)),
+                        None => (rest, None),
+                    }
+                }
                 None => (rest, None),
             };
             let entry = blends.programs.entry(program.to_owned()).or_default();
@@ -605,7 +607,11 @@ mod tests {
         let flips = FlipOverrides::read(&props);
         let mut toggles = flips.toggles("composite2", &[5, 7]);
         toggles.sort();
-        assert_eq!(toggles, vec![3, 5], "3 swaps unwritten, 5 holds though written");
+        assert_eq!(
+            toggles,
+            vec![3, 5],
+            "3 swaps unwritten, 5 holds though written"
+        );
         assert!(flips.toggles("composite2", &[3]).is_empty());
         assert!(flips.toggles("composite1", &[3]).is_empty());
     }
@@ -615,7 +621,10 @@ mod tests {
         use bevy::render::render_resource::{BlendFactor, BlendState};
         let props: std::collections::HashMap<String, String> = [
             ("blend.gbuffers_water", "off"),
-            ("blend.gbuffers_clouds", "SRC_ALPHA ONE_MINUS_SRC_ALPHA ONE ONE_MINUS_SRC_ALPHA"),
+            (
+                "blend.gbuffers_clouds",
+                "SRC_ALPHA ONE_MINUS_SRC_ALPHA ONE ONE_MINUS_SRC_ALPHA",
+            ),
             ("blend.gbuffers_clouds.colortex3", "off"),
             ("blend.gbuffers_hand.gaux1", "ONE ONE ONE ONE"),
             ("blend.composite", "NOT A MODE"),
@@ -629,7 +638,9 @@ mod tests {
         let clouds = blends.resolve("gbuffers_clouds", 0, None).expect("blends");
         assert_eq!(clouds.color.dst_factor, BlendFactor::OneMinusSrcAlpha);
         assert_eq!(blends.resolve("gbuffers_clouds", 3, default), None);
-        let hand = blends.resolve("gbuffers_hand", 4, None).expect("gaux1 is colortex4");
+        let hand = blends
+            .resolve("gbuffers_hand", 4, None)
+            .expect("gaux1 is colortex4");
         assert_eq!(hand.color.src_factor, BlendFactor::One);
         assert_eq!(blends.resolve("gbuffers_hand", 0, default), default);
         assert_eq!(blends.resolve("composite", 0, default), default);

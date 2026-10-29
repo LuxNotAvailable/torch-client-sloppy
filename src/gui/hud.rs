@@ -695,7 +695,10 @@ const PROFILER_PASSES: usize = 10;
 fn profiler_sections(d: &DebugInfo) -> Vec<(&'static str, Vec<Item<'static>>)> {
     use crate::diag::frame_profile::Group;
     let Some(report) = d.frame_profile.as_deref() else {
-        return vec![("FRAME PROFILER", vec![row("", "sampling...".to_string()).into()])];
+        return vec![(
+            "FRAME PROFILER",
+            vec![row("", "sampling...".to_string()).into()],
+        )];
     };
     let group = |g: Group| report.lines.iter().filter(move |l| l.group == g);
     let stages = |g: Group| -> Vec<Item<'static>> {
@@ -735,7 +738,12 @@ fn profiler_sections(d: &DebugInfo) -> Vec<(&'static str, Vec<Item<'static>>)> {
                 Some(gpu) => format!("{gpu:.2} gpu  {:.2} cpu ms", p.cpu_ms),
                 None => format!("{:.2} cpu ms", p.cpu_ms),
             };
-            row_c(p.name.clone(), value, stage_color(p.gpu_ms.unwrap_or(p.cpu_ms))).into()
+            row_c(
+                p.name.clone(),
+                value,
+                stage_color(p.gpu_ms.unwrap_or(p.cpu_ms)),
+            )
+            .into()
         })
         .collect();
     if !gpu && !passes.is_empty() {

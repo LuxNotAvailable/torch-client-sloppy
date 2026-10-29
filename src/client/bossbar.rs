@@ -52,7 +52,9 @@ fn state() -> &'static Mutex<Vec<Bar>> {
 
 /// `BossHealthOverlay.shouldPlayMusic`.
 pub(crate) fn plays_music() -> bool {
-    state().lock().is_ok_and(|bars| bars.iter().any(|b| b.bar.music))
+    state()
+        .lock()
+        .is_ok_and(|bars| bars.iter().any(|b| b.bar.music))
 }
 
 pub(crate) fn reset() {

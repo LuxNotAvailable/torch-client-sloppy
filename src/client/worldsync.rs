@@ -16,7 +16,8 @@ use crate::{CHUNK_Q, SHARED, blockentities, lighting};
 /// soon after is theirs, whose place sound the server leaves to this client
 /// (`BlockItem.place` plays it for everyone but the placer).
 #[cfg(audio)]
-static LOCAL_PLACES: Mutex<Vec<(AzBlockPos, crate::platform::time::Instant)>> = Mutex::new(Vec::new());
+static LOCAL_PLACES: Mutex<Vec<(AzBlockPos, crate::platform::time::Instant)>> =
+    Mutex::new(Vec::new());
 
 #[cfg(audio)]
 const LOCAL_PLACE_WINDOW: std::time::Duration = std::time::Duration::from_millis(600);
@@ -82,15 +83,12 @@ pub(crate) fn install_block_change_hook() {
                         let block: Box<dyn BlockTrait> = Box::<dyn BlockTrait>::from(state);
                         matches!(block.id(), "water" | "lava" | "bubble_column")
                     };
-                    let event = if old.is_air()
-                        && !new.is_air()
-                        && !is_fluid(new)
-                        && placed_locally(pos)
-                    {
-                        Some(name(new).place_event)
-                    } else {
-                        None
-                    };
+                    let event =
+                        if old.is_air() && !new.is_air() && !is_fluid(new) && placed_locally(pos) {
+                            Some(name(new).place_event)
+                        } else {
+                            None
+                        };
                     if let Some(event) = event {
                         crate::audio::play_at(
                             event,
@@ -364,7 +362,8 @@ pub(crate) fn forget_chunk(
         .lock()
         .unwrap()
         .session
-        .world.unloaded_chunks
+        .world
+        .unloaded_chunks
         .push((cx, cz));
     if !crate::client::mesh_worker::forward_unload(cx, cz) {
         send_light(lighting::LightJob::Unload {

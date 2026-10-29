@@ -184,7 +184,8 @@ pub fn handle_interaction(bot: &Client, shared: &Arc<SharedMutex>) {
                 std::mem::take(&mut s.session.input.attack_clicked),
                 s.session.input.use_held,
                 std::mem::take(&mut s.session.input.use_clicked),
-                std::mem::take(&mut s.session.input.pick_clicked).then_some(s.session.input.pick_include_data),
+                std::mem::take(&mut s.session.input.pick_clicked)
+                    .then_some(s.session.input.pick_include_data),
                 attack_ready,
             )
         }
@@ -217,7 +218,8 @@ pub fn handle_interaction(bot: &Client, shared: &Arc<SharedMutex>) {
                 let s = shared.lock().unwrap();
                 let weapon = s
                     .session
-                    .inventory.hotbar
+                    .inventory
+                    .hotbar
                     .get(s.session.inventory.hotbar_selected as usize)
                     .is_some_and(|st| {
                         !st.is_empty() && crate::modules::triggerbot::is_weapon(st.item)
@@ -539,7 +541,10 @@ pub(crate) fn using_item() -> Option<(String, i32)> {
         return None;
     }
     let item = use_item.item?;
-    Some((item.to_str().trim_start_matches("minecraft:").to_owned(), use_item.held))
+    Some((
+        item.to_str().trim_start_matches("minecraft:").to_owned(),
+        use_item.held,
+    ))
 }
 
 pub(crate) fn is_using_item() -> bool {
@@ -604,7 +609,9 @@ fn consume_fx(bot: &Client) -> Option<ConsumeFx> {
     use azalea_inventory::components::{Consumable, ItemUseAnimation};
     use azalea_registry::Holder;
 
-    let inventory = bot.component::<azalea::entity::inventory::Inventory>().ok()?;
+    let inventory = bot
+        .component::<azalea::entity::inventory::Inventory>()
+        .ok()?;
     let held = inventory.held_item();
     let consumable = held.get_component::<Consumable>()?;
     let sound = match &consumable.sound {
@@ -654,7 +661,11 @@ fn emit_consume_fx(bot: &Client, shared: &Arc<SharedMutex>, fx: &ConsumeFx, coun
             [x * c + z * s, y, z * c - x * s]
         };
         for _ in 0..count {
-            let d = turn([(rng.next_f32() - 0.5) * 0.1, rng.next_f32() * 0.1 + 0.1, 0.0]);
+            let d = turn([
+                (rng.next_f32() - 0.5) * 0.1,
+                rng.next_f32() * 0.1 + 0.1,
+                0.0,
+            ]);
             let y1 = -rng.next_f32() * 0.6 - 0.3;
             let p = turn([(rng.next_f32() - 0.5) * 0.3, y1, 0.6]);
             crate::session::push_particle_emit(
@@ -665,7 +676,11 @@ fn emit_consume_fx(bot: &Client, shared: &Arc<SharedMutex>, fx: &ConsumeFx, coun
                             item: fx.item.clone(),
                         },
                     ),
-                    pos: [pos.x + p[0] as f64, eye_y + p[1] as f64, pos.z + p[2] as f64],
+                    pos: [
+                        pos.x + p[0] as f64,
+                        eye_y + p[1] as f64,
+                        pos.z + p[2] as f64,
+                    ],
                     dist: [d[0], d[1] + 0.05, d[2]],
                     max_speed: [1.0; 3],
                     count: 0,
@@ -718,10 +733,14 @@ fn riptide(bot: &Client) {
     if strength <= 0.0 || !in_water_or_rain(bot) {
         return;
     }
-    let Ok(look) = bot.component::<LookDirection>() else { return };
+    let Ok(look) = bot.component::<LookDirection>() else {
+        return;
+    };
     let push = crate::play::gliding::riptide_push(look.y_rot(), look.x_rot(), strength);
     let mut ecs = bot.ecs.write();
-    let Some(mut physics) = ecs.get_mut::<Physics>(bot.entity) else { return };
+    let Some(mut physics) = ecs.get_mut::<Physics>(bot.entity) else {
+        return;
+    };
     physics.velocity = physics.velocity + push;
     let on_ground = physics.on_ground();
     let bb = physics.bounding_box;
@@ -774,7 +793,9 @@ fn in_water_or_rain(bot: &Client) -> bool {
         return false;
     };
     let env = crate::util::biome_color::env(biome);
-    let Ok(pos) = bot.component::<Position>() else { return false };
+    let Ok(pos) = bot.component::<Position>() else {
+        return false;
+    };
     let Ok(world) = bot.world() else { return false };
     let world = world.read();
     let open_sky = |x: i32, y: i32, z: i32| {
@@ -1056,7 +1077,10 @@ fn open_op_block(bot: &Client, shared: &Arc<SharedMutex>, hit: &BlockHitResult) 
     };
     let id = crate::util::block_model::block_id(state);
     if let Some(kind) = crate::gui::op_blocks::OpBlock::of(id) {
-        crate::client::bus::emit(crate::client::bus::ClientEvent::OpenOpBlock(kind, hit.block_pos));
+        crate::client::bus::emit(crate::client::bus::ClientEvent::OpenOpBlock(
+            kind,
+            hit.block_pos,
+        ));
     }
 }
 
@@ -1077,11 +1101,13 @@ fn open_command_block(bot: &Client, shared: &Arc<SharedMutex>, hit: &BlockHitRes
     let conditional = Box::<dyn azalea::block::BlockTrait>::from(state).get_property("conditional")
         == Some("true");
     let mut s = shared.lock().unwrap();
-crate::client::bus::emit(crate::client::bus::ClientEvent::OpenCommandBlock(crate::session::CommandBlockOpen {
-        pos: hit.block_pos,
-        mode,
-        conditional,
-    }));
+    crate::client::bus::emit(crate::client::bus::ClientEvent::OpenCommandBlock(
+        crate::session::CommandBlockOpen {
+            pos: hit.block_pos,
+            mode,
+            conditional,
+        },
+    ));
     s.session.editors.command_block_pos = Some(hit.block_pos);
 }
 
@@ -1148,10 +1174,12 @@ fn open_book_editor(bot: &Client, _shared: &Arc<SharedMutex>, clicked: bool) {
     if data.kind != ItemKind::WritableBook {
         return;
     }
-    crate::client::bus::emit(crate::client::bus::ClientEvent::EditBook(crate::session::BookEditRequest {
-        hand: crate::session::InteractionHand::Main,
-        author: bot.username(),
-    }));
+    crate::client::bus::emit(crate::client::bus::ClientEvent::EditBook(
+        crate::session::BookEditRequest {
+            hand: crate::session::InteractionHand::Main,
+            author: bot.username(),
+        },
+    ));
 }
 
 fn next_sequence(bot: &Client) -> Option<u32> {

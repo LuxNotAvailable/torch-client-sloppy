@@ -130,7 +130,8 @@ impl BlockInfoOptions {
     pub fn load(json: Option<&serde_json::Value>) -> BlockInfoOptions {
         let d = BlockInfoOptions::default();
         let Some(json) = json else { return d };
-        let flag = |key: &str, default: bool| json.get(key).and_then(|v| v.as_bool()).unwrap_or(default);
+        let flag =
+            |key: &str, default: bool| json.get(key).and_then(|v| v.as_bool()).unwrap_or(default);
         let number = |key: &str, default: u32, max: u32| {
             json.get(key)
                 .and_then(|v| v.as_u64())
@@ -230,7 +231,10 @@ fn block_name(id: &str) -> String {
         return translate(&own, &[]);
     }
     let item = block_icon(id);
-    for key in [format!("block.minecraft.{item}"), format!("item.minecraft.{item}")] {
+    for key in [
+        format!("block.minecraft.{item}"),
+        format!("item.minecraft.{item}"),
+    ] {
         if has_translation(&key) {
             return translate(&key, &[]);
         }
@@ -245,7 +249,14 @@ fn property_line(name: &str, value: &str) -> String {
 
 /// The panel, drawn with its top centred at `centre_x`, `top`.
 /// Draws the panel with its top at `top`, and returns its drawn height.
-pub fn draw(p: &mut Painter, centre_x: f32, top: f32, looking: &Looking, sneaking: bool, o: &BlockInfoOptions) -> f32 {
+pub fn draw(
+    p: &mut Painter,
+    centre_x: f32,
+    top: f32,
+    looking: &Looking,
+    sneaking: bool,
+    o: &BlockInfoOptions,
+) -> f32 {
     const PAD: f32 = 5.0;
     const ICON_GAP: f32 = 5.0;
     const ROW: f32 = LINE_HEIGHT + 1.0;
@@ -304,8 +315,9 @@ pub fn draw(p: &mut Painter, centre_x: f32, top: f32, looking: &Looking, sneakin
             {
                 lines.push((format!("\u{2764} {health:.1} / {max:.1}"), 0xFF5555));
             }
-            name.clone()
-                .unwrap_or_else(|| crate::gui::tooltip::translate(&format!("entity.minecraft.{id}"), &[]))
+            name.clone().unwrap_or_else(|| {
+                crate::gui::tooltip::translate(&format!("entity.minecraft.{id}"), &[])
+            })
         }
     };
     let source = o.source.then_some("Minecraft");
@@ -318,7 +330,11 @@ pub fn draw(p: &mut Painter, centre_x: f32, top: f32, looking: &Looking, sneakin
         .ceil();
     let rows = 1 + lines.len() + usize::from(source.is_some());
     let text_h = rows as f32 * ROW - 1.0;
-    let icon_w = if icon.is_some() { ITEM_SIZE + ICON_GAP } else { 0.0 };
+    let icon_w = if icon.is_some() {
+        ITEM_SIZE + ICON_GAP
+    } else {
+        0.0
+    };
     let inner_h = text_h.max(if icon.is_some() { ITEM_SIZE } else { 0.0 });
     let (w, h) = (icon_w + text_w + 2.0 * PAD, inner_h + 2.0 * PAD);
 
@@ -411,10 +427,18 @@ pub fn draw_settings(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         Button::new(x, y, COLUMN_W, WIDGET_HEIGHT, &caption).draw(p, ctx)
     };
 
-    if button(p, cell(0.0, 0.0), format!("Block Info: {}", on_off(o.enabled))) {
+    if button(
+        p,
+        cell(0.0, 0.0),
+        format!("Block Info: {}", on_off(o.enabled)),
+    ) {
         o.enabled = !o.enabled;
     }
-    if button(p, cell(1.0, 0.0), format!("Show Tags: {}", o.details.caption())) {
+    if button(
+        p,
+        cell(1.0, 0.0),
+        format!("Show Tags: {}", o.details.caption()),
+    ) {
         o.details = o.details.next();
     }
 
@@ -447,31 +471,63 @@ pub fn draw_settings(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     .draw(p, ctx)
     .clamp(0, 100) as u32;
 
-    if button(p, cell(0.0, 2.0), format!("Background: {}", COLORS[o.background].0)) {
+    if button(
+        p,
+        cell(0.0, 2.0),
+        format!("Background: {}", COLORS[o.background].0),
+    ) {
         o.background = (o.background + 1) % COLORS.len();
     }
-    if button(p, cell(1.0, 2.0), format!("Border: {}", BORDERS[o.border].0)) {
+    if button(
+        p,
+        cell(1.0, 2.0),
+        format!("Border: {}", BORDERS[o.border].0),
+    ) {
         o.border = (o.border + 1) % BORDERS.len();
     }
-    if button(p, cell(0.0, 3.0), format!("Source Colour: {}", SOURCES[o.source_color].0)) {
+    if button(
+        p,
+        cell(0.0, 3.0),
+        format!("Source Colour: {}", SOURCES[o.source_color].0),
+    ) {
         o.source_color = (o.source_color + 1) % SOURCES.len();
     }
-    if button(p, cell(1.0, 3.0), format!("Show Source: {}", on_off(o.source))) {
+    if button(
+        p,
+        cell(1.0, 3.0),
+        format!("Show Source: {}", on_off(o.source)),
+    ) {
         o.source = !o.source;
     }
     if button(p, cell(0.0, 4.0), format!("Show Icon: {}", on_off(o.icon))) {
         o.icon = !o.icon;
     }
-    if button(p, cell(1.0, 4.0), format!("Show Harvestable: {}", on_off(o.harvestable))) {
+    if button(
+        p,
+        cell(1.0, 4.0),
+        format!("Show Harvestable: {}", on_off(o.harvestable)),
+    ) {
         o.harvestable = !o.harvestable;
     }
-    if button(p, cell(0.0, 5.0), format!("Show Progress: {}", on_off(o.progress))) {
+    if button(
+        p,
+        cell(0.0, 5.0),
+        format!("Show Progress: {}", on_off(o.progress)),
+    ) {
         o.progress = !o.progress;
     }
-    if button(p, cell(1.0, 5.0), format!("Show Coordinates: {}", on_off(o.coordinates))) {
+    if button(
+        p,
+        cell(1.0, 5.0),
+        format!("Show Coordinates: {}", on_off(o.coordinates)),
+    ) {
         o.coordinates = !o.coordinates;
     }
-    if button(p, cell(0.0, 6.0), format!("Entity Health: {}", on_off(o.entity_health))) {
+    if button(
+        p,
+        cell(0.0, 6.0),
+        format!("Entity Health: {}", on_off(o.entity_health)),
+    ) {
         o.entity_health = !o.entity_health;
     }
     if button(p, cell(1.0, 6.0), "Reset to Defaults".to_owned()) {

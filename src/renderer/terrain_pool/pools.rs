@@ -658,7 +658,12 @@ struct WaterSort {
 }
 
 impl WaterSort {
-    fn new(pool: u32, first_index: u32, origin: [i32; 3], mesh: &crate::renderer::mesh::MeshBuf) -> Self {
+    fn new(
+        pool: u32,
+        first_index: u32,
+        origin: [i32; 3],
+        mesh: &crate::renderer::mesh::MeshBuf,
+    ) -> Self {
         let indices: Vec<u32> = mesh.idx.iter().chain(&mesh.cutout_idx).copied().collect();
         // A quad's six indices name its four vertices in any order (fluid
         // quads start at their third), so its first vertex is the lowest.
@@ -911,10 +916,9 @@ pub fn apply_ops(
                 }
 
                 if water {
-                    pools.water_sort.insert(
-                        slot,
-                        WaterSort::new(pool_index, first_index, origin, &mesh),
-                    );
+                    pools
+                        .water_sort
+                        .insert(slot, WaterSort::new(pool_index, first_index, origin, &mesh));
                 }
 
                 let (min, max) = mesh.bounds();
@@ -1029,10 +1033,18 @@ mod water_sort_tests {
         let (mut order, mut out) = (Vec::new(), Vec::new());
 
         sort.back_to_front(Vec3::new(-5.0, 0.5, 0.0), &mut order, &mut out);
-        assert_eq!(&out[..6], &mesh.idx[6..12], "seen from -x, the quad at x=10 is behind");
+        assert_eq!(
+            &out[..6],
+            &mesh.idx[6..12],
+            "seen from -x, the quad at x=10 is behind"
+        );
 
         sort.back_to_front(Vec3::new(20.0, 0.5, 0.0), &mut order, &mut out);
-        assert_eq!(&out[..6], &mesh.idx[..6], "seen from +x, the quad at x=0 is behind");
+        assert_eq!(
+            &out[..6],
+            &mesh.idx[..6],
+            "seen from +x, the quad at x=0 is behind"
+        );
     }
 
     #[test]

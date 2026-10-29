@@ -105,9 +105,16 @@ impl Antialiasing {
     pub fn level_caption(&self) -> Option<String> {
         match self.mode {
             AaMode::Off => None,
-            AaMode::Fxaa => Some(FXAA_LEVELS[self.fxaa.min(FXAA_LEVELS.len() - 1)].0.to_owned()),
+            AaMode::Fxaa => Some(
+                FXAA_LEVELS[self.fxaa.min(FXAA_LEVELS.len() - 1)]
+                    .0
+                    .to_owned(),
+            ),
             AaMode::Msaa => Some(format!("{}x", self.msaa_samples())),
-            AaMode::Supersample => Some(format!("{}x", SSAA_SCALES[self.ssaa.min(SSAA_SCALES.len() - 1)])),
+            AaMode::Supersample => Some(format!(
+                "{}x",
+                SSAA_SCALES[self.ssaa.min(SSAA_SCALES.len() - 1)]
+            )),
         }
     }
 
@@ -118,7 +125,8 @@ impl Antialiasing {
             AaMode::Off => {}
             AaMode::Fxaa => self.fxaa = (self.fxaa + 1) % FXAA_LEVELS.len(),
             AaMode::Msaa => {
-                let supported: Vec<u8> = MSAA_SAMPLES.into_iter().filter(|&n| supports(n)).collect();
+                let supported: Vec<u8> =
+                    MSAA_SAMPLES.into_iter().filter(|&n| supports(n)).collect();
                 if supported.is_empty() {
                     return;
                 }
@@ -142,7 +150,8 @@ impl Antialiasing {
 
     /// Supersampling's per-axis scale, when it is the mode.
     pub fn supersample(&self) -> Option<f32> {
-        (self.mode == AaMode::Supersample).then(|| SSAA_SCALES[self.ssaa.min(SSAA_SCALES.len() - 1)])
+        (self.mode == AaMode::Supersample)
+            .then(|| SSAA_SCALES[self.ssaa.min(SSAA_SCALES.len() - 1)])
     }
 
     /// Reads the saved settings. Before modes there was a single
@@ -151,7 +160,9 @@ impl Antialiasing {
         let mut aa = Antialiasing::default();
         match value("antialiasing") {
             Some(serde_json::Value::Bool(true)) => aa.mode = AaMode::Supersample,
-            Some(serde_json::Value::String(key)) => aa.mode = AaMode::from_key(&key).unwrap_or_default(),
+            Some(serde_json::Value::String(key)) => {
+                aa.mode = AaMode::from_key(&key).unwrap_or_default()
+            }
             _ => {}
         }
         if let Some(i) = value("fxaaLevel").and_then(|v| v.as_u64()) {

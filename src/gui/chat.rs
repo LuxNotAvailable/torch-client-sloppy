@@ -611,7 +611,10 @@ fn chat_options() -> crate::gui::ChatOptions {
 
 /// A player's chat message, as against the server's and the client's own.
 fn from_player(tag: ChatTag) -> bool {
-    matches!(tag, ChatTag::Secure | ChatTag::Modified | ChatTag::NotSecure)
+    matches!(
+        tag,
+        ChatTag::Secure | ChatTag::Modified | ChatTag::NotSecure
+    )
 }
 
 /// A point on screen in the chat's own units, under `chatScale`.
@@ -741,10 +744,13 @@ pub fn draw(
     let delay = chat_options().delay_tenths as f32 / 10.0;
     let mut incoming = incoming;
     if delay > 0.0 || !chat.delayed.is_empty() {
-        let (players, rest): (Vec<_>, Vec<_>) = incoming.into_iter().partition(|e| from_player(e.tag));
+        let (players, rest): (Vec<_>, Vec<_>) =
+            incoming.into_iter().partition(|e| from_player(e.tag));
         chat.delayed.extend(players);
         incoming = rest;
-        let due = chat.released_at.is_none_or(|at| at.elapsed().as_secs_f32() >= delay);
+        let due = chat
+            .released_at
+            .is_none_or(|at| at.elapsed().as_secs_f32() >= delay);
         if due && let Some(next) = chat.delayed.pop_front() {
             incoming.push(next);
             chat.released_at = Some(std::time::Instant::now());
@@ -1836,7 +1842,8 @@ pub(crate) mod tests {
             .lock()
             .unwrap()
             .session
-            .chat.suggestion_request
+            .chat
+            .suggestion_request
             .take()
             .expect("a request");
         assert_eq!(command, "/team re");
@@ -1864,7 +1871,15 @@ pub(crate) mod tests {
         assert_eq!(list.items.len(), 1);
         assert_eq!(list.items[0].text, "red");
 
-        assert!(shared.lock().unwrap().session.chat.suggestion_request.is_none());
+        assert!(
+            shared
+                .lock()
+                .unwrap()
+                .session
+                .chat
+                .suggestion_request
+                .is_none()
+        );
     }
 
     fn ask_server_tree() -> crate::play::commands::CommandTree {

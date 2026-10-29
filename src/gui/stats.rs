@@ -10,7 +10,8 @@ use crate::gui::painter::Painter;
 use crate::gui::widgets::{self, Button, HeaderFooter, WIDGET_HEIGHT, WIDGET_WIDTH_BIG};
 use crate::gui::{Screen, ScreenCtx};
 
-const LAYOUT: HeaderFooter = HeaderFooter::new(HeaderFooter::DEFAULT_H + 24.0, HeaderFooter::DEFAULT_H);
+const LAYOUT: HeaderFooter =
+    HeaderFooter::new(HeaderFooter::DEFAULT_H + 24.0, HeaderFooter::DEFAULT_H);
 const ROW: f32 = 12.0;
 const ITEM_ROW: f32 = 20.0;
 const TABS: [&str; 3] = ["General", "Items", "Mobs"];
@@ -73,7 +74,8 @@ pub fn format_count(value: i32) -> String {
 /// A custom stat's value as vanilla shows it.
 pub fn format_custom(name: &str, value: i32) -> String {
     match name {
-        "play_time" | "total_world_time" | "time_since_death" | "time_since_rest" | "sneak_time" => format_time(value),
+        "play_time" | "total_world_time" | "time_since_death" | "time_since_rest"
+        | "sneak_time" => format_time(value),
         n if n.ends_with("_one_cm") => format_distance(value),
         n if n.starts_with("damage_") => format!("{:.1}", value as f64 * 0.1),
         _ => format_count(value),
@@ -110,7 +112,13 @@ pub fn draw(p: &mut Painter, state: &mut StatsState, ctx: &ScreenCtx) -> Option<
     let Some(stats) = &state.stats else {
         let text = "Downloading statistics...";
         let w = p.atlas.font.width_str(text);
-        p.text_str(text, ((ctx.vw - w) / 2.0).floor(), list_y + list_h / 2.0 - 4.0, 0xFFFFFF, true);
+        p.text_str(
+            text,
+            ((ctx.vw - w) / 2.0).floor(),
+            list_y + list_h / 2.0 - 4.0,
+            0xFFFFFF,
+            true,
+        );
         return done(p, ctx);
     };
 
@@ -131,7 +139,12 @@ pub fn draw(p: &mut Painter, state: &mut StatsState, ctx: &ScreenCtx) -> Option<
                 .collect();
             custom.sort_by_key(|(name, _)| translate(&format!("stat.minecraft.{name}")));
             for (name, value) in custom {
-                rows.push((None, translate(&format!("stat.minecraft.{name}")), format_custom(&name, value), Vec::new()));
+                rows.push((
+                    None,
+                    translate(&format!("stat.minecraft.{name}")),
+                    format_custom(&name, value),
+                    Vec::new(),
+                ));
             }
         }
         1 => {
@@ -156,7 +169,16 @@ pub fn draw(p: &mut Painter, state: &mut StatsState, ctx: &ScreenCtx) -> Option<
                     Some(icon),
                     item_name(&item),
                     String::new(),
-                    values.iter().map(|v| if *v == 0 { "-".to_owned() } else { format_count(*v) }).collect(),
+                    values
+                        .iter()
+                        .map(|v| {
+                            if *v == 0 {
+                                "-".to_owned()
+                            } else {
+                                format_count(*v)
+                            }
+                        })
+                        .collect(),
                 ));
             }
         }
@@ -166,7 +188,9 @@ pub fn draw(p: &mut Painter, state: &mut StatsState, ctx: &ScreenCtx) -> Option<
             for (stat, v) in stats {
                 match stat {
                     Stat::Killed(e) => per.entry(strip(e.to_str()).to_owned()).or_default().0 += v,
-                    Stat::KilledBy(e) => per.entry(strip(e.to_str()).to_owned()).or_default().1 += v,
+                    Stat::KilledBy(e) => {
+                        per.entry(strip(e.to_str()).to_owned()).or_default().1 += v
+                    }
                     _ => {}
                 }
             }
@@ -189,13 +213,28 @@ pub fn draw(p: &mut Painter, state: &mut StatsState, ctx: &ScreenCtx) -> Option<
 
     let header_h = if state.tab == 1 { ROW + 4.0 } else { 0.0 };
     let content_h = header_h + rows.len() as f32 * row_h;
-    crate::gui::options::scroll_input(&mut state.scroll, &mut state.drag, ctx, left, width, list_y, list_h, content_h);
+    crate::gui::options::scroll_input(
+        &mut state.scroll,
+        &mut state.drag,
+        ctx,
+        left,
+        width,
+        list_y,
+        list_h,
+        content_h,
+    );
     let clip = p.push_clip(list_x, list_y, list_w, list_h);
     let top = list_y - state.scroll;
     if rows.is_empty() {
         let text = "Nothing yet";
         let w = p.atlas.font.width_str(text);
-        p.text_str(text, ((ctx.vw - w) / 2.0).floor(), list_y + 8.0, 0xA0A0A0, true);
+        p.text_str(
+            text,
+            ((ctx.vw - w) / 2.0).floor(),
+            list_y + 8.0,
+            0xA0A0A0,
+            true,
+        );
     }
     // Items: column headers.
     const COLUMNS: [&str; 6] = ["Broken", "Crafted", "Used", "Mined", "Picked", "Dropped"];
@@ -236,7 +275,13 @@ pub fn draw(p: &mut Painter, state: &mut StatsState, ctx: &ScreenCtx) -> Option<
             _ => {
                 p.text_str(name, left + 2.0, y + 1.0, 0xFFFFFF, true);
                 for (l, line) in cells.iter().enumerate() {
-                    p.text_str(line, left + 10.0, y + 1.0 + (l + 1) as f32 * ROW, 0xA0A0A0, true);
+                    p.text_str(
+                        line,
+                        left + 10.0,
+                        y + 1.0 + (l + 1) as f32 * ROW,
+                        0xA0A0A0,
+                        true,
+                    );
                 }
             }
         }
@@ -248,7 +293,14 @@ pub fn draw(p: &mut Painter, state: &mut StatsState, ctx: &ScreenCtx) -> Option<
 
 fn done(p: &mut Painter, ctx: &ScreenCtx) -> Option<Screen> {
     let x = widgets::centered_x(ctx.vw);
-    let pressed = Button::new(x, LAYOUT.footer_y(ctx.vh), WIDGET_WIDTH_BIG, WIDGET_HEIGHT, "Done").draw(p, ctx);
+    let pressed = Button::new(
+        x,
+        LAYOUT.footer_y(ctx.vh),
+        WIDGET_WIDTH_BIG,
+        WIDGET_HEIGHT,
+        "Done",
+    )
+    .draw(p, ctx);
     (pressed || ctx.input.escape).then_some(Screen::Pause)
 }
 

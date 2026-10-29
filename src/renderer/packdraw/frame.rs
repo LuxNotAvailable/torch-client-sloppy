@@ -352,10 +352,7 @@ pub(crate) fn take_over_view(
                     })
             };
             for mut visible in &mut hand_views {
-                if let Some(meshes) = visible
-                    .entities
-                    .get_mut(&std::any::TypeId::of::<Mesh3d>())
-                {
+                if let Some(meshes) = visible.entities.get_mut(&std::any::TypeId::of::<Mesh3d>()) {
                     meshes.retain(|(_, main)| !drawn(main.id()));
                 }
             }

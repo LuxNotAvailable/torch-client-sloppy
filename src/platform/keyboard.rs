@@ -491,7 +491,10 @@ pub(crate) mod android {
         CACHED.load(Ordering::Relaxed) as f32
     }
 
-    #[allow(unsafe_code, reason = "the JNI handles Android hands over are raw pointers")]
+    #[allow(
+        unsafe_code,
+        reason = "the JNI handles Android hands over are raw pointers"
+    )]
     fn read_ime_inset() -> Option<i32> {
         let app = bevy::android::ANDROID_APP.get()?;
         let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
@@ -505,7 +508,10 @@ pub(crate) mod android {
         .ok()
     }
 
-    #[allow(unsafe_code, reason = "the JNI handles Android hands over are raw pointers")]
+    #[allow(
+        unsafe_code,
+        reason = "the JNI handles Android hands over are raw pointers"
+    )]
     fn ime_bottom(env: &mut Env<'_>, app: &AndroidApp) -> Result<i32> {
         let activity = unsafe { JObject::from_raw(env, app.activity_as_ptr().cast()) };
         let window = env

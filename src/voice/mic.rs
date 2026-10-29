@@ -4,9 +4,9 @@
 //! (`ptt_deactivation_delay`, `voice_deactivation_delay`), then one empty
 //! packet to end the transmission.
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
-use std::sync::Arc;
 use std::time::Duration;
 
 use rodio::cpal;
@@ -142,11 +142,14 @@ impl Framer {
         while self.at < mono.len() as f64 {
             let index = self.at.floor() as usize;
             let t = (self.at - index as f64) as f32;
-            let a = if index == 0 { self.previous } else { mono[index - 1] };
+            let a = if index == 0 {
+                self.previous
+            } else {
+                mono[index - 1]
+            };
             let b = mono[index];
             let sample = a + (b - a) * t;
-            self.frame
-                .push((sample.clamp(-1.0, 1.0) * 32767.0) as i16);
+            self.frame.push((sample.clamp(-1.0, 1.0) * 32767.0) as i16);
             if self.frame.len() == FRAME {
                 let frame: [i16; FRAME] = self.frame[..].try_into().expect("a whole frame");
                 self.frame.clear();

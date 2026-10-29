@@ -366,7 +366,12 @@ pub(super) fn write_batch_mesh(
             uvs.push(uv);
             colors.push(if p.grow == Grow::Flash {
                 let age = p.age as f32 + frac - 1.0;
-                [p.tint[0], p.tint[1], p.tint[2], (0.6 - age * 0.125).clamp(0.0, 1.0)]
+                [
+                    p.tint[0],
+                    p.tint[1],
+                    p.tint[2],
+                    (0.6 - age * 0.125).clamp(0.0, 1.0),
+                ]
             } else {
                 p.tint
             });

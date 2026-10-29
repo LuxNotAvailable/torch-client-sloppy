@@ -188,22 +188,31 @@ impl Channel {
                 if distance_between(eye, listening.listener) > distance + 1.0 {
                     return;
                 }
-                StreamPlace::At { at: eye, range: distance }
+                StreamPlace::At {
+                    at: eye,
+                    range: distance,
+                }
             }
             Kind::Location { at, distance } => {
                 if distance_between(at, listening.listener) > distance + 1.0 {
                     return;
                 }
-                StreamPlace::At { at, range: distance }
+                StreamPlace::At {
+                    at,
+                    range: distance,
+                }
             }
         };
         let volume = listening.volume_of(sound.sender);
         let stream = match &self.stream {
             Some(stream) => stream,
             None => {
-                let Some(stream) =
-                    crate::audio::open_stream(SoundCategory::Voice, volume, place, SAMPLE_RATE as u32)
-                else {
+                let Some(stream) = crate::audio::open_stream(
+                    SoundCategory::Voice,
+                    volume,
+                    place,
+                    SAMPLE_RATE as u32,
+                ) else {
                     return;
                 };
                 self.place = Some(place);
@@ -241,7 +250,9 @@ impl Playback {
             } => (sound, Kind::Player { distance }),
             Packet::GroupSound { sound } => (sound, Kind::Group),
             Packet::LocationSound {
-                sound, at, distance,
+                sound,
+                at,
+                distance,
             } => (
                 sound,
                 Kind::Location {
@@ -266,7 +277,8 @@ impl Playback {
 
     /// Closes channels nobody has spoken on for half a minute.
     pub(crate) fn sweep(&mut self) {
-        self.channels.retain(|_, channel| channel.heard.elapsed() < IDLE);
+        self.channels
+            .retain(|_, channel| channel.heard.elapsed() < IDLE);
     }
 }
 

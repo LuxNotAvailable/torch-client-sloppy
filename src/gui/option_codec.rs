@@ -61,7 +61,9 @@ impl OptionValue for u8 {
 
 impl OptionValue for i32 {
     fn from_json(value: &Value) -> Option<Self> {
-        value.as_i64().map(|v| v.clamp(i32::MIN as i64, i32::MAX as i64) as i32)
+        value
+            .as_i64()
+            .map(|v| v.clamp(i32::MIN as i64, i32::MAX as i64) as i32)
     }
     fn to_json(&self) -> Value {
         Value::from(*self)
@@ -80,7 +82,9 @@ impl OptionValue for String {
 /// An optional name: stored as the empty string when unset.
 impl OptionValue for Option<String> {
     fn from_json(value: &Value) -> Option<Self> {
-        value.as_str().map(|s| (!s.is_empty()).then(|| s.to_owned()))
+        value
+            .as_str()
+            .map(|s| (!s.is_empty()).then(|| s.to_owned()))
     }
     fn to_json(&self) -> Value {
         Value::from(self.as_deref().unwrap_or(""))
@@ -124,7 +128,9 @@ pub fn key(name: &'static str) -> Key {
 
 impl<T: OptionValue> Codec<T> for Key {
     fn read(&self, value: Lookup, default: T) -> T {
-        value(self.0).and_then(|v| T::from_json(&v)).unwrap_or(default)
+        value(self.0)
+            .and_then(|v| T::from_json(&v))
+            .unwrap_or(default)
     }
     fn write(&self, map: &mut Map<String, Value>, value: &T) {
         map.insert(self.0.to_owned(), value.to_json());
@@ -140,7 +146,11 @@ impl Key {
     /// Stored divided by `factor`: vanilla keeps some settings as
     /// fractions (`mouseSensitivity` 0 to 1 for 0 to 200).
     pub fn scaled(self, factor: f64) -> Scaled {
-        Scaled { key: self, factor, range: None }
+        Scaled {
+            key: self,
+            factor,
+            range: None,
+        }
     }
 }
 
@@ -191,7 +201,10 @@ impl Codec<u32> for Scaled {
         }
     }
     fn write(&self, map: &mut Map<String, Value>, value: &u32) {
-        map.insert(self.key.0.to_owned(), Value::from(*value as f64 / self.factor));
+        map.insert(
+            self.key.0.to_owned(),
+            Value::from(*value as f64 / self.factor),
+        );
     }
 }
 
@@ -292,12 +305,34 @@ mod tests {
     #[test]
     fn options_round_trip_through_their_keys() {
         let defaults = Sample::defaults();
-        assert_eq!(defaults, Sample { on: true, level: 50, time: 50, name: None });
+        assert_eq!(
+            defaults,
+            Sample {
+                on: true,
+                level: 50,
+                time: 50,
+                name: None
+            }
+        );
         let mut map = Map::new();
-        Sample { on: false, level: 70, time: 25, name: Some("x".into()) }.write_to(&mut map);
+        Sample {
+            on: false,
+            level: 70,
+            time: 25,
+            name: Some("x".into()),
+        }
+        .write_to(&mut map);
         assert_eq!(map["time"], Value::from(2.5));
         let back = Sample::read_from(&|k| map.get(k).cloned());
-        assert_eq!(back, Sample { on: false, level: 70, time: 25, name: Some("x".into()) });
+        assert_eq!(
+            back,
+            Sample {
+                on: false,
+                level: 70,
+                time: 25,
+                name: Some("x".into())
+            }
+        );
         // Out of range is pulled back in.
         let clamped = Sample::read_from(&|k| (k == "level").then(|| Value::from(500)));
         assert_eq!(clamped.level, 100);

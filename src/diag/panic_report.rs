@@ -63,7 +63,10 @@ fn write_crash_log(report: &str) {
         // is the last of them, so it is not repeated).
         let recent = super::logfile::recent();
         let before = recent.len().saturating_sub(report.lines().count());
-        let _ = writeln!(file, "\n---------------- log before the panic ----------------");
+        let _ = writeln!(
+            file,
+            "\n---------------- log before the panic ----------------"
+        );
         for line in &recent[..before] {
             let _ = writeln!(file, "{line}");
         }

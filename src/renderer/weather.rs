@@ -36,7 +36,9 @@ fn seed(x: i32, z: i32) -> i32 {
     x.wrapping_mul(x)
         .wrapping_mul(3121)
         .wrapping_add(x.wrapping_mul(45238971))
-        ^ z.wrapping_mul(z).wrapping_mul(418711).wrapping_add(z.wrapping_mul(13761))
+        ^ z.wrapping_mul(z)
+            .wrapping_mul(418711)
+            .wrapping_add(z.wrapping_mul(13761))
 }
 
 /// The columns about `camera` (a block position) where something falls.
@@ -76,13 +78,25 @@ pub fn columns(
                 }
                 Fall::Snow => {
                     let time = wrapped as f32 + partial;
-                    let u = (random.next_f64() + (time * 0.01 * random.next_gaussian() as f32) as f64) as f32;
-                    let v = (random.next_f64() + (time * random.next_gaussian() as f32 * 0.001) as f64) as f32;
+                    let u = (random.next_f64()
+                        + (time * 0.01 * random.next_gaussian() as f32) as f64)
+                        as f32;
+                    let v = (random.next_f64()
+                        + (time * random.next_gaussian() as f32 * 0.001) as f64)
+                        as f32;
                     let drop = -((game_time & 511) as f32 + partial) / 512.0;
                     (u, drop + v)
                 }
             };
-            out.push(Column { fall: kind, x, z, bottom, top, u_offset, v_offset });
+            out.push(Column {
+                fall: kind,
+                x,
+                z,
+                bottom,
+                top,
+                u_offset,
+                v_offset,
+            });
         }
     }
     out
@@ -104,7 +118,11 @@ pub fn sheet(column: &Column, cam: Vec3, intensity: f32) -> [Corner; 4] {
     let dx = (column.x - cam.x.floor() as i32) as f32;
     let dz = (column.z - cam.z.floor() as i32) as f32;
     let length = (dx * dx + dz * dz).sqrt();
-    let (hx, hz) = if length > 0.0 { (-dz / length / 2.0, dx / length / 2.0) } else { (f32::NAN, f32::NAN) };
+    let (hx, hz) = if length > 0.0 {
+        (-dz / length / 2.0, dx / length / 2.0)
+    } else {
+        (f32::NAN, f32::NAN)
+    };
     // Vanilla's centre column divides by zero and draws nothing.
     let (hx, hz) = if hx.is_nan() { (0.0, 0.0) } else { (hx, hz) };
     let (y0, y1) = (column.bottom as f32 - cam.y, column.top as f32 - cam.y);
@@ -140,7 +158,11 @@ pub fn sheet_pieces(column: &Column, cam: Vec3, intensity: f32) -> Vec<[Corner; 
         at
     };
     let across = cuts(u0, u0 + 1.0);
-    let down = if (v1 - v0).abs() > 0.0 { cuts(v0, v1) } else { vec![0.0, 1.0] };
+    let down = if (v1 - v0).abs() > 0.0 {
+        cuts(v0, v1)
+    } else {
+        vec![0.0, 1.0]
+    };
     let mut out = Vec::new();
     for w in across.windows(2) {
         for h in down.windows(2) {
@@ -183,7 +205,15 @@ mod tests {
 
     #[test]
     fn sheets_fade_toward_the_edge() {
-        let c = |x| Column { fall: Fall::Rain, x, z: 0, bottom: 60, top: 74, u_offset: 0.0, v_offset: 0.0 };
+        let c = |x| Column {
+            fall: Fall::Rain,
+            x,
+            z: 0,
+            bottom: 60,
+            top: 74,
+            u_offset: 0.0,
+            v_offset: 0.0,
+        };
         let cam = Vec3::new(0.5, 64.0, 0.5);
         assert!(sheet(&c(1), cam, 1.0)[0].2 > sheet(&c(9), cam, 1.0)[0].2);
         assert_eq!(sheet(&c(1), cam, 0.0)[0].2, 0.0);
@@ -191,12 +221,23 @@ mod tests {
 
     #[test]
     fn pieces_keep_their_uv_in_one_repeat() {
-        let column = Column { fall: Fall::Snow, x: 3, z: 1, bottom: 60, top: 74, u_offset: 2.3, v_offset: -7.6 };
+        let column = Column {
+            fall: Fall::Snow,
+            x: 3,
+            z: 1,
+            bottom: 60,
+            top: 74,
+            u_offset: 2.3,
+            v_offset: -7.6,
+        };
         let pieces = sheet_pieces(&column, Vec3::new(0.5, 64.0, 0.5), 1.0);
         assert!(pieces.len() > 4);
         for piece in &pieces {
             for (_, uv, _) in piece {
-                assert!((-1e-4..=1.0001).contains(&uv[0]) && (-1e-4..=1.0001).contains(&uv[1]), "{uv:?}");
+                assert!(
+                    (-1e-4..=1.0001).contains(&uv[0]) && (-1e-4..=1.0001).contains(&uv[1]),
+                    "{uv:?}"
+                );
             }
         }
     }

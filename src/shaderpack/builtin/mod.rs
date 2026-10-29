@@ -48,7 +48,8 @@ mod tests {
 
     #[test]
     fn every_file_on_disk_is_embedded() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/shaderpack/builtin/pack");
+        let root =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/shaderpack/builtin/pack");
         let mut on_disk = Vec::new();
         let mut stack = vec![root.clone()];
         while let Some(dir) = stack.pop() {
@@ -111,13 +112,25 @@ mod tests {
                 .unwrap_or_else(|e| panic!("{text}: {e}"))
         };
         let defaults = at("");
-        assert_eq!(defaults.targets.settings[4].resolve_size([1200, 600]), [600, 300]);
-        assert_eq!(defaults.targets.settings[5].resolve_size([1200, 600]), [600, 300]);
+        assert_eq!(
+            defaults.targets.settings[4].resolve_size([1200, 600]),
+            [600, 300]
+        );
+        assert_eq!(
+            defaults.targets.settings[5].resolve_size([1200, 600]),
+            [600, 300]
+        );
         let scaled = at("REFLECTION_RES=4
 VOLUMETRIC_RES=1
 SCALED_RESOLVE=1
 ");
-        assert_eq!(scaled.targets.settings[5].resolve_size([1200, 600]), [300, 150]);
-        assert_eq!(scaled.targets.settings[4].resolve_size([1200, 600]), [1200, 600]);
+        assert_eq!(
+            scaled.targets.settings[5].resolve_size([1200, 600]),
+            [300, 150]
+        );
+        assert_eq!(
+            scaled.targets.settings[4].resolve_size([1200, 600]),
+            [1200, 600]
+        );
     }
 }

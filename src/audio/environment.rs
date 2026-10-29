@@ -196,7 +196,10 @@ mod tests {
         assert!(under.replace_current);
         assert_eq!(music.select(true, false).unwrap().event, "music.game");
         let ambient = layer.ambient.unwrap();
-        assert_eq!(ambient.looping.as_deref(), Some("ambient.crimson_forest.loop"));
+        assert_eq!(
+            ambient.looping.as_deref(),
+            Some("ambient.crimson_forest.loop")
+        );
         assert_eq!(ambient.mood.unwrap().tick_delay, 6000);
         assert_eq!(ambient.additions[0].tick_chance, 0.0111);
     }

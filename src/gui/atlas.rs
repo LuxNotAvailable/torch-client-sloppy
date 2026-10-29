@@ -767,12 +767,17 @@ pub fn build_gui_atlas(assets: &Path) -> GuiAtlas {
 
     // The elder guardian's face, for its curse: the head's front (the box at
     // texture offset 0,0, 12 by 12 by 16, faces -Z at 16,16) with its eye.
-    if let Ok(img) = crate::platform::assets::open_image(&textures.join("entity/guardian_elder.png")) {
+    if let Ok(img) =
+        crate::platform::assets::open_image(&textures.join("entity/guardian_elder.png"))
+    {
         let img = img.to_rgba8();
         let scale = img.width() / 64;
-        let mut face = image::imageops::crop_imm(&img, 16 * scale, 16 * scale, 12 * scale, 12 * scale).to_image();
+        let mut face =
+            image::imageops::crop_imm(&img, 16 * scale, 16 * scale, 12 * scale, 12 * scale)
+                .to_image();
         // The eye: a 2 by 2 box at offset 8,0, its front at 9,1.
-        let eye = image::imageops::crop_imm(&img, 9 * scale, scale, 2 * scale, 2 * scale).to_image();
+        let eye =
+            image::imageops::crop_imm(&img, 9 * scale, scale, 2 * scale, 2 * scale).to_image();
         image::imageops::overlay(&mut face, &eye, (5 * scale) as i64, (5 * scale) as i64);
         entries.push(Entry {
             kind: Kind::Sprite,
@@ -783,7 +788,9 @@ pub fn build_gui_atlas(assets: &Path) -> GuiAtlas {
     }
 
     // AppleSkin's saturation icon: the drumstick's outline in gold.
-    if let Ok(img) = crate::platform::assets::open_image(&textures.join("gui/sprites/hud/food_full.png")) {
+    if let Ok(img) =
+        crate::platform::assets::open_image(&textures.join("gui/sprites/hud/food_full.png"))
+    {
         entries.push(Entry {
             kind: Kind::Sprite,
             key: crate::gui::appleskin::SATURATION_SPRITE.to_string(),

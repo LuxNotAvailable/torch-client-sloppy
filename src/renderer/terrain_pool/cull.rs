@@ -811,7 +811,6 @@ impl ViewNode for TerrainCullNode {
 }
 
 impl TerrainCullNode {
-
     fn run_untimed<'w>(
         &self,
         _graph: &mut RenderGraphContext,

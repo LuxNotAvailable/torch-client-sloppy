@@ -384,9 +384,14 @@ impl Assets {
     /// `trims/items/chestplate_trim_quartz`.
     fn trim_permutation(&self, path: &str) -> Option<image::RgbaImage> {
         let rest = path.strip_prefix("trims/items/")?;
-        let (base, material) = ["helmet_trim", "chestplate_trim", "leggings_trim", "boots_trim"]
-            .iter()
-            .find_map(|base| Some((*base, rest.strip_prefix(base)?.strip_prefix('_')?)))?;
+        let (base, material) = [
+            "helmet_trim",
+            "chestplate_trim",
+            "leggings_trim",
+            "boots_trim",
+        ]
+        .iter()
+        .find_map(|base| Some((*base, rest.strip_prefix(base)?.strip_prefix('_')?)))?;
         let open = |relative: String| {
             crate::platform::assets::open_image(&self.root.join(relative))
                 .ok()
@@ -594,10 +599,22 @@ mod namespace_tests {
     #[test]
     fn references_find_their_namespace() {
         let root = Path::new("/a/assets/minecraft");
-        assert_eq!(locate(root, "items/stone.json"), Path::new("/a/assets/minecraft/items/stone.json"));
-        assert_eq!(locate(root, "items/minecraft:stone.json"), Path::new("/a/assets/minecraft/items/stone.json"));
-        assert_eq!(locate(root, "items/mymod:gem.json"), Path::new("/a/assets/mymod/items/gem.json"));
-        assert_eq!(locate(root, "textures/mymod:item/gem.png"), Path::new("/a/assets/mymod/textures/item/gem.png"));
+        assert_eq!(
+            locate(root, "items/stone.json"),
+            Path::new("/a/assets/minecraft/items/stone.json")
+        );
+        assert_eq!(
+            locate(root, "items/minecraft:stone.json"),
+            Path::new("/a/assets/minecraft/items/stone.json")
+        );
+        assert_eq!(
+            locate(root, "items/mymod:gem.json"),
+            Path::new("/a/assets/mymod/items/gem.json")
+        );
+        assert_eq!(
+            locate(root, "textures/mymod:item/gem.png"),
+            Path::new("/a/assets/mymod/textures/item/gem.png")
+        );
         assert_eq!(strip_namespace("minecraft:stone"), "stone");
         assert_eq!(strip_namespace("mymod:gem"), "mymod:gem");
     }

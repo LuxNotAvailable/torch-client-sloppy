@@ -377,7 +377,9 @@ fn print_dirs() {
     }
     println!("\nAssets are read from");
     println!("  {}", crate::assets_root().display());
-    if cfg!(feature = "asset_download") && crate::platform::env::var_os("MINECRAFT_ASSETS").is_none() {
+    if cfg!(feature = "asset_download")
+        && crate::platform::env::var_os("MINECRAFT_ASSETS").is_none()
+    {
         println!("  (a downloaded set, addressed by that path rather than stored at it)");
     }
     println!("  MINECRAFT_ASSETS moves it, and no reset ever deletes it");

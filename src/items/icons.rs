@@ -169,7 +169,9 @@ fn is_display_context(node: &Json) -> bool {
 /// rides the same switch: its holder passes "using" while a bobber is out.
 fn is_using_item(node: &Json) -> bool {
     matches!(
-        node.get("property").and_then(Json::as_str).map(strip_namespace),
+        node.get("property")
+            .and_then(Json::as_str)
+            .map(strip_namespace),
         Some("using_item" | "fishing_rod/cast")
     )
 }
@@ -869,12 +871,21 @@ pub(super) fn enumerate_paths(assets: &Assets, root: &Json, limit: usize) -> Vec
         let mut taken: Vec<u16> = Vec::new();
         let mut arities: Vec<usize> = Vec::new();
         let mut parts = Vec::new();
-        collect_parts_with(assets, root, "gui", false, Mat4::IDENTITY, &mut parts, 0, &mut |node| {
-            let choice = path.get(taken.len()).copied().unwrap_or(0);
-            taken.push(choice);
-            arities.push(super::dispatch::arity(node));
-            Some(choice as usize)
-        });
+        collect_parts_with(
+            assets,
+            root,
+            "gui",
+            false,
+            Mat4::IDENTITY,
+            &mut parts,
+            0,
+            &mut |node| {
+                let choice = path.get(taken.len()).copied().unwrap_or(0);
+                taken.push(choice);
+                arities.push(super::dispatch::arity(node));
+                Some(choice as usize)
+            },
+        );
         if taken.is_empty() {
             return out;
         }
@@ -903,15 +914,27 @@ pub(super) fn enumerate_paths(assets: &Assets, root: &Json, limit: usize) -> Vec
 /// skip the walk. Remembered per item.
 pub fn is_dynamic(id: &str) -> bool {
     static KNOWN: std::sync::RwLock<Option<HashMap<String, bool>>> = std::sync::RwLock::new(None);
-    if let Some(known) = KNOWN.read().unwrap().as_ref().and_then(|k| k.get(id).copied()) {
+    if let Some(known) = KNOWN
+        .read()
+        .unwrap()
+        .as_ref()
+        .and_then(|k| k.get(id).copied())
+    {
         return known;
     }
     let assets = super::model::shared();
     let dynamic = assets
         .json(&format!("items/{id}.json"))
-        .and_then(|doc| doc.get("model").map(|root| !enumerate_paths(assets, root, 1).is_empty()))
+        .and_then(|doc| {
+            doc.get("model")
+                .map(|root| !enumerate_paths(assets, root, 1).is_empty())
+        })
         .unwrap_or(false);
-    KNOWN.write().unwrap().get_or_insert_with(HashMap::new).insert(id.to_owned(), dynamic);
+    KNOWN
+        .write()
+        .unwrap()
+        .get_or_insert_with(HashMap::new)
+        .insert(id.to_owned(), dynamic);
     dynamic
 }
 
@@ -928,11 +951,20 @@ pub fn runtime_path(
     let root = doc.get("model")?;
     let mut taken: Vec<u16> = Vec::new();
     let mut parts = Vec::new();
-    collect_parts_with(assets, root, "gui", false, Mat4::IDENTITY, &mut parts, 0, &mut |node| {
-        let choice = super::dispatch::decide(node, stack, ctx);
-        taken.push(choice as u16);
-        Some(choice)
-    });
+    collect_parts_with(
+        assets,
+        root,
+        "gui",
+        false,
+        Mat4::IDENTITY,
+        &mut parts,
+        0,
+        &mut |node| {
+            let choice = super::dispatch::decide(node, stack, ctx);
+            taken.push(choice as u16);
+            Some(choice)
+        },
+    );
     (!taken.is_empty()).then_some(taken)
 }
 
@@ -959,11 +991,20 @@ fn bake_path(
         match path {
             Some(path) => {
                 let mut k = 0;
-                collect_parts_with(assets, node, "gui", false, Mat4::IDENTITY, &mut parts, 0, &mut |_| {
-                    let choice = path.get(k).copied().unwrap_or(0) as usize;
-                    k += 1;
-                    Some(choice)
-                });
+                collect_parts_with(
+                    assets,
+                    node,
+                    "gui",
+                    false,
+                    Mat4::IDENTITY,
+                    &mut parts,
+                    0,
+                    &mut |_| {
+                        let choice = path.get(k).copied().unwrap_or(0) as usize;
+                        k += 1;
+                        Some(choice)
+                    },
+                );
             }
             None => collect_parts(assets, node, "gui", false, Mat4::IDENTITY, &mut parts, 0),
         }
@@ -1103,16 +1144,23 @@ pub fn bake_item_icons(assets: &Path) -> ItemIcons {
     // `namespace:name`.
     if let Some(root) = assets.parent() {
         for namespace in crate::platform::assets::read_dir(root) {
-            let Some(ns) = namespace.file_name().map(|n| n.to_string_lossy().into_owned()) else {
+            let Some(ns) = namespace
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+            else {
                 continue;
             };
             if ns == "minecraft" {
                 continue;
             }
-            ids.extend(crate::platform::assets::read_dir(namespace.join("items")).iter().filter_map(|path| {
-                let name = path.file_name()?.to_string_lossy().into_owned();
-                name.strip_suffix(".json").map(|n| format!("{ns}:{n}"))
-            }));
+            ids.extend(
+                crate::platform::assets::read_dir(namespace.join("items"))
+                    .iter()
+                    .filter_map(|path| {
+                        let name = path.file_name()?.to_string_lossy().into_owned();
+                        name.strip_suffix(".json").map(|n| format!("{ns}:{n}"))
+                    }),
+            );
         }
     }
     ids.sort();
@@ -1176,7 +1224,10 @@ pub fn bake_item_icons(assets: &Path) -> ItemIcons {
     // Every draw-time variant of every item with draw-time choices.
     let mut model_variants = 0usize;
     for id in ids.clone() {
-        let Some(root) = cache.json(&format!("items/{id}.json")).and_then(|d| d.get("model").cloned()) else {
+        let Some(root) = cache
+            .json(&format!("items/{id}.json"))
+            .and_then(|d| d.get("model").cloned())
+        else {
             continue;
         };
         for path in enumerate_paths(&cache, &root, MAX_VARIANTS) {
@@ -1384,17 +1435,47 @@ mod tests {
             return;
         }
         let icons = bake_item_icons(assets);
-        let count = |item: &str| icons.map.keys().filter(|k| k.starts_with(&format!("{item}@"))).count();
-        for (item, at_least) in [("compass", 32), ("clock", 64), ("recovery_compass", 32), ("bow", 4), ("crossbow", 5), ("elytra", 2), ("bundle", 2)] {
+        let count = |item: &str| {
+            icons
+                .map
+                .keys()
+                .filter(|k| k.starts_with(&format!("{item}@")))
+                .count()
+        };
+        for (item, at_least) in [
+            ("compass", 32),
+            ("clock", 64),
+            ("recovery_compass", 32),
+            ("bow", 4),
+            ("crossbow", 5),
+            ("elytra", 2),
+            ("bundle", 2),
+        ] {
             eprintln!("{item}: {} variants", count(item));
-            assert!(count(item) >= at_least, "{item} has {} variants", count(item));
+            assert!(
+                count(item) >= at_least,
+                "{item} has {} variants",
+                count(item)
+            );
         }
         // A strip of some variants, to look at.
-        let mut keys: Vec<&String> = icons.map.keys().filter(|k| {
-            ["compass@", "clock@", "bow@", "crossbow@", "elytra@", "iron_chestplate@", "netherite_helmet@"]
+        let mut keys: Vec<&String> = icons
+            .map
+            .keys()
+            .filter(|k| {
+                [
+                    "compass@",
+                    "clock@",
+                    "bow@",
+                    "crossbow@",
+                    "elytra@",
+                    "iron_chestplate@",
+                    "netherite_helmet@",
+                ]
                 .iter()
                 .any(|p| k.starts_with(p))
-        }).collect();
+            })
+            .collect();
         keys.sort();
         // A few of each.
         let mut seen: HashMap<&str, usize> = HashMap::new();
@@ -1412,9 +1493,14 @@ mod tests {
         }
         let out = crate::gui::preview::output_dir();
         std::fs::create_dir_all(&out).unwrap();
-        image::imageops::resize(&strip, strip.width() * 3, 48, image::imageops::FilterType::Nearest)
-            .save(out.join("item_variants.png"))
-            .unwrap();
+        image::imageops::resize(
+            &strip,
+            strip.width() * 3,
+            48,
+            image::imageops::FilterType::Nearest,
+        )
+        .save(out.join("item_variants.png"))
+        .unwrap();
         eprintln!("{:?}", keys);
     }
 

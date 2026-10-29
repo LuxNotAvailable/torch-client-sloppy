@@ -331,11 +331,7 @@ pub(crate) fn unpack(
 }
 
 #[cfg_attr(
-    all(
-        not(packed_assets),
-        not(feature = "asset_download"),
-        not(audio)
-    ),
+    all(not(packed_assets), not(feature = "asset_download"), not(audio)),
     allow(dead_code)
 )]
 pub(crate) fn read_table(

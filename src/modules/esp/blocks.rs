@@ -5,7 +5,6 @@ use azalea::block::BlockState;
 
 use crate::modules::list::{BitList, Built, Entry, Preset};
 
-
 struct Tint {
     name: &'static str,
     color: u32,

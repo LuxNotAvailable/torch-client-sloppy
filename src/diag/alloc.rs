@@ -22,7 +22,10 @@ impl Site {
 
 pub struct SiteGuard(#[cfg(feature = "alloc_diag")] usize);
 
-#[allow(unsafe_code, reason = "a counting global allocator wraps the system one (alloc_diag only)")]
+#[allow(
+    unsafe_code,
+    reason = "a counting global allocator wraps the system one (alloc_diag only)"
+)]
 #[cfg(feature = "alloc_diag")]
 mod counting {
     use super::{Site, SiteGuard};

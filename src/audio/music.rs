@@ -49,9 +49,11 @@ impl Situation {
     pub fn music(&self) -> Option<Music> {
         match self {
             Situation::Menu => Some(menu()),
-            Situation::InGame { end_boss: true, dimension, .. } if dimension.ends_with("the_end") => {
-                Some(end_boss())
-            }
+            Situation::InGame {
+                end_boss: true,
+                dimension,
+                ..
+            } if dimension.ends_with("the_end") => Some(end_boss()),
             Situation::InGame {
                 dimension,
                 biome,
@@ -77,7 +79,14 @@ pub struct Mixer;
 
 impl Player for Mixer {
     fn start(&mut self, event: &str) -> Option<u64> {
-        super::start(event, SoundCategory::Music, StreamPlace::Listener, 1.0, 1.0, false)
+        super::start(
+            event,
+            SoundCategory::Music,
+            StreamPlace::Listener,
+            1.0,
+            1.0,
+            false,
+        )
     }
 
     fn stop(&mut self, voice: u64) {
@@ -144,7 +153,9 @@ impl MusicManager {
         if self.current.is_none() {
             self.next_delay -= 1;
             if self.next_delay <= 0 {
-                self.current = player.start(&music.event).map(|voice| (voice, music.event.clone()));
+                self.current = player
+                    .start(&music.event)
+                    .map(|voice| (voice, music.event.clone()));
                 self.next_delay = i32::MAX;
             }
         }
@@ -224,7 +235,11 @@ mod tests {
         }
         fake.live.clear();
         manager.tick(Some(&music), &mut fake);
-        assert!((12000..=24000).contains(&(manager.next_delay + 1)), "{}", manager.next_delay);
+        assert!(
+            (12000..=24000).contains(&(manager.next_delay + 1)),
+            "{}",
+            manager.next_delay
+        );
         assert_eq!(fake.started.len(), 1);
     }
 

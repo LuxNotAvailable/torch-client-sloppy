@@ -211,7 +211,8 @@ fn controls(kind: EntityKind, vehicle_id: i32, held: ItemKind, stays_still: bool
         .map_or((false, false), |worn| {
             (
                 worn.saddle.is_some(),
-                worn.body_armor.is_some_and(|item| item.ends_with("_harness")),
+                worn.body_armor
+                    .is_some_and(|item| item.ends_with("_harness")),
             )
         });
     if kind == K::HappyGhast {
@@ -396,7 +397,8 @@ fn ride_pre_travel(
         // `tickRidden`: the mount turns part of the way to the rider's look.
         Some(turn) => LookDirection::new(
             direction.y_rot()
-                + crate::util::mth::wrap_degrees(rider_direction.y_rot() - direction.y_rot()) * turn,
+                + crate::util::mth::wrap_degrees(rider_direction.y_rot() - direction.y_rot())
+                    * turn,
             rider_direction.x_rot() * 0.5,
         ),
         None => LookDirection::new(rider_direction.y_rot(), rider_direction.x_rot() * 0.5),

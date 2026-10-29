@@ -39,8 +39,16 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     let logo_h = p
         .atlas
         .sprite(crate::gui::atlas::TORCH_LOGO)
-        .map_or(44.0, |s| (LOGO_W * s.region.h as f32 / s.region.w.max(1) as f32).round());
-    p.sprite(crate::gui::atlas::TORCH_LOGO, logo_x, LOGO_Y, LOGO_W, logo_h);
+        .map_or(44.0, |s| {
+            (LOGO_W * s.region.h as f32 / s.region.w.max(1) as f32).round()
+        });
+    p.sprite(
+        crate::gui::atlas::TORCH_LOGO,
+        logo_x,
+        LOGO_Y,
+        LOGO_W,
+        logo_h,
+    );
 
     if let Some(splash) = session_splash() {
         draw_splash(p, ctx, splash);

@@ -1,7 +1,8 @@
 /// Values laid over the process environment: what the Android launcher
 /// reads from its bundled env file. Setting the real environment is
 /// `unsafe` (other threads may read it); this table is read first instead.
-static OVERRIDES: std::sync::OnceLock<std::collections::HashMap<String, String>> = std::sync::OnceLock::new();
+static OVERRIDES: std::sync::OnceLock<std::collections::HashMap<String, String>> =
+    std::sync::OnceLock::new();
 
 /// Installs the overrides, once, before anything reads them.
 #[allow(dead_code, reason = "set by the Android launcher")]

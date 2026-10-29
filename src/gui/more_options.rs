@@ -45,17 +45,40 @@ pub fn apply(options: &crate::gui::GuiOptions) {
 
 fn done(p: &mut Painter, ctx: &ScreenCtx) -> bool {
     let x = widgets::centered_x(ctx.vw);
-    Button::new(x, LAYOUT.footer_y(ctx.vh), WIDGET_WIDTH_BIG, WIDGET_HEIGHT, "Done").draw(p, ctx) || ctx.input.escape
+    Button::new(
+        x,
+        LAYOUT.footer_y(ctx.vh),
+        WIDGET_WIDTH_BIG,
+        WIDGET_HEIGHT,
+        "Done",
+    )
+    .draw(p, ctx)
+        || ctx.input.escape
 }
 
 pub fn draw_accessibility(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     let mut form = Form::new(p, ctx, "Accessibility Settings", 3, 70);
     let a = &mut state.options.accessibility;
-    form.slider(&mut a.distortion, 0, 100, crate::percent_label!("Distortion Effects"));
-    form.slider(&mut a.damage_tilt, 0, 100, crate::percent_label!("Damage Tilt"));
+    form.slider(
+        &mut a.distortion,
+        0,
+        100,
+        crate::percent_label!("Distortion Effects"),
+    );
+    form.slider(
+        &mut a.damage_tilt,
+        0,
+        100,
+        crate::percent_label!("Damage Tilt"),
+    );
     form.toggle("Hide Lightning Flashes", &mut a.hide_lightning);
     form.toggle("Hide Splash Texts", &mut a.hide_splash);
-    form.slider(&mut a.panorama_speed, 0, 100, crate::percent_label!("Panorama Speed"));
+    form.slider(
+        &mut a.panorama_speed,
+        0,
+        100,
+        crate::percent_label!("Panorama Speed"),
+    );
     if form.finish() {
         crate::gui::save_options(&state.options);
     }
@@ -79,7 +102,10 @@ pub fn draw_online(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
 pub fn draw_debug(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     let mut form = Form::new(p, ctx, "Debug Options", 3, 0);
     let saved_before = (state.options.pause_on_lost_focus, state.options.fps_counter);
-    form.toggle("Pause on Lost Focus", &mut state.options.pause_on_lost_focus);
+    form.toggle(
+        "Pause on Lost Focus",
+        &mut state.options.pause_on_lost_focus,
+    );
     form.toggle("FPS Counter", &mut state.options.fps_counter);
     form.toggle("Chunk Borders", &mut state.chunk_borders);
     form.toggle("Hitboxes", &mut state.hitboxes);
@@ -126,7 +152,11 @@ pub fn draw_language(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
             entries = list
                 .into_iter()
                 .map(|l| {
-                    let label = if l.region.is_empty() { l.name.clone() } else { format!("{} ({})", l.name, l.region) };
+                    let label = if l.region.is_empty() {
+                        l.name.clone()
+                    } else {
+                        format!("{} ({})", l.name, l.region)
+                    };
                     (l.code, label)
                 })
                 .collect();
@@ -138,7 +168,16 @@ pub fn draw_language(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     let row_h = 18.0;
     let content_h = entries.len() as f32 * row_h;
     let lang = &mut state.language_list;
-    crate::gui::options::scroll_input(&mut lang.scroll, &mut lang.drag, ctx, left, width, list_y, list_h, content_h);
+    crate::gui::options::scroll_input(
+        &mut lang.scroll,
+        &mut lang.drag,
+        ctx,
+        left,
+        width,
+        list_y,
+        list_h,
+        content_h,
+    );
     let clip = p.push_clip(list_x, list_y, list_w, list_h);
     let downloading = languages::downloading();
     for (i, (code, label)) in entries.iter().enumerate() {
@@ -150,13 +189,26 @@ pub fn draw_language(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         if selected {
             p.outline(left, y, width, row_h, 0xFFFF_FFFF);
         }
-        let hovered = ctx.mouse().is_some_and(|m| m.x >= left && m.x < left + width && m.y >= y && m.y < y + row_h && m.y >= list_y && m.y < list_y + list_h);
+        let hovered = ctx.mouse().is_some_and(|m| {
+            m.x >= left
+                && m.x < left + width
+                && m.y >= y
+                && m.y < y + row_h
+                && m.y >= list_y
+                && m.y < list_y + list_h
+        });
         let mut text = label.clone();
         if downloading.as_deref() == Some(code.as_str()) {
             text.push_str(" ...");
         }
         let w = p.atlas.font.width_str(&text);
-        p.text_str(&text, ((ctx.vw - w) / 2.0).floor(), y + 5.0, if hovered { 0xFFFF55 } else { 0xFFFFFF }, true);
+        p.text_str(
+            &text,
+            ((ctx.vw - w) / 2.0).floor(),
+            y + 5.0,
+            if hovered { 0xFFFF55 } else { 0xFFFFFF },
+            true,
+        );
         if hovered && ctx.input.left_click && !selected {
             state.options.language = code.clone();
             crate::gui::save_options(&state.options);
@@ -167,14 +219,30 @@ pub fn draw_language(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     crate::gui::options::draw_scrollbar(p, lang.scroll, left, width, list_y, list_h, content_h);
     if let Some(status) = status {
         let w = p.atlas.font.width_str(&status);
-        p.text_str(&status, ((ctx.vw - w) / 2.0).floor(), list_y + list_h + 6.0, 0xA0A0A0, true);
+        p.text_str(
+            &status,
+            ((ctx.vw - w) / 2.0).floor(),
+            list_y + list_h + 6.0,
+            0xA0A0A0,
+            true,
+        );
     }
     let footer = LAYOUT.footer_y(ctx.vh);
     let cx = (ctx.vw / 2.0).floor();
-    if Button::new(cx - 155.0, footer, COLUMN_W, WIDGET_HEIGHT, "Font Settings...").draw(p, ctx) {
+    if Button::new(
+        cx - 155.0,
+        footer,
+        COLUMN_W,
+        WIDGET_HEIGHT,
+        "Font Settings...",
+    )
+    .draw(p, ctx)
+    {
         state.nav = Some(Screen::FontSettings);
     }
-    if Button::new(cx + 5.0, footer, COLUMN_W, WIDGET_HEIGHT, "Done").draw(p, ctx) || ctx.input.escape {
+    if Button::new(cx + 5.0, footer, COLUMN_W, WIDGET_HEIGHT, "Done").draw(p, ctx)
+        || ctx.input.escape
+    {
         state.nav = Some(Screen::Options);
     }
 }

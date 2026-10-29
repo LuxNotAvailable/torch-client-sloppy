@@ -182,7 +182,8 @@ fn update<'a>(
 ) -> Vec<ToastEvent> {
     let reshaped = reset || !removed.is_empty() || !added.is_empty();
     let selected = session
-        .progress.advancement_tab
+        .progress
+        .advancement_tab
         .filter(|_| reshaped)
         .and_then(|i| session.progress.advancements.nodes.get(i as usize))
         .map(|n| n.id.clone());

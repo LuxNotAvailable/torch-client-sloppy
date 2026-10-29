@@ -58,7 +58,10 @@ fn fetch_json(url: &str) -> Result<serde_json::Value, String> {
 }
 
 fn object_url(hash: &str) -> String {
-    format!("https://resources.download.minecraft.net/{}/{hash}", &hash[..2.min(hash.len())])
+    format!(
+        "https://resources.download.minecraft.net/{}/{hash}",
+        &hash[..2.min(hash.len())]
+    )
 }
 
 /// Reads the version's asset index for the languages, once.
@@ -73,7 +76,8 @@ pub fn refresh() {
     #[cfg(not(target_arch = "wasm32"))]
     std::thread::spawn(|| {
         let result = (|| -> Result<Index, String> {
-            let manifest = fetch_json("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json")?;
+            let manifest =
+                fetch_json("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json")?;
             let version = crate::ASSET_VERSION;
             let url = manifest["versions"]
                 .as_array()
@@ -82,12 +86,17 @@ pub fn refresh() {
                 .ok_or_else(|| format!("{version} is not in Mojang's list"))?
                 .to_owned();
             let meta = fetch_json(&url)?;
-            let index_url = meta["assetIndex"]["url"].as_str().ok_or("no asset index")?.to_owned();
+            let index_url = meta["assetIndex"]["url"]
+                .as_str()
+                .ok_or("no asset index")?
+                .to_owned();
             let index = fetch_json(&index_url)?;
             let objects = index["objects"].as_object().ok_or("no objects")?;
             let mut hashes = HashMap::new();
             for (key, value) in objects {
-                if let Some(code) = key.strip_prefix("minecraft/lang/").and_then(|k| k.strip_suffix(".json"))
+                if let Some(code) = key
+                    .strip_prefix("minecraft/lang/")
+                    .and_then(|k| k.strip_suffix(".json"))
                     && let Some(hash) = value["hash"].as_str()
                 {
                     hashes.insert(code.to_owned(), hash.to_owned());
@@ -145,10 +154,12 @@ pub fn choose(code: &str) {
     {
         let code = code.to_owned();
         std::thread::spawn(move || {
-            let ok = crate::platform::http::get_bytes_blocking(&object_url(&hash)).and_then(|bytes| {
-                std::fs::create_dir_all(dir()).map_err(|e| e.to_string())?;
-                std::fs::write(dir().join(format!("{code}.json")), bytes).map_err(|e| e.to_string())
-            });
+            let ok =
+                crate::platform::http::get_bytes_blocking(&object_url(&hash)).and_then(|bytes| {
+                    std::fs::create_dir_all(dir()).map_err(|e| e.to_string())?;
+                    std::fs::write(dir().join(format!("{code}.json")), bytes)
+                        .map_err(|e| e.to_string())
+                });
             *DOWNLOADING.lock().unwrap() = None;
             if ok.is_ok() {
                 apply(&code);

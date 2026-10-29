@@ -251,7 +251,10 @@ pub(crate) fn biome_category(name: &str) -> i32 {
 
 /// The GLSL type of the builtin uniform `name`, as packs declare it.
 pub(crate) fn builtin_type(name: &str) -> Option<&'static str> {
-    BUILTINS.iter().find(|(n, _, _)| *n == name).map(|(_, t, _)| *t)
+    BUILTINS
+        .iter()
+        .find(|(n, _, _)| *n == name)
+        .map(|(_, t, _)| *t)
 }
 
 pub(crate) const BUILTINS: &[(&str, &str, Builtin)] = &[

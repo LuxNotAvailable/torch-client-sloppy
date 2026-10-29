@@ -11,10 +11,10 @@
 //! if form.finish() { save_options(..) }
 //! ```
 
+use crate::gui::ScreenCtx;
 use crate::gui::options::{COLUMN_STEP, COLUMN_W, GRID_LEFT_OFFSET, LAYOUT, ROW_H, ROW_INSET};
 use crate::gui::painter::Painter;
 use crate::gui::widgets::{self, Button, Slider, WIDGET_HEIGHT};
-use crate::gui::ScreenCtx;
 
 const ON: &str = "ON";
 const OFF: &str = "OFF";
@@ -33,11 +33,25 @@ pub struct Form<'p, 'a, 'c> {
 
 impl<'p, 'a, 'c> Form<'p, 'a, 'c> {
     /// A form of `rows` rows, centred; its sliders take ids from `id_base`.
-    pub fn new(p: &'p mut Painter<'a>, ctx: &'c ScreenCtx<'c>, title: &str, rows: usize, id_base: u32) -> Self {
+    pub fn new(
+        p: &'p mut Painter<'a>,
+        ctx: &'c ScreenCtx<'c>,
+        title: &str,
+        rows: usize,
+        id_base: u32,
+    ) -> Self {
         widgets::draw_title(p, ctx.vw, LAYOUT.title_y(), title);
         let left = (ctx.vw / 2.0 - GRID_LEFT_OFFSET).floor();
         let top = LAYOUT.content_y(ctx.vh, rows as f32 * ROW_H);
-        Form { p, ctx, left, top, cell: 0, next_id: id_base, changed: false }
+        Form {
+            p,
+            ctx,
+            left,
+            top,
+            cell: 0,
+            next_id: id_base,
+            changed: false,
+        }
     }
 
     fn at(&self, cell: usize) -> (f32, f32) {
@@ -75,7 +89,13 @@ impl<'p, 'a, 'c> Form<'p, 'a, 'c> {
     }
 
     /// A slider over `min..=max`, captioned by `label`.
-    pub fn slider(&mut self, value: &mut u32, min: u32, max: u32, label: fn(i32) -> String) -> bool {
+    pub fn slider(
+        &mut self,
+        value: &mut u32,
+        min: u32,
+        max: u32,
+        label: fn(i32) -> String,
+    ) -> bool {
         let (x, y) = self.take_cell();
         let id = self.next_id;
         self.next_id += 1;
@@ -101,7 +121,12 @@ impl<'p, 'a, 'c> Form<'p, 'a, 'c> {
     }
 
     /// A button cycling through `options`, captioned `label: option`.
-    pub fn cycle<T: Copy + PartialEq>(&mut self, label: &str, value: &mut T, options: &[(T, &str)]) -> bool {
+    pub fn cycle<T: Copy + PartialEq>(
+        &mut self,
+        label: &str,
+        value: &mut T,
+        options: &[(T, &str)],
+    ) -> bool {
         let (x, y) = self.take_cell();
         let at = options.iter().position(|(v, _)| v == value).unwrap_or(0);
         let caption = format!("{label}: {}", options[at].1);

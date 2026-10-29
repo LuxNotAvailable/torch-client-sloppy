@@ -177,8 +177,14 @@ pub fn pieces(
         return out;
     }
     let depth = (pow / 0.5 - 1.0).min(radius);
-    let (x0, x1) = ((pos.x - radius).floor() as i32, (pos.x + radius).floor() as i32);
-    let (z0, z1) = ((pos.z - radius).floor() as i32, (pos.z + radius).floor() as i32);
+    let (x0, x1) = (
+        (pos.x - radius).floor() as i32,
+        (pos.x + radius).floor() as i32,
+    );
+    let (z0, z1) = (
+        (pos.z - radius).floor() as i32,
+        (pos.z + radius).floor() as i32,
+    );
     let (y0, y1) = ((pos.y - depth).floor() as i32, pos.y.floor() as i32);
     for z in z0..=z1 {
         for x in x0..=x1 {
@@ -229,7 +235,12 @@ mod tests {
         assert!(near.iter().any(|p| p.y == 64.0));
         assert!(near.iter().all(|p| p.y == 64.0 || p.y == 63.0));
         let far = pieces(Vec3::new(0.5, 64.0, 0.5), 0.5, 1.0, 200.0, floor, lit);
-        let top = |ps: &[Piece]| ps.iter().filter(|p| p.y == 64.0).map(|p| p.alpha).fold(0.0, f32::max);
+        let top = |ps: &[Piece]| {
+            ps.iter()
+                .filter(|p| p.y == 64.0)
+                .map(|p| p.alpha)
+                .fold(0.0, f32::max)
+        };
         assert!(top(&far) < top(&near));
         assert!(pieces(Vec3::new(0.5, 64.0, 0.5), 0.5, 1.0, 300.0, floor, lit).is_empty());
         // Too dark: none.

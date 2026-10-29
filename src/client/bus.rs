@@ -29,7 +29,10 @@ pub enum ClientRequest {
     /// A packet built elsewhere (the game-master block editors).
     Packet(Box<azalea_protocol::packets::game::ServerboundGamePacket>),
     /// Bytes for a server-side mod on a named channel.
-    CustomPayload { channel: String, data: Vec<u8> },
+    CustomPayload {
+        channel: String,
+        data: Vec<u8>,
+    },
 }
 
 /// Something that happened in the game, for the frame to act on.
@@ -54,7 +57,10 @@ pub enum ClientEvent {
     ElderGuardian,
     /// Bytes from a server-side mod on a named channel the client itself
     /// doesn't handle.
-    CustomPayload { channel: String, data: Vec<u8> },
+    CustomPayload {
+        channel: String,
+        data: Vec<u8>,
+    },
 }
 
 /// An ordered queue: pushes from any thread, drains all at once.

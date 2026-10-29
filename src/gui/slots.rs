@@ -1182,7 +1182,16 @@ pub fn panel(
             }
         }
     }
-    shift_sweep(ctx.input, mode, layout, hovered_index, snap, state, &cursor, out);
+    shift_sweep(
+        ctx.input,
+        mode,
+        layout,
+        hovered_index,
+        snap,
+        state,
+        &cursor,
+        out,
+    );
 
     let (w, h) = layout.size();
     let outside = !ctx.hovering(left, top, w, h);
@@ -1404,7 +1413,15 @@ fn shift_sweep(
         return;
     }
     state.shift_swept.push(slot);
-    apply_one(mode, layout, SlotClick::QuickMove { right: false }, slot, snap, cursor, out);
+    apply_one(
+        mode,
+        layout,
+        SlotClick::QuickMove { right: false },
+        slot,
+        snap,
+        cursor,
+        out,
+    );
 }
 
 fn apply_one(
@@ -2370,7 +2387,11 @@ mod tests {
     fn a_shift_drag_quick_moves_each_filled_slot_once() {
         let snapshot = snap(
             Gamemode::Survival,
-            &[(9, stack("dirt", 5)), (10, stack("stone", 5)), (12, stack("sand", 5))],
+            &[
+                (9, stack("dirt", 5)),
+                (10, stack("stone", 5)),
+                (12, stack("sand", 5)),
+            ],
         );
         let mut state = SlotState::default();
         let mut out = Vec::new();
@@ -2389,12 +2410,30 @@ mod tests {
             (shifted(false), 12),
             (shifted(false), 10),
         ] {
-            shift_sweep(&input, Mode::Protocol, Layout::PlayerMenu, Some(slot), &snapshot, &mut state, &SlotStack::default(), &mut out);
+            shift_sweep(
+                &input,
+                Mode::Protocol,
+                Layout::PlayerMenu,
+                Some(slot),
+                &snapshot,
+                &mut state,
+                &SlotStack::default(),
+                &mut out,
+            );
         }
         let acts: Vec<String> = out.iter().map(describe).collect();
         assert_eq!(acts, vec!["quick_move_left(10)", "quick_move_left(12)"]);
         // Letting go ends the sweep.
-        shift_sweep(&GuiInput::default(), Mode::Protocol, Layout::PlayerMenu, Some(10), &snapshot, &mut state, &SlotStack::default(), &mut out);
+        shift_sweep(
+            &GuiInput::default(),
+            Mode::Protocol,
+            Layout::PlayerMenu,
+            Some(10),
+            &snapshot,
+            &mut state,
+            &SlotStack::default(),
+            &mut out,
+        );
         assert!(state.shift_swept.is_empty());
     }
 
@@ -2412,7 +2451,11 @@ mod tests {
             vec![shifted(press(0)), shifted(release(Some(0)))],
         );
         assert_eq!(acts, vec!["quick_move_left(0)".to_string()]);
-        assert_eq!((cursor.item, cursor.count), ("stone", 32), "the held stack stays held");
+        assert_eq!(
+            (cursor.item, cursor.count),
+            ("stone", 32),
+            "the held stack stays held"
+        );
     }
 
     #[test]

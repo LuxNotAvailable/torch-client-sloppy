@@ -101,8 +101,19 @@ pub(crate) fn extract_entity_draws(
             .unwrap_or(-1)
     };
     let world = bevy::camera::visibility::RenderLayers::default();
-    for (entity, mesh, material, transform, visible, inherited, layers, block, particle, beam, weather) in
-        &meshes
+    for (
+        entity,
+        mesh,
+        material,
+        transform,
+        visible,
+        inherited,
+        layers,
+        block,
+        particle,
+        beam,
+        weather,
+    ) in &meshes
     {
         if layers.is_some_and(|l| !l.intersects(&world)) {
             continue;
@@ -424,7 +435,6 @@ pub(crate) fn extract_standard_draws(
     }
     frame.hand_entities = hand_entities;
 }
-
 
 fn overlay(params: &crate::renderer::entity_material::EntityParams) -> Vec4 {
     let strength = (1.0 - params.light1.w).clamp(0.0, 1.0);

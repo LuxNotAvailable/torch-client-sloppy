@@ -139,7 +139,12 @@ static TRACE: Mutex<Trace> = Mutex::new(Trace {
 
 pub fn trace_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| matches!(crate::platform::env::var("MC_TRACE").as_deref(), Ok("1") | Ok("true")))
+    *ON.get_or_init(|| {
+        matches!(
+            crate::platform::env::var("MC_TRACE").as_deref(),
+            Ok("1") | Ok("true")
+        )
+    })
 }
 
 fn trace_packet(name: &'static str, sent: bool) {

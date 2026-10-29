@@ -207,7 +207,11 @@ mod tests {
                     hotbar_selected: 2,
                     ..Default::default()
                 },
-                vitals: crate::session::SessionVitals { health: 15.0, food: 7, ..Default::default() },
+                vitals: crate::session::SessionVitals {
+                    health: 15.0,
+                    food: 7,
+                    ..Default::default()
+                },
                 gamemode,
                 ..Default::default()
             },
@@ -440,17 +444,29 @@ mod tests {
             health: 13.0,
             food: 17,
             saturation: 3.0,
-            health_display: crate::session::HealthDisplay { max_health: 20.0, ..Default::default() },
+            health_display: crate::session::HealthDisplay {
+                max_health: 20.0,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let mut p = Painter::new(&atlas, 0);
         let rows = crate::gui::health::Rows::new(&snap, 13, 0);
         let mut rng = crate::util::javarandom::JavaRandom::new(1);
-        crate::gui::health::draw(&mut p, &snap, &rows, false, 1, 10.0, 200.0, 30.0, true, &mut rng);
-        save(&rasterize_scaled(&p, 210, 45, 4, [70, 110, 170, 255]), "gui_appleskin_bars.png");
+        crate::gui::health::draw(
+            &mut p, &snap, &rows, false, 1, 10.0, 200.0, 30.0, true, &mut rng,
+        );
+        save(
+            &rasterize_scaled(&p, 210, 45, 4, [70, 110, 170, 255]),
+            "gui_appleskin_bars.png",
+        );
 
         let mut p = Painter::new(&atlas, 0);
-        let beef = crate::session::SlotStack { item: "cooked_beef", count: 12, ..Default::default() };
+        let beef = crate::session::SlotStack {
+            item: "cooked_beef",
+            count: 12,
+            ..Default::default()
+        };
         crate::gui::tooltip::draw(&mut p, &beef, 150.0, 100.0, vw, vh, false);
         save(
             &rasterize_scaled(&p, vw as u32, vh as u32, SCALE, [70, 110, 170, 255]),
