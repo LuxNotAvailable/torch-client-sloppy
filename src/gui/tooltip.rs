@@ -88,6 +88,11 @@ macro_rules! label {
 }
 pub(crate) use label;
 
+/// Whether the language has a string for `key`.
+pub(crate) fn has_translation(key: &str) -> bool {
+    LANG.contains_key(key)
+}
+
 pub(crate) fn translate(key: &str, args: &[String]) -> String {
     let template: &str = LANG.get(key).map_or(key, String::as_str);
     let mut out = String::with_capacity(template.len());

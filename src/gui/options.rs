@@ -33,8 +33,11 @@ const AUDIO_TITLE: &str = "Music & Sounds";
 #[cfg(audio)]
 const AUDIO: &str = "Music & Sounds...";
 
-const GAME_TITLE: &str = "Game";
-const GAME: &str = "Game...";
+const CHAT_TITLE: &str = "Chat Settings";
+const CHAT: &str = "Chat Settings...";
+
+const SKIN_TITLE: &str = "Skin Customisation";
+const SKIN: &str = "Skin Customisation...";
 
 #[cfg(all(target_arch = "wasm32", feature = "asset_download"))]
 const STORAGE_HEADER: &str = "Storage";
@@ -98,7 +101,7 @@ const TOUCH_MOVEMENT: &str = "Movement";
 
 const RESET_VIDEO: &str = "Reset Video Settings";
 
-const RESET_GAME: &str = "Reset Game Settings";
+const RESET_CHAT: &str = "Reset Chat Settings";
 
 const RESET_ALL: &str = "Reset All Options";
 
@@ -118,9 +121,6 @@ const MAIN_HAND_LEFT: &str = "Left";
 const MAIN_HAND_RIGHT: &str = "Right";
 
 #[cfg(feature = "skins")]
-const SKIN_HEADER: &str = "Skin Customisation";
-
-#[cfg(feature = "skins")]
 const SKIN_PART_LABELS: [&str; 7] = [
     "Cape",
     "Jacket",
@@ -130,8 +130,6 @@ const SKIN_PART_LABELS: [&str; 7] = [
     "Right Pants Leg",
     "Hat",
 ];
-
-const CHAT_HEADER: &str = "Chat Settings";
 
 const SIGNED_CHAT: &str = "Allow Signed Chat";
 
@@ -218,8 +216,7 @@ const Y_DISPLAY_ROW_0: f32 = Y_DISPLAY_HEADER + HEADER_H;
 const Y_DISPLAY_ROW_1: f32 = Y_DISPLAY_ROW_0 + ROW_H;
 const Y_DISPLAY_ROW_2: f32 = Y_DISPLAY_ROW_1 + ROW_H;
 const Y_DISPLAY_ROW_3: f32 = Y_DISPLAY_ROW_2 + ROW_H;
-const Y_DISPLAY_ROW_4: f32 = Y_DISPLAY_ROW_3 + ROW_H;
-const Y_QUALITY_HEADER: f32 = Y_DISPLAY_ROW_4 + ROW_H;
+const Y_QUALITY_HEADER: f32 = Y_DISPLAY_ROW_3 + ROW_H;
 const Y_QUALITY_ROW_0: f32 = Y_QUALITY_HEADER + HEADER_PAD_TOP + HEADER_H;
 const Y_QUALITY_ROW_1: f32 = Y_QUALITY_ROW_0 + ROW_H;
 const Y_QUALITY_ROW_2: f32 = Y_QUALITY_ROW_1 + ROW_H;
@@ -435,27 +432,11 @@ pub(in crate::gui) fn draw_scrollbar(
     );
 }
 
-const Y_GAME_ROW_0: f32 = 0.0;
-const Y_CHAT_HEADER: f32 = Y_GAME_ROW_0 + ROW_H;
-const Y_CHAT_ROW_0: f32 = Y_CHAT_HEADER + HEADER_PAD_TOP + HEADER_H;
+const Y_CHAT_ROW_0: f32 = 0.0;
 const Y_TOAST_HEADER: f32 = Y_CHAT_ROW_0 + ROW_H;
 const Y_TOAST_ROW_0: f32 = Y_TOAST_HEADER + HEADER_PAD_TOP + HEADER_H;
 const Y_TOAST_ROW_1: f32 = Y_TOAST_ROW_0 + ROW_H;
 
-#[cfg(feature = "skins")]
-const Y_SKIN_HEADER: f32 = Y_TOAST_ROW_1 + ROW_H;
-#[cfg(feature = "skins")]
-const Y_SKIN_ROW_0: f32 = Y_SKIN_HEADER + HEADER_PAD_TOP + HEADER_H;
-#[cfg(feature = "skins")]
-const Y_SKIN_ROW_1: f32 = Y_SKIN_ROW_0 + ROW_H;
-#[cfg(feature = "skins")]
-const Y_SKIN_ROW_2: f32 = Y_SKIN_ROW_1 + ROW_H;
-#[cfg(feature = "skins")]
-const Y_SKIN_ROW_3: f32 = Y_SKIN_ROW_2 + ROW_H;
-
-#[cfg(feature = "skins")]
-const Y_GAME_LAST_GROUP_ROW: f32 = Y_SKIN_ROW_3;
-#[cfg(not(feature = "skins"))]
 const Y_GAME_LAST_GROUP_ROW: f32 = Y_TOAST_ROW_1;
 
 #[cfg(all(target_arch = "wasm32", feature = "asset_download"))]
@@ -571,7 +552,6 @@ pub(in crate::gui) fn draw_done(p: &mut Painter, ctx: &ScreenCtx) -> bool {
 
 fn reset_video_options(o: &mut crate::gui::GuiOptions) {
     o.gui_scale = 0;
-    o.fov = crate::renderer::systems::VANILLA_FOV_DEGREES as u32;
     o.fov_effects = crate::gui::FOV_EFFECTS_DEFAULT;
     o.view_bobbing = true;
     o.clouds = if cfg!(feature = "mobile_ui") {
@@ -598,13 +578,7 @@ fn reset_video_options(o: &mut crate::gui::GuiOptions) {
     o.touch_movement = Default::default();
 }
 
-fn reset_game_options(o: &mut crate::gui::GuiOptions) {
-    o.auto_jump = crate::gui::AUTO_JUMP_DEFAULT;
-    o.main_hand_left = false;
-    #[cfg(feature = "skins")]
-    {
-        o.skin_parts = crate::client::skins::ALL_PARTS;
-    }
+fn reset_chat_options(o: &mut crate::gui::GuiOptions) {
     o.allow_signed_chat = false;
     o.toast_advancement = true;
     o.toast_recipe = true;
@@ -617,6 +591,14 @@ fn reset_audio_options(o: &mut crate::gui::GuiOptions) {
     o.volumes = [crate::gui::VOLUME_DEFAULT; crate::audio::category::SoundCategory::COUNT];
 }
 
+/// Vanilla's `OptionsScreen` header: 61 pixels holding the title and, 8
+/// below it, a row of FOV beside one more button.
+const MENU_LAYOUT: HeaderFooter = HeaderFooter::new(61.0, HeaderFooter::DEFAULT_H);
+const MENU_HEADER_ROW_Y: f32 = 12.0 + LINE_HEIGHT + 8.0;
+/// Its grid: 150 wide buttons padded 4 each side, 4 below.
+const MENU_COLUMN_STEP: f32 = COLUMN_W + 8.0;
+const MENU_ROW_STEP: f32 = WIDGET_HEIGHT + 4.0;
+
 pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     draw_title(p, ctx, TITLE);
 
@@ -628,29 +610,62 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         Hud,
     }
 
-    let mut entries = vec![
-        (VIDEO, Entry::Screen(Screen::VideoSettings)),
-        (CONTROLS, Entry::Screen(Screen::Controls)),
-        (GAME, Entry::Screen(Screen::GameSettings)),
-    ];
+    let left = (ctx.vw / 2.0 - MENU_COLUMN_STEP + 4.0).floor();
+
+    // The header row: FOV, and voice chat where vanilla has Online.
+    let fov = Slider {
+        id: FOV_SLIDER_ID,
+        x: left,
+        y: MENU_HEADER_ROW_Y,
+        w: COLUMN_W,
+        h: WIDGET_HEIGHT,
+        min: FOV_MIN,
+        max: FOV_MAX,
+        value: state.options.fov as i32,
+        label: fov_label,
+    };
+    let new_fov = fov.draw(p, ctx).clamp(FOV_MIN, FOV_MAX) as u32;
+    if new_fov != state.options.fov {
+        state.options.fov = new_fov;
+        crate::gui::save_options(&state.options);
+    }
+    #[cfg(voice)]
+    let header_entry = Some(("Voice Chat...", Entry::Screen(Screen::VoiceChat)));
+    #[cfg(not(voice))]
+    let header_entry: Option<(&str, Entry)> = None;
+
+    // Vanilla's grid order. Torch's own screens take the places of
+    // Language, Accessibility, Telemetry and Credits, so Chat Settings and
+    // Resource Packs sit where vanilla players look for them.
+    let mut entries = vec![(SKIN, Entry::Screen(Screen::SkinCustomisation))];
     #[cfg(audio)]
     entries.push((AUDIO, Entry::Screen(Screen::AudioSettings)));
-    #[cfg(voice)]
-    entries.push(("Voice Chat...", Entry::Screen(Screen::VoiceChat)));
+    entries.push((VIDEO, Entry::Screen(Screen::VideoSettings)));
+    entries.push((CONTROLS, Entry::Screen(Screen::Controls)));
+    entries.push(("Block Info...", Entry::Screen(Screen::BlockInfoSettings)));
+    entries.push((CHAT, Entry::Screen(Screen::ChatSettings)));
     #[cfg(resource_packs)]
     entries.push((crate::gui::resourcepacks::RESOURCE_PACKS, Entry::Packs));
-    entries.push(("Block Info...", Entry::Screen(Screen::BlockInfoSettings)));
     #[cfg(feature = "hud_editor")]
     entries.push(("Edit HUD...", Entry::Hud));
     entries.push((MANAGE_STORAGE, Entry::Screen(Screen::ManageStorage)));
 
-    let left = (ctx.vw / 2.0 - GRID_LEFT_OFFSET).floor();
-    let top = LAYOUT.content_y(ctx.vh, menu_content_h(entries.len()));
-    let row = |i: usize| top + i as f32 * (WIDGET_HEIGHT + ROW_SPACING);
+    let rows = entries.len().div_ceil(2) as f32;
+    let top = MENU_LAYOUT.content_y(ctx.vh, rows * MENU_ROW_STEP);
+    let mut buttons: Vec<(f32, f32, &str, &Entry)> = entries
+        .iter()
+        .enumerate()
+        .map(|(i, (label, entry))| {
+            let x = left + (i % 2) as f32 * MENU_COLUMN_STEP;
+            (x, top + (i / 2) as f32 * MENU_ROW_STEP, *label, entry)
+        })
+        .collect();
+    if let Some((label, entry)) = &header_entry {
+        buttons.insert(0, (left + MENU_COLUMN_STEP, MENU_HEADER_ROW_Y, *label, entry));
+    }
 
-    for (i, (label, entry)) in entries.iter().enumerate() {
-        let x = left + (i % 2) as f32 * COLUMN_STEP;
-        let button = Button::new(x, row(i / 2), COLUMN_W, WIDGET_HEIGHT, label);
+    for (x, y, label, entry) in buttons {
+        let button = Button::new(x, y, COLUMN_W, WIDGET_HEIGHT, label);
         if !button.draw(p, ctx) {
             continue;
         }
@@ -716,7 +731,15 @@ pub fn draw_manage_storage(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCt
 
     if Button::new(left, top, COLUMN_W, WIDGET_HEIGHT, RESET_ALL).draw(p, ctx) {
         reset_video_options(&mut state.options);
-        reset_game_options(&mut state.options);
+        reset_chat_options(&mut state.options);
+        let o = &mut state.options;
+        o.fov = crate::renderer::systems::VANILLA_FOV_DEGREES as u32;
+        o.auto_jump = crate::gui::AUTO_JUMP_DEFAULT;
+        o.main_hand_left = false;
+        #[cfg(feature = "skins")]
+        {
+            o.skin_parts = crate::client::skins::ALL_PARTS;
+        }
         #[cfg(audio)]
         {
             reset_audio_options(&mut state.options);
@@ -861,21 +884,8 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         crate::gui::save_options(&state.options);
     }
 
-    let (x, y) = cell(1.0, Y_DISPLAY_ROW_1);
-    let fov = Slider {
-        id: FOV_SLIDER_ID,
-        x,
-        y,
-        w: COLUMN_W,
-        h: WIDGET_HEIGHT,
-        min: FOV_MIN,
-        max: FOV_MAX,
-        value: state.options.fov as i32,
-        label: fov_label,
-    };
-    let new_fov = fov.draw(p, ctx).clamp(FOV_MIN, FOV_MAX) as u32;
-    if new_fov != state.options.fov {
-        state.options.fov = new_fov;
+    let at = cell(1.0, Y_DISPLAY_ROW_1);
+    if toggle(p, ctx, at, VIEW_BOBBING, &mut state.options.view_bobbing) {
         crate::gui::save_options(&state.options);
     }
 
@@ -937,11 +947,6 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
                 state.options.render_backend.caption()
             ));
         }
-    }
-
-    let at = cell(0.0, Y_DISPLAY_ROW_4);
-    if toggle(p, ctx, at, VIEW_BOBBING, &mut state.options.view_bobbing) {
-        crate::gui::save_options(&state.options);
     }
 
     header(p, Y_QUALITY_HEADER, HEADER_PAD_TOP, QUALITY_HEADER);
@@ -1291,23 +1296,36 @@ pub fn draw_controls(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         (list_y + advance, (list_h - advance).max(0.0))
     };
 
-    // Vanilla's controls header: mouse settings and the hold/toggle pair.
+    // Vanilla's controls header: mouse settings beside auto-jump (where the
+    // key binds button sits; the binds are listed below), then the
+    // hold/toggle pair.
     let (list_y, list_h) = {
-        let gap = ROW_SPACING;
-        let w = ((BIG_W - 2.0 * gap) / 3.0).floor();
         let x = (ctx.vw / 2.0 - BIG_W / 2.0).floor();
-        if Button::new(x, list_y, w, WIDGET_HEIGHT, MOUSE_SETTINGS).draw(p, screen_ctx) {
+        let right = x + COLUMN_STEP;
+        let second = list_y + WIDGET_HEIGHT + ROW_SPACING;
+        if Button::new(x, list_y, COLUMN_W, WIDGET_HEIGHT, MOUSE_SETTINGS).draw(p, screen_ctx) {
             state.nav = Some(Screen::MouseSettings);
         }
         let o = &mut state.options;
-        let sneak = (x + w + gap, list_y, w);
-        let sprint = (x + 2.0 * (w + gap), list_y, w);
-        if hold_or_toggle(p, screen_ctx, sneak, SNEAK, &mut o.toggle_crouch)
-            | hold_or_toggle(p, screen_ctx, sprint, SPRINT, &mut o.toggle_sprint)
-        {
+        let mut changed = toggle(p, screen_ctx, (right, list_y), AUTO_JUMP, &mut o.auto_jump);
+        changed |= hold_or_toggle(
+            p,
+            screen_ctx,
+            (x, second, COLUMN_W),
+            SNEAK,
+            &mut o.toggle_crouch,
+        );
+        changed |= hold_or_toggle(
+            p,
+            screen_ctx,
+            (right, second, COLUMN_W),
+            SPRINT,
+            &mut o.toggle_sprint,
+        );
+        if changed {
             crate::gui::save_options(&state.options);
         }
-        let advance = WIDGET_HEIGHT + ROW_SPACING;
+        let advance = 2.0 * (WIDGET_HEIGHT + ROW_SPACING);
         (list_y + advance, (list_h - advance).max(0.0))
     };
 
@@ -1505,14 +1523,62 @@ fn draw_clear_assets(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     }
 }
 
-pub fn draw_game(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
+/// Vanilla's `SkinCustomizationScreen`: a toggle for each layer of the skin,
+/// in `PlayerModelPart` order, then the main hand.
+pub fn draw_skin(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
+    draw_title(p, ctx, SKIN_TITLE);
+
+    let left = (ctx.vw / 2.0 - GRID_LEFT_OFFSET).floor();
+    let (_, list_y, _, _) = LAYOUT.content_rect(ctx.vw, ctx.vh);
+    let cell = |i: usize| {
+        (
+            left + (i % 2) as f32 * COLUMN_STEP,
+            list_y + (i / 2) as f32 * ROW_H + ROW_INSET,
+        )
+    };
+
+    #[cfg_attr(not(feature = "skins"), allow(unused_mut))]
+    let mut next = 0;
+    #[cfg(feature = "skins")]
+    for (label, bit) in SKIN_PART_LABELS
+        .iter()
+        .zip(crate::gui::MODEL_PART_KEYS.map(|(_, bit)| bit))
+    {
+        let mut on = state.options.skin_parts & (1 << bit) != 0;
+        if toggle(p, ctx, cell(next), label, &mut on) {
+            state.options.skin_parts ^= 1 << bit;
+            crate::gui::save_options(&state.options);
+        }
+        next += 1;
+    }
+
+    let (x, y) = cell(next);
+    let caption = format!(
+        "{MAIN_HAND}: {}",
+        if state.options.main_hand_left {
+            MAIN_HAND_LEFT
+        } else {
+            MAIN_HAND_RIGHT
+        }
+    );
+    if Button::new(x, y, COLUMN_W, WIDGET_HEIGHT, &caption).draw(p, ctx) {
+        state.options.main_hand_left = !state.options.main_hand_left;
+        crate::gui::save_options(&state.options);
+    }
+
+    if draw_done(p, ctx) {
+        state.nav = Some(Screen::Options);
+    }
+}
+
+pub fn draw_chat(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     #[cfg(all(target_arch = "wasm32", feature = "asset_download"))]
     if state.confirm_clear_assets {
         draw_clear_assets(p, state, ctx);
         return;
     }
 
-    draw_title(p, ctx, GAME_TITLE);
+    draw_title(p, ctx, CHAT_TITLE);
 
     let left = (ctx.vw / 2.0 - GRID_LEFT_OFFSET).floor();
     let (list_x, list_y, list_w, list_h) = LAYOUT.content_rect(ctx.vw, ctx.vh);
@@ -1547,33 +1613,6 @@ pub fn draw_game(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     let clip = p.push_clip(list_x, list_y, list_w, list_h);
 
     let cell = |column: f32, row_y: f32| (left + column * COLUMN_STEP, top + row_y + ROW_INSET);
-
-    let at = cell(0.0, Y_GAME_ROW_0);
-    if toggle(p, ctx, at, AUTO_JUMP, &mut state.options.auto_jump) {
-        crate::gui::save_options(&state.options);
-    }
-
-    let (x, y) = cell(1.0, Y_GAME_ROW_0);
-    let caption = format!(
-        "{MAIN_HAND}: {}",
-        if state.options.main_hand_left {
-            MAIN_HAND_LEFT
-        } else {
-            MAIN_HAND_RIGHT
-        }
-    );
-    if Button::new(x, y, COLUMN_W, WIDGET_HEIGHT, &caption).draw(p, ctx) {
-        state.options.main_hand_left = !state.options.main_hand_left;
-        crate::gui::save_options(&state.options);
-    }
-
-    p.text_str(
-        CHAT_HEADER,
-        left,
-        top + Y_CHAT_HEADER + ROW_INSET + HEADER_PAD_TOP,
-        0xFFFFFF,
-        true,
-    );
 
     let (x, y) = cell(0.0, Y_CHAT_ROW_0);
     let can_sign = signing_available(state);
@@ -1651,30 +1690,6 @@ pub fn draw_game(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         crate::gui::save_options(&state.options);
     }
 
-    #[cfg(feature = "skins")]
-    {
-        p.text_str(
-            SKIN_HEADER,
-            left,
-            top + Y_SKIN_HEADER + ROW_INSET + HEADER_PAD_TOP,
-            0xFFFFFF,
-            true,
-        );
-        let rows = [Y_SKIN_ROW_0, Y_SKIN_ROW_1, Y_SKIN_ROW_2, Y_SKIN_ROW_3];
-        for (i, (label, bit)) in SKIN_PART_LABELS
-            .iter()
-            .zip(crate::gui::MODEL_PART_KEYS.map(|(_, bit)| bit))
-            .enumerate()
-        {
-            let at = cell((i % 2) as f32, rows[i / 2]);
-            let mut on = state.options.skin_parts & (1 << bit) != 0;
-            if toggle(p, ctx, at, label, &mut on) {
-                state.options.skin_parts ^= 1 << bit;
-                crate::gui::save_options(&state.options);
-            }
-        }
-    }
-
     #[cfg(all(target_arch = "wasm32", feature = "asset_download"))]
     {
         p.text_str(
@@ -1691,8 +1706,8 @@ pub fn draw_game(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     }
 
     let (x, y) = cell(0.0, Y_GAME_RESET_ROW);
-    if Button::new(x, y, BIG_W, WIDGET_HEIGHT, RESET_GAME).draw(p, ctx) {
-        reset_game_options(&mut state.options);
+    if Button::new(x, y, BIG_W, WIDGET_HEIGHT, RESET_CHAT).draw(p, ctx) {
+        reset_chat_options(&mut state.options);
         crate::gui::save_options(&state.options);
     }
 
@@ -2037,12 +2052,11 @@ mod tests {
         assert_eq!(Y_DISPLAY_ROW_1, 38.0);
         assert_eq!(Y_DISPLAY_ROW_2, 63.0);
         assert_eq!(Y_DISPLAY_ROW_3, 88.0);
-        assert_eq!(Y_DISPLAY_ROW_4, 113.0);
-        assert_eq!(Y_QUALITY_HEADER, 138.0);
-        assert_eq!(Y_QUALITY_ROW_0, 169.0);
+        assert_eq!(Y_QUALITY_HEADER, 113.0);
+        assert_eq!(Y_QUALITY_ROW_0, 144.0);
         const EXTRA_ROWS: f32 = cfg!(feature = "builtin_shaders") as u32 as f32
             + cfg!(feature = "shader_support") as u32 as f32;
-        assert_eq!(Y_RESET_ROW, 269.0 + EXTRA_ROWS * ROW_H);
+        assert_eq!(Y_RESET_ROW, 244.0 + EXTRA_ROWS * ROW_H);
         assert_eq!(VIDEO_CONTENT_H, Y_RESET_ROW + ROW_H);
     }
 

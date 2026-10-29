@@ -380,7 +380,11 @@ fn close_target(gui: &mut GuiState) -> Screen {
     match gui.screen {
         Screen::Options => gui.options_parent,
         Screen::MouseSettings => Screen::Controls,
-        Screen::VideoSettings | Screen::Controls | Screen::GameSettings | Screen::ManageStorage => {
+        Screen::VideoSettings
+        | Screen::Controls
+        | Screen::ChatSettings
+        | Screen::SkinCustomisation
+        | Screen::ManageStorage => {
             Screen::Options
         }
         #[cfg(resource_packs)]

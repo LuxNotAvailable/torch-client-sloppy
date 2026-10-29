@@ -98,7 +98,11 @@ pub enum Screen {
     VideoSettings,
     Controls,
     MouseSettings,
-    GameSettings,
+    /// Signed chat and toasts.
+    ChatSettings,
+    /// The skin's layers and the main hand (vanilla's
+    /// `SkinCustomizationScreen`).
+    SkinCustomisation,
     ManageStorage,
     #[cfg(audio)]
     AudioSettings,
@@ -234,7 +238,8 @@ impl Screen {
                 | Screen::VideoSettings
                 | Screen::Controls
                 | Screen::MouseSettings
-                | Screen::GameSettings
+                | Screen::ChatSettings
+                | Screen::SkinCustomisation
                 | Screen::ManageStorage
         )
     }

@@ -220,6 +220,24 @@ fn block_icon(id: &str) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Borrowed(item)
 }
 
+/// A block's name. Wall banners have none of their own: vanilla names them
+/// after the standing banner they drop, so a block without a name takes its
+/// item's.
+fn block_name(id: &str) -> String {
+    use crate::gui::tooltip::{has_translation, translate};
+    let own = format!("block.minecraft.{id}");
+    if has_translation(&own) {
+        return translate(&own, &[]);
+    }
+    let item = block_icon(id);
+    for key in [format!("block.minecraft.{item}"), format!("item.minecraft.{item}")] {
+        if has_translation(&key) {
+            return translate(&key, &[]);
+        }
+    }
+    translate(&own, &[])
+}
+
 /// A state property as Jade shows it, names with spaces for underscores.
 fn property_line(name: &str, value: &str) -> String {
     format!("{}: {}", name.replace('_', " "), value.replace('_', " "))
@@ -274,7 +292,7 @@ pub fn draw(p: &mut Painter, centre_x: f32, top: f32, looking: &Looking, sneakin
             if o.progress {
                 progress = *mining;
             }
-            crate::gui::tooltip::translate(&format!("block.minecraft.{id}"), &[])
+            block_name(id)
         }
         Looking::Entity { id, name, health } => {
             let egg = format!("{id}_spawn_egg");
@@ -471,6 +489,13 @@ pub fn draw_settings(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_wall_banner_is_named_after_its_banner() {
+        assert_eq!(block_name("red_wall_banner"), "Red Banner");
+        assert_eq!(block_name("oak_wall_sign"), "Oak Wall Sign");
+        assert_eq!(block_name("stone"), "Stone");
+    }
 
     #[test]
     fn settings_round_trip_through_the_options_file() {

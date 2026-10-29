@@ -580,16 +580,32 @@ pub fn placeholder_atlas() -> Image {
 
 const MAX_TILE_PX: u32 = 64;
 
+/// The largest tile a texture bigger than the rest can grow every tile to.
+/// Vanilla's signs, shelves and dried ghast tentacles are 32 px, two texels
+/// per model unit; squeezed into 16 px tiles they lose every other texel.
+/// The taller atlas this makes (about 5000 px) is past what web and Android
+/// GPUs allow, so they keep the common size.
+const MAX_DETAIL_TILE_PX: u32 = if cfg!(any(target_arch = "wasm32", target_os = "android")) {
+    TILE_PX
+} else {
+    32
+};
+
+/// The tile size: the most common texture size, or larger to keep the
+/// bigger textures whole.
 fn tile_px(entries: &[(&str, &image::RgbaImage)]) -> u32 {
     let mut counts: HashMap<u32, u32> = HashMap::new();
+    let mut largest = TILE_PX;
     for (_, rgba) in entries {
         let side = rgba.width().min(rgba.height()).next_power_of_two();
         *counts.entry(side.clamp(TILE_PX, MAX_TILE_PX)).or_default() += 1;
+        largest = largest.max(side.min(MAX_DETAIL_TILE_PX));
     }
-    counts
+    let common = counts
         .into_iter()
         .max_by_key(|&(side, count)| (count, side))
-        .map_or(TILE_PX, |(side, _)| side)
+        .map_or(TILE_PX, |(side, _)| side);
+    common.max(largest)
 }
 
 /// Tiles per side of a packed entity texture.

@@ -363,6 +363,42 @@ mod tests {
     }
 
     #[test]
+    fn preview_option_screens() {
+        let atlas = build_gui_atlas(&crate::assets_root());
+        let (vw, vh) = (427.0_f32, 240.0_f32);
+        let shared = shared_with(demo_menu(), Gamemode::Survival);
+        for (screen, name) in [
+            (Screen::Options, "gui_options.png"),
+            (Screen::SkinCustomisation, "gui_options_skin.png"),
+            (Screen::Controls, "gui_options_controls.png"),
+            (Screen::ChatSettings, "gui_options_chat.png"),
+            (Screen::VideoSettings, "gui_options_video.png"),
+            (
+                Screen::Container(crate::session::ContainerKind::Chest(3)),
+                "gui_chest.png",
+            ),
+        ] {
+            let mut state = GuiState {
+                screen,
+                ..Default::default()
+            };
+            let mut p = Painter::new(&atlas, 0);
+            screens::draw(
+                &mut p,
+                &mut state,
+                &input(vw, vh, None),
+                &shared,
+                #[cfg(feature = "skins")]
+                &mut Default::default(),
+            );
+            save(
+                &rasterize_scaled(&p, vw as u32, vh as u32, SCALE, [70, 110, 170, 255]),
+                name,
+            );
+        }
+    }
+
+    #[test]
     fn preview_screens() {
         let atlas = build_gui_atlas(&crate::assets_root());
         let (vw, vh) = (427.0_f32, 240.0_f32);

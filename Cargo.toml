@@ -8,7 +8,7 @@ name = "torch_client"
 crate-type = ["rlib"]
 
 [features]
-default = ["asset_download", "multiversion", "full_font", "skins", "online_mode", "shader_support", "audio", "voice", "hud_editor"]
+default = ["asset_download", "multiversion", "full_font", "skins", "online_mode", "shader_support", "audio", "voice", "hud_editor", "resourcepacks"]
 
 skins = ["dep:reqwest", "dep:rustls"]
 

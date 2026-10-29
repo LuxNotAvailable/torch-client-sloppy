@@ -954,7 +954,27 @@ pub enum InvAction {
         secondary: Option<u32>,
     },
     RenameItem(String),
+    /// A sort or bulk transfer, planned into clicks against the live menu.
+    Sort(SortRequest),
     Close,
+}
+
+/// Which part of an open menu a sort or transfer works on: the container's
+/// storage, or the player's main inventory (the hotbar stays put).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SortSide {
+    Container,
+    Player,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SortRequest {
+    /// Merges and orders the stacks on one side.
+    Sort(SortSide),
+    /// Moves the stacks on `from` whose item the other side already holds.
+    MoveMatching { from: SortSide },
+    /// Moves everything on `from` that fits on the other side.
+    MoveAll { from: SortSide },
 }
 
 #[derive(Clone, Copy)]

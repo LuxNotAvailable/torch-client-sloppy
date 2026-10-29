@@ -42,7 +42,7 @@ tools/build_web.sh --features webgpu
 | `shader_support` | on | Loads Iris/OptiFine-style shader packs from a `shaders/` folder. |
 | `audio` | on | Sound. Desktop only (does nothing on the web or Android); downloads about 332 MB of sounds on first run, which can be skipped. |
 | `voice` | on | Simple Voice Chat on servers that run it: voices heard at the players speaking, and the microphone by push-to-talk (Caps Lock) or voice activation. Desktop only; settings under Options > Voice Chat. |
-| `resourcepacks` | off | A resource packs screen for loading packs from a `resourcepacks/` folder. |
+| `resourcepacks` | on | A resource packs screen (Options > Resource Packs...) for loading packs from a `resourcepacks/` folder. |
 | `explore_modrinth` | off | Browsing and downloading resource packs from Modrinth. Turns on `resourcepacks`. |
 | `eagler` | off | Joins Eaglercraft servers over `wss://`. |
 | `webgpu` | off | Browser build only. Uses WebGPU instead of WebGL2, with no fallback. |

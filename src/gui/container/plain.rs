@@ -39,6 +39,7 @@ pub fn draw_chest(
 
     let hovered = slots::panel(p, layout, (left, top), ctx, snap, &mut state.slots, out);
     draw_labels(p, snap, left, top, img_h, 8.0);
+    super::storage_sort_buttons(p, state, ctx, snap, (left, top, img_h), out);
     hovered
 }
 
@@ -146,7 +147,9 @@ pub fn draw_hopper(
     out: &mut Vec<InvAction>,
 ) -> Option<SlotStack> {
     let (hovered, left, top) = simple(p, state, ctx, snap, out, Layout::Hopper, "container/hopper");
-    draw_labels(p, snap, left, top, Layout::Hopper.size().1, 8.0);
+    let img_h = Layout::Hopper.size().1;
+    draw_labels(p, snap, left, top, img_h, 8.0);
+    super::storage_sort_buttons(p, state, ctx, snap, (left, top, img_h), out);
     hovered
 }
 

@@ -1602,7 +1602,8 @@ mod tests {
             InvAction::ButtonClick(_)
             | InvAction::SelectTrade(_)
             | InvAction::SetBeacon { .. }
-            | InvAction::RenameItem(_) => "other".into(),
+            | InvAction::RenameItem(_)
+            | InvAction::Sort(_) => "other".into(),
         }
     }
 
