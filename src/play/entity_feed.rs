@@ -976,8 +976,9 @@ pub(crate) fn collect_entities(
         let ignited = living && flag::<metadata::IsIgnited>(eref);
         let playing_dead = living && flag::<metadata::PlayingDead>(eref);
 
-        // The boat this player steers goes where the client moved it.
-        let driven = crate::play::boat::driven_pose(id);
+        // The boat or mount this player steers goes where the client moved it.
+        let driven =
+            crate::play::boat::driven_pose(id).or_else(|| crate::play::riding::driven_pose(id));
         let (now_pos, y_rot) = match driven {
             Some((pos, yaw)) => ([pos.x, pos.y, pos.z], yaw),
             None => (now_pos, y_rot),

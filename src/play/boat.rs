@@ -141,7 +141,7 @@ fn water(world: &World, pos: BlockPos) -> Option<(f32, bool)> {
     Some((if above { 1.0 } else { own }, source))
 }
 
-fn water_level(state: BlockState) -> Option<(f32, bool)> {
+pub(crate) fn water_level(state: BlockState) -> Option<(f32, bool)> {
     const SOURCE: f32 = 8.0 / 9.0;
     if state
         .property::<azalea::block::properties::Waterlogged>()

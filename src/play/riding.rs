@@ -86,11 +86,26 @@ pub(crate) fn tick_jump_charge(jumpable: bool, jump_held: bool) -> (Option<f32>,
 
 static PENDING_JUMP: Mutex<f32> = Mutex::new(0.0);
 
-static DRIVEN: Mutex<Option<(i32, Vec3)>> = Mutex::new(None);
+/// The mount this player steers: its id, where the client moved it, and its
+/// yaw. The server's own position updates for it are ignored meanwhile, as
+/// vanilla ignores them for an entity the client moves.
+static DRIVEN: Mutex<Option<(i32, Vec3, f32)>> = Mutex::new(None);
+
+/// Where the mount this player steers is, if `id` is that mount.
+pub(crate) fn driven_pose(id: i32) -> Option<(Vec3, f32)> {
+    DRIVEN
+        .lock()
+        .unwrap()
+        .filter(|(driven, ..)| *driven == id)
+        .map(|(_, pos, yaw)| (pos, yaw))
+}
 
 pub(crate) fn note_vehicle_correction(pos: Vec3, yaw: f32) {
     if let Some(id) = crate::client::tracking::local_vehicle_id() {
-        *DRIVEN.lock().unwrap() = Some((id, pos));
+        let mut driven = DRIVEN.lock().unwrap();
+        if driven.is_some_and(|(driven, ..)| driven == id) {
+            *driven = Some((id, pos, yaw));
+        }
     }
     crate::play::boat::correct(pos, yaw);
 }
@@ -318,6 +333,7 @@ fn ride_pre_travel(
     mut commands: Commands,
 ) {
     let Some(vehicle_id) = crate::client::tracking::local_vehicle_id() else {
+        *DRIVEN.lock().unwrap() = None;
         return;
     };
     let Ok((rider, rider_direction, id_index, movement, inventory)) = local.single() else {
@@ -352,12 +368,28 @@ fn ride_pre_travel(
             stays_still.is_some_and(|s| s.0),
         )
     {
+        *DRIVEN.lock().unwrap() = None;
         return;
     }
 
-    match *DRIVEN.lock().unwrap() {
-        Some((id, driven_pos)) if id == vehicle_id => **position = driven_pos,
+    let driven = *DRIVEN.lock().unwrap();
+    match driven {
+        Some((id, driven_pos, yaw)) if id == vehicle_id => {
+            let moved = driven_pos - **position;
+            **position = driven_pos;
+            physics.bounding_box = physics.bounding_box.move_relative(moved);
+            *direction = LookDirection::new(yaw, direction.x_rot());
+        }
         _ => {}
+    }
+
+    // azalea only follows the local player's fluids; the mount's are needed
+    // to swim it (`updateInWaterStateAndDoFluidPushing`).
+    if let Some(world_lock) = worlds.get(world_name) {
+        let (water, lava) = fluid_heights(&world_lock.read(), &physics.bounding_box);
+        physics.was_touching_water = water.is_some();
+        physics.water_fluid_height = water.unwrap_or(0.0);
+        physics.lava_fluid_height = lava.unwrap_or(0.0);
     }
 
     *direction = match turn_rate(kind) {
@@ -510,10 +542,17 @@ fn ride_pre_travel(
             move_colliding(&mut ctx, velocity);
             ctx.physics.velocity = ctx.physics.velocity.scale(damping);
         }
-        None => travel_ctx(&mut ctx),
+        None => {
+            travel_ctx(&mut ctx);
+            // `floatInLiquidWhileRidden`: a ridden horse or camel paddles up
+            // once the water is deeper than its jump threshold.
+            if floats_while_ridden(kind) && ctx.physics.water_fluid_height > 0.4 {
+                ctx.physics.velocity.y += 0.04;
+            }
+        }
     }
     drop(ctx);
-    *DRIVEN.lock().unwrap() = Some((vehicle_id, **position));
+    *DRIVEN.lock().unwrap() = Some((vehicle_id, **position, direction.y_rot()));
 
     commands.trigger(SendGamePacketEvent::new(
         rider,
@@ -563,6 +602,63 @@ fn ride_post_travel(
 const DEFAULT_JUMP_STRENGTH: f64 = 0.7;
 
 const HAPPY_GHAST_FLYING_SPEED: f64 = 0.05;
+
+/// `#can_float_while_ridden`.
+fn floats_while_ridden(kind: EntityKind) -> bool {
+    use EntityKind as K;
+    matches!(
+        kind,
+        K::Horse | K::ZombieHorse | K::Mule | K::Donkey | K::Camel | K::CamelHusk
+    )
+}
+
+/// `updateFluidHeightAndDoFluidPushing` for water and lava: how deep the box
+/// (shrunk by 0.001) sits in each, when it touches any.
+fn fluid_heights(
+    world: &azalea::world::World,
+    bb: &azalea_core::aabb::Aabb,
+) -> (Option<f64>, Option<f64>) {
+    use azalea::block::fluid_state::{FluidKind, FluidState};
+    use azalea_core::position::BlockPos;
+
+    let lo = bb.min + Vec3::new(0.001, 0.001, 0.001);
+    let hi = bb.max - Vec3::new(0.001, 0.001, 0.001);
+    let surface = |pos: BlockPos, lava: bool| -> Option<f64> {
+        let state = world.get_block_state(pos)?;
+        let own = if lava {
+            let fluid = FluidState::from(state);
+            (fluid.kind == FluidKind::Lava).then(|| fluid.amount as f32 / 9.0)?
+        } else {
+            crate::play::boat::water_level(state)?.0
+        };
+        // Full when the same fluid continues above.
+        let above = world.get_block_state(pos.up(1)).is_some_and(|s| {
+            if lava {
+                FluidState::from(s).kind == FluidKind::Lava
+            } else {
+                crate::play::boat::water_level(s).is_some()
+            }
+        });
+        Some(pos.y as f64 + if above { 1.0 } else { own as f64 })
+    };
+    let depth = |lava: bool| {
+        let mut deepest: Option<f64> = None;
+        for x in lo.x.floor() as i32..hi.x.ceil() as i32 {
+            for y in lo.y.floor() as i32..hi.y.ceil() as i32 {
+                for z in lo.z.floor() as i32..hi.z.ceil() as i32 {
+                    if let Some(top) = surface(BlockPos::new(x, y, z), lava)
+                        && top >= lo.y
+                    {
+                        let d = top - lo.y;
+                        deepest = Some(deepest.map_or(d, |best: f64| best.max(d)));
+                    }
+                }
+            }
+        }
+        deepest
+    };
+    (depth(false), depth(true))
+}
 const DASH_COOLDOWN_TICKS: u32 = 40;
 
 /// Ticks until a ridden nautilus may dash again.
@@ -683,7 +779,7 @@ mod tests {
                 was_jumping: true,
             };
             *PENDING_JUMP.lock().unwrap() = 0.75;
-            *DRIVEN.lock().unwrap() = Some((42, Vec3::new(1.0, 2.0, 3.0)));
+            *DRIVEN.lock().unwrap() = Some((42, Vec3::new(1.0, 2.0, 3.0), 0.0));
             crate::client::tracking::LOCAL_VEHICLE_ID.store(42, Ordering::Relaxed);
 
             reset(blocking);
