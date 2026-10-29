@@ -1448,7 +1448,7 @@ fn sync_hands(
         || spectator
         || scoping
         || sample.sleeping
-        || gui.hide_gui
+        || gui.gui_hidden()
     {
         for hand in [Hand::Main, Hand::Off] {
             hide(&mut nodes, &rig.hands[hand.index()].nodes);

@@ -27,7 +27,13 @@ pub fn bob_pose(walk: f32, bob: f32) -> Transform {
 }
 
 fn current_pose(view: &FrameView, state: &crate::gui::GuiState, freecam: &FreecamState) -> Transform {
-    if !state.options.view_bobbing || freecam.active || view.sleeping || !view.in_world {
+    // Zooming holds the view still.
+    if !state.options.view_bobbing
+        || state.zooming
+        || freecam.active
+        || view.sleeping
+        || !view.in_world
+    {
         return Transform::IDENTITY;
     }
     let (walk, bob) = view.view_bob;

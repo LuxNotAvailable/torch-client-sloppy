@@ -1008,7 +1008,7 @@ fn collect_hud_info(
     crate::prof_span!("render:collect_hud_info");
     let profiling_page = prof.shown && prof.page == crate::gui::hud::DebugPage::Profiler;
     crate::diag::frame_profile::set_enabled(profiling_page);
-    let hud_visible = !state.in_menu() && !state.hide_gui;
+    let hud_visible = !state.in_menu() && !state.gui_hidden();
     let camera = camera_q.single().ok();
     let mut nametags = std::mem::take(&mut state.hud.nametags);
     nametags.clear();
@@ -1745,14 +1745,16 @@ fn sync_app_state(
     }
 }
 
+/// The FOV the view is easing toward and has reached, before effects.
 #[derive(Default)]
-struct ZoomEase(f32);
+struct ZoomEase(Option<f32>);
 
 fn apply_fov(
     state: Res<crate::gui::GuiState>,
     view: Res<FrameView>,
     time: Res<Time>,
     mut ease: Local<ZoomEase>,
+    mut zoom_key: ResMut<super::input::ZoomState>,
     mut camera: Query<&mut Projection, With<WorldCamera>>,
 ) {
     let Ok(mut projection) = camera.single_mut() else {
@@ -1761,16 +1763,34 @@ fn apply_fov(
     if let Projection::Perspective(perspective) = &mut *projection {
         let modifier = view.fov_modifier;
 
-        let zoom = crate::modules::zoom::settings();
-        let (target_fov, target) = (zoom.fov, if zoom.on { 1.0 } else { 0.0 });
-        let step = time.delta_secs() / zoom.duration;
-        ease.0 = if ease.0 < target {
-            (ease.0 + step).min(target)
+        // The zoom key, else the Zoom module, else the plain FOV; the view
+        // glides there, so a wheel notch eases rather than snaps.
+        let options_fov = state.options.fov as f32;
+        let module = crate::modules::zoom::settings();
+        let smoothing = state.options.zoom.smoothing_ms as f32 / 1000.0;
+        let (target, seconds) = if zoom_key.held {
+            (options_fov / zoom_key.divisor, smoothing)
+        } else if module.on {
+            (module.fov, module.duration)
         } else {
-            (ease.0 - step).max(target)
+            (options_fov, if ease.0.is_some() { smoothing } else { 0.0 })
         };
-
-        let base_fov = state.options.fov as f32 + (target_fov - state.options.fov as f32) * ease.0;
+        let current = ease.0.unwrap_or(options_fov);
+        let base_fov = if seconds <= 0.0 {
+            target
+        } else {
+            let k = 1.0 - (-time.delta_secs() * 3.0 / seconds).exp();
+            let next = current + (target - current) * k;
+            if (next - target).abs() < 0.01 { target } else { next }
+        };
+        ease.0 = (base_fov != options_fov).then_some(base_fov);
+        // The mouse slows with the view, by the chosen share: the ratio of
+        // FOVs raised to it, so 50% slows half as much in log terms.
+        let ratio = base_fov / options_fov.max(1.0);
+        let factor = ratio.powf(state.options.zoom.sensitivity as f32 / 100.0);
+        if zoom_key.factor != factor {
+            zoom_key.factor = factor;
+        }
         let fov = (base_fov * modifier).to_radians();
         if perspective.fov != fov {
             perspective.fov = fov;
@@ -2471,16 +2491,25 @@ pub fn run(
                 .after(toggle_screen)
                 .run_if(in_state(AppState::InGame)),
         )
+        .init_resource::<super::input::ZoomState>()
         .add_systems(
             Update,
-            handle_hotbar_scroll
+            super::input::handle_zoom
                 .after(apply_gui_nav)
                 .after(toggle_screen)
                 .run_if(in_state(AppState::InGame)),
         )
         .add_systems(
             Update,
-            handle_spectator_fly_speed_scroll.run_if(in_state(AppState::InGame)),
+            handle_hotbar_scroll
+                .after(super::input::handle_zoom)
+                .run_if(in_state(AppState::InGame)),
+        )
+        .add_systems(
+            Update,
+            handle_spectator_fly_speed_scroll
+                .after(super::input::handle_zoom)
+                .run_if(in_state(AppState::InGame)),
         )
         .add_systems(
             Update,

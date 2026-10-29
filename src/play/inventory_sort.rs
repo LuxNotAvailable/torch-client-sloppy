@@ -35,9 +35,20 @@ fn container_slots(menu: &Menu) -> Option<Range<usize>> {
     }
 }
 
-/// The player's main inventory, without the hotbar, which sorting and
-/// storing leave alone.
+static INCLUDE_HOTBAR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether the player's side takes in the hotbar (the Include Hotbar
+/// setting), as the GUI last set it.
+pub(crate) fn set_include_hotbar(include: bool) {
+    INCLUDE_HOTBAR.store(include, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The player's side: the main inventory, and the hotbar when the setting
+/// takes it in. Left out, sorting and storing leave the hotbar alone.
 fn main_slots(menu: &Menu) -> Range<usize> {
+    if INCLUDE_HOTBAR.load(std::sync::atomic::Ordering::Relaxed) {
+        return player_slots(menu);
+    }
     let r = menu.player_slots_without_hotbar_range();
     *r.start()..*r.end() + 1
 }

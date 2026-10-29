@@ -183,7 +183,7 @@ pub fn draw(
     let editing = state.screen == Screen::HudEditor;
     #[cfg(not(feature = "hud_editor"))]
     let editing = false;
-    let hide_gui = state.hide_gui && !editing;
+    let hide_gui = state.gui_hidden() && !editing;
     // Nothing of the HUD until the server has put the player in the world.
     let loading = !in_menu && !editing && !state.hud.in_world;
     let hud_shown = (!in_menu || editing) && !loading;
@@ -400,6 +400,9 @@ pub fn draw(
         | Screen::VideoSettings
         | Screen::Controls
         | Screen::MouseSettings
+        | Screen::ZoomSettings
+        | Screen::Features
+        | Screen::InventorySortSettings
         | Screen::ChatSettings
         | Screen::SkinCustomisation
         | Screen::ManageStorage => {
@@ -412,6 +415,9 @@ pub fn draw(
                 Screen::VideoSettings => options::draw_video(p, state, &ctx),
                 Screen::Controls => options::draw_controls(p, state, &ctx),
                 Screen::MouseSettings => options::draw_mouse(p, state, &ctx),
+                Screen::ZoomSettings => options::draw_zoom(p, state, &ctx),
+                Screen::Features => options::draw_features(p, state, &ctx),
+                Screen::InventorySortSettings => options::draw_inventory_sort(p, state, &ctx),
                 Screen::ChatSettings => options::draw_chat(p, state, &ctx),
                 Screen::SkinCustomisation => options::draw_skin(p, state, &ctx),
                 Screen::ManageStorage => options::draw_manage_storage(p, state, &ctx),
@@ -682,7 +688,7 @@ pub fn draw(
                 ui: &state.mobile,
                 movement: state.options.touch_movement,
                 screen: state.screen,
-                hide_gui: state.hide_gui,
+                hide_gui: state.gui_hidden(),
                 in_menu,
                 editing: false,
             };

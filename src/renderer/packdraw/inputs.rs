@@ -347,7 +347,7 @@ pub(crate) fn gather_inputs(
         biome: row,
         atlas_size,
         relative_eye: camera_at - eye,
-        hide_gui: gui.hide_gui,
+        hide_gui: gui.gui_hidden(),
         held_items,
         held_light,
         lightning: bolt.map_or(bevy::math::Vec4::ZERO, |at| (at - camera_at).extend(1.0)),

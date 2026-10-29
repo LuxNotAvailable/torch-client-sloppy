@@ -27,6 +27,19 @@ const HOLD: &str = "Hold";
 const TOGGLE: &str = "Toggle";
 const MOUSE_SENSITIVITY_SLIDER_ID: u32 = 40;
 const SCROLL_SENSITIVITY_SLIDER_ID: u32 = 41;
+const ZOOM_DEFAULT_SLIDER_ID: u32 = 50;
+const ZOOM_MAX_SLIDER_ID: u32 = 51;
+const ZOOM_SMOOTHING_SLIDER_ID: u32 = 52;
+const ZOOM_SENSITIVITY_SLIDER_ID: u32 = 53;
+const ZOOM_TITLE: &str = "Zoom Settings";
+const ZOOM_SETTINGS: &str = "Zoom...";
+const FEATURES: &str = "Features...";
+const FEATURES_TITLE: &str = "Features";
+const INVENTORY_SORT: &str = "Inventory Sorting...";
+const INVENTORY_SORT_TITLE: &str = "Inventory Sorting";
+const SORT_BUTTONS: &str = "Sort Buttons";
+const SORT_HOTBAR: &str = "Include Hotbar";
+const RESET_ZOOM: &str = "Reset Zoom Settings";
 
 #[cfg(audio)]
 const AUDIO_TITLE: &str = "Music & Sounds";
@@ -606,8 +619,6 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         Screen(Screen),
         #[cfg(resource_packs)]
         Packs,
-        #[cfg(feature = "hud_editor")]
-        Hud,
     }
 
     let left = (ctx.vw / 2.0 - MENU_COLUMN_STEP + 4.0).floor();
@@ -642,12 +653,10 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     entries.push((AUDIO, Entry::Screen(Screen::AudioSettings)));
     entries.push((VIDEO, Entry::Screen(Screen::VideoSettings)));
     entries.push((CONTROLS, Entry::Screen(Screen::Controls)));
-    entries.push(("Block Info...", Entry::Screen(Screen::BlockInfoSettings)));
+    entries.push((FEATURES, Entry::Screen(Screen::Features)));
     entries.push((CHAT, Entry::Screen(Screen::ChatSettings)));
     #[cfg(resource_packs)]
     entries.push((crate::gui::resourcepacks::RESOURCE_PACKS, Entry::Packs));
-    #[cfg(feature = "hud_editor")]
-    entries.push(("Edit HUD...", Entry::Hud));
     entries.push((MANAGE_STORAGE, Entry::Screen(Screen::ManageStorage)));
 
     let rows = entries.len().div_ceil(2) as f32;
@@ -692,12 +701,6 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
             Entry::Packs => {
                 state.resourcepacks.open();
                 state.nav = Some(Screen::ResourcePacks);
-            }
-            #[cfg(feature = "hud_editor")]
-            Entry::Hud => {
-                state.hud_state.parent = Screen::Options;
-                state.hud_state.over_menu = state.in_menu();
-                state.nav = Some(Screen::HudEditor);
             }
         }
     }
@@ -1166,6 +1169,136 @@ const DUPLICATE: &str = "This key is also used for:";
 
 const FOOTER_GAP: f32 = 8.0;
 const FOOTER_BUTTON_W: f32 = 150.0;
+
+fn zoom_level_label(name: &str, tenths: i32) -> String {
+    format!("{name}: {}x", tenths as f32 / 10.0)
+}
+
+fn zoom_default_label(tenths: i32) -> String {
+    zoom_level_label("Default Zoom", tenths)
+}
+
+fn zoom_max_label(tenths: i32) -> String {
+    zoom_level_label("Max Zoom", tenths)
+}
+
+fn zoom_smoothing_label(ms: i32) -> String {
+    if ms == 0 {
+        format!("Zoom Smoothing: {OFF}")
+    } else {
+        format!("Zoom Smoothing: {ms} ms")
+    }
+}
+
+fn zoom_sensitivity_label(percent: i32) -> String {
+    format!("Sensitivity Scaling: {percent}%")
+}
+
+/// The zoom key's settings: where a press starts, how far the wheel goes,
+/// how the view eases, and how much the mouse slows with it.
+pub fn draw_zoom(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
+    use crate::gui::{ZOOM_SMOOTHING_MAX_MS, ZOOM_TENTHS_MAX, ZOOM_TENTHS_MIN, ZoomOptions};
+
+    draw_title(p, ctx, ZOOM_TITLE);
+    let left = (ctx.vw / 2.0 - GRID_LEFT_OFFSET).floor();
+    let top = LAYOUT.content_y(ctx.vh, 3.0 * ROW_H);
+    let cell = |column: f32, row: f32| (left + column * COLUMN_STEP, top + row * ROW_H + ROW_INSET);
+    let before = state.options.zoom;
+    let z = &mut state.options.zoom;
+
+    let slider = |id: u32, at: (f32, f32), min: u32, max: u32, value: u32, label: fn(i32) -> String| Slider {
+        id,
+        x: at.0,
+        y: at.1,
+        w: COLUMN_W,
+        h: WIDGET_HEIGHT,
+        min: min as i32,
+        max: max as i32,
+        value: value as i32,
+        label,
+    };
+
+    z.default_tenths = slider(ZOOM_DEFAULT_SLIDER_ID, cell(0.0, 0.0), ZOOM_TENTHS_MIN, z.max_tenths, z.default_tenths, zoom_default_label)
+        .draw(p, ctx)
+        .clamp(ZOOM_TENTHS_MIN as i32, z.max_tenths as i32) as u32;
+    z.max_tenths = slider(ZOOM_MAX_SLIDER_ID, cell(1.0, 0.0), ZOOM_TENTHS_MIN, ZOOM_TENTHS_MAX, z.max_tenths, zoom_max_label)
+        .draw(p, ctx)
+        .clamp(ZOOM_TENTHS_MIN as i32, ZOOM_TENTHS_MAX as i32) as u32;
+    // The default can't sit past the maximum.
+    z.default_tenths = z.default_tenths.min(z.max_tenths);
+    z.smoothing_ms = slider(ZOOM_SMOOTHING_SLIDER_ID, cell(0.0, 1.0), 0, ZOOM_SMOOTHING_MAX_MS, z.smoothing_ms, zoom_smoothing_label)
+        .draw(p, ctx)
+        .clamp(0, ZOOM_SMOOTHING_MAX_MS as i32) as u32;
+    z.sensitivity = slider(ZOOM_SENSITIVITY_SLIDER_ID, cell(1.0, 1.0), 0, 100, z.sensitivity, zoom_sensitivity_label)
+        .draw(p, ctx)
+        .clamp(0, 100) as u32;
+
+    let (x, y) = cell(0.0, 2.0);
+    if Button::new(x, y, BIG_W, WIDGET_HEIGHT, RESET_ZOOM).draw(p, ctx) {
+        *z = ZoomOptions::default();
+    }
+
+    if state.options.zoom != before {
+        crate::gui::save_options(&state.options);
+    }
+    if draw_done(p, ctx) {
+        state.nav = Some(Screen::Features);
+    }
+}
+
+/// Torch's own features, each with its settings.
+pub fn draw_features(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
+    draw_title(p, ctx, FEATURES_TITLE);
+    #[allow(unused_mut)]
+    let mut entries = vec![
+        (ZOOM_SETTINGS, Screen::ZoomSettings),
+        ("Block Info...", Screen::BlockInfoSettings),
+        (INVENTORY_SORT, Screen::InventorySortSettings),
+    ];
+    #[cfg(feature = "hud_editor")]
+    entries.push(("Edit HUD...", Screen::HudEditor));
+    let left = (ctx.vw / 2.0 - GRID_LEFT_OFFSET).floor();
+    let top = LAYOUT.content_y(ctx.vh, menu_content_h(entries.len()));
+    for (i, (label, screen)) in entries.into_iter().enumerate() {
+        let x = left + (i % 2) as f32 * COLUMN_STEP;
+        let y = top + (i / 2) as f32 * (WIDGET_HEIGHT + ROW_SPACING);
+        if Button::new(x, y, COLUMN_W, WIDGET_HEIGHT, label).draw(p, ctx) {
+            #[cfg(feature = "hud_editor")]
+            if screen == Screen::HudEditor {
+                // The editor returns here when done.
+                state.hud_state.parent = Screen::Features;
+                state.hud_state.over_menu = state.in_menu();
+            }
+            state.nav = Some(screen);
+        }
+    }
+    if draw_done(p, ctx) {
+        state.nav = Some(Screen::Options);
+    }
+}
+
+/// Inventory sorting: whether the buttons show, and whether the hotbar
+/// sorts and stores along with the rest of the inventory.
+pub fn draw_inventory_sort(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
+    draw_title(p, ctx, INVENTORY_SORT_TITLE);
+    let left = (ctx.vw / 2.0 - GRID_LEFT_OFFSET).floor();
+    let top = LAYOUT.content_y(ctx.vh, ROW_H);
+    let o = &mut state.options;
+    let mut changed = toggle(p, ctx, (left, top + ROW_INSET), SORT_BUTTONS, &mut o.sort_buttons);
+    changed |= toggle(
+        p,
+        ctx,
+        (left + COLUMN_STEP, top + ROW_INSET),
+        SORT_HOTBAR,
+        &mut o.sort_hotbar,
+    );
+    if changed {
+        crate::gui::save_options(&state.options);
+    }
+    if draw_done(p, ctx) {
+        state.nav = Some(Screen::Features);
+    }
+}
 
 /// `0%` and `200%` read as vanilla's jokes.
 fn sensitivity_label(value: i32) -> String {

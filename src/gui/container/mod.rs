@@ -221,6 +221,10 @@ fn storage_sort_buttons(
     (left, top, img_h): (f32, f32, f32),
     out: &mut Vec<InvAction>,
 ) {
+    if !state.options.sort_buttons {
+        return;
+    }
+    crate::play::inventory_sort::set_include_hotbar(state.options.sort_hotbar);
     let held = !state.slots.cursor(snap).is_empty();
     let right = left + SLOTS_RIGHT;
     sort_buttons(p, ctx, held, right, top + 5.0, SortSide::Container, true, out);
@@ -241,6 +245,10 @@ pub fn inventory_sort_button(
     (left, top): (f32, f32),
     out: &mut Vec<InvAction>,
 ) {
+    if !state.options.sort_buttons {
+        return;
+    }
+    crate::play::inventory_sort::set_include_hotbar(state.options.sort_hotbar);
     let held = !state.slots.cursor(snap).is_empty();
     sort_buttons(p, ctx, held, left + SLOTS_RIGHT, top + 72.0, SortSide::Player, false, out);
 }

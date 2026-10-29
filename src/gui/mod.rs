@@ -98,6 +98,12 @@ pub enum Screen {
     VideoSettings,
     Controls,
     MouseSettings,
+    /// Torch's own features: zoom, block info, inventory sorting.
+    Features,
+    /// The zoom key's settings, under Features.
+    ZoomSettings,
+    /// Inventory sorting's settings, under Features.
+    InventorySortSettings,
     /// Signed chat and toasts.
     ChatSettings,
     /// The skin's layers and the main hand (vanilla's
@@ -238,6 +244,9 @@ impl Screen {
                 | Screen::VideoSettings
                 | Screen::Controls
                 | Screen::MouseSettings
+                | Screen::ZoomSettings
+                | Screen::Features
+                | Screen::InventorySortSettings
                 | Screen::ChatSettings
                 | Screen::SkinCustomisation
                 | Screen::ManageStorage
@@ -395,6 +404,11 @@ pub struct GuiOptions {
     pub render_backend: RenderBackend,
     pub auto_jump: bool,
     pub view_bobbing: bool,
+    pub zoom: ZoomOptions,
+    /// The sort and transfer buttons on inventories.
+    pub sort_buttons: bool,
+    /// Whether sorting and storing take in the hotbar.
+    pub sort_hotbar: bool,
     /// Vanilla `mouseSensitivity` as a percent: 0..=200, 100 is the default.
     pub mouse_sensitivity: u32,
     pub invert_x: bool,
@@ -588,6 +602,60 @@ pub const MODEL_PART_KEYS: [(&str, u8); 7] = [
     ("modelPart_hat", 6),
 ];
 
+/// The zoom key's settings. Zoom levels are how many times narrower than
+/// the FOV the view gets, in tenths.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ZoomOptions {
+    pub default_tenths: u32,
+    pub max_tenths: u32,
+    /// How long the view takes to settle on a new zoom; 0 snaps.
+    pub smoothing_ms: u32,
+    /// How much the mouse slows with the zoom, in percent: 100 slows it as
+    /// much as the view narrows, 0 not at all.
+    pub sensitivity: u32,
+}
+
+pub const ZOOM_TENTHS_MIN: u32 = 15;
+pub const ZOOM_TENTHS_MAX: u32 = 1000;
+pub const ZOOM_SMOOTHING_MAX_MS: u32 = 500;
+
+impl Default for ZoomOptions {
+    fn default() -> Self {
+        ZoomOptions {
+            default_tenths: 40,
+            max_tenths: 500,
+            smoothing_ms: 100,
+            sensitivity: 50,
+        }
+    }
+}
+
+impl ZoomOptions {
+    fn read(value: &dyn Fn(&str) -> Option<serde_json::Value>) -> ZoomOptions {
+        let d = ZoomOptions::default();
+        let num = |key: &str, fallback: u32, lo: u32, hi: u32| {
+            value(key)
+                .and_then(|v| v.as_u64())
+                .map_or(fallback, |v| (v as u32).clamp(lo, hi))
+        };
+        let max_tenths = num("zoomMax", d.max_tenths, ZOOM_TENTHS_MIN, ZOOM_TENTHS_MAX);
+        ZoomOptions {
+            default_tenths: num("zoomDefault", d.default_tenths, ZOOM_TENTHS_MIN, max_tenths),
+            max_tenths,
+            smoothing_ms: num("zoomSmoothingMs", d.smoothing_ms, 0, ZOOM_SMOOTHING_MAX_MS),
+            sensitivity: num("zoomSensitivity", d.sensitivity, 0, 100),
+        }
+    }
+
+    pub fn default_zoom(&self) -> f32 {
+        self.default_tenths.min(self.max_tenths) as f32 / 10.0
+    }
+
+    pub fn max_zoom(&self) -> f32 {
+        self.max_tenths as f32 / 10.0
+    }
+}
+
 impl Default for GuiOptions {
     fn default() -> Self {
         let stored = load_options();
@@ -651,6 +719,9 @@ impl Default for GuiOptions {
                 .and_then(|v| v.as_str().and_then(RenderBackend::from_serialized_name))
                 .unwrap_or_default(),
             view_bobbing: value("bobView").and_then(|v| v.as_bool()).unwrap_or(true),
+            zoom: ZoomOptions::read(&value),
+            sort_buttons: value("sortButtons").and_then(|v| v.as_bool()).unwrap_or(true),
+            sort_hotbar: value("sortHotbar").and_then(|v| v.as_bool()).unwrap_or(false),
             auto_jump: value("autoJump")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(AUTO_JUMP_DEFAULT),
@@ -800,6 +871,12 @@ pub fn save_options(options: &GuiOptions) {
         "renderBackend": options.render_backend.serialized_name(),
         "autoJump": options.auto_jump,
         "bobView": options.view_bobbing,
+        "zoomDefault": options.zoom.default_tenths,
+        "zoomMax": options.zoom.max_tenths,
+        "zoomSmoothingMs": options.zoom.smoothing_ms,
+        "zoomSensitivity": options.zoom.sensitivity,
+        "sortButtons": options.sort_buttons,
+        "sortHotbar": options.sort_hotbar,
         "mouseSensitivity": options.mouse_sensitivity as f64 / MOUSE_SENSITIVITY_MAX as f64,
         "invertXMouse": options.invert_x,
         "invertYMouse": options.invert_y,
@@ -900,6 +977,8 @@ pub struct GuiState {
     pub hearts: health::HeartAnim,
     pub chunk_borders: bool,
     pub hide_gui: bool,
+    /// The zoom key is held: the HUD hides, as with F1.
+    pub zooming: bool,
     pub slots: slots::SlotState,
     pub container: container::ContainerUi,
     #[cfg(feature = "click_gui")]
@@ -951,6 +1030,11 @@ pub struct GuiState {
 }
 
 impl GuiState {
+    /// F1's hidden GUI, or the zoom key held: no HUD, no hand.
+    pub fn gui_hidden(&self) -> bool {
+        self.hide_gui || self.zooming
+    }
+
     pub fn anvil_typing(&self) -> bool {
         self.screen == Screen::Container(ContainerKind::Anvil) && self.container.anvil.editable()
     }

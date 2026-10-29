@@ -179,7 +179,7 @@ fn mobile_input(
         }
         return;
     }
-    if gui.hide_gui {
+    if gui.gui_hidden() {
         gui.mobile.release_all();
         let mut s = shared.0.lock().unwrap();
         s.session.attack_held = false;
@@ -380,6 +380,9 @@ fn close_target(gui: &mut GuiState) -> Screen {
     match gui.screen {
         Screen::Options => gui.options_parent,
         Screen::MouseSettings => Screen::Controls,
+        Screen::ZoomSettings | Screen::BlockInfoSettings | Screen::InventorySortSettings => {
+            Screen::Features
+        }
         Screen::VideoSettings
         | Screen::Controls
         | Screen::ChatSettings

@@ -332,7 +332,7 @@ pub(super) fn update_block_outline(
     mut meshes: ResMut<Assets<Mesh>>,
     mut targets: Query<(&mut Transform, &mut Visibility), With<BlockOutlineMarker>>,
 ) {
-    let target = if state.hide_gui {
+    let target = if state.gui_hidden() {
         None
     } else {
         if view.targeted_block == outline.shown {

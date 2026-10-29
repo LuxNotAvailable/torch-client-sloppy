@@ -272,7 +272,7 @@ fn update(
     let on_fire = session.health_display.on_fire;
     let pumpkin = session.armor[0] == Some("carved_pumpkin");
     let sleeping = session.sleeping;
-    let hud = !gui.in_menu() && !gui.hide_gui;
+    let hud = !gui.in_menu() && !gui.gui_hidden();
     drop(state);
 
     let eye_f = eye.map(|v| v as f32);

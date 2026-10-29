@@ -43,7 +43,7 @@ impl ToastSettings {
             recipe: state.options.toast_recipe,
             system: state.options.toast_system,
             display_time: state.options.toast_time as f32 / 10.0,
-            hide_gui: state.hide_gui,
+            hide_gui: state.gui_hidden(),
         }
     }
 }

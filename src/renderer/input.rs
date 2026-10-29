@@ -284,10 +284,11 @@ pub(super) fn mouse_look(
     state: Res<crate::gui::GuiState>,
     time: Res<Time>,
     mut boat_turn: Local<BoatTurn>,
+    zoom: Res<ZoomState>,
 ) {
     #[cfg(feature = "mobile_ui")]
     {
-        let _ = (motion, angles, shared, freecam, camera, state, time, boat_turn);
+        let _ = (motion, angles, shared, freecam, camera, state, time, boat_turn, zoom);
         return;
     }
     // The boat being steered turns the view with it. Minecraft's yaw runs
@@ -310,7 +311,8 @@ pub(super) fn mouse_look(
         let hand = if state.screen.is_open() || !crate::platform::pointer::is_locked() {
             Vec2::ZERO
         } else {
-            motion.delta * state.options.look_scale()
+            // Zoomed in, the mouse slows with the view.
+            motion.delta * state.options.look_scale() * zoom.factor
         };
         if hand == Vec2::ZERO && !crate::modules::hooks::drives_look() {
             return;
@@ -897,13 +899,80 @@ pub(super) fn next_scroll_selection(wheel: f64, current: i32, limit: i32) -> i32
     selected
 }
 
+/// The zoom key: held, the view narrows to a share of the FOV, and the
+/// wheel narrows or widens it further instead of turning the hotbar.
+#[derive(Resource)]
+pub(crate) struct ZoomState {
+    pub held: bool,
+    /// How many times narrower than the FOV the zoomed view is.
+    pub divisor: f32,
+    /// The view's FOV this frame over the unzoomed one, which slows the
+    /// mouse to match.
+    pub factor: f32,
+    /// The furthest the wheel zooms in.
+    pub max: f32,
+}
+
+impl Default for ZoomState {
+    fn default() -> Self {
+        ZoomState {
+            held: false,
+            divisor: ZOOM_DEFAULT,
+            factor: 1.0,
+            max: ZOOM_MAX,
+        }
+    }
+}
+
+const ZOOM_DEFAULT: f32 = 4.0;
+const ZOOM_MIN: f32 = 1.5;
+const ZOOM_MAX: f32 = 50.0;
+/// Each wheel notch zooms this much further.
+const ZOOM_STEP: f32 = 1.2;
+
+impl ZoomState {
+    /// One wheel movement while zoomed: up zooms in, down zooms out.
+    pub(crate) fn scroll(&mut self, notches: f32) {
+        self.divisor = (self.divisor * ZOOM_STEP.powf(notches)).clamp(ZOOM_MIN, self.max.max(ZOOM_MIN));
+    }
+}
+
+pub(super) fn handle_zoom(
+    keys: Res<ButtonInput<KeyCode>>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    wheel: Res<AccumulatedMouseScroll>,
+    mut state: ResMut<crate::gui::GuiState>,
+    mut zoom: ResMut<ZoomState>,
+) {
+    let held = !state.screen.is_open()
+        && state.keybinds.capturing.is_none()
+        && state.keybinds.down(Action::Zoom, &keys, &buttons);
+    let settings = state.options.zoom;
+    zoom.max = settings.max_zoom();
+    if held && !zoom.held {
+        // Each press starts from the default zoom.
+        zoom.divisor = settings.default_zoom();
+    }
+    zoom.held = held;
+    if state.zooming != held {
+        state.zooming = held;
+    }
+    if held {
+        let notches = wheel_notches(&wheel, &state.options).y;
+        if notches != 0.0 {
+            zoom.scroll(notches);
+        }
+    }
+}
+
 pub(super) fn handle_hotbar_scroll(
     wheel: Res<AccumulatedMouseScroll>,
     shared: Res<Shared>,
     state: Res<crate::gui::GuiState>,
+    zoom: Res<ZoomState>,
     mut acc: Local<(f64, f64)>,
 ) {
-    if state.screen.is_open() {
+    if state.screen.is_open() || zoom.held {
         return;
     }
     let notches = wheel_notches(&wheel, &state.options);
@@ -935,9 +1004,10 @@ pub(super) fn handle_spectator_fly_speed_scroll(
     time: Res<Time>,
     shared: Res<Shared>,
     mut state: ResMut<crate::gui::GuiState>,
+    zoom: Res<ZoomState>,
     mut acc: Local<(f64, f64)>,
 ) {
-    if state.screen.is_open() {
+    if state.screen.is_open() || zoom.held {
         return;
     }
     let dy = wheel_notches(&wheel, &state.options).y;
@@ -1063,6 +1133,9 @@ pub(super) fn toggle_screen(
                 Some(match state.screen {
                     Screen::Options => state.options_parent,
                     Screen::MouseSettings => Screen::Controls,
+                    Screen::ZoomSettings
+                    | Screen::BlockInfoSettings
+                    | Screen::InventorySortSettings => Screen::Features,
                     #[cfg(feature = "shader_support")]
                     Screen::ShaderPacks => Screen::VideoSettings,
                     #[cfg(feature = "shader_support")]
@@ -1289,7 +1362,20 @@ pub(super) fn handle_keybinds(
 
 #[cfg(test)]
 mod tests {
-    use super::BoatTurn;
+    use super::{BoatTurn, ZoomState};
+
+    #[test]
+    fn the_wheel_zooms_within_limits() {
+        let mut zoom = ZoomState::default();
+        zoom.scroll(1.0);
+        assert!((zoom.divisor - 4.8).abs() < 1e-4);
+        zoom.scroll(-2.0);
+        assert!(zoom.divisor < 4.0);
+        zoom.scroll(100.0);
+        assert_eq!(zoom.divisor, 50.0);
+        zoom.scroll(-100.0);
+        assert_eq!(zoom.divisor, 1.5);
+    }
 
     #[test]
     fn a_boat_turn_plays_out_over_a_tick() {

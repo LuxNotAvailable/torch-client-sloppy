@@ -295,6 +295,7 @@ pub static BINDS: LazyLock<Vec<BindDef>> = LazyLock::new(|| {
     // Unbound by default, so a stray C no longer leaves the body behind. A new
     // id, since every saved bind file still holds the old C.
     BindDef { action: Action::Freecam, id: "key.client.detachedCamera", name: "Detached Camera", category: CLIENT, default: Bound::Unbound },
+    BindDef { action: Action::Zoom, id: "key.client.zoom", name: "Zoom", category: CLIENT, default: Bound::Key(KeyCode::KeyC) },
     ];
     #[cfg(target_arch = "wasm32")]
     binds.push(BindDef { action: Action::Pause, id: "key.client.pause", name: "Pause Menu", category: CLIENT, default: Bound::Key(KeyCode::Backquote) });
@@ -351,6 +352,7 @@ pub enum Action {
     ChunkBorders,
     AdvancedTooltips,
     Freecam,
+    Zoom,
     #[cfg(target_arch = "wasm32")]
     Pause,
     #[cfg(feature = "click_gui")]

@@ -482,7 +482,7 @@ pub fn draw_settings(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         crate::gui::save_options(&state.options);
     }
     if crate::gui::options::draw_done(p, ctx) {
-        state.nav = Some(Screen::Options);
+        state.nav = Some(Screen::Features);
     }
 }
 
