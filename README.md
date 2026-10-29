@@ -9,8 +9,6 @@ Please go use and contribute to the original ^^^
 > who dont know how to program in the first place. That being said, this is a rather guilty pleasure project of mine to see
 > just how capable these slop machines have come so far. This is NOT a serious project. 
 
-<img width="960" height="526" alt="preview" src="https://github.com/user-attachments/assets/7139ff66-3257-4841-b810-75796659f7b3" />
-
 ## Build from source
 
 ```sh
