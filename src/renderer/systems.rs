@@ -2313,6 +2313,7 @@ pub fn run(
     .add_plugins(crate::renderer::antialias::AntialiasPlugin)
     .add_plugins(crate::renderer::view_bob::ViewBobPlugin)
     .add_plugins(crate::renderer::inventory_figure::InventoryFigurePlugin)
+    .add_plugins(crate::renderer::tethers::TethersPlugin)
     .add_plugins(crate::renderer::clouds::CloudPlugin)
     .add_plugins(crate::renderer::post::PostPlugin)
     .add_plugins(crate::entities::EntityPlugin)

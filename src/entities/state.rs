@@ -229,6 +229,16 @@ pub struct ExtrasShared {
     pub damage: f32,
     pub display_block: Option<u32>,
     pub display_offset: i32,
+    /// An experience orb's value, which picks its icon.
+    pub xp_value: i32,
+    /// The block an end crystal beams to (`BeamTarget`).
+    pub beam_target: Option<[i32; 3]>,
+    /// The entity a guardian's laser locks on (`AttackTarget`), 0 for none.
+    pub attack_target: i32,
+    /// A fishing bobber's angler, from the add-entity data.
+    pub owner_id: i32,
+    /// Who holds this entity's lead (`ClientboundSetEntityLink`).
+    pub leash_holder: Option<i32>,
     pub display: Option<Box<Display>>,
     pub block_state: Option<u32>,
     pub fuse: i32,
@@ -394,6 +404,11 @@ impl Default for Extras {
 impl Default for ExtrasShared {
     fn default() -> Self {
         ExtrasShared {
+            xp_value: 0,
+            beam_target: None,
+            attack_target: 0,
+            owner_id: 0,
+            leash_holder: None,
             is_baby: false,
             powered: false,
             size: 1,

@@ -165,11 +165,13 @@ fn is_display_context(node: &Json) -> bool {
         == Some("display_context")
 }
 
+/// A condition on the item being in use. A fishing rod's `fishing_rod/cast`
+/// rides the same switch: its holder passes "using" while a bobber is out.
 fn is_using_item(node: &Json) -> bool {
-    node.get("property")
-        .and_then(Json::as_str)
-        .map(strip_namespace)
-        == Some("using_item")
+    matches!(
+        node.get("property").and_then(Json::as_str).map(strip_namespace),
+        Some("using_item" | "fishing_rod/cast")
+    )
 }
 
 pub(super) fn depends_on_using_item(node: &Json, depth: u32) -> bool {

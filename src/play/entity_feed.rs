@@ -419,6 +419,7 @@ pub(crate) fn collect_entities(
     let meta18 = &*meta18_guard;
     let grounded = &*grounded_guard;
     let add_entity_data_map = &*add_entity_data_guard;
+    let leashes = crate::client::tracking::leash_links().lock().unwrap().clone();
     let velocity_map = &*velocity_guard;
     let (riders, vehicles, mounts): (HashSet<i32>, HashSet<i32>, HashMap<i32, i32>) = {
         let map = passengers().lock().unwrap();
@@ -784,6 +785,24 @@ pub(crate) fn collect_entities(
                     .and_then(block_state_id)
             });
         shared.fuse = meta::<metadata::Fuse>(eref).unwrap_or(0);
+        match kind {
+            EntityKind::ExperienceOrb => {
+                shared.xp_value = meta::<metadata::Value>(eref).unwrap_or(0);
+            }
+            EntityKind::EndCrystal => {
+                shared.beam_target = meta::<metadata::BeamTarget>(eref)
+                    .flatten()
+                    .map(|p| [p.x, p.y, p.z]);
+            }
+            EntityKind::Guardian | EntityKind::ElderGuardian => {
+                shared.attack_target = meta::<metadata::AttackTarget>(eref).unwrap_or(0);
+            }
+            EntityKind::FishingBobber => {
+                shared.owner_id = add_entity_data_map.get(&id).copied().unwrap_or(0);
+            }
+            _ => {}
+        }
+        shared.leash_holder = leashes.get(&id).copied();
 
         if instance_of::<metadata::AbstractArrow>(eref) {
             shared.in_ground = flag::<metadata::InGround>(eref);

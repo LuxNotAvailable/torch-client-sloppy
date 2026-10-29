@@ -211,6 +211,13 @@ pub(crate) fn add_entity_data() -> &'static SideMutex<HashMap<i32, i32>> {
     ADD_ENTITY_DATA.get_or_init(Default::default)
 }
 
+static LEASH_LINKS: OnceLock<SideMutex<HashMap<i32, i32>>> = OnceLock::new();
+
+/// Leashed entity to the entity holding its lead.
+pub(crate) fn leash_links() -> &'static SideMutex<HashMap<i32, i32>> {
+    LEASH_LINKS.get_or_init(Default::default)
+}
+
 static PASSENGERS: OnceLock<SideMutex<HashMap<i32, Vec<i32>>>> = OnceLock::new();
 
 pub(crate) fn passengers() -> &'static SideMutex<HashMap<i32, Vec<i32>>> {

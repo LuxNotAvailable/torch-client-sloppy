@@ -684,6 +684,15 @@ fn entity_state(packet: &ClientboundGamePacket) {
                 }
             }
         }
+        ClientboundGamePacket::SetEntityLink(p) => {
+            // A lead from `source` to `dest`; no holder (0) cuts it.
+            let mut links = crate::client::tracking::leash_links().lock().unwrap();
+            if p.dest_id.0 == 0 {
+                links.remove(&p.source_id.0);
+            } else {
+                links.insert(p.source_id.0, p.dest_id.0);
+            }
+        }
         ClientboundGamePacket::MoveVehicle(p) => {
             crate::play::riding::note_vehicle_correction(p.pos, p.look_direction.y_rot());
         }
@@ -691,7 +700,8 @@ fn entity_state(packet: &ClientboundGamePacket) {
             mark_meta_dirty(p.id.0);
             use azalea_registry::builtin::EntityKind;
             match p.entity_type {
-                EntityKind::FallingBlock => {
+                // A falling block's state, a fishing bobber's angler.
+                EntityKind::FallingBlock | EntityKind::FishingBobber => {
                     add_entity_data().lock().unwrap().insert(p.id.0, p.data);
                 }
                 EntityKind::ItemFrame | EntityKind::GlowItemFrame | EntityKind::Painting => {

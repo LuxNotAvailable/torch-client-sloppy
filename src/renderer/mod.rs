@@ -39,6 +39,7 @@ pub mod view_bob;
 pub mod systems;
 pub mod terrain;
 pub mod terrain_pool;
+pub mod tethers;
 pub mod timeline;
 pub mod visgraph;
 pub mod world_text;

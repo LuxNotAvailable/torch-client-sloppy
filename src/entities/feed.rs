@@ -1349,7 +1349,9 @@ impl EntityAnim {
 
         self.ticks = self.ticks.wrapping_add(1);
         if input.dead {
-            self.death_time = (self.death_time + 1).min(20);
+            // The dragon's death lasts 200 ticks (`dragonDeathTime`); the rest 20.
+            let longest = if self.kind == EntityKind::EnderDragon { 200 } else { 20 };
+            self.death_time = (self.death_time + 1).min(longest);
         } else {
             self.death_time = 0;
         }

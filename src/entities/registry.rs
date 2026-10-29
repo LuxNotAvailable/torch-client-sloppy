@@ -193,6 +193,8 @@ mod tests {
     const DRAWN_ELSEWHERE: &[EntityKind] = &[
         EntityKind::AreaEffectCloud,
         EntityKind::Interaction,
+        // `renderer::tethers` draws bolts with the other per-frame geometry.
+        EntityKind::LightningBolt,
         EntityKind::Marker,
         EntityKind::Player,
         EntityKind::TextDisplay,

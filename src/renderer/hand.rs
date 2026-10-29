@@ -1399,6 +1399,8 @@ fn sync_hands(
     let live_pitch = -frame_view.camera_pitch;
     let live_yaw = wrap_degrees(-frame_view.camera_yaw - 180.0);
     let feet = frame_view.player_pos;
+    let casting =
+        crate::renderer::tethers::casting(&frame_view, crate::client::tracking::local_entity_id());
     let eye = [
         feet[0],
         feet[1] + crate::renderer::systems::eye_height(false),
@@ -1542,11 +1544,13 @@ fn sync_hands(
         set_visible(&mut nodes, state.nodes.map, false);
         set_visible(&mut nodes, state.nodes.item, true);
 
+        // A cast rod shows its cast model through the "using" switch.
+        let using = frame.using || (casting && frame.item.id == "fishing_rod");
         let cached = state
             .uploaded
             .as_ref()
             .filter(|up| {
-                up.using == frame.using
+                up.using == using
                     && up.main_arm_left == frame.main_arm_left
                     && up.item.same_model(&frame.item)
             })
@@ -1558,7 +1562,7 @@ fn sync_hands(
                 let gpu = item_assets.get(
                     &key,
                     hand.display_context(frame.main_arm_left).name(),
-                    frame.using,
+                    using,
                     &mut meshes,
                     &mut images,
                     &mut materials,
@@ -1572,7 +1576,7 @@ fn sync_hands(
                 }
                 state.uploaded = Some(UploadedItem {
                     item: frame.item.clone(),
-                    using: frame.using,
+                    using,
                     main_arm_left: frame.main_arm_left,
                     transform: display,
                 });

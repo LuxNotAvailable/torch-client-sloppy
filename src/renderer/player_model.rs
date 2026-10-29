@@ -1355,6 +1355,10 @@ struct ItemCtx<'a> {
     entity_materials: &'a mut Assets<EntityMaterial>,
     no_item: Handle<Mesh>,
     armor_textures: &'a mut ArmorTextures,
+    /// Players with a fishing bobber out, whose rods show cast; the local
+    /// player's rigs have no id and go by `local_id`.
+    casters: Vec<i32>,
+    local_id: i32,
     #[cfg(feature = "skins")]
     skins: &'a mut super::skin::SkinTextures,
     #[cfg(feature = "skins")]
@@ -1398,6 +1402,13 @@ fn sync_player_models(
         entity_materials: &mut entity_materials,
         no_item: assets.no_item.clone(),
         armor_textures: &mut armor_textures,
+        casters: view
+            .entities
+            .iter()
+            .filter(|e| e.kind == azalea_registry::builtin::EntityKind::FishingBobber)
+            .map(|e| e.shared().owner_id)
+            .collect(),
+        local_id: crate::client::tracking::local_entity_id(),
         #[cfg(feature = "skins")]
         skins: &mut skin_textures,
         #[cfg(feature = "skins")]
@@ -1908,11 +1919,15 @@ fn apply_rig(
         (&sample.main_hand, &sample.off_hand)
     };
     let [right_held, left_held] = &rig.held;
+    // A cast rod shows its cast model through the same switch as a raised
+    // shield ("using").
+    let casting = items.casters.contains(&rig.id.unwrap_or(items.local_id));
+    let cast = |item: &HeldItem| casting && item.id == "fishing_rod";
     update_held_item(
         right_held.node,
         right_item,
         false,
-        sample.right_arm_pose == ArmPose::Block,
+        sample.right_arm_pose == ArmPose::Block || cast(right_item),
         &right_held.material,
         items,
         &mut queries.3,
@@ -1921,7 +1936,7 @@ fn apply_rig(
         left_held.node,
         left_item,
         true,
-        sample.left_arm_pose == ArmPose::Block,
+        sample.left_arm_pose == ArmPose::Block || cast(left_item),
         &left_held.material,
         items,
         &mut queries.3,

@@ -571,8 +571,8 @@ fn reset_session_side_tables(blocking: bool) {
             }
         }
         use crate::client::tracking::{
-            add_entity_data, crit_hits, entity_anims, meta_dirty, meta_index_18, mount_attributes,
-            on_grounds, passengers, velocities,
+            add_entity_data, crit_hits, entity_anims, leash_links, meta_dirty, meta_index_18,
+            mount_attributes, on_grounds, passengers, velocities,
         };
         clear(entity_anims());
         clear(mount_attributes());
@@ -581,6 +581,7 @@ fn reset_session_side_tables(blocking: bool) {
         clear(on_grounds());
         clear(velocities());
         clear(add_entity_data());
+        clear(leash_links());
         clear(passengers());
         clear(crit_hits());
     }
