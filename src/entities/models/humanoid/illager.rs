@@ -153,12 +153,12 @@ fn setup(
     match pose {
         IllagerArmPose::Attacking => {
             let mut limbs = humanoid::Limbs::load(model, parts);
-            if st.extras.main_hand.is_empty() {
+            if st.extras.equipment.main_hand.is_empty() {
                 humanoid::animate_zombie_arms(&mut limbs, st, true);
             } else {
                 humanoid::swing_weapon_down(
                     &mut limbs,
-                    !st.extras.left_handed,
+                    !st.extras.equipment.left_handed,
                     st.attack_time,
                     st.age_ticks,
                 );
@@ -244,7 +244,9 @@ pub fn illusioner_pose(st: &EntityState) -> IllagerArmPose {
 pub fn pillager_pose(st: &EntityState) -> IllagerArmPose {
     if st.extras.charging_crossbow {
         IllagerArmPose::CrossbowCharge
-    } else if st.extras.main_hand.id == "crossbow" || st.extras.off_hand.id == "crossbow" {
+    } else if st.extras.equipment.main_hand.id == "crossbow"
+        || st.extras.equipment.off_hand.id == "crossbow"
+    {
         IllagerArmPose::CrossbowHold
     } else if st.extras.aggressive {
         IllagerArmPose::Attacking

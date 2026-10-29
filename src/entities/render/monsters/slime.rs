@@ -46,7 +46,7 @@ fn magma_cube_texture(_st: &EntityState) -> TexturePath {
 
 fn slime_root(st: &EntityState) -> RootPose {
     let mut pose = default_root(st);
-    let size = st.extras.size as f32;
+    let size = st.extras.look.size as f32;
     let ss = st.extras.squish / (size * 0.5 + 1.0);
     let w = 1.0 / (ss + 1.0);
     let inner = Vec3::new(w * size, 1.0 / w * size, w * size);
@@ -57,7 +57,7 @@ fn slime_root(st: &EntityState) -> RootPose {
 
 fn magma_cube_root(st: &EntityState) -> RootPose {
     let mut pose = default_root(st);
-    let size = st.extras.size as f32;
+    let size = st.extras.look.size as f32;
     let ss = st.extras.squish / (size * 0.5 + 1.0);
     let w = 1.0 / (ss + 1.0);
     pose.hook.scale = Vec3::new(w * size, 1.0 / w * size, w * size);

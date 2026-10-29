@@ -44,7 +44,7 @@ pub struct Variant {
 /// The variant a painting shows, from the `painting_variant` registry.
 pub fn variant(st: &EntityState) -> Option<Variant> {
     static CACHE: OnceLock<Mutex<HashMap<String, Option<Variant>>>> = OnceLock::new();
-    let key = strip_namespace(st.extras.variant.as_deref()?).to_owned();
+    let key = strip_namespace(st.extras.look.variant.as_deref()?).to_owned();
     let mut cache = CACHE.get_or_init(Default::default).lock().unwrap();
     cache
         .entry(key.clone())
@@ -76,13 +76,17 @@ pub fn centre(pos: [f32; 3], facing: crate::direction::Direction, width: u32, he
     let normal = Vec3::from(facing.normal());
     // `getCounterClockWise`: north to west, south to east.
     let left = Vec3::new(normal.z, 0.0, -normal.x);
-    Vec3::new(pos[0].floor() + 0.5, pos[1].floor() + 0.5, pos[2].floor() + 0.5) - normal * 0.46875
+    Vec3::new(
+        pos[0].floor() + 0.5,
+        pos[1].floor() + 0.5,
+        pos[2].floor() + 0.5,
+    ) - normal * 0.46875
         + left * size_offset(width)
         + Vec3::Y * size_offset(height)
 }
 
 fn painting_root(st: &EntityState) -> RootPose {
-    let facing = st.extras.item_frame_direction;
+    let facing = st.extras.object.item_frame_direction;
     let (width, height) = variant(st).map_or((1, 1), |v| (v.width, v.height));
     let at = centre(st.pos, facing, width, height);
     RootPose {
@@ -147,7 +151,12 @@ fn front_mesh(st: &EntityState) -> Mesh {
         let v0 = dv * (h - sy) as f32;
         let v1 = dv * (h - (sy + 1)) as f32;
         out.quad(
-            [[x0, y1, -EDGE], [x1, y1, -EDGE], [x1, y0, -EDGE], [x0, y0, -EDGE]],
+            [
+                [x0, y1, -EDGE],
+                [x1, y1, -EDGE],
+                [x1, y0, -EDGE],
+                [x0, y0, -EDGE],
+            ],
             [[u1, v0], [u0, v0], [u0, v1], [u1, v1]],
             [0.0, 0.0, -1.0],
         );
@@ -162,34 +171,59 @@ fn back_mesh(st: &EntityState) -> Mesh {
     let mut out = QuadMesh::new();
     for (x0, x1, y0, y1, sx, sy) in cells(w, h) {
         out.quad(
-            [[x0, y0, EDGE], [x1, y0, EDGE], [x1, y1, EDGE], [x0, y1, EDGE]],
+            [
+                [x0, y0, EDGE],
+                [x1, y0, EDGE],
+                [x1, y1, EDGE],
+                [x0, y1, EDGE],
+            ],
             [[1.0, 0.0], [0.0, 0.0], [0.0, 1.0], [1.0, 1.0]],
             [0.0, 0.0, 1.0],
         );
         if sy == h - 1 {
             out.quad(
-                [[x0, y0, -EDGE], [x1, y0, -EDGE], [x1, y0, EDGE], [x0, y0, EDGE]],
+                [
+                    [x0, y0, -EDGE],
+                    [x1, y0, -EDGE],
+                    [x1, y0, EDGE],
+                    [x0, y0, EDGE],
+                ],
                 [[0.0, 0.0], [1.0, 0.0], [1.0, STRIP], [0.0, STRIP]],
                 [0.0, 1.0, 0.0],
             );
         }
         if sy == 0 {
             out.quad(
-                [[x0, y1, EDGE], [x1, y1, EDGE], [x1, y1, -EDGE], [x0, y1, -EDGE]],
+                [
+                    [x0, y1, EDGE],
+                    [x1, y1, EDGE],
+                    [x1, y1, -EDGE],
+                    [x0, y1, -EDGE],
+                ],
                 [[0.0, 0.0], [1.0, 0.0], [1.0, STRIP], [0.0, STRIP]],
                 [0.0, -1.0, 0.0],
             );
         }
         if sx == w - 1 {
             out.quad(
-                [[x0, y0, EDGE], [x0, y1, EDGE], [x0, y1, -EDGE], [x0, y0, -EDGE]],
+                [
+                    [x0, y0, EDGE],
+                    [x0, y1, EDGE],
+                    [x0, y1, -EDGE],
+                    [x0, y0, -EDGE],
+                ],
                 [[STRIP, 0.0], [STRIP, 1.0], [0.0, 1.0], [0.0, 0.0]],
                 [-1.0, 0.0, 0.0],
             );
         }
         if sx == 0 {
             out.quad(
-                [[x1, y0, -EDGE], [x1, y1, -EDGE], [x1, y1, EDGE], [x1, y0, EDGE]],
+                [
+                    [x1, y0, -EDGE],
+                    [x1, y1, -EDGE],
+                    [x1, y1, EDGE],
+                    [x1, y0, EDGE],
+                ],
                 [[STRIP, 0.0], [STRIP, 1.0], [0.0, 1.0], [0.0, 0.0]],
                 [1.0, 0.0, 0.0],
             );
@@ -217,13 +251,16 @@ mod tests {
         assert!((c - Vec3::new(1.0, 1.0, 0.03125)).length() < 1e-5, "{c:?}");
         // Facing north, left is west.
         let c = centre([0.0, 0.0, 0.0], Direction::North, 2, 1);
-        assert!((c.x - 0.0).abs() < 1e-5 && (c.y - 0.5).abs() < 1e-5, "{c:?}");
+        assert!(
+            (c.x - 0.0).abs() < 1e-5 && (c.y - 0.5).abs() < 1e-5,
+            "{c:?}"
+        );
     }
 
     #[test]
     fn a_painting_has_a_front_quad_per_block() {
         let mut st = EntityState::new(0, EntityKind::Painting);
-        st.extras.shared_mut().variant = Some("minecraft:kebab".into());
+        st.extras.shared_mut().look.variant = Some("minecraft:kebab".into());
         let mesh = front_mesh(&st);
         assert_eq!(mesh.count_vertices(), 4);
     }

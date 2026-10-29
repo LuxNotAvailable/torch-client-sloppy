@@ -39,7 +39,7 @@ const GENES: [&str; 7] = [
 ];
 
 fn gene(st: &EntityState) -> &'static str {
-    GENES[(st.extras.variant_id.clamp(0, 6)) as usize]
+    GENES[(st.extras.look.variant_id.clamp(0, 6)) as usize]
 }
 
 fn texture(st: &EntityState) -> TexturePath {

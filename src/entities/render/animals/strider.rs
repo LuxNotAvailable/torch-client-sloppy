@@ -30,7 +30,7 @@ pub fn register(registry: &mut Registry) {
             saddle_texture,
             strider::setup_anim,
         )
-        .with_visible(|st| !st.extras.is_baby && st.extras.saddled),
+        .with_visible(|st| !st.extras.is_baby && st.extras.pet.saddled),
     );
 }
 

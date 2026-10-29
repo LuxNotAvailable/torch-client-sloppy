@@ -97,7 +97,7 @@ fn leash_knot_root(_st: &EntityState) -> RootPose {
 
 fn cushion_texture(st: &EntityState) -> TexturePath {
     let color = crate::util::dye::DYES
-        .get(st.extras.color as usize)
+        .get(st.extras.look.color as usize)
         .map_or("white", |dye| dye.name);
     format!("entity/cushion/{color}_cushion").into()
 }

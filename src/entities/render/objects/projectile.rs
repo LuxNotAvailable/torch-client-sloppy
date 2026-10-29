@@ -97,7 +97,7 @@ pub fn register(registry: &mut Registry) {
 }
 
 fn arrow_texture(st: &EntityState) -> TexturePath {
-    if st.extras.arrow_tipped {
+    if st.extras.object.arrow_tipped {
         "entity/projectiles/arrow_tipped".into()
     } else {
         "entity/projectiles/arrow".into()

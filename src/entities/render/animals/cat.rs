@@ -36,8 +36,8 @@ pub fn register(registry: &mut Registry) {
             feline::setup_anim,
         )
         .with_root(root)
-        .with_visible(|st| st.extras.tame && !st.extras.is_baby)
-        .with_tint(|st| dye::dye_tint(st.extras.collar_color)),
+        .with_visible(|st| st.extras.pet.tame && !st.extras.is_baby)
+        .with_tint(|st| dye::dye_tint(st.extras.pet.collar_color)),
     );
     registry.add(
         EntityKind::Cat,
@@ -48,8 +48,8 @@ pub fn register(registry: &mut Registry) {
             feline::baby_setup_anim,
         )
         .with_root(root)
-        .with_visible(|st| st.extras.tame && st.extras.is_baby)
-        .with_tint(|st| dye::dye_tint(st.extras.collar_color)),
+        .with_visible(|st| st.extras.pet.tame && st.extras.is_baby)
+        .with_tint(|st| dye::dye_tint(st.extras.pet.collar_color)),
     );
 }
 
@@ -73,7 +73,7 @@ fn rot_lerp(a: f32, from: f32, to: f32) -> f32 {
 }
 
 fn texture(st: &EntityState) -> TexturePath {
-    let variant = match &st.extras.variant {
+    let variant = match &st.extras.look.variant {
         Some(id) => id.rsplit(':').next().unwrap_or("tabby"),
         None => "tabby",
     };

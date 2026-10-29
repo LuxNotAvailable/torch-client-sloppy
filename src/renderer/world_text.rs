@@ -128,7 +128,7 @@ fn sync_text_displays(
     let mut painted: Option<([Painter<'_>; 2], [Vec<[f32; 3]>; 2])> = None;
     layouts.generation = layouts.generation.wrapping_add(1);
     for anim in view.entities.iter() {
-        let Some(display) = anim.shared().display.as_deref() else {
+        let Some(display) = anim.shared().object.display.as_deref() else {
             continue;
         };
         if display.text.is_empty() {

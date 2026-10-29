@@ -308,7 +308,7 @@ pub fn witch_setup_anim(model: &BakedModel, parts: &mut [PartState], st: &Entity
     let nose = model.id("nose");
     parts[nose].x_rot = (st.age_ticks * speed).sin() * 4.5 * DEG_TO_RAD;
     parts[nose].z_rot = (st.age_ticks * speed).cos() * 2.5 * DEG_TO_RAD;
-    if !st.extras.main_hand.is_empty() {
+    if !st.extras.equipment.main_hand.is_empty() {
         parts[nose].set_pos(0.0, 1.0, -1.5);
         parts[nose].x_rot = -0.9;
     }

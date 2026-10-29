@@ -435,8 +435,8 @@ impl Shown<'_> {
             && st.carrier.and_then(|c| c.specs) == self.carried
             && st.extras.brightness_override == self.light
             && match self.what {
-                What::Item(item) => st.extras.item == *item,
-                What::Block(id) => st.extras.block_state == Some(id),
+                What::Item(item) => st.extras.object.item == *item,
+                What::Block(id) => st.extras.object.block_state == Some(id),
                 What::Entity => true,
             }
     }
@@ -447,8 +447,8 @@ impl Shown<'_> {
             ..Default::default()
         };
         match self.what {
-            What::Item(item) => shared.item = item.clone(),
-            What::Block(state) => shared.block_state = Some(state),
+            What::Item(item) => shared.object.item = item.clone(),
+            What::Block(state) => shared.object.block_state = Some(state),
             What::Entity => {}
         }
         let mut st = EntityState::with_extras(
@@ -763,7 +763,10 @@ fn sync_block_entities(
     crate::prof_span!("render:sync_block_entities");
     let Some(gui) = gui else { return };
     let gpu_rigs = crate::renderer::rig_parts::enabled();
-    if gpu_rigs_were.replace(gpu_rigs).is_some_and(|was| was != gpu_rigs) {
+    if gpu_rigs_were
+        .replace(gpu_rigs)
+        .is_some_and(|was| was != gpu_rigs)
+    {
         for (_, rig) in rigs.live.drain() {
             for layer in &rig.layers {
                 despawn_layer(&mut commands, &mut rig_parts, layer);
@@ -991,13 +994,8 @@ fn sync_block_entities(
                         if *written != layer.states
                             && let Some(rigged) = &gpu.rigged
                         {
-                            let aabb = pose_slot(
-                                &mut rig_parts,
-                                *slot,
-                                &gpu.model,
-                                rigged,
-                                &layer.states,
-                            );
+                            let aabb =
+                                pose_slot(&mut rig_parts, *slot, &gpu.model, rigged, &layer.states);
                             if let Ok(mut held) = aabbs.get_mut(*node) {
                                 *held = aabb;
                             }

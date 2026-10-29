@@ -42,8 +42,8 @@ pub fn register(registry: &mut Registry) {
     for (name, layer, texture, baby) in layers {
         // A swallowed block takes the inner body's place.
         let visible: fn(&EntityState) -> bool = match (baby, name.ends_with("_inner")) {
-            (true, true) => |st| st.extras.is_baby && st.extras.body_block.is_none(),
-            (false, true) => |st| !st.extras.is_baby && st.extras.body_block.is_none(),
+            (true, true) => |st| st.extras.is_baby && st.extras.equipment.body_block.is_none(),
+            (false, true) => |st| !st.extras.is_baby && st.extras.equipment.body_block.is_none(),
             (true, false) => |st| st.extras.is_baby,
             (false, false) => |st| !st.extras.is_baby,
         };
@@ -62,7 +62,7 @@ pub fn register(registry: &mut Registry) {
 }
 
 fn swallowed(st: &EntityState) -> Option<BlockRef> {
-    st.extras.body_block.map(BlockRef::State)
+    st.extras.equipment.body_block.map(BlockRef::State)
 }
 
 /// `TntRenderer.getSwellAmount`: the last ten fuse ticks puff the cube up.
@@ -80,7 +80,7 @@ fn swell(st: &EntityState) -> f32 {
 /// centred a fixed fraction of the way up, turned to face backwards.
 fn swallowed_root(st: &EntityState) -> RootPose {
     let mut pose = default_root(st);
-    let grow = 0.999 * st.extras.size as f32 * swell(st);
+    let grow = 0.999 * st.extras.look.size as f32 * swell(st);
     let pixel = if st.is_invisible { 0.0 } else { 1.0 / 16.0 };
     let centre = if st.extras.is_baby {
         grow * (1.501 - 1.24 + pixel - 0.009)
@@ -117,9 +117,9 @@ fn inner_texture(st: &EntityState) -> TexturePath {
 /// a fixed shrink for the full-size model and a lift onto the ground.
 fn root(st: &EntityState) -> RootPose {
     let mut pose = default_root(st);
-    let size = st.extras.size as f32;
+    let size = st.extras.look.size as f32;
     // A cube holding a block keeps its shape.
-    let ss = if st.extras.body_block.is_some() {
+    let ss = if st.extras.equipment.body_block.is_some() {
         0.0
     } else {
         st.extras.squish / (size * 0.5 + 1.0)

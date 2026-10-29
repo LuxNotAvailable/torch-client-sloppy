@@ -89,11 +89,11 @@ pub fn register(registry: &mut Registry) {
 }
 
 fn is_big(st: &EntityState) -> bool {
-    !st.extras.small
+    !st.extras.stand.small
 }
 
 fn is_small(st: &EntityState) -> bool {
-    st.extras.small
+    st.extras.stand.small
 }
 
 fn armor_stand_texture(_st: &EntityState) -> TexturePath {
@@ -121,7 +121,7 @@ fn armor_stand_root(st: &EntityState) -> RootPose {
 fn avatar_root(st: &EntityState) -> RootPose {
     let mut pose = crate::entities::setup_rotations(st, 90.0);
     pose.hook = hook_scale_then_translate(Vec3::splat(AVATAR_SCALE), Vec3::ZERO);
-    if st.extras.crouching {
+    if st.extras.pose.crouching {
         pose.world_offset.y += st.scale * CROUCH_RENDER_OFFSET_Y;
     }
     pose

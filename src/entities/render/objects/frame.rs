@@ -29,7 +29,7 @@ pub fn register(registry: &mut Registry) {
 
 fn frame_model(st: &EntityState) -> Option<BlockRef> {
     Some(BlockRef::Model(
-        match (st.kind, st.extras.item.map_id.is_some()) {
+        match (st.kind, st.extras.object.item.map_id.is_some()) {
             (EntityKind::GlowItemFrame, false) => FrameModel::GlowFrame,
             (EntityKind::GlowItemFrame, true) => FrameModel::GlowFrameMap,
             (_, false) => FrameModel::Frame,
@@ -39,11 +39,11 @@ fn frame_model(st: &EntityState) -> Option<BlockRef> {
 }
 
 pub fn has_map(st: &EntityState) -> bool {
-    st.extras.item.map_id.is_some()
+    st.extras.object.item.map_id.is_some()
 }
 
 fn facing(st: &EntityState) -> (Vec3, f32, f32) {
-    let dir = st.extras.item_frame_direction;
+    let dir = st.extras.object.item_frame_direction;
     let step = Vec3::from(dir.normal());
     match dir {
         Direction::Up => (step, -90.0, 180.0),
@@ -96,6 +96,7 @@ fn map_mesh(_st: &EntityState) -> Mesh {
 
 fn map_texture(st: &EntityState) -> Option<TexturePath> {
     st.extras
+        .object
         .item
         .map_id
         .map(|id| format!("{MAP_TEXTURE_PREFIX}{id}").into())
@@ -106,7 +107,7 @@ fn map_key(st: &EntityState) -> TexturePath {
 }
 
 fn frame_map_root(st: &EntityState) -> RootPose {
-    let quarter_turns = (st.extras.item_rotation.rem_euclid(4) * 2) as f32;
+    let quarter_turns = (st.extras.object.item_rotation.rem_euclid(4) * 2) as f32;
     let mut pose = frame_root(st);
     pose.hook = pose
         .hook
@@ -129,10 +130,9 @@ mod tests {
 
     fn state(dir: Direction) -> EntityState {
         let mut st = EntityState::new(0, EntityKind::ItemFrame);
-        st.extras = Extras::with_shared(std::sync::Arc::new(ExtrasShared {
-            item_frame_direction: dir,
-            ..ExtrasShared::default()
-        }));
+        let mut shared = ExtrasShared::default();
+        shared.object.item_frame_direction = dir;
+        st.extras = Extras::with_shared(std::sync::Arc::new(shared));
         st
     }
 

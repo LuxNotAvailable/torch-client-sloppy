@@ -133,7 +133,7 @@ pub fn setup_anim(model: &BakedModel, parts: &mut [PartState], st: &EntityState)
     let body = model.id("body");
     parts[body].x_rot = st.x_rot * DEG_TO_RAD;
     parts[body].y_rot = st.y_rot * DEG_TO_RAD;
-    if st.extras.moving {
+    if st.extras.pose.moving {
         let wobble = (st.age_ticks * 0.3).cos();
         parts[body].x_rot += -0.05 - 0.05 * wobble;
         parts[model.id("tail")].x_rot = -0.1 * wobble;

@@ -80,7 +80,8 @@ impl Geo {
 
     fn quad(&mut self, v: [(Vec3, [f32; 2], [f32; 4]); 4]) {
         let i = v.map(|(p, uv, c)| self.vertex(p, uv, c));
-        self.idx.extend_from_slice(&[i[0], i[1], i[2], i[0], i[2], i[3]]);
+        self.idx
+            .extend_from_slice(&[i[0], i[1], i[2], i[0], i[2], i[3]]);
     }
 
     fn tri(&mut self, v: [(Vec3, [f32; 4]); 3]) {
@@ -95,7 +96,8 @@ impl Geo {
             self.vertex(p, [0.0, 0.0], c);
         }
         for i in 0..v.len().saturating_sub(2) as u32 {
-            self.idx.extend_from_slice(&[first + i, first + i + 1, first + i + 2]);
+            self.idx
+                .extend_from_slice(&[first + i, first + i + 1, first + i + 2]);
         }
     }
 
@@ -125,7 +127,7 @@ fn y_rot(v: Vec3, radians: f32) -> Vec3 {
 pub fn casting(view: &FrameView, id: i32) -> bool {
     view.entities
         .iter()
-        .any(|e| e.kind == EntityKind::FishingBobber && e.shared().owner_id == id)
+        .any(|e| e.kind == EntityKind::FishingBobber && e.shared().pet.owner_id == id)
 }
 
 pub struct TethersPlugin;
@@ -165,8 +167,14 @@ pub struct WeatherLayer;
 
 /// The holder and world item models read: the local player, now.
 fn update_item_context(view: Res<FrameView>) {
-    let dimension = crate::renderer::dimension::current().registry_id().to_owned();
-    let dimension = if dimension.contains(':') { dimension } else { format!("minecraft:{dimension}") };
+    let dimension = crate::renderer::dimension::current()
+        .registry_id()
+        .to_owned();
+    let dimension = if dimension.contains(':') {
+        dimension
+    } else {
+        format!("minecraft:{dimension}")
+    };
     let local = crate::client::tracking::local_entity_id();
     crate::items::dispatch::set_context(crate::items::dispatch::WorldContext {
         in_world: view.in_world,
@@ -206,8 +214,16 @@ fn setup(
             ),
             Kind::Lightning | Kind::Rays => (None, LightMode::Emissive, AlphaMode::Add),
             // Flames light themselves (`withBlock(light, 15)`).
-            Kind::Rain => (tiled("environment/rain", &mut images), LightMode::Text, AlphaMode::Blend),
-            Kind::Snow => (tiled("environment/snow", &mut images), LightMode::Text, AlphaMode::Blend),
+            Kind::Rain => (
+                tiled("environment/rain", &mut images),
+                LightMode::Text,
+                AlphaMode::Blend,
+            ),
+            Kind::Snow => (
+                tiled("environment/snow", &mut images),
+                LightMode::Text,
+                AlphaMode::Blend,
+            ),
             Kind::Shadow => (
                 crate::entities::load_entity_image("misc/shadow", &mut images),
                 // Text mode keeps the vertex alpha the fade lives in.
@@ -225,7 +241,10 @@ fn setup(
                 AlphaMode::Mask(0.1),
             ),
         };
-        let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+        let mut mesh = Mesh::new(
+            PrimitiveTopology::TriangleList,
+            RenderAssetUsages::default(),
+        );
         Geo::default().into_mesh(&mut mesh);
         let mesh = meshes.add(mesh);
         // Shadows lie on block tops; a nudge toward the camera keeps them
@@ -363,13 +382,16 @@ fn draw(
 ) {
     let mut geo: HashMap<Kind, Geo> = KINDS.iter().map(|k| (*k, Geo::default())).collect();
     let now = time.elapsed_secs();
-    let (cam_pos, cam_rot, aspect) = camera.single().map_or((Vec3::ZERO, Quat::IDENTITY, 16.0 / 9.0), |(t, p)| {
-        let aspect = match p {
-            Projection::Perspective(p) => p.aspect_ratio,
-            _ => 16.0 / 9.0,
-        };
-        (t.translation(), t.rotation(), aspect)
-    });
+    let (cam_pos, cam_rot, aspect) =
+        camera
+            .single()
+            .map_or((Vec3::ZERO, Quat::IDENTITY, 16.0 / 9.0), |(t, p)| {
+                let aspect = match p {
+                    Projection::Perspective(p) => p.aspect_ratio,
+                    _ => 16.0 / 9.0,
+                };
+                (t.translation(), t.rotation(), aspect)
+            });
 
     if view.in_world {
         let world = World {
@@ -387,10 +409,15 @@ fn draw(
         let fire_frame = fire_frame(now);
         let (mut fire0, mut fire1) = (Geo::default(), Geo::default());
         let mut burn = |pos: Vec3, width: f32, height: f32| {
-            flames(&mut fire0, &mut fire1, pos, width, height, cam_rot, fire_frame);
+            flames(
+                &mut fire0, &mut fire1, pos, width, height, cam_rot, fire_frame,
+            );
         };
         // Shadows: the world's blocks under each caster.
-        let level = crate::client::tracking::current_world().lock().unwrap().clone();
+        let level = crate::client::tracking::current_world()
+            .lock()
+            .unwrap()
+            .clone();
         if let Some(level) = level {
             let level = level.read();
             let solid_top = |p: azalea_core::position::BlockPos| {
@@ -409,25 +436,40 @@ fn draw(
             if intensity > 0.0
                 && let Some(env) = env.filter(|e| e.has_precipitation)
             {
+                use super::weather::Fall;
                 use azalea_core::heightmap_kind::HeightmapKind;
                 use azalea_core::position::ChunkPos;
-                use super::weather::Fall;
-                let camera = [cam_pos.x.floor() as i32, cam_pos.y.floor() as i32, cam_pos.z.floor() as i32];
+                let camera = [
+                    cam_pos.x.floor() as i32,
+                    cam_pos.y.floor() as i32,
+                    cam_pos.z.floor() as i32,
+                ];
                 let min_y = level.chunks.min_y();
                 let terrain = |x: i32, z: i32| {
-                    let chunk = level.chunks.get(&ChunkPos::new(x.div_euclid(16), z.div_euclid(16)));
+                    let chunk = level
+                        .chunks
+                        .get(&ChunkPos::new(x.div_euclid(16), z.div_euclid(16)));
                     chunk
                         .and_then(|c| {
                             c.read()
                                 .heightmaps
                                 .get(&HeightmapKind::MotionBlocking)
-                                .map(|m| m.get_first_available(x.rem_euclid(16) as u8, z.rem_euclid(16) as u8))
+                                .map(|m| {
+                                    m.get_first_available(
+                                        x.rem_euclid(16) as u8,
+                                        z.rem_euclid(16) as u8,
+                                    )
+                                })
                         })
                         .unwrap_or(min_y)
                 };
                 // `coldEnoughToSnow` at the camera's height.
                 let temperature = env.temperature - (camera[1] - 80).max(0) as f32 * 0.00125;
-                let kind = if env.frozen || temperature < 0.15 { Fall::Snow } else { Fall::Rain };
+                let kind = if env.frozen || temperature < 0.15 {
+                    Fall::Snow
+                } else {
+                    Fall::Rain
+                };
                 let columns = super::weather::columns(
                     camera,
                     crate::client::tracking::game_time(),
@@ -437,8 +479,11 @@ fn draw(
                 );
                 for column in &columns {
                     let sample_y = camera[1].max(terrain(column.x, column.z));
-                    let (block, sky) =
-                        super::lightmap::levels_at([column.x as f32, sample_y as f32, column.z as f32]);
+                    let (block, sky) = super::lightmap::levels_at([
+                        column.x as f32,
+                        sample_y as f32,
+                        column.z as f32,
+                    ]);
                     // Snow is lit a quarter of the way to full.
                     let (block, sky) = match column.fall {
                         Fall::Rain => (block, sky),
@@ -451,7 +496,9 @@ fn draw(
                     });
                     let target = target.unwrap();
                     for corners in super::weather::sheet_pieces(column, cam_pos, intensity) {
-                        target.quad(corners.map(|(p, uv, a)| (cam_pos + p, uv, [shade, shade, shade, a])));
+                        target.quad(
+                            corners.map(|(p, uv, a)| (cam_pos + p, uv, [shade, shade, shade, a])),
+                        );
                     }
                 }
             }
@@ -466,9 +513,14 @@ fn draw(
                     return;
                 }
                 let dist_sq = (pos - cam_pos).length_squared();
-                for piece in super::shadows::pieces(pos, radius, strength, dist_sq, &solid_top, &light) {
+                for piece in
+                    super::shadows::pieces(pos, radius, strength, dist_sq, &solid_top, &light)
+                {
                     let uv = |x: f32, z: f32| {
-                        [-(x - pos.x) / 2.0 / radius + 0.5, -(z - pos.z) / 2.0 / radius + 0.5]
+                        [
+                            -(x - pos.x) / 2.0 / radius + 0.5,
+                            -(z - pos.z) / 2.0 / radius + 0.5,
+                        ]
                     };
                     // Vanilla's alpha tops out at a half: 50% is vanilla, 100%
                     // solid black.
@@ -490,13 +542,13 @@ fn draw(
                 cast(Vec3::from(player.anim.position(partial)), 0.5, 1.0);
             }
             for (anim, st) in view.entities.iter().zip(&sampled.states) {
-                let r = super::shadows::radius(anim.kind);
+                let r = crate::entities::facts::facts(anim.kind).shadow_radius;
                 if r > 0.0 && !anim.is_invisible() {
                     // `MobRenderer`: babies' shadows shrink with them.
                     cast(
                         Vec3::from(anim.position(partial)),
                         r * st.age_scale * st.scale,
-                        super::shadows::strength(anim.kind),
+                        crate::entities::facts::facts(anim.kind).shadow_strength,
                     );
                 }
             }
@@ -518,23 +570,38 @@ fn draw(
             if st.display_fire && !st.is_invisible {
                 burn(pos, st.bounding_box_width, st.bounding_box_height);
             }
-            if let Some(holder) = st.extras.leash_holder
+            if let Some(holder) = st.extras.pet.leash_holder
                 && let Some(holder) = world.body(holder)
             {
-                leash(geo.get_mut(&Kind::Leash).unwrap(), pos, &st, holder.rope_hold());
+                leash(
+                    geo.get_mut(&Kind::Leash).unwrap(),
+                    pos,
+                    &st,
+                    holder.rope_hold(),
+                );
             }
             match anim.kind {
-                EntityKind::FishingBobber if st.extras.owner_id != 0 => {
-                    let hand = if st.extras.owner_id == world.local_id && first_person {
-                        Some(first_person_hand(cam_pos, cam_rot, fov, aspect, view.main_hand_left))
+                EntityKind::FishingBobber if st.extras.pet.owner_id != 0 => {
+                    let hand = if st.extras.pet.owner_id == world.local_id && first_person {
+                        Some(first_person_hand(
+                            cam_pos,
+                            cam_rot,
+                            fov,
+                            aspect,
+                            view.main_hand_left,
+                        ))
                     } else {
-                        world.body(st.extras.owner_id).map(|b| third_person_hand(&b))
+                        world
+                            .body(st.extras.pet.owner_id)
+                            .map(|b| third_person_hand(&b))
                     };
                     if let Some(hand) = hand {
                         fishing_line(geo.get_mut(&Kind::Line).unwrap(), pos, hand, cam_pos);
                     }
                 }
-                EntityKind::Guardian | EntityKind::ElderGuardian if st.extras.attack_target != 0 => {
+                EntityKind::Guardian | EntityKind::ElderGuardian
+                    if st.extras.attack_target != 0 =>
+                {
                     let target = st.extras.attack_target;
                     let entry = guardians.entry(anim.id).or_insert((target, now));
                     if entry.0 != target {
@@ -546,22 +613,43 @@ fn draw(
                         let ticks = ((now - entry.1) * 20.0).min(80.0);
                         let eye = pos + Vec3::Y * st.eye_height;
                         let aim = body.pos + Vec3::Y * (body.height * 0.5);
-                        guardian_beam(geo.get_mut(&Kind::GuardianBeam).unwrap(), eye, aim, ticks, ticks / 80.0);
+                        guardian_beam(
+                            geo.get_mut(&Kind::GuardianBeam).unwrap(),
+                            eye,
+                            aim,
+                            ticks,
+                            ticks / 80.0,
+                        );
                     }
                 }
                 EntityKind::EndCrystal => {
-                    if let Some([x, y, z]) = st.extras.beam_target {
+                    if let Some([x, y, z]) = st.extras.object.beam_target {
                         let target = Vec3::new(x as f32 + 0.5, y as f32 + 0.5, z as f32 + 0.5);
                         let delta = pos - target + Vec3::Y * crystal_bob(st.age_ticks);
-                        crystal_beam(geo.get_mut(&Kind::CrystalBeam).unwrap(), target, delta, st.age_ticks);
+                        crystal_beam(
+                            geo.get_mut(&Kind::CrystalBeam).unwrap(),
+                            target,
+                            delta,
+                            st.age_ticks,
+                        );
                     }
                 }
                 EntityKind::EnderDragon => {
                     if st.death_time > 0.0 {
-                        dragon_rays(geo.get_mut(&Kind::Rays).unwrap(), pos, st.y_rot, st.death_time / 200.0);
+                        dragon_rays(
+                            geo.get_mut(&Kind::Rays).unwrap(),
+                            pos,
+                            st.y_rot,
+                            st.death_time / 200.0,
+                        );
                     } else if let Some(crystal) = nearest_crystal(&view.entities, pos, partial) {
                         let delta = crystal - pos;
-                        crystal_beam(geo.get_mut(&Kind::CrystalBeam).unwrap(), pos, delta, st.age_ticks);
+                        crystal_beam(
+                            geo.get_mut(&Kind::CrystalBeam).unwrap(),
+                            pos,
+                            delta,
+                            st.age_ticks,
+                        );
                     }
                 }
                 EntityKind::LightningBolt => {
@@ -593,7 +681,11 @@ fn draw(
         let built = geo.remove(kind).unwrap_or_default();
         let empty = built.idx.is_empty();
         if let Ok(mut vis) = visibility.get_mut(layer.entity) {
-            let wanted = if empty { Visibility::Hidden } else { Visibility::Visible };
+            let wanted = if empty {
+                Visibility::Hidden
+            } else {
+                Visibility::Visible
+            };
             if *vis != wanted {
                 *vis = wanted;
             }
@@ -613,7 +705,15 @@ fn fire_frame(seconds: f32) -> u32 {
 /// `FlameFeatureRenderer`: planes 1.4 tall stacked up the body, alternating
 /// the two fire textures, each 10% narrower and further back, turned to the
 /// camera about the vertical.
-fn flames(fire0: &mut Geo, fire1: &mut Geo, pos: Vec3, width: f32, height: f32, cam: Quat, frame: u32) {
+fn flames(
+    fire0: &mut Geo,
+    fire1: &mut Geo,
+    pos: Vec3,
+    width: f32,
+    height: f32,
+    cam: Quat,
+    frame: u32,
+) {
     let s = width * 1.4;
     let (yaw, _, _) = cam.to_euler(EulerRot::YXZ);
     let turn = Quat::from_rotation_y(yaw);
@@ -630,7 +730,11 @@ fn flames(fire0: &mut Geo, fire1: &mut Geo, pos: Vec3, width: f32, height: f32, 
             std::mem::swap(&mut u0, &mut u1);
         }
         let p = |x: f32, y: f32| pos + turn * (Vec3::new(x, y - yo, z0 + zo) * s);
-        let geo = if layer % 2 == 0 { &mut *fire0 } else { &mut *fire1 };
+        let geo = if layer % 2 == 0 {
+            &mut *fire0
+        } else {
+            &mut *fire1
+        };
         geo.quad([
             (p(-r, 0.0), [u1, v1], white),
             (p(r, 0.0), [u0, v1], white),
@@ -660,13 +764,21 @@ fn leash(geo: &mut Geo, pos: Vec3, st: &crate::entities::state::EntityState, end
     let (x_off, z_off) = (d.z * factor, d.x * factor);
     for backwards in [false, true] {
         let fudge = if backwards { 0.0 } else { 0.05 };
-        let steps: Vec<u32> = if backwards { (0..=24).rev().collect() } else { (0..=24).collect() };
+        let steps: Vec<u32> = if backwards {
+            (0..=24).rev().collect()
+        } else {
+            (0..=24).collect()
+        };
         let mut strip = Vec::with_capacity(50);
         for k in steps {
             let t = k as f32 / 24.0;
             let shade = if k % 2 == backwards as u32 { 0.7 } else { 1.0 };
             let color = srgb(0.5 * shade, 0.4 * shade, 0.3 * shade);
-            let y = if d.y > 0.0 { d.y * t * t } else { d.y - d.y * (1.0 - t) * (1.0 - t) };
+            let y = if d.y > 0.0 {
+                d.y * t * t
+            } else {
+                d.y - d.y * (1.0 - t) * (1.0 - t)
+            };
             let at = start + Vec3::new(d.x * t, y, d.z * t);
             strip.push((at + Vec3::new(-x_off, fudge, z_off), color));
             strip.push((at + Vec3::new(x_off, 0.05 - fudge, -z_off), color));
@@ -705,7 +817,8 @@ fn third_person_hand(body: &Body) -> Vec3 {
 /// curve, a few pixels wide, facing the camera.
 fn fishing_line(geo: &mut Geo, hook: Vec3, hand: Vec3, cam: Vec3) {
     let reach = hand - (hook + Vec3::new(0.0, 0.25, 0.0));
-    let at = |a: f32| hook + Vec3::new(reach.x * a, reach.y * (a * a + a) * 0.5 + 0.25, reach.z * a);
+    let at =
+        |a: f32| hook + Vec3::new(reach.x * a, reach.y * (a * a + a) * 0.5 + 0.25, reach.z * a);
     let black = [0.0, 0.0, 0.0, 1.0];
     for i in 0..16 {
         let (p0, p1) = (at(i as f32 / 16.0), at((i + 1) as f32 / 16.0));
@@ -761,7 +874,11 @@ fn guardian_beam(geo: &mut Geo, eye: Vec3, target: Vec3, time: f32, scale: f32) 
         (p(sx, 0.0, sz), [0.0, min_v], color),
         (p(sx, length, sz), [0.0, max_v], color),
     ]);
-    let v_base = if time.floor() as i32 % 2 == 0 { 0.5 } else { 0.0 };
+    let v_base = if time.floor() as i32 % 2 == 0 {
+        0.5
+    } else {
+        0.0
+    };
     geo.quad([
         (p(wnx, length, wnz), [0.5, v_base + 0.5], color),
         (p(enx, length, enz), [1.0, v_base + 0.5], color),
@@ -827,7 +944,11 @@ fn dragon_rays(geo: &mut Geo, pos: Vec3, y_rot: f32, death: f32) {
         * Mat4::from_translation(Vec3::new(0.0, 0.0, 1.0))
         * Mat4::from_scale(Vec3::new(-1.0, -1.0, 1.0))
         * Mat4::from_translation(Vec3::new(0.0, -1.501 - 1.0, -2.0));
-    let overdrive = if death > 0.8 { ((death - 0.8) / 0.2).min(1.0) } else { 0.0 };
+    let overdrive = if death > 0.8 {
+        ((death - 0.8) / 0.2).min(1.0)
+    } else {
+        0.0
+    };
     // Additive: the inner colour carries its alpha, the outer is clear.
     let inner = [1.0 - overdrive; 3];
     let inner = [inner[0], inner[1], inner[2], 1.0];
@@ -835,7 +956,9 @@ fn dragon_rays(geo: &mut Geo, pos: Vec3, y_rot: f32, death: f32) {
     let mut random = JavaRandom::new(432);
     let count = ((death + death * death) / 2.0 * 60.0).floor() as i32;
     let mut turn = Quat::IDENTITY;
-    let xyz = |x: f32, y: f32, z: f32| Quat::from_rotation_x(x) * Quat::from_rotation_y(y) * Quat::from_rotation_z(z);
+    let xyz = |x: f32, y: f32, z: f32| {
+        Quat::from_rotation_x(x) * Quat::from_rotation_y(y) * Quat::from_rotation_z(z)
+    };
     for _ in 0..count {
         let mut f = || random.next_f32() * PI * 2.0;
         let (a, b, c, d, e) = (f(), f(), f(), f(), f());
@@ -905,10 +1028,26 @@ fn lightning(geo: &mut Geo, pos: Vec3, seed: i64) {
                     let y0 = segment as f32 * 16.0;
                     let y1 = (segment + 1) as f32 * 16.0;
                     geo.quad([
-                        (pos + Vec3::new(sx + s(rx, bottom), y0, sz + s(rz, bottom)), [0.0, 0.0], color),
-                        (pos + Vec3::new(ex + s(rx, top), y1, ez + s(rz, top)), [0.0, 0.0], color),
-                        (pos + Vec3::new(ex + s(lx, top), y1, ez + s(lz, top)), [0.0, 0.0], color),
-                        (pos + Vec3::new(sx + s(lx, bottom), y0, sz + s(lz, bottom)), [0.0, 0.0], color),
+                        (
+                            pos + Vec3::new(sx + s(rx, bottom), y0, sz + s(rz, bottom)),
+                            [0.0, 0.0],
+                            color,
+                        ),
+                        (
+                            pos + Vec3::new(ex + s(rx, top), y1, ez + s(rz, top)),
+                            [0.0, 0.0],
+                            color,
+                        ),
+                        (
+                            pos + Vec3::new(ex + s(lx, top), y1, ez + s(lz, top)),
+                            [0.0, 0.0],
+                            color,
+                        ),
+                        (
+                            pos + Vec3::new(sx + s(lx, bottom), y0, sz + s(lz, bottom)),
+                            [0.0, 0.0],
+                            color,
+                        ),
                     ]);
                 }
             }

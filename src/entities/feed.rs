@@ -944,7 +944,7 @@ impl EntityAnim {
         }
 
         if self.motion != Motion::Server && input.simulate && !input.local_authority {
-            if input.shared.in_ground {
+            if input.shared.object.in_ground {
                 self.body.in_ground = true;
             } else if self.k().was_in_ground {
                 self.body.in_ground = false;
@@ -991,7 +991,7 @@ impl EntityAnim {
                 k.peek = (k.peek + 0.05).clamp(0.0, input.peek_target);
             }
 
-            if input.shared.rearing {
+            if input.shared.pose.rearing {
                 k.jump = (k.jump + (1.0 - k.jump) * 0.4 + 0.05).min(1.0);
             } else {
                 k.jump = (k.jump + (0.8 * k.jump * k.jump * k.jump - k.jump) * 0.6 - 0.05).max(0.0);
@@ -1076,14 +1076,14 @@ impl EntityAnim {
             }
 
             k.crouch_old = k.crouch;
-            k.crouch = if input.shared.crouching {
+            k.crouch = if input.shared.pose.crouching {
                 (k.crouch + 0.2).min(5.0)
             } else {
                 0.0
             };
 
             k.bear_stand_old = k.bear_stand;
-            k.bear_stand = if input.shared.standing {
+            k.bear_stand = if input.shared.pose.standing {
                 (k.bear_stand + 1.0).clamp(0.0, 6.0)
             } else {
                 (k.bear_stand - 1.0).clamp(0.0, 6.0)
@@ -1091,8 +1091,8 @@ impl EntityAnim {
 
             k.panda_old = k.panda;
             for (slot, active) in k.panda.iter_mut().zip([
-                input.shared.sitting,
-                input.shared.on_back,
+                input.shared.pet.sitting,
+                input.shared.pose.on_back,
                 input.shared.panda_rolling,
             ]) {
                 *slot = if active {
@@ -1114,7 +1114,7 @@ impl EntityAnim {
             }
 
             k.horse_eat_old = k.horse_eat;
-            if input.shared.rearing {
+            if input.shared.pose.rearing {
                 k.horse_eat = 0.0;
                 k.horse_eat_old = 0.0;
             } else if input.eating {
@@ -1186,7 +1186,7 @@ impl EntityAnim {
                 k.tail_anim_old = k.tail_anim;
                 if !input.is_in_water {
                     k.tail_anim_speed = 2.0;
-                } else if input.shared.moving {
+                } else if input.shared.pose.moving {
                     if k.tail_anim_speed < 0.5 {
                         k.tail_anim_speed = 4.0;
                     } else {
@@ -1200,7 +1200,7 @@ impl EntityAnim {
                 k.spikes_anim_old = k.spikes_anim;
                 if !input.is_in_water {
                     k.spikes_anim = self.rng.next_f32();
-                } else if input.shared.moving {
+                } else if input.shared.pose.moving {
                     k.spikes_anim += (0.0 - k.spikes_anim) * 0.25;
                 } else {
                     k.spikes_anim += (1.0 - k.spikes_anim) * 0.06;
@@ -1275,13 +1275,13 @@ impl EntityAnim {
             k.lower_head_ticks = k.lower_head_ticks.clamp(0, GOAT_LOWER_HEAD_TICKS);
 
             k.holding_ticks_old = k.holding_ticks;
-            let holding_step = if input.shared.main_hand.is_empty() {
+            let holding_step = if input.shared.equipment.main_hand.is_empty() {
                 -1.0
             } else {
                 1.0
             };
             k.holding_ticks = (k.holding_ticks + holding_step).clamp(0.0, 5.0);
-            if input.shared.dancing {
+            if input.shared.pose.dancing {
                 k.dancing_ticks += 1.0;
                 k.spinning_ticks_old = k.spinning_ticks;
                 k.spinning = k.dancing_ticks % 55.0 < 15.0;
@@ -1300,10 +1300,14 @@ impl EntityAnim {
             k.dash_old = input.shared.dash;
             k.dash_cooldown = (k.dash_cooldown - 1).max(0);
 
-            if input.shared.in_ground && !k.was_in_ground && self.started && k.shake_time <= 0 {
+            if input.shared.object.in_ground
+                && !k.was_in_ground
+                && self.started
+                && k.shake_time <= 0
+            {
                 k.shake_time = ARROW_SHAKE_TICKS;
             }
-            k.was_in_ground = input.shared.in_ground;
+            k.was_in_ground = input.shared.object.in_ground;
             k.shake_time = (k.shake_time - 1).max(0);
 
             if k.fangs_started {
@@ -1350,7 +1354,11 @@ impl EntityAnim {
         self.ticks = self.ticks.wrapping_add(1);
         if input.dead {
             // The dragon's death lasts 200 ticks (`dragonDeathTime`); the rest 20.
-            let longest = if self.kind == EntityKind::EnderDragon { 200 } else { 20 };
+            let longest = if self.kind == EntityKind::EnderDragon {
+                200
+            } else {
+                20
+            };
             self.death_time = (self.death_time + 1).min(longest);
         } else {
             self.death_time = 0;
@@ -1535,7 +1543,7 @@ impl EntityAnim {
         let x_rot = lerp(partial, self.x_rot_old, self.x_rot);
         let mut extras = Extras::with_shared(self.sampled.shared.clone());
         extras.eating = self.sampled.eating;
-        extras.parrot_pose = if self.sampled.shared.sitting {
+        extras.parrot_pose = if self.sampled.shared.pet.sitting {
             2
         } else if self.sampled.on_ground {
             1
@@ -1739,7 +1747,10 @@ impl EntityAnim {
             is_invisible: self.sampled.is_invisible,
             is_in_water: self.sampled.is_in_water,
             is_fully_frozen: self.sampled.is_fully_frozen,
-            is_upside_down: matches!(extras.name.as_deref(), Some("Dinnerbone") | Some("Grumm")),
+            is_upside_down: matches!(
+                extras.nametag.name.as_deref(),
+                Some("Dinnerbone") | Some("Grumm")
+            ),
             is_auto_spin_attack: self.sampled.is_auto_spin_attack,
             has_red_overlay: self.hurt_time > 0 || self.death_time > 0,
             display_fire: self.sampled.display_fire,
@@ -2300,7 +2311,7 @@ mod tests {
         let start = anim.k().tail_anim;
         let mut input = TickInput::new();
         input.is_in_water = true;
-        input.shared_mut().moving = true;
+        input.shared_mut().pose.moving = true;
         anim.tick(input.clone());
         assert!((anim.sample(1.0).extras.tail_animation - (start + 4.0)).abs() < 1e-5);
         assert_eq!(anim.sample(1.0).extras.spikes_animation, 0.0);
@@ -2355,10 +2366,10 @@ mod tests {
     fn a_sitting_parrot_reads_the_sitting_pose() {
         let mut anim = EntityAnim::new(1, EntityKind::Parrot);
         let mut input = TickInput::new();
-        input.shared_mut().sitting = true;
+        input.shared_mut().pet.sitting = true;
         anim.tick(input.clone());
         assert_eq!(anim.sample(1.0).extras.parrot_pose, 2);
-        input.shared_mut().sitting = false;
+        input.shared_mut().pet.sitting = false;
         input.on_ground = true;
         anim.tick(input);
         assert_eq!(anim.sample(1.0).extras.parrot_pose, 1);
@@ -2568,7 +2579,7 @@ mod tests {
     fn a_dancing_allay_spins_for_fifteen_ticks_in_every_fifty_five() {
         let mut anim = EntityAnim::new(1, EntityKind::Allay);
         let mut input = TickInput::new();
-        input.shared_mut().dancing = true;
+        input.shared_mut().pose.dancing = true;
 
         for _ in 0..14 {
             anim.tick(input.clone());
@@ -2604,7 +2615,7 @@ mod tests {
     fn an_allay_raises_its_arms_to_a_held_item_over_five_ticks() {
         let mut anim = EntityAnim::new(1, EntityKind::Allay);
         let mut input = TickInput::new();
-        input.shared_mut().main_hand = crate::renderer::anim::HeldItem {
+        input.shared_mut().equipment.main_hand = crate::renderer::anim::HeldItem {
             id: "amethyst_shard",
             count: 1,
             ..crate::renderer::anim::HeldItem::default()
@@ -2613,7 +2624,7 @@ mod tests {
             anim.tick(input.clone());
         }
         assert!((anim.sample(1.0).extras.holding_progress - 1.0).abs() < 1e-6);
-        input.shared_mut().main_hand = crate::renderer::anim::HeldItem::default();
+        input.shared_mut().equipment.main_hand = crate::renderer::anim::HeldItem::default();
         for _ in 0..5 {
             anim.tick(input.clone());
         }
@@ -2637,7 +2648,7 @@ mod tests {
         let mut input = TickInput::new();
         anim.tick(input.clone());
         assert!(anim.sample(0.0).extras.arrow_shake <= 0.0);
-        input.shared_mut().in_ground = true;
+        input.shared_mut().object.in_ground = true;
         anim.tick(input.clone());
         assert!((anim.sample(0.0).extras.arrow_shake - 6.0).abs() < 1e-6);
         for _ in 0..6 {

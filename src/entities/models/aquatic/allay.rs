@@ -90,7 +90,7 @@ pub fn setup_anim(model: &BakedModel, parts: &mut [PartState], st: &EntityState)
     let idle_bob_factor = 1.0 - flying_factor;
     let holding_item_factor = st.extras.holding_progress;
 
-    if st.extras.dancing {
+    if st.extras.pose.dancing {
         let dance_speed = st.age_ticks * 8.0 * DEG_TO_RAD;
         let root_tilt_z = dance_speed.cos() * 16.0 * DEG_TO_RAD;
         let spinning_progress = st.extras.spinning_progress;

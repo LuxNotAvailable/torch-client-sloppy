@@ -358,9 +358,9 @@ pub fn mob_arm_pose(item: &HeldItem) -> ArmPose {
 }
 
 pub fn mob_arm_poses(st: &EntityState) -> ArmPoses {
-    let main = mob_arm_pose(&st.extras.main_hand);
-    let off = mob_arm_pose(&st.extras.off_hand);
-    if st.extras.left_handed {
+    let main = mob_arm_pose(&st.extras.equipment.main_hand);
+    let off = mob_arm_pose(&st.extras.equipment.off_hand);
+    if st.extras.equipment.left_handed {
         ArmPoses {
             right: off,
             left: main,
@@ -462,7 +462,7 @@ pub fn swing_weapon_down(l: &mut Limbs, main_arm_right: bool, attack_time: f32, 
 }
 
 pub fn animate_zombie_arms(l: &mut Limbs, st: &EntityState, aggressive: bool) {
-    if !st.extras.is_baby || st.extras.main_hand.is_empty() {
+    if !st.extras.is_baby || st.extras.equipment.main_hand.is_empty() {
         let attack_time = st.attack_time;
         let arm_drop = -PI / if aggressive { 1.5 } else { 2.25 };
         let attack_y = (attack_time * PI).sin();
@@ -552,7 +552,7 @@ fn pose_arm(
         ArmPose::Spyglass => {
             arm.x_rot = (head.x_rot
                 - SPYGLASS_ARM_ROT_X
-                - if st.extras.crouching {
+                - if st.extras.pose.crouching {
                     SPYGLASS_ARM_CROUCH_ROT_X
                 } else {
                     0.0
@@ -659,7 +659,7 @@ pub fn pose_humanoid_with(
         l.left_leg.z_rot = -0.078_539_82;
     }
 
-    let right_handed = !st.extras.left_handed;
+    let right_handed = !st.extras.equipment.left_handed;
     let right_first = if st.extras.using_item {
         (!st.extras.use_offhand) == right_handed
     } else {
@@ -713,7 +713,7 @@ pub fn pose_humanoid_with(
 
     setup_attack(l, st, poses);
 
-    if st.extras.crouching {
+    if st.extras.pose.crouching {
         l.body.x_rot = 0.5;
         l.right_arm.x_rot += 0.4;
         l.left_arm.x_rot += 0.4;

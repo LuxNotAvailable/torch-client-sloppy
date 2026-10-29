@@ -45,7 +45,7 @@ pub fn register(registry: &mut Registry) {
             saddle_texture,
             quadruped::setup_anim,
         )
-        .with_visible(|st| is_adult(st) && st.extras.saddled),
+        .with_visible(|st| is_adult(st) && st.extras.pet.saddled),
     );
 }
 
@@ -102,7 +102,7 @@ fn baby_texture(st: &EntityState) -> TexturePath {
 }
 
 fn variant(st: &EntityState) -> &str {
-    match &st.extras.variant {
+    match &st.extras.look.variant {
         Some(id) => id.rsplit(':').next().unwrap_or("temperate"),
         None => "temperate",
     }

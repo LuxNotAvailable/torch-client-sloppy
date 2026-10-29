@@ -45,7 +45,7 @@ pub fn register(registry: &mut Registry) {
 }
 
 pub fn variant(st: &EntityState) -> &str {
-    match &st.extras.variant {
+    match &st.extras.look.variant {
         Some(id) => id.rsplit(':').next().unwrap_or("temperate"),
         None => "temperate",
     }

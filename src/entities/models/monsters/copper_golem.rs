@@ -100,7 +100,8 @@ pub fn setup_anim(model: &BakedModel, parts: &mut [PartState], st: &EntityState)
     parts[head].x_rot = st.x_rot * DEG_TO_RAD;
     parts[head].y_rot = st.y_rot * DEG_TO_RAD;
 
-    let holding = !st.extras.main_hand.is_empty() || !st.extras.off_hand.is_empty();
+    let holding =
+        !st.extras.equipment.main_hand.is_empty() || !st.extras.equipment.off_hand.is_empty();
     if holding {
         keyframe::apply_walk(
             &copper_golem_anim::COPPER_GOLEM_WALK_ITEM,

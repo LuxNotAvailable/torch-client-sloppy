@@ -26,7 +26,7 @@ pub fn register(registry: &mut Registry) {
 }
 
 fn falling_block(st: &EntityState) -> Option<BlockRef> {
-    st.extras.block_state.map(BlockRef::State)
+    st.extras.object.block_state.map(BlockRef::State)
 }
 
 fn falling_block_root(_st: &EntityState) -> RootPose {
@@ -38,17 +38,17 @@ fn falling_block_root(_st: &EntityState) -> RootPose {
 }
 
 fn tnt_block(st: &EntityState) -> Option<BlockRef> {
-    Some(BlockRef::State(st.extras.block_state.unwrap_or_else(
-        || {
+    Some(BlockRef::State(
+        st.extras.object.block_state.unwrap_or_else(|| {
             use azalea::block::BlockState;
             use azalea_registry::builtin::BlockKind;
             BlockState::from(BlockKind::Tnt).id() as u32
-        },
-    )))
+        }),
+    ))
 }
 
 fn tnt_root(st: &EntityState) -> RootPose {
-    let fuse = st.extras.fuse as f32;
+    let fuse = st.extras.object.fuse as f32;
     let scale = if fuse < 10.0 {
         let mut g = (1.0 - fuse / 10.0).clamp(0.0, 1.0);
         g *= g;
@@ -69,7 +69,7 @@ fn tnt_root(st: &EntityState) -> RootPose {
 }
 
 fn display_block(st: &EntityState) -> Option<BlockRef> {
-    st.extras.display_block.map(BlockRef::State)
+    st.extras.object.display_block.map(BlockRef::State)
 }
 
 fn block_display_root(st: &EntityState, camera: &CameraView) -> RootPose {
@@ -89,7 +89,7 @@ mod tests {
     fn the_tnt_swell_ramps_over_the_last_ten_ticks() {
         let scale_at = |fuse: i32| {
             let mut st = EntityState::new(0, EntityKind::Tnt);
-            st.extras.shared_mut().fuse = fuse;
+            st.extras.shared_mut().object.fuse = fuse;
             tnt_root(&st).hook.scale.x
         };
         assert_eq!(scale_at(80), 1.0);

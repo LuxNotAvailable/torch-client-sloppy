@@ -21,8 +21,13 @@ pub fn register(registry: &mut Registry) {
     );
     registry.add(
         EntityKind::DragonFireball,
-        RenderSpec::built("dragon_fireball", fireball_key, fireball_mesh, fireball_texture)
-            .with_camera_root(fireball_root),
+        RenderSpec::built(
+            "dragon_fireball",
+            fireball_key,
+            fireball_mesh,
+            fireball_texture,
+        )
+        .with_camera_root(fireball_root),
     );
     registry.add(
         EntityKind::FishingBobber,
@@ -53,11 +58,11 @@ pub fn orb_icon(value: i32) -> u32 {
 }
 
 fn orb_key(st: &EntityState) -> TexturePath {
-    format!("experience_orb:{}", orb_icon(st.extras.xp_value)).into()
+    format!("experience_orb:{}", orb_icon(st.extras.object.xp_value)).into()
 }
 
 fn orb_mesh(st: &EntityState) -> Mesh {
-    let icon = orb_icon(st.extras.xp_value);
+    let icon = orb_icon(st.extras.object.xp_value);
     let (u, v) = ((icon % 4 * 16) as f32 / 64.0, (icon / 4 * 16) as f32 / 64.0);
     billboard_quad(0.25, [u, v, u + 0.25, v + 0.25])
 }

@@ -184,7 +184,7 @@ impl Ids {
 
 fn prelude(parts: &mut [PartState], id: &Ids, st: &EntityState) {
     let age_scale = st.age_scale;
-    if st.extras.crouching {
+    if st.extras.pose.crouching {
         parts[id.body].y += 1.0 * age_scale;
         parts[id.head].y += 2.0 * age_scale;
         parts[id.tail1].y += 1.0 * age_scale;
@@ -216,7 +216,7 @@ fn walk(parts: &mut [PartState], id: &Ids, st: &EntityState) {
         parts[id.right_hind].x_rot = (pos * 0.6662 + std::f32::consts::PI).cos() * speed;
         parts[id.left_front].x_rot = (pos * 0.6662 + std::f32::consts::PI).cos() * speed;
         parts[id.right_front].x_rot = (pos * 0.6662).cos() * speed;
-        if !st.extras.crouching {
+        if !st.extras.pose.crouching {
             parts[id.tail2].x_rot = 1.7278761 + 0.7853982 * pos.cos() * speed;
         } else {
             parts[id.tail2].x_rot = 1.7278761 + 0.47123894 * pos.cos() * speed;
@@ -229,12 +229,12 @@ pub fn setup_anim(model: &BakedModel, parts: &mut [PartState], st: &EntityState)
     let age_scale = st.age_scale;
     prelude(parts, &id, st);
 
-    if !st.extras.sitting {
+    if !st.extras.pet.sitting {
         parts[id.body].x_rot = std::f32::consts::FRAC_PI_2;
         walk(parts, &id, st);
     }
 
-    if st.extras.sitting {
+    if st.extras.pet.sitting {
         parts[id.body].x_rot = 0.7853982;
         parts[id.body].y += -4.0 * age_scale;
         parts[id.body].z += 5.0 * age_scale;
@@ -291,7 +291,7 @@ pub fn baby_setup_anim(model: &BakedModel, parts: &mut [PartState], st: &EntityS
     let id = Ids::new(model);
     prelude(parts, &id, st);
 
-    if !st.extras.sitting {
+    if !st.extras.pet.sitting {
         walk(parts, &id, st);
     } else {
         parts[id.body].x_rot += -0.43633232;

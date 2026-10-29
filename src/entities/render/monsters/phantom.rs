@@ -36,7 +36,7 @@ fn eyes_texture(_st: &EntityState) -> TexturePath {
 fn root(st: &EntityState) -> RootPose {
     let mut pose = default_root(st);
     pose.extra_rotation *= Quat::from_rotation_x(st.x_rot.to_radians());
-    let scale = 1.0 + 0.15 * st.extras.size as f32;
+    let scale = 1.0 + 0.15 * st.extras.look.size as f32;
     pose.hook = hook_scale_then_translate(Vec3::splat(scale), Vec3::new(0.0, 1.3125, 0.1875));
     pose
 }

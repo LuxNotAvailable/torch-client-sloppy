@@ -85,8 +85,8 @@ pub fn setup_anim(model: &BakedModel, parts: &mut [PartState], st: &EntityState)
         set_arms_charging(
             model,
             parts,
-            !st.extras.main_hand.is_empty(),
-            !st.extras.off_hand.is_empty(),
+            !st.extras.equipment.main_hand.is_empty(),
+            !st.extras.equipment.off_hand.is_empty(),
             moving_arm_z_bob,
         );
     } else {

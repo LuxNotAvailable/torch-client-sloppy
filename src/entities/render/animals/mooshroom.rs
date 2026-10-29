@@ -30,7 +30,7 @@ pub fn register(registry: &mut Registry) {
 }
 
 fn variant(st: &EntityState) -> &'static str {
-    if st.extras.variant_id == 1 {
+    if st.extras.look.variant_id == 1 {
         "brown"
     } else {
         "red"

@@ -161,7 +161,7 @@ pub fn setup_anim(model: &BakedModel, parts: &mut [PartState], st: &EntityState)
     parts[right_front].x_rot = (pos * 0.6662 + std::f32::consts::PI).cos() * 1.4 * speed;
     parts[left_front].x_rot = (pos * 0.6662).cos() * 1.4 * speed;
 
-    let chest = st.extras.has_chest && !st.extras.is_baby;
+    let chest = st.extras.pet.has_chest && !st.extras.is_baby;
     parts[model.id("right_chest")].visible = chest;
     parts[model.id("left_chest")].visible = chest;
 }

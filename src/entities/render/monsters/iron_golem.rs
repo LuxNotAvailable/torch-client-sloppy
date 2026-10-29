@@ -36,7 +36,7 @@ fn texture(_st: &EntityState) -> TexturePath {
 }
 
 fn crackiness_texture(st: &EntityState) -> TexturePath {
-    match st.extras.crackiness {
+    match st.extras.object.crackiness {
         3 => "entity/iron_golem/iron_golem_crackiness_high".into(),
         2 => "entity/iron_golem/iron_golem_crackiness_medium".into(),
         _ => "entity/iron_golem/iron_golem_crackiness_low".into(),
@@ -44,7 +44,7 @@ fn crackiness_texture(st: &EntityState) -> TexturePath {
 }
 
 fn is_cracked(st: &EntityState) -> bool {
-    st.extras.crackiness != 0
+    st.extras.object.crackiness != 0
 }
 
 fn root(st: &EntityState) -> RootPose {

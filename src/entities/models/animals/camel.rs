@@ -257,7 +257,7 @@ fn setup(model: &BakedModel, parts: &mut [PartState], st: &EntityState, set: &Se
         MAX_WALK_ANIMATION_SPEED,
         WALK_ANIMATION_SCALE_FACTOR,
     );
-    if st.extras.sitting {
+    if st.extras.pet.sitting {
         keyframe::apply(set.sit_pose, model, parts, set.sit_pose.length_seconds, 1.0);
     } else if st.extras.dash {
         keyframe::apply(set.dash, model, parts, st.age_ticks / 20.0, 1.0);

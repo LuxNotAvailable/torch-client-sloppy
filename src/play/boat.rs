@@ -8,6 +8,7 @@
 use std::sync::Mutex;
 
 use azalea::app::{App, Plugin};
+use azalea::block::{BlockState, BlockTrait};
 use azalea::ecs::prelude::*;
 use azalea::entity::dimensions::EntityDimensions;
 use azalea::entity::indexing::EntityIdIndex;
@@ -23,7 +24,6 @@ use azalea::physics::collision::entity_collisions::{AabbQuery, CollidableEntityQ
 use azalea::physics::collision::{BlockWithShape, MoveCtx, MoverType, move_colliding};
 use azalea::physics::travel::travel;
 use azalea::world::{World, WorldName, Worlds};
-use azalea::block::{BlockState, BlockTrait};
 use azalea_core::aabb::Aabb;
 use azalea_core::entity_id::MinecraftEntityId;
 use azalea_core::position::{BlockPos, Vec3};
@@ -245,7 +245,8 @@ fn ground_friction(world: &World, bb: &Aabb) -> f32 {
                 let Some(state) = world.get_block_state(pos) else {
                     continue;
                 };
-                if BlockKind::from(state) == BlockKind::LilyPad || state.is_collision_shape_empty() {
+                if BlockKind::from(state) == BlockKind::LilyPad || state.is_collision_shape_empty()
+                {
                     continue;
                 }
                 let offset = Vec3::new(x as f64, y as f64, z as f64);
@@ -261,7 +262,11 @@ fn ground_friction(world: &World, bb: &Aabb) -> f32 {
             }
         }
     }
-    if count == 0 { 0.0 } else { friction / count as f32 }
+    if count == 0 {
+        0.0
+    } else {
+        friction / count as f32
+    }
 }
 
 /// `getWaterLevelAbove`: the surface above a boat that fell into water.
@@ -333,7 +338,11 @@ impl Boat {
             }
         };
         let f = inv_friction as f64;
-        self.velocity = Vec3::new(self.velocity.x * f, self.velocity.y + vspeed, self.velocity.z * f);
+        self.velocity = Vec3::new(
+            self.velocity.x * f,
+            self.velocity.y + vspeed,
+            self.velocity.z * f,
+        );
         self.delta_rotation *= inv_friction;
         if buoyancy > 0.0 {
             self.velocity.y = (self.velocity.y + buoyancy * (GRAVITY / 0.65)) * 0.75;
@@ -400,12 +409,20 @@ fn drive_boat(
     let Some(entity) = id_index.get_by_minecraft_entity(MinecraftEntityId(vehicle_id)) else {
         return;
     };
-    let Ok((entity, kind, mut position, mut physics, mut direction, dimensions, world_name, on_climbable)) =
-        boats.get_mut(entity)
+    let Ok((
+        entity,
+        kind,
+        mut position,
+        mut physics,
+        mut direction,
+        dimensions,
+        world_name,
+        on_climbable,
+    )) = boats.get_mut(entity)
     else {
         return;
     };
-    if !is_boat(**kind) || !crate::play::riding::drives(vehicle_id) {
+    if !crate::entities::facts::facts(**kind).boat || !crate::play::riding::drives(vehicle_id) {
         if driven.take().is_some() {
             set_steered(None);
         }
@@ -442,7 +459,8 @@ fn drive_boat(
         && boat.status != Status::OnLand
     {
         boat.water_level = boat.pos.y + dimensions.height as f64;
-        let target_y = water_level_above(&world, &bb, boat.last_yd) - dimensions.height as f64 + 0.101;
+        let target_y =
+            water_level_above(&world, &bb, boat.last_yd) - dimensions.height as f64 + 0.101;
         let moved = bb.move_relative(Vec3::new(0.0, target_y - boat.pos.y, 0.0));
         azalea::physics::travel::no_collision(
             &world,

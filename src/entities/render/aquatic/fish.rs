@@ -168,19 +168,19 @@ fn pufferfish_root(st: &EntityState) -> RootPose {
 }
 
 fn is_small_salmon(st: &EntityState) -> bool {
-    st.extras.variant_id <= 0
+    st.extras.look.variant_id <= 0
 }
 
 fn is_medium_salmon(st: &EntityState) -> bool {
-    st.extras.variant_id == 1
+    st.extras.look.variant_id == 1
 }
 
 fn is_large_salmon(st: &EntityState) -> bool {
-    st.extras.variant_id >= 2
+    st.extras.look.variant_id >= 2
 }
 
 fn tropical_pattern(st: &EntityState) -> (i32, i32) {
-    let packed = st.extras.variant_id & 0xffff;
+    let packed = st.extras.look.variant_id & 0xffff;
     let (base, index) = (packed & 0xff, packed >> 8 & 0xff);
     if (0..2).contains(&base) && (0..6).contains(&index) {
         (base, index)
@@ -217,11 +217,11 @@ fn dye_tint(ordinal: i32) -> [f32; 4] {
 }
 
 fn tropical_base_tint(st: &EntityState) -> [f32; 4] {
-    dye_tint(st.extras.variant_id >> 16 & 0xff)
+    dye_tint(st.extras.look.variant_id >> 16 & 0xff)
 }
 
 fn tropical_pattern_tint(st: &EntityState) -> [f32; 4] {
-    dye_tint(st.extras.variant_id >> 24 & 0xff)
+    dye_tint(st.extras.look.variant_id >> 24 & 0xff)
 }
 
 fn is_deflated(st: &EntityState) -> bool {

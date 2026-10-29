@@ -276,5 +276,5 @@ pub fn setup_anim(model: &BakedModel, parts: &mut [PartState], st: &EntityState)
 
 pub fn zombie_coral_setup(model: &BakedModel, parts: &mut [PartState], st: &EntityState) {
     setup_anim(model, parts, st);
-    parts[model.id("corals")].visible = st.extras.body_armor.is_none();
+    parts[model.id("corals")].visible = st.extras.equipment.body_armor.is_none();
 }

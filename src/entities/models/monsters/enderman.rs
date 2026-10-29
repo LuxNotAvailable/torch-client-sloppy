@@ -174,7 +174,7 @@ pub fn setup_anim(model: &BakedModel, parts: &mut [PartState], st: &EntityState)
     parts[left_arm].x_rot = parts[left_arm].x_rot.clamp(-0.4, 0.4);
     parts[right_leg].x_rot = parts[right_leg].x_rot.clamp(-0.4, 0.4);
     parts[left_leg].x_rot = parts[left_leg].x_rot.clamp(-0.4, 0.4);
-    if st.extras.carried_block.is_some() {
+    if st.extras.object.carried_block.is_some() {
         parts[right_arm].x_rot = -0.5;
         parts[left_arm].x_rot = -0.5;
         parts[right_arm].z_rot = 0.05;

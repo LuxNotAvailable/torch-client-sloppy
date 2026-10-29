@@ -97,7 +97,7 @@ mod tests {
 
         for id in -1..4 {
             let mut st = EntityState::new(0, EntityKind::Salmon);
-            st.extras.shared_mut().variant_id = id;
+            st.extras.shared_mut().look.variant_id = id;
             assert_eq!(visible(EntityKind::Salmon, &st), 1, "salmon variant {id}");
         }
 
@@ -109,13 +109,13 @@ mod tests {
 
         for base in 0..2 {
             let mut st = EntityState::new(0, EntityKind::TropicalFish);
-            st.extras.shared_mut().variant_id = base;
+            st.extras.shared_mut().look.variant_id = base;
             assert_eq!(visible(EntityKind::TropicalFish, &st), 2, "base {base}");
         }
 
         for variant in ["minecraft:temperate", "minecraft:warm"] {
             let mut st = EntityState::new(0, EntityKind::ZombieNautilus);
-            st.extras.shared_mut().variant = Some(variant.to_string());
+            st.extras.shared_mut().look.variant = Some(variant.to_string());
             assert_eq!(visible(EntityKind::ZombieNautilus, &st), 1, "{variant}");
         }
     }
@@ -126,7 +126,7 @@ mod tests {
         for base in 0..2 {
             for index in 0..6 {
                 let mut st = EntityState::new(0, EntityKind::TropicalFish);
-                st.extras.shared_mut().variant_id = base | index << 8;
+                st.extras.shared_mut().look.variant_id = base | index << 8;
                 for &i in registry.specs_for(EntityKind::TropicalFish) {
                     let spec = &registry.specs[i];
                     if !(spec.visible)(&st) {
@@ -154,12 +154,12 @@ mod tests {
         for id in 0..5 {
             for baby in [false, true] {
                 let mut st = EntityState::new(0, EntityKind::Axolotl);
-                st.extras.shared_mut().variant_id = id;
+                st.extras.shared_mut().look.variant_id = id;
                 st.extras.shared_mut().is_baby = baby;
                 check(EntityKind::Axolotl, &st);
             }
             let mut st = EntityState::new(0, EntityKind::Parrot);
-            st.extras.shared_mut().variant_id = id;
+            st.extras.shared_mut().look.variant_id = id;
             check(EntityKind::Parrot, &st);
         }
 
@@ -171,8 +171,8 @@ mod tests {
             "minecraft:netherite",
         ] {
             let mut st = EntityState::new(0, EntityKind::Nautilus);
-            st.extras.shared_mut().body_armor = Some(material);
-            st.extras.shared_mut().saddled = true;
+            st.extras.shared_mut().equipment.body_armor = Some(material);
+            st.extras.shared_mut().pet.saddled = true;
             check(EntityKind::Nautilus, &st);
         }
 
@@ -195,13 +195,13 @@ mod tests {
             "minecraft:black_harness",
         ] {
             let mut st = EntityState::new(0, EntityKind::HappyGhast);
-            st.extras.shared_mut().body_armor = Some(harness);
+            st.extras.shared_mut().equipment.body_armor = Some(harness);
             check(EntityKind::HappyGhast, &st);
         }
 
         for variant in ["cold", "temperate", "warm"] {
             let mut st = EntityState::new(0, EntityKind::Frog);
-            st.extras.shared_mut().variant = Some(format!("minecraft:{variant}"));
+            st.extras.shared_mut().look.variant = Some(format!("minecraft:{variant}"));
             check(EntityKind::Frog, &st);
         }
 
@@ -260,10 +260,10 @@ mod tests {
                     st.walk_pos = 3.0;
                     st.is_in_water = flag;
                     st.extras.shared_mut().is_baby = flag;
-                    st.extras.shared_mut().resting = flag;
-                    st.extras.shared_mut().dancing = flag;
+                    st.extras.shared_mut().pose.resting = flag;
+                    st.extras.shared_mut().pose.dancing = flag;
                     st.extras.spinning = flag;
-                    st.extras.shared_mut().moving = flag;
+                    st.extras.shared_mut().pose.moving = flag;
                     st.extras.on_ground = flag;
                     st.extras.shared_mut().ridden = flag;
                     st.extras.bee_roll = if flag { 0.5 } else { 0.0 };
@@ -271,7 +271,8 @@ mod tests {
                     st.extras.playing_dead_factor = if flag { 1.0 } else { 0.0 };
                     st.extras.on_ground_factor = if flag { 1.0 } else { 0.0 };
                     st.extras.moving_factor = if flag { 1.0 } else { 0.0 };
-                    st.extras.shared_mut().body_armor = flag.then_some("minecraft:copper");
+                    st.extras.shared_mut().equipment.body_armor =
+                        flag.then_some("minecraft:copper");
                     for pose in [
                         crate::entities::Pose::Standing,
                         crate::entities::Pose::Croaking,

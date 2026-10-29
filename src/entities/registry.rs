@@ -117,7 +117,7 @@ mod tests {
                 spec.name
             );
             let mut st = crate::entities::EntityState::new(0, EntityKind::Pig);
-            st.extras.shared_mut().variant = None;
+            st.extras.shared_mut().look.variant = None;
             let path = (model.texture)(&st);
             if let Some(rest) =
                 path.strip_prefix(crate::entities::render::humanoid::armor::STACK_PREFIX)

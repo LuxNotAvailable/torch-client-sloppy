@@ -78,10 +78,10 @@ pub fn register_set(
         boots_texture,
     ];
     const GLINT: [fn(&EntityState) -> bool; 4] = [
-        |st| st.extras.armor_glint & glint_bit::HEAD != 0,
-        |st| st.extras.armor_glint & glint_bit::CHEST != 0,
-        |st| st.extras.armor_glint & glint_bit::LEGS != 0,
-        |st| st.extras.armor_glint & glint_bit::FEET != 0,
+        |st| st.extras.equipment.armor_glint & glint_bit::HEAD != 0,
+        |st| st.extras.equipment.armor_glint & glint_bit::CHEST != 0,
+        |st| st.extras.equipment.armor_glint & glint_bit::LEGS != 0,
+        |st| st.extras.equipment.armor_glint & glint_bit::FEET != 0,
     ];
     for slot in 0..4 {
         registry.add_many(
@@ -415,19 +415,39 @@ fn over_onto(under: &mut image::RgbaImage, over: &image::RgbaImage) {
 }
 
 fn helmet_texture(st: &EntityState) -> TexturePath {
-    armor_slot_texture(0, st.extras.helmet.as_deref(), st.extras.armor_trims[0]).into()
+    armor_slot_texture(
+        0,
+        st.extras.equipment.helmet.as_deref(),
+        st.extras.equipment.armor_trims[0],
+    )
+    .into()
 }
 
 fn chestplate_texture(st: &EntityState) -> TexturePath {
-    armor_slot_texture(1, st.extras.chestplate.as_deref(), st.extras.armor_trims[1]).into()
+    armor_slot_texture(
+        1,
+        st.extras.equipment.chestplate.as_deref(),
+        st.extras.equipment.armor_trims[1],
+    )
+    .into()
 }
 
 fn leggings_texture(st: &EntityState) -> TexturePath {
-    armor_slot_texture(2, st.extras.leggings.as_deref(), st.extras.armor_trims[2]).into()
+    armor_slot_texture(
+        2,
+        st.extras.equipment.leggings.as_deref(),
+        st.extras.equipment.armor_trims[2],
+    )
+    .into()
 }
 
 fn boots_texture(st: &EntityState) -> TexturePath {
-    armor_slot_texture(3, st.extras.boots.as_deref(), st.extras.armor_trims[3]).into()
+    armor_slot_texture(
+        3,
+        st.extras.equipment.boots.as_deref(),
+        st.extras.equipment.armor_trims[3],
+    )
+    .into()
 }
 
 pub const FILLED: [fn(&EntityState) -> bool; 4] =
@@ -443,16 +463,16 @@ pub const SMALL_STAND: [fn(&EntityState) -> bool; 4] =
     [small_helmet, small_chestplate, small_leggings, small_boots];
 
 fn has_helmet(st: &EntityState) -> bool {
-    st.extras.helmet.is_some()
+    st.extras.equipment.helmet.is_some()
 }
 fn has_chestplate(st: &EntityState) -> bool {
-    st.extras.chestplate.is_some()
+    st.extras.equipment.chestplate.is_some()
 }
 fn has_leggings(st: &EntityState) -> bool {
-    st.extras.leggings.is_some()
+    st.extras.equipment.leggings.is_some()
 }
 fn has_boots(st: &EntityState) -> bool {
-    st.extras.boots.is_some()
+    st.extras.equipment.boots.is_some()
 }
 
 fn adult_helmet(st: &EntityState) -> bool {
@@ -469,29 +489,29 @@ fn adult_boots(st: &EntityState) -> bool {
 }
 
 fn big_helmet(st: &EntityState) -> bool {
-    !st.extras.small && has_helmet(st)
+    !st.extras.stand.small && has_helmet(st)
 }
 fn big_chestplate(st: &EntityState) -> bool {
-    !st.extras.small && has_chestplate(st)
+    !st.extras.stand.small && has_chestplate(st)
 }
 fn big_leggings(st: &EntityState) -> bool {
-    !st.extras.small && has_leggings(st)
+    !st.extras.stand.small && has_leggings(st)
 }
 fn big_boots(st: &EntityState) -> bool {
-    !st.extras.small && has_boots(st)
+    !st.extras.stand.small && has_boots(st)
 }
 
 fn small_helmet(st: &EntityState) -> bool {
-    st.extras.small && has_helmet(st)
+    st.extras.stand.small && has_helmet(st)
 }
 fn small_chestplate(st: &EntityState) -> bool {
-    st.extras.small && has_chestplate(st)
+    st.extras.stand.small && has_chestplate(st)
 }
 fn small_leggings(st: &EntityState) -> bool {
-    st.extras.small && has_leggings(st)
+    st.extras.stand.small && has_leggings(st)
 }
 fn small_boots(st: &EntityState) -> bool {
-    st.extras.small && has_boots(st)
+    st.extras.stand.small && has_boots(st)
 }
 
 #[cfg(test)]

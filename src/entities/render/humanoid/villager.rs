@@ -193,14 +193,14 @@ const PARTIAL_HAT_PROFESSIONS: [&str; 1] = ["butcher"];
 const LEVEL_LOCATIONS: [&str; 5] = ["stone", "iron", "gold", "emerald", "diamond"];
 
 fn villager_type(st: &EntityState) -> &str {
-    match &st.extras.villager_kind {
+    match &st.extras.look.villager_kind {
         Some(id) => id.rsplit(':').next().unwrap_or("plains"),
         None => "plains",
     }
 }
 
 fn profession(st: &EntityState) -> &str {
-    match &st.extras.villager_profession {
+    match &st.extras.look.villager_profession {
         Some(id) => id.rsplit(':').next().unwrap_or("none"),
         None => "none",
     }
@@ -314,6 +314,7 @@ fn profession_or_farmer(st: &EntityState) -> &str {
 fn level(st: &EntityState) -> &'static str {
     let level = st
         .extras
+        .look
         .villager_level
         .clamp(1, LEVEL_LOCATIONS.len() as u32);
     LEVEL_LOCATIONS[level as usize - 1]

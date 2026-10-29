@@ -24,15 +24,15 @@ pub fn register(registry: &mut Registry) {
 
 fn root(st: &EntityState) -> RootPose {
     let mut pose = default_root(st);
-    if st.extras.pouncing || st.extras.faceplanted {
+    if st.extras.pose.pouncing || st.extras.pose.faceplanted {
         pose.extra_rotation *= Quat::from_rotation_x((-st.x_rot).to_radians());
     }
     pose
 }
 
 fn texture(st: &EntityState) -> TexturePath {
-    let snow = st.extras.variant_id == 1;
-    match (snow, st.extras.sleeping, st.extras.is_baby) {
+    let snow = st.extras.look.variant_id == 1;
+    match (snow, st.extras.pose.sleeping, st.extras.is_baby) {
         (false, false, false) => "entity/fox/fox",
         (false, false, true) => "entity/fox/fox_baby",
         (false, true, false) => "entity/fox/fox_sleep",

@@ -44,7 +44,7 @@ pub fn register(registry: &mut Registry) {
 const VARIANTS: [&str; 4] = ["creamy", "white", "brown", "gray"];
 
 fn texture(st: &EntityState) -> TexturePath {
-    let variant = VARIANTS[(st.extras.variant_id.clamp(0, 3)) as usize];
+    let variant = VARIANTS[(st.extras.look.variant_id.clamp(0, 3)) as usize];
     if st.extras.is_baby {
         format!("entity/llama/llama_{variant}_baby").into()
     } else {
@@ -53,7 +53,7 @@ fn texture(st: &EntityState) -> TexturePath {
 }
 
 fn decor_texture_name(st: &EntityState) -> Option<String> {
-    if let Some(item) = &st.extras.body_armor {
+    if let Some(item) = &st.extras.equipment.body_armor {
         let id = item.rsplit(':').next().unwrap_or("");
         if let Some(color) = id.strip_suffix("_carpet") {
             return Some(color.to_string());

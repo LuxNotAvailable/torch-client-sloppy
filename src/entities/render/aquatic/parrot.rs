@@ -14,7 +14,7 @@ pub fn register(registry: &mut Registry) {
 }
 
 fn texture(st: &EntityState) -> TexturePath {
-    match st.extras.variant_id {
+    match st.extras.look.variant_id {
         1 => "entity/parrot/parrot_blue".into(),
         2 => "entity/parrot/parrot_green".into(),
         3 => "entity/parrot/parrot_yellow_blue".into(),

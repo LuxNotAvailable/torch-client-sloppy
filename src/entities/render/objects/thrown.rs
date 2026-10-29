@@ -102,15 +102,16 @@ fn item_key(item: &crate::renderer::anim::HeldItem) -> TexturePath {
 }
 
 fn dropped_item(st: &EntityState) -> TexturePath {
-    item_key(&st.extras.item)
+    item_key(&st.extras.object.item)
 }
 
 fn dropped_count(st: &EntityState) -> u32 {
-    st.extras.item.count as u32
+    st.extras.object.item.count as u32
 }
 
 fn dropped_seed(st: &EntityState) -> i64 {
     st.extras
+        .object
         .item
         .id
         .bytes()
@@ -142,8 +143,8 @@ fn thrown_scale(kind: EntityKind) -> f32 {
 }
 
 fn thrown_item(st: &EntityState) -> TexturePath {
-    if !st.extras.item.is_empty() {
-        return item_key(&st.extras.item);
+    if !st.extras.object.item.is_empty() {
+        return item_key(&st.extras.object.item);
     }
     match st.kind {
         EntityKind::Egg => "egg",
@@ -173,7 +174,7 @@ fn thrown_root(st: &EntityState, camera: &CameraView) -> RootPose {
 }
 
 fn display_item(st: &EntityState) -> TexturePath {
-    item_key(&st.extras.item)
+    item_key(&st.extras.object.item)
 }
 
 fn item_display_root(st: &EntityState, camera: &CameraView) -> RootPose {
@@ -190,7 +191,7 @@ fn item_display_root(st: &EntityState, camera: &CameraView) -> RootPose {
 }
 
 fn spawner_item(st: &EntityState) -> TexturePath {
-    item_key(&st.extras.item)
+    item_key(&st.extras.object.item)
 }
 
 fn spawner_root(st: &EntityState) -> RootPose {
@@ -209,17 +210,19 @@ fn spawner_root(st: &EntityState) -> RootPose {
 }
 
 fn frame_item(st: &EntityState) -> TexturePath {
-    item_key(&st.extras.item)
+    item_key(&st.extras.object.item)
 }
 
 fn frame_item_visible(st: &EntityState) -> bool {
-    !st.extras.item.is_empty() && !super::frame::has_map(st)
+    !st.extras.object.item.is_empty() && !super::frame::has_map(st)
 }
 
 fn frame_item_inner(st: &EntityState) -> Transform {
     Transform {
         translation: Vec3::new(0.0, 0.0, super::frame::contents_depth(st)),
-        rotation: Quat::from_rotation_z((st.extras.item_rotation as f32 * 45.0).to_radians()),
+        rotation: Quat::from_rotation_z(
+            (st.extras.object.item_rotation as f32 * 45.0).to_radians(),
+        ),
         scale: Vec3::splat(0.5),
     }
 }

@@ -1,5 +1,6 @@
 pub mod bake;
 pub mod blockmodel;
+pub mod facts;
 pub mod feed;
 pub mod geom;
 pub mod keyframe;
@@ -152,7 +153,7 @@ fn hurt_overlay_alpha(st: &EntityState) -> f32 {
 fn tnt_flash_alpha(st: &EntityState) -> Option<f32> {
     let lit = |fuse: i32| (fuse / 5) % 2 == 0;
     match st.kind {
-        EntityKind::Tnt => lit(st.extras.fuse).then_some(0.25),
+        EntityKind::Tnt => lit(st.extras.object.fuse).then_some(0.25),
         EntityKind::SulfurCube if st.extras.fuse_remaining > 0.0 => {
             lit(st.extras.fuse_remaining as i32).then_some(0.25)
         }
@@ -213,7 +214,7 @@ fn in_open_view(st: &EntityState, occlusion: &crate::renderer::occlusion::Occlus
 }
 
 fn within_view_range(st: &EntityState, camera: &CameraView) -> bool {
-    let Some(display) = st.extras.display.as_deref() else {
+    let Some(display) = st.extras.object.display.as_deref() else {
         return true;
     };
     let limit = display.view_range * VIEW_RANGE_BLOCKS;
@@ -264,7 +265,7 @@ pub fn display_root(
     camera: &CameraView,
     inner: Quat,
 ) -> (Transform, Option<Quat>) {
-    let Some(display) = st.extras.display.as_deref() else {
+    let Some(display) = st.extras.object.display.as_deref() else {
         return (Transform::IDENTITY, None);
     };
     let orientation = display_orientation(display.billboard, st.body_rot, st.x_rot, camera);
@@ -1104,11 +1105,14 @@ mod display_tests {
         st.pos = [0.0, 0.0, 100.0];
         assert!(within_view_range(&st, &camera), "a pig is never culled");
 
-        st.extras.shared_mut().display = Some(Box::new(state::Display {
+        st.extras.shared_mut().object.display = Some(Box::new(state::Display {
             view_range: 1.0,
             ..state::Display::default()
         }));
-        assert!(!within_view_range(&st, &camera), "100 blocks is past a range of 64");
+        assert!(
+            !within_view_range(&st, &camera),
+            "100 blocks is past a range of 64"
+        );
         st.pos = [0.0, 0.0, 50.0];
         assert!(within_view_range(&st, &camera));
         st.pos = [0.0, 0.0, 65.0];
@@ -1310,7 +1314,10 @@ fn sync_entities(
 ) {
     crate::prof_span!("render:sync_entities");
     let gpu_rigs = crate::renderer::rig_parts::enabled();
-    if gpu_rigs_were.replace(gpu_rigs).is_some_and(|was| was != gpu_rigs) {
+    if gpu_rigs_were
+        .replace(gpu_rigs)
+        .is_some_and(|was| was != gpu_rigs)
+    {
         for (_, rig) in rigs.live.drain() {
             despawn_rig(&mut commands, &mut rig_parts, &rig);
         }
@@ -1942,8 +1949,7 @@ fn spawn_single_rig(
 
     let copies: Vec<Entity> = (0..copy_count)
         .map(|_| {
-            let copy =
-                commands.spawn((Transform::default(), Visibility::Hidden, EntityRigNode));
+            let copy = commands.spawn((Transform::default(), Visibility::Hidden, EntityRigNode));
             #[cfg(feature = "builtin_shaders")]
             copy.insert(bevy::light::NotShadowCaster);
             let copy = copy.id();
@@ -1985,7 +1991,7 @@ fn display_leftover(st: &EntityState) -> Option<Quat> {
     if st.kind != EntityKind::BlockDisplay {
         return None;
     }
-    let display = st.extras.display.as_deref()?;
+    let display = st.extras.object.display.as_deref()?;
     (!display.no_right_rotation() && !display.uniform_scale())
         .then(|| display_quat(display.right_rotation))
 }

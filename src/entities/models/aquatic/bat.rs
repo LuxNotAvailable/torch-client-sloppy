@@ -75,7 +75,7 @@ pub fn layer() -> LayerDef {
 
 pub fn setup_anim(model: &BakedModel, parts: &mut [PartState], st: &EntityState) {
     let seconds = st.age_ticks / 20.0;
-    if st.extras.resting {
+    if st.extras.pose.resting {
         parts[model.id("head")].y_rot = st.y_rot * DEG_TO_RAD;
         apply(&anim::BAT_RESTING, model, parts, seconds, 1.0);
     } else {

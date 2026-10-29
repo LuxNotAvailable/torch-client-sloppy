@@ -111,13 +111,13 @@ mod tests {
                 for flag in [false, true] {
                     let mut st = EntityState::new(0, EntityKind::Pig);
                     st.extras.shared_mut().is_baby = baby;
-                    st.extras.shared_mut().sitting = flag;
-                    st.extras.shared_mut().sleeping = flag;
-                    st.extras.shared_mut().crouching = flag;
+                    st.extras.shared_mut().pet.sitting = flag;
+                    st.extras.shared_mut().pose.sleeping = flag;
+                    st.extras.shared_mut().pose.crouching = flag;
                     st.extras.shared_mut().sprinting = flag;
-                    st.extras.shared_mut().pouncing = flag;
-                    st.extras.shared_mut().faceplanted = flag;
-                    st.extras.shared_mut().has_chest = flag;
+                    st.extras.shared_mut().pose.pouncing = flag;
+                    st.extras.shared_mut().pose.faceplanted = flag;
+                    st.extras.shared_mut().pet.has_chest = flag;
                     st.extras.shared_mut().has_egg = flag;
                     st.extras.shared_mut().on_land = flag;
                     st.extras.shared_mut().ridden = flag;

@@ -166,89 +166,9 @@ pub struct Extras {
     shared: std::sync::Arc<ExtrasShared>,
 }
 
+/// What the entity holds and wears.
 #[derive(Clone, Debug)]
-pub struct ExtrasShared {
-    /// A firework rocket's explosions, for its burst.
-    pub fireworks: Option<std::sync::Arc<Vec<crate::util::particles::FireworkExplosion>>>,
-    pub is_baby: bool,
-    pub powered: bool,
-    pub size: i32,
-    pub sheared: bool,
-    pub wool_color: u8,
-    pub tame: bool,
-    pub sitting: bool,
-    pub collar_color: u8,
-    pub variant: Option<String>,
-    pub variant_id: i32,
-    pub attach_face: Direction,
-    pub color: u8,
-    pub item: HeldItem,
-    pub item_rotation: i32,
-    pub item_frame_direction: Direction,
-    pub villager_kind: Option<&'static str>,
-    pub villager_profession: Option<&'static str>,
-    pub villager_level: u32,
-    pub interested: bool,
-    pub anger_ticks: i32,
-    pub crouching: bool,
-    pub sleeping: bool,
-    pub pouncing: bool,
-    pub faceplanted: bool,
-    pub on_back: bool,
-    pub panda_rolling: bool,
-    pub unhappy_counter: i32,
-    pub left_horn: bool,
-    pub right_horn: bool,
-    pub standing: bool,
-    pub anger_level: i32,
-    pub has_pumpkin: bool,
-    pub charged: bool,
-    pub moving: bool,
-    pub resting: bool,
-    pub dancing: bool,
-    pub saddled: bool,
-    pub has_chest: bool,
-    pub rearing: bool,
-    pub dash: bool,
-    pub sniffer_state: u8,
-    pub armadillo_state: u8,
-    pub copper_golem_state: u8,
-    pub weather_state: u8,
-    pub has_egg: bool,
-    pub laying_egg: bool,
-    pub tearing_down: bool,
-    pub active: bool,
-    pub puff_state: i32,
-    pub carried_block: Option<String>,
-    pub creepy: bool,
-    pub spell: u8,
-    pub charging_crossbow: bool,
-    pub celebrating: bool,
-    pub dragon_phase: i32,
-    pub bubble_time: f32,
-    pub hurt_time: f32,
-    pub hurt_dir: f32,
-    pub damage: f32,
-    pub display_block: Option<u32>,
-    pub display_offset: i32,
-    /// An experience orb's value, which picks its icon.
-    pub xp_value: i32,
-    /// The block an end crystal beams to (`BeamTarget`).
-    pub beam_target: Option<[i32; 3]>,
-    /// The entity a guardian's laser locks on (`AttackTarget`), 0 for none.
-    pub attack_target: i32,
-    /// A fishing bobber's angler, from the add-entity data.
-    pub owner_id: i32,
-    /// Who holds this entity's lead (`ClientboundSetEntityLink`).
-    pub leash_holder: Option<i32>,
-    pub display: Option<Box<Display>>,
-    pub block_state: Option<u32>,
-    pub fuse: i32,
-    pub in_ground: bool,
-    pub small: bool,
-    pub show_arms: bool,
-    pub show_base_plate: bool,
-    pub stand_pose: [[f32; 3]; 6],
+pub struct ExtrasEquipment {
     pub main_hand: HeldItem,
     pub off_hand: HeldItem,
     pub helmet: Option<&'static str>,
@@ -262,9 +182,235 @@ pub struct ExtrasShared {
     pub armor_glint: u8,
     pub armor_trims: [Option<crate::entities::render::humanoid::armor::Trim>; 4],
     pub left_handed: bool,
+}
+
+impl Default for ExtrasEquipment {
+    fn default() -> Self {
+        ExtrasEquipment {
+            main_hand: HeldItem::default(),
+            off_hand: HeldItem::default(),
+            helmet: None,
+            chestplate: None,
+            leggings: None,
+            boots: None,
+            body_armor: None,
+            body_block: None,
+            armor_glint: 0,
+            armor_trims: [None; 4],
+            left_handed: false,
+        }
+    }
+}
+
+/// The name shown above it.
+#[derive(Clone, Debug)]
+pub struct ExtrasNametag {
     pub name: Option<String>,
     pub name_spans: Vec<crate::text::Span>,
     pub name_visible: bool,
+}
+
+impl Default for ExtrasNametag {
+    fn default() -> Self {
+        ExtrasNametag {
+            name: None,
+            name_spans: Vec::new(),
+            name_visible: false,
+        }
+    }
+}
+
+/// Taming, collars, saddles and leads.
+#[derive(Clone, Debug)]
+pub struct ExtrasPet {
+    pub tame: bool,
+    pub sitting: bool,
+    pub collar_color: u8,
+    pub saddled: bool,
+    pub has_chest: bool,
+    /// A fishing bobber's angler, from the add-entity data.
+    pub owner_id: i32,
+    /// Who holds this entity's lead (`ClientboundSetEntityLink`).
+    pub leash_holder: Option<i32>,
+}
+
+impl Default for ExtrasPet {
+    fn default() -> Self {
+        ExtrasPet {
+            owner_id: 0,
+            leash_holder: None,
+            tame: false,
+            sitting: false,
+            collar_color: 14,
+            saddled: false,
+            has_chest: false,
+        }
+    }
+}
+
+/// Variant, colour and size: what it looks like.
+#[derive(Clone, Debug)]
+pub struct ExtrasLook {
+    pub size: i32,
+    pub sheared: bool,
+    pub wool_color: u8,
+    pub variant: Option<String>,
+    pub variant_id: i32,
+    pub color: u8,
+    pub villager_kind: Option<&'static str>,
+    pub villager_profession: Option<&'static str>,
+    pub villager_level: u32,
+}
+
+impl Default for ExtrasLook {
+    fn default() -> Self {
+        ExtrasLook {
+            size: 1,
+            sheared: false,
+            wool_color: 0,
+            variant: None,
+            variant_id: 0,
+            color: 16,
+            villager_kind: None,
+            villager_profession: None,
+            villager_level: 1,
+        }
+    }
+}
+
+/// Non-mob entities: items, frames, displays, falling blocks, TNT, beams.
+#[derive(Clone, Debug)]
+pub struct ExtrasObject {
+    /// A firework rocket's explosions, for its burst.
+    pub fireworks: Option<std::sync::Arc<Vec<crate::util::particles::FireworkExplosion>>>,
+    pub attach_face: Direction,
+    pub item: HeldItem,
+    pub item_rotation: i32,
+    pub item_frame_direction: Direction,
+    pub carried_block: Option<String>,
+    pub display_block: Option<u32>,
+    pub display_offset: i32,
+    /// An experience orb's value, which picks its icon.
+    pub xp_value: i32,
+    /// The block an end crystal beams to (`BeamTarget`).
+    pub beam_target: Option<[i32; 3]>,
+    pub display: Option<Box<Display>>,
+    pub block_state: Option<u32>,
+    pub fuse: i32,
+    pub in_ground: bool,
+    pub crackiness: u8,
+    pub arrow_tipped: bool,
+}
+
+impl Default for ExtrasObject {
+    fn default() -> Self {
+        ExtrasObject {
+            fireworks: None,
+            xp_value: 0,
+            beam_target: None,
+            attach_face: Direction::Down,
+            item: HeldItem::default(),
+            item_rotation: 0,
+            item_frame_direction: Direction::South,
+            carried_block: None,
+            display_block: None,
+            display_offset: 0,
+            display: None,
+            block_state: None,
+            fuse: 0,
+            in_ground: false,
+            crackiness: 0,
+            arrow_tipped: false,
+        }
+    }
+}
+
+/// Armour stand settings.
+#[derive(Clone, Debug)]
+pub struct ExtrasStand {
+    pub small: bool,
+    pub show_arms: bool,
+    pub show_base_plate: bool,
+    pub stand_pose: [[f32; 3]; 6],
+}
+
+impl Default for ExtrasStand {
+    fn default() -> Self {
+        ExtrasStand {
+            small: false,
+            show_arms: false,
+            show_base_plate: true,
+            stand_pose: [[0.0; 3]; 6],
+        }
+    }
+}
+
+/// Body poses mobs switch between.
+#[derive(Clone, Debug)]
+pub struct ExtrasPose {
+    pub crouching: bool,
+    pub sleeping: bool,
+    pub pouncing: bool,
+    pub faceplanted: bool,
+    pub on_back: bool,
+    pub standing: bool,
+    pub moving: bool,
+    pub resting: bool,
+    pub dancing: bool,
+    pub rearing: bool,
+}
+
+impl Default for ExtrasPose {
+    fn default() -> Self {
+        ExtrasPose {
+            crouching: false,
+            sleeping: false,
+            pouncing: false,
+            faceplanted: false,
+            on_back: false,
+            standing: false,
+            moving: false,
+            resting: false,
+            dancing: false,
+            rearing: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ExtrasShared {
+    pub is_baby: bool,
+    pub powered: bool,
+    pub interested: bool,
+    pub anger_ticks: i32,
+    pub panda_rolling: bool,
+    pub unhappy_counter: i32,
+    pub left_horn: bool,
+    pub right_horn: bool,
+    pub anger_level: i32,
+    pub has_pumpkin: bool,
+    pub charged: bool,
+    pub dash: bool,
+    pub sniffer_state: u8,
+    pub armadillo_state: u8,
+    pub copper_golem_state: u8,
+    pub weather_state: u8,
+    pub has_egg: bool,
+    pub laying_egg: bool,
+    pub tearing_down: bool,
+    pub active: bool,
+    pub puff_state: i32,
+    pub creepy: bool,
+    pub spell: u8,
+    pub charging_crossbow: bool,
+    pub celebrating: bool,
+    pub dragon_phase: i32,
+    pub bubble_time: f32,
+    pub hurt_time: f32,
+    pub hurt_dir: f32,
+    pub damage: f32,
+    /// The entity a guardian's laser locks on (`AttackTarget`), 0 for none.
+    pub attack_target: i32,
     pub tail_angle: f32,
     pub sprinting: bool,
     pub lying_on_sleeping_player: bool,
@@ -286,15 +432,20 @@ pub struct ExtrasShared {
     pub aggressive: bool,
     pub charging: bool,
     pub admiring: bool,
-    pub crackiness: u8,
     pub invulnerable_ticks: f32,
     pub can_move: bool,
     pub under_water: bool,
-    pub arrow_tipped: bool,
     pub skull_dangerous: bool,
     pub shows_bottom: bool,
     pub dark_ticks_remaining: i32,
     pub brightness_override: i32,
+    pub equipment: ExtrasEquipment,
+    pub nametag: ExtrasNametag,
+    pub pet: ExtrasPet,
+    pub look: ExtrasLook,
+    pub object: ExtrasObject,
+    pub stand: ExtrasStand,
+    pub pose: ExtrasPose,
 }
 
 impl ExtrasShared {
@@ -303,11 +454,11 @@ impl ExtrasShared {
     }
 
     pub fn magic_name_toast(&self) -> bool {
-        self.name.as_deref() == Some("Toast")
+        self.nametag.name.as_deref() == Some("Toast")
     }
 
     pub fn magic_name_jeb(&self) -> bool {
-        self.name.as_deref() == Some("jeb_")
+        self.nametag.name.as_deref() == Some("jeb_")
     }
 }
 
@@ -406,51 +557,18 @@ impl Default for Extras {
 impl Default for ExtrasShared {
     fn default() -> Self {
         ExtrasShared {
-            fireworks: None,
-            xp_value: 0,
-            beam_target: None,
             attack_target: 0,
-            owner_id: 0,
-            leash_holder: None,
             is_baby: false,
             powered: false,
-            size: 1,
-            sheared: false,
-            wool_color: 0,
-            tame: false,
-            sitting: false,
-            collar_color: 14,
-            variant: None,
-            variant_id: 0,
-            attach_face: Direction::Down,
-            color: 16,
-            item: HeldItem::default(),
-            item_rotation: 0,
-            item_frame_direction: Direction::South,
-            villager_kind: None,
-            villager_profession: None,
-            villager_level: 1,
             interested: false,
             anger_ticks: 0,
-            crouching: false,
-            sleeping: false,
-            pouncing: false,
-            faceplanted: false,
-            on_back: false,
             panda_rolling: false,
             unhappy_counter: 0,
             left_horn: true,
             right_horn: true,
-            standing: false,
             anger_level: 0,
             has_pumpkin: true,
             charged: false,
-            moving: false,
-            resting: false,
-            dancing: false,
-            saddled: false,
-            has_chest: false,
-            rearing: false,
             dash: false,
             sniffer_state: 0,
             armadillo_state: 0,
@@ -461,7 +579,6 @@ impl Default for ExtrasShared {
             tearing_down: false,
             active: false,
             puff_state: 0,
-            carried_block: None,
             creepy: false,
             spell: 0,
             charging_crossbow: false,
@@ -471,30 +588,6 @@ impl Default for ExtrasShared {
             hurt_time: 0.0,
             hurt_dir: 1.0,
             damage: 0.0,
-            display_block: None,
-            display_offset: 0,
-            display: None,
-            block_state: None,
-            fuse: 0,
-            in_ground: false,
-            small: false,
-            show_arms: false,
-            show_base_plate: true,
-            stand_pose: [[0.0; 3]; 6],
-            main_hand: HeldItem::default(),
-            off_hand: HeldItem::default(),
-            helmet: None,
-            chestplate: None,
-            leggings: None,
-            boots: None,
-            body_armor: None,
-            body_block: None,
-            armor_glint: 0,
-            armor_trims: [None; 4],
-            left_handed: false,
-            name: None,
-            name_spans: Vec::new(),
-            name_visible: false,
             tail_angle: 0.628_318_55,
             sprinting: false,
             lying_on_sleeping_player: false,
@@ -516,15 +609,20 @@ impl Default for ExtrasShared {
             aggressive: false,
             charging: false,
             admiring: false,
-            crackiness: 0,
             invulnerable_ticks: 0.0,
             can_move: true,
             under_water: false,
-            arrow_tipped: false,
             skull_dangerous: false,
             shows_bottom: true,
             dark_ticks_remaining: 0,
             brightness_override: -1,
+            equipment: ExtrasEquipment::default(),
+            nametag: ExtrasNametag::default(),
+            pet: ExtrasPet::default(),
+            look: ExtrasLook::default(),
+            object: ExtrasObject::default(),
+            stand: ExtrasStand::default(),
+            pose: ExtrasPose::default(),
         }
     }
 }

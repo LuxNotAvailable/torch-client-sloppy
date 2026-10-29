@@ -142,7 +142,7 @@ pub fn happy_ghast_baby_ropes_layer() -> LayerDef {
 const BODY_SQUEEZE: f32 = 0.9375;
 
 pub fn happy_ghast_setup(model: &BakedModel, parts: &mut [PartState], st: &EntityState) {
-    if st.extras.body_armor.is_some() {
+    if st.extras.equipment.body_armor.is_some() {
         let body = model.id("body");
         parts[body].x_scale = BODY_SQUEEZE;
         parts[body].y_scale = BODY_SQUEEZE;

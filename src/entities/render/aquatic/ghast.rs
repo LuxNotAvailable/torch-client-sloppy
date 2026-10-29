@@ -104,11 +104,11 @@ fn happy_ghast_baby_texture(_st: &EntityState) -> TexturePath {
 }
 
 fn shows_adult_harness(st: &EntityState) -> bool {
-    !st.extras.is_baby && st.extras.body_armor.is_some()
+    !st.extras.is_baby && st.extras.equipment.body_armor.is_some()
 }
 
 fn shows_baby_harness(st: &EntityState) -> bool {
-    st.extras.is_baby && st.extras.body_armor.is_some()
+    st.extras.is_baby && st.extras.equipment.body_armor.is_some()
 }
 
 fn shows_adult_ropes(st: &EntityState) -> bool {
@@ -124,7 +124,7 @@ fn ropes_texture(_st: &EntityState) -> TexturePath {
 }
 
 fn harness_texture(st: &EntityState) -> TexturePath {
-    let asset = match &st.extras.body_armor {
+    let asset = match &st.extras.equipment.body_armor {
         Some(id) => id.rsplit(':').next().unwrap_or("white_harness"),
         None => "white_harness",
     };

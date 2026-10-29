@@ -25,7 +25,7 @@ pub fn register(registry: &mut Registry) {
 }
 
 fn variant(st: &EntityState) -> &'static str {
-    match st.extras.variant_id {
+    match st.extras.look.variant_id {
         1 => "white",
         2 => "black",
         3 => "white_splotched",

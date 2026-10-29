@@ -43,7 +43,7 @@ pub fn register(registry: &mut Registry) {
             wool_texture,
             sheep::setup_anim,
         )
-        .with_visible(|st| !st.extras.sheared && !st.extras.is_baby)
+        .with_visible(|st| !st.extras.look.sheared && !st.extras.is_baby)
         .with_tint(dye::sheep_wool_tint),
     );
     registry.add(
@@ -54,7 +54,7 @@ pub fn register(registry: &mut Registry) {
             wool_texture,
             sheep::setup_anim,
         )
-        .with_visible(|st| !st.extras.sheared && st.extras.is_baby)
+        .with_visible(|st| !st.extras.look.sheared && st.extras.is_baby)
         .with_tint(dye::sheep_wool_tint),
     );
 }
@@ -80,5 +80,5 @@ fn wool_texture(st: &EntityState) -> TexturePath {
 }
 
 fn undercoat_visible(st: &EntityState) -> bool {
-    !st.extras.is_baby && (st.extras.magic_name_jeb() || st.extras.wool_color != 0)
+    !st.extras.is_baby && (st.extras.magic_name_jeb() || st.extras.look.wool_color != 0)
 }

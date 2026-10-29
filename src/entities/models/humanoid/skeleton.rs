@@ -178,7 +178,7 @@ pub fn bogged_layer() -> LayerDef {
 pub fn arm_poses(st: &EntityState) -> ArmPoses {
     let mut poses = humanoid::mob_arm_poses(st);
     if st.extras.aggressive && is_holding_bow(st) {
-        if st.extras.left_handed {
+        if st.extras.equipment.left_handed {
             poses.left = ArmPose::BowAndArrow;
         } else {
             poses.right = ArmPose::BowAndArrow;
@@ -188,7 +188,7 @@ pub fn arm_poses(st: &EntityState) -> ArmPoses {
 }
 
 fn is_holding_bow(st: &EntityState) -> bool {
-    st.extras.main_hand.id == "bow"
+    st.extras.equipment.main_hand.id == "bow"
 }
 
 pub fn setup_anim(model: &BakedModel, parts: &mut [PartState], st: &EntityState) {
@@ -215,6 +215,6 @@ pub fn setup_anim(model: &BakedModel, parts: &mut [PartState], st: &EntityState)
 pub fn bogged_setup_anim(model: &BakedModel, parts: &mut [PartState], st: &EntityState) {
     setup_anim(model, parts, st);
     if let Some(mushrooms) = model.find("mushrooms") {
-        parts[mushrooms].visible = !st.extras.sheared;
+        parts[mushrooms].visible = !st.extras.look.sheared;
     }
 }

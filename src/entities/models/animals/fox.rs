@@ -175,10 +175,10 @@ pub fn setup_anim(model: &BakedModel, parts: &mut [PartState], st: &EntityState)
     parts[id.right_front].x_rot = (pos * 0.6662 + std::f32::consts::PI).cos() * 1.4 * speed;
     parts[id.left_front].x_rot = (pos * 0.6662).cos() * 1.4 * speed;
 
-    if st.extras.crouching {
+    if st.extras.pose.crouching {
         crouching_pose(parts, &id, st);
         parts[id.body].y += st.extras.crouch_amount;
-    } else if st.extras.sleeping {
+    } else if st.extras.pose.sleeping {
         sleeping_pose(parts, &id);
         parts[id.body].z_rot = -std::f32::consts::FRAC_PI_2;
         parts[id.body].y += 5.0;
@@ -187,7 +187,7 @@ pub fn setup_anim(model: &BakedModel, parts: &mut [PartState], st: &EntityState)
         parts[id.head].y += 2.99;
         parts[id.head].y_rot = -2.0943952;
         parts[id.head].z_rot = 0.0;
-    } else if st.extras.sitting {
+    } else if st.extras.pet.sitting {
         sitting_pose(parts, &id);
         parts[id.body].x_rot = 0.5235988;
         parts[id.body].y -= 7.0;
@@ -206,7 +206,7 @@ pub fn setup_anim(model: &BakedModel, parts: &mut [PartState], st: &EntityState)
         parts[id.tail].z -= 1.0;
     }
 
-    if st.extras.pouncing {
+    if st.extras.pose.pouncing {
         let crouch = st.extras.crouch_amount / 2.0;
         parts[id.body].y -= crouch;
         parts[id.head].y -= crouch;
@@ -229,10 +229,10 @@ pub fn baby_setup_anim(model: &BakedModel, parts: &mut [PartState], st: &EntityS
     );
 
     let age_scale = st.age_scale;
-    if st.extras.crouching {
+    if st.extras.pose.crouching {
         crouching_pose(parts, &id, st);
         parts[id.body].y += st.extras.crouch_amount / 6.0;
-    } else if st.extras.sleeping {
+    } else if st.extras.pose.sleeping {
         sleeping_pose(parts, &id);
         parts[id.body].z_rot = -std::f32::consts::FRAC_PI_2;
         parts[id.body].x_rot = -0.17453292;
@@ -248,7 +248,7 @@ pub fn baby_setup_anim(model: &BakedModel, parts: &mut [PartState], st: &EntityS
         parts[id.head].z -= 4.0;
         parts[id.head].y_rot = -2.0943952;
         parts[id.head].z_rot = 0.0;
-    } else if st.extras.sitting {
+    } else if st.extras.pet.sitting {
         sitting_pose(parts, &id);
         parts[id.body].x_rot = -0.959931;
         parts[id.body].z -= 4.5 * age_scale;
@@ -305,16 +305,16 @@ fn crouching_pose(parts: &mut [PartState], id: &Ids, st: &EntityState) {
 
 fn finish(parts: &mut [PartState], id: &Ids, st: &EntityState) {
     let e = &st.extras;
-    if !e.sleeping && !e.faceplanted && !e.crouching {
+    if !e.pose.sleeping && !e.pose.faceplanted && !e.pose.crouching {
         parts[id.head].x_rot = st.x_rot * DEG_TO_RAD;
         parts[id.head].y_rot = st.y_rot * DEG_TO_RAD;
     }
-    if e.sleeping {
+    if e.pose.sleeping {
         parts[id.head].x_rot = 0.0;
         parts[id.head].y_rot = -2.0943952;
         parts[id.head].z_rot = (st.age_ticks * 0.027).cos() / 22.0;
     }
-    if e.faceplanted {
+    if e.pose.faceplanted {
         let leg_motion_pos = st.age_ticks * 0.67;
         parts[id.right_hind].x_rot = (leg_motion_pos * 0.4662).cos() * 0.1;
         parts[id.left_hind].x_rot = (leg_motion_pos * 0.4662 + std::f32::consts::PI).cos() * 0.1;

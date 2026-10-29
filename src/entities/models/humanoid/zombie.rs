@@ -131,8 +131,8 @@ pub fn baby_drowned_outer_layer() -> LayerDef {
 
 pub fn drowned_arm_poses(st: &EntityState) -> ArmPoses {
     let mut poses = humanoid::mob_arm_poses(st);
-    if st.extras.aggressive && st.extras.main_hand.id == "trident" {
-        if st.extras.left_handed {
+    if st.extras.aggressive && st.extras.equipment.main_hand.id == "trident" {
+        if st.extras.equipment.left_handed {
             poses.left = ArmPose::ThrowTrident;
         } else {
             poses.right = ArmPose::ThrowTrident;

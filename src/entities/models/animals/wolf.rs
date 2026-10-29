@@ -217,7 +217,7 @@ fn common(
         parts[tail].y_rot = (pos * 0.6662).cos() * 1.4 * speed;
     }
 
-    if st.extras.sitting {
+    if st.extras.pet.sitting {
         let age_scale = st.age_scale;
         parts[body].y += 4.0 * age_scale;
         parts[body].z -= 2.0 * age_scale;

@@ -115,7 +115,7 @@ pub fn armor_setup_anim(model: &BakedModel, parts: &mut [PartState], st: &Entity
     let mut limbs = humanoid::Limbs::load(model, parts);
     humanoid::pose_humanoid(&mut limbs, st, humanoid::ArmPoses::default());
     limbs.store(parts);
-    let pose = st.extras.stand_pose;
+    let pose = st.extras.stand.stand_pose;
     for (name, angles) in [
         ("head", pose[0]),
         ("body", pose[1]),
@@ -142,13 +142,13 @@ pub fn setup_anim(model: &BakedModel, parts: &mut [PartState], st: &EntityState)
 
     let base_plate = model.id("base_plate");
     parts[base_plate].y_rot = DEG_TO_RAD * -st.body_rot;
-    parts[base_plate].visible = st.extras.show_base_plate;
+    parts[base_plate].visible = st.extras.stand.show_base_plate;
 
-    let show_arms = st.extras.show_arms;
+    let show_arms = st.extras.stand.show_arms;
     parts[model.id("left_arm")].visible = show_arms;
     parts[model.id("right_arm")].visible = show_arms;
 
-    let body = st.extras.stand_pose[1];
+    let body = st.extras.stand.stand_pose[1];
     for name in ["right_body_stick", "left_body_stick", "shoulder_stick"] {
         let id = model.id(name);
         parts[id].set_rotation(

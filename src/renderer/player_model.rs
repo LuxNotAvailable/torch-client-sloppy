@@ -757,9 +757,19 @@ fn stinger_layer() -> geom::LayerDef {
     let mut mesh = MeshDef::new();
     {
         let root = mesh.root();
-        let cross = CubeList::new().tex_offs(0, 0).add_box(-1.0, -0.5, 0.0, 2.0, 1.0, 0.0);
-        root.child("cross_1", cross.clone(), PartPose::rotation(FRAC_PI_4, 0.0, 0.0));
-        root.child("cross_2", cross, PartPose::rotation(PI * 3.0 / 4.0, 0.0, 0.0));
+        let cross = CubeList::new()
+            .tex_offs(0, 0)
+            .add_box(-1.0, -0.5, 0.0, 2.0, 1.0, 0.0);
+        root.child(
+            "cross_1",
+            cross.clone(),
+            PartPose::rotation(FRAC_PI_4, 0.0, 0.0),
+        );
+        root.child(
+            "cross_2",
+            cross,
+            PartPose::rotation(PI * 3.0 / 4.0, 0.0, 0.0),
+        );
     }
     LayerDef::create(mesh, 16, 16)
 }
@@ -770,19 +780,30 @@ fn bake_whole(layer: geom::LayerDef, meshes: &mut Assets<Mesh>) -> Handle<Mesh> 
     let baked = geom::bake(&layer);
     let mut posed = Vec::new();
     baked.pose_parts(&baked.rest_pose(), Mat4::IDENTITY, &mut posed);
-    let (mut positions, mut normals, mut uvs, mut indices) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let (mut positions, mut normals, mut uvs, mut indices) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     for (part, pose) in baked.parts.iter().zip(&posed) {
-        let Some(arrays) = part.arrays() else { continue };
+        let Some(arrays) = part.arrays() else {
+            continue;
+        };
         let base = positions.len() as u32;
         for (p, n) in arrays.positions.iter().zip(arrays.normals) {
             positions.push((pose.mat.transform_point3(Vec3::from(*p)) * 16.0).to_array());
-            normals.push(pose.mat.transform_vector3(Vec3::from(*n)).normalize_or_zero().to_array());
+            normals.push(
+                pose.mat
+                    .transform_vector3(Vec3::from(*n))
+                    .normalize_or_zero()
+                    .to_array(),
+            );
         }
         uvs.extend_from_slice(arrays.uvs);
         indices.extend(arrays.indices.iter().map(|i| i + base));
     }
     let colors = vec![[1.0f32; 4]; positions.len()];
-    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
@@ -806,7 +827,8 @@ fn stuck_placements(seed: i32, count: usize, on_surface: bool) -> Vec<(usize, Tr
             let part = STUCK_BODY_PARTS[random.next_int(6) as usize];
             // `getRandomCube`: a player's parts have the one cube each.
             random.next_int(1);
-            let (mut mx, mut my, mut mz) = (random.next_f32(), random.next_f32(), random.next_f32());
+            let (mut mx, mut my, mut mz) =
+                (random.next_f32(), random.next_f32(), random.next_f32());
             if on_surface {
                 match random.next_int(3) {
                     0 => mx = snap(mx),
@@ -825,7 +847,10 @@ fn stuck_placements(seed: i32, count: usize, on_surface: bool) -> Vec<(usize, Tr
             let x_rot = dy.atan2((dx * dx + dz * dz).sqrt()).to_degrees();
             let rotation = Quat::from_rotation_y((y_rot - 90.0).to_radians())
                 * Quat::from_rotation_z(x_rot.to_radians());
-            (part, Transform::from_translation(at).with_rotation(rotation))
+            (
+                part,
+                Transform::from_translation(at).with_rotation(rotation),
+            )
         })
         .collect()
 }
@@ -1112,7 +1137,10 @@ fn setup_player_model(
         cape: meshes.add(box_mesh_on(super::skin::CAPE_SHEET, &CAPE)),
         wings: bake_wings(&mut meshes),
         stuck_meshes: [
-            bake_whole(crate::entities::models::objects::projectile::arrow_layer(), &mut meshes),
+            bake_whole(
+                crate::entities::models::objects::projectile::arrow_layer(),
+                &mut meshes,
+            ),
             bake_whole(stinger_layer(), &mut meshes),
         ],
         meshes: wide,
@@ -1355,7 +1383,11 @@ fn spawn_rig(
                     Visibility::Hidden,
                     RigPart,
                     layers.clone(),
-                    Name::new(if kind == 0 { "stuck_arrow" } else { "stuck_stinger" }),
+                    Name::new(if kind == 0 {
+                        "stuck_arrow"
+                    } else {
+                        "stuck_stinger"
+                    }),
                 ))
                 .id();
             commands.entity(flip).add_child(entity);
@@ -1530,7 +1562,7 @@ fn sync_player_models(
             .entities
             .iter()
             .filter(|e| e.kind == azalea_registry::builtin::EntityKind::FishingBobber)
-            .map(|e| e.shared().owner_id)
+            .map(|e| e.shared().pet.owner_id)
             .collect(),
         local_id: crate::client::tracking::local_entity_id(),
         #[cfg(feature = "skins")]
@@ -2023,7 +2055,10 @@ fn apply_rig(
     // Arrows and stingers stuck in the body, on their parts as posed.
     let parts = pose.parts();
     let seed = rig.id.unwrap_or(items.local_id);
-    for (kind, count) in [sample.arrow_count, sample.stinger_count].into_iter().enumerate() {
+    for (kind, count) in [sample.arrow_count, sample.stinger_count]
+        .into_iter()
+        .enumerate()
+    {
         let count = (count as usize).min(STUCK_POOL);
         if count > 0
             && let Some(material) = items.entity_materials.get(&rig.stuck_materials[kind])
@@ -2116,8 +2151,8 @@ fn apply_rig(
             &rig.stuck_materials[0],
             &rig.stuck_materials[1],
         ]
-            .into_iter()
-            .chain(rig.held.iter().map(|held| &held.material))
+        .into_iter()
+        .chain(rig.held.iter().map(|held| &held.material))
         {
             if let Some(material) = items.entity_materials.get_mut(handle) {
                 material.params.set(lit);
@@ -2187,7 +2222,9 @@ mod tests {
             let def = &PARTS[*part];
             for axis in 0..3 {
                 let v = local.translation[axis];
-                assert!(v >= def.origin[axis] - 1e-4 && v <= def.origin[axis] + def.size[axis] + 1e-4);
+                assert!(
+                    v >= def.origin[axis] - 1e-4 && v <= def.origin[axis] + def.size[axis] + 1e-4
+                );
             }
         }
         // Stingers sit on a face: one axis at the box's middle or far side.

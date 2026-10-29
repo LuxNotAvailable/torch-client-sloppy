@@ -38,7 +38,7 @@ fn is_baby(st: &EntityState) -> bool {
 }
 
 fn variant_name(st: &EntityState) -> &'static str {
-    match st.extras.variant_id {
+    match st.extras.look.variant_id {
         1 => "wild",
         2 => "gold",
         3 => "cyan",

@@ -130,9 +130,10 @@ mod tests {
                     st.extras.shared_mut().can_move = flag;
                     st.extras.shared_mut().tearing_down = flag;
                     st.extras.shared_mut().creepy = flag;
-                    st.extras.shared_mut().carried_block =
+                    st.extras.shared_mut().object.carried_block =
                         flag.then(|| "minecraft:grass_block".to_string());
-                    st.extras.shared_mut().main_hand.id = if flag { "copper_ingot" } else { "" };
+                    st.extras.shared_mut().equipment.main_hand.id =
+                        if flag { "copper_ingot" } else { "" };
                     for pose in [
                         Pose::Standing,
                         Pose::Emerging,
@@ -175,7 +176,7 @@ mod tests {
 
         for color in 0..=16u8 {
             let mut st = EntityState::new(0, EntityKind::Shulker);
-            st.extras.shared_mut().color = color;
+            st.extras.shared_mut().look.color = color;
             check(EntityKind::Shulker, &st);
         }
         for ticks in [0, 3, 7, 82, 220] {
@@ -185,7 +186,7 @@ mod tests {
         }
         for level in 0..4u8 {
             let mut st = EntityState::new(0, EntityKind::IronGolem);
-            st.extras.shared_mut().crackiness = level;
+            st.extras.shared_mut().object.crackiness = level;
             check(EntityKind::IronGolem, &st);
         }
         for weathering in 0..4u8 {
@@ -203,7 +204,7 @@ mod tests {
 
         let camera = CameraView::default();
         let mut st = EntityState::new(0, EntityKind::Shulker);
-        st.extras.shared_mut().attach_face = Direction::Down;
+        st.extras.shared_mut().object.attach_face = Direction::Down;
         let pose = spec.root.pose(&st, &camera);
         assert!(
             pose.extra_rotation
@@ -212,7 +213,7 @@ mod tests {
         );
         assert!(pose.extra_offset.length() < 1e-5);
 
-        st.extras.shared_mut().attach_face = Direction::Up;
+        st.extras.shared_mut().object.attach_face = Direction::Up;
         let pose = spec.root.pose(&st, &camera);
         let mapped = pose.extra_rotation * bevy::prelude::Vec3::ZERO + pose.extra_offset;
         assert!((mapped.y - 1.0).abs() < 1e-5, "{mapped:?}");

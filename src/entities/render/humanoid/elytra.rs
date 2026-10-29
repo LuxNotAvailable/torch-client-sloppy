@@ -24,11 +24,11 @@ fn texture(st: &EntityState) -> TexturePath {
     if !wearing(st) {
         return "entity/equipment/wings/elytra".into();
     }
-    armor::slot_texture(st.extras.chestplate, LAYER_WINGS).into()
+    armor::slot_texture(st.extras.equipment.chestplate, LAYER_WINGS).into()
 }
 
 fn wearing(st: &EntityState) -> bool {
-    armor::has_layer(st.extras.chestplate, LAYER_WINGS)
+    armor::has_layer(st.extras.equipment.chestplate, LAYER_WINGS)
 }
 
 fn visible(st: &EntityState) -> bool {
@@ -40,7 +40,7 @@ fn visible_baby(st: &EntityState) -> bool {
 }
 
 fn setup(model_def: &BakedModel, parts: &mut [PartState], st: &EntityState) {
-    let (left, right) = model::wing_angles(st.extras.elytra, st.extras.crouching);
+    let (left, right) = model::wing_angles(st.extras.elytra, st.extras.pose.crouching);
     for (name, [y, x_rot, y_rot, z_rot]) in [("left_wing", left), ("right_wing", right)] {
         let Some(id) = model_def.find(name) else {
             continue;

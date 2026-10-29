@@ -588,7 +588,9 @@ fn poll_shared_state(
     state.profiling.queue_depth =
         state.session.world.pending_chunks.len() + state.session.world.pending_edits.len();
     if let Some(q) = crate::CHUNK_Q.get() {
-        q.set_backlog(state.session.world.pending_chunks.len() + state.session.world.pending_edits.len());
+        q.set_backlog(
+            state.session.world.pending_chunks.len() + state.session.world.pending_edits.len(),
+        );
     }
     crate::client::mesh_worker::note_backlog(
         state.session.world.pending_chunks.len() + state.session.world.pending_edits.len(),
@@ -622,7 +624,11 @@ fn poll_shared_state(
     );
     let mut verts = max_verts;
     let mut sections = max_sections;
-    let mut pending = take_budgeted(&mut state.session.world.pending_edits, &mut verts, &mut sections);
+    let mut pending = take_budgeted(
+        &mut state.session.world.pending_edits,
+        &mut verts,
+        &mut sections,
+    );
     pending.extend(take_budgeted(
         &mut state.session.world.pending_chunks,
         &mut verts,
@@ -973,10 +979,10 @@ fn collect_nametags(
 ) {
     for anim in entities {
         let extras = anim.shared();
-        if extras.name_spans.is_empty() {
+        if extras.nametag.name_spans.is_empty() {
             continue;
         }
-        if !extras.name_visible && crosshair_entity != Some(anim.id) {
+        if !extras.nametag.name_visible && crosshair_entity != Some(anim.id) {
             continue;
         }
         if anim.is_invisible() && anim.kind != azalea_registry::builtin::EntityKind::ArmorStand {
@@ -984,7 +990,7 @@ fn collect_nametags(
         }
         let pos = anim.position(partial);
         let world = Vec3::new(pos[0], pos[1] + anim.bounding_box_height() + 0.5, pos[2]);
-        tags.extend(projector.project(&extras.name_spans, &[], world, NAME_TAG_RANGE));
+        tags.extend(projector.project(&extras.nametag.name_spans, &[], world, NAME_TAG_RANGE));
     }
 
     tags.sort_by(|a, b| b.distance.total_cmp(&a.distance));
@@ -1036,12 +1042,7 @@ fn collect_hud_info(
             shared.0.lock().unwrap()
         };
         if let Some(projector) = &projector {
-            collect_player_tags(
-                &view.players,
-                view.partial,
-                projector,
-                &mut nametags,
-            );
+            collect_player_tags(&view.players, view.partial, projector, &mut nametags);
         }
         (
             if hud_visible {
@@ -1134,7 +1135,10 @@ fn collect_hud_info(
                 .then(crate::diag::frame_profile::report)
                 .flatten(),
             passes: if profiling_page {
-                diagnostics.as_deref().map(render_passes).unwrap_or_default()
+                diagnostics
+                    .as_deref()
+                    .map(render_passes)
+                    .unwrap_or_default()
             } else {
                 Vec::new()
             },
@@ -1789,7 +1793,11 @@ fn apply_fov(
         } else {
             let k = 1.0 - (-time.delta_secs() * 3.0 / seconds).exp();
             let next = current + (target - current) * k;
-            if (next - target).abs() < 0.01 { target } else { next }
+            if (next - target).abs() < 0.01 {
+                target
+            } else {
+                next
+            }
         };
         ease.0 = (base_fov != options_fov).then_some(base_fov);
         // The mouse slows with the view, by the chosen share: the ratio of
@@ -1869,7 +1877,11 @@ fn sync_bot_options(
         s.skin_prefs_sent = Some(skin_prefs);
         s.session.client_info.skin_prefs_request = Some(skin_prefs);
     }
-    let chat_prefs = (state.options.chat.shown.id(), state.options.chat.colors, state.options.allow_listing);
+    let chat_prefs = (
+        state.options.chat.shown.id(),
+        state.options.chat.colors,
+        state.options.allow_listing,
+    );
     if s.chat_prefs_sent != Some(chat_prefs) {
         s.chat_prefs_sent = Some(chat_prefs);
         s.session.client_info.chat_prefs_request = Some(chat_prefs);
@@ -1883,11 +1895,7 @@ fn sync_bot_options(
 
 /// `MusicManager.tick`, at the game's twenty ticks a second.
 #[cfg(audio)]
-fn tick_music(
-    time: Res<Time>,
-    state: Res<State<AppState>>,
-    mut owed: Local<f32>,
-) {
+fn tick_music(time: Res<Time>, state: Res<State<AppState>>, mut owed: Local<f32>) {
     const TICK: f32 = 0.05;
     *owed = (*owed + time.delta_secs()).min(TICK * 10.0);
     let in_game = *state.get() == AppState::InGame;
@@ -2084,8 +2092,7 @@ fn wgpu_settings() -> bevy::render::settings::WgpuSettings {
     settings
 }
 
-static STARTED_BACKEND: std::sync::OnceLock<crate::gui::RenderBackend> =
-    std::sync::OnceLock::new();
+static STARTED_BACKEND: std::sync::OnceLock<crate::gui::RenderBackend> = std::sync::OnceLock::new();
 
 /// The Renderer setting this run started with, after any fallback.
 pub(crate) fn started_backend() -> crate::gui::RenderBackend {
@@ -2151,7 +2158,10 @@ fn render_passes(
         let Some(rest) = path.strip_prefix("render/") else {
             continue;
         };
-        let (name, gpu) = match (rest.strip_suffix("/elapsed_gpu"), rest.strip_suffix("/elapsed_cpu")) {
+        let (name, gpu) = match (
+            rest.strip_suffix("/elapsed_gpu"),
+            rest.strip_suffix("/elapsed_cpu"),
+        ) {
             (Some(name), _) => (name, true),
             (_, Some(name)) => (name, false),
             _ => continue,
@@ -2308,9 +2318,7 @@ pub fn run(
                 ..default()
             })
             .set(bevy::render::RenderPlugin {
-                render_creation: bevy::render::settings::RenderCreation::Automatic(
-                    wgpu_settings(),
-                ),
+                render_creation: bevy::render::settings::RenderCreation::Automatic(wgpu_settings()),
                 ..default()
             })
             .disable::<bevy::app::PanicHandlerPlugin>()
@@ -2439,7 +2447,13 @@ pub fn run(
         )
         .add_systems(Update, toggle_advanced_tooltips)
         .add_systems(Update, toggle_chunk_borders)
-        .add_systems(Update, (super::input::toggle_hitboxes, super::input::game_mode_switcher))
+        .add_systems(
+            Update,
+            (
+                super::input::toggle_hitboxes,
+                super::input::game_mode_switcher,
+            ),
+        )
         .add_systems(Update, reload_all_chunks.run_if(in_state(AppState::InGame)))
         .add_systems(
             Update,

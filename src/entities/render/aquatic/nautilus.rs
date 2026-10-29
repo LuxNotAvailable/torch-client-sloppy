@@ -107,7 +107,7 @@ fn baby_texture(_st: &EntityState) -> TexturePath {
 }
 
 fn variant(st: &EntityState) -> &str {
-    match &st.extras.variant {
+    match &st.extras.look.variant {
         Some(id) => id.rsplit(':').next().unwrap_or("temperate"),
         None => "temperate",
     }
@@ -130,11 +130,11 @@ fn zombie_texture(st: &EntityState) -> TexturePath {
 }
 
 fn shows_body_armor(st: &EntityState) -> bool {
-    !st.extras.is_baby && st.extras.body_armor.is_some()
+    !st.extras.is_baby && st.extras.equipment.body_armor.is_some()
 }
 
 fn body_armor_texture(st: &EntityState) -> TexturePath {
-    let asset = match &st.extras.body_armor {
+    let asset = match &st.extras.equipment.body_armor {
         Some(id) => id.rsplit(':').next().unwrap_or("copper"),
         None => "copper",
     };
@@ -148,7 +148,7 @@ fn body_armor_texture(st: &EntityState) -> TexturePath {
 }
 
 fn shows_saddle(st: &EntityState) -> bool {
-    !st.extras.is_baby && st.extras.saddled
+    !st.extras.is_baby && st.extras.pet.saddled
 }
 
 fn saddle_texture(_st: &EntityState) -> TexturePath {

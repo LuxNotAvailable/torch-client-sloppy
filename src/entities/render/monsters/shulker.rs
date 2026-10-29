@@ -15,7 +15,7 @@ pub fn register(registry: &mut Registry) {
 }
 
 fn texture(st: &EntityState) -> TexturePath {
-    match crate::util::dye::DYES.get(st.extras.color as usize) {
+    match crate::util::dye::DYES.get(st.extras.look.color as usize) {
         Some(dye) => format!("entity/shulker/shulker_{}", dye.name).into(),
         None => "entity/shulker/shulker".into(),
     }
@@ -28,7 +28,7 @@ fn root(st: &EntityState) -> RootPose {
     };
     let mut pose = setup_rotations(&flipped, 90.0);
     let about = rotate_around(
-        st.extras.attach_face.opposite().rotation(),
+        st.extras.object.attach_face.opposite().rotation(),
         Vec3::new(0.0, 0.5, 0.0),
     );
     pose.extra_offset += pose.extra_rotation * about.translation;

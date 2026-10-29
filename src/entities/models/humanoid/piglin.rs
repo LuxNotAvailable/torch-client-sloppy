@@ -156,7 +156,7 @@ fn setup_ears(model: &BakedModel, parts: &mut [PartState], st: &EntityState, bab
 }
 
 pub fn arm_pose(st: &EntityState, brute: bool) -> PiglinArmPose {
-    let melee = st.extras.aggressive && is_melee_weapon(st.extras.main_hand.id);
+    let melee = st.extras.aggressive && is_melee_weapon(st.extras.equipment.main_hand.id);
     if brute {
         return if melee {
             PiglinArmPose::AttackingWithMeleeWeapon
@@ -164,7 +164,7 @@ pub fn arm_pose(st: &EntityState, brute: bool) -> PiglinArmPose {
             PiglinArmPose::Default
         };
     }
-    if st.extras.dancing {
+    if st.extras.pose.dancing {
         PiglinArmPose::Dancing
     } else if st.extras.admiring {
         PiglinArmPose::AdmiringItem
@@ -172,7 +172,9 @@ pub fn arm_pose(st: &EntityState, brute: bool) -> PiglinArmPose {
         PiglinArmPose::AttackingWithMeleeWeapon
     } else if st.extras.charging_crossbow {
         PiglinArmPose::CrossbowCharge
-    } else if st.extras.main_hand.id == "crossbow" && st.extras.main_hand.charged {
+    } else if st.extras.equipment.main_hand.id == "crossbow"
+        && st.extras.equipment.main_hand.charged
+    {
         PiglinArmPose::CrossbowHold
     } else {
         PiglinArmPose::Default
@@ -186,7 +188,12 @@ fn is_melee_weapon(id: &str) -> bool {
 fn setup_attack(l: &mut Limbs, st: &EntityState, poses: humanoid::ArmPoses) {
     let brute = st.kind == azalea_registry::builtin::EntityKind::PiglinBrute;
     if st.attack_time > 0.0 && arm_pose(st, brute) == PiglinArmPose::AttackingWithMeleeWeapon {
-        humanoid::swing_weapon_down(l, !st.extras.left_handed, st.attack_time, st.age_ticks);
+        humanoid::swing_weapon_down(
+            l,
+            !st.extras.equipment.left_handed,
+            st.attack_time,
+            st.age_ticks,
+        );
     } else {
         humanoid::setup_attack_animation(l, st, poses);
     }
@@ -201,7 +208,7 @@ pub fn piglin_setup_anim(model: &BakedModel, parts: &mut [PartState], st: &Entit
 
     let brute = st.kind == azalea_registry::builtin::EntityKind::PiglinBrute;
     let pose = arm_pose(st, brute);
-    let right_arm_holds = !st.extras.left_handed;
+    let right_arm_holds = !st.extras.equipment.left_handed;
     let mut l = Limbs::load(model, parts);
     let left_ear = model.find("left_ear");
     let right_ear = model.find("right_ear");
@@ -235,7 +242,7 @@ pub fn piglin_setup_anim(model: &BakedModel, parts: &mut [PartState], st: &Entit
         PiglinArmPose::AdmiringItem => {
             l.head.x_rot = 0.5;
             l.head.y_rot = 0.0;
-            if st.extras.left_handed {
+            if st.extras.equipment.left_handed {
                 l.right_arm.y_rot = -0.5;
                 l.right_arm.x_rot = -0.9;
             } else {

@@ -62,16 +62,16 @@ pub fn register(registry: &mut Registry) {
             saddle_texture,
             equine::saddle_setup_anim,
         )
-        .with_visible(|st| !st.extras.is_baby && st.extras.saddled),
+        .with_visible(|st| !st.extras.is_baby && st.extras.pet.saddled),
     );
 }
 
 pub fn coat(st: &EntityState) -> usize {
-    (st.extras.variant_id & 0xFF) as usize % 7
+    (st.extras.look.variant_id & 0xFF) as usize % 7
 }
 
 pub fn markings(st: &EntityState) -> u8 {
-    ((st.extras.variant_id >> 8) & 0xFF) as u8
+    ((st.extras.look.variant_id >> 8) & 0xFF) as u8
 }
 
 const COATS: [&str; 7] = [
@@ -108,7 +108,7 @@ fn markings_texture(st: &EntityState) -> TexturePath {
 }
 
 pub fn armor_material(st: &EntityState) -> Option<&'static str> {
-    let item = st.extras.body_armor.as_ref()?;
+    let item = st.extras.equipment.body_armor.as_ref()?;
     let id = item.rsplit(':').next()?;
     let material = id.strip_suffix("_horse_armor")?;
     ["copper", "diamond", "gold", "iron", "leather", "netherite"]

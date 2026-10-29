@@ -15,12 +15,12 @@ fn avatar_arm_poses(st: &EntityState) -> ArmPoses {
         None
     };
     let (main, off) = arm_poses(
-        &st.extras.main_hand,
-        &st.extras.off_hand,
+        &st.extras.equipment.main_hand,
+        &st.extras.equipment.off_hand,
         using_hand,
         st.attack_time > 0.0,
     );
-    if st.extras.left_handed {
+    if st.extras.equipment.left_handed {
         ArmPoses {
             right: off,
             left: main,

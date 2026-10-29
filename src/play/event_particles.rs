@@ -63,11 +63,6 @@ fn is_villager(kind: EntityKind) -> bool {
     kind == EntityKind::Villager
 }
 
-fn is_tamable(kind: EntityKind) -> bool {
-    use EntityKind as K;
-    matches!(kind, K::Wolf | K::Cat | K::Parrot | K::Nautilus | K::ZombieNautilus)
-}
-
 /// The particles `event` sets off on `body`, if any.
 pub(crate) fn particles(event: u8, b: &Body, rng: &mut JavaRandom) -> Vec<Spawn> {
     match event {
@@ -76,7 +71,11 @@ pub(crate) fn particles(event: u8, b: &Body, rng: &mut JavaRandom) -> Vec<Spawn>
                 let v = drift(rng);
                 let [x, y, z] = in_box(rng, b, 0.0);
                 // Spawned upstream of their drift by ten ticks of it.
-                let at = [x - v[0] as f64 * 10.0, y - v[1] as f64 * 10.0, z - v[2] as f64 * 10.0];
+                let at = [
+                    x - v[0] as f64 * 10.0,
+                    y - v[1] as f64 * 10.0,
+                    z - v[2] as f64 * 10.0,
+                ];
                 (Particle::Poof, at, v)
             })
             .collect(),
@@ -95,8 +94,12 @@ pub(crate) fn particles(event: u8, b: &Body, rng: &mut JavaRandom) -> Vec<Spawn>
                 (Particle::Portal, [x, y, z], v)
             })
             .collect(),
-        7 if is_tamable(b.kind) => around(rng, b, Particle::Heart, 7, 0.5),
-        6 if is_tamable(b.kind) => around(rng, b, Particle::Smoke, 7, 0.5),
+        7 if crate::entities::facts::facts(b.kind).tamable => {
+            around(rng, b, Particle::Heart, 7, 0.5)
+        }
+        6 if crate::entities::facts::facts(b.kind).tamable => {
+            around(rng, b, Particle::Smoke, 7, 0.5)
+        }
         18 => around(rng, b, Particle::Heart, 7, 0.5),
         12 if is_villager(b.kind) => around(rng, b, Particle::Heart, 5, 1.0),
         13 if is_villager(b.kind) => around(rng, b, Particle::AngryVillager, 5, 1.0),
@@ -170,10 +173,19 @@ pub(crate) fn tick(shared: &Arc<SharedMutex>) {
     push(shared, spawns);
 }
 
-fn body_of(anims: &bevy::platform::collections::HashMap<i32, crate::entities::feed::EntityAnim>, id: i32) -> Option<Body> {
+fn body_of(
+    anims: &bevy::platform::collections::HashMap<i32, crate::entities::feed::EntityAnim>,
+    id: i32,
+) -> Option<Body> {
     if id == crate::client::tracking::local_entity_id() {
         let pos = crate::items::dispatch::context().pos;
-        return Some(Body { pos, old: pos, width: 0.6, height: 1.8, kind: EntityKind::Player });
+        return Some(Body {
+            pos,
+            old: pos,
+            width: 0.6,
+            height: 1.8,
+            kind: EntityKind::Player,
+        });
     }
     let anim = anims.get(&id)?;
     let st = anim.sample(1.0);
@@ -223,7 +235,13 @@ fn totem(entity_id: i32) {
         let anims = crate::client::tracking::entity_anims().lock().unwrap();
         if let Some(b) = body_of(&anims, entity_id) {
             let at = [b.pos[0] as f32, b.pos[1] as f32, b.pos[2] as f32];
-            crate::audio::play_at("item.totem.use", crate::audio::category::SoundCategory::Players, at, 1.0, 1.0);
+            crate::audio::play_at(
+                "item.totem.use",
+                crate::audio::category::SoundCategory::Players,
+                at,
+                1.0,
+                1.0,
+            );
         }
     }
     if local {
@@ -240,13 +258,21 @@ pub(crate) fn emit(shared: &Arc<SharedMutex>, entity_id: i32, event: u8) {
     }
     let body = {
         let anims = crate::client::tracking::entity_anims().lock().unwrap();
-        let Some(anim) = anims.get(&entity_id) else { return };
+        let Some(anim) = anims.get(&entity_id) else {
+            return;
+        };
         // `FireworkRocketEntity.handleEntityEvent`: the burst.
         if event == 17 && anim.kind == EntityKind::FireworkRocket {
             let pos = anim.position(1.0).map(f64::from);
             let old = anim.position(0.0).map(f64::from);
             let velocity = [pos[0] - old[0], pos[1] - old[1], pos[2] - old[2]];
-            let explosions = anim.shared().fireworks.as_deref().cloned().unwrap_or_default();
+            let explosions = anim
+                .shared()
+                .object
+                .fireworks
+                .as_deref()
+                .cloned()
+                .unwrap_or_default();
             crate::util::particles::start_firework(pos, velocity, explosions);
             return;
         }
@@ -304,10 +330,16 @@ mod tests {
     fn each_event_sets_off_vanillas_count() {
         let mut rng = JavaRandom::new(1);
         assert_eq!(particles(60, &body(EntityKind::Zombie), &mut rng).len(), 20);
-        assert_eq!(particles(46, &body(EntityKind::Enderman), &mut rng).len(), 128);
+        assert_eq!(
+            particles(46, &body(EntityKind::Enderman), &mut rng).len(),
+            128
+        );
         assert_eq!(particles(7, &body(EntityKind::Wolf), &mut rng).len(), 7);
         assert_eq!(particles(18, &body(EntityKind::Cow), &mut rng).len(), 7);
-        assert_eq!(particles(13, &body(EntityKind::Villager), &mut rng).len(), 5);
+        assert_eq!(
+            particles(13, &body(EntityKind::Villager), &mut rng).len(),
+            5
+        );
         // Ids mean other things on other entities.
         assert!(particles(13, &body(EntityKind::Cow), &mut rng).is_empty());
         assert!(particles(7, &body(EntityKind::Cow), &mut rng).is_empty());
