@@ -194,6 +194,11 @@ impl ChatState {
         self.field.suggest = suggestions::State::default();
     }
 
+    /// Whether nothing is typed in the chat box.
+    pub fn draft_is_empty(&self) -> bool {
+        self.field.input.text.trim().is_empty()
+    }
+
     pub fn hide_suggestions(&mut self) -> bool {
         self.field.hide()
     }

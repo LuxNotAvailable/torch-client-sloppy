@@ -535,6 +535,13 @@ pub(crate) fn is_using_item() -> bool {
     USE_ITEM.lock().unwrap().started
 }
 
+/// How many uses this client has started; see `AnimInput::use_generation`.
+static USE_GENERATION: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+pub(crate) fn use_generation() -> u32 {
+    USE_GENERATION.load(Ordering::Relaxed)
+}
+
 fn start_using_item(kind: ItemKind, duration: i32) {
     let mut use_item = USE_ITEM.lock().unwrap();
     if use_item.started {
@@ -544,6 +551,7 @@ fn start_using_item(kind: ItemKind, duration: i32) {
     use_item.item = Some(kind);
     use_item.remaining = duration;
     use_item.held = 0;
+    USE_GENERATION.fetch_add(1, Ordering::Relaxed);
 }
 
 fn stop_using_item() {

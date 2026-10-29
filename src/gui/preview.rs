@@ -376,6 +376,7 @@ mod tests {
             (Screen::ZoomSettings, "gui_options_zoom.png"),
             (Screen::MouseSettings, "gui_options_mouse.png"),
             (Screen::Features, "gui_options_features.png"),
+            (Screen::Sleep, "gui_sleep.png"),
             (Screen::InventorySortSettings, "gui_options_sorting.png"),
             (
                 Screen::Container(crate::session::ContainerKind::Chest(3)),

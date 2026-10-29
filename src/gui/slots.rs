@@ -435,6 +435,8 @@ pub struct SlotState {
     pub last_click_slot: Option<usize>,
     pub cursor: Option<SlotStack>,
     pub menu_preview: MenuPreview,
+    /// The slots a shift-drag has already quick-moved this sweep.
+    pub shift_swept: Vec<usize>,
 }
 
 impl SlotState {
@@ -442,6 +444,7 @@ impl SlotState {
         self.drag.clear();
         self.last_click_slot = None;
         self.menu_preview = MenuPreview::default();
+        self.shift_swept.clear();
     }
 
     pub fn cursor(&self, snap: &Snapshot) -> SlotStack {
@@ -1179,6 +1182,7 @@ pub fn panel(
             }
         }
     }
+    shift_sweep(ctx.input, mode, layout, hovered_index, snap, state, &cursor, out);
 
     let (w, h) = layout.size();
     let outside = !ctx.hovering(left, top, w, h);
@@ -1332,8 +1336,14 @@ pub(crate) fn drag_step(
         if kind == DragKind::Middle {
             return true;
         }
-        let click = SlotClick::Pickup {
-            right: kind == DragKind::Right,
+        let right = kind == DragKind::Right;
+        // `mouseReleased`: holding an item, a press that took in no slot (an
+        // output, which takes nothing placed) is a shift-click's quick move,
+        // otherwise a pickup.
+        let click = if slots.is_empty() && input.shift {
+            SlotClick::QuickMove { right }
+        } else {
+            SlotClick::Pickup { right }
         };
         if let Some(slot) = slots.first().copied().or(hovered) {
             *cursor = apply_one(mode, layout, click, slot, snap, cursor, out);
@@ -1366,6 +1376,35 @@ pub(crate) fn drag_step(
         }
     }
     true
+}
+
+/// Shift-drag: with nothing held, holding shift and the left button while
+/// sweeping over slots quick-moves each one passed that holds an item, once
+/// a sweep. The press itself is the plain shift-click.
+fn shift_sweep(
+    input: &GuiInput,
+    mode: Mode,
+    layout: Layout,
+    hovered: Option<usize>,
+    snap: &Snapshot,
+    state: &mut SlotState,
+    cursor: &SlotStack,
+    out: &mut Vec<InvAction>,
+) {
+    if !input.left_down || !input.shift || !cursor.is_empty() {
+        state.shift_swept.clear();
+        return;
+    }
+    let Some(slot) = hovered else { return };
+    if input.left_click {
+        state.shift_swept = vec![slot];
+        return;
+    }
+    if state.shift_swept.contains(&slot) || snap.slot(slot).is_empty() {
+        return;
+    }
+    state.shift_swept.push(slot);
+    apply_one(mode, layout, SlotClick::QuickMove { right: false }, slot, snap, cursor, out);
 }
 
 fn apply_one(
@@ -2325,6 +2364,55 @@ mod tests {
             );
         }
         (out.iter().map(describe).collect(), cursor)
+    }
+
+    #[test]
+    fn a_shift_drag_quick_moves_each_filled_slot_once() {
+        let snapshot = snap(
+            Gamemode::Survival,
+            &[(9, stack("dirt", 5)), (10, stack("stone", 5)), (12, stack("sand", 5))],
+        );
+        let mut state = SlotState::default();
+        let mut out = Vec::new();
+        let shifted = |left_click: bool| GuiInput {
+            shift: true,
+            left_down: true,
+            left_click,
+            ..Default::default()
+        };
+        // The press (a plain shift-click, handled elsewhere), then a sweep
+        // back and forth over 10, an empty 11 and 12.
+        for (input, slot) in [
+            (shifted(true), 9),
+            (shifted(false), 10),
+            (shifted(false), 11),
+            (shifted(false), 12),
+            (shifted(false), 10),
+        ] {
+            shift_sweep(&input, Mode::Protocol, Layout::PlayerMenu, Some(slot), &snapshot, &mut state, &SlotStack::default(), &mut out);
+        }
+        let acts: Vec<String> = out.iter().map(describe).collect();
+        assert_eq!(acts, vec!["quick_move_left(10)", "quick_move_left(12)"]);
+        // Letting go ends the sweep.
+        shift_sweep(&GuiInput::default(), Mode::Protocol, Layout::PlayerMenu, Some(10), &snapshot, &mut state, &SlotStack::default(), &mut out);
+        assert!(state.shift_swept.is_empty());
+    }
+
+    #[test]
+    fn shift_clicking_an_output_while_holding_an_item_quick_moves_it() {
+        let shifted = |mut frame: Frame| {
+            frame.input.shift = true;
+            frame
+        };
+        // Slot 0 is the crafting output, which takes nothing placed.
+        let (acts, cursor) = gesture(
+            Gamemode::Survival,
+            &[(0, stack("oak_planks", 4))],
+            stack("stone", 32),
+            vec![shifted(press(0)), shifted(release(Some(0)))],
+        );
+        assert_eq!(acts, vec!["quick_move_left(0)".to_string()]);
+        assert_eq!((cursor.item, cursor.count), ("stone", 32), "the held stack stays held");
     }
 
     #[test]

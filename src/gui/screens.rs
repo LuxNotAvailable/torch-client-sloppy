@@ -217,7 +217,7 @@ pub fn draw(
             &ctx,
             &state.hud,
             &snap.sidebar,
-            state.screen == Screen::Chat,
+            state.screen.chat_open(),
             show_fps,
             &mut elements,
         );
@@ -260,7 +260,7 @@ pub fn draw(
         });
         hud::draw_overlays(p, &ctx, &state.hud_overlays, snap.gamemode, &mut elements);
         #[cfg(voice)]
-        if state.screen != Screen::Chat {
+        if !state.screen.chat_open() {
             let status = state.options.voice.status;
             elements.draw(p, ctx.vw, ctx.vh, ElementId::Voice, |p| {
                 hud::draw_voice(p, &ctx, status, editing);
@@ -269,7 +269,7 @@ pub fn draw(
     }
 
     if !in_menu {
-        let focused = state.screen == Screen::Chat;
+        let focused = state.screen.chat_open();
         let placed = !focused && hud_visible && elements.shown(ElementId::Chat);
         let visible = hud_visible && (focused || placed);
         macro_rules! draw_chat {
@@ -304,7 +304,7 @@ pub fn draw(
     }
 
     #[cfg(feature = "mobile_ui")]
-    if chat::texting() && state.screen != Screen::Chat {
+    if chat::texting() && !state.screen.chat_open() {
         chat::set_texting(false);
     }
     #[cfg(not(feature = "mobile_ui"))]

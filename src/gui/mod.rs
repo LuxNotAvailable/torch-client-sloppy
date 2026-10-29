@@ -253,6 +253,12 @@ impl Screen {
         )
     }
 
+    /// Whether the chat box is up: in chat, and in bed (vanilla's
+    /// `InBedChatScreen` is the chat screen with a Leave Bed button).
+    pub fn chat_open(self) -> bool {
+        matches!(self, Screen::Chat | Screen::Sleep)
+    }
+
     pub fn tab_navigates(self) -> bool {
         if self.is_options() {
             return true;

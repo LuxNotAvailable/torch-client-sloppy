@@ -1432,6 +1432,8 @@ fn collect_other_players(bot: &Client) -> (Vec<OtherPlayerInfo>, HashSet<i32>) {
                     .get_component::<metadata::AbstractLivingUsingItem>()
                     .map(|c| c.0)
                     .unwrap_or(false),
+                // Other players' uses follow the server's using flag.
+                use_generation: 0,
                 passenger: pose == Pose::Sitting,
                 main_arm_left: avatar_metadata_trusted
                     && eref
@@ -1566,6 +1568,7 @@ fn tick_local_anim(
         sleeping: local_sleeping_pos.is_some(),
         bed_orientation: local_sleeping_pos.and_then(|pos| bed_orientation_at(bot, pos)),
         using_item: interaction::is_using_item(),
+        use_generation: interaction::use_generation(),
         passenger: false,
         #[cfg(feature = "skins")]
         on_ground: bot

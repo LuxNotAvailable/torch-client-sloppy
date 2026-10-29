@@ -622,7 +622,7 @@ pub(crate) fn collect_input(
         input.shift |= shift;
     }
 
-    if state.screen != Screen::Chat && crate::platform::keyboard::take_enter() {
+    if !state.screen.chat_open() && crate::platform::keyboard::take_enter() {
         input.enter = true;
         input.select = true;
         input.edits.push(EditKey::Enter);

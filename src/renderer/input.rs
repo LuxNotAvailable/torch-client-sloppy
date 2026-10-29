@@ -230,10 +230,20 @@ pub(super) fn apply_gui_nav(
             state.nav = Some(Screen::Death);
         } else if !dead && state.screen == Screen::Death {
             state.nav = Some(Screen::None);
-        } else if sleeping && state.screen == Screen::None {
+        } else if sleeping && matches!(state.screen, Screen::None | Screen::Chat) {
+            // In bed the chat stays up, with what was being typed.
+            if state.screen == Screen::None {
+                state.chat.open("");
+            }
             state.nav = Some(Screen::Sleep);
         } else if !sleeping && state.screen == Screen::Sleep {
-            state.nav = Some(Screen::None);
+            // `onPlayerWokeUp`: a message being typed carries on in chat.
+            if state.chat.draft_is_empty() {
+                state.chat.close();
+                state.nav = Some(Screen::None);
+            } else {
+                state.nav = Some(Screen::Chat);
+            }
         }
     }
 
@@ -1094,7 +1104,7 @@ pub(super) fn toggle_screen(
     let creative_search_focused =
         state.screen == Screen::Creative && state.creative.search_focused();
     let toggle_key = state.keybinds.just(Action::Inventory, &keys, &buttons)
-        && state.screen != Screen::Chat
+        && !state.screen.chat_open()
         && state.screen != Screen::SignEdit
         && state.screen != Screen::CommandBlock
         && !matches!(
@@ -1109,8 +1119,8 @@ pub(super) fn toggle_screen(
     let pause_key = state.keybinds.just(Action::Pause, &keys, &buttons);
     #[cfg(not(target_arch = "wasm32"))]
     let pause_key = false;
-    let enter_from_field = state.screen == Screen::Chat && crate::platform::keyboard::take_enter();
-    let submit_key = state.screen == Screen::Chat
+    let enter_from_field = state.screen.chat_open() && crate::platform::keyboard::take_enter();
+    let submit_key = state.screen.chat_open()
         && (keys.just_pressed(KeyCode::Enter)
             || keys.just_pressed(KeyCode::NumpadEnter)
             || enter_from_field);
@@ -1193,7 +1203,15 @@ pub(super) fn toggle_screen(
             None
         }
     } else if state.screen == Screen::Sleep {
-        if close_key {
+        // `InBedChatScreen`: Enter sends and stays in bed; Escape, once the
+        // link prompt and suggestions are out of the way, gets up.
+        if (close_key || submit_key) && state.chat.dismiss_link_prompt() {
+        } else if close_key && state.chat.hide_suggestions() {
+        } else if submit_key {
+            if let Some(line) = state.chat.submit() {
+                shared.0.lock().unwrap().session.outgoing_chat.push(line);
+            }
+        } else if close_key {
             shared.0.lock().unwrap().leave_bed_requested = true;
         }
         None

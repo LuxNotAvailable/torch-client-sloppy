@@ -282,6 +282,9 @@ pub struct AnimInput {
     pub sleeping: bool,
     pub bed_orientation: Option<crate::direction::Direction>,
     pub using_item: bool,
+    /// Counts each use started, so a use that follows straight on from the
+    /// last (eating while the key is held) restarts the use animation.
+    pub use_generation: u32,
     pub using_offhand: bool,
     pub passenger: bool,
     pub health: f32,
@@ -353,6 +356,7 @@ pub struct HumanoidAnim {
     hurt_time: u32,
     use_ticks: u32,
     use_ticks_old: u32,
+    use_generation: u32,
 
     pos: [f64; 3],
     pos_old: [f64; 3],
@@ -521,11 +525,15 @@ impl HumanoidAnim {
             ],
         );
 
-        self.use_ticks_old = self.use_ticks;
-        self.use_ticks = if self.flags.using_item {
-            self.use_ticks + 1
-        } else {
-            0
+        // A new use counts from its own start, even when it follows the
+        // last without a tick between (`getTicksUsingItem`).
+        let restarted = self.flags.use_generation != self.use_generation;
+        self.use_generation = self.flags.use_generation;
+        self.use_ticks_old = if restarted { 0 } else { self.use_ticks };
+        self.use_ticks = match (self.flags.using_item, restarted) {
+            (false, _) => 0,
+            (true, true) => 1,
+            (true, false) => self.use_ticks + 1,
         };
 
         self.turn_body();
@@ -1048,5 +1056,22 @@ mod tests {
         i.using_item = false;
         a.tick(i);
         assert_eq!(a.sample(1.0).ticks_using_item, 0.0);
+    }
+
+    #[test]
+    fn a_use_that_follows_straight_on_counts_from_its_own_start() {
+        let mut a = HumanoidAnim::default();
+        let mut i = input(0.0, 0.0);
+        i.using_item = true;
+        i.use_generation = 1;
+        for _ in 0..32 {
+            a.tick(i.clone());
+        }
+        assert_eq!(a.sample(1.0).ticks_using_item, 32.0);
+        // The next bite starts the tick the last one ends.
+        i.use_generation = 2;
+        a.tick(i.clone());
+        assert_eq!(a.sample(1.0).ticks_using_item, 1.0);
+        assert_eq!(a.sample(0.0).ticks_using_item, 0.0, "no sweep back from 32");
     }
 }

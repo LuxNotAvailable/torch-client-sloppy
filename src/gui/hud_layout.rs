@@ -1078,6 +1078,12 @@ impl<'a> Hud<'a> {
         if id == ElementId::Chat {
             return id.placeholder(vw, vh);
         }
+        // The hotbar places by its 182-pixel bar, as vanilla centres it. What
+        // it draws around the bar (the selection's overhang, an offhand slot,
+        // shaking hearts) would otherwise nudge it as it changes.
+        if id == ElementId::Hotbar {
+            return id.placeholder(vw, vh);
+        }
         self.frames.natural[id.index()].unwrap_or_else(|| id.placeholder(vw, vh))
     }
 
@@ -1342,6 +1348,18 @@ impl<'a> Hud<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_hotbar_places_by_its_bar_whatever_it_drew() {
+        let layout = HudLayout::default();
+        let mut frames = Frames::default();
+        // A frame where the selection overhung the bar by a pixel each side.
+        frames.natural[ElementId::Hotbar.index()] = Some(Rect::new(100.0, 200.0, 184.0, 49.0));
+        let hud = Hud::new(&layout, &mut frames, false, 1.0);
+        let natural = hud.natural_of(ElementId::Hotbar, 427.0, 240.0);
+        assert_eq!(natural, ElementId::Hotbar.placeholder(427.0, 240.0));
+        assert_eq!(natural.w, 182.0);
+    }
 
     fn stack_ids(l: &HudLayout) -> Vec<StackId> {
         l.stacks.iter().map(|s| s.id).collect()
