@@ -12,8 +12,8 @@ Please go use and contribute to the original ^^^
 ## Build from source
 
 ```sh
-git clone https://github.com/torch-client/torch-client-sloppy.git
-cd torch-client
+git clone https://github.com/LuxNotAvailable/torch-client-sloppy.git
+cd torch-client-sloppy
 cargo build --release
 ```
 
