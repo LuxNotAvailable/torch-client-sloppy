@@ -32,6 +32,7 @@ pub struct SharedState {
     pub in_world: bool,
     pub session: SessionState,
     pub render_distance_sent: Option<u32>,
+    pub chat_prefs_sent: Option<(u8, bool)>,
     pub skin_prefs_sent: Option<SkinPrefs>,
     pub skin_prefs: SkinPrefs,
     pub chat_signing_allowed: bool,
@@ -249,6 +250,8 @@ pub struct SessionState {
     pub block_entities_version: u64,
     pub render_distance_request: Option<u32>,
     pub skin_prefs_request: Option<SkinPrefs>,
+    /// `chatVisibility` (its id) and `chatColors` to send the server.
+    pub chat_prefs_request: Option<(u8, bool)>,
     pub xp_progress: f32,
     pub xp_level: u32,
     pub xp_seen: bool,

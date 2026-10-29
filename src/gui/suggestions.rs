@@ -393,10 +393,17 @@ impl Field {
         if keep {
             let current = self.suggest.list.as_ref().map_or(0, |l| l.current as i32);
             self.select(current);
-        } else if self.suggest.allow {
+        } else if self.suggest.allow && AUTO.load(std::sync::atomic::Ordering::Relaxed) {
             self.show(font, st, a);
         }
     }
+}
+
+/// `autoSuggestions`: off, the list only shows on Tab.
+static AUTO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+pub fn set_auto(on: bool) {
+    AUTO.store(on, std::sync::atomic::Ordering::Relaxed);
 }
 
 fn sort_suggestions(pending: &Suggestions, value: &str, cursor: usize) -> Vec<Suggestion> {

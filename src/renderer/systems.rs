@@ -1861,6 +1861,11 @@ fn sync_bot_options(
         s.skin_prefs_sent = Some(skin_prefs);
         s.session.skin_prefs_request = Some(skin_prefs);
     }
+    let chat_prefs = (state.options.chat.shown.id(), state.options.chat.colors);
+    if s.chat_prefs_sent != Some(chat_prefs) {
+        s.chat_prefs_sent = Some(chat_prefs);
+        s.session.chat_prefs_request = Some(chat_prefs);
+    }
     if s.chat_signing_allowed != signing {
         s.chat_signing_allowed = signing;
     }

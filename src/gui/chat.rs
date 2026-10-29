@@ -99,6 +99,10 @@ struct Caret {
 }
 
 pub struct ChatState {
+    /// Players' messages held back by the chat delay, and when the last
+    /// one came out.
+    pub delayed: std::collections::VecDeque<ChatEntry>,
+    pub released_at: Option<std::time::Instant>,
     messages: VecDeque<Message>,
     lines: VecDeque<Line>,
     history: VecDeque<String>,
@@ -132,6 +136,8 @@ pub struct ChatState {
 impl Default for ChatState {
     fn default() -> Self {
         ChatState {
+            delayed: Default::default(),
+            released_at: None,
             messages: VecDeque::new(),
             lines: VecDeque::new(),
             history: VecDeque::new(),
@@ -244,7 +250,21 @@ impl ChatState {
     }
 
     pub fn push_entries(&mut self, entries: Vec<ChatEntry>, font: &Font, tick: u32) {
-        for e in entries {
+        let options = chat_options();
+        for mut e in entries {
+            // `chatVisibility` Commands Only, and `onlyShowSecureChat`.
+            if options.shown == crate::gui::ChatShown::CommandsOnly && from_player(e.tag) {
+                continue;
+            }
+            if options.only_secure && matches!(e.tag, ChatTag::Modified | ChatTag::NotSecure) {
+                continue;
+            }
+            // `chatColors` off: plain white text.
+            if !options.colors {
+                for span in &mut e.spans {
+                    span.style.color = 0xFFFFFF;
+                }
+            }
             let msg = Message {
                 spans: e.spans,
                 events: e.events,
@@ -353,11 +373,14 @@ impl ChatState {
         }
         #[cfg(not(feature = "mobile_ui"))]
         {
-            if self.field.input.focused {
-                FOCUSED_LINES
+            let look = look();
+            let height = if self.field.input.focused {
+                look.focused_height
             } else {
-                UNFOCUSED_LINES
-            }
+                look.unfocused_height
+            };
+            let _ = (FOCUSED_LINES, UNFOCUSED_LINES);
+            ((height / look.line_height).floor() as usize).max(1)
         }
     }
 
@@ -431,14 +454,21 @@ impl ChatState {
     }
 
     fn line_under(&self, my: f32, bottom: f32) -> Option<&Line> {
+        let (_, my) = to_chat(0.0, my);
+        let (_, bottom) = to_chat(0.0, bottom);
+        self.line_under_local(my, bottom)
+    }
+
+    fn line_under_local(&self, my: f32, bottom: f32) -> Option<&Line> {
+        let line_height = look().line_height;
         let page = self.lines_per_page();
         let visible = self.lines.len().saturating_sub(self.scroll).min(page);
-        if my >= bottom || my < bottom - visible as f32 * LINE_HEIGHT {
+        if my >= bottom || my < bottom - visible as f32 * line_height {
             return None;
         }
         for i in 0..visible {
-            let entry_bottom = bottom - i as f32 * LINE_HEIGHT;
-            if my >= entry_bottom - LINE_HEIGHT && my < entry_bottom {
+            let entry_bottom = bottom - i as f32 * line_height;
+            if my >= entry_bottom - line_height && my < entry_bottom {
                 return self.lines.get(i + self.scroll);
             }
         }
@@ -446,10 +476,12 @@ impl ChatState {
     }
 
     fn event_at(&self, font: &Font, mx: f32, my: f32, bottom: f32) -> Option<&SpanEvent> {
+        let (mx, my) = to_chat(mx, my);
+        let (_, bottom) = to_chat(0.0, bottom);
         if mx < MESSAGE_INDENT {
             return None;
         }
-        let line = self.line_under(my, bottom)?;
+        let line = self.line_under_local(my, bottom)?;
         line.events.as_ref()?;
         let mut x = MESSAGE_INDENT;
         for span in &line.spans {
@@ -464,11 +496,14 @@ impl ChatState {
     }
 
     fn line_at(&self, font: &Font, mx: f32, my: f32, bottom: f32) -> Option<Caret> {
+        let (mx, my) = to_chat(mx, my);
+        let (_, bottom) = to_chat(0.0, bottom);
+        let line_height = look().line_height;
         let page = self.lines_per_page();
         let visible = (self.lines.len() - self.scroll).min(page);
         for i in 0..visible {
-            let entry_bottom = bottom - i as f32 * LINE_HEIGHT;
-            let entry_top = entry_bottom - LINE_HEIGHT;
+            let entry_bottom = bottom - i as f32 * line_height;
+            let entry_top = entry_bottom - line_height;
             if my < entry_top || my >= entry_bottom {
                 continue;
             }
@@ -522,6 +557,78 @@ fn caret_count(spans: &[Span]) -> usize {
     1 + spans.iter().map(|s| s.text.chars().count()).sum::<usize>()
 }
 
+/// The chat options as the HUD draws them: `ChatComponent`'s sizes and
+/// opacities, in chat units (before `chatScale`).
+#[derive(Clone, Copy, Debug)]
+struct Look {
+    width: f32,
+    focused_height: f32,
+    unfocused_height: f32,
+    line_height: f32,
+    /// From an entry's bottom up to its text's top.
+    text_rise: f32,
+    text_opacity: f32,
+    background: f32,
+    scale: f32,
+}
+
+impl Look {
+    const VANILLA: Look = Look {
+        width: CHAT_WIDTH,
+        focused_height: 180.0,
+        unfocused_height: 90.0,
+        line_height: LINE_HEIGHT,
+        text_rise: TEXT_RISE,
+        text_opacity: TEXT_OPACITY,
+        background: BG_ALPHA,
+        scale: 1.0,
+    };
+
+    fn of(o: &crate::gui::ChatOptions) -> Look {
+        let spacing = o.line_spacing as f64 / 100.0;
+        let scale = (o.scale as f32 / 100.0).max(0.05);
+        Look {
+            width: o.width as f32,
+            focused_height: o.focused_height as f32,
+            unfocused_height: o.unfocused_height as f32,
+            line_height: (9.0 * (spacing + 1.0)).floor() as f32,
+            text_rise: (8.0 * (spacing + 1.0) - 4.0 * spacing).round() as f32,
+            text_opacity: o.opacity as f32 / 100.0 * 0.9 + 0.1,
+            background: o.background as f32 / 100.0,
+            scale,
+        }
+    }
+}
+
+static LOOK: std::sync::Mutex<Look> = std::sync::Mutex::new(Look::VANILLA);
+static CHAT_OPTIONS: std::sync::Mutex<Option<crate::gui::ChatOptions>> = std::sync::Mutex::new(None);
+
+fn look() -> Look {
+    *LOOK.lock().unwrap()
+}
+
+fn chat_options() -> crate::gui::ChatOptions {
+    CHAT_OPTIONS.lock().unwrap().unwrap_or_default()
+}
+
+/// Takes this frame's chat options.
+pub fn apply_options(options: &crate::gui::ChatOptions) {
+    *LOOK.lock().unwrap() = Look::of(options);
+    *CHAT_OPTIONS.lock().unwrap() = Some(*options);
+    suggestions::set_auto(options.auto_suggestions);
+}
+
+/// A player's chat message, as against the server's and the client's own.
+fn from_player(tag: ChatTag) -> bool {
+    matches!(tag, ChatTag::Secure | ChatTag::Modified | ChatTag::NotSecure)
+}
+
+/// A point on screen in the chat's own units, under `chatScale`.
+fn to_chat(x: f32, y: f32) -> (f32, f32) {
+    let s = look().scale;
+    (x / s, y / s)
+}
+
 fn line_alpha(added: u32, now: u32, focused: bool) -> f32 {
     if focused {
         return 1.0;
@@ -558,8 +665,11 @@ pub fn set_texting(on: bool) {
 fn chat_width(vw: f32) -> f32 {
     if texting() {
         (vw - MESSAGE_INDENT - 12.0).floor().max(1.0)
-    } else {
+    } else if cfg!(feature = "mobile_ui") {
         CHAT_WIDTH
+    } else {
+        let look = look();
+        (look.width / look.scale).ceil()
     }
 }
 
@@ -636,6 +746,19 @@ pub fn draw(
         }
     }
 
+    // `chatDelay`: players' messages wait their turn, one a delay apart.
+    let delay = chat_options().delay_tenths as f32 / 10.0;
+    let mut incoming = incoming;
+    if delay > 0.0 || !chat.delayed.is_empty() {
+        let (players, rest): (Vec<_>, Vec<_>) = incoming.into_iter().partition(|e| from_player(e.tag));
+        chat.delayed.extend(players);
+        incoming = rest;
+        let due = chat.released_at.is_none_or(|at| at.elapsed().as_secs_f32() >= delay);
+        if due && let Some(next) = chat.delayed.pop_front() {
+            incoming.push(next);
+            chat.released_at = Some(std::time::Instant::now());
+        }
+    }
     if !incoming.is_empty() {
         let font = &p.atlas.font;
         chat.push_entries(incoming, font, tick);
@@ -662,8 +785,10 @@ pub fn draw(
         handle_input(p, chat, ctx, shared);
     }
 
-    if visible {
-        draw_lines(p, chat, ctx, focused);
+    // `chatVisibility` Hidden draws no messages.
+    if visible && chat_options().shown != crate::gui::ChatShown::Hidden {
+        let scale = look().scale;
+        p.scaled(scale, 0.0, 0.0, |p| draw_lines(p, chat, ctx, focused));
     }
 
     if focused {
@@ -791,7 +916,16 @@ fn click_span(
             chat.field.input.set_text(&command);
             chat.field.suggest.allow = true;
         }
-        Followup::Link(url) => chat.link_prompt = Some(url),
+        // `chatLinks` and `chatLinksPrompt`.
+        Followup::Link(url) => {
+            let options = chat_options();
+            if !options.links {
+            } else if options.links_prompt {
+                chat.link_prompt = Some(url);
+            } else {
+                crate::platform::url::open(&url);
+            }
+        }
         Followup::Dialog(dialog) => {
             shared.lock().unwrap().session.dialog_show = Some(dialog);
         }
@@ -964,7 +1098,9 @@ fn move_in_history(chat: &mut ChatState, dir: i32) {
 
 fn draw_lines(p: &mut Painter, chat: &ChatState, ctx: &ScreenCtx, focused: bool) {
     let tick = p.frame;
-    let bottom = chat_bottom(ctx);
+    let look = look();
+    let (_, bottom) = to_chat(0.0, chat_bottom(ctx));
+    let line_height = look.line_height;
     let page = chat.lines_per_page();
     let total = chat.lines.len();
     let visible = total.saturating_sub(chat.scroll).min(page);
@@ -984,16 +1120,16 @@ fn draw_lines(p: &mut Painter, chat: &ChatState, ctx: &ScreenCtx, focused: bool)
         }
         drawn += 1;
 
-        let entry_bottom = bottom - i as f32 * LINE_HEIGHT;
-        let entry_top = entry_bottom - LINE_HEIGHT;
-        let text_top = entry_bottom - TEXT_RISE;
+        let entry_bottom = bottom - i as f32 * line_height;
+        let entry_top = entry_bottom - line_height;
+        let text_top = entry_bottom - look.text_rise;
 
         p.fill(
             0.0,
             entry_top,
             chat.wrapped_at + MESSAGE_INDENT + 8.0,
-            LINE_HEIGHT,
-            argb(alpha * BG_ALPHA, 0x000000),
+            line_height,
+            argb(alpha * look.background, 0x000000),
         );
 
         #[cfg(feature = "mobile_ui")]
@@ -1017,8 +1153,8 @@ fn draw_lines(p: &mut Painter, chat: &ChatState, ctx: &ScreenCtx, focused: bool)
                 0.0,
                 entry_top,
                 2.0,
-                LINE_HEIGHT,
-                argb(alpha * TEXT_OPACITY, rgb),
+                line_height,
+                argb(alpha * look.text_opacity, rgb),
             );
         }
 
@@ -1038,7 +1174,7 @@ fn draw_lines(p: &mut Painter, chat: &ChatState, ctx: &ScreenCtx, focused: bool)
             &line.spans,
             MESSAGE_INDENT,
             text_top,
-            alpha * TEXT_OPACITY,
+            alpha * look.text_opacity,
             sel,
         );
 
@@ -1125,8 +1261,9 @@ fn indicator_color(tag: ChatTag, focused: bool) -> Option<u32> {
 }
 
 fn draw_scrollbar(p: &mut Painter, chat: &ChatState, bottom: f32, drawn: usize, total: usize) {
-    let drawn_h = drawn as f32 * LINE_HEIGHT;
-    let virtual_h = total as f32 * LINE_HEIGHT;
+    let line_height = look().line_height;
+    let drawn_h = drawn as f32 * line_height;
+    let virtual_h = total as f32 * line_height;
     if virtual_h <= drawn_h || drawn == 0 {
         return;
     }

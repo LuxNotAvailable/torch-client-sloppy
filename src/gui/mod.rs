@@ -411,6 +411,7 @@ pub struct GuiOptions {
     pub auto_jump: bool,
     pub view_bobbing: bool,
     pub zoom: ZoomOptions,
+    pub chat: ChatOptions,
     /// The sort and transfer buttons on inventories.
     pub sort_buttons: bool,
     /// Whether sorting and storing take in the hotbar.
@@ -612,6 +613,117 @@ pub const MODEL_PART_KEYS: [(&str, u8); 7] = [
     ("modelPart_hat", 6),
 ];
 
+/// Who the chat shows: `chatVisibility`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum ChatShown {
+    #[default]
+    Shown,
+    CommandsOnly,
+    Hidden,
+}
+
+impl ChatShown {
+    pub fn caption(self) -> &'static str {
+        match self {
+            ChatShown::Shown => "Shown",
+            ChatShown::CommandsOnly => "Commands Only",
+            ChatShown::Hidden => "Hidden",
+        }
+    }
+
+    pub fn next(self) -> ChatShown {
+        match self {
+            ChatShown::Shown => ChatShown::CommandsOnly,
+            ChatShown::CommandsOnly => ChatShown::Hidden,
+            ChatShown::Hidden => ChatShown::Shown,
+        }
+    }
+
+    /// The id sent in `ClientInformation`.
+    pub fn id(self) -> u8 {
+        self as u8
+    }
+}
+
+/// Vanilla's chat options, as percentages and pixels where vanilla keeps
+/// fractions.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ChatOptions {
+    pub shown: ChatShown,
+    pub colors: bool,
+    pub links: bool,
+    pub links_prompt: bool,
+    /// `chatOpacity` and `textBackgroundOpacity`, percent.
+    pub opacity: u32,
+    pub background: u32,
+    /// `chatScale` and `chatLineSpacing`, percent.
+    pub scale: u32,
+    pub line_spacing: u32,
+    /// `chatDelay`, in tenths of a second.
+    pub delay_tenths: u32,
+    /// Pixels: width 40 to 320, heights 20 to 180.
+    pub width: u32,
+    pub focused_height: u32,
+    pub unfocused_height: u32,
+    pub auto_suggestions: bool,
+    pub only_secure: bool,
+}
+
+pub const CHAT_DELAY_MAX_TENTHS: u32 = 60;
+
+impl Default for ChatOptions {
+    fn default() -> Self {
+        ChatOptions {
+            shown: ChatShown::Shown,
+            colors: true,
+            links: true,
+            links_prompt: true,
+            opacity: 100,
+            background: 50,
+            scale: 100,
+            line_spacing: 0,
+            delay_tenths: 0,
+            width: 320,
+            focused_height: 180,
+            unfocused_height: 90,
+            auto_suggestions: true,
+            only_secure: false,
+        }
+    }
+}
+
+impl ChatOptions {
+    fn read(value: &dyn Fn(&str) -> Option<serde_json::Value>) -> ChatOptions {
+        let d = ChatOptions::default();
+        let num = |key: &str, fallback: u32, lo: u32, hi: u32| {
+            value(key)
+                .and_then(|v| v.as_u64())
+                .map_or(fallback, |v| (v as u32).clamp(lo, hi))
+        };
+        let flag = |key: &str, fallback: bool| value(key).and_then(|v| v.as_bool()).unwrap_or(fallback);
+        ChatOptions {
+            shown: match value("chatVisibility").and_then(|v| v.as_u64()) {
+                Some(1) => ChatShown::CommandsOnly,
+                Some(2) => ChatShown::Hidden,
+                _ => ChatShown::Shown,
+            },
+            colors: flag("chatColors", d.colors),
+            links: flag("chatLinks", d.links),
+            links_prompt: flag("chatLinksPrompt", d.links_prompt),
+            opacity: num("chatOpacity", d.opacity, 0, 100),
+            background: num("textBackgroundOpacity", d.background, 0, 100),
+            scale: num("chatScale", d.scale, 0, 100),
+            line_spacing: num("chatLineSpacing", d.line_spacing, 0, 100),
+            delay_tenths: num("chatDelay", d.delay_tenths, 0, CHAT_DELAY_MAX_TENTHS),
+            width: num("chatWidth", d.width, 40, 320),
+            focused_height: num("chatHeightFocused", d.focused_height, 20, 180),
+            unfocused_height: num("chatHeightUnfocused", d.unfocused_height, 20, 180),
+            auto_suggestions: flag("autoSuggestions", d.auto_suggestions),
+            only_secure: flag("onlyShowSecureChat", d.only_secure),
+        }
+    }
+}
+
 /// The zoom key's settings. Zoom levels are how many times narrower than
 /// the FOV the view gets, in tenths.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -730,6 +842,7 @@ impl Default for GuiOptions {
                 .unwrap_or_default(),
             view_bobbing: value("bobView").and_then(|v| v.as_bool()).unwrap_or(true),
             zoom: ZoomOptions::read(&value),
+            chat: ChatOptions::read(&value),
             sort_buttons: value("sortButtons").and_then(|v| v.as_bool()).unwrap_or(true),
             sort_hotbar: value("sortHotbar").and_then(|v| v.as_bool()).unwrap_or(false),
             auto_jump: value("autoJump")
@@ -912,6 +1025,24 @@ pub fn save_options(options: &GuiOptions) {
         "toastSystem": options.toast_system,
         "toastDisplayTime": options.toast_time as f64 / 10.0,
     });
+    {
+        let map = json.as_object_mut().expect("json! object literal");
+        let chat = &options.chat;
+        map.insert("chatVisibility".to_owned(), serde_json::json!(chat.shown.id()));
+        map.insert("chatColors".to_owned(), serde_json::json!(chat.colors));
+        map.insert("chatLinks".to_owned(), serde_json::json!(chat.links));
+        map.insert("chatLinksPrompt".to_owned(), serde_json::json!(chat.links_prompt));
+        map.insert("chatOpacity".to_owned(), serde_json::json!(chat.opacity));
+        map.insert("textBackgroundOpacity".to_owned(), serde_json::json!(chat.background));
+        map.insert("chatScale".to_owned(), serde_json::json!(chat.scale));
+        map.insert("chatLineSpacing".to_owned(), serde_json::json!(chat.line_spacing));
+        map.insert("chatDelay".to_owned(), serde_json::json!(chat.delay_tenths));
+        map.insert("chatWidth".to_owned(), serde_json::json!(chat.width));
+        map.insert("chatHeightFocused".to_owned(), serde_json::json!(chat.focused_height));
+        map.insert("chatHeightUnfocused".to_owned(), serde_json::json!(chat.unfocused_height));
+        map.insert("autoSuggestions".to_owned(), serde_json::json!(chat.auto_suggestions));
+        map.insert("onlyShowSecureChat".to_owned(), serde_json::json!(chat.only_secure));
+    }
     #[cfg(feature = "skins")]
     {
         let map = json.as_object_mut().expect("json! object literal");

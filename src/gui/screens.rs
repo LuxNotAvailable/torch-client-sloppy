@@ -272,6 +272,7 @@ pub fn draw(
         let focused = state.screen.chat_open();
         let placed = !focused && hud_visible && elements.shown(ElementId::Chat);
         let visible = hud_visible && (focused || placed);
+        chat::apply_options(&state.options.chat);
         macro_rules! draw_chat {
             ($p:expr) => {
                 chat::draw(

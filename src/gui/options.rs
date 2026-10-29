@@ -32,6 +32,7 @@ const ZOOM_MAX_SLIDER_ID: u32 = 51;
 const ZOOM_SMOOTHING_SLIDER_ID: u32 = 52;
 const ZOOM_SENSITIVITY_SLIDER_ID: u32 = 53;
 const SHADOW_OPACITY_SLIDER_ID: u32 = 54;
+const CHAT_SLIDER_ID_BASE: u32 = 60;
 const ENTITY_SHADOWS: &str = "Entity Shadows";
 const SHADOW_OPACITY: &str = "Shadow Opacity";
 const ZOOM_TITLE: &str = "Zoom Settings";
@@ -450,7 +451,9 @@ pub(in crate::gui) fn draw_scrollbar(
     );
 }
 
-const Y_CHAT_ROW_0: f32 = 0.0;
+/// Vanilla's chat options, seven rows of two, above the signed chat row.
+const CHAT_OPTION_ROWS: f32 = 7.0;
+const Y_CHAT_ROW_0: f32 = CHAT_OPTION_ROWS * ROW_H;
 const Y_TOAST_HEADER: f32 = Y_CHAT_ROW_0 + ROW_H;
 const Y_TOAST_ROW_0: f32 = Y_TOAST_HEADER + HEADER_PAD_TOP + HEADER_H;
 const Y_TOAST_ROW_1: f32 = Y_TOAST_ROW_0 + ROW_H;
@@ -603,6 +606,7 @@ fn reset_video_options(o: &mut crate::gui::GuiOptions) {
 }
 
 fn reset_chat_options(o: &mut crate::gui::GuiOptions) {
+    o.chat = crate::gui::ChatOptions::default();
     o.allow_signed_chat = false;
     o.toast_advancement = true;
     o.toast_recipe = true;
@@ -1780,6 +1784,8 @@ pub fn draw_chat(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
 
     let cell = |column: f32, row_y: f32| (left + column * COLUMN_STEP, top + row_y + ROW_INSET);
 
+    draw_chat_options(p, &mut state.options, ctx, &cell);
+
     let (x, y) = cell(0.0, Y_CHAT_ROW_0);
     let can_sign = signing_available(state);
     if can_sign {
@@ -1890,6 +1896,65 @@ pub fn draw_chat(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
 
     if draw_done(p, screen_ctx) {
         state.nav = Some(Screen::Options);
+    }
+}
+
+/// `ChatOptionsScreen`'s options, two to a row from the top of the list.
+fn draw_chat_options(
+    p: &mut Painter,
+    options: &mut crate::gui::GuiOptions,
+    ctx: &ScreenCtx,
+    cell: &dyn Fn(f32, f32) -> (f32, f32),
+) {
+    use crate::gui::CHAT_DELAY_MAX_TENTHS;
+    let before = options.chat;
+    let c = &mut options.chat;
+    let at = |n: usize| cell((n % 2) as f32, (n / 2) as f32 * ROW_H);
+
+    let (x, y) = at(0);
+    let label = format!("Chat: {}", c.shown.caption());
+    if Button::new(x, y, COLUMN_W, WIDGET_HEIGHT, &label).draw(p, ctx) {
+        c.shown = c.shown.next();
+    }
+    toggle(p, ctx, at(1), "Colors", &mut c.colors);
+    toggle(p, ctx, at(2), "Web Links", &mut c.links);
+    toggle(p, ctx, at(3), "Prompt on Links", &mut c.links_prompt);
+
+    let mut slider = |n: usize, value: &mut u32, min: u32, max: u32, label: fn(i32) -> String| {
+        let (x, y) = at(n);
+        *value = Slider {
+            id: CHAT_SLIDER_ID_BASE + n as u32,
+            x,
+            y,
+            w: COLUMN_W,
+            h: WIDGET_HEIGHT,
+            min: min as i32,
+            max: max as i32,
+            value: *value as i32,
+            label,
+        }
+        .draw(p, ctx)
+        .clamp(min as i32, max as i32) as u32;
+    };
+    slider(4, &mut c.opacity, 0, 100, |v| format!("Chat Text Opacity: {v}%"));
+    slider(5, &mut c.background, 0, 100, |v| format!("Text Background Opacity: {v}%"));
+    slider(6, &mut c.scale, 0, 100, |v| format!("Chat Text Size: {v}%"));
+    slider(7, &mut c.line_spacing, 0, 100, |v| format!("Line Spacing: {v}%"));
+    slider(8, &mut c.delay_tenths, 0, CHAT_DELAY_MAX_TENTHS, |v| {
+        if v == 0 {
+            "Chat Delay: None".to_owned()
+        } else {
+            format!("Chat Delay: {:.1} Seconds", v as f32 / 10.0)
+        }
+    });
+    slider(9, &mut c.width, 40, 320, |v| format!("Width: {v}px"));
+    slider(10, &mut c.focused_height, 20, 180, |v| format!("Focused Height: {v}px"));
+    slider(11, &mut c.unfocused_height, 20, 180, |v| format!("Unfocused Height: {v}px"));
+    toggle(p, ctx, at(12), "Command Suggestions", &mut c.auto_suggestions);
+    toggle(p, ctx, at(13), "Only Show Secure Chat", &mut c.only_secure);
+
+    if options.chat != before {
+        crate::gui::save_options(options);
     }
 }
 

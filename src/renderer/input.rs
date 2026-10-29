@@ -150,6 +150,7 @@ pub(super) fn apply_gui_nav(
         let mut s = shared.0.lock().unwrap();
         s.render_distance_sent = None;
         s.skin_prefs_sent = None;
+        s.chat_prefs_sent = None;
     }
     let (container_id, kind) = (poll.container_id, poll.container_kind);
     if container_id != *last_container_id && container_id != 0 {

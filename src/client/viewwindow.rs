@@ -104,11 +104,32 @@ pub(crate) fn apply_client_information_requests(bot: &Client, shared: &Arc<Share
             s.session.skin_prefs_request.take(),
         )
     };
+    let chat_prefs = shared.lock().unwrap().session.chat_prefs_request.take();
+    if let Some((shown, colors)) = chat_prefs {
+        apply_chat_prefs(bot, shown, colors);
+    }
     if let Some(view_distance) = view_distance {
         apply_render_distance(bot, view_distance);
     }
     if let Some(prefs) = prefs {
         apply_skin_prefs(bot, prefs);
+    }
+}
+
+fn apply_chat_prefs(bot: &Client, shown: u8, colors: bool) {
+    use azalea_protocol::common::client_information::ChatVisibility;
+    let mut info = bot
+        .component::<ClientInformation>()
+        .map(|guard| guard.clone())
+        .unwrap_or_default();
+    info.chat_visibility = match shown {
+        1 => ChatVisibility::System,
+        2 => ChatVisibility::Hidden,
+        _ => ChatVisibility::Full,
+    };
+    info.chat_colors = colors;
+    if let Err(e) = bot.set_client_information(info) {
+        log_warn!("net", "could not apply the chat options: {e}");
     }
 }
 
