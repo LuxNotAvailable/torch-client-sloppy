@@ -296,6 +296,7 @@ impl Body {
 
 struct World<'a> {
     view: &'a FrameView,
+    sampled: &'a super::frame_view::SampledEntities,
     by_id: HashMap<i32, &'a EntityAnim>,
     local_id: i32,
 }
@@ -316,8 +317,9 @@ impl World<'_> {
                 left_handed: self.view.main_hand_left,
             });
         }
-        if let Some(anim) = self.by_id.get(&id) {
-            let st = anim.sample(partial);
+        if let Some(anim) = self.by_id.get(&id)
+            && let Some(st) = self.sampled.get(id)
+        {
             return Some(Body {
                 pos: Vec3::from(anim.position(partial)),
                 body_yaw: st.body_rot,
@@ -329,8 +331,9 @@ impl World<'_> {
                 left_handed: false,
             });
         }
-        let player = self.view.players.iter().find(|p| p.id == id)?;
-        let sample = player.anim.sample(partial);
+        let at = self.view.players.iter().position(|p| p.id == id)?;
+        let player = &self.view.players[at];
+        let sample = self.sampled.players.get(at)?;
         Some(Body {
             pos: Vec3::from(player.anim.position(partial)),
             body_yaw: sample.body_yaw,
@@ -352,6 +355,7 @@ fn draw(
     third_person: Res<super::input::ThirdPersonState>,
     state: Res<crate::gui::GuiState>,
     time: Res<Time>,
+    sampled: Res<super::frame_view::SampledEntities>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut visibility: Query<&mut Visibility>,
     mut guardians: Local<HashMap<i32, (i32, f32)>>,
@@ -370,6 +374,7 @@ fn draw(
     if view.in_world {
         let world = World {
             view: &view,
+            sampled: &sampled,
             by_id: view.entities.iter().map(|e| (e.id, e)).collect(),
             local_id: crate::client::tracking::local_entity_id(),
         };
@@ -484,10 +489,9 @@ fn draw(
             for player in view.players.iter() {
                 cast(Vec3::from(player.anim.position(partial)), 0.5, 1.0);
             }
-            for anim in view.entities.iter() {
+            for (anim, st) in view.entities.iter().zip(&sampled.states) {
                 let r = super::shadows::radius(anim.kind);
                 if r > 0.0 && !anim.is_invisible() {
-                    let st = anim.sample(partial);
                     // `MobRenderer`: babies' shadows shrink with them.
                     cast(
                         Vec3::from(anim.position(partial)),
@@ -503,15 +507,13 @@ fn draw(
             let height = if view.local.crouching { 1.5 } else { 1.8 };
             burn(Vec3::from(view.player_lerp), 0.6, height);
         }
-        for player in view.players.iter() {
-            let sample = player.anim.sample(partial);
+        for (player, sample) in view.players.iter().zip(&sampled.players) {
             if sample.on_fire {
                 let height = if sample.crouching { 1.5 } else { 1.8 };
                 burn(Vec3::from(player.anim.position(partial)), 0.6, height);
             }
         }
-        for anim in view.entities.iter() {
-            let st = anim.sample(partial);
+        for (anim, st) in view.entities.iter().zip(&sampled.states) {
             let pos = Vec3::from(anim.position(partial));
             if st.display_fire && !st.is_invisible {
                 burn(pos, st.bounding_box_width, st.bounding_box_height);

@@ -43,7 +43,7 @@ fn store(captured: On<ScreenshotCaptured>, shared: Res<Shared>) {
         .lock()
         .unwrap()
         .session
-        .chat_incoming
+        .chat.chat_incoming
         .push(crate::session::ChatEntry {
             spans: vec![crate::text::Span { text, style }],
             events: None,

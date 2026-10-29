@@ -145,24 +145,24 @@ pub(crate) fn handle_chat(bot: &Client, shared: &Arc<SharedMutex>, m: ChatPacket
 
     let mut s = shared.lock().unwrap();
 
-    s.session.chat_incoming.push(ChatEntry {
+    s.session.chat.chat_incoming.push(ChatEntry {
         spans,
         events,
         tag,
         original,
     });
     if send_error.is_some() {
-        s.session.chat_send_error = send_error;
+        s.session.chat.chat_send_error = send_error;
     }
     if signature_wanted
         && !s.chat_signing_allowed
-        && !s.session.chat_signing_session
-        && !s.session.chat_signing_declined
-        && !s.session.chat_signing_prompt
+        && !s.session.chat.chat_signing_session
+        && !s.session.chat.chat_signing_declined
     {
         drop(s);
-        let capable = crate::client::chat_sign::capable(bot);
-        shared.lock().unwrap().session.chat_signing_prompt = capable;
+        if crate::client::chat_sign::capable(bot) {
+            crate::client::bus::emit(crate::client::bus::ClientEvent::SigningPrompt);
+        }
     }
 }
 
@@ -175,15 +175,15 @@ fn acknowledge(bot: &Client, shared: &Arc<SharedMutex>, p: &ClientboundPlayerCha
         return;
     };
     let mut s = shared.lock().unwrap();
-    if s.session.chat_ack_last.as_ref() == Some(&signature.bytes) {
+    if s.session.chat.chat_ack_last.as_ref() == Some(&signature.bytes) {
         return;
     }
-    s.session.chat_ack_last = Some(signature.bytes);
-    s.session.chat_ack_pending += 1;
-    if s.session.chat_ack_pending <= ACK_AFTER {
+    s.session.chat.chat_ack_last = Some(signature.bytes);
+    s.session.chat.chat_ack_pending += 1;
+    if s.session.chat.chat_ack_pending <= ACK_AFTER {
         return;
     }
-    let messages = std::mem::take(&mut s.session.chat_ack_pending);
+    let messages = std::mem::take(&mut s.session.chat.chat_ack_pending);
     drop(s);
     bot.write_packet(ServerboundChatAck { messages });
 }

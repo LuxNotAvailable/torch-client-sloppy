@@ -155,19 +155,19 @@ pub(crate) fn packet(
         ClientboundGamePacket::SelectAdvancementsTab(p) => {
             let mut s = shared.lock().unwrap();
             let session = &mut s.session;
-            session.advancement_tab = p
+            session.progress.advancement_tab = p
                 .tab
                 .as_ref()
-                .and_then(|id| session.advancement_ids.get(id).copied());
+                .and_then(|id| session.progress.advancement_ids.get(id).copied());
         }
         ClientboundGamePacket::StartConfiguration(_) => {
             let mut s = shared.lock().unwrap();
             let session = &mut s.session;
-            let tree = Arc::make_mut(&mut session.advancements);
+            let tree = Arc::make_mut(&mut session.progress.advancements);
             tree.nodes.clear();
             tree.generation = tree.generation.wrapping_add(1);
-            session.advancement_ids.clear();
-            session.advancement_tab = None;
+            session.progress.advancement_ids.clear();
+            session.progress.advancement_tab = None;
         }
         _ => {}
     }
@@ -182,12 +182,12 @@ fn update<'a>(
 ) -> Vec<ToastEvent> {
     let reshaped = reset || !removed.is_empty() || !added.is_empty();
     let selected = session
-        .advancement_tab
+        .progress.advancement_tab
         .filter(|_| reshaped)
-        .and_then(|i| session.advancements.nodes.get(i as usize))
+        .and_then(|i| session.progress.advancements.nodes.get(i as usize))
         .map(|n| n.id.clone());
-    let tree = Arc::make_mut(&mut session.advancements);
-    let ids = &mut session.advancement_ids;
+    let tree = Arc::make_mut(&mut session.progress.advancements);
+    let ids = &mut session.progress.advancement_ids;
 
     if reset {
         tree.nodes.clear();
@@ -199,7 +199,7 @@ fn update<'a>(
     add_all(tree, ids, added);
     if reshaped {
         tree.generation = tree.generation.wrapping_add(1);
-        session.advancement_tab = selected.and_then(|id| ids.get(&id).copied());
+        session.progress.advancement_tab = selected.and_then(|id| ids.get(&id).copied());
     }
 
     let mut toasts = Vec::new();
@@ -341,7 +341,7 @@ mod tests {
             vec![],
             progress("a", &["y"]).iter().map(|(i, p)| (i, p)),
         );
-        let n = &s.advancements.nodes[0];
+        let n = &s.progress.advancements.nodes[0];
         assert_eq!(n.progress(), Some((1, 2)));
         assert!(!n.is_done());
         update(
@@ -351,7 +351,7 @@ mod tests {
             vec![],
             progress("a", &["y", "z"]).iter().map(|(i, p)| (i, p)),
         );
-        assert!(s.advancements.nodes[0].is_done());
+        assert!(s.progress.advancements.nodes[0].is_done());
     }
 
     #[test]
@@ -364,7 +364,7 @@ mod tests {
             vec![added("a", None, &[])],
             progress("a", &[]).iter().map(|(i, p)| (i, p)),
         );
-        let n = &s.advancements.nodes[0];
+        let n = &s.progress.advancements.nodes[0];
         assert!(!n.is_done());
         assert_eq!(n.percent(), 0.0);
         assert_eq!(n.progress(), None);
@@ -375,7 +375,7 @@ mod tests {
         let mut s = SessionState::default();
         let list = vec![added("c", Some("r"), &[]), added("r", None, &[])];
         update(&mut s, true, &[], list, std::iter::empty());
-        let n = &s.advancements.nodes;
+        let n = &s.progress.advancements.nodes;
         assert_eq!(n[0].id, Identifier::new("r"));
         assert_eq!(n[1].parent, Some(0));
     }
@@ -391,8 +391,8 @@ mod tests {
             added("c", Some("r2"), &[]),
         ];
         update(&mut s, true, &[], list, std::iter::empty());
-        s.advancement_tab = Some(3);
-        let generation = s.advancements.generation;
+        s.progress.advancement_tab = Some(3);
+        let generation = s.progress.advancements.generation;
         update(
             &mut s,
             false,
@@ -400,11 +400,11 @@ mod tests {
             vec![],
             std::iter::empty(),
         );
-        let n = &s.advancements.nodes;
+        let n = &s.progress.advancements.nodes;
         assert_eq!(n.len(), 3);
         assert_eq!(n[2].parent, Some(1));
-        assert_eq!(s.advancement_ids[&Identifier::new("c")], 2);
-        assert_eq!(s.advancement_tab, Some(1));
-        assert_ne!(s.advancements.generation, generation);
+        assert_eq!(s.progress.advancement_ids[&Identifier::new("c")], 2);
+        assert_eq!(s.progress.advancement_tab, Some(1));
+        assert_ne!(s.progress.advancements.generation, generation);
     }
 }

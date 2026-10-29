@@ -127,8 +127,8 @@ pub fn draw(
     let (data, block_gone) = {
         let mut s = shared.lock().unwrap();
         (
-            s.session.command_block_data.take(),
-            s.session.command_block_pos.is_none(),
+            s.session.editors.command_block_data.take(),
+            s.session.editors.command_block_pos.is_none(),
         )
     };
     if let Some(data) = data {
@@ -275,7 +275,7 @@ pub fn draw(
     suggestions::draw(p, &mut state.field, ctx, SUGGEST, anchor(ctx));
 
     if done_pressed {
-        shared.lock().unwrap().session.command_block_update = Some(state.submit());
+        shared.lock().unwrap().session.editors.command_block_update = Some(state.submit());
         return Some(Screen::None);
     }
     cancelled.then_some(Screen::None)
@@ -327,9 +327,9 @@ mod visual {
         };
         {
             let mut s = shared.lock().unwrap();
-            s.session.command_tree =
+            s.session.chat.command_tree =
                 Some(std::sync::Arc::new(crate::gui::chat::tests::preview_tree()));
-            s.session.command_block_pos = Some(BlockPos::new(0, 64, 0));
+            s.session.editors.command_block_pos = Some(BlockPos::new(0, 64, 0));
         }
 
         let mut state = GuiState::default();
@@ -347,7 +347,7 @@ mod visual {
             vh,
         );
 
-        shared.lock().unwrap().session.command_block_data = Some(CommandBlockData {
+        shared.lock().unwrap().session.editors.command_block_data = Some(CommandBlockData {
             command: "gamemode creative".to_string(),
             track_output: true,
             last_output: "Set own game mode to Creative Mode".to_string(),

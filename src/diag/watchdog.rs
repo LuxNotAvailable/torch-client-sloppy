@@ -295,6 +295,7 @@ counted! {
         Anim,
         Tick,
         Snapshot,
+        Slots,
     }
 }
 
@@ -342,6 +343,7 @@ fn report_event_load() {
     if events < 10_000 {
         return;
     }
+    let slots = ms(Phase::Slots);
     let (nearest, meta, world, anim, tick, snapshot) = (
         ms(Phase::Nearest),
         ms(Phase::Meta),
@@ -354,8 +356,8 @@ fn report_event_load() {
         "net",
         "event handler ({:.0} ms window): {} events costing {:.0} ms, of which {} were packets \
          costing {:.0} ms ({:.2} us each); entity collection: nearest {:.0} ms, meta {:.0} ms, \
-         world {:.0} ms, anim {:.0} ms (tick {:.0} ms, snapshot {:.0} ms). The bot thread has one core: whatever this does not \
-         account for is azalea's own dispatch around it.",
+         world {:.0} ms, anim {:.0} ms (tick {:.0} ms, snapshot {:.0} ms); slots {:.0} ms. The bot thread has one core: whatever \
+         this does not account for is azalea's own dispatch around it.",
         window,
         events,
         nanos as f64 / 1e6,
@@ -371,7 +373,8 @@ fn report_event_load() {
         world,
         anim,
         tick,
-        snapshot
+        snapshot,
+        slots
     );
 }
 

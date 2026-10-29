@@ -38,7 +38,7 @@ pub fn move_flags(s: &SharedState, keys: u8) -> u8 {
     if sneak::enabled() {
         flags |= sneak::flags(s.session.flying);
     }
-    if s.session.auto_mine.is_some_and(|i| i.forward) {
+    if s.session.targeting.auto_mine.is_some_and(|i| i.forward) {
         flags |= crate::session::MOVE_FORWARD;
     }
     flags

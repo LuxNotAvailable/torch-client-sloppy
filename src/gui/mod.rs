@@ -1038,12 +1038,71 @@ impl Default for GuiOptions {
     }
 }
 
+/// Effects drawn over the game for a moment: the item activation
+/// (`ItemActivation`) and the elder guardian's face.
+#[derive(Default)]
+pub struct ScreenEffects {
+    /// When the totem started, and its sideways drift.
+    pub activation: Option<(crate::platform::time::Instant, f32, f32, &'static str)>,
+    pub elder: Option<crate::platform::time::Instant>,
+}
+
+impl ScreenEffects {
+    pub fn totem(&mut self) {
+        let seed = crate::platform::time::Instant::now().elapsed().as_nanos() as i64 ^ 0x5DEECE66D;
+        let mut rng = crate::util::javarandom::JavaRandom::new(seed);
+        let (x, y) = (rng.next_f32() * 2.0 - 1.0, rng.next_f32() * 2.0 - 1.0);
+        self.activation = Some((crate::platform::time::Instant::now(), x, y, "totem_of_undying"));
+    }
+
+    /// How far through the activation (0 to 1), its drift and item.
+    pub fn activation(&mut self) -> Option<(f32, f32, f32, &'static str)> {
+        let (start, x, y, item) = self.activation?;
+        let t = start.elapsed().as_secs_f32() / 2.0;
+        if t >= 1.0 {
+            self.activation = None;
+            return None;
+        }
+        Some((t, x, y, item))
+    }
+
+    /// How far through the elder guardian's appearance (0 to 1).
+    pub fn elder(&mut self) -> Option<f32> {
+        let t = self.elder?.elapsed().as_secs_f32() / 1.5;
+        if t >= 1.0 {
+            self.elder = None;
+            return None;
+        }
+        Some(t)
+    }
+}
+
+/// The options as last saved, for code outside the GUI (the renderer,
+/// items, chat drawing): one shared copy, swapped when options are saved,
+/// instead of each part keeping its own.
+static CURRENT_OPTIONS: std::sync::RwLock<Option<std::sync::Arc<GuiOptions>>> = std::sync::RwLock::new(None);
+
+pub fn current_options() -> std::sync::Arc<GuiOptions> {
+    if let Some(current) = CURRENT_OPTIONS.read().unwrap().as_ref() {
+        return current.clone();
+    }
+    let loaded = std::sync::Arc::new(GuiOptions::default());
+    publish_options(&loaded);
+    loaded
+}
+
+fn publish_options(options: &std::sync::Arc<GuiOptions>) {
+    crate::text::FORCE_UNICODE.store(options.force_unicode, std::sync::atomic::Ordering::Relaxed);
+    *CURRENT_OPTIONS.write().unwrap() = Some(options.clone());
+}
+
 fn load_options() -> Option<serde_json::Value> {
     let text = crate::platform::storage::OPTIONS.load()?;
     serde_json::from_str(&text).ok()
 }
 
 pub fn save_options(options: &GuiOptions) {
+    publish_options(&std::sync::Arc::new(options.clone()));
     let mut json = serde_json::json!({
         "guiScale": options.gui_scale,
         "fov": options.fov,
@@ -1205,6 +1264,8 @@ pub struct GuiState {
     pub social: social::SocialState,
     pub op_block: op_blocks::OpBlockState,
     pub language_list: more_options::LanguageState,
+    /// Screen effects the game set off.
+    pub effects: ScreenEffects,
     pub switcher: gamemode_switcher::SwitcherState,
     pub hide_gui: bool,
     /// The zoom key is held: the HUD hides, as with F1.
@@ -1299,7 +1360,7 @@ pub struct Snapshot {
     pub subtitle_text: Option<Vec<crate::text::Span>>,
     pub title_times: Option<(Option<u32>, Option<u32>, Option<u32>)>,
     pub titles_clear: Option<bool>,
-    pub menu_slots: Vec<SlotStack>,
+    pub menu_slots: std::sync::Arc<[SlotStack]>,
     pub attack_strength: f32,
     pub attack_delay: f32,
     pub targeted_entity: bool,
@@ -1391,7 +1452,7 @@ mod tests {
         hotbar[9] = stack("shield");
 
         let snap = Snapshot {
-            menu_slots,
+            menu_slots: menu_slots.into(),
             hotbar: hotbar.into(),
             ..Default::default()
         };

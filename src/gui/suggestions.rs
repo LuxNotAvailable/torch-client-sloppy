@@ -339,7 +339,7 @@ impl Field {
     }
 
     pub fn refresh(&mut self, font: &Font, shared: &Arc<SharedMutex>, st: Style, a: Anchor) {
-        let reply = shared.lock().unwrap().session.suggestion_reply.take();
+        let reply = shared.lock().unwrap().session.chat.suggestion_reply.take();
         let accepted = match reply {
             Some((id, suggestions)) => self.suggest.client.accept(id, suggestions),
             None => false,
@@ -357,10 +357,10 @@ impl Field {
         let (tree, source) = {
             let s = shared.lock().unwrap();
             (
-                s.session.command_tree.clone(),
+                s.session.chat.command_tree.clone(),
                 Source {
-                    player_names: s.session.player_names.clone(),
-                    custom_completions: s.session.custom_completions.clone(),
+                    player_names: s.session.chat.player_names.clone(),
+                    custom_completions: s.session.chat.custom_completions.clone(),
                 },
             )
         };
@@ -376,7 +376,7 @@ impl Field {
         if let Some(request) = self.suggest.info.ask_server.clone()
             && let Some(packet) = self.suggest.client.request(&request)
         {
-            shared.lock().unwrap().session.suggestion_request = Some(packet);
+            shared.lock().unwrap().session.chat.suggestion_request = Some(packet);
         }
 
         let input_chars: Vec<char> = value.chars().collect();
@@ -393,17 +393,10 @@ impl Field {
         if keep {
             let current = self.suggest.list.as_ref().map_or(0, |l| l.current as i32);
             self.select(current);
-        } else if self.suggest.allow && AUTO.load(std::sync::atomic::Ordering::Relaxed) {
+        } else if self.suggest.allow && crate::gui::current_options().chat.auto_suggestions {
             self.show(font, st, a);
         }
     }
-}
-
-/// `autoSuggestions`: off, the list only shows on Tab.
-static AUTO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
-
-pub fn set_auto(on: bool) {
-    AUTO.store(on, std::sync::atomic::Ordering::Relaxed);
 }
 
 fn sort_suggestions(pending: &Suggestions, value: &str, cursor: usize) -> Vec<Suggestion> {

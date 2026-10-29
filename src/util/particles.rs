@@ -493,7 +493,7 @@ fn spawn_particles(
 ) {
     use crate::session::ParticleEmit;
 
-    let emits = std::mem::take(&mut shared.0.lock().unwrap().session.particle_emits);
+    let emits = std::mem::take(&mut shared.0.lock().unwrap().session.world.particle_emits);
     if emits.is_empty() {
         return;
     }
@@ -3081,6 +3081,11 @@ struct Starter {
 
 static STARTERS: std::sync::Mutex<Vec<Starter>> = std::sync::Mutex::new(Vec::new());
 
+/// A new session: no fireworks carry over.
+pub(crate) fn reset_fireworks() {
+    STARTERS.lock().unwrap().clear();
+}
+
 /// A rocket exploded (entity event 17) at `pos` moving at `velocity`.
 pub(crate) fn start_firework(pos: [f64; 3], velocity: [f64; 3], explosions: Vec<FireworkExplosion>) {
     let pos = Vec3::new(pos[0] as f32, pos[1] as f32, pos[2] as f32);
@@ -3091,7 +3096,7 @@ pub(crate) fn start_firework(pos: [f64; 3], velocity: [f64; 3], explosions: Vec<
             let mut s = shared.lock().unwrap();
             for _ in 0..8 {
                 crate::session::push_particle_emit(
-                    &mut s.session.particle_emits,
+                    &mut s.session.world.particle_emits,
                     crate::session::ParticleEmit::Level(crate::session::LevelParticle {
                         particle: azalea::entity::particle::Particle::Poof,
                         pos: [pos.x as f64, pos.y as f64, pos.z as f64],

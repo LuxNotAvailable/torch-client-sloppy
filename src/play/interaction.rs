@@ -162,29 +162,29 @@ pub fn handle_interaction(bot: &Client, shared: &Arc<SharedMutex>) {
     #[cfg_attr(not(feature = "mobile_ui"), allow(unused_variables))]
     let (attack_held, attack_clicked, use_held, use_clicked, pick, attack_ready) = {
         let mut s = shared.lock().unwrap();
-        s.session.targeted_block = target;
-        s.session.targeted_entity = targeted_entity;
-        s.session.crosshair_entity = crosshair_entity;
-        let attack_ready = s.session.attack_strength >= 1.0;
-        s.session.breaking = breaking;
+        s.session.targeting.targeted_block = target;
+        s.session.targeting.targeted_entity = targeted_entity;
+        s.session.targeting.crosshair_entity = crosshair_entity;
+        let attack_ready = s.session.targeting.attack_strength >= 1.0;
+        s.session.targeting.breaking = breaking;
         if let Some(spawn) = mining_particle {
             crate::session::push_particle_emit(
-                &mut s.session.particle_emits,
+                &mut s.session.world.particle_emits,
                 crate::session::ParticleEmit::Block(spawn),
             );
         }
         if s.screen_open {
-            s.session.attack_clicked = false;
-            s.session.use_clicked = false;
-            s.session.pick_clicked = false;
+            s.session.input.attack_clicked = false;
+            s.session.input.use_clicked = false;
+            s.session.input.pick_clicked = false;
             (false, false, false, false, None, attack_ready)
         } else {
             (
-                s.session.attack_held,
-                std::mem::take(&mut s.session.attack_clicked),
-                s.session.use_held,
-                std::mem::take(&mut s.session.use_clicked),
-                std::mem::take(&mut s.session.pick_clicked).then_some(s.session.pick_include_data),
+                s.session.input.attack_held,
+                std::mem::take(&mut s.session.input.attack_clicked),
+                s.session.input.use_held,
+                std::mem::take(&mut s.session.input.use_clicked),
+                std::mem::take(&mut s.session.input.pick_clicked).then_some(s.session.input.pick_include_data),
                 attack_ready,
             )
         }
@@ -217,12 +217,12 @@ pub fn handle_interaction(bot: &Client, shared: &Arc<SharedMutex>) {
                 let s = shared.lock().unwrap();
                 let weapon = s
                     .session
-                    .hotbar
-                    .get(s.session.hotbar_selected as usize)
+                    .inventory.hotbar
+                    .get(s.session.inventory.hotbar_selected as usize)
                     .is_some_and(|st| {
                         !st.is_empty() && crate::modules::triggerbot::is_weapon(st.item)
                     });
-                (s.session.attack_strength, weapon)
+                (s.session.targeting.attack_strength, weapon)
             };
             crate::modules::triggerbot::should_attack(kind, strength, weapon)
         });
@@ -351,7 +351,7 @@ fn apply_break(
         GameMode::Spectator => (false, false),
         _ => (held, clicked),
     };
-    let editing_pos = shared.lock().unwrap().session.sign_edit_open_pos;
+    let editing_pos = shared.lock().unwrap().session.editors.sign_edit_open_pos;
     let (held, clicked) = match (hit, editing_pos) {
         (Some(h), Some(editing)) if h.block_pos == editing => (false, false),
         _ => (held, clicked),
@@ -658,7 +658,7 @@ fn emit_consume_fx(bot: &Client, shared: &Arc<SharedMutex>, fx: &ConsumeFx, coun
             let y1 = -rng.next_f32() * 0.6 - 0.3;
             let p = turn([(rng.next_f32() - 0.5) * 0.3, y1, 0.6]);
             crate::session::push_particle_emit(
-                &mut s.session.particle_emits,
+                &mut s.session.world.particle_emits,
                 crate::session::ParticleEmit::Level(crate::session::LevelParticle {
                     particle: azalea::entity::particle::Particle::Item(
                         azalea::entity::particle::ItemParticle {
@@ -1054,9 +1054,9 @@ fn open_op_block(bot: &Client, shared: &Arc<SharedMutex>, hit: &BlockHitResult) 
     let Some(state) = world.read().get_block_state(hit.block_pos) else {
         return;
     };
-    let id = Box::<dyn azalea::block::BlockTrait>::from(state).id();
+    let id = crate::util::block_model::block_id(state);
     if let Some(kind) = crate::gui::op_blocks::OpBlock::of(id) {
-        shared.lock().unwrap().session.op_block_open = Some((kind, hit.block_pos));
+        crate::client::bus::emit(crate::client::bus::ClientEvent::OpenOpBlock(kind, hit.block_pos));
     }
 }
 
@@ -1077,16 +1077,16 @@ fn open_command_block(bot: &Client, shared: &Arc<SharedMutex>, hit: &BlockHitRes
     let conditional = Box::<dyn azalea::block::BlockTrait>::from(state).get_property("conditional")
         == Some("true");
     let mut s = shared.lock().unwrap();
-    s.session.command_block_open = Some(crate::session::CommandBlockOpen {
+crate::client::bus::emit(crate::client::bus::ClientEvent::OpenCommandBlock(crate::session::CommandBlockOpen {
         pos: hit.block_pos,
         mode,
         conditional,
-    });
-    s.session.command_block_pos = Some(hit.block_pos);
+    }));
+    s.session.editors.command_block_pos = Some(hit.block_pos);
 }
 
 pub(crate) fn command_block_mode(state: azalea::blocks::BlockState) -> Option<CommandBlockMode> {
-    match Box::<dyn azalea::block::BlockTrait>::from(state).id() {
+    match crate::util::block_model::block_id(state) {
         "command_block" => Some(CommandBlockMode::Redstone),
         "repeating_command_block" => Some(CommandBlockMode::Auto),
         "chain_command_block" => Some(CommandBlockMode::Sequence),
@@ -1148,10 +1148,10 @@ fn open_book_editor(bot: &Client, shared: &Arc<SharedMutex>, clicked: bool) {
     if data.kind != ItemKind::WritableBook {
         return;
     }
-    shared.lock().unwrap().session.book_edit_open = Some(crate::session::BookEditRequest {
+    crate::client::bus::emit(crate::client::bus::ClientEvent::EditBook(crate::session::BookEditRequest {
         hand: crate::session::InteractionHand::Main,
         author: bot.username(),
-    });
+    }));
 }
 
 fn next_sequence(bot: &Client) -> Option<u32> {

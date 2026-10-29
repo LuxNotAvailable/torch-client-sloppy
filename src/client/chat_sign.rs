@@ -129,7 +129,7 @@ impl azalea::app::Plugin for ChatSigningPlugin {
 fn signing_wanted() -> bool {
     crate::SHARED.get().is_some_and(|shared| {
         let s = shared.lock().unwrap();
-        s.chat_signing_allowed || s.session.chat_signing_session
+        s.chat_signing_allowed || s.session.chat.chat_signing_session
     })
 }
 

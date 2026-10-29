@@ -642,13 +642,13 @@ fn centered(p: &mut Painter, s: &str, mid: i32, y: i32) {
 fn select(shared: &SharedMutex, tree: &AdvancementTree, root: Option<u32>) {
     let mut s = shared.lock().unwrap();
     let session = &mut s.session;
-    if session.advancements.generation != tree.generation {
+    if session.progress.advancements.generation != tree.generation {
         return;
     }
-    session.advancement_tab = root;
+    session.progress.advancement_tab = root;
     if let Some(root) = root {
         session
-            .seen_advancements
+            .progress.seen_advancements
             .push(Some(tree.nodes[root as usize].id.clone()));
     }
 }

@@ -40,14 +40,14 @@ pub fn draw(p: &mut Painter, ctx: &ScreenCtx, shared: &Arc<SharedMutex>) -> Opti
     let y = cy + 30.0;
     if Button::new(x, y, WIDGET_WIDTH_BIG, WIDGET_HEIGHT, YES).draw(p, ctx) {
         let mut s = shared.lock().unwrap();
-        s.session.chat_signing_session = true;
-        s.session.chat_signing_wait = 0;
+        s.session.chat.chat_signing_session = true;
+        s.session.chat.chat_signing_wait = 0;
         return Some(Screen::None);
     }
     if Button::new(x, y + 24.0, WIDGET_WIDTH_BIG, WIDGET_HEIGHT, NO).draw(p, ctx)
         || ctx.input.escape
     {
-        shared.lock().unwrap().session.chat_signing_declined = true;
+        shared.lock().unwrap().session.chat.chat_signing_declined = true;
         return Some(Screen::None);
     }
     None

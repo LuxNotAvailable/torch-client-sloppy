@@ -15,6 +15,11 @@ const TABS: [&str; 2] = ["All", "Hidden"];
 
 static HIDDEN: Mutex<Option<HashSet<u128>>> = Mutex::new(None);
 
+/// A new session: hidden players are per server, as vanilla's.
+pub fn reset() {
+    *HIDDEN.lock().unwrap() = None;
+}
+
 /// Whether this player's chat is hidden.
 pub fn is_hidden(uuid: u128) -> bool {
     HIDDEN.lock().unwrap().as_ref().is_some_and(|h| h.contains(&uuid))

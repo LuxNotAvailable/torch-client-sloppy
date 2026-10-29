@@ -1267,7 +1267,10 @@ impl Plugin for EntityPlugin {
 #[allow(clippy::too_many_arguments)]
 fn sync_entities(
     mut commands: Commands,
-    view: Res<crate::renderer::FrameView>,
+    (view, sampled): (
+        Res<crate::renderer::FrameView>,
+        Res<crate::renderer::frame_view::SampledEntities>,
+    ),
     registry: Res<Registry>,
     mut assets: ResMut<EntityAssets>,
     mut rigs: ResMut<EntityRigs>,
@@ -1297,7 +1300,7 @@ fn sync_entities(
         Query<&mut Aabb, With<EntityRigNode>>,
     ),
     mut mats: Query<&mut MeshMaterial3d<EntityMaterial>>,
-    (mut variant_tick, mut frame, mut seen, mut idx, mut gpu_rigs_were): (
+    (mut variant_tick, _frame, mut seen, mut idx, mut gpu_rigs_were): (
         Local<u32>,
         Local<Vec<EntityState>>,
         Local<HashMap<i32, (EntityKind, Option<Carried>)>>,
@@ -1323,10 +1326,10 @@ fn sync_entities(
     let cap = max_rendered_entities();
     let anims = &*view.entities;
     let partial = view.partial;
-    let frame = &mut *frame;
-    frame.clear();
-    if anims.len() <= cap {
-        frame.extend(anims.iter().map(|e| e.sample(partial)));
+    // Sampled once this frame, in `anims` order.
+    let all = &sampled.states;
+    let frame: Vec<&EntityState> = if anims.len() <= cap || all.len() != anims.len() {
+        all.iter().take(cap).collect()
     } else {
         let eye = camera.position;
         let key = |i: usize| {
@@ -1338,13 +1341,13 @@ fn sync_entities(
         idx.extend(0..anims.len());
         idx.select_nth_unstable_by_key(cap, |&i| key(i));
         idx.truncate(cap);
-        frame.extend(idx.iter().map(|&i| anims[i].sample(partial)));
-    }
+        idx.iter().map(|&i| &all[i]).collect()
+    };
 
     let seen = &mut *seen;
     seen.clear();
     seen.reserve(frame.len());
-    for st in frame.iter().chain(&carried.0) {
+    for st in frame.iter().copied().chain(&carried.0) {
         seen.insert(st.id, (st.kind, st.carrier.and_then(|c| c.specs)));
     }
     rigs.live.retain(|id, rig| {
@@ -1363,7 +1366,7 @@ fn sync_entities(
     let mut copy_locals: Vec<Transform> = Vec::new();
     let mut posed: Vec<PosedPart> = Vec::new();
 
-    for st in frame.iter().chain(&carried.0) {
+    for st in frame.iter().copied().chain(&carried.0) {
         let spec_ids = registry.specs_for_state(st);
         if spec_ids.is_empty() {
             continue;

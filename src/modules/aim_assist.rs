@@ -29,7 +29,7 @@ pub fn tick(bot: &Client, shared: &Arc<SharedMutex>) {
     match EDGE.poll(s) {
         Phase::Off => return,
         Phase::Stopped => {
-            shared.lock().unwrap().session.aim_target = None;
+            shared.lock().unwrap().session.targeting.aim_target = None;
             TARGET.store(NO_TARGET, Relaxed);
             return;
         }
@@ -45,7 +45,7 @@ pub fn tick(bot: &Client, shared: &Arc<SharedMutex>) {
         match pick(&state, eye, range, fov) {
             Some(found) => (eye, found),
             None => {
-                state.session.aim_target = None;
+                state.session.targeting.aim_target = None;
                 TARGET.store(NO_TARGET, Relaxed);
                 return;
             }
@@ -54,7 +54,7 @@ pub fn tick(bot: &Client, shared: &Arc<SharedMutex>) {
     let (eye, (id, point)) = picked;
 
     if !s.flag(setting::IGNORE_WALLS) && !visible(bot, eye, point) {
-        shared.lock().unwrap().session.aim_target = None;
+        shared.lock().unwrap().session.targeting.aim_target = None;
         return;
     }
 
@@ -64,7 +64,7 @@ pub fn tick(bot: &Client, shared: &Arc<SharedMutex>) {
         ARM_AT.store(now + (roll(lo, hi) / MS_PER_TICK).round() as i64, Relaxed);
     }
     let armed = now >= ARM_AT.load(Relaxed);
-    shared.lock().unwrap().session.aim_target = armed.then_some(id);
+    shared.lock().unwrap().session.targeting.aim_target = armed.then_some(id);
 }
 
 fn pick(s: &SharedState, eye: [f32; 3], range: f32, fov: f32) -> Option<(i32, [f32; 3])> {
@@ -129,7 +129,7 @@ pub(super) fn visible(bot: &Client, eye: [f32; 3], point: [f32; 3]) -> bool {
 
 pub fn nudge(s: &SharedState, yaw: f32, pitch: f32, dx: f32, dy: f32) -> (f32, f32) {
     let store = store();
-    let Some(id) = s.session.aim_target else {
+    let Some(id) = s.session.targeting.aim_target else {
         return (dx, dy);
     };
     let pull = Pull {

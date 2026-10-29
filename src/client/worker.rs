@@ -521,7 +521,7 @@ pub fn drain_all(queue: &JobQueue, shared: &Arc<SharedMutex>, scratch: &mut Scra
     while let Some(job) = queue.try_pop() {
         run_job(job, queue, shared, scratch, None);
         let s = shared.lock().unwrap();
-        if s.session.pending_chunks.len() + s.session.pending_edits.len() >= cap {
+        if s.session.world.pending_chunks.len() + s.session.world.pending_edits.len() >= cap {
             return;
         }
     }
@@ -727,8 +727,8 @@ fn process_job(
         s.profiling.record_mesh(elapsed_ms);
         crate::diag::add(crate::diag::Stat::SectionsMeshed, results.len() as u64);
         match job.scope {
-            JobScope::Section(_) => s.session.pending_edits.extend(results),
-            JobScope::Column => s.session.pending_chunks.extend(results),
+            JobScope::Section(_) => s.session.world.pending_edits.extend(results),
+            JobScope::Column => s.session.world.pending_chunks.extend(results),
         }
     }
 

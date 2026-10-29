@@ -20,15 +20,10 @@ pub struct SharedState {
     pub move_flags: u8,
     pub screen_open: bool,
     pub profiling: ChunkProfiling,
-    pub quit_requested: bool,
-    pub disconnect_requested: bool,
     pub disconnected_pending: bool,
     pub session_ended: bool,
     pub end_notice: Option<String>,
     pub disconnect_reason: Option<Vec<crate::text::Span>>,
-    pub reload_chunks_requested: bool,
-    pub leave_bed_requested: bool,
-    pub respawn_requested: bool,
     pub in_world: bool,
     pub session: SessionState,
     pub render_distance_sent: Option<u32>,
@@ -57,12 +52,12 @@ impl SharedState {
 
     pub fn clear_session(&mut self, status: String) {
         self.in_world = false;
-        let health_epoch = self.session.health_epoch;
-        let block_entities_version = self.session.block_entities_version;
+        let health_epoch = self.session.vitals.health_epoch;
+        let block_entities_version = self.session.world.block_entities_version;
         self.session = SessionState::default();
-        self.session.health_epoch = health_epoch;
-        self.session.block_entities_version = block_entities_version.wrapping_add(1);
-        self.session.clear_chunks = true;
+        self.session.vitals.health_epoch = health_epoch;
+        self.session.world.block_entities_version = block_entities_version.wrapping_add(1);
+        self.session.world.clear_chunks = true;
         self.session.status = Some(status.into());
     }
 }
@@ -108,12 +103,169 @@ impl ChunkProfiling {
     }
 }
 
+/// The player's inventory as the GUI shows it, and its pending edits.
 #[derive(Default)]
-pub struct SessionState {
+pub struct SessionInventory {
+    pub menu_slots: std::sync::Arc<[SlotStack]>,
+    pub hotbar: std::sync::Arc<[SlotStack]>,
+    pub armor: crate::renderer::Armor,
+    pub carried: SlotStack,
+    pub horse: Option<HorseMenu>,
+    pub horse_published_state_id: u32,
+    pub inv_actions: Vec<InvAction>,
+    pub hotbar_selected: u8,
+    pub hotbar_target: Option<u8>,
+    pub pending_drop: Option<DropRequest>,
+    pub swap_hands: bool,
+}
+
+/// The open container and what its screen shows.
+#[derive(Default)]
+pub struct SessionContainer {
+    pub container_id: i32,
+    pub container_kind: ContainerKind,
+    pub container_title: std::sync::Arc<[crate::text::Span]>,
+    pub container_data: ContainerData,
+    pub enchant_clues: [Option<Box<str>>; 3],
+    pub merchant: Option<std::sync::Arc<MerchantOffers>>,
+    pub merchant_hint: i32,
+    pub merchant_future_xp: u32,
+    pub stonecutter_recipes: std::sync::Arc<[StonecutterRecipe]>,
+}
+
+/// Health, hunger, air, effects, experience and death.
+#[derive(Default)]
+pub struct SessionVitals {
+    pub health: f32,
+    pub health_display: HealthDisplay,
+    pub health_epoch: u32,
+    pub dead: bool,
+    pub death_cause: Option<Vec<crate::text::Span>>,
+    pub death_score: i32,
+    pub show_death_screen: bool,
+    pub jump_charge: Option<f32>,
+    pub food: u32,
+    pub saturation: f32,
+    pub air_supply: i32,
+    pub active_effects: Vec<crate::play::mob_effects::MobEffectInstance>,
+    pub xp_progress: f32,
+    pub xp_level: u32,
+    pub xp_seen: bool,
+    pub xp_display_tick: i64,
+}
+
+/// Chat both ways, signing, commands and suggestions.
+#[derive(Default)]
+pub struct SessionChat {
+    pub chat_incoming: Vec<ChatEntry>,
+    pub toast_incoming: Vec<crate::gui::toast::ToastEvent>,
+    pub outgoing_chat: Vec<String>,
+    pub chat_signing_session: bool,
+    pub chat_signing_declined: bool,
+    pub chat_signing_wait: u32,
+    pub chat_ack_pending: u32,
+    pub chat_ack_last: Option<[u8; 256]>,
+    pub chat_send_error: Option<String>,
+    pub enforces_secure_chat: bool,
+    pub command_tree: Option<std::sync::Arc<crate::play::commands::CommandTree>>,
+    pub suggestion_request: Option<(u32, String)>,
+    pub suggestion_reply: Option<(u32, crate::play::commands::Suggestions)>,
+    pub player_names: Vec<String>,
+    pub custom_completions: Vec<String>,
+}
+
+/// What the server shows on the HUD: titles, lists, bars, waypoints.
+#[derive(Default)]
+pub struct SessionHud {
+    pub tab_list: std::sync::Arc<crate::client::tablist::TabList>,
+    pub sidebar: std::sync::Arc<crate::client::tablist::Sidebar>,
+    pub boss_bars: std::sync::Arc<Vec<crate::client::bossbar::BossBar>>,
+    pub waypoints: std::sync::Arc<Vec<WaypointInfo>>,
+    pub action_bar: Option<Vec<crate::text::Span>>,
+    pub title_text: Option<Vec<crate::text::Span>>,
+    pub subtitle_text: Option<Vec<crate::text::Span>>,
+    pub title_times: Option<(Option<u32>, Option<u32>, Option<u32>)>,
+    pub titles_clear: Option<bool>,
+}
+
+/// Mouse buttons held and clicked this frame, for the tick.
+#[derive(Default)]
+pub struct SessionInput {
+    pub attack_held: bool,
+    pub use_held: bool,
+    pub attack_clicked: bool,
+    pub use_clicked: bool,
+    pub pick_clicked: bool,
+    pub pick_include_data: bool,
+}
+
+/// The command block, sign and book editors' traffic.
+#[derive(Default)]
+pub struct SessionEditors {
+    pub command_block_pos: Option<azalea_core::position::BlockPos>,
+    pub command_block_data: Option<CommandBlockData>,
+    pub command_block_update: Option<CommandBlockUpdate>,
+    pub sign_update: Option<SignUpdateRequest>,
+    pub sign_edit_open_pos: Option<azalea_core::position::BlockPos>,
+    pub edit_book: Option<EditBookRequest>,
+}
+
+/// What the player looks at, attacks and mines.
+#[derive(Default)]
+pub struct SessionTargeting {
+    pub targeted_block: Option<TargetedBlock>,
+    pub targeted_entity: bool,
+    pub crosshair_entity: Option<i32>,
+    pub aim_target: Option<i32>,
+    pub auto_mine: Option<MineIntent>,
+    pub auto_mace: Option<MaceAim>,
+    pub attack_strength: f32,
+    pub attack_delay: f32,
+    pub breaking: Option<BreakingBlock>,
+}
+
+/// Advancements and statistics.
+#[derive(Default)]
+pub struct SessionProgress {
+    /// The statistics the server last sent, merged, and how many times it
+    /// has; and a request for them.
+    pub stats: std::collections::HashMap<azalea_protocol::packets::game::c_award_stats::Stat, i32>,
+    pub stats_version: u32,
+    pub advancements: std::sync::Arc<crate::client::advancements::AdvancementTree>,
+    pub advancement_ids: std::collections::HashMap<azalea_registry::identifier::Identifier, u32>,
+    pub advancement_tab: Option<u32>,
+    pub seen_advancements: Vec<Option<azalea_registry::identifier::Identifier>>,
+}
+
+/// World data streaming to the renderer: chunks, block entities, maps, particles, time.
+#[derive(Default)]
+pub struct SessionWorld {
     pub pending_chunks: Vec<PendingSection>,
     pub pending_edits: Vec<PendingSection>,
     pub unloaded_chunks: Vec<(i32, i32)>,
     pub clear_chunks: bool,
+    pub game_time: u64,
+    pub particle_emits: Vec<ParticleEmit>,
+    pub map_updates: Vec<MapUpdate>,
+    pub clear_maps: bool,
+    pub day_clock: WorldClock,
+    pub env: Option<crate::renderer::environment::BiomeLayer>,
+    pub env_prev: Option<crate::renderer::environment::BiomeLayer>,
+    pub block_entities: std::sync::Arc<std::collections::HashMap<[i32; 3], crate::blockentities::feed::BlockEntityInfo>>,
+    pub block_entities_version: u64,
+}
+
+/// Client settings to send the server.
+#[derive(Default)]
+pub struct SessionClientInfo {
+    pub render_distance_request: Option<u32>,
+    pub skin_prefs_request: Option<SkinPrefs>,
+    /// `chatVisibility` (its id) and `chatColors` to send the server.
+    pub chat_prefs_request: Option<(u8, bool, bool)>,
+}
+
+#[derive(Default)]
+pub struct SessionState {
     pub player_pos: [f32; 3],
     pub status: Option<std::sync::Arc<str>>,
     pub current_address: Option<String>,
@@ -130,42 +282,6 @@ pub struct SessionState {
     pub fov: FovState,
     pub view_bob: ViewBob,
     pub other_players: std::sync::Arc<Vec<OtherPlayerInfo>>,
-    pub menu_slots: Vec<SlotStack>,
-    pub hotbar: std::sync::Arc<[SlotStack]>,
-    pub armor: crate::renderer::Armor,
-    pub carried: SlotStack,
-    pub container_id: i32,
-    pub container_kind: ContainerKind,
-    pub container_title: std::sync::Arc<[crate::text::Span]>,
-    pub container_data: ContainerData,
-    pub enchant_clues: [Option<Box<str>>; 3],
-    pub merchant: Option<std::sync::Arc<MerchantOffers>>,
-    pub merchant_hint: i32,
-    pub merchant_future_xp: u32,
-    pub stonecutter_recipes: std::sync::Arc<[StonecutterRecipe]>,
-    pub horse: Option<HorseMenu>,
-    pub horse_published_state_id: u32,
-    pub inv_actions: Vec<InvAction>,
-    pub hotbar_selected: u8,
-    pub health: f32,
-    pub health_display: HealthDisplay,
-    pub health_epoch: u32,
-    pub dead: bool,
-    pub death_cause: Option<Vec<crate::text::Span>>,
-    pub death_score: i32,
-    pub show_death_screen: bool,
-    /// The server asked for the end poem (game event 4, value 1).
-    pub show_credits: bool,
-    /// The statistics the server last sent, merged, and how many times it
-    /// has; and a request for them.
-    pub stats: std::collections::HashMap<azalea_protocol::packets::game::c_award_stats::Stat, i32>,
-    pub stats_version: u32,
-    pub stats_request: bool,
-    pub jump_charge: Option<f32>,
-    pub food: u32,
-    pub saturation: f32,
-    pub air_supply: i32,
-    pub active_effects: Vec<crate::play::mob_effects::MobEffectInstance>,
     pub gamemode: Gamemode,
     pub crouching: bool,
     pub fall_flying: bool,
@@ -174,128 +290,59 @@ pub struct SessionState {
     pub bed_orientation: Option<crate::direction::Direction>,
     pub sleep_timer: u32,
     pub player_pos_prev: [f32; 3],
-    pub game_time: u64,
     pub last_tick_time: Option<crate::platform::time::Instant>,
     /// Client ticks handled, so the renderer can pace them by count rather
     /// than by when each one happened to land.
     pub tick_seq: u64,
-    pub hotbar_target: Option<u8>,
     pub spectator_teleport_target: Option<u128>,
     pub fly_speed_scroll: f32,
-    pub pending_drop: Option<DropRequest>,
-    pub command_block_open: Option<CommandBlockOpen>,
-    /// A game-master block was used: which editor, at which block.
-    pub op_block_open: Option<(crate::gui::op_blocks::OpBlock, azalea_core::position::BlockPos)>,
-    pub command_block_pos: Option<azalea_core::position::BlockPos>,
-    pub command_block_data: Option<CommandBlockData>,
-    pub command_block_update: Option<CommandBlockUpdate>,
     pub op_level: u8,
-    pub sign_editor_open: Option<SignEditRequest>,
-    pub sign_update: Option<SignUpdateRequest>,
-    pub sign_edit_open_pos: Option<azalea_core::position::BlockPos>,
-    pub book_open: Option<InteractionHand>,
-    pub book_edit_open: Option<BookEditRequest>,
-    pub edit_book: Option<EditBookRequest>,
-    pub advancements: std::sync::Arc<crate::client::advancements::AdvancementTree>,
-    pub advancement_ids: std::collections::HashMap<azalea_registry::identifier::Identifier, u32>,
-    pub advancement_tab: Option<u32>,
-    pub seen_advancements: Vec<Option<azalea_registry::identifier::Identifier>>,
-    pub dialog_show: Option<std::sync::Arc<crate::play::dialog::Dialog>>,
-    pub dialog_clear: bool,
     pub dialog_submits: Vec<crate::play::dialog::Submit>,
     pub server_links: Vec<ServerLink>,
-    pub targeted_block: Option<TargetedBlock>,
-    pub targeted_entity: bool,
-    pub crosshair_entity: Option<i32>,
-    pub aim_target: Option<i32>,
-    pub auto_mine: Option<MineIntent>,
-    pub auto_mace: Option<MaceAim>,
-    pub attack_strength: f32,
-    pub attack_delay: f32,
-    pub breaking: Option<BreakingBlock>,
-    pub particle_emits: Vec<ParticleEmit>,
-    pub map_updates: Vec<MapUpdate>,
-    pub clear_maps: bool,
-    pub attack_held: bool,
-    pub use_held: bool,
-    pub attack_clicked: bool,
-    pub use_clicked: bool,
-    pub pick_clicked: bool,
-    pub pick_include_data: bool,
-    pub chat_incoming: Vec<ChatEntry>,
-    pub toast_incoming: Vec<crate::gui::toast::ToastEvent>,
-    pub outgoing_chat: Vec<String>,
 
-    pub chat_signing_session: bool,
-    pub chat_signing_prompt: bool,
-    pub chat_signing_declined: bool,
-    pub chat_signing_wait: u32,
-    pub chat_ack_pending: u32,
-    pub chat_ack_last: Option<[u8; 256]>,
-    pub chat_send_error: Option<String>,
-    pub enforces_secure_chat: bool,
     pub hardcore: bool,
     pub local_anim: HumanoidAnim,
     #[cfg(feature = "skins")]
     pub local_skin: crate::client::skins::SkinState,
     pub item_used: [u32; 2],
-    pub swap_hands: bool,
-    pub command_tree: Option<std::sync::Arc<crate::play::commands::CommandTree>>,
-    pub suggestion_request: Option<(u32, String)>,
-    pub suggestion_reply: Option<(u32, crate::play::commands::Suggestions)>,
-    pub player_names: Vec<String>,
-    pub tab_list: std::sync::Arc<crate::client::tablist::TabList>,
-    pub sidebar: std::sync::Arc<crate::client::tablist::Sidebar>,
-    pub boss_bars: std::sync::Arc<Vec<crate::client::bossbar::BossBar>>,
     pub esp: std::sync::Arc<crate::modules::esp::EspFrame>,
-    pub custom_completions: Vec<String>,
     pub entities: std::sync::Arc<Vec<crate::entities::feed::EntityAnim>>,
-    pub day_clock: WorldClock,
-    pub env: Option<crate::renderer::environment::BiomeLayer>,
-    pub env_prev: Option<crate::renderer::environment::BiomeLayer>,
-    pub block_entities: std::sync::Arc<
-        std::collections::HashMap<[i32; 3], crate::blockentities::feed::BlockEntityInfo>,
-    >,
-    pub block_entities_version: u64,
-    pub render_distance_request: Option<u32>,
-    pub skin_prefs_request: Option<SkinPrefs>,
-    /// `chatVisibility` (its id) and `chatColors` to send the server.
-    pub chat_prefs_request: Option<(u8, bool, bool)>,
-    pub xp_progress: f32,
-    pub xp_level: u32,
-    pub xp_seen: bool,
-    pub xp_display_tick: i64,
-    pub waypoints: std::sync::Arc<Vec<WaypointInfo>>,
-    pub action_bar: Option<Vec<crate::text::Span>>,
-    pub title_text: Option<Vec<crate::text::Span>>,
-    pub subtitle_text: Option<Vec<crate::text::Span>>,
-    pub title_times: Option<(Option<u32>, Option<u32>, Option<u32>)>,
-    pub titles_clear: Option<bool>,
+    pub inventory: SessionInventory,
+    pub container: SessionContainer,
+    pub vitals: SessionVitals,
+    pub chat: SessionChat,
+    pub hud: SessionHud,
+    pub input: SessionInput,
+    pub editors: SessionEditors,
+    pub targeting: SessionTargeting,
+    pub progress: SessionProgress,
+    pub world: SessionWorld,
+    pub client_info: SessionClientInfo,
 }
 
 impl SessionState {
     pub fn clear_clicks(&mut self) {
-        self.attack_held = false;
-        self.use_held = false;
-        self.attack_clicked = false;
-        self.use_clicked = false;
+        self.input.attack_held = false;
+        self.input.use_held = false;
+        self.input.attack_clicked = false;
+        self.input.use_clicked = false;
     }
 
     pub fn set_action_bar(&mut self, spans: Vec<crate::text::Span>) {
-        self.action_bar = Some(spans);
+        self.hud.action_bar = Some(spans);
     }
 
     pub fn set_title(&mut self, spans: Vec<crate::text::Span>) {
-        self.title_text = Some(spans);
-        self.titles_clear = None;
+        self.hud.title_text = Some(spans);
+        self.hud.titles_clear = None;
     }
 
     pub fn set_subtitle(&mut self, spans: Vec<crate::text::Span>) {
-        self.subtitle_text = Some(spans);
+        self.hud.subtitle_text = Some(spans);
     }
 
     pub fn set_title_times(&mut self, fade_in: i32, stay: i32, fade_out: i32) {
-        let (mut a, mut b, mut c) = self.title_times.unwrap_or_default();
+        let (mut a, mut b, mut c) = self.hud.title_times.unwrap_or_default();
         if fade_in >= 0 {
             a = Some(fade_in as u32);
         }
@@ -305,16 +352,16 @@ impl SessionState {
         if fade_out >= 0 {
             c = Some(fade_out as u32);
         }
-        self.title_times = Some((a, b, c));
+        self.hud.title_times = Some((a, b, c));
     }
 
     pub fn clear_titles(&mut self, reset_times: bool) {
-        self.title_text = None;
-        self.subtitle_text = None;
+        self.hud.title_text = None;
+        self.hud.subtitle_text = None;
         if reset_times {
-            self.title_times = None;
+            self.hud.title_times = None;
         }
-        self.titles_clear = Some(reset_times);
+        self.hud.titles_clear = Some(reset_times);
     }
 }
 
@@ -1153,7 +1200,7 @@ pub fn push_toasts(
     session: &mut SessionState,
     events: impl IntoIterator<Item = crate::gui::toast::ToastEvent>,
 ) {
-    let queue = &mut session.toast_incoming;
+    let queue = &mut session.chat.toast_incoming;
     for event in events {
         if queue.len() >= TOAST_QUEUE_MAX {
             break;

@@ -190,13 +190,13 @@ pub(crate) fn gather_inputs(
         let session = &state.session;
         let effect = |name: &str| {
             session
-                .active_effects
+                .vitals.active_effects
                 .iter()
                 .find(|e| e.id == name)
                 .map(|e| e.duration)
         };
         let held = |slot: usize| {
-            let item = session.hotbar.get(slot).map_or("", |s| s.item);
+            let item = session.inventory.hotbar.get(slot).map_or("", |s| s.item);
             item_ids
                 .and_then(|ids| ids.get(item))
                 .copied()
@@ -204,31 +204,31 @@ pub(crate) fn gather_inputs(
         };
         let light = |slot: usize| {
             session
-                .hotbar
+                .inventory.hotbar
                 .get(slot)
                 .map_or(0, |s| held_block_light(s.item))
         };
-        let (main, off) = (light(usize::from(session.hotbar_selected)), light(9));
+        let (main, off) = (light(usize::from(session.inventory.hotbar_selected)), light(9));
         (
             (
                 effect("blindness"),
                 effect("night_vision"),
                 effect("darkness"),
             ),
-            [held(usize::from(session.hotbar_selected)), held(9)],
+            [held(usize::from(session.inventory.hotbar_selected)), held(9)],
             [if old_hand_light { main.max(off) } else { main }, off],
             Vitals::of(
                 session.gamemode.is_survival(),
-                session.health,
-                if session.health_display.max_health > 0.0 {
-                    session.health_display.max_health
+                session.vitals.health,
+                if session.vitals.health_display.max_health > 0.0 {
+                    session.vitals.health_display.max_health
                 } else {
                     crate::session::VANILLA_MAX_HEALTH
                 },
-                session.food,
-                session.air_supply,
+                session.vitals.food,
+                session.vitals.air_supply,
                 crate::session::MAX_AIR_SUPPLY,
-                session.health_display.armor,
+                session.vitals.health_display.armor,
             ),
             session.fall_flying,
             session.swimming,

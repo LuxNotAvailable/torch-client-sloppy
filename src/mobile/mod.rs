@@ -182,8 +182,8 @@ fn mobile_input(
     if gui.gui_hidden() {
         gui.mobile.release_all();
         let mut s = shared.0.lock().unwrap();
-        s.session.attack_held = false;
-        s.session.use_held = false;
+        s.session.input.attack_held = false;
+        s.session.input.use_held = false;
         return;
     }
 
@@ -353,7 +353,7 @@ fn mobile_input(
             s.session.fly_toggle = true;
         }
         if let Some(slot) = hotbar {
-            s.session.hotbar_target = Some(slot);
+            s.session.inventory.hotbar_target = Some(slot);
         }
         s.session.flying
     };

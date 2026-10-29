@@ -524,6 +524,7 @@ pub(super) fn update_hitboxes(
     view: Res<FrameView>,
     state: Res<crate::gui::GuiState>,
     third_person: Res<super::input::ThirdPersonState>,
+    sampled: Res<super::frame_view::SampledEntities>,
     overlay: Option<Res<HitboxOverlay>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut targets: Query<&mut Visibility, With<HitboxMarker>>,
@@ -562,13 +563,11 @@ pub(super) fn update_hitboxes(
         colors.push(blue);
         colors.push(blue);
     };
-    for anim in view.entities.iter() {
-        let st = anim.sample(partial);
+    for (anim, st) in view.entities.iter().zip(&sampled.states) {
         let eye = azalea::entity::dimensions::EntityDimensions::from(anim.kind).eye_height * st.scale.max(0.01);
         cast(anim.position(partial), st.bounding_box_width, st.bounding_box_height, eye, anim.look(partial), &mut positions, &mut colors);
     }
-    for player in view.players.iter() {
-        let st = player.anim.sample(partial);
+    for (player, st) in view.players.iter().zip(&sampled.players) {
         let (h, eye) = if st.crouching { (1.5, 1.27) } else { (1.8, 1.62) };
         cast(player.anim.position(partial), 0.6, h, eye, (st.head_yaw, st.pitch), &mut positions, &mut colors);
     }

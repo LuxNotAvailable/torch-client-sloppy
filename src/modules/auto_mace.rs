@@ -144,7 +144,7 @@ pub fn tick(bot: &Client, shared: &Arc<SharedMutex>) {
             if let Some(sw) = run.swung {
                 settle(bot, sw, s.flag(setting::SWAP_BACK));
             }
-            shared.lock().unwrap().session.auto_mace = None;
+            shared.lock().unwrap().session.targeting.auto_mace = None;
             return;
         }
         Phase::Started => *RUN.lock().unwrap() = Run::IDLE,
@@ -172,7 +172,7 @@ pub fn tick(bot: &Client, shared: &Arc<SharedMutex>) {
     let silent = s.flag(setting::SILENT);
     let Some(ready) = ready(bot, shared) else {
         run.target = None;
-        shared.lock().unwrap().session.auto_mace = None;
+        shared.lock().unwrap().session.targeting.auto_mace = None;
         return;
     };
 
@@ -188,7 +188,7 @@ pub fn tick(bot: &Client, shared: &Arc<SharedMutex>) {
         aim,
     ) else {
         run.target = None;
-        shared.lock().unwrap().session.auto_mace = None;
+        shared.lock().unwrap().session.targeting.auto_mace = None;
         return;
     };
 
@@ -201,7 +201,7 @@ pub fn tick(bot: &Client, shared: &Arc<SharedMutex>) {
         id: found.id,
         aim: point,
     });
-    shared.lock().unwrap().session.auto_mace = (!silent).then_some(MaceAim {
+    shared.lock().unwrap().session.targeting.auto_mace = (!silent).then_some(MaceAim {
         aim: point.map(|v| v as f32),
         turn: run.turn,
     });
@@ -257,21 +257,21 @@ fn ready(bot: &Client, shared: &Arc<SharedMutex>) -> Option<Ready> {
         let st = shared.lock().unwrap();
         if !st.in_world
             || st.screen_open
-            || st.session.dead
+            || st.session.vitals.dead
             || st.session.gamemode == Gamemode::Spectator
         {
             return None;
         }
         let mace = mace_slot(
-            &st.session.hotbar,
-            st.session.hotbar_selected,
+            &st.session.inventory.hotbar,
+            st.session.inventory.hotbar_selected,
             s.choice(setting::SLOT),
         )?;
         let camera = Look {
             yaw: -st.camera_yaw - 180.0,
             pitch: -st.camera_pitch,
         };
-        (camera, st.session.attack_strength, mace)
+        (camera, st.session.targeting.attack_strength, mace)
     };
 
     let eye = bot.eye_position().ok()?;
@@ -395,7 +395,7 @@ fn candidates(
 }
 
 pub fn look_step(s: &SharedState, yaw: f32, pitch: f32, dt: f32, d: (f32, f32)) -> (f32, f32) {
-    let Some(intent) = s.session.auto_mace else {
+    let Some(intent) = s.session.targeting.auto_mace else {
         return d;
     };
     turn::look_toward(s, yaw, pitch, dt, d, intent.aim, intent.turn)

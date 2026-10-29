@@ -67,18 +67,10 @@ fn reset_session_gui(
 }
 
 struct NavPoll {
-    show_credits: bool,
     ended: Option<Option<Vec<crate::text::Span>>>,
     container_id: i32,
     container_kind: crate::session::ContainerKind,
-    sign_editor_open: Option<crate::session::SignEditRequest>,
-    signing_prompt: bool,
-    book_open: Option<crate::session::InteractionHand>,
-    book_edit_open: Option<crate::session::BookEditRequest>,
-    command_block_open: Option<crate::session::CommandBlockOpen>,
-    op_block_open: Option<(crate::gui::op_blocks::OpBlock, azalea_core::position::BlockPos)>,
-    dialog_show: Option<std::sync::Arc<crate::play::dialog::Dialog>>,
-    dialog_clear: bool,
+
     sleeping: bool,
     dead: bool,
     death_opening: Option<(Option<Vec<crate::text::Span>>, i32, bool)>,
@@ -93,7 +85,8 @@ pub(super) fn apply_gui_nav(
     #[cfg(feature = "skins")] mut faces: ResMut<crate::gui::player_faces::PlayerFaces>,
 ) {
     if std::mem::take(&mut state.quit) {
-        shared.0.lock().unwrap().quit_requested = true;
+        crate::client::bus::request(crate::client::bus::ClientRequest::Quit);
+        let _ = &shared;
         exit.write(AppExit::Success);
         return;
     }
@@ -110,31 +103,24 @@ pub(super) fn apply_gui_nav(
         let mut s = shared.0.lock().unwrap();
         let ended = std::mem::replace(&mut s.disconnected_pending, false)
             .then(|| s.disconnect_reason.take());
-        let dead = s.session.dead;
+        let dead = s.session.vitals.dead;
         let death_opening = dead
             && (state.screen == Screen::None
                 || state.screen.is_modal()
                 || state.screen == Screen::Advancements)
-            && s.session.show_death_screen;
+            && s.session.vitals.show_death_screen;
         NavPoll {
             ended,
-            container_id: s.session.container_id,
-            container_kind: s.session.container_kind,
-            sign_editor_open: s.session.sign_editor_open.take(),
-            signing_prompt: std::mem::take(&mut s.session.chat_signing_prompt),
-            book_open: s.session.book_open.take(),
-            book_edit_open: s.session.book_edit_open.take(),
-            command_block_open: s.session.command_block_open.take(),
-            op_block_open: s.session.op_block_open.take(),
-            dialog_show: s.session.dialog_show.take(),
-            show_credits: std::mem::take(&mut s.session.show_credits),
-            dialog_clear: std::mem::take(&mut s.session.dialog_clear),
+            container_id: s.session.container.container_id,
+            container_kind: s.session.container.container_kind,
+
+
             sleeping: s.session.sleeping,
             dead,
             death_opening: death_opening.then(|| {
                 (
-                    s.session.death_cause.clone(),
-                    s.session.death_score,
+                    s.session.vitals.death_cause.clone(),
+                    s.session.vitals.death_score,
                     s.session.hardcore,
                 )
             }),
@@ -170,14 +156,36 @@ pub(super) fn apply_gui_nav(
     }
     *last_container_id = container_id;
 
-    let sign_editor_open = poll.sign_editor_open;
-    let signing_prompt = poll.signing_prompt;
-    let book_open = poll.book_open;
-    let book_edit_open = poll.book_edit_open;
-    let command_block_open = poll.command_block_open;
-    if let Some((kind, pos)) = poll.op_block_open {
-        state.op_block.open(kind, pos);
-        state.nav = Some(Screen::OpBlock);
+    let mut sign_editor_open = None;
+    let mut signing_prompt = false;
+    let mut book_open = None;
+    let mut book_edit_open = None;
+    let mut command_block_open = None;
+    let mut dialog_show = None;
+    let mut dialog_clear = false;
+    // The game's events, in order.
+    for event in crate::client::bus::take_events() {
+        use crate::client::bus::ClientEvent;
+        match event {
+            ClientEvent::ShowCredits => {
+                state.win.pending = true;
+                state.nav = Some(Screen::EndPoem);
+            }
+            ClientEvent::OpenOpBlock(kind, pos) => {
+                state.op_block.open(kind, pos);
+                state.nav = Some(Screen::OpBlock);
+            }
+            ClientEvent::TotemActivated => state.effects.totem(),
+            ClientEvent::ElderGuardian => state.effects.elder = Some(crate::platform::time::Instant::now()),
+            ClientEvent::OpenCommandBlock(req) => command_block_open = Some(req),
+            ClientEvent::OpenSignEditor(req) => sign_editor_open = Some(req),
+            ClientEvent::OpenBook(hand) => book_open = Some(hand),
+            ClientEvent::EditBook(req) => book_edit_open = Some(req),
+            ClientEvent::ShowDialog(dialog) => dialog_show = Some(dialog),
+            ClientEvent::ClearDialog => dialog_clear = true,
+            ClientEvent::SigningPrompt => signing_prompt = true,
+            ClientEvent::CustomPayload { .. } => {}
+        }
     }
     if let Some(req) = command_block_open {
         state.command_block.open(req.pos, req.mode, req.conditional);
@@ -187,20 +195,20 @@ pub(super) fn apply_gui_nav(
         let pos = req.pos;
         if state.screen == Screen::SignEdit {
             let mut s = shared.0.lock().unwrap();
-            s.session.sign_update = Some(state.sign_edit.close(None));
+            s.session.editors.sign_update = Some(state.sign_edit.close(None));
         }
         state.sign_edit.open(req);
         state.nav = Some(Screen::SignEdit);
-        shared.0.lock().unwrap().session.sign_edit_open_pos = Some(pos);
+        shared.0.lock().unwrap().session.editors.sign_edit_open_pos = Some(pos);
     }
 
     if book_open.is_some() || book_edit_open.is_some() {
         let (view, edit) = {
             let s = shared.0.lock().unwrap();
-            let selected = s.session.hotbar_selected;
+            let selected = s.session.inventory.hotbar_selected;
             let book_of = |hand: crate::session::InteractionHand| {
                 s.session
-                    .hotbar
+                    .inventory.hotbar
                     .get(hand.hotbar_index(selected))
                     .and_then(|slot| slot.book.as_deref())
                     .cloned()
@@ -219,16 +227,13 @@ pub(super) fn apply_gui_nav(
         }
     }
 
-    if poll.show_credits {
-        state.win.pending = true;
-        state.nav = Some(Screen::EndPoem);
-    }
-    if let Some(dialog) = poll.dialog_show {
+
+    if let Some(dialog) = dialog_show {
         let current = state.screen;
         state.dialog.show(dialog, current);
         state.nav = Some(Screen::Dialog);
     }
-    if poll.dialog_clear && state.screen == Screen::Dialog {
+    if dialog_clear && state.screen == Screen::Dialog {
         state.nav = Some(state.dialog.clear());
     }
 
@@ -271,7 +276,7 @@ pub(super) fn apply_gui_nav(
             .lock()
             .unwrap()
             .session
-            .inv_actions
+            .inventory.inv_actions
             .push(InvAction::Close);
     }
     if state.screen == Screen::Dialog && next != Screen::Dialog {
@@ -279,18 +284,18 @@ pub(super) fn apply_gui_nav(
     }
     if state.screen == Screen::CommandBlock && next != Screen::CommandBlock {
         let mut s = shared.0.lock().unwrap();
-        s.session.command_block_pos = None;
-        s.session.command_block_data = None;
+        s.session.editors.command_block_pos = None;
+        s.session.editors.command_block_data = None;
     }
     if state.screen == Screen::SignEdit && next != Screen::SignEdit {
         let mut s = shared.0.lock().unwrap();
         let rev = s
             .session
-            .block_entities
+            .world.block_entities
             .get(&state.sign_edit.key())
             .map(|info| info.rev);
-        s.session.sign_update = Some(state.sign_edit.close(rev));
-        s.session.sign_edit_open_pos = None;
+        s.session.editors.sign_update = Some(state.sign_edit.close(rev));
+        s.session.editors.sign_edit_open_pos = None;
     }
     enter_screen(next, &mut state, &shared, &mut windows);
 }
@@ -853,7 +858,7 @@ pub(super) fn handle_hotbar_keys(
         if state.keybinds.just(action, &keys, &buttons) {
             let mut s = shared.0.lock().unwrap();
             if s.session.gamemode == Gamemode::Spectator {
-                let tab_list = s.session.tab_list.clone();
+                let tab_list = s.session.hud.tab_list.clone();
                 drop(s);
                 if let Some(uuid) =
                     state
@@ -863,7 +868,7 @@ pub(super) fn handle_hotbar_keys(
                     shared.0.lock().unwrap().session.spectator_teleport_target = Some(uuid);
                 }
             } else {
-                s.session.hotbar_target = Some(i as u8);
+                s.session.inventory.hotbar_target = Some(i as u8);
             }
             break;
         }
@@ -890,7 +895,7 @@ pub(super) fn handle_spectator_action_key(
     if s.session.gamemode != Gamemode::Spectator {
         return;
     }
-    let tab_list = s.session.tab_list.clone();
+    let tab_list = s.session.hud.tab_list.clone();
     drop(s);
     if let Some(uuid) = state
         .spectator_menu
@@ -1044,10 +1049,10 @@ pub(super) fn handle_hotbar_scroll(
     }
     let notches = if wy == 0 { -wx } else { wy };
 
-    let current = s.session.hotbar_target.unwrap_or(s.session.hotbar_selected) as i32;
+    let current = s.session.inventory.hotbar_target.unwrap_or(s.session.inventory.hotbar_selected) as i32;
     let next = next_scroll_selection(notches as f64, current, HOTBAR_SLOTS);
     if next != current {
-        s.session.hotbar_target = Some(next as u8);
+        s.session.inventory.hotbar_target = Some(next as u8);
     }
 }
 
@@ -1076,7 +1081,7 @@ pub(super) fn handle_spectator_fly_speed_scroll(
         s.session.fly_speed_scroll += dy * 0.005;
         return;
     }
-    let tab_list = s.session.tab_list.clone();
+    let tab_list = s.session.hud.tab_list.clone();
     drop(s);
     let (_, notches) = accumulate_scroll(&mut acc, 0.0, dy as f64);
     if notches != 0 {
@@ -1217,7 +1222,7 @@ pub(super) fn toggle_screen(
         } else if close_key || submit_key {
             if submit_key && let Some(line) = state.chat.submit() {
                 let mut locked = shared.0.lock().unwrap();
-                locked.session.outgoing_chat.push(line);
+                locked.session.chat.outgoing_chat.push(line);
             }
             if submit_key && crate::gui::chat::texting() {
                 None
@@ -1255,10 +1260,10 @@ pub(super) fn toggle_screen(
         } else if close_key && state.chat.hide_suggestions() {
         } else if submit_key {
             if let Some(line) = state.chat.submit() {
-                shared.0.lock().unwrap().session.outgoing_chat.push(line);
+                shared.0.lock().unwrap().session.chat.outgoing_chat.push(line);
             }
         } else if close_key {
-            shared.0.lock().unwrap().leave_bed_requested = true;
+            crate::client::bus::request(crate::client::bus::ClientRequest::LeaveBed);
         }
         None
     } else if state.screen == Screen::Death {
@@ -1315,7 +1320,7 @@ pub(super) fn toggle_screen(
             .lock()
             .unwrap()
             .session
-            .inv_actions
+            .inventory.inv_actions
             .push(InvAction::Close);
     }
     enter_screen(next, &mut state, &shared, &mut windows);
@@ -1376,9 +1381,9 @@ pub(super) fn game_mode_switcher(
             let mut s = shared.0.lock().unwrap();
             if let Some(command) = state.switcher.command(current) {
                 if op_level >= 2 {
-                    s.session.outgoing_chat.push(format!("/{command}"));
+                    s.session.chat.outgoing_chat.push(format!("/{command}"));
                 } else {
-                    s.session.chat_incoming.push(crate::session::ChatEntry {
+                    s.session.chat.chat_incoming.push(crate::session::ChatEntry {
                         spans: vec![crate::text::Span {
                             text: "Unable to switch game mode; no permission".into(),
                             style: crate::text::Style::colored(0xFF5555),
@@ -1417,7 +1422,8 @@ pub(super) fn reload_all_chunks(
     shared: Res<Shared>,
 ) {
     if debug_combo(Action::ReloadChunks, &keys, &buttons, &state) {
-        shared.0.lock().unwrap().reload_chunks_requested = true;
+        crate::client::bus::request(crate::client::bus::ClientRequest::ReloadChunks);
+        let _ = &shared;
     }
 }
 
@@ -1469,12 +1475,12 @@ pub(super) fn handle_keybinds(
     }
 
     if state.keybinds.just(Action::SwapOffhand, &keys, &buttons) {
-        shared.0.lock().unwrap().session.swap_hands = true;
+        shared.0.lock().unwrap().session.inventory.swap_hands = true;
     }
 
     if state.keybinds.just(Action::Drop, &keys, &buttons) {
         let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
-        shared.0.lock().unwrap().session.pending_drop = Some(if ctrl {
+        shared.0.lock().unwrap().session.inventory.pending_drop = Some(if ctrl {
             DropRequest::HeldStack
         } else {
             DropRequest::HeldItem

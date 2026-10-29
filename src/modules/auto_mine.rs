@@ -73,7 +73,7 @@ pub fn tick(bot: &Client, shared: &Arc<SharedMutex>, hit: Option<&BlockHitResult
         let st = shared.lock().unwrap();
         let blocked = !st.in_world
             || (st.screen_open && !in_gui)
-            || st.session.dead
+            || st.session.vitals.dead
             || st.session.gamemode == Gamemode::Spectator;
         (blocked, st.camera_yaw)
     };
@@ -169,7 +169,7 @@ pub fn tick(bot: &Client, shared: &Arc<SharedMutex>, hit: Option<&BlockHitResult
     }
 
     debug_assert!(!(attack && intent.forward));
-    shared.lock().unwrap().session.auto_mine = Some(intent);
+    shared.lock().unwrap().session.targeting.auto_mine = Some(intent);
     attack
 }
 
@@ -312,14 +312,14 @@ fn column_centre(run: &Run) -> f64 {
 }
 
 fn clear(shared: &Arc<SharedMutex>) {
-    shared.lock().unwrap().session.auto_mine = None;
+    shared.lock().unwrap().session.targeting.auto_mine = None;
 }
 
 fn stop(shared: &Arc<SharedMutex>, why: Halt) -> bool {
     *RUN.lock().unwrap() = None;
     store().set_enabled(Id::AutoMine, false);
     let mut st = shared.lock().unwrap();
-    st.session.auto_mine = None;
+    st.session.targeting.auto_mine = None;
     super::chat_math::show_local(
         &mut st.session,
         match why {
@@ -333,7 +333,7 @@ fn stop(shared: &Arc<SharedMutex>, why: Halt) -> bool {
 }
 
 pub fn look_step(s: &SharedState, yaw: f32, pitch: f32, dt: f32, d: (f32, f32)) -> (f32, f32) {
-    let Some(intent) = s.session.auto_mine else {
+    let Some(intent) = s.session.targeting.auto_mine else {
         return d;
     };
     let Some(aim) = intent.aim else {

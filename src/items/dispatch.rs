@@ -71,18 +71,26 @@ pub struct WorldContext {
     pub casting: bool,
 }
 
-static CONTEXT: Mutex<Option<WorldContext>> = Mutex::new(None);
+/// Shared, so each lookup takes a count rather than copying the strings.
+static CONTEXT: Mutex<Option<std::sync::Arc<WorldContext>>> = Mutex::new(None);
 
 pub fn set_context(context: WorldContext) {
-    *CONTEXT.lock().unwrap() = Some(context);
+    *CONTEXT.lock().unwrap() = Some(std::sync::Arc::new(context));
 }
 
-pub fn context() -> WorldContext {
+pub fn context() -> std::sync::Arc<WorldContext> {
     CONTEXT.lock().unwrap().clone().unwrap_or_default()
 }
 
 static SPAWN: Mutex<Option<([i32; 3], String)>> = Mutex::new(None);
 static DEATH: Mutex<Option<([i32; 3], String)>> = Mutex::new(None);
+
+/// A new session: spawn, death and needle state start over.
+pub fn reset() {
+    *SPAWN.lock().unwrap() = None;
+    *DEATH.lock().unwrap() = None;
+    *WOBBLERS.lock().unwrap() = None;
+}
 
 /// The world's spawn (`ClientboundSetDefaultSpawnPosition`).
 pub fn set_spawn(at: Option<([i32; 3], String)>) {

@@ -195,6 +195,12 @@ fn key(path: &Path) -> Option<String> {
     if let Ok(relative) = path.strip_prefix(crate::assets_root()) {
         return Some(format!("assets/minecraft/{}", slashes(relative)));
     }
+    // Other namespaces sit beside `minecraft` in `assets`.
+    if let Some(assets) = crate::assets_root().parent()
+        && let Ok(relative) = path.strip_prefix(assets)
+    {
+        return Some(format!("assets/{}", slashes(relative)));
+    }
     let relative = path.strip_prefix(crate::datapack_root()).ok()?;
     Some(format!("data/minecraft/{}", slashes(relative)))
 }

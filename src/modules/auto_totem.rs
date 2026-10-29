@@ -52,7 +52,7 @@ pub fn tick(bot: &Client, shared: &Arc<SharedMutex>) {
         let st = shared.lock().unwrap();
         if !st.in_world
             || st.screen_open
-            || st.session.dead
+            || st.session.vitals.dead
             || matches!(
                 st.session.gamemode,
                 Gamemode::Creative | Gamemode::Spectator
@@ -60,7 +60,7 @@ pub fn tick(bot: &Client, shared: &Arc<SharedMutex>) {
         {
             return;
         }
-        st.session.health + st.session.health_display.absorption
+        st.session.vitals.health + st.session.vitals.health_display.absorption
     };
 
     let Some((window_id, slot)) = totem_to_move(bot) else {

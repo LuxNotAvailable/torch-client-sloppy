@@ -117,39 +117,14 @@ struct Emitter {
 
 static EMITTERS: Mutex<Vec<Emitter>> = Mutex::new(Vec::new());
 
-/// `ItemActivation`: the item flying at the screen, when it began and its
-/// sideways drift.
-static ACTIVATION: Mutex<Option<(std::time::Instant, f32, f32, &'static str)>> = Mutex::new(None);
-
-/// `MobAppearanceParticle`: when the elder guardian's face appeared.
-static ELDER: Mutex<Option<std::time::Instant>> = Mutex::new(None);
-
+/// The elder guardian's curse: the face over the screen.
 pub(crate) fn elder_guardian() {
-    *ELDER.lock().unwrap() = Some(std::time::Instant::now());
+    crate::client::bus::emit(crate::client::bus::ClientEvent::ElderGuardian);
 }
 
-/// How far through the elder guardian's appearance (0 to 1), if showing.
-pub(crate) fn elder_guardian_progress() -> Option<f32> {
-    let mut guard = ELDER.lock().unwrap();
-    let t = guard.as_ref()?.elapsed().as_secs_f32() / 1.5;
-    if t >= 1.0 {
-        *guard = None;
-        return None;
-    }
-    Some(t)
-}
-
-/// The item activation now: how far through (0 to 1), its drift, and the
-/// item.
-pub(crate) fn activation() -> Option<(f32, f32, f32, &'static str)> {
-    let mut guard = ACTIVATION.lock().unwrap();
-    let (start, x, y, item) = (*guard)?;
-    let t = start.elapsed().as_secs_f32() / 2.0;
-    if t >= 1.0 {
-        *guard = None;
-        return None;
-    }
-    Some((t, x, y, item))
+/// A new session: no emitters carry over.
+pub(crate) fn reset() {
+    EMITTERS.lock().unwrap().clear();
 }
 
 /// One game tick of the tracking emitters.
@@ -218,7 +193,7 @@ fn push(shared: &Arc<SharedMutex>, spawns: Vec<Spawn>) {
     let mut s = shared.lock().unwrap();
     for (particle, pos, velocity) in spawns {
         crate::session::push_particle_emit(
-            &mut s.session.particle_emits,
+            &mut s.session.world.particle_emits,
             ParticleEmit::Level(LevelParticle {
                 particle,
                 pos,
@@ -252,10 +227,7 @@ fn totem(entity_id: i32) {
         }
     }
     if local {
-        let mut rng = random();
-        let rng = rng.as_mut().unwrap();
-        let (x, y) = (rng.next_f32() * 2.0 - 1.0, rng.next_f32() * 2.0 - 1.0);
-        *ACTIVATION.lock().unwrap() = Some((std::time::Instant::now(), x, y, "totem_of_undying"));
+        crate::client::bus::emit(crate::client::bus::ClientEvent::TotemActivated);
     }
 }
 
@@ -299,7 +271,7 @@ pub(crate) fn emit(shared: &Arc<SharedMutex>, entity_id: i32, event: u8) {
     let mut s = shared.lock().unwrap();
     for (particle, pos, velocity) in spawns {
         crate::session::push_particle_emit(
-            &mut s.session.particle_emits,
+            &mut s.session.world.particle_emits,
             ParticleEmit::Level(LevelParticle {
                 particle,
                 pos,

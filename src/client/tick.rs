@@ -39,7 +39,7 @@ struct TickSnapshot {
     #[cfg(feature = "skins")]
     local_skin: crate::client::skins::SkinState,
     entity_anims: std::sync::Arc<Vec<crate::entities::feed::EntityAnim>>,
-    menu_slots: Vec<SlotStack>,
+    menu_slots: Arc<[SlotStack]>,
     hotbar: Arc<[SlotStack]>,
     armor: crate::renderer::Armor,
     carried: SlotStack,
@@ -224,14 +224,16 @@ fn read_tick_snapshot(bot: &Client, shared: &Arc<SharedMutex>) -> Option<TickSna
     ) = {
         let world_guard = world.as_ref().map(|w| w.read());
         let registries = world_guard.as_ref().map(|g| &g.registries);
-        let menu_slots: Vec<SlotStack> = bot
+        let _slots_timer = crate::diag::timed(crate::diag::Phase::Slots);
+        let mut caches_guard = SLOT_CACHES.lock().unwrap();
+        let caches = caches_guard.get_or_insert_with(|| SlotCaches {
+            menu: SlotCache::default(),
+            hotbar: SlotCache::default(),
+            carried: SlotCache::default(),
+        });
+        let menu_slots: Arc<[SlotStack]> = bot
             .menu()
-            .map(|menu| {
-                menu.slots()
-                    .iter()
-                    .map(|s| slot_stack(s, registries, advanced_tooltips))
-                    .collect()
-            })
+            .map(|menu| caches.menu.convert(&menu.slots(), registries, advanced_tooltips))
             .unwrap_or_default();
         let inventory = bot.component::<azalea::entity::inventory::Inventory>();
         let player_slots = inventory
@@ -240,12 +242,7 @@ fn read_tick_snapshot(bot: &Client, shared: &Arc<SharedMutex>) -> Option<TickSna
             .unwrap_or_default();
         let hotbar: Arc<[SlotStack]> = player_slots
             .get(36..46)
-            .map(|slots| {
-                slots
-                    .iter()
-                    .map(|s| slot_stack(s, registries, advanced_tooltips))
-                    .collect()
-            })
+            .map(|slots| caches.hotbar.convert(slots, registries, advanced_tooltips))
             .unwrap_or_default();
         let armor = crate::renderer::Armor {
             worn: std::array::from_fn(|i| player_slots.get(5 + i).and_then(item_id)),
@@ -264,8 +261,17 @@ fn read_tick_snapshot(bot: &Client, shared: &Arc<SharedMutex>) -> Option<TickSna
         };
         let carried = inventory
             .as_ref()
-            .map(|inv| slot_stack(&inv.carried, registries, advanced_tooltips))
+            .ok()
+            .and_then(|inv| {
+                caches
+                    .carried
+                    .convert(std::slice::from_ref(&inv.carried), registries, advanced_tooltips)
+                    .first()
+                    .cloned()
+            })
             .unwrap_or_default();
+        drop(caches_guard);
+        drop(_slots_timer);
         let (container_id, kind, container_title) = inventory
             .as_ref()
             .map(|inv| {
@@ -306,7 +312,7 @@ fn read_tick_snapshot(bot: &Client, shared: &Arc<SharedMutex>) -> Option<TickSna
                 .iter()
                 .map(|p| p.anim.position(1.0).map(f64::from));
             (
-                s.session.game_time,
+                s.session.world.game_time,
                 std::iter::once(own).chain(others).collect::<Vec<_>>(),
             )
         };
@@ -316,8 +322,8 @@ fn read_tick_snapshot(bot: &Client, shared: &Arc<SharedMutex>) -> Option<TickSna
         };
         if let Some(snapshot) = snapshot {
             let mut s = shared.lock().unwrap();
-            s.session.block_entities = snapshot;
-            s.session.block_entities_version = s.session.block_entities_version.wrapping_add(1);
+            s.session.world.block_entities = snapshot;
+            s.session.world.block_entities_version = s.session.world.block_entities_version.wrapping_add(1);
         }
     }
 
@@ -592,6 +598,64 @@ fn note_movement_write(what: &str, e: impl std::fmt::Display) {
     );
 }
 
+/// Converted slots, kept between ticks: `slot_stack` reads names, lore,
+/// enchantments and components, so a slot is converted again only when its
+/// stack changes (or what the conversion depends on does). Unchanged slots
+/// keep their `SlotStack`, and an unchanged menu keeps its whole `Arc`.
+#[derive(Default)]
+struct SlotCache {
+    raw: Vec<ItemStack>,
+    cooked: Arc<[SlotStack]>,
+    /// What the conversion read: advanced tooltips, and whether the
+    /// registries (enchantment and trim names) were there.
+    inputs: Option<(bool, bool)>,
+}
+
+impl SlotCache {
+    fn convert(
+        &mut self,
+        slots: &[ItemStack],
+        registries: Option<&azalea_core::registry_holder::RegistryHolder>,
+        advanced: bool,
+    ) -> Arc<[SlotStack]> {
+        let inputs = (advanced, registries.is_some());
+        if self.inputs != Some(inputs) || self.raw.len() != slots.len() {
+            self.inputs = Some(inputs);
+            self.raw = slots.to_vec();
+            self.cooked = slots.iter().map(|s| slot_stack(s, registries, advanced)).collect();
+            return self.cooked.clone();
+        }
+        let mut changed: Option<Vec<SlotStack>> = None;
+        for (i, (stack, raw)) in slots.iter().zip(&mut self.raw).enumerate() {
+            let fresh = if stack != raw {
+                *raw = stack.clone();
+                Some(slot_stack(stack, registries, advanced))
+            } else {
+                let cooldown = crate::play::inventory_bridge::slot_cooldown(stack);
+                (cooldown != self.cooked[i].cooldown).then(|| SlotStack {
+                    cooldown,
+                    ..self.cooked[i].clone()
+                })
+            };
+            if let Some(fresh) = fresh {
+                changed.get_or_insert_with(|| self.cooked.to_vec())[i] = fresh;
+            }
+        }
+        if let Some(changed) = changed {
+            self.cooked = changed.into();
+        }
+        self.cooked.clone()
+    }
+}
+
+struct SlotCaches {
+    menu: SlotCache,
+    hotbar: SlotCache,
+    carried: SlotCache,
+}
+
+static SLOT_CACHES: std::sync::Mutex<Option<SlotCaches>> = std::sync::Mutex::new(None);
+
 fn trace_menu_change(
     old: &[SlotStack],
     new: &[SlotStack],
@@ -632,7 +696,7 @@ fn apply_local_trades(session: &mut crate::session::SessionState, actions: &[Inv
     if actions.is_empty() {
         return;
     }
-    if session.container_kind != ContainerKind::Merchant {
+    if session.container.container_kind != ContainerKind::Merchant {
         trace_trade("actions queued, but no merchant menu is open");
         return;
     }
@@ -645,7 +709,7 @@ fn apply_local_trades(session: &mut crate::session::SessionState, actions: &[Inv
             continue;
         }
         let index = {
-            let Some([buy_a, buy_b, result]) = session.menu_slots.get(..3) else {
+            let Some([buy_a, buy_b, result]) = session.inventory.menu_slots.get(..3) else {
                 trace_trade("no payment slots published yet");
                 return;
             };
@@ -654,12 +718,12 @@ fn apply_local_trades(session: &mut crate::session::SessionState, actions: &[Inv
                 return;
             }
             let Some(offers) =
-                crate::session::MerchantOffers::for_window(&session.merchant, session.container_id)
+                crate::session::MerchantOffers::for_window(&session.container.merchant, session.container.container_id)
             else {
                 trace_trade("no offers for this window");
                 return;
             };
-            let found = offers.active_offer(buy_a, buy_b, session.merchant_hint);
+            let found = offers.active_offer(buy_a, buy_b, session.container.merchant_hint);
             match found {
                 Some(_) => trace_trade("took a trade"),
                 None => trace_trade("payment slots match no offer"),
@@ -667,14 +731,14 @@ fn apply_local_trades(session: &mut crate::session::SessionState, actions: &[Inv
             found
         };
         if let Some(i) = index
-            && let Some(offers) = session.merchant.as_mut()
+            && let Some(offers) = session.container.merchant.as_mut()
         {
             let offers = Arc::make_mut(offers);
             if matches!(
                 op,
                 azalea_inventory::operations::ClickOperation::QuickMove(_)
             ) {
-                let n = offers.quick_move_trades(&session.menu_slots, session.merchant_hint);
+                let n = offers.quick_move_trades(&session.inventory.menu_slots, session.container.merchant_hint);
                 trace_trade(&format!("shift-click took {n} trades"));
             } else {
                 offers.notify_trade(i);
@@ -831,18 +895,18 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
 
     let (inv_actions, horse) = {
         let mut s = shared.lock().unwrap();
-        let actions = std::mem::take(&mut s.session.inv_actions);
+        let actions = std::mem::take(&mut s.session.inventory.inv_actions);
         if let Some(hint) = actions.iter().rev().find_map(|a| match a {
             InvAction::SelectTrade(item) => Some(*item as i32),
             _ => None,
         }) {
-            s.session.merchant_hint = hint;
+            s.session.container.merchant_hint = hint;
         }
         apply_local_trades(&mut s.session, &actions);
         let horse = if actions.is_empty() {
             None
         } else {
-            s.session.horse.clone()
+            s.session.inventory.horse.clone()
         };
         (actions, horse)
     };
@@ -850,7 +914,7 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
     let closing = inv_actions.iter().any(|a| matches!(a, InvAction::Close));
     apply_inv_actions(bot, inv_actions, horse);
     if closing {
-        shared.lock().unwrap().session.horse = None;
+        shared.lock().unwrap().session.inventory.horse = None;
     }
 
     let Some(snapshot) = read_tick_snapshot(bot, shared) else {
@@ -930,18 +994,18 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
         {
             let [px, _, pz] = s.session.player_pos;
             let moved = ((pos.x as f32 - px).powi(2) + (pos.z as f32 - pz).powi(2)).sqrt();
-            let walking = bob_ground && !s.session.dead && !s.session.swimming;
+            let walking = bob_ground && !s.session.vitals.dead && !s.session.swimming;
             s.session.view_bob.tick(moved, bob_speed, walking, bob_riding);
         }
         s.session.player_pos_prev = s.session.player_pos;
         s.session.player_pos = [pos.x as f32, pos.y as f32, pos.z as f32];
         s.session.last_tick_time = Some(crate::platform::time::Instant::now());
         s.session.tick_seq = s.session.tick_seq.wrapping_add(1);
-        s.session.game_time = s.session.game_time.wrapping_add(1);
-        s.session.day_clock.advance();
+        s.session.world.game_time = s.session.world.game_time.wrapping_add(1);
+        s.session.world.day_clock.advance();
         if let Some(env) = env {
-            s.session.env_prev = s.session.env.or(Some(env));
-            s.session.env = Some(env);
+            s.session.world.env_prev = s.session.world.env.or(Some(env));
+            s.session.world.env = Some(env);
         }
         s.session.other_players = Arc::new(other_positions);
         s.session.local_anim = local_anim;
@@ -953,29 +1017,29 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
         s.session.fov.cur = fov_modifier;
         s.session.entities = entity_anims;
         s.session.status = None;
-        let click_in_flight = !s.session.inv_actions.is_empty();
+        let click_in_flight = !s.session.inventory.inv_actions.is_empty();
         let horse_open = s
             .session
-            .horse
+            .inventory.horse
             .as_ref()
             .is_some_and(|h| !h.slots.is_empty());
         if !menu_slots.is_empty() && !click_in_flight && !horse_open {
             trace_menu_change(
-                &s.session.menu_slots,
+                &s.session.inventory.menu_slots,
                 &menu_slots,
-                &s.session.carried,
+                &s.session.inventory.carried,
                 &carried,
                 applied_clicks,
             );
-            s.session.menu_slots = menu_slots;
+            s.session.inventory.menu_slots = menu_slots;
         }
         if !hotbar.is_empty() && !click_in_flight {
-            s.session.hotbar = hotbar;
+            s.session.inventory.hotbar = hotbar;
         }
         if !click_in_flight {
-            s.session.armor = armor;
+            s.session.inventory.armor = armor;
         }
-        if let Some(drop) = s.session.pending_drop {
+        if let Some(drop) = s.session.inventory.pending_drop {
             let remove_from = |slot: &mut SlotStack| {
                 if slot.count == 0 {
                     return;
@@ -989,39 +1053,38 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
                     *slot = SlotStack::default();
                 }
             };
-            if let Some(slot) = s.session.menu_slots.get_mut(36 + hotbar_sel as usize) {
+            if let Some(slot) = Arc::make_mut(&mut s.session.inventory.menu_slots).get_mut(36 + hotbar_sel as usize) {
                 remove_from(slot);
             }
             if s.session
-                .hotbar
+                .inventory.hotbar
                 .get(hotbar_sel as usize)
                 .is_some_and(|st| st.count != 0)
                 && let Some(slot) =
-                    Arc::make_mut(&mut s.session.hotbar).get_mut(hotbar_sel as usize)
+                    Arc::make_mut(&mut s.session.inventory.hotbar).get_mut(hotbar_sel as usize)
             {
                 remove_from(slot);
             }
         }
         if !click_in_flight {
-            s.session.carried = carried;
+            s.session.inventory.carried = carried;
         }
-        if container_id != s.session.container_id {
-            s.session.container_data = Default::default();
-            s.session.merchant_hint = -1;
+        if container_id != s.session.container.container_id {
+            s.session.container.container_data = Default::default();
+            s.session.container.merchant_hint = -1;
         }
-        s.session.container_id = container_id;
-        s.session.container_kind = container_kind;
-        if let Some(horse) = s.session.horse.take() {
+        s.session.container.container_id = container_id;
+        s.session.container.container_kind = container_kind;
+        if let Some(horse) = s.session.inventory.horse.take() {
             if !horse.slots.is_empty() {
-                s.session.container_kind = ContainerKind::Horse(horse.columns);
-                s.session.container_id = horse.container_id;
-                let changed = horse.state_id != s.session.horse_published_state_id
-                    || s.session.menu_slots.len() != horse.slots.len();
+                s.session.container.container_kind = ContainerKind::Horse(horse.columns);
+                s.session.container.container_id = horse.container_id;
+                let changed = horse.state_id != s.session.inventory.horse_published_state_id
+                    || s.session.inventory.menu_slots.len() != horse.slots.len();
                 if changed && !click_in_flight {
-                    s.session.horse_published_state_id = horse.state_id;
-                    s.session.menu_slots.clear();
-                    s.session.menu_slots.extend_from_slice(&horse.slots);
-                    let hotbar = Arc::make_mut(&mut s.session.hotbar);
+                    s.session.inventory.horse_published_state_id = horse.state_id;
+                    s.session.inventory.menu_slots = horse.slots.clone().into();
+                    let hotbar = Arc::make_mut(&mut s.session.inventory.hotbar);
                     for (i, slot) in horse.player_slots().iter().skip(27).take(9).enumerate() {
                         if let Some(dst) = hotbar.get_mut(i) {
                             dst.clone_from(slot);
@@ -1029,36 +1092,36 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
                     }
                 }
             }
-            s.session.horse = Some(horse);
+            s.session.inventory.horse = Some(horse);
         }
         if container_id != 0 {
-            s.session.container_title = container_title;
+            s.session.container.container_title = container_title;
         }
         let future_xp = match (
             container_kind,
-            crate::session::MerchantOffers::for_window(&s.session.merchant, container_id),
-            s.session.menu_slots.get(..3),
+            crate::session::MerchantOffers::for_window(&s.session.container.merchant, container_id),
+            s.session.inventory.menu_slots.get(..3),
         ) {
             (ContainerKind::Merchant, Some(offers), Some([a, b, result])) if !result.is_empty() => {
-                offers.future_xp(a, b, s.session.merchant_hint)
+                offers.future_xp(a, b, s.session.container.merchant_hint)
             }
             _ => 0,
         };
-        s.session.merchant_future_xp = future_xp;
+        s.session.container.merchant_future_xp = future_xp;
         // The target is taken below and applied this tick, so publish it now;
         // the snapshot slot predates it and would bounce the HUD back a slot.
-        s.session.hotbar_selected = s.session.hotbar_target.unwrap_or(hotbar_sel);
-        s.session.health = health;
-        if dead && !s.session.dead && !s.session.show_death_screen {
-            s.respawn_requested = true;
+        s.session.inventory.hotbar_selected = s.session.inventory.hotbar_target.unwrap_or(hotbar_sel);
+        s.session.vitals.health = health;
+        if dead && !s.session.vitals.dead && !s.session.vitals.show_death_screen {
+            crate::client::bus::request(crate::client::bus::ClientRequest::Respawn);
         }
-        s.session.dead = dead;
-        s.session.death_score = death_score;
-        s.session.food = food;
-        s.session.saturation = saturation;
-        s.session.air_supply = air_supply;
-        s.session.health_display = health_display;
-        s.session.active_effects = active_effects;
+        s.session.vitals.dead = dead;
+        s.session.vitals.death_score = death_score;
+        s.session.vitals.food = food;
+        s.session.vitals.saturation = saturation;
+        s.session.vitals.air_supply = air_supply;
+        s.session.vitals.health_display = health_display;
+        s.session.vitals.active_effects = active_effects;
         s.session.gamemode = gamemode;
         s.session.crouching = crouching;
         s.session.fall_flying = fall_flying;
@@ -1073,40 +1136,40 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
         } else {
             0
         };
-        s.session.attack_strength = attack_strength;
-        s.session.attack_delay = attack_delay;
-        if s.session.xp_seen {
-            if xp_progress != s.session.xp_progress {
-                s.session.xp_display_tick = GAME_TIME.load(std::sync::atomic::Ordering::Relaxed);
+        s.session.targeting.attack_strength = attack_strength;
+        s.session.targeting.attack_delay = attack_delay;
+        if s.session.vitals.xp_seen {
+            if xp_progress != s.session.vitals.xp_progress {
+                s.session.vitals.xp_display_tick = GAME_TIME.load(std::sync::atomic::Ordering::Relaxed);
             }
         } else {
-            s.session.xp_seen = true;
+            s.session.vitals.xp_seen = true;
         }
-        if s.session.container_kind == ContainerKind::Anvil {
-            s.session.xp_display_tick = GAME_TIME.load(std::sync::atomic::Ordering::Relaxed);
+        if s.session.container.container_kind == ContainerKind::Anvil {
+            s.session.vitals.xp_display_tick = GAME_TIME.load(std::sync::atomic::Ordering::Relaxed);
         }
-        s.session.xp_progress = xp_progress;
-        s.session.xp_level = xp_level;
+        s.session.vitals.xp_progress = xp_progress;
+        s.session.vitals.xp_level = xp_level;
         (
             s.move_flags,
             s.session.auto_jump,
             s.camera_yaw,
             s.camera_pitch,
-            s.session.hotbar_target.take(),
+            s.session.inventory.hotbar_target.take(),
             s.session.spectator_teleport_target.take(),
-            s.session.pending_drop.take(),
-            s.session.sign_update.take(),
-            s.session.command_block_update.take(),
-            s.session.command_block_pos,
-            s.session.sign_edit_open_pos,
-            s.session.edit_book.take(),
-            std::mem::take(&mut s.session.seen_advancements),
-            std::mem::take(&mut s.session.outgoing_chat),
+            s.session.inventory.pending_drop.take(),
+            s.session.editors.sign_update.take(),
+            s.session.editors.command_block_update.take(),
+            s.session.editors.command_block_pos,
+            s.session.editors.sign_edit_open_pos,
+            s.session.editors.edit_book.take(),
+            std::mem::take(&mut s.session.progress.seen_advancements),
+            std::mem::take(&mut s.session.chat.outgoing_chat),
             (
-                s.chat_signing_allowed || s.session.chat_signing_session,
-                s.session.chat_signing_wait,
+                s.chat_signing_allowed || s.session.chat.chat_signing_session,
+                s.session.chat.chat_signing_wait,
             ),
-            std::mem::take(&mut s.session.swap_hands),
+            std::mem::take(&mut s.session.inventory.swap_hands),
         )
     };
 
@@ -1114,7 +1177,7 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
         jumpable_mount,
         flags & crate::session::MOVE_JUMP != 0,
     );
-    shared.lock().unwrap().session.jump_charge = jump_charge;
+    shared.lock().unwrap().session.vitals.jump_charge = jump_charge;
 
     if let Some(slot) = hotbar_target {
         bot.set_selected_hotbar_slot(slot);
@@ -1178,7 +1241,7 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
             .and_then(crate::play::interaction::command_block_mode)
             .is_none()
     {
-        shared.lock().unwrap().session.command_block_pos = None;
+        shared.lock().unwrap().session.editors.command_block_pos = None;
     }
 
     if let Some(sign_pos) = sign_edit_open_pos {
@@ -1188,7 +1251,7 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
             .ok()
             .and_then(|world| world.read().get_block_state(sign_pos))
             .is_some_and(|state| {
-                crate::session::SignEditKind::from_block(Box::<dyn BlockTrait>::from(state).id())
+                crate::session::SignEditKind::from_block(crate::util::block_model::block_id(state))
                     .is_some()
             });
         let range = bot
@@ -1203,21 +1266,12 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
         ];
         if !still_sign || block_distance_sqr(sign_pos, eye) >= range * range {
             let mut s = shared.lock().unwrap();
-            if s.session.sign_edit_open_pos == Some(sign_pos) {
-                s.session.sign_edit_open_pos = None;
+            if s.session.editors.sign_edit_open_pos == Some(sign_pos) {
+                s.session.editors.sign_edit_open_pos = None;
             }
         }
     }
 
-    for send in crate::gui::op_blocks::take_sends() {
-        use crate::gui::op_blocks::OpBlockSend;
-        match send {
-            OpBlockSend::Structure(p) => bot.write_packet(p),
-            OpBlockSend::Jigsaw(p) => bot.write_packet(p),
-            OpBlockSend::JigsawGenerate(p) => bot.write_packet(p),
-            OpBlockSend::Test(p) => bot.write_packet(p),
-        }
-    }
     if let Some(update) = command_block_update {
         bot.write_packet(ServerboundSetCommandBlock {
             pos: update.pos,
@@ -1271,7 +1325,7 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
 
     let suggestion = {
         let mut s = shared.lock().unwrap();
-        s.session.suggestion_request.take()
+        s.session.chat.suggestion_request.take()
     };
     if let Some((id, command)) = suggestion {
         bot.write_packet(ServerboundCommandSuggestion { id, command });
@@ -1302,52 +1356,52 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
 
     viewwindow::apply_client_information_requests(bot, shared);
 
-    let (quit, disconnect, reload_chunks, leave_bed, respawn) = {
-        let mut s = shared.lock().unwrap();
-        (
-            std::mem::take(&mut s.quit_requested),
-            std::mem::take(&mut s.disconnect_requested),
-            std::mem::take(&mut s.reload_chunks_requested),
-            std::mem::take(&mut s.leave_bed_requested),
-            std::mem::take(&mut s.respawn_requested),
-        )
-    };
-
-    if quit {
-        bot.disconnect();
-    }
-
-    if disconnect {
-        bot.disconnect();
-    }
-
-    if reload_chunks || crate::client::mesh_worker::take_died() {
+    if crate::client::mesh_worker::take_died() {
         worldsync::reload_all_chunks(bot, shared);
     }
-
-    if leave_bed {
-        let id = bot
-            .component::<azalea_core::entity_id::MinecraftEntityId>()
-            .ok()
-            .map(|id| *id);
-        if let Some(id) = id {
-            bot.write_packet(ServerboundPlayerCommand {
-                id,
-                action: PlayerCommand::StopSleeping,
-                data: 0,
-            });
+    // The requests, in the order they were made.
+    let mut reloaded = false;
+    for request in crate::client::bus::take_requests() {
+        use crate::client::bus::ClientRequest;
+        match request {
+            ClientRequest::Quit | ClientRequest::Disconnect => bot.disconnect(),
+            ClientRequest::ReloadChunks if !reloaded => {
+                reloaded = true;
+                worldsync::reload_all_chunks(bot, shared);
+            }
+            ClientRequest::ReloadChunks => {}
+            ClientRequest::LeaveBed => {
+                let id = bot
+                    .component::<azalea_core::entity_id::MinecraftEntityId>()
+                    .ok()
+                    .map(|id| *id);
+                if let Some(id) = id {
+                    bot.write_packet(ServerboundPlayerCommand {
+                        id,
+                        action: PlayerCommand::StopSleeping,
+                        data: 0,
+                    });
+                }
+            }
+            ClientRequest::Respawn => bot.write_packet(ServerboundClientCommand {
+                action: ClientCommand::PerformRespawn,
+            }),
+            ClientRequest::RequestStats => bot.write_packet(ServerboundClientCommand {
+                action: ClientCommand::RequestStats,
+            }),
+            ClientRequest::Packet(packet) => bot.write_packet(*packet),
+            ClientRequest::CustomPayload { channel, data } => {
+                match channel.parse() {
+                    Ok(identifier) => bot.write_packet(
+                        azalea_protocol::packets::game::s_custom_payload::ServerboundCustomPayload {
+                            identifier,
+                            data: data.into(),
+                        },
+                    ),
+                    Err(_) => crate::log_warn!("net", "not a channel name: {channel}"),
+                }
+            }
         }
-    }
-
-    if respawn {
-        bot.write_packet(ServerboundClientCommand {
-            action: ClientCommand::PerformRespawn,
-        });
-    }
-    if std::mem::take(&mut shared.lock().unwrap().session.stats_request) {
-        bot.write_packet(ServerboundClientCommand {
-            action: ClientCommand::RequestStats,
-        });
     }
 }
 
@@ -1366,21 +1420,21 @@ fn hold_unsigned(
     }
     if chat_sign::ready(bot) {
         if waited != 0 {
-            shared.lock().unwrap().session.chat_signing_wait = 0;
+            shared.lock().unwrap().session.chat.chat_signing_wait = 0;
         }
         return (outgoing, true);
     }
 
     let mut s = shared.lock().unwrap();
-    s.session.chat_signing_wait = waited + 1;
-    if s.session.chat_signing_wait > SIGNING_WAIT_TICKS {
-        s.session.chat_signing_wait = 0;
-        s.session.chat_send_error = Some(UNAVAILABLE.to_string());
+    s.session.chat.chat_signing_wait = waited + 1;
+    if s.session.chat.chat_signing_wait > SIGNING_WAIT_TICKS {
+        s.session.chat.chat_signing_wait = 0;
+        s.session.chat.chat_send_error = Some(UNAVAILABLE.to_string());
         return (outgoing, false);
     }
     let mut queue = outgoing;
-    queue.append(&mut s.session.outgoing_chat);
-    s.session.outgoing_chat = queue;
+    queue.append(&mut s.session.chat.outgoing_chat);
+    s.session.chat.outgoing_chat = queue;
     (Vec::new(), signing)
 }
 
@@ -1552,7 +1606,7 @@ fn tick_local_anim(
         let s = shared.lock().unwrap();
         let hand = |i: usize| {
             s.session
-                .hotbar
+                .inventory.hotbar
                 .get(i)
                 .map(|st| renderer::HeldItem {
                     id: st.item,
@@ -1574,10 +1628,10 @@ fn tick_local_anim(
             s.camera_yaw,
             s.camera_pitch,
             s.move_flags & crate::session::MOVE_SPRINT != 0,
-            s.session.attack_held || s.session.attack_clicked,
-            hand(s.session.hotbar_selected.min(8) as usize),
+            s.session.input.attack_held || s.session.input.attack_clicked,
+            hand(s.session.inventory.hotbar_selected.min(8) as usize),
             hand(9),
-            s.session.armor,
+            s.session.inventory.armor,
             s.skin_prefs,
             TickReads {
                 #[cfg(feature = "skins")]
@@ -1702,11 +1756,7 @@ pub(crate) fn held_item(stack: &ItemStack) -> renderer::HeldItem {
         layers: None,
         glint: crate::play::inventory_bridge::has_glint(data),
         // Custom model data, trims, a loaded crossbow: the stack's variant.
-        variant: {
-            let slot = crate::play::inventory_bridge::slot_stack(stack, None, false);
-            let key = slot.model_key();
-            key.contains('@').then(|| std::sync::Arc::from(key.as_ref()))
-        },
+        variant: crate::play::inventory_bridge::variant_key(data),
     }
 }
 
@@ -1952,5 +2002,32 @@ fn apply_movement(bot: &Client, flags: u8, auto_jump_enabled: bool) {
 
     if let Err(e) = bot.set_jumping(jump || auto_jump) {
         note_movement_write("the jump flag", e);
+    }
+}
+
+#[cfg(test)]
+mod slot_cache_tests {
+    use super::*;
+    use azalea_registry::builtin::ItemKind;
+
+    #[test]
+    fn unchanged_slots_keep_their_conversion() {
+        let mut cache = SlotCache::default();
+        let mut slots = vec![ItemStack::from(ItemKind::Stone), ItemStack::Empty, ItemStack::from(ItemKind::Apple)];
+        let first = cache.convert(&slots, None, false);
+        assert_eq!(first[0].item, "stone");
+        let again = cache.convert(&slots, None, false);
+        assert!(Arc::ptr_eq(&first, &again), "an unchanged menu is the same Arc");
+
+        slots[1] = ItemStack::new(ItemKind::Bread, 3);
+        let changed = cache.convert(&slots, None, false);
+        assert!(!Arc::ptr_eq(&first, &changed));
+        assert_eq!(changed[1].item, "bread");
+        assert_eq!(changed[1].count, 3);
+        assert_eq!(changed[2].item, "apple");
+
+        // What the conversion reads changing converts everything again.
+        let advanced = cache.convert(&slots, None, true);
+        assert!(!Arc::ptr_eq(&changed, &advanced));
     }
 }

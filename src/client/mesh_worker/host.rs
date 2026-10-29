@@ -168,13 +168,13 @@ fn apply(msg: FromWorker) {
             let mut s = shared.lock().unwrap();
             let session = &mut s.session;
             supersede(
-                &mut session.pending_chunks,
-                &mut session.pending_edits,
+                &mut session.world.pending_chunks,
+                &mut session.world.pending_edits,
                 &chunks,
                 &edits,
             );
-            session.pending_chunks.extend(chunks);
-            session.pending_edits.extend(edits);
+            session.world.pending_chunks.extend(chunks);
+            session.world.pending_edits.extend(edits);
         }
         FromWorker::Light(delta) => {
             let map = crate::client::worldsync::light_map();

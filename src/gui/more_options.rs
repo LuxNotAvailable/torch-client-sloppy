@@ -39,14 +39,11 @@ impl Default for AccessibilityOptions {
     }
 }
 
-static ACCESSIBILITY: std::sync::Mutex<AccessibilityOptions> = std::sync::Mutex::new(AccessibilityOptions::DEFAULT);
-
 pub fn accessibility() -> AccessibilityOptions {
-    *ACCESSIBILITY.lock().unwrap()
+    crate::gui::current_options().accessibility
 }
 
 pub fn apply(options: &crate::gui::GuiOptions) {
-    *ACCESSIBILITY.lock().unwrap() = options.accessibility;
     // The saved language, once at start (the screen applies later picks).
     static APPLIED: std::sync::Once = std::sync::Once::new();
     APPLIED.call_once(|| crate::client::languages::apply(&options.language));

@@ -40,13 +40,13 @@ pub(crate) fn publish(mut intent: ResMut<Intent>, shared: Res<Shared>) {
     if crate::modules::hooks::shapes_movement() {
         s.move_flags = crate::modules::hooks::move_flags(&s, s.move_flags);
     }
-    s.session.attack_held = intent.attack_held;
-    s.session.use_held = intent.use_held;
-    s.session.attack_clicked |= intent.attack_clicked;
-    s.session.use_clicked |= intent.use_clicked;
+    s.session.input.attack_held = intent.attack_held;
+    s.session.input.use_held = intent.use_held;
+    s.session.input.attack_clicked |= intent.attack_clicked;
+    s.session.input.use_clicked |= intent.use_clicked;
     if intent.pick_clicked {
-        s.session.pick_clicked = true;
-        s.session.pick_include_data = intent.pick_include_data;
+        s.session.input.pick_clicked = true;
+        s.session.input.pick_include_data = intent.pick_include_data;
     }
     drop(s);
     *intent = Intent::default();
@@ -62,7 +62,7 @@ pub(crate) fn release_on_suspend(
     {
         let mut s = shared.0.lock().unwrap();
         s.move_flags = 0;
-        s.session.attack_held = false;
-        s.session.use_held = false;
+        s.session.input.attack_held = false;
+        s.session.input.use_held = false;
     }
 }

@@ -78,11 +78,11 @@ fn relay_config_packets(
                     dialog::parse_direct(&p.dialog, &world.registries)
                 };
                 if let Some(parsed) = parsed {
-                    shared.lock().unwrap().session.dialog_show = Some(parsed);
+                    crate::client::bus::emit(crate::client::bus::ClientEvent::ShowDialog(parsed));
                 }
             }
             ClientboundConfigPacket::ClearDialog(_) => {
-                shared.lock().unwrap().session.dialog_clear = true;
+                crate::client::bus::emit(crate::client::bus::ClientEvent::ClearDialog);
             }
             ClientboundConfigPacket::ServerLinks(p) => {
                 shared.lock().unwrap().session.server_links = links(&p.links);

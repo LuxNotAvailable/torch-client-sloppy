@@ -15,6 +15,6 @@ pub fn draw(p: &mut Painter, ctx: &ScreenCtx, shared: &Arc<SharedMutex>) {
     let y = (ctx.vh - 40.0).floor();
 
     if Button::new(x, y, BUTTON_WIDTH, WIDGET_HEIGHT, LEAVE_BED).draw(p, ctx) {
-        shared.lock().unwrap().leave_bed_requested = true;
+        crate::client::bus::request(crate::client::bus::ClientRequest::LeaveBed);
     }
 }

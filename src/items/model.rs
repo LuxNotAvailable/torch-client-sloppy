@@ -285,8 +285,30 @@ impl Resolved {
     }
 }
 
+/// `minecraft:stone` as `stone`. Other namespaces are kept (`mymod:gem`),
+/// so their files are looked up in their own `assets/<namespace>`.
 pub fn strip_namespace(name: &str) -> &str {
-    name.split_once(':').map(|(_, rest)| rest).unwrap_or(name)
+    name.strip_prefix("minecraft:").unwrap_or(name)
+}
+
+/// Where a `folder/namespace:path` reference lives: under the root for
+/// `minecraft`, else beside it in `assets/<namespace>`.
+fn locate(root: &Path, relative: &str) -> PathBuf {
+    if let Some((folder, rest)) = relative.split_once('/')
+        && let Some((namespace, tail)) = rest.split_once(':')
+        && namespace != "minecraft"
+        && let Some(assets) = root.parent()
+    {
+        return assets.join(namespace).join(folder).join(tail);
+    }
+    if let Some((namespace, tail)) = relative.split_once(':')
+        && !namespace.contains('/')
+        && namespace != "minecraft"
+        && let Some(assets) = root.parent()
+    {
+        return assets.join(namespace).join(tail);
+    }
+    root.join(relative.replace("minecraft:", ""))
 }
 
 pub struct Tex {
@@ -335,7 +357,7 @@ impl Assets {
         if let Some(hit) = self.files.lock().unwrap().get(relative) {
             return hit.clone();
         }
-        let parsed = crate::platform::assets::read_to_string(self.root.join(relative))
+        let parsed = crate::platform::assets::read_to_string(locate(&self.root, relative))
             .and_then(|text| Json::parse(&text))
             .map(Arc::new);
         self.files
@@ -389,7 +411,7 @@ impl Assets {
     }
 
     fn decode_texture(&self, path: &str) -> Option<Tex> {
-        let file = self.root.join(format!("textures/{}.png", path));
+        let file = locate(&self.root, &format!("textures/{path}.png"));
         let img = match crate::platform::assets::open_image(&file) {
             Ok(img) => img.to_rgba8(),
             Err(_) => self.trim_permutation(path)?,
@@ -563,4 +585,20 @@ pub(crate) fn parse_elements(node: &Json) -> Vec<Elem> {
         });
     }
     out
+}
+
+#[cfg(test)]
+mod namespace_tests {
+    use super::*;
+
+    #[test]
+    fn references_find_their_namespace() {
+        let root = Path::new("/a/assets/minecraft");
+        assert_eq!(locate(root, "items/stone.json"), Path::new("/a/assets/minecraft/items/stone.json"));
+        assert_eq!(locate(root, "items/minecraft:stone.json"), Path::new("/a/assets/minecraft/items/stone.json"));
+        assert_eq!(locate(root, "items/mymod:gem.json"), Path::new("/a/assets/mymod/items/gem.json"));
+        assert_eq!(locate(root, "textures/mymod:item/gem.png"), Path::new("/a/assets/mymod/textures/item/gem.png"));
+        assert_eq!(strip_namespace("minecraft:stone"), "stone");
+        assert_eq!(strip_namespace("mymod:gem"), "mymod:gem");
+    }
 }

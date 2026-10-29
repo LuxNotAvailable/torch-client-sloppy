@@ -329,13 +329,13 @@ pub(crate) fn packet(shared: &Arc<SharedMutex>, packet: &ClientboundGamePacket) 
 
     let mut shared = shared.lock().unwrap();
     if let Some(list) = list {
-        shared.session.tab_list = Arc::new(list);
+        shared.session.hud.tab_list = Arc::new(list);
     }
     if let Some(sidebar) = sidebar {
-        shared.session.sidebar = Arc::new(sidebar);
+        shared.session.hud.sidebar = Arc::new(sidebar);
     }
     if let Some(names) = names {
-        shared.session.player_names = names;
+        shared.session.chat.player_names = names;
     }
 }
 
@@ -953,8 +953,8 @@ mod tests {
         assert!(s.slots.iter().all(Option::is_none));
 
         let published = shared.lock().unwrap();
-        assert!(published.session.tab_list.rows.is_empty());
-        assert!(!published.session.sidebar.active);
-        assert!(published.session.player_names.is_empty());
+        assert!(published.session.hud.tab_list.rows.is_empty());
+        assert!(!published.session.hud.sidebar.active);
+        assert!(published.session.chat.player_names.is_empty());
     }
 }

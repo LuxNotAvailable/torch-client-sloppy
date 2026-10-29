@@ -319,7 +319,7 @@ pub(crate) fn sync_pack_vertices(
     crate::renderer::packvertex::set_current(wanted.clone());
     *published = wanted;
     if remesh {
-        let Ok(mut state) = shared.0.lock();
-        state.reload_chunks_requested = true;
+        let _ = &shared;
+        crate::client::bus::request(crate::client::bus::ClientRequest::ReloadChunks);
     }
 }

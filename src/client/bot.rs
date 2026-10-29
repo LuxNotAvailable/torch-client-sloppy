@@ -268,9 +268,7 @@ pub(crate) fn start_bot(address: String) {
         let mut s = shared.lock().unwrap();
         s.session.status = Some(format!("Connecting to {address}...").into());
         s.session.current_address = Some(address.clone());
-        s.disconnect_requested = false;
-        s.quit_requested = false;
-        s.reload_chunks_requested = false;
+        crate::client::bus::reset();
         s.session_ended = false;
         s.end_notice = None;
     }
@@ -474,7 +472,7 @@ async fn handle_event(
         Event::Death(packet) => {
             let cause = packet.map(|p| crate::client::chat_text::to_spans(&p.message));
             let mut s = shared.lock().unwrap();
-            s.session.death_cause = cause;
+            s.session.vitals.death_cause = cause;
         }
         Event::Disconnect(reason) => {
             let msg = reason
@@ -507,7 +505,7 @@ async fn handle_event(
                         | "multiplayer.disconnect.illegal_characters"
                 )
             {
-                s.session.chat_send_error = Some(msg);
+                s.session.chat.chat_send_error = Some(msg);
             }
             drop(s);
         }
@@ -590,6 +588,13 @@ fn reset_session_side_tables(blocking: bool) {
     crate::play::interaction::reset_session_state();
     crate::play::screen_warp::reset();
     crate::renderer::view_bob::reset_hurt();
+    // Per-session state kept outside the session struct.
+    crate::client::bus::reset();
+    crate::play::event_particles::reset();
+    crate::util::particles::reset_fireworks();
+    crate::items::dispatch::reset();
+    crate::gui::op_blocks::reset();
+    crate::gui::social::reset();
     tick::reset_session_locals(blocking);
 
     tablist::reset();
@@ -612,7 +617,7 @@ pub(crate) fn request_disconnect() {
     reset_session_side_tables(true);
 
     let mut s = shared.lock().unwrap();
-    s.disconnect_requested = true;
+    crate::client::bus::request(crate::client::bus::ClientRequest::Disconnect);
     s.session_ended = true;
     s.clear_session("Disconnected".to_string());
 }

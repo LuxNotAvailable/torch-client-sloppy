@@ -573,6 +573,7 @@ struct Look {
 }
 
 impl Look {
+    #[allow(dead_code, reason = "the defaults, kept beside Look::of")]
     const VANILLA: Look = Look {
         width: CHAT_WIDTH,
         focused_height: 180.0,
@@ -600,22 +601,12 @@ impl Look {
     }
 }
 
-static LOOK: std::sync::Mutex<Look> = std::sync::Mutex::new(Look::VANILLA);
-static CHAT_OPTIONS: std::sync::Mutex<Option<crate::gui::ChatOptions>> = std::sync::Mutex::new(None);
-
 fn look() -> Look {
-    *LOOK.lock().unwrap()
+    Look::of(&chat_options())
 }
 
 fn chat_options() -> crate::gui::ChatOptions {
-    CHAT_OPTIONS.lock().unwrap().unwrap_or_default()
-}
-
-/// Takes this frame's chat options.
-pub fn apply_options(options: &crate::gui::ChatOptions) {
-    *LOOK.lock().unwrap() = Look::of(options);
-    *CHAT_OPTIONS.lock().unwrap() = Some(*options);
-    suggestions::set_auto(options.auto_suggestions);
+    crate::gui::current_options().chat
 }
 
 /// A player's chat message, as against the server's and the client's own.
@@ -927,7 +918,7 @@ fn click_span(
             }
         }
         Followup::Dialog(dialog) => {
-            shared.lock().unwrap().session.dialog_show = Some(dialog);
+            crate::client::bus::emit(crate::client::bus::ClientEvent::ShowDialog(dialog));
         }
     }
     true
@@ -1691,7 +1682,7 @@ pub(crate) mod tests {
     ) -> (ChatState, std::sync::Arc<crate::session::SharedMutex>) {
         use std::sync::{Arc, Mutex};
         let shared: Arc<SharedMutex> = Arc::new(SharedMutex::default());
-        shared.lock().unwrap().session.command_tree = Some(Arc::new(preview_tree()));
+        shared.lock().unwrap().session.chat.command_tree = Some(Arc::new(preview_tree()));
         let mut chat = ChatState::default();
         chat.open("/");
         chat.just_opened = false;
@@ -1833,7 +1824,7 @@ pub(crate) mod tests {
 
         let atlas = build_gui_atlas(&crate::assets_root());
         let shared: Arc<SharedMutex> = Arc::new(SharedMutex::default());
-        shared.lock().unwrap().session.command_tree = Some(Arc::new(ask_server_tree()));
+        shared.lock().unwrap().session.chat.command_tree = Some(Arc::new(ask_server_tree()));
         let mut chat = ChatState::default();
         chat.open("/");
         chat.just_opened = false;
@@ -1845,11 +1836,11 @@ pub(crate) mod tests {
             .lock()
             .unwrap()
             .session
-            .suggestion_request
+            .chat.suggestion_request
             .take()
             .expect("a request");
         assert_eq!(command, "/team re");
-        shared.lock().unwrap().session.suggestion_reply =
+        shared.lock().unwrap().session.chat.suggestion_reply =
             Some((id.wrapping_add(7), Suggestions::default()));
         press(&mut chat, &shared, &atlas, idle_input());
         assert!(chat.field.suggest.list.is_none());
@@ -1862,7 +1853,7 @@ pub(crate) mod tests {
                 tooltip: None,
             }],
         );
-        shared.lock().unwrap().session.suggestion_reply = Some((id, answer));
+        shared.lock().unwrap().session.chat.suggestion_reply = Some((id, answer));
         press(&mut chat, &shared, &atlas, idle_input());
         let list = chat
             .field
@@ -1873,7 +1864,7 @@ pub(crate) mod tests {
         assert_eq!(list.items.len(), 1);
         assert_eq!(list.items[0].text, "red");
 
-        assert!(shared.lock().unwrap().session.suggestion_request.is_none());
+        assert!(shared.lock().unwrap().session.chat.suggestion_request.is_none());
     }
 
     fn ask_server_tree() -> crate::play::commands::CommandTree {
@@ -2011,7 +2002,7 @@ mod visual {
             ..Default::default()
         };
 
-        shared.lock().unwrap().session.chat_incoming = sample();
+        shared.lock().unwrap().session.chat.chat_incoming = sample();
         let mut state = GuiState::default();
         frame(
             &atlas,
@@ -2035,7 +2026,7 @@ mod visual {
         );
 
         let mut state = GuiState::default();
-        shared.lock().unwrap().session.chat_incoming = sample();
+        shared.lock().unwrap().session.chat.chat_incoming = sample();
         state.screen = Screen::Chat;
         state.chat.open("");
         state.chat.field.input.set_text("hello world");
@@ -2092,8 +2083,8 @@ mod visual {
         state.chat.open("/");
         {
             let mut s = shared.lock().unwrap();
-            s.session.command_tree = Some(std::sync::Arc::new(super::tests::preview_tree()));
-            s.session.player_names = vec!["Alex".to_string(), "Steve".to_string()];
+            s.session.chat.command_tree = Some(std::sync::Arc::new(super::tests::preview_tree()));
+            s.session.chat.player_names = vec!["Alex".to_string(), "Steve".to_string()];
         }
         state.chat.field.suggest.allow = true;
         state.chat.field.input.set_text("/g");
@@ -2159,10 +2150,10 @@ mod visual {
         );
 
         let mut state = GuiState::default();
-        shared.lock().unwrap().session.chat_incoming = sample();
+        shared.lock().unwrap().session.chat.chat_incoming = sample();
         state.screen = Screen::Chat;
         state.chat.open("");
-        shared.lock().unwrap().session.chat_send_error = Some(
+        shared.lock().unwrap().session.chat.chat_send_error = Some(
             "Chat disabled due to missing profile public key. Please try reconnecting.".into(),
         );
         frame(

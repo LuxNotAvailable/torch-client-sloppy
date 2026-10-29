@@ -127,12 +127,12 @@ pub fn upload_maps(
 ) {
     let (updates, cleared) = {
         let mut s = shared.0.lock().unwrap();
-        if s.session.map_updates.is_empty() && !s.session.clear_maps {
+        if s.session.world.map_updates.is_empty() && !s.session.world.clear_maps {
             return;
         }
         (
-            std::mem::take(&mut s.session.map_updates),
-            std::mem::take(&mut s.session.clear_maps),
+            std::mem::take(&mut s.session.world.map_updates),
+            std::mem::take(&mut s.session.world.clear_maps),
         )
     };
     if cleared {

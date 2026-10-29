@@ -57,7 +57,7 @@ fn parse_ref(node: &Json) -> Option<ModelRef> {
         (deg.div_euclid(90).rem_euclid(4)) as u8
     };
     Some(ModelRef {
-        model: crate::items::model::strip_namespace(model).to_string(),
+        model: model.split_once(':').map_or(model, |(_, rest)| rest).to_string(),
         rot: Rot {
             x: quadrant("x"),
             y: quadrant("y"),

@@ -73,7 +73,7 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     }
     if Button::new(x + half + BUTTON_PADDING, gy + BUTTON_TOPS[1], half, WIDGET_HEIGHT, STATISTICS).draw(p, ctx) {
         state.stats = Default::default();
-        crate::SHARED.get().map(|s| s.lock().unwrap().session.stats_request = true);
+        crate::client::bus::request(crate::client::bus::ClientRequest::RequestStats);
         state.nav = Some(Screen::Statistics);
     }
     if button(p, 2, OPTIONS) {

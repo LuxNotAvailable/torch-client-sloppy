@@ -110,7 +110,7 @@ pub(crate) fn install_block_change_hook() {
                 && crate::play::interaction::take_local_break(pos)
             {
                 crate::session::push_particle_emit(
-                    &mut s.session.particle_emits,
+                    &mut s.session.world.particle_emits,
                     crate::session::ParticleEmit::Event(crate::session::LevelEventEmit {
                         id: 2001,
                         pos: [pos.x, pos.y, pos.z],
@@ -331,10 +331,10 @@ pub(crate) fn reload_all_chunks(bot: &Client, shared: &Arc<SharedMutex>) {
     }
     {
         let mut s = shared.lock().unwrap();
-        s.session.clear_chunks = true;
-        s.session.pending_chunks.clear();
-        s.session.pending_edits.clear();
-        s.session.unloaded_chunks.clear();
+        s.session.world.clear_chunks = true;
+        s.session.world.pending_chunks.clear();
+        s.session.world.pending_edits.clear();
+        s.session.world.unloaded_chunks.clear();
     }
     if !crate::client::mesh_worker::forward_reset_light() {
         send_light(lighting::LightJob::Reset);
@@ -364,7 +364,7 @@ pub(crate) fn forget_chunk(
         .lock()
         .unwrap()
         .session
-        .unloaded_chunks
+        .world.unloaded_chunks
         .push((cx, cz));
     if !crate::client::mesh_worker::forward_unload(cx, cz) {
         send_light(lighting::LightJob::Unload {
@@ -396,14 +396,14 @@ pub(crate) fn reset_level(shared: &Arc<SharedMutex>) {
     blockentities::feed::reset();
     reset_maps();
     let mut s = shared.lock().unwrap();
-    s.session.map_updates.clear();
-    s.session.clear_maps = true;
-    s.session.block_entities = Default::default();
-    s.session.block_entities_version = s.session.block_entities_version.wrapping_add(1);
-    s.session.clear_chunks = true;
-    s.session.pending_chunks.clear();
-    s.session.pending_edits.clear();
-    s.session.unloaded_chunks.clear();
+    s.session.world.map_updates.clear();
+    s.session.world.clear_maps = true;
+    s.session.world.block_entities = Default::default();
+    s.session.world.block_entities_version = s.session.world.block_entities_version.wrapping_add(1);
+    s.session.world.clear_chunks = true;
+    s.session.world.pending_chunks.clear();
+    s.session.world.pending_edits.clear();
+    s.session.world.unloaded_chunks.clear();
 }
 
 pub(crate) fn set_dimension(

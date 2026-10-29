@@ -114,7 +114,7 @@ pub(crate) fn packet(shared: &Arc<SharedMutex>, packet: &ClientboundGamePacket) 
 
     let published: Vec<BossBar> = bars.iter().map(|b| b.bar.clone()).collect();
     drop(bars);
-    shared.lock().unwrap().session.boss_bars = Arc::new(published);
+    shared.lock().unwrap().session.hud.boss_bars = Arc::new(published);
 }
 
 fn color_index(color: BossBarColor) -> u8 {

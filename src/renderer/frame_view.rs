@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use bevy::prelude::*;
@@ -80,9 +81,9 @@ impl TickInputs {
             seq: session.tick_seq,
             player_prev: session.player_pos_prev,
             player_pos: session.player_pos,
-            day_clock: session.day_clock,
-            env_prev: session.env_prev,
-            env: session.env,
+            day_clock: session.world.day_clock,
+            env_prev: session.world.env_prev,
+            env: session.world.env,
             fov: session.fov,
             view_bob: session.view_bob,
             entities: session.entities.clone(),
@@ -168,6 +169,36 @@ impl TickPacer {
     }
 }
 
+/// Every entity and player sampled once for this frame: the rigs, shadows,
+/// flames, beams and debug overlays all read these instead of each
+/// interpolating the same entities again.
+#[derive(Resource, Default)]
+pub struct SampledEntities {
+    /// In `FrameView::entities` order.
+    pub states: Vec<crate::entities::state::EntityState>,
+    index: HashMap<i32, usize>,
+    /// Other players, in `FrameView::players` order.
+    pub players: Vec<crate::renderer::anim::AnimSample>,
+}
+
+impl SampledEntities {
+    pub fn get(&self, id: i32) -> Option<&crate::entities::state::EntityState> {
+        self.index.get(&id).map(|&i| &self.states[i])
+    }
+}
+
+pub(crate) fn sample_entities(view: Res<FrameView>, mut out: ResMut<SampledEntities>) {
+    crate::prof_span!("render:sample_entities");
+    let partial = view.partial;
+    let out = &mut *out;
+    out.states.clear();
+    out.index.clear();
+    out.states.extend(view.entities.iter().map(|e| e.sample(partial)));
+    out.index.extend(view.entities.iter().enumerate().map(|(i, e)| (e.id, i)));
+    out.players.clear();
+    out.players.extend(view.players.iter().map(|p| p.anim.sample(partial)));
+}
+
 impl FrameView {
     /// Picks the tick inputs to draw now and how far through them.
     fn pace(&mut self, session: &crate::session::SessionState, now: Instant) -> (TickInputs, f32) {
@@ -224,14 +255,14 @@ impl FrameView {
         self.in_world = s.in_world;
         self.gamemode = session.gamemode;
         self.flying = session.flying;
-        self.hotbar_selected = session.hotbar_selected;
+        self.hotbar_selected = session.inventory.hotbar_selected;
         self.item_used = session.item_used;
-        self.attack_strength = session.attack_strength;
-        self.crosshair_entity = session.crosshair_entity;
+        self.attack_strength = session.targeting.attack_strength;
+        self.crosshair_entity = session.targeting.crosshair_entity;
         self.main_hand_left = s.skin_prefs.main_hand_left;
         self.entities = tick.entities;
         self.players = tick.players;
-        self.game_time = session.game_time;
+        self.game_time = session.world.game_time;
         self.op_level = session.op_level;
         #[cfg(feature = "skins")]
         {
@@ -242,16 +273,16 @@ impl FrameView {
             self.esp = session.esp.clone();
         }
         if in_game {
-            if self.block_entities_version != session.block_entities_version {
-                self.block_entities_version = session.block_entities_version;
-                self.block_entities = session.block_entities.clone();
+            if self.block_entities_version != session.world.block_entities_version {
+                self.block_entities_version = session.world.block_entities_version;
+                self.block_entities = session.world.block_entities.clone();
             }
             self.local = tick.local_anim.sample(partial);
-            if self.breaking != session.breaking {
-                self.breaking = session.breaking.clone();
+            if self.breaking != session.targeting.breaking {
+                self.breaking = session.targeting.breaking.clone();
             }
-            if self.targeted_block != session.targeted_block {
-                self.targeted_block = session.targeted_block.clone();
+            if self.targeted_block != session.targeting.targeted_block {
+                self.targeted_block = session.targeting.targeted_block.clone();
             }
         }
     }
@@ -279,7 +310,7 @@ mod tests {
         assert_eq!(view.partial, 0.0);
         assert_eq!(view.player_lerp, [1.0, 2.0, 3.0]);
         assert_eq!(view.player_pos, [5.0, 6.0, 7.0]);
-        assert_eq!(view.day_ticks, s.session.day_clock.ticks);
+        assert_eq!(view.day_ticks, s.session.world.day_clock.ticks);
         let eye = view.tick_eye();
         assert_eq!(eye[1], 6.0 + view.eye_height as f64);
     }

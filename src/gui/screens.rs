@@ -25,99 +25,101 @@ pub fn draw(
     let eye_pos;
     let mut snap = {
         let mut s = shared.lock().unwrap();
+        // A shared handle: the tick replaces the menu only when a slot
+        // changed, so this is a count bump, not a copy.
         let menu_slots = if state.screen.is_modal() {
-            s.session.menu_slots.clone()
+            s.session.inventory.menu_slots.clone()
         } else {
-            Vec::new()
+            Default::default()
         };
         eye_height = crate::renderer::systems::session_eye_height(&s.session) as f64;
         eye_pos = s.session.player_pos;
 
         Snapshot {
-            action_bar: s.session.action_bar.take(),
-            title_text: s.session.title_text.take(),
-            subtitle_text: s.session.subtitle_text.take(),
-            title_times: s.session.title_times.take(),
-            titles_clear: s.session.titles_clear.take(),
+            action_bar: s.session.hud.action_bar.take(),
+            title_text: s.session.hud.title_text.take(),
+            subtitle_text: s.session.hud.subtitle_text.take(),
+            title_times: s.session.hud.title_times.take(),
+            titles_clear: s.session.hud.titles_clear.take(),
             menu_slots,
-            hotbar: s.session.hotbar.clone(),
-            carried: s.session.carried.clone(),
-            selected: s.session.hotbar_target.unwrap_or(s.session.hotbar_selected),
+            hotbar: s.session.inventory.hotbar.clone(),
+            carried: s.session.inventory.carried.clone(),
+            selected: s.session.inventory.hotbar_target.unwrap_or(s.session.inventory.hotbar_selected),
             gamemode: s.session.gamemode,
-            health: s.session.health,
-            food: s.session.food,
-            saturation: s.session.saturation,
-            air_supply: s.session.air_supply,
-            health_display: s.session.health_display,
+            health: s.session.vitals.health,
+            food: s.session.vitals.food,
+            saturation: s.session.vitals.saturation,
+            air_supply: s.session.vitals.air_supply,
+            health_display: s.session.vitals.health_display,
             hardcore: s.session.hardcore,
-            health_epoch: s.session.health_epoch,
-            jump_charge: s.session.jump_charge,
+            health_epoch: s.session.vitals.health_epoch,
+            jump_charge: s.session.vitals.jump_charge,
             eye_in_water: false,
-            chat_incoming: std::mem::take(&mut s.session.chat_incoming),
-            toast_incoming: std::mem::take(&mut s.session.toast_incoming),
-            chat_error: s.session.chat_send_error.take(),
-            enforces_secure_chat: s.session.enforces_secure_chat,
-            chat_signing: s.chat_signing_allowed || s.session.chat_signing_session,
-            attack_strength: s.session.attack_strength,
-            attack_delay: s.session.attack_delay,
-            targeted_entity: s.session.targeted_entity,
+            chat_incoming: std::mem::take(&mut s.session.chat.chat_incoming),
+            toast_incoming: std::mem::take(&mut s.session.chat.toast_incoming),
+            chat_error: s.session.chat.chat_send_error.take(),
+            enforces_secure_chat: s.session.chat.enforces_secure_chat,
+            chat_signing: s.chat_signing_allowed || s.session.chat.chat_signing_session,
+            attack_strength: s.session.targeting.attack_strength,
+            attack_delay: s.session.targeting.attack_delay,
+            targeted_entity: s.session.targeting.targeted_entity,
             container_title: if state.screen.is_container() {
-                s.session.container_title.clone()
+                s.session.container.container_title.clone()
             } else {
                 crate::session::empty_spans()
             },
-            container_id: s.session.container_id,
+            container_id: s.session.container.container_id,
             container_data: if state.screen.is_container() {
-                s.session.container_data
+                s.session.container.container_data
             } else {
                 Default::default()
             },
             enchant_clues: match state.screen {
-                Screen::Container(ContainerKind::Enchantment) => s.session.enchant_clues.clone(),
+                Screen::Container(ContainerKind::Enchantment) => s.session.container.enchant_clues.clone(),
                 _ => Default::default(),
             },
             merchant: match state.screen {
                 Screen::Container(ContainerKind::Merchant) => {
                     crate::session::MerchantOffers::for_window(
-                        &s.session.merchant,
-                        s.session.container_id,
+                        &s.session.container.merchant,
+                        s.session.container.container_id,
                     )
                     .cloned()
                 }
                 _ => None,
             },
-            merchant_future_xp: s.session.merchant_future_xp,
+            merchant_future_xp: s.session.container.merchant_future_xp,
             stonecutter_recipes: match state.screen {
                 Screen::Container(ContainerKind::Stonecutter) => {
-                    s.session.stonecutter_recipes.clone()
+                    s.session.container.stonecutter_recipes.clone()
                 }
                 _ => Default::default(),
             },
             advancements: (state.screen == Screen::Advancements)
-                .then(|| s.session.advancements.clone()),
-            advancement_tab: s.session.advancement_tab,
+                .then(|| s.session.progress.advancements.clone()),
+            advancement_tab: s.session.progress.advancement_tab,
             active_effects: if matches!(state.screen, Screen::Inventory | Screen::Creative) {
-                s.session.active_effects.clone()
+                s.session.vitals.active_effects.clone()
             } else {
                 Vec::new()
             },
-            xp_progress: s.session.xp_progress,
-            xp_level: s.session.xp_level,
-            xp_recent_gain: s.session.xp_seen
-                && s.session.xp_display_tick.saturating_add(100)
+            xp_progress: s.session.vitals.xp_progress,
+            xp_level: s.session.vitals.xp_level,
+            xp_recent_gain: s.session.vitals.xp_seen
+                && s.session.vitals.xp_display_tick.saturating_add(100)
                     > crate::client::tracking::GAME_TIME.load(std::sync::atomic::Ordering::Relaxed),
-            waypoints: s.session.waypoints.clone(),
+            waypoints: s.session.hud.waypoints.clone(),
             eye_pos: [eye_pos[0], eye_pos[1] + eye_height as f32, eye_pos[2]],
             camera_yaw: s.camera_yaw,
             camera_pitch: s.camera_pitch,
             sleep_timer: s.session.sleep_timer,
             sleeping: s.session.sleeping,
-            sidebar: s.session.sidebar.clone(),
-            boss_bars: s.session.boss_bars.clone(),
+            sidebar: s.session.hud.sidebar.clone(),
+            boss_bars: s.session.hud.boss_bars.clone(),
             tab_list: if state.tab_list_held
                 || (cfg!(feature = "mobile_ui") && state.screen == Screen::Pause)
             {
-                s.session.tab_list.clone()
+                s.session.hud.tab_list.clone()
             } else {
                 Default::default()
             },
@@ -209,6 +211,7 @@ pub fn draw(
             state.options.main_hand_left,
             &mut state.hearts,
             &mut elements,
+            &mut state.effects,
         );
         hud::draw_nametags(p, &ctx, &state.hud.nametags);
         let show_fps = state.options.fps_counter && state.hud.debug.is_none();
@@ -272,8 +275,6 @@ pub fn draw(
         let focused = state.screen.chat_open();
         let placed = !focused && hud_visible && elements.shown(ElementId::Chat);
         let visible = hud_visible && (focused || placed);
-        chat::apply_options(&state.options.chat);
-        crate::gui::appleskin::apply_options(&state.options.appleskin);
         crate::gui::more_options::apply(&state.options);
         macro_rules! draw_chat {
             ($p:expr) => {
@@ -578,8 +579,8 @@ pub fn draw(
         Screen::Statistics => {
             {
                 let s = shared.lock().unwrap();
-                if s.session.stats_version != 0 {
-                    state.stats.stats = Some(s.session.stats.clone());
+                if s.session.progress.stats_version != 0 {
+                    state.stats.stats = Some(s.session.progress.stats.clone());
                 }
             }
             if let Some(next) = crate::gui::stats::draw(p, &mut state.stats, &ctx) {
@@ -596,7 +597,7 @@ pub fn draw(
             if let Some(next) = crate::gui::win::draw(p, &mut state.win, &ctx) {
                 state.nav = Some(next);
                 // `WinScreen.respawn`: back to the Overworld.
-                shared.lock().unwrap().respawn_requested = true;
+                crate::client::bus::request(crate::client::bus::ClientRequest::Respawn);
             }
             None
         }
@@ -766,12 +767,12 @@ pub fn draw(
         let mut s = shared.lock().unwrap();
         for action in &actions {
             if let InvAction::CreativeSet { slot, stack } = action
-                && let Some(dst) = s.session.menu_slots.get_mut(*slot as usize)
+                && let Some(dst) = std::sync::Arc::make_mut(&mut s.session.inventory.menu_slots).get_mut(*slot as usize)
             {
                 *dst = local_stack(stack);
             }
         }
-        s.session.inv_actions.extend(actions);
+        s.session.inventory.inv_actions.extend(actions);
     }
 }
 
@@ -900,9 +901,9 @@ fn draw_loading(p: &mut Painter, ctx: &ScreenCtx, status: Option<&str>) {
 /// `ScreenEffectRenderer.renderItemActivationAnimation`: the item thrown at
 /// the camera and back, spinning, drawn as the 3D item would project with a
 /// 70 degree field of view; the spin about its upright shows as a squash.
-fn draw_item_activation(p: &mut Painter, vw: f32, vh: f32) {
+fn draw_item_activation(p: &mut Painter, effects: &mut crate::gui::ScreenEffects, vw: f32, vh: f32) {
     use std::f32::consts::PI;
-    let Some((t, off_x, off_y, item)) = crate::play::event_particles::activation() else {
+    let Some((t, off_x, off_y, item)) = effects.activation() else {
         return;
     };
     let (ts, tc) = (t * t, t * t * t);
@@ -924,8 +925,8 @@ fn draw_item_activation(p: &mut Painter, vw: f32, vh: f32) {
 /// `MobAppearanceParticle`: the elder guardian's face looms in front of the
 /// camera and fades over 30 ticks (alpha `0.05 + 0.5 * sin(t * pi)`), drawn
 /// as its texture's face, swelling as it comes.
-fn draw_elder_guardian(p: &mut Painter, vw: f32, vh: f32) {
-    let Some(t) = crate::play::event_particles::elder_guardian_progress() else {
+fn draw_elder_guardian(p: &mut Painter, effects: &mut crate::gui::ScreenEffects, vw: f32, vh: f32) {
+    let Some(t) = effects.elder() else {
         return;
     };
     let alpha = 0.05 + 0.5 * (t * std::f32::consts::PI).sin();
@@ -991,13 +992,14 @@ fn draw_hud(
     main_hand_left: bool,
     hearts: &mut health::HeartAnim,
     elements: &mut Hud,
+    effects: &mut crate::gui::ScreenEffects,
 ) {
     let (vw, vh) = (ctx.vw, ctx.vh);
 
     draw_spyglass_scope(p, vw, vh);
     draw_portal_overlay(p, vw, vh);
-    draw_item_activation(p, vw, vh);
-    draw_elder_guardian(p, vw, vh);
+    draw_item_activation(p, effects, vw, vh);
+    draw_elder_guardian(p, effects, vw, vh);
     health::draw_freeze_overlay(p, snap, vw, vh);
 
     p.sprite(
@@ -1474,17 +1476,17 @@ pub(crate) fn draw_effects_panel(
 
 fn clear_world_clicks(shared: &Arc<SharedMutex>) {
     let mut s = shared.lock().unwrap();
-    s.session.attack_held = false;
-    s.session.use_held = false;
-    s.session.attack_clicked = false;
-    s.session.use_clicked = false;
+    s.session.input.attack_held = false;
+    s.session.input.use_held = false;
+    s.session.input.attack_clicked = false;
+    s.session.input.use_clicked = false;
 }
 
 fn apply_book_out(out: book::BookOut, state: &mut GuiState, shared: &Arc<SharedMutex>) {
     match out {
         book::BookOut::Nav(next) => state.nav = Some(next),
         book::BookOut::Send(req) => {
-            shared.lock().unwrap().session.edit_book = Some(req);
+            shared.lock().unwrap().session.editors.edit_book = Some(req);
             state.nav = Some(Screen::None);
         }
     }

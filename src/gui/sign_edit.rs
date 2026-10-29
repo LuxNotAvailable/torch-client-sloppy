@@ -235,7 +235,7 @@ pub fn draw(
     ctx: &ScreenCtx,
     shared: &SharedMutex,
 ) -> Option<Screen> {
-    if shared.lock().unwrap().session.sign_edit_open_pos != Some(state.pos) {
+    if shared.lock().unwrap().session.editors.sign_edit_open_pos != Some(state.pos) {
         return Some(Screen::None);
     }
 

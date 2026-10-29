@@ -17,6 +17,11 @@ use crate::gui::{Screen, ScreenCtx};
 /// The raw data of the game-master blocks the client knows, by position.
 static TAGS: Mutex<Option<HashMap<[i32; 3], NbtCompound>>> = Mutex::new(None);
 
+/// A new session: no block data carries over.
+pub fn reset() {
+    *TAGS.lock().unwrap() = None;
+}
+
 pub fn store_tag(pos: [i32; 3], tag: &NbtCompound) {
     TAGS.lock().unwrap().get_or_insert_with(HashMap::new).insert(pos, tag.clone());
 }
@@ -50,23 +55,23 @@ impl OpBlock {
     }
 }
 
-/// A request to the server, sent by the tick.
-#[derive(Clone, Debug)]
-pub enum OpBlockSend {
+/// The editors' packets, sent with the client's requests.
+enum OpBlockSend {
     Structure(azalea_protocol::packets::game::s_set_structure_block::ServerboundSetStructureBlock),
     Jigsaw(azalea_protocol::packets::game::s_set_jigsaw_block::ServerboundSetJigsawBlock),
     JigsawGenerate(azalea_protocol::packets::game::s_jigsaw_generate::ServerboundJigsawGenerate),
     Test(azalea_protocol::packets::game::s_set_test_block::ServerboundSetTestBlock),
 }
 
-static OUTBOX: Mutex<Vec<OpBlockSend>> = Mutex::new(Vec::new());
-
-pub fn take_sends() -> Vec<OpBlockSend> {
-    std::mem::take(&mut *OUTBOX.lock().unwrap())
-}
-
 fn send(packet: OpBlockSend) {
-    OUTBOX.lock().unwrap().push(packet);
+    use azalea_protocol::packets::game::ServerboundGamePacket as P;
+    let packet = match packet {
+        OpBlockSend::Structure(p) => P::SetStructureBlock(p),
+        OpBlockSend::Jigsaw(p) => P::SetJigsawBlock(p),
+        OpBlockSend::JigsawGenerate(p) => P::JigsawGenerate(p),
+        OpBlockSend::Test(p) => P::SetTestBlock(p),
+    };
+    crate::client::bus::request(crate::client::bus::ClientRequest::Packet(Box::new(packet)));
 }
 
 /// A labelled text field.

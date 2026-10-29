@@ -234,8 +234,8 @@ impl Mirror {
                 self.batch.push(LightJob::Reset);
                 crate::client::worker::reset_biome_table();
                 let mut s = self.shared.lock().unwrap();
-                s.session.pending_chunks.clear();
-                s.session.pending_edits.clear();
+                s.session.world.pending_chunks.clear();
+                s.session.world.pending_edits.clear();
             }
         }
     }
@@ -419,8 +419,8 @@ impl Mirror {
         let (chunks, edits) = {
             let mut s = self.shared.lock().unwrap();
             (
-                std::mem::take(&mut s.session.pending_chunks),
-                std::mem::take(&mut s.session.pending_edits),
+                std::mem::take(&mut s.session.world.pending_chunks),
+                std::mem::take(&mut s.session.world.pending_edits),
             )
         };
         if chunks.is_empty() && edits.is_empty() {

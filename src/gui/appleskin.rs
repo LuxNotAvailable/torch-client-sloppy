@@ -53,15 +53,8 @@ impl Default for AppleSkinOptions {
     }
 }
 
-static OPTIONS: std::sync::Mutex<AppleSkinOptions> = std::sync::Mutex::new(AppleSkinOptions::DEFAULT);
-
-/// Takes this frame's options.
-pub fn apply_options(options: &AppleSkinOptions) {
-    *OPTIONS.lock().unwrap() = *options;
-}
-
 fn options() -> AppleSkinOptions {
-    *OPTIONS.lock().unwrap()
+    crate::gui::current_options().appleskin
 }
 
 /// A food's nutrition and the saturation it gives (`nutrition * modifier *

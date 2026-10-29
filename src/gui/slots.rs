@@ -1579,7 +1579,7 @@ mod tests {
             menu_slots[*i] = s.clone();
         }
         Snapshot {
-            menu_slots,
+            menu_slots: menu_slots.into(),
             gamemode,
             ..Default::default()
         }

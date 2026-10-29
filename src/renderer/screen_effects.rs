@@ -269,8 +269,8 @@ fn update(
         session.player_pos[2] as f64,
     ];
     let (yaw, pitch) = (state.camera_yaw, state.camera_pitch);
-    let on_fire = session.health_display.on_fire;
-    let pumpkin = session.armor[0] == Some("carved_pumpkin");
+    let on_fire = session.vitals.health_display.on_fire;
+    let pumpkin = session.inventory.armor[0] == Some("carved_pumpkin");
     let sleeping = session.sleeping;
     let hud = !gui.in_menu() && !gui.gui_hidden();
     drop(state);

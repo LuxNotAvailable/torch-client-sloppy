@@ -251,7 +251,7 @@ impl Store {
         *self
             .kinds
             .entry(state.id())
-            .or_insert_with(|| kind_for_block(Box::<dyn BlockTrait>::from(state).id()))
+            .or_insert_with(|| kind_for_block(crate::util::block_model::block_id(state)))
     }
 
     fn insert(&mut self, pos: [i32; 3], kind: BlockEntityKind, tag: &NbtCompound) {
@@ -497,7 +497,7 @@ pub fn publish(
         };
         if kinds
             .entry(state.id())
-            .or_insert_with(|| kind_for_block(Box::<dyn BlockTrait>::from(state).id()))
+            .or_insert_with(|| kind_for_block(crate::util::block_model::block_id(state)))
             .is_none()
         {
             changed = true;

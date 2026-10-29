@@ -62,6 +62,20 @@ pub(crate) fn has_glint(data: &azalea_inventory::ItemStackData) -> bool {
     }
 }
 
+/// A stack's cooldown, in percent: the one `SlotStack` field that moves
+/// while the stack itself stays the same.
+pub(crate) fn slot_cooldown(stack: &ItemStack) -> u8 {
+    use azalea_inventory::components as comp;
+    let ItemStack::Present(data) = stack else { return 0 };
+    if !crate::client::cooldowns::any_active() {
+        return 0;
+    }
+    let item = data.kind.to_str().trim_start_matches("minecraft:");
+    let use_cooldown = data.get_component::<comp::UseCooldown>();
+    let group = use_cooldown.as_ref().and_then(|c| c.cooldown_group.as_ref());
+    crate::client::cooldowns::percent(group, item)
+}
+
 pub(crate) fn slot_stack(
     stack: &ItemStack,
     registries: Option<&azalea_core::registry_holder::RegistryHolder>,
@@ -160,6 +174,29 @@ pub(crate) fn slot_stack(
         glint: has_glint(data),
         model_data: model_data(data, registries).map(Box::new),
     }
+}
+
+/// A held item's model variant (`item@path`), when its model varies: the
+/// few fields a variant reads, not a whole `SlotStack`.
+pub(crate) fn variant_key(data: &azalea_inventory::ItemStackData) -> Option<std::sync::Arc<str>> {
+    use azalea_inventory::components as comp;
+    let item = data.kind.to_str().trim_start_matches("minecraft:");
+    let has_model = data.get_component::<comp::ItemModel>().is_some();
+    if !has_model && !crate::items::icons::is_dynamic(item) {
+        return None;
+    }
+    let get = |f: fn(&azalea_inventory::ItemStackData) -> Option<i32>| f(data).unwrap_or(0);
+    let stack = SlotStack {
+        item,
+        count: data.count.clamp(0, 255) as u8,
+        damage: get(|d| d.get_component::<comp::Damage>().map(|c| c.amount)) as u16,
+        max_damage: get(|d| d.get_component::<comp::MaxDamage>().map(|c| c.amount)) as u16,
+        charged: data.get_component::<comp::ChargedProjectiles>().is_some_and(|c| !c.items.is_empty()),
+        model_data: model_data(data, None).map(Box::new),
+        ..Default::default()
+    };
+    let key = stack.model_key();
+    (key != item).then(|| std::sync::Arc::from(key.as_ref()))
 }
 
 /// What the item model reads from the stack's components; `None` when it

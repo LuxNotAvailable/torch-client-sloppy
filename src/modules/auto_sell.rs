@@ -36,10 +36,10 @@ pub fn tick(bot: &Client, shared: &Arc<SharedMutex>) {
 
     let item = {
         let session = &shared.lock().unwrap().session;
-        if session.container_id != 0 {
+        if session.container.container_id != 0 {
             None
         } else {
-            next_match(&session.menu_slots)
+            next_match(&session.inventory.menu_slots)
         }
     };
     let Some(item) = item else {

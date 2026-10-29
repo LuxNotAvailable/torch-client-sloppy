@@ -41,21 +41,28 @@ pub(crate) fn handle_packet(
         }
         _ => {}
     }
+    // Every mod channel, for whatever listens (client plugins, mod ports).
+    if let ClientboundGamePacket::CustomPayload(p) = packet {
+        crate::client::bus::emit(crate::client::bus::ClientEvent::CustomPayload {
+            channel: p.identifier.to_string(),
+            data: p.data.to_vec(),
+        });
+    }
     if let ClientboundGamePacket::Login(p) = packet {
         let mut s = shared.lock().unwrap();
-        s.session.enforces_secure_chat = p.enforces_secure_chat;
+        s.session.chat.enforces_secure_chat = p.enforces_secure_chat;
         s.session.hardcore = p.hardcore;
-        s.session.show_death_screen = p.show_death_screen;
-        s.session.health_epoch = s.session.health_epoch.wrapping_add(1);
-        s.session.chat_ack_pending = 0;
-        s.session.chat_ack_last = None;
+        s.session.vitals.show_death_screen = p.show_death_screen;
+        s.session.vitals.health_epoch = s.session.vitals.health_epoch.wrapping_add(1);
+        s.session.chat.chat_ack_pending = 0;
+        s.session.chat.chat_ack_last = None;
         drop(s);
         unsecure_server_warning(shared, p.enforces_secure_chat);
     }
     if let ClientboundGamePacket::Respawn(_) = packet {
         let mut s = shared.lock().unwrap();
-        s.session.health_epoch = s.session.health_epoch.wrapping_add(1);
-        s.session.death_cause = None;
+        s.session.vitals.health_epoch = s.session.vitals.health_epoch.wrapping_add(1);
+        s.session.vitals.death_cause = None;
     }
     if let ClientboundGamePacket::PlayerPosition(p) = packet
         && !p.relative.x
@@ -176,15 +183,16 @@ fn game_event(shared: &Arc<SharedMutex>, event: EventType, param: f32) {
     match event {
         EventType::NoRespawnBlockAvailable => {
             let text = translate("block.minecraft.spawn.not_valid");
-            shared.lock().unwrap().session.chat_incoming.push(system(text));
+            shared.lock().unwrap().session.chat.chat_incoming.push(system(text));
         }
         EventType::WinGame => {
             let mut s = shared.lock().unwrap();
             if param == 0.0 {
-                s.respawn_requested = true;
+                crate::client::bus::request(crate::client::bus::ClientRequest::Respawn);
             } else {
-                s.session.show_credits = true;
+                crate::client::bus::emit(crate::client::bus::ClientEvent::ShowCredits);
             }
+            drop(s);
         }
         EventType::DemoEvent => {
             let key = match param as i32 {
@@ -195,7 +203,7 @@ fn game_event(shared: &Arc<SharedMutex>, event: EventType, param: f32) {
                 104 => "demo.day.6",
                 _ => return,
             };
-            shared.lock().unwrap().session.chat_incoming.push(system(translate(key)));
+            shared.lock().unwrap().session.chat.chat_incoming.push(system(translate(key)));
         }
         EventType::ArrowHitPlayer => {
             #[cfg(audio)]
@@ -213,7 +221,7 @@ fn game_event(shared: &Arc<SharedMutex>, event: EventType, param: f32) {
             }
         }
         EventType::ImmediateRespawn => {
-            shared.lock().unwrap().session.show_death_screen = param == 0.0;
+            shared.lock().unwrap().session.vitals.show_death_screen = param == 0.0;
         }
         _ => {}
     }
@@ -314,7 +322,7 @@ fn horse_slots(
 
     let advanced_tooltips = {
         let s = shared.lock().unwrap();
-        let horse = s.session.horse.as_ref()?;
+        let horse = s.session.inventory.horse.as_ref()?;
         if horse.container_id != container_id {
             return None;
         }
@@ -526,7 +534,7 @@ fn block_entities(world: &WorldHolder, shared: &Arc<SharedMutex>, packet: &Clien
 
 fn command_block_data(shared: &Arc<SharedMutex>, packet: &ClientboundBlockEntityData) {
     let mut s = shared.lock().unwrap();
-    if s.session.command_block_pos != Some(packet.pos) {
+    if s.session.editors.command_block_pos != Some(packet.pos) {
         return;
     }
     let track_output = packet.tag.byte("TrackOutput").unwrap_or(1) != 0;
@@ -545,7 +553,7 @@ fn command_block_data(shared: &Arc<SharedMutex>, packet: &ClientboundBlockEntity
     } else {
         String::new()
     };
-    s.session.command_block_data = Some(crate::session::CommandBlockData {
+    s.session.editors.command_block_data = Some(crate::session::CommandBlockData {
         command: packet
             .tag
             .string("Command")
@@ -676,14 +684,14 @@ fn maps(shared: &Arc<SharedMutex>, packet: &ClientboundGamePacket) {
         )
     });
     let mut s = shared.lock().unwrap();
-    match s.session.map_updates.iter_mut().find(|u| u.id == id) {
+    match s.session.world.map_updates.iter_mut().find(|u| u.id == id) {
         Some(pending) => {
             pending.colors = colors;
             if decorations.is_some() {
                 pending.decorations = decorations;
             }
         }
-        None => s.session.map_updates.push(MapUpdate {
+        None => s.session.world.map_updates.push(MapUpdate {
             id,
             colors,
             decorations,
@@ -876,11 +884,11 @@ fn session_state(world: &WorldHolder, shared: &Arc<SharedMutex>, packet: &Client
                     .shared
                     .read()
                     .get_block_state(p.pos)
-                    .map(|state| Box::<dyn BlockTrait>::from(state).id().to_string())
+                    .map(|state| crate::util::block_model::block_id(state).to_string())
             };
             let mut s = shared.lock().unwrap();
             let key = [p.pos.x, p.pos.y, p.pos.z];
-            let entry = s.session.block_entities.get(&key);
+            let entry = s.session.world.block_entities.get(&key);
             let Some((kind, wood)) = entry
                 .and_then(|info| SignEditKind::from_block(&info.state.block))
                 .or_else(|| world_block.as_deref().and_then(SignEditKind::from_block))
@@ -902,16 +910,16 @@ fn session_state(world: &WorldHolder, shared: &Arc<SharedMutex>, packet: &Client
                     _ => None,
                 })
                 .unwrap_or_else(SignFace::default);
-            s.session.sign_editor_open = Some(crate::session::SignEditRequest {
+            crate::client::bus::emit(crate::client::bus::ClientEvent::OpenSignEditor(crate::session::SignEditRequest {
                 pos: p.pos,
                 front: p.is_front_text,
                 kind,
                 wood,
                 face,
-            });
+            }));
         }
         ClientboundGamePacket::OpenBook(p) => {
-            shared.lock().unwrap().session.book_open = Some(hand(p.hand));
+            crate::client::bus::emit(crate::client::bus::ClientEvent::OpenBook(hand(p.hand)));
         }
         ClientboundGamePacket::ContainerSetData(p) => {
             let clue = (p.id as usize)
@@ -920,29 +928,29 @@ fn session_state(world: &WorldHolder, shared: &Arc<SharedMutex>, packet: &Client
                 .map(|row| (row, enchantment_id(world, p.value as i16)));
 
             let mut s = shared.lock().unwrap();
-            if let Some(slot) = s.session.container_data.get_mut(p.id as usize) {
+            if let Some(slot) = s.session.container.container_data.get_mut(p.id as usize) {
                 *slot = p.value as i16;
             }
             if let Some((row, name)) = clue {
-                s.session.enchant_clues[row] = name;
+                s.session.container.enchant_clues[row] = name;
             }
         }
         ClientboundGamePacket::MountScreenOpen(p) => {
             let mut s = shared.lock().unwrap();
-            s.session.horse = Some(crate::session::HorseMenu {
+            s.session.inventory.horse = Some(crate::session::HorseMenu {
                 container_id: p.container_id,
                 columns: p.inventory_columns.min(5) as u8,
                 state_id: 0,
                 slots: Vec::new(),
             });
-            s.session.horse_published_state_id = u32::MAX;
+            s.session.inventory.horse_published_state_id = u32::MAX;
         }
         ClientboundGamePacket::ContainerSetContent(p) => {
             let Some(slots) = horse_slots(world, shared, p.container_id, &p.items) else {
                 return;
             };
             let mut s = shared.lock().unwrap();
-            if let Some(horse) = s.session.horse.as_mut() {
+            if let Some(horse) = s.session.inventory.horse.as_mut() {
                 horse.slots = slots;
                 horse.state_id = p.state_id;
             }
@@ -957,7 +965,7 @@ fn session_state(world: &WorldHolder, shared: &Arc<SharedMutex>, packet: &Client
                 return;
             };
             let mut s = shared.lock().unwrap();
-            if let Some(horse) = s.session.horse.as_mut()
+            if let Some(horse) = s.session.inventory.horse.as_mut()
                 && let Some(dst) = horse.slots.get_mut(p.slot as usize)
             {
                 *dst = slots.remove(0);
@@ -965,19 +973,19 @@ fn session_state(world: &WorldHolder, shared: &Arc<SharedMutex>, packet: &Client
             }
         }
         ClientboundGamePacket::ContainerClose(_) => {
-            shared.lock().unwrap().session.horse = None;
+            shared.lock().unwrap().session.inventory.horse = None;
         }
         ClientboundGamePacket::MerchantOffers(p) => {
             let offers = merchant_offers(world, p);
-            shared.lock().unwrap().session.merchant = Some(Arc::new(offers));
+            shared.lock().unwrap().session.container.merchant = Some(Arc::new(offers));
         }
         ClientboundGamePacket::UpdateRecipes(p) => {
             let recipes = stonecutter_recipes(world, p);
-            shared.lock().unwrap().session.stonecutter_recipes = recipes.into();
+            shared.lock().unwrap().session.container.stonecutter_recipes = recipes.into();
         }
         ClientboundGamePacket::Commands(p) => {
             let tree = commands::CommandTree::from_stubs(&p.entries, p.root_index);
-            shared.lock().unwrap().session.command_tree = Some(Arc::new(tree));
+            shared.lock().unwrap().session.chat.command_tree = Some(Arc::new(tree));
         }
         ClientboundGamePacket::CommandSuggestions(p) => {
             let range = commands::Range::between(
@@ -994,7 +1002,7 @@ fn session_state(world: &WorldHolder, shared: &Arc<SharedMutex>, packet: &Client
                     tooltip: s.tooltip.clone(),
                 })
                 .collect();
-            shared.lock().unwrap().session.suggestion_reply =
+            shared.lock().unwrap().session.chat.suggestion_reply =
                 Some((p.id, commands::Suggestions { range, list }));
         }
         ClientboundGamePacket::CustomChatCompletions(p) => {
@@ -1003,13 +1011,13 @@ fn session_state(world: &WorldHolder, shared: &Arc<SharedMutex>, packet: &Client
             match p.action {
                 Action::Add => s
                     .session
-                    .custom_completions
+                    .chat.custom_completions
                     .extend(p.entries.iter().cloned()),
                 Action::Remove => s
                     .session
-                    .custom_completions
+                    .chat.custom_completions
                     .retain(|e| !p.entries.contains(e)),
-                Action::Set => s.session.custom_completions = p.entries.clone(),
+                Action::Set => s.session.chat.custom_completions = p.entries.clone(),
             }
         }
         ClientboundGamePacket::SetEquipment(p) => {
@@ -1054,7 +1062,7 @@ fn session_state(world: &WorldHolder, shared: &Arc<SharedMutex>, packet: &Client
         ClientboundGamePacket::SetTime(p) => {
             GAME_TIME.store(p.game_time as i64, std::sync::atomic::Ordering::Relaxed);
             if let Some(clock) = overworld_clock(world, p) {
-                shared.lock().unwrap().session.day_clock.resync(clock);
+                shared.lock().unwrap().session.world.day_clock.resync(clock);
             }
         }
         ClientboundGamePacket::SetActionBarText(p) => {
@@ -1085,11 +1093,11 @@ fn session_state(world: &WorldHolder, shared: &Arc<SharedMutex>, packet: &Client
                 crate::play::dialog::parse_holder(&p.dialog, &world.registries)
             };
             if let Some(dialog) = dialog {
-                shared.lock().unwrap().session.dialog_show = Some(dialog);
+                crate::client::bus::emit(crate::client::bus::ClientEvent::ShowDialog(dialog));
             }
         }
         ClientboundGamePacket::ClearDialog(_) => {
-            shared.lock().unwrap().session.dialog_clear = true;
+            crate::client::bus::emit(crate::client::bus::ClientEvent::ClearDialog);
         }
         ClientboundGamePacket::ServerLinks(p) => {
             shared.lock().unwrap().session.server_links = crate::client::dialogs::links(&p.links);
@@ -1102,7 +1110,7 @@ fn session_state(world: &WorldHolder, shared: &Arc<SharedMutex>, packet: &Client
         ClientboundGamePacket::Explode(p) => {
             let mut s = shared.lock().unwrap();
             crate::session::push_particle_emit(
-                &mut s.session.particle_emits,
+                &mut s.session.world.particle_emits,
                 crate::session::ParticleEmit::Explosion(crate::session::ExplosionEmit {
                     center: [p.center.x, p.center.y, p.center.z],
                     radius: p.radius,
@@ -1119,7 +1127,7 @@ fn session_state(world: &WorldHolder, shared: &Arc<SharedMutex>, packet: &Client
         ClientboundGamePacket::LevelEvent(p) => {
             let mut s = shared.lock().unwrap();
             crate::session::push_particle_emit(
-                &mut s.session.particle_emits,
+                &mut s.session.world.particle_emits,
                 crate::session::ParticleEmit::Event(crate::session::LevelEventEmit {
                     id: p.event_type,
                     pos: [p.pos.x, p.pos.y, p.pos.z],
@@ -1203,7 +1211,7 @@ fn level_particles(
 ) {
     let mut s = shared.lock().unwrap();
     crate::session::push_particle_emit(
-        &mut s.session.particle_emits,
+        &mut s.session.world.particle_emits,
         crate::session::ParticleEmit::Level(crate::session::LevelParticle {
             particle: p.particle.clone(),
             pos: [p.pos.x, p.pos.y, p.pos.z],
@@ -1229,7 +1237,7 @@ fn waypoint(shared: &Arc<SharedMutex>, p: &ClientboundWaypoint) {
 
     let mut s = shared.lock().unwrap();
     if matches!(p.operation, WaypointOperation::Untrack) {
-        Arc::make_mut(&mut s.session.waypoints).retain(|w| w.id != key);
+        Arc::make_mut(&mut s.session.hud.waypoints).retain(|w| w.id != key);
         return;
     }
 
@@ -1239,7 +1247,7 @@ fn waypoint(shared: &Arc<SharedMutex>, p: &ClientboundWaypoint) {
         WaypointData::Chunk { x, z } => Some(WaypointPos::Chunk { x: *x, z: *z }),
         WaypointData::Azimuth { angle } => Some(WaypointPos::Azimuth(*angle)),
     }) else {
-        Arc::make_mut(&mut s.session.waypoints).retain(|w| w.id != key);
+        Arc::make_mut(&mut s.session.hud.waypoints).retain(|w| w.id != key);
         return;
     };
     let info = WaypointInfo {
@@ -1252,7 +1260,7 @@ fn waypoint(shared: &Arc<SharedMutex>, p: &ClientboundWaypoint) {
             .map(|c| [c.red(), c.green(), c.blue()].map(|v| v as f32 / 255.0)),
         pos,
     };
-    let waypoints = Arc::make_mut(&mut s.session.waypoints);
+    let waypoints = Arc::make_mut(&mut s.session.hud.waypoints);
     if let Some(existing) = waypoints.iter_mut().find(|w| w.id == key) {
         *existing = info;
     } else {
@@ -1286,9 +1294,9 @@ fn level_lifecycle(world: &WorldHolder, shared: &Arc<SharedMutex>, packet: &Clie
             if let Some(shared) = crate::SHARED.get() {
                 let mut s = shared.lock().unwrap();
                 for (stat, value) in &p.stats {
-                    s.session.stats.insert(*stat, *value);
+                    s.session.progress.stats.insert(*stat, *value);
                 }
-                s.session.stats_version = s.session.stats_version.wrapping_add(1);
+                s.session.progress.stats_version = s.session.progress.stats_version.wrapping_add(1);
             }
         }
         ClientboundGamePacket::SetDefaultSpawnPosition(p) => {

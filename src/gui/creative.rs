@@ -1136,7 +1136,10 @@ mod visual {
         let shared: Arc<SharedMutex> = Arc::new(SharedMutex::new(SharedState {
             in_world: true,
             session: SessionState {
-                menu_slots: vec![SlotStack::default(); 46],
+                inventory: crate::session::SessionInventory {
+                    menu_slots: vec![SlotStack::default(); 46].into(),
+                    ..Default::default()
+                },
                 gamemode: Gamemode::Creative,
                 ..Default::default()
             },

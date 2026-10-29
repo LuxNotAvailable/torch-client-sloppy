@@ -100,11 +100,11 @@ pub(crate) fn apply_client_information_requests(bot: &Client, shared: &Arc<Share
     let (view_distance, prefs) = {
         let mut s = shared.lock().unwrap();
         (
-            s.session.render_distance_request.take(),
-            s.session.skin_prefs_request.take(),
+            s.session.client_info.render_distance_request.take(),
+            s.session.client_info.skin_prefs_request.take(),
         )
     };
-    let chat_prefs = shared.lock().unwrap().session.chat_prefs_request.take();
+    let chat_prefs = shared.lock().unwrap().session.client_info.chat_prefs_request.take();
     if let Some((shown, colors, listing)) = chat_prefs {
         apply_chat_prefs(bot, shown, colors, listing);
     }

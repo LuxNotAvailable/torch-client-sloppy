@@ -81,7 +81,7 @@ pub fn update_player_faces(
     let generation = skins.generation();
     let listed: Vec<u128> = {
         let s = shared.0.lock().unwrap();
-        let list = &s.session.tab_list;
+        let list = &s.session.hud.tab_list;
         let id = std::sync::Arc::as_ptr(list) as usize;
         if (id == faces.seen_list && generation == faces.seen_textures) || list.rows.is_empty() {
             return;

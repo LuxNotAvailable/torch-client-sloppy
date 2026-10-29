@@ -1745,11 +1745,11 @@ mod tests {
 
     fn snapshot_of(session: &mut SessionState) -> Snapshot {
         Snapshot {
-            action_bar: session.action_bar.take(),
-            title_text: session.title_text.take(),
-            subtitle_text: session.subtitle_text.take(),
-            title_times: session.title_times.take(),
-            titles_clear: session.titles_clear.take(),
+            action_bar: session.hud.action_bar.take(),
+            title_text: session.hud.title_text.take(),
+            subtitle_text: session.hud.subtitle_text.take(),
+            title_times: session.hud.title_times.take(),
+            titles_clear: session.hud.titles_clear.take(),
             hotbar: vec![SlotStack::default(); 10].into(),
             ..Default::default()
         }
@@ -1802,7 +1802,7 @@ mod tests {
     fn negative_times_leave_their_field_unchanged() {
         let mut session = SessionState::default();
         session.set_title_times(5, -1, u32::MAX as i32);
-        assert_eq!(session.title_times, Some((Some(5), None, None)));
+        assert_eq!(session.hud.title_times, Some((Some(5), None, None)));
 
         let mut ov = HudOverlays::default();
         let mut snap = snapshot_of(&mut session);

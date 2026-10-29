@@ -108,7 +108,7 @@ pub fn draw(
         )
     };
     if respawn.draw(p, ctx) {
-        shared.lock().unwrap().respawn_requested = true;
+        crate::client::bus::request(crate::client::bus::ClientRequest::Respawn);
         state.respawn_sent = true;
     }
 
@@ -160,7 +160,7 @@ fn draw_confirm(
         )
     };
     if no.draw(p, ctx) {
-        shared.lock().unwrap().respawn_requested = true;
+        crate::client::bus::request(crate::client::bus::ClientRequest::Respawn);
         state.respawn_sent = true;
         state.confirm = None;
     }

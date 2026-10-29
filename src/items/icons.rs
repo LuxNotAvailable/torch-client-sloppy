@@ -899,16 +899,36 @@ pub(super) fn enumerate_paths(assets: &Assets, root: &Json, limit: usize) -> Vec
 
 /// The path this stack takes through `id`'s model now, if its model has
 /// draw-time choices.
+/// Whether `id`'s model has any draw-time choice: most don't, and those
+/// skip the walk. Remembered per item.
+pub fn is_dynamic(id: &str) -> bool {
+    static KNOWN: std::sync::RwLock<Option<HashMap<String, bool>>> = std::sync::RwLock::new(None);
+    if let Some(known) = KNOWN.read().unwrap().as_ref().and_then(|k| k.get(id).copied()) {
+        return known;
+    }
+    let assets = super::model::shared();
+    let dynamic = assets
+        .json(&format!("items/{id}.json"))
+        .and_then(|doc| doc.get("model").map(|root| !enumerate_paths(assets, root, 1).is_empty()))
+        .unwrap_or(false);
+    KNOWN.write().unwrap().get_or_insert_with(HashMap::new).insert(id.to_owned(), dynamic);
+    dynamic
+}
+
 pub fn runtime_path(
     id: &str,
     stack: &super::dispatch::StackView,
     ctx: &super::dispatch::WorldContext,
 ) -> Option<Vec<u16>> {
+    if !is_dynamic(id) {
+        return None;
+    }
     let assets = super::model::shared();
-    let root = assets.json(&format!("items/{}.json", id))?.get("model").cloned()?;
+    let doc = assets.json(&format!("items/{}.json", id))?;
+    let root = doc.get("model")?;
     let mut taken: Vec<u16> = Vec::new();
     let mut parts = Vec::new();
-    collect_parts_with(assets, &root, "gui", false, Mat4::IDENTITY, &mut parts, 0, &mut |node| {
+    collect_parts_with(assets, root, "gui", false, Mat4::IDENTITY, &mut parts, 0, &mut |node| {
         let choice = super::dispatch::decide(node, stack, ctx);
         taken.push(choice as u16);
         Some(choice)
@@ -1079,6 +1099,22 @@ pub fn bake_item_icons(assets: &Path) -> ItemIcons {
             name.strip_suffix(".json").map(str::to_string)
         })
         .collect();
+    // Item definitions in other namespaces (resource packs, mod ports), as
+    // `namespace:name`.
+    if let Some(root) = assets.parent() {
+        for namespace in crate::platform::assets::read_dir(root) {
+            let Some(ns) = namespace.file_name().map(|n| n.to_string_lossy().into_owned()) else {
+                continue;
+            };
+            if ns == "minecraft" {
+                continue;
+            }
+            ids.extend(crate::platform::assets::read_dir(namespace.join("items")).iter().filter_map(|path| {
+                let name = path.file_name()?.to_string_lossy().into_owned();
+                name.strip_suffix(".json").map(|n| format!("{ns}:{n}"))
+            }));
+        }
+    }
     ids.sort();
 
     let block_gui = cache.model("block/block").gui.unwrap_or(Transform::NONE);

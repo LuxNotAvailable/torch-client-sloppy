@@ -308,6 +308,19 @@ fn translucent_layer(name: &str) -> bool {
         || name.ends_with("_stained_glass_pane")
 }
 
+/// A block state's block id, `stone`, remembered per state: the trait
+/// object the plain lookup builds is a heap allocation each time.
+pub fn block_id(state: azalea::block::BlockState) -> &'static str {
+    use std::sync::OnceLock;
+    const STATES: usize = azalea::block::BlockState::MAX_STATE as usize + 1;
+    static IDS: OnceLock<Box<[OnceLock<&'static str>]>> = OnceLock::new();
+    let ids = IDS.get_or_init(|| (0..STATES).map(|_| OnceLock::new()).collect());
+    match ids.get(state.id() as usize) {
+        Some(slot) => slot.get_or_init(|| Box::<dyn azalea::block::BlockTrait>::from(state).id()),
+        None => Box::<dyn azalea::block::BlockTrait>::from(state).id(),
+    }
+}
+
 pub fn is_solid(state: azalea::block::BlockState) -> bool {
     use std::sync::atomic::{AtomicU8, Ordering::Relaxed};
     const UNKNOWN: u8 = 0;

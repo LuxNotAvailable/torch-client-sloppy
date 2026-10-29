@@ -586,19 +586,19 @@ fn poll_shared_state(
             .record_poll(std::mem::take(&mut *last_poll_ms));
     }
     state.profiling.queue_depth =
-        state.session.pending_chunks.len() + state.session.pending_edits.len();
+        state.session.world.pending_chunks.len() + state.session.world.pending_edits.len();
     if let Some(q) = crate::CHUNK_Q.get() {
-        q.set_backlog(state.session.pending_chunks.len() + state.session.pending_edits.len());
+        q.set_backlog(state.session.world.pending_chunks.len() + state.session.world.pending_edits.len());
     }
     crate::client::mesh_worker::note_backlog(
-        state.session.pending_chunks.len() + state.session.pending_edits.len(),
+        state.session.world.pending_chunks.len() + state.session.world.pending_edits.len(),
     );
 
-    let unloaded: Vec<(i32, i32)> = std::mem::take(&mut state.session.unloaded_chunks);
-    let clear_all = std::mem::take(&mut state.session.clear_chunks);
+    let unloaded: Vec<(i32, i32)> = std::mem::take(&mut state.session.world.unloaded_chunks);
+    let clear_all = std::mem::take(&mut state.session.world.clear_chunks);
 
-    if state.session.pending_chunks.is_empty()
-        && state.session.pending_edits.is_empty()
+    if state.session.world.pending_chunks.is_empty()
+        && state.session.world.pending_edits.is_empty()
         && unloaded.is_empty()
         && !clear_all
     {
@@ -622,9 +622,9 @@ fn poll_shared_state(
     );
     let mut verts = max_verts;
     let mut sections = max_sections;
-    let mut pending = take_budgeted(&mut state.session.pending_edits, &mut verts, &mut sections);
+    let mut pending = take_budgeted(&mut state.session.world.pending_edits, &mut verts, &mut sections);
     pending.extend(take_budgeted(
-        &mut state.session.pending_chunks,
+        &mut state.session.world.pending_chunks,
         &mut verts,
         &mut sections,
     ));
@@ -1051,7 +1051,7 @@ fn collect_hud_info(
             },
             prof.shown.then(|| s.profiling.clone()),
             if hud_visible {
-                s.session.active_effects.clone()
+                s.session.vitals.active_effects.clone()
             } else {
                 Vec::new()
             },
@@ -1457,12 +1457,12 @@ pub(super) fn enter_screen(
         let mut s = shared.0.lock().unwrap();
         s.screen_open = open;
         if advancements_closed {
-            s.session.seen_advancements.push(None);
+            s.session.progress.seen_advancements.push(None);
         }
-        s.session.attack_held = false;
-        s.session.use_held = false;
-        s.session.attack_clicked = false;
-        s.session.use_clicked = false;
+        s.session.input.attack_held = false;
+        s.session.input.use_held = false;
+        s.session.input.attack_clicked = false;
+        s.session.input.use_clicked = false;
     }
     if open || world_cursor().0 == CursorGrabMode::None {
         crate::platform::pointer::unlock();
@@ -1857,7 +1857,7 @@ fn sync_bot_options(
     let first_person = !third_person.active && !freecam.active;
     if s.render_distance_sent != Some(wanted) {
         s.render_distance_sent = Some(wanted);
-        s.session.render_distance_request = Some(wanted);
+        s.session.client_info.render_distance_request = Some(wanted);
     }
     let skin_prefs = crate::session::SkinPrefs {
         main_hand_left: state.options.main_hand_left,
@@ -1867,12 +1867,12 @@ fn sync_bot_options(
     s.skin_prefs = skin_prefs;
     if s.skin_prefs_sent != Some(skin_prefs) {
         s.skin_prefs_sent = Some(skin_prefs);
-        s.session.skin_prefs_request = Some(skin_prefs);
+        s.session.client_info.skin_prefs_request = Some(skin_prefs);
     }
     let chat_prefs = (state.options.chat.shown.id(), state.options.chat.colors, state.options.allow_listing);
     if s.chat_prefs_sent != Some(chat_prefs) {
         s.chat_prefs_sent = Some(chat_prefs);
-        s.session.chat_prefs_request = Some(chat_prefs);
+        s.session.client_info.chat_prefs_request = Some(chat_prefs);
     }
     if s.chat_signing_allowed != signing {
         s.chat_signing_allowed = signing;
@@ -1936,7 +1936,7 @@ fn sync_lighting_enabled(
     crate::renderer::set_lighting_enabled(wanted);
     forward_lighting_options();
     if had_previous_value {
-        shared.0.lock().unwrap().reload_chunks_requested = true;
+        crate::client::bus::request(crate::client::bus::ClientRequest::ReloadChunks);
     }
 }
 
@@ -2377,6 +2377,14 @@ pub fn run(
     .add_systems(
         Update,
         update_environment
+            .in_set(FrameViewSystems)
+            .after(refresh_frame_view)
+            .after(poll_shared_state),
+    )
+    .init_resource::<super::frame_view::SampledEntities>()
+    .add_systems(
+        Update,
+        super::frame_view::sample_entities
             .in_set(FrameViewSystems)
             .after(refresh_frame_view)
             .after(poll_shared_state),

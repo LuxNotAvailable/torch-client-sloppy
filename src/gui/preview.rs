@@ -201,11 +201,13 @@ mod tests {
         Arc::new(SharedMutex::new(SharedState {
             in_world: true,
             session: SessionState {
-                hotbar: Arc::from(&menu[36..46]),
-                menu_slots: menu,
-                hotbar_selected: 2,
-                health: 15.0,
-                food: 7,
+                inventory: crate::session::SessionInventory {
+                    hotbar: Arc::from(&menu[36..46]),
+                    menu_slots: menu.into(),
+                    hotbar_selected: 2,
+                    ..Default::default()
+                },
+                vitals: crate::session::SessionVitals { health: 15.0, food: 7, ..Default::default() },
                 gamemode,
                 ..Default::default()
             },
@@ -410,9 +412,9 @@ mod tests {
         let shared = shared_with(demo_menu(), Gamemode::Survival);
         {
             let mut s = shared.lock().unwrap();
-            s.session.hotbar_selected = 3;
-            s.session.food = 17;
-            s.session.saturation = 3.0;
+            s.session.inventory.hotbar_selected = 3;
+            s.session.vitals.food = 17;
+            s.session.vitals.saturation = 3.0;
         }
         let mut state = GuiState::default();
         let mut p = Painter::new(&atlas, 0);
