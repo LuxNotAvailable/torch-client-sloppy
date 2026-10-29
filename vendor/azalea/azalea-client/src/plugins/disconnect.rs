@@ -6,6 +6,7 @@ use azalea_entity::{
 use bevy_app::{App, Plugin, PostUpdate};
 use bevy_ecs::prelude::*;
 use derive_more::Deref;
+use tracing::info;
 
 use super::login::IsAuthenticated;
 #[cfg(feature = "online-mode")]
@@ -61,7 +62,15 @@ pub fn remove_components_from_disconnected_players(
     mut events: MessageReader<DisconnectEvent>,
     mut loaded_by_query: Query<&mut azalea_entity::LoadedBy>,
 ) {
-    for DisconnectEvent { entity, .. } in events.read() {
+    for DisconnectEvent { entity, reason } in events.read() {
+        info!(
+            "A client {entity:?} was disconnected{}",
+            if let Some(reason) = reason {
+                format!(": {reason}")
+            } else {
+                "".to_owned()
+            }
+        );
         commands
             .entity(*entity)
             .remove::<RemoveOnDisconnectBundle>();

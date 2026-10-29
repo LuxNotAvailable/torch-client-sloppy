@@ -47,7 +47,6 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     let world_position =
         mesh_functions::mesh_position_local_to_world(world_from_local, vec4(vertex.position, 1.0));
     out.clip_position = position_world_to_clip(world_position.xyz);
-    out.clip_position.z = out.clip_position.w * bitcast<f32>(#{HAND_BAND_FLOOR_BITS}u);
 
     let corner = vertex.packed & 3u;
     out.uv = vec2(f32(corner & 1u), f32((corner >> 1u) & 1u));
@@ -76,9 +75,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         discard;
     }
 #ifdef TONEMAP_IN_SHADER
-#ifndef TONEMAP_METHOD_NONE
     color = tone_mapping(color, view.color_grading);
-#endif
 #endif
     return color;
 }

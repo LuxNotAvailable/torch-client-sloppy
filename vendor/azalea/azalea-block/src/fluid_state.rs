@@ -87,7 +87,11 @@ impl From<BlockState> for FluidState {
                     falling: false,
                 };
             }
-            BlockKind::BubbleColumn => {
+            BlockKind::BubbleColumn
+            | BlockKind::Seagrass
+            | BlockKind::TallSeagrass
+            | BlockKind::Kelp
+            | BlockKind::KelpPlant => {
                 return Self::new_source_block(FluidKind::Water, false);
             }
             _ => {}

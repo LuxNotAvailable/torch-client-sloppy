@@ -126,6 +126,8 @@ pub(super) struct FrameState {
     pub(super) entity_buffer: Option<Buffer>,
     pub(super) entity_frame: u32,
     pub(super) entity_texture_use: std::collections::HashMap<Option<AssetId<Image>>, u32>,
+    /// The hand-layer meshes the pack was given this frame, with their mesh.
+    pub(super) hand_entities: bevy::platform::collections::HashMap<Entity, AssetId<Mesh>>,
 }
 
 impl PackRender {
@@ -178,6 +180,7 @@ pub(crate) fn extract_pack(
     queue: Res<RenderQueue>,
     render: Option<ResMut<PackRender>>,
 ) {
+    crate::prof_span!("render:pack_extract_pack");
     let Some(mut render) = render else { return };
     let render = &mut *render;
     let failed = render.failed;
@@ -298,7 +301,10 @@ pub(crate) fn take_over_view(
     takeover: Option<ResMut<PackTakeover>>,
     render: Option<Res<PackRender>>,
     views: Query<(&ExtractedView, &ViewTarget), With<TerrainView>>,
-    hand_views: Query<&ExtractedView, With<crate::renderer::hand::HandCamera>>,
+    mut hand_views: Query<
+        &mut bevy::render::view::RenderVisibleEntities,
+        With<crate::renderer::hand::HandCamera>,
+    >,
     mut opaque: ResMut<ViewBinnedRenderPhases<bevy::core_pipeline::core_3d::Opaque3d>>,
     mut alpha_mask: ResMut<ViewBinnedRenderPhases<bevy::core_pipeline::core_3d::AlphaMask3d>>,
     mut transmissive: ResMut<ViewSortedRenderPhases<bevy::core_pipeline::core_3d::Transmissive3d>>,
@@ -307,8 +313,9 @@ pub(crate) fn take_over_view(
         Option<ResMut<ViewBinnedRenderPhases<bevy::core_pipeline::prepass::Opaque3dPrepass>>>,
         Option<ResMut<ViewBinnedRenderPhases<bevy::core_pipeline::prepass::AlphaMask3dPrepass>>>,
     ),
-    gpu_preprocessing: Res<bevy::render::batching::gpu_preprocessing::GpuPreprocessingSupport>,
+    render_meshes: Res<bevy::render::render_asset::RenderAssets<bevy::render::mesh::RenderMesh>>,
 ) {
+    crate::prof_span!("render:pack_take_over_view");
     let Some(mut takeover) = takeover else { return };
     let mut taken_over = false;
     if let Some(render) = render
@@ -332,27 +339,40 @@ pub(crate) fn take_over_view(
                 hide(&view.retained_view_entity);
             }
         }
-        if taken_over && render.draws_hand() {
-            let mode = gpu_preprocessing.min(
-                bevy::render::batching::gpu_preprocessing::GpuPreprocessingMode::PreprocessingOnly,
-            );
-            let keys: Vec<_> = hand_views
-                .iter()
-                .map(|view| view.retained_view_entity)
-                .collect();
-            for key in &keys {
-                hide(key);
-            }
-            for key in keys {
-                opaque.prepare_for_new_frame(key, mode);
-                alpha_mask.prepare_for_new_frame(key, mode);
-                transmissive.insert_or_clear(key);
-                transparent.insert_or_clear(key);
+        // The hand camera keeps its phases (they are retained, in Bevy's own
+        // preprocessing mode) and still draws the screen overlays; the meshes
+        // the pack draws are only taken out of what it sees, before Bevy
+        // specializes and queues them, so its bins drop them on their own.
+        // A mesh whose layout the pack's programs cannot read (or that is not
+        // on the GPU yet) stays with the hand camera.
+        if taken_over
+            && let Some(install) = render.install.as_deref()
+            && !install.frame.hand_entities.is_empty()
+        {
+            let drawn = |entity: Entity| {
+                install
+                    .frame
+                    .hand_entities
+                    .get(&entity)
+                    .and_then(|mesh| render_meshes.get(*mesh))
+                    .is_some_and(|mesh| {
+                        super::entities::entity_layout_matches(mesh.layout.0.layout())
+                    })
+            };
+            for mut visible in &mut hand_views {
+                if let Some(meshes) = visible
+                    .entities
+                    .get_mut(&std::any::TypeId::of::<Mesh3d>())
+                {
+                    meshes.retain(|(_, main)| !drawn(main.id()));
+                }
             }
         }
     }
     if takeover.0 != taken_over {
         takeover.0 = taken_over;
+        crate::renderer::rig_parts::PACK_TAKEOVER
+            .store(taken_over, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -386,6 +406,7 @@ pub(crate) fn prepare_uniforms(
     takeover: Option<Res<PackTakeover>>,
     mut pack_view: ResMut<PackCullView>,
 ) {
+    crate::prof_span!("render:pack_prepare_uniforms");
     pack_view.0 = None;
     let Some(mut render) = render else { return };
     let Some(install) = render

@@ -2,10 +2,8 @@ use bevy::asset::embedded_asset;
 use bevy::camera::{ClearColor, NormalizedRenderTarget};
 use bevy::color::LinearRgba;
 use bevy::mesh::VertexBufferLayout;
-use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
-use bevy::render::camera::{ExtractedCamera, SortedCameras};
-use bevy::render::diagnostic::RecordDiagnostics;
+use bevy::render::camera::ExtractedCamera;
 use bevy::render::render_asset::RenderAssets;
 use bevy::render::render_graph::{
     Node, NodeRunError, RenderGraph, RenderGraphContext, RenderLabel,
@@ -13,11 +11,10 @@ use bevy::render::render_graph::{
 use bevy::render::render_resource::binding_types::{sampler, texture_2d};
 use bevy::render::render_resource::{
     BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, BlendState,
-    CachedRenderPipelineId, ColorTargetState, ColorWrites, FragmentState, IndexFormat, LoadOp,
-    Operations, PipelineCache, RenderPassColorAttachment, RenderPassDescriptor,
-    RenderPipelineDescriptor, SamplerBindingType, ShaderStages, SpecializedRenderPipeline,
-    SpecializedRenderPipelines, StoreOp, TextureFormat, TextureSampleType, TextureViewId,
-    VertexAttribute, VertexFormat, VertexState, VertexStepMode,
+    CachedRenderPipelineId, ColorTargetState, ColorWrites, FragmentState, IndexFormat,
+    PipelineCache, RenderPassDescriptor, RenderPipelineDescriptor, SamplerBindingType,
+    ShaderStages, SpecializedRenderPipeline, SpecializedRenderPipelines, TextureFormat,
+    TextureSampleType, TextureViewId, VertexAttribute, VertexFormat, VertexState, VertexStepMode,
 };
 use bevy::render::renderer::{RenderContext, RenderDevice};
 use bevy::render::texture::{GpuImage, OutputColorAttachment};
@@ -30,6 +27,12 @@ use super::pool::{GUI_VERTEX_STRIDE, GuiPool, GuiTextures};
 use crate::renderer::ssaa::SceneImage;
 
 pub const UNIHEX_UV_BIAS: f32 = 2.0;
+
+/// Added to `v` on the quads the GUI shader shades as enchantment glint.
+pub const GLINT_UV_BIAS: f32 = 2.0;
+
+/// Taken from `u` on the quad that shows the inventory's player figure.
+pub const FIGURE_UV_BIAS: f32 = 2.0;
 
 fn gui_vertex_layout() -> VertexBufferLayout {
     VertexBufferLayout {
@@ -58,7 +61,7 @@ fn gui_vertex_layout() -> VertexBufferLayout {
 #[derive(Resource, Default)]
 pub struct GuiBindGroup {
     pub group: Option<BindGroup>,
-    key: Option<(TextureViewId, TextureViewId)>,
+    key: Option<(TextureViewId, TextureViewId, TextureViewId, TextureViewId)>,
 }
 
 #[derive(Resource, Default)]
@@ -91,6 +94,10 @@ fn two_texture_layout() -> BindGroupLayoutDescriptor {
             sampler(SamplerBindingType::Filtering),
             texture_2d(TextureSampleType::Float { filterable: true }),
             sampler(SamplerBindingType::Filtering),
+            texture_2d(TextureSampleType::Float { filterable: true }),
+            sampler(SamplerBindingType::Filtering),
+            texture_2d(TextureSampleType::Float { filterable: true }),
+            sampler(SamplerBindingType::Filtering),
         ),
     );
     BindGroupLayoutDescriptor::new("gui", &entries)
@@ -119,7 +126,7 @@ impl SpecializedRenderPipeline for GuiPipeline {
                 "vertex",
                 "fragment",
                 vec![gui_vertex_layout()],
-                Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                Some(BlendState::ALPHA_BLENDING),
             ),
             GuiPipelineKind::Blit => (
                 "gui_scene_blit",
@@ -171,6 +178,7 @@ fn prepare_gui_bind_group(
     pipeline_cache: Res<PipelineCache>,
     pipeline: Res<GuiPipeline>,
     textures: Option<Res<GuiTextures>>,
+    figure: Option<Res<crate::renderer::inventory_figure::FigureImage>>,
     images: Res<RenderAssets<GpuImage>>,
     mut bind_group: ResMut<GuiBindGroup>,
 ) {
@@ -180,7 +188,25 @@ fn prepare_gui_bind_group(
         return;
     };
 
-    let key = (atlas.texture_view.id(), unihex.texture_view.id());
+    // The glint texture arrives with the game assets; until then the atlas
+    // stands in, and the key change rebuilds the group once it lands.
+    let glint = images
+        .get(&crate::renderer::entity_material::GLINT_ITEM)
+        .unwrap_or(atlas);
+    // The inventory figure's texture, made the first time a figure shows;
+    // the GUI draws no figure quad before then.
+    let figure = figure
+        .as_ref()
+        .and_then(|f| f.0.as_ref())
+        .and_then(|handle| images.get(handle))
+        .unwrap_or(atlas);
+
+    let key = (
+        atlas.texture_view.id(),
+        unihex.texture_view.id(),
+        glint.texture_view.id(),
+        figure.texture_view.id(),
+    );
     if bind_group.key == Some(key) && bind_group.group.is_some() {
         return;
     }
@@ -194,6 +220,10 @@ fn prepare_gui_bind_group(
             &atlas.sampler,
             &unihex.texture_view,
             &unihex.sampler,
+            &glint.texture_view,
+            &glint.sampler,
+            &figure.texture_view,
+            &figure.sampler,
         )),
     ));
     bind_group.key = Some(key);
@@ -310,80 +340,6 @@ fn plan_gui_passes(
     }
 }
 
-struct GuiCameraDriverNode {
-    cameras: QueryState<&'static ExtractedCamera>,
-}
-
-impl Node for GuiCameraDriverNode {
-    fn update(&mut self, world: &mut World) {
-        self.cameras.update_archetypes(world);
-    }
-
-    fn run(
-        &self,
-        graph: &mut RenderGraphContext,
-        render_context: &mut RenderContext,
-        world: &World,
-    ) -> Result<(), NodeRunError> {
-        let sorted = world.resource::<SortedCameras>();
-        let windows = world.resource::<ExtractedWindows>();
-        let mut camera_windows = HashSet::<Entity>::default();
-        for sorted_camera in &sorted.0 {
-            let Ok(camera) = self.cameras.get_manual(world, sorted_camera.entity) else {
-                continue;
-            };
-            if let Some(NormalizedRenderTarget::Window(window_ref)) = camera.target {
-                let window = window_ref.entity();
-                if !windows
-                    .get(&window)
-                    .is_some_and(|w| w.physical_width > 0 && w.physical_height > 0)
-                {
-                    continue;
-                }
-                camera_windows.insert(window);
-            }
-            graph.run_sub_graph(
-                camera.render_graph,
-                vec![],
-                Some(sorted_camera.entity),
-                Some(format!(
-                    "Camera {} ({})",
-                    sorted_camera.order, sorted_camera.entity
-                )),
-            )?;
-        }
-
-        let plan = world.resource::<GuiPlan>();
-        let clear = world.resource::<ClearColor>();
-        for (id, window) in windows.iter() {
-            if camera_windows.contains(id) || plan.0.iter().any(|pass| pass.window == *id) {
-                continue;
-            }
-            let Some(view) = &window.swap_chain_texture_view else {
-                continue;
-            };
-            render_context
-                .command_encoder()
-                .begin_render_pass(&RenderPassDescriptor {
-                    label: Some("no_camera_clear_pass"),
-                    color_attachments: &[Some(RenderPassColorAttachment {
-                        view,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: Operations {
-                            load: LoadOp::Clear(clear.to_linear().into()),
-                            store: StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
-        }
-        Ok(())
-    }
-}
-
 #[derive(RenderLabel, Debug, Hash, PartialEq, Eq, Clone)]
 struct GuiLabel;
 
@@ -391,6 +347,19 @@ struct GuiNode;
 
 impl Node for GuiNode {
     fn run<'w>(
+        &self,
+        graph: &mut RenderGraphContext,
+        render_context: &mut RenderContext<'w>,
+        world: &'w World,
+    ) -> Result<(), NodeRunError> {
+        crate::diag::frame_profile::timed(render_context, "gui", |render_context| {
+            self.run_untimed(graph, render_context, world)
+        })
+    }
+}
+
+impl GuiNode {
+    fn run_untimed<'w>(
         &self,
         _graph: &mut RenderGraphContext,
         render_context: &mut RenderContext<'w>,
@@ -410,7 +379,6 @@ impl Node for GuiNode {
             .as_ref()
             .map(|(_, group)| group);
 
-        let recorder = render_context.diagnostic_recorder();
         for pass in &plan.0 {
             let Some(attachment) = attachments.get(&pass.target) else {
                 continue;
@@ -422,7 +390,6 @@ impl Node for GuiNode {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            let span = recorder.pass_span(&mut render_pass, "gui");
 
             if let (Some(id), Some(group)) = (pass.blit, blit_group)
                 && let Some(pipeline) = pipeline_cache.get_render_pipeline(id)
@@ -451,7 +418,6 @@ impl Node for GuiNode {
                     );
                 }
             }
-            span.end(&mut render_pass);
         }
         Ok(())
     }
@@ -506,14 +472,7 @@ pub fn build(app: &mut App) {
             ),
         );
 
-    let driver = GuiCameraDriverNode {
-        cameras: render_app.world_mut().query(),
-    };
     let mut graph = render_app.world_mut().resource_mut::<RenderGraph>();
-    graph
-        .remove_node(bevy::render::graph::CameraDriverLabel)
-        .expect("CameraPlugin adds the camera driver before the gui plugin builds");
-    graph.add_node(bevy::render::graph::CameraDriverLabel, driver);
     graph.add_node(GuiLabel, GuiNode);
     graph.add_node_edge(bevy::render::graph::CameraDriverLabel, GuiLabel);
 }

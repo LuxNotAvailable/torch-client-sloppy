@@ -6,7 +6,6 @@ use image::RgbaImage;
 
 use crate::blockentities::render::skull;
 use crate::entities::geom;
-use crate::entities::quads::QUAD_INDICES;
 
 use super::icons::{
     LAYERS, Part, Synthetic, baked_quads, banner_quads, chest_quads, collect_parts, cube_quads,
@@ -38,11 +37,11 @@ pub struct ItemMesh {
 }
 
 pub struct ItemMeshes {
-    assets: Arc<Assets>,
+    assets: &'static Assets,
 }
 
 impl ItemMeshes {
-    pub fn new(assets: Arc<Assets>) -> ItemMeshes {
+    pub fn new(assets: &'static Assets) -> ItemMeshes {
         ItemMeshes { assets }
     }
 
@@ -78,7 +77,7 @@ impl ItemMeshes {
 
         let mut parts = Vec::new();
         collect_parts(
-            &self.assets,
+            self.assets,
             &root,
             "gui",
             false,
@@ -89,11 +88,11 @@ impl ItemMeshes {
         let mut quads = Vec::new();
         let model = parts.iter().find_map(|part| match &part.synthetic {
             Some(Synthetic::Banner(color, local)) => {
-                banner_quads(&self.assets, *color, &layers, *local, &mut quads);
+                banner_quads(self.assets, *color, &layers, *local, &mut quads);
                 Some(&part.model)
             }
             Some(Synthetic::Shield(local)) => {
-                shield_quads(&self.assets, &layers, *local, &mut quads);
+                shield_quads(self.assets, &layers, *local, &mut quads);
                 Some(&part.model)
             }
             _ => None,
@@ -111,7 +110,7 @@ impl ItemMeshes {
     }
 
     pub fn build(&self, id: &str, ctx: &str, using: bool) -> Option<ItemMesh> {
-        let assets = &*self.assets;
+        let assets = self.assets;
         let (id, banner_layers) = match crate::blockentities::banner::parse_model_key(id) {
             Some((item, layers)) => (item, layers),
             None => (id, Vec::new()),
@@ -426,7 +425,7 @@ fn triangulate(quads: &[Quad], packed: &Packed) -> (Vec<ItemVertex>, Vec<u32>) {
                 normal,
             });
         }
-        indices.extend(QUAD_INDICES.map(|i| base + i));
+        indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
     (vertices, indices)
 }
@@ -454,14 +453,14 @@ mod tests {
     use super::*;
     use crate::items::model::DisplayContext;
 
-    const ASSETS: &str = "reference/minecraft-26.1.1/assets/minecraft";
+    const ASSETS: &str = "reference/minecraft-26.3/assets/minecraft";
 
     fn meshes() -> Option<ItemMeshes> {
         if !std::path::Path::new(ASSETS).exists() {
             eprintln!("assets missing, skipping");
             return None;
         }
-        Some(ItemMeshes::new(crate::blocks::registry().assets().clone()))
+        Some(ItemMeshes::new(crate::items::model::shared()))
     }
 
     #[test]

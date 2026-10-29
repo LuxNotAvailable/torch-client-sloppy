@@ -121,6 +121,7 @@ pub(crate) enum EntityKind {
     DamagedBlock,
     Line,
     SpiderEyes,
+    BeaconBeam,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -135,7 +136,7 @@ pub(crate) enum Segment {
 }
 
 impl EntityKind {
-    pub(crate) const COUNT: usize = 15;
+    pub(crate) const COUNT: usize = 16;
     pub(crate) const ALL: [EntityKind; EntityKind::COUNT] = [
         EntityKind::Entity,
         EntityKind::Block,
@@ -152,6 +153,7 @@ impl EntityKind {
         EntityKind::DamagedBlock,
         EntityKind::Line,
         EntityKind::SpiderEyes,
+        EntityKind::BeaconBeam,
     ];
 
     pub(crate) fn index(self) -> usize {
@@ -233,6 +235,9 @@ impl EntityKind {
             EntityKind::SpiderEyes => {
                 &["gbuffers_spidereyes", "gbuffers_textured", "gbuffers_basic"]
             }
+            EntityKind::BeaconBeam => {
+                &["gbuffers_beaconbeam", "gbuffers_textured", "gbuffers_basic"]
+            }
         }
     }
 
@@ -252,6 +257,9 @@ impl EntityKind {
             | EntityKind::BlockTranslucent
             | EntityKind::ParticleTranslucent => Segment::WorldTranslucent,
             EntityKind::DamagedBlock | EntityKind::Line | EntityKind::SpiderEyes => Segment::World,
+            // Iris draws beams with the block entities; their glow blends, so
+            // they go after the translucent terrain they shine through.
+            EntityKind::BeaconBeam => Segment::WorldTranslucent,
         }
     }
 
@@ -263,7 +271,9 @@ impl EntityKind {
             | EntityKind::SpiderEyes => "ENTITIES",
             EntityKind::DamagedBlock => "DESTROY",
             EntityKind::Line => "OUTLINE",
-            EntityKind::Block | EntityKind::BlockTranslucent => "BLOCK_ENTITIES",
+            EntityKind::Block | EntityKind::BlockTranslucent | EntityKind::BeaconBeam => {
+                "BLOCK_ENTITIES"
+            }
             EntityKind::Particle | EntityKind::ParticleTranslucent => "PARTICLES",
             EntityKind::SkyBasic => "SKY",
             EntityKind::SkyTextured => "SUN",
@@ -355,11 +365,177 @@ impl ShadowCulling {
     }
 }
 
+/// `flip.<pass>.<buffer>=true|false` from `shaders.properties`: after that
+/// pass, swap the buffer's two copies whether or not the pass wrote it
+/// (`true`), or keep them as they were even though it did (`false`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct FlipOverrides {
+    passes: std::collections::HashMap<String, Vec<(u8, bool)>>,
+}
+
+impl FlipOverrides {
+    pub(crate) fn read(properties: &std::collections::HashMap<String, String>) -> FlipOverrides {
+        let mut out = FlipOverrides::default();
+        for (key, value) in properties {
+            let Some((pass, buffer)) = key
+                .strip_prefix("flip.")
+                .and_then(|rest| rest.rsplit_once('.'))
+            else {
+                continue;
+            };
+            let Some(index) = crate::shaderpack::directives::target_index(buffer) else {
+                continue;
+            };
+            let flip = match value.trim() {
+                "true" => true,
+                "false" => false,
+                _ => continue,
+            };
+            out.passes
+                .entry(pass.to_owned())
+                .or_default()
+                .push((index as u8, flip));
+        }
+        out
+    }
+
+    /// The buffers whose swap after `pass` differs from what drawing
+    /// `written` alone would do.
+    pub(crate) fn toggles(&self, pass: &str, written: &[u8]) -> Vec<u8> {
+        self.passes
+            .get(pass)
+            .into_iter()
+            .flatten()
+            .filter(|(buffer, flip)| *flip != written.contains(buffer))
+            .map(|(buffer, _)| *buffer)
+            .collect()
+    }
+}
+
+/// `blend.<program>` and `blend.<program>.<buffer>` from `shaders.properties`:
+/// `off`, or four GL factors (source and destination colour, then alpha).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct Blends {
+    programs: std::collections::HashMap<String, ProgramBlend>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+struct ProgramBlend {
+    all: Option<Option<bevy::render::render_resource::BlendState>>,
+    buffers: std::collections::HashMap<u8, Option<bevy::render::render_resource::BlendState>>,
+}
+
+fn blend_factor(name: &str) -> Option<bevy::render::render_resource::BlendFactor> {
+    use bevy::render::render_resource::BlendFactor as F;
+    Some(match name {
+        "ZERO" => F::Zero,
+        "ONE" => F::One,
+        "SRC_COLOR" => F::Src,
+        "ONE_MINUS_SRC_COLOR" => F::OneMinusSrc,
+        "DST_COLOR" => F::Dst,
+        "ONE_MINUS_DST_COLOR" => F::OneMinusDst,
+        "SRC_ALPHA" => F::SrcAlpha,
+        "ONE_MINUS_SRC_ALPHA" => F::OneMinusSrcAlpha,
+        "DST_ALPHA" => F::DstAlpha,
+        "ONE_MINUS_DST_ALPHA" => F::OneMinusDstAlpha,
+        "SRC_ALPHA_SATURATE" => F::SrcAlphaSaturated,
+        _ => return None,
+    })
+}
+
+fn blend_value(value: &str) -> Option<Option<bevy::render::render_resource::BlendState>> {
+    let words: Vec<&str> = value.split_whitespace().collect();
+    match words.as_slice() {
+        [off] if off.eq_ignore_ascii_case("off") => Some(None),
+        [src, dst, src_a, dst_a] => {
+            let component = |src: &str, dst: &str| {
+                Some(bevy::render::render_resource::BlendComponent {
+                    src_factor: blend_factor(src)?,
+                    dst_factor: blend_factor(dst)?,
+                    operation: bevy::render::render_resource::BlendOperation::Add,
+                })
+            };
+            Some(Some(bevy::render::render_resource::BlendState {
+                color: component(src, dst)?,
+                alpha: component(src_a, dst_a)?,
+            }))
+        }
+        _ => None,
+    }
+}
+
+impl Blends {
+    pub(crate) fn read(properties: &std::collections::HashMap<String, String>) -> Blends {
+        let mut blends = Blends::default();
+        for (key, value) in properties {
+            let Some(rest) = key.strip_prefix("blend.") else {
+                continue;
+            };
+            let Some(state) = blend_value(value) else {
+                crate::log_warn!("shaders", "{key}: unreadable blend mode {value:?}");
+                continue;
+            };
+            let (program, buffer) = match rest.rsplit_once('.') {
+                Some((program, buffer)) => match crate::shaderpack::directives::target_index(buffer) {
+                    Some(index) => (program, Some(index as u8)),
+                    None => (rest, None),
+                },
+                None => (rest, None),
+            };
+            let entry = blends.programs.entry(program.to_owned()).or_default();
+            match buffer {
+                Some(buffer) => {
+                    entry.buffers.insert(buffer, state);
+                }
+                None => entry.all = Some(state),
+            }
+        }
+        blends
+    }
+
+    /// The blend for `program` writing `buffer`, else `default`.
+    pub(crate) fn resolve(
+        &self,
+        program: &str,
+        buffer: u8,
+        default: Option<bevy::render::render_resource::BlendState>,
+    ) -> Option<bevy::render::render_resource::BlendState> {
+        let Some(entry) = self.programs.get(program) else {
+            return default;
+        };
+        entry
+            .buffers
+            .get(&buffer)
+            .copied()
+            .or(entry.all)
+            .unwrap_or(default)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ShadowCasters {
     pub(crate) entities: bool,
     pub(crate) player: bool,
     pub(crate) block_entities: bool,
+    /// `shadowTerrain`: terrain casts at all.
+    pub(crate) terrain: bool,
+    /// `shadowTranslucent`: water and other translucent terrain casts.
+    pub(crate) translucent: bool,
+    /// `shadowSolidBackFaces` (this client's): solid terrain draws only the
+    /// faces turned from the light. Solid terrain is closed, so a ray from a
+    /// surface to the light that passes through it leaves through one of
+    /// those, and the shadows are the same for half the raster work, a block
+    /// behind every lit face (so lit faces cannot shadow themselves).
+    pub(crate) solid_back_faces: bool,
+}
+
+/// The shadow program a terrain layer draws with: its own, else `shadow`.
+pub(crate) fn shadow_chain(geometry: Geometry) -> [&'static str; 2] {
+    match geometry {
+        Geometry::TerrainSolid => ["shadow_solid", "shadow"],
+        Geometry::TerrainCutout => ["shadow_cutout", "shadow"],
+        Geometry::Water => ["shadow_water", "shadow"],
+    }
 }
 
 impl ShadowCasters {
@@ -368,6 +544,9 @@ impl ShadowCasters {
             entities: true_key(properties, "shadowEntities", true),
             player: true_key(properties, "shadowPlayer", false),
             block_entities: true_key(properties, "shadowBlockEntities", true),
+            terrain: true_key(properties, "shadowTerrain", true),
+            translucent: true_key(properties, "shadowTranslucent", true),
+            solid_back_faces: true_key(properties, "shadowSolidBackFaces", false),
         }
     }
 
@@ -398,6 +577,49 @@ impl SkyParts {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn flip_lines_force_or_hold_a_swap() {
+        let props: std::collections::HashMap<String, String> = [
+            ("flip.composite2.colortex3", "true"),
+            ("flip.composite2.colortex5", "false"),
+            ("flip.composite2.gaux1", "maybe"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_owned(), v.to_owned()))
+        .collect();
+        let flips = FlipOverrides::read(&props);
+        let mut toggles = flips.toggles("composite2", &[5, 7]);
+        toggles.sort();
+        assert_eq!(toggles, vec![3, 5], "3 swaps unwritten, 5 holds though written");
+        assert!(flips.toggles("composite2", &[3]).is_empty());
+        assert!(flips.toggles("composite1", &[3]).is_empty());
+    }
+
+    #[test]
+    fn blend_lines_set_programs_and_single_buffers() {
+        use bevy::render::render_resource::{BlendFactor, BlendState};
+        let props: std::collections::HashMap<String, String> = [
+            ("blend.gbuffers_water", "off"),
+            ("blend.gbuffers_clouds", "SRC_ALPHA ONE_MINUS_SRC_ALPHA ONE ONE_MINUS_SRC_ALPHA"),
+            ("blend.gbuffers_clouds.colortex3", "off"),
+            ("blend.gbuffers_hand.gaux1", "ONE ONE ONE ONE"),
+            ("blend.composite", "NOT A MODE"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_owned(), v.to_owned()))
+        .collect();
+        let blends = Blends::read(&props);
+        let default = Some(BlendState::ALPHA_BLENDING);
+        assert_eq!(blends.resolve("gbuffers_water", 0, default), None);
+        let clouds = blends.resolve("gbuffers_clouds", 0, None).expect("blends");
+        assert_eq!(clouds.color.dst_factor, BlendFactor::OneMinusSrcAlpha);
+        assert_eq!(blends.resolve("gbuffers_clouds", 3, default), None);
+        let hand = blends.resolve("gbuffers_hand", 4, None).expect("gaux1 is colortex4");
+        assert_eq!(hand.color.src_factor, BlendFactor::One);
+        assert_eq!(blends.resolve("gbuffers_hand", 0, default), default);
+        assert_eq!(blends.resolve("composite", 0, default), default);
+    }
 
     #[test]
     fn kinds_fall_back_as_iris_does() {
@@ -460,13 +682,17 @@ mod tests {
             ShadowCasters {
                 entities: true,
                 player: false,
-                block_entities: true
+                block_entities: true,
+                terrain: true,
+                translucent: true,
+                solid_back_faces: false,
             }
         );
         let solas = std::collections::HashMap::from([
             ("shadowEntities".to_string(), "false".to_string()),
             ("shadowBlockEntities".to_string(), "false".to_string()),
             ("shadowPlayer".to_string(), "true".to_string()),
+            ("shadowTranslucent".to_string(), "false".to_string()),
         ]);
         let casters = ShadowCasters::read(&solas);
         assert_eq!(
@@ -474,7 +700,10 @@ mod tests {
             ShadowCasters {
                 entities: false,
                 player: true,
-                block_entities: false
+                block_entities: false,
+                terrain: true,
+                translucent: false,
+                solid_back_faces: false,
             }
         );
         assert!(casters.any());

@@ -1,12 +1,55 @@
 use azalea_registry::builtin::EntityKind;
 
-use super::living::{LivingCore, MAX_HEAD_ROTATION, SwimAmount};
 use super::physics::{Body, Level, Motion, Shape, Void};
 use super::state::{Direction, EntityState, Extras, ExtrasShared, Pose};
-use crate::util::interp::Interpolation;
+use crate::util::interp::{Interpolation, Target};
 use crate::util::javarandom::JavaRandom;
 use crate::util::mth::ease::in_out_sine as ease_in_out_sine;
-pub use crate::util::mth::{lerp, rot_lerp, rot_lerp_capped, wrap_degrees};
+pub use crate::util::mth::{lerp, lerp_f64, rot_lerp, rot_lerp_capped, wrap_degrees};
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct WalkAnim {
+    speed_old: f32,
+    speed: f32,
+    position: f32,
+    position_scale: f32,
+}
+
+impl WalkAnim {
+    pub fn new() -> WalkAnim {
+        WalkAnim {
+            speed_old: 0.0,
+            speed: 0.0,
+            position: 0.0,
+            position_scale: 1.0,
+        }
+    }
+
+    pub fn update(&mut self, target_speed: f32, factor: f32, position_scale: f32) {
+        self.speed_old = self.speed;
+        self.speed += (target_speed - self.speed) * factor;
+        self.position += self.speed;
+        self.position_scale = position_scale;
+    }
+
+    pub fn stop(&mut self) {
+        self.speed_old = 0.0;
+        self.speed = 0.0;
+        self.position = 0.0;
+    }
+
+    pub fn set_speed(&mut self, speed: f32) {
+        self.speed = speed;
+    }
+
+    pub fn speed(&self, partial: f32) -> f32 {
+        lerp(partial, self.speed_old, self.speed).min(1.0)
+    }
+
+    pub fn position(&self, partial: f32) -> f32 {
+        (self.position - self.speed * (1.0 - partial)) * self.position_scale
+    }
+}
 
 const BINARY_ANIMATOR_LENGTH: i32 = 10;
 
@@ -49,6 +92,8 @@ pub struct TickInput {
     pub is_passenger: bool,
     pub swell_dir: i32,
     pub ignited: bool,
+    /// `MaxFuse`, re-armed whenever it changes; -1 when unprimed.
+    pub max_fuse: i32,
     pub peek_target: f32,
     pub paddling_left: bool,
     pub paddling_right: bool,
@@ -60,6 +105,10 @@ pub struct TickInput {
     pub head_targets: [Option<[f64; 3]>; 2],
     pub shared: std::sync::Arc<ExtrasShared>,
     pub eating: bool,
+    /// This client moves the entity itself (`isLocalInstanceAuthoritative`):
+    /// the boat its player steers. Its pose is taken as is each tick, with no
+    /// interpolation toward it and no server updates.
+    pub local_authority: bool,
 }
 
 impl TickInput {
@@ -93,9 +142,11 @@ impl TickInput {
             bed_orientation: None,
             walk_factor: 0.4,
             walk_halted: false,
+            local_authority: false,
             is_passenger: false,
             swell_dir: -1,
             ignited: false,
+            max_fuse: -1,
             peek_target: 0.0,
             paddling_left: false,
             paddling_right: false,
@@ -170,6 +221,14 @@ pub fn dragon_phase_is_sitting(phase: i32) -> bool {
     matches!(phase, 5 | 6 | 7 | 10)
 }
 
+const LERP_HEAD_STEPS: i32 = 3;
+
+const MAX_HEAD_ROTATION: f32 = 50.0;
+
+const BODY_ROT_MOVEMENT_THRESHOLD: f32 = 0.002_500_000_2;
+
+const MAX_INTERPOLATION_DISTANCE_SQR: f64 = 4096.0;
+
 const SHULKER_TELEPORT_TICKS: i32 = 6;
 
 fn interpolation_for(kind: EntityKind, is_living: bool) -> Option<Interpolation> {
@@ -187,6 +246,7 @@ fn interpolation_for(kind: EntityKind, is_living: bool) -> Option<Interpolation>
                 | EntityKind::CherryBoat
                 | EntityKind::DarkOakBoat
                 | EntityKind::PaleOakBoat
+                | EntityKind::PoplarBoat
                 | EntityKind::MangroveBoat
                 | EntityKind::OakChestBoat
                 | EntityKind::SpruceChestBoat
@@ -196,6 +256,7 @@ fn interpolation_for(kind: EntityKind, is_living: bool) -> Option<Interpolation>
                 | EntityKind::CherryChestBoat
                 | EntityKind::DarkOakChestBoat
                 | EntityKind::PaleOakChestBoat
+                | EntityKind::PoplarChestBoat
                 | EntityKind::MangroveChestBoat
                 | EntityKind::BambooRaft
                 | EntityKind::BambooChestRaft
@@ -212,12 +273,26 @@ fn interpolation_for(kind: EntityKind, is_living: bool) -> Option<Interpolation>
     interpolated.then(Interpolation::new)
 }
 
+fn distance_sqr(a: [f64; 3], b: [f64; 3]) -> f64 {
+    let (dx, dy, dz) = (a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+    dx * dx + dy * dy + dz * dz
+}
+
 fn block_pos(pos: [f64; 3]) -> [i32; 3] {
     [
         pos[0].floor() as i32,
         pos[1].floor() as i32,
         pos[2].floor() as i32,
     ]
+}
+
+fn unwind(old: &mut f32, new: f32) {
+    while new - *old < -180.0 {
+        *old -= 360.0;
+    }
+    while new - *old >= 180.0 {
+        *old += 360.0;
+    }
 }
 
 impl Default for TickInput {
@@ -237,6 +312,8 @@ struct KindAnim {
     jump: f32,
     jump_old: f32,
     swell_counter: i32,
+    fuse: i32,
+    fuse_seen: i32,
     paddle: [f32; 2],
     paddle_old: [f32; 2],
     eat_ticks: i32,
@@ -254,7 +331,8 @@ struct KindAnim {
     heart_ticks: i32,
     heart_ticks_old: i32,
     wiggle_ticks: i32,
-    swim: SwimAmount,
+    swim: f32,
+    swim_old: f32,
     elytra: [f32; 3],
     elytra_old: [f32; 3],
     use_ticks: i32,
@@ -333,6 +411,8 @@ impl KindAnim {
         jump: 0.0,
         jump_old: 0.0,
         swell_counter: 0,
+        fuse: -1,
+        fuse_seen: -1,
         paddle: [0.0; 2],
         paddle_old: [0.0; 2],
         eat_ticks: 0,
@@ -350,7 +430,8 @@ impl KindAnim {
         heart_ticks: 0,
         heart_ticks_old: 0,
         wiggle_ticks: 0,
-        swim: SwimAmount::new(),
+        swim: 0.0,
+        swim_old: 0.0,
         elytra: [0.0; 3],
         elytra_old: [0.0; 3],
         use_ticks: 0,
@@ -475,13 +556,37 @@ impl Sampled {
 pub struct EntityAnim {
     pub id: i32,
     pub kind: EntityKind,
-    core: LivingCore,
+    pub(crate) pos: [f64; 3],
+    pos_old: [f64; 3],
+    body_rot: f32,
+    body_rot_old: f32,
+    head_rot: f32,
+    head_rot_old: f32,
+    y_rot: f32,
+    y_rot_old: f32,
+    x_rot: f32,
+    x_rot_old: f32,
+    interp: Option<Interpolation>,
     is_living: bool,
+    lerp_head_steps: i32,
+    lerp_y_head_rot: f32,
+    raw_pos: [f64; 3],
+    raw_y_rot: f32,
+    raw_x_rot: f32,
+    raw_head_rot: f32,
     motion: Motion,
     body: Body,
     velocity_seq: u64,
     vehicle_body_rot: Option<(f32, f32)>,
+    walk: WalkAnim,
     ticks: u32,
+    death_time: u32,
+    hurt_time: u32,
+    swing_time: i32,
+    swinging: bool,
+    swing_left: bool,
+    attack_anim: f32,
+    attack_anim_old: f32,
     rng: JavaRandom,
     speed_sqr: f32,
     sampled: Sampled,
@@ -497,13 +602,37 @@ impl EntityAnim {
         EntityAnim {
             id,
             kind,
-            core: LivingCore::default(),
+            pos: [0.0; 3],
+            pos_old: [0.0; 3],
+            body_rot: 0.0,
+            body_rot_old: 0.0,
+            head_rot: 0.0,
+            head_rot_old: 0.0,
+            y_rot: 0.0,
+            y_rot_old: 0.0,
+            x_rot: 0.0,
+            x_rot_old: 0.0,
+            interp: None,
             is_living: false,
+            lerp_head_steps: 0,
+            lerp_y_head_rot: 0.0,
+            raw_pos: [0.0; 3],
+            raw_y_rot: 0.0,
+            raw_x_rot: 0.0,
+            raw_head_rot: 0.0,
             motion: Motion::for_kind(kind),
             body: Body::default(),
             velocity_seq: 0,
             vehicle_body_rot: None,
+            walk: WalkAnim::new(),
             ticks: 0,
+            death_time: 0,
+            hurt_time: 0,
+            swing_time: -1,
+            swinging: false,
+            swing_left: false,
+            attack_anim: 0.0,
+            attack_anim_old: 0.0,
             rng,
             speed_sqr: 0.0,
             sampled: Sampled::from_input(&TickInput::new()),
@@ -519,6 +648,8 @@ impl EntityAnim {
                     jump: 0.0,
                     jump_old: 0.0,
                     swell_counter: 0,
+                    fuse: -1,
+                    fuse_seen: -1,
                     paddle: [0.0; 2],
                     paddle_old: [0.0; 2],
                     eat_ticks: 0,
@@ -536,7 +667,8 @@ impl EntityAnim {
                     heart_ticks: 0,
                     heart_ticks_old: 0,
                     wiggle_ticks: WIGGLE_TICKS,
-                    swim: SwimAmount::new(),
+                    swim: 0.0,
+                    swim_old: 0.0,
                     elytra: [0.0; 3],
                     elytra_old: [0.0; 3],
                     use_ticks: 0,
@@ -608,7 +740,7 @@ impl EntityAnim {
     }
 
     pub fn body_rot_pair(&self) -> (f32, f32) {
-        self.core.body_rot_pair()
+        (self.body_rot_old, self.body_rot)
     }
 
     pub fn is_living(&self) -> bool {
@@ -621,7 +753,7 @@ impl EntityAnim {
 
     fn solve_body_rot(&self, head_rot: f32, partial: f32) -> f32 {
         let Some((old, new)) = self.vehicle_body_rot else {
-            return rot_lerp(partial, self.core.body_rot_old, self.core.body_rot);
+            return rot_lerp(partial, self.body_rot_old, self.body_rot);
         };
         let mount = rot_lerp(partial, old, new);
         let head_diff = wrap_degrees(head_rot - mount).clamp(-85.0, 85.0);
@@ -634,26 +766,73 @@ impl EntityAnim {
     }
 
     fn handle_movement_packets(&mut self, input: &TickInput) -> Option<([f64; 3], f32, f32)> {
-        let deferred = self
-            .core
-            .handle_movement_packets(input.pos, input.y_rot, input.x_rot)
-            .map(|(pos, y_rot, x_rot)| (pos, y_rot % 360.0, x_rot % 360.0));
+        let mut deferred = None;
+        if input.local_authority {
+            // `handleMoveEntity` leaves a locally moved entity alone; its
+            // own tick moves it, after the old pose is kept (`tick_in`).
+            self.raw_pos = input.pos;
+            self.raw_y_rot = input.y_rot;
+            self.raw_x_rot = input.x_rot;
+            if let Some(interp) = self.interp.as_mut() {
+                interp.cancel();
+            }
+        } else if input.pos != self.raw_pos
+            || input.y_rot != self.raw_y_rot
+            || input.x_rot != self.raw_x_rot
+        {
+            self.raw_pos = input.pos;
+            self.raw_y_rot = input.y_rot;
+            self.raw_x_rot = input.x_rot;
+            let too_big = distance_sqr(self.pos, input.pos) > MAX_INTERPOLATION_DISTANCE_SQR;
+            match self.interp.take() {
+                Some(mut interp) if too_big => {
+                    self.set_pos(input.pos, input.is_passenger);
+                    self.y_rot = input.y_rot;
+                    self.x_rot = input.x_rot;
+                    self.pos_old = self.pos;
+                    self.y_rot_old = self.y_rot;
+                    self.x_rot_old = self.x_rot;
+                    interp.cancel();
+                    self.interp = Some(interp);
+                }
+                Some(mut interp) => {
+                    interp.interpolate_to(
+                        Target {
+                            pos: &mut self.pos,
+                            y_rot: &mut self.y_rot,
+                            x_rot: &mut self.x_rot,
+                        },
+                        input.pos,
+                        input.y_rot,
+                        input.x_rot,
+                    );
+                    self.interp = Some(interp);
+                }
+                None => {
+                    deferred = Some((input.pos, input.y_rot % 360.0, input.x_rot % 360.0));
+                    self.interp = None;
+                }
+            }
+        }
 
         if self.is_living
             && let Some(head_rot) = input.head_rot
+            && head_rot != self.raw_head_rot
         {
-            self.core.rotate_head(head_rot, true);
+            self.raw_head_rot = head_rot;
+            self.lerp_y_head_rot = head_rot;
+            self.lerp_head_steps = LERP_HEAD_STEPS;
         }
         deferred
     }
 
     fn set_pos(&mut self, pos: [f64; 3], is_passenger: bool) {
         if !matches!(self.kind, EntityKind::Shulker) {
-            self.core.pos = pos;
+            self.pos = pos;
             return;
         }
-        let old_block = block_pos(self.core.pos);
-        self.core.pos = if is_passenger {
+        let old_block = block_pos(self.pos);
+        self.pos = if is_passenger {
             pos
         } else {
             [
@@ -665,7 +844,7 @@ impl EntityAnim {
         if self.ticks == 0 {
             return;
         }
-        let new_block = block_pos(self.core.pos);
+        let new_block = block_pos(self.pos);
         let slid = new_block != old_block && !is_passenger;
         if let Some(k) = self.kind_state.as_deref_mut()
             && slid
@@ -673,7 +852,15 @@ impl EntityAnim {
         {
             k.attach_pos = Some(old_block);
             k.teleport_interp = SHULKER_TELEPORT_TICKS;
-            self.core.pos_old = self.core.pos;
+            self.pos_old = self.pos;
+        }
+    }
+
+    fn tick_head_turn(&mut self, target: f32) {
+        self.body_rot += wrap_degrees(target - self.body_rot) * 0.3;
+        let head_diff = wrap_degrees(self.y_rot - self.body_rot);
+        if head_diff.abs() > MAX_HEAD_ROTATION {
+            self.body_rot += head_diff - head_diff.signum() * MAX_HEAD_ROTATION;
         }
     }
 
@@ -688,15 +875,17 @@ impl EntityAnim {
     pub fn tick_in(&mut self, input: &TickInput, level: &dyn Level) {
         if !self.started {
             self.is_living = input.is_living;
-            self.core.start(
-                input.pos,
-                input.y_rot,
-                input.x_rot,
-                input.head_rot.unwrap_or(input.y_rot),
-                interpolation_for(self.kind, input.is_living),
-            );
+            self.interp = interpolation_for(self.kind, input.is_living);
             self.set_pos(input.pos, input.is_passenger);
-            self.core.pos_old = self.core.pos;
+            self.y_rot = input.y_rot;
+            self.x_rot = input.x_rot;
+            self.body_rot = input.y_rot;
+            self.head_rot = input.head_rot.unwrap_or(input.y_rot);
+            self.pos_old = self.pos;
+            self.raw_pos = input.pos;
+            self.raw_y_rot = input.y_rot;
+            self.raw_x_rot = input.x_rot;
+            self.raw_head_rot = self.head_rot;
             if let Some(k) = self.kind_state.as_deref_mut() {
                 k.peek = input.peek_target;
             }
@@ -707,8 +896,8 @@ impl EntityAnim {
 
         if let Some((pos, y_rot, x_rot)) = correction {
             self.set_pos(pos, input.is_passenger);
-            self.core.y_rot = y_rot;
-            self.core.x_rot = x_rot;
+            self.y_rot = y_rot;
+            self.x_rot = x_rot;
         }
 
         if let Some((velocity, seq)) = input.velocity
@@ -718,16 +907,43 @@ impl EntityAnim {
             self.body.velocity = velocity;
         }
 
-        self.core.latch();
+        self.pos_old = self.pos;
+        self.y_rot_old = self.y_rot;
+        self.x_rot_old = self.x_rot;
+        self.body_rot_old = self.body_rot;
+        self.head_rot_old = self.head_rot;
+        self.attack_anim_old = self.attack_anim;
         if let Some(k) = self.kind_state.as_deref_mut() {
             k.swell_old = k.swell;
             k.peek_old = k.peek;
             k.jump_old = k.jump;
             k.paddle_old = k.paddle;
         }
-        self.core.step_interpolation();
 
-        if self.motion != Motion::Server && input.simulate {
+        if input.local_authority {
+            self.set_pos(input.pos, input.is_passenger);
+            self.y_rot = input.y_rot;
+            self.x_rot = input.x_rot;
+        } else if let Some(mut interp) = self.interp.take() {
+            if interp.has_active_interpolation() {
+                interp.interpolate(Target {
+                    pos: &mut self.pos,
+                    y_rot: &mut self.y_rot,
+                    x_rot: &mut self.x_rot,
+                });
+            }
+            self.interp = Some(interp);
+        }
+        if self.lerp_head_steps > 0 {
+            self.head_rot = rot_lerp(
+                1.0 / self.lerp_head_steps as f32,
+                self.head_rot,
+                self.lerp_y_head_rot,
+            );
+            self.lerp_head_steps -= 1;
+        }
+
+        if self.motion != Motion::Server && input.simulate && !input.local_authority {
             if input.shared.in_ground {
                 self.body.in_ground = true;
             } else if self.k().was_in_ground {
@@ -741,13 +957,12 @@ impl EntityAnim {
                 ticks: self.ticks,
                 id: self.id,
             };
-            self.core.pos =
-                super::physics::step(self.motion, self.core.pos, &mut self.body, &shape, level);
+            self.pos = super::physics::step(self.motion, self.pos, &mut self.body, &shape, level);
         }
 
         if !self.is_living {
-            self.core.body_rot = self.core.y_rot;
-            self.core.head_rot = self.core.y_rot;
+            self.body_rot = self.y_rot;
+            self.head_rot = self.y_rot;
         }
 
         if let Some(k) = self.kind_state.as_deref_mut() {
@@ -762,6 +977,13 @@ impl EntityAnim {
                 k.swell_counter = (k.swell_counter + dir).clamp(0, MAX_SWELL);
             }
             k.swell = k.swell_counter as f32 / (MAX_SWELL - 2) as f32;
+
+            if input.max_fuse != k.fuse_seen {
+                k.fuse_seen = input.max_fuse;
+                k.fuse = input.max_fuse;
+            } else if k.fuse > 0 {
+                k.fuse -= 1;
+            }
 
             if k.peek > input.peek_target {
                 k.peek = (k.peek - 0.05).clamp(input.peek_target, 1.0);
@@ -827,13 +1049,18 @@ impl EntityAnim {
 
             k.wiggle_ticks = (k.wiggle_ticks + 1).min(WIGGLE_TICKS);
 
-            k.swim.tick(input.pose == Pose::Swimming);
+            k.swim_old = k.swim;
+            k.swim = if input.pose == Pose::Swimming {
+                (k.swim + 0.09).min(1.0)
+            } else {
+                (k.swim - 0.09).max(0.0)
+            };
 
             k.elytra_old = k.elytra;
             let step = [
-                self.core.pos[0] - self.core.pos_old[0],
-                self.core.pos[1] - self.core.pos_old[1],
-                self.core.pos[2] - self.core.pos_old[2],
+                self.pos[0] - self.pos_old[0],
+                self.pos[1] - self.pos_old[1],
+                self.pos[2] - self.pos_old[2],
             ];
             crate::entities::models::humanoid::elytra::tick_angles(
                 &mut k.elytra,
@@ -905,9 +1132,9 @@ impl EntityAnim {
         }
 
         let vel = [
-            (self.core.pos[0] - self.core.pos_old[0]) as f32,
-            (self.core.pos[1] - self.core.pos_old[1]) as f32,
-            (self.core.pos[2] - self.core.pos_old[2]) as f32,
+            (self.pos[0] - self.pos_old[0]) as f32,
+            (self.pos[1] - self.pos_old[1]) as f32,
+            (self.pos[2] - self.pos_old[2]) as f32,
         ];
         self.speed_sqr = vel[0] * vel[0] + vel[1] * vel[1] + vel[2] * vel[2];
         let horizontal_speed = (vel[0] * vel[0] + vel[2] * vel[2]).sqrt();
@@ -1009,9 +1236,9 @@ impl EntityAnim {
                 (k.bee_roll - 0.24).max(0.0)
             };
 
-            let axolotl_moving = self.core.walk.current_speed() > 1.0e-5
-                || self.core.x_rot != self.core.x_rot_old
-                || self.core.body_rot != self.core.body_rot_old;
+            let axolotl_moving = self.walk.speed > 1.0e-5
+                || self.x_rot != self.x_rot_old
+                || self.body_rot != self.body_rot_old;
             let in_water_state = !input.playing_dead && input.is_in_water;
             let on_ground_state = !input.playing_dead && !input.is_in_water && input.on_ground;
             k.axolotl_old = k.axolotl;
@@ -1088,10 +1315,10 @@ impl EntityAnim {
             for i in 0..2 {
                 match input.head_targets[i] {
                     Some(target) => {
-                        let head_angle = (self.core.body_rot + 180.0 * i as f32).to_radians();
-                        let hx = self.core.pos[0] + (head_angle.cos() * 1.3 * input.scale) as f64;
-                        let hy = self.core.pos[1] + (2.2 * input.scale) as f64;
-                        let hz = self.core.pos[2] + (head_angle.sin() * 1.3 * input.scale) as f64;
+                        let head_angle = (self.body_rot + 180.0 * i as f32).to_radians();
+                        let hx = self.pos[0] + (head_angle.cos() * 1.3 * input.scale) as f64;
+                        let hy = self.pos[1] + (2.2 * input.scale) as f64;
+                        let hz = self.pos[2] + (head_angle.sin() * 1.3 * input.scale) as f64;
                         let dx = (target[0] - hx) as f32;
                         let dy = (target[1] - hy) as f32;
                         let dz = (target[2] - hz) as f32;
@@ -1102,32 +1329,70 @@ impl EntityAnim {
                         k.head_y_rots[i] = rot_lerp_capped(k.head_y_rots[i], y_target, 10.0);
                     }
                     None => {
-                        k.head_y_rots[i] =
-                            rot_lerp_capped(k.head_y_rots[i], self.core.body_rot, 10.0);
+                        k.head_y_rots[i] = rot_lerp_capped(k.head_y_rots[i], self.body_rot, 10.0);
                     }
                 }
             }
         }
 
         if input.is_passenger || input.dead {
-            self.core.walk.stop();
+            self.walk.stop();
         } else {
             let position_scale = if input.shared.is_baby { 3.0 } else { 1.0 };
             let target = if input.walk_halted {
                 0.0
             } else {
-                walk_target(self.kind, self.core.pos_old, self.core.pos)
+                walk_target(self.kind, self.pos_old, self.pos)
             };
-            self.core
-                .walk
-                .update(target, input.walk_factor, position_scale);
+            self.walk.update(target, input.walk_factor, position_scale);
         }
 
         self.ticks = self.ticks.wrapping_add(1);
-        self.core.tick_counters(input.dead);
+        if input.dead {
+            // The dragon's death lasts 200 ticks (`dragonDeathTime`); the rest 20.
+            let longest = if self.kind == EntityKind::EnderDragon { 200 } else { 20 };
+            self.death_time = (self.death_time + 1).min(longest);
+        } else {
+            self.death_time = 0;
+        }
+        if self.hurt_time > 0 {
+            self.hurt_time -= 1;
+        }
+
+        const SWING_DURATION: i32 = 6;
+        if self.swinging {
+            self.swing_time += 1;
+            if self.swing_time >= SWING_DURATION {
+                self.swing_time = 0;
+                self.swinging = false;
+            }
+        } else {
+            self.swing_time = 0;
+        }
+        self.attack_anim = self.swing_time as f32 / SWING_DURATION as f32;
 
         if self.is_living {
-            self.core.turn_body();
+            let xd = (self.pos[0] - self.pos_old[0]) as f32;
+            let zd = (self.pos[2] - self.pos_old[2]) as f32;
+            let mut target = self.body_rot;
+            if xd * xd + zd * zd > BODY_ROT_MOVEMENT_THRESHOLD {
+                let walk_direction = zd.atan2(xd).to_degrees() - 90.0;
+                let diff = (wrap_degrees(self.y_rot) - walk_direction).abs();
+                target = if (95.0..265.0).contains(&diff) {
+                    walk_direction - 180.0
+                } else {
+                    walk_direction
+                };
+            }
+            if self.attack_anim > 0.0 {
+                target = self.y_rot;
+            }
+            self.tick_head_turn(target);
+
+            unwind(&mut self.y_rot_old, self.y_rot);
+            unwind(&mut self.body_rot_old, self.body_rot);
+            unwind(&mut self.x_rot_old, self.x_rot);
+            unwind(&mut self.head_rot_old, self.head_rot);
         }
 
         self.sampled = Sampled::from_input(input);
@@ -1144,15 +1409,20 @@ impl EntityAnim {
     }
 
     pub fn swing(&mut self, left_arm: bool) {
-        self.core.swing(left_arm);
+        if !self.swinging || self.swing_time >= 3 || self.swing_time < 0 {
+            self.swing_time = -1;
+            self.swinging = true;
+            self.swing_left = left_arm;
+        }
     }
 
     pub fn hurt(&mut self) {
-        self.core.hurt();
+        self.hurt_time = 10;
     }
 
     pub fn damage(&mut self) {
-        self.core.damage();
+        self.walk.set_speed(1.5);
+        self.hurt();
     }
 
     pub fn eat_grass(&mut self) {
@@ -1218,13 +1488,17 @@ impl EntityAnim {
     }
 
     pub fn position(&self, partial: f32) -> [f32; 3] {
-        self.core.position(partial)
+        [
+            lerp_f64(partial, self.pos_old[0], self.pos[0]) as f32,
+            lerp_f64(partial, self.pos_old[1], self.pos[1]) as f32,
+            lerp_f64(partial, self.pos_old[2], self.pos[2]) as f32,
+        ]
     }
 
     pub fn look(&self, partial: f32) -> (f32, f32) {
         (
-            rot_lerp(partial, self.core.y_rot_old, self.core.y_rot),
-            lerp(partial, self.core.x_rot_old, self.core.x_rot),
+            rot_lerp(partial, self.y_rot_old, self.y_rot),
+            lerp(partial, self.x_rot_old, self.x_rot),
         )
     }
 
@@ -1234,10 +1508,6 @@ impl EntityAnim {
 
     pub fn is_invisible(&self) -> bool {
         self.sampled.is_invisible
-    }
-
-    pub fn display_fire(&self) -> bool {
-        self.sampled.display_fire
     }
 
     pub fn shared(&self) -> &crate::entities::state::ExtrasShared {
@@ -1251,7 +1521,7 @@ impl EntityAnim {
         };
         let mut scale = (k.teleport_interp as f32 - partial) / SHULKER_TELEPORT_TICKS as f32;
         scale *= scale;
-        let current = block_pos(self.core.pos);
+        let current = block_pos(self.pos);
         [
             -((current[0] - old[0]) as f32 * scale),
             -((current[1] - old[1]) as f32 * scale),
@@ -1260,9 +1530,9 @@ impl EntityAnim {
     }
 
     pub fn sample(&self, partial: f32) -> EntityState {
-        let head_rot = rot_lerp(partial, self.core.head_rot_old, self.core.head_rot);
+        let head_rot = rot_lerp(partial, self.head_rot_old, self.head_rot);
         let body_rot = self.solve_body_rot(head_rot, partial);
-        let x_rot = lerp(partial, self.core.x_rot_old, self.core.x_rot);
+        let x_rot = lerp(partial, self.x_rot_old, self.x_rot);
         let mut extras = Extras::with_shared(self.sampled.shared.clone());
         extras.eating = self.sampled.eating;
         extras.parrot_pose = if self.sampled.shared.sitting {
@@ -1276,6 +1546,11 @@ impl EntityAnim {
 
         if let Some(k) = self.kind_state.as_deref() {
             extras.swell = lerp(partial, k.swell_old, k.swell);
+            extras.fuse_remaining = if k.fuse >= 0 {
+                k.fuse as f32 - partial + 1.0
+            } else {
+                0.0
+            };
             extras.peek = lerp(partial, k.peek_old, k.peek);
             extras.jump_progress = lerp(partial, k.jump_old, k.jump);
             extras.paddle_left = if self.sampled.paddling_left {
@@ -1344,7 +1619,7 @@ impl EntityAnim {
 
             extras.wiggle = k.wiggle_ticks as f32 + partial;
 
-            extras.swim_amount = k.swim.get(partial);
+            extras.swim_amount = lerp(partial, k.swim_old, k.swim);
             extras.elytra = std::array::from_fn(|i| lerp(partial, k.elytra_old[i], k.elytra[i]));
             extras.ticks_using_item = if extras.using_item {
                 k.use_ticks as f32 + partial
@@ -1440,14 +1715,18 @@ impl EntityAnim {
         EntityState {
             id: self.id,
             kind: self.kind,
-            pos: self.core.position(partial),
+            pos: self.position(partial),
             body_rot,
             y_rot: wrap_degrees(head_rot - body_rot),
             x_rot,
             age_ticks: self.ticks as f32 + partial,
-            walk_pos: self.core.walk.position(partial),
-            walk_speed: self.core.walk.speed(partial),
-            death_time: self.core.death_time(partial),
+            walk_pos: self.walk.position(partial),
+            walk_speed: self.walk.speed(partial),
+            death_time: if self.death_time > 0 {
+                self.death_time as f32 + partial
+            } else {
+                0.0
+            },
             scale: self.sampled.scale,
             age_scale: if self.sampled.shared.is_baby {
                 0.5
@@ -1462,12 +1741,12 @@ impl EntityAnim {
             is_fully_frozen: self.sampled.is_fully_frozen,
             is_upside_down: matches!(extras.name.as_deref(), Some("Dinnerbone") | Some("Grumm")),
             is_auto_spin_attack: self.sampled.is_auto_spin_attack,
-            has_red_overlay: self.core.has_red_overlay(),
+            has_red_overlay: self.hurt_time > 0 || self.death_time > 0,
             display_fire: self.sampled.display_fire,
             pose: self.sampled.pose,
             bed_orientation: self.sampled.bed_orientation,
-            attack_time: self.core.attack_time(partial),
-            swing_left: self.core.swing_left(),
+            attack_time: lerp(partial, self.attack_anim_old, self.attack_anim),
+            swing_left: self.swing_left,
             extras,
             carrier: None,
         }
@@ -1616,7 +1895,7 @@ mod tests {
 
     #[test]
     fn walk_position_trails_the_tick_by_one_speed_step() {
-        let mut walk = crate::entities::living::WalkAnim::new();
+        let mut walk = WalkAnim::new();
         walk.update(1.0, 0.4, 1.0);
         assert!((walk.position(1.0) - 0.4).abs() < 1e-6);
         assert!((walk.position(0.0) - 0.0).abs() < 1e-6);
@@ -1756,6 +2035,24 @@ mod tests {
             anim.tick(input.clone());
         }
         assert!((anim.sample(1.0).extras.swell - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_primed_sulfur_cube_counts_its_fuse_down_on_the_client() {
+        let mut anim = EntityAnim::new(1, EntityKind::SulfurCube);
+        let mut input = TickInput::new();
+        anim.tick(input.clone());
+        assert_eq!(anim.sample(0.5).extras.fuse_remaining, 0.0);
+        input.max_fuse = 30;
+        anim.tick(input.clone());
+        assert_eq!(anim.sample(0.0).extras.fuse_remaining, 31.0);
+        for _ in 0..10 {
+            anim.tick(input.clone());
+        }
+        assert_eq!(anim.sample(0.5).extras.fuse_remaining, 20.5);
+        input.max_fuse = -1;
+        anim.tick(input);
+        assert_eq!(anim.sample(0.5).extras.fuse_remaining, 0.0);
     }
 
     #[test]

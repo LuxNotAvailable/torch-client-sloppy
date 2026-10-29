@@ -1,4 +1,4 @@
-use simdnbt::owned::Nbt;
+use simdnbt::owned::NbtCompound;
 
 use super::TickCtx;
 use crate::renderer::anim::HeldItem;
@@ -9,7 +9,7 @@ pub struct Data {
     pub display_item: HeldItem,
 }
 
-pub fn decode(tag: &Nbt) -> Data {
+pub fn decode(tag: &NbtCompound) -> Data {
     Data {
         display_item: tag
             .compound("shared_data")

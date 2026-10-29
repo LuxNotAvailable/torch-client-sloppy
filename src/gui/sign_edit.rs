@@ -9,13 +9,15 @@ use crate::gui::widgets::{self, Button, TextBox, WIDGET_HEIGHT, WIDGET_WIDTH_BIG
 use crate::gui::{Screen, ScreenCtx};
 use crate::platform::time::Instant;
 use crate::session::{SharedMutex, SignEditKind, SignEditRequest, SignUpdateRequest};
-use crate::text::Span;
+use crate::text::{Span, Style};
 
-pub(crate) const SIGN_TEXTURE_WIDTH: u32 = 64;
+/// Width of `gui/signs/<wood>.png`: the 24x12 board with a 2x14 post under
+/// its middle.
+pub(crate) const SIGN_TEXTURE_WIDTH: u32 = 24;
 
-pub(crate) const BOARD_UV: [u32; 4] = [2, 2, 24, 12];
+pub(crate) const BOARD_UV: [u32; 4] = [0, 0, 24, 12];
 
-pub(crate) const STICK_UV: [u32; 4] = [2, 16, 2, 14];
+pub(crate) const STICK_UV: [u32; 4] = [11, 12, 2, 14];
 
 pub(crate) fn hanging_sprite(wood: &str) -> String {
     format!("sign_edit/hanging/{wood}")
@@ -72,7 +74,10 @@ impl SignPreview {
             let Some(edit) = edit else { continue };
             line.clear();
             if !edit.is_empty() {
-                line.push(Span::colored(edit.as_str(), INHERIT_COLOR));
+                line.push(Span {
+                    text: edit.clone(),
+                    style: Style::colored(INHERIT_COLOR),
+                });
             }
         }
         BlockEntityData::Sign(sign)
@@ -238,7 +243,7 @@ pub fn draw(
         SignEditKind::Standing { .. } => (label!("sign.edit"), 90.0, 0.976_562_8),
         SignEditKind::Hanging => (label!("hanging_sign.edit"), 125.0, 1.0),
     };
-    p.text_centered(title, ctx.vw / 2.0, 40.0, 0xFFFFFF, true);
+    widgets::draw_title(p, ctx.vw, 40.0, title);
 
     let cx = ctx.vw / 2.0;
     match &state.background {
@@ -284,19 +289,26 @@ pub fn draw(
                 continue;
             }
             let chars = line.chars().count();
-            let prefix_width = |n: usize| (width(&line[..widgets::byte_at(line, n)]) - half) as f32;
+            let prefix_width = |n: usize| {
+                let end = line.char_indices().nth(n).map_or(line.len(), |(b, _)| b);
+                (width(&line[..end]) - half) as f32
+            };
             let cursor = state.field.cursor.min(chars);
             let cursor_x = prefix_width(cursor);
             if show_cursor {
-                widgets::draw_caret(p, cursor_x, y, cursor >= chars, color, false, (0.0, lh));
+                if cursor >= chars {
+                    widgets::draw_append_caret(p, cursor_x, y, color, false);
+                } else {
+                    widgets::draw_insert_caret(p, cursor_x, y, lh, color);
+                }
             }
             let anchor = state.field.anchor.min(chars);
             if anchor != cursor {
                 let (lo, hi) = (cursor.min(anchor), cursor.max(anchor));
-                let selected = widgets::char_slice(line, lo..hi);
+                let selected: String = line.chars().skip(lo).take(hi - lo).collect();
                 widgets::draw_selection(
                     p,
-                    selected,
+                    &selected,
                     prefix_width(lo),
                     prefix_width(hi),
                     y,
@@ -307,7 +319,7 @@ pub fn draw(
         }
     });
 
-    let x = widgets::centered_x(ctx.vw);
+    let x = ((ctx.vw - WIDGET_WIDTH_BIG) / 2.0).floor();
     let base = (ctx.vh / 4.0).floor();
     let done = Button::new(
         x,

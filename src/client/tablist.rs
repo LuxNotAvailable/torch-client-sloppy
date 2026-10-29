@@ -84,10 +84,7 @@ struct Team {
     suffix: Vec<Span>,
     members: Vec<String>,
     nametag_visibility: NameTagVisibility,
-    see_friendly_invisibles: bool,
 }
-
-const SEE_FRIENDLY_INVISIBLES: u8 = 2;
 
 struct Objective {
     hearts: bool,
@@ -354,7 +351,6 @@ fn apply_team(s: &mut State, name: &str, method: &TeamMethod) {
                 suffix: to_spans_styled(&params.player_suffix, root),
                 members: members.clone(),
                 nametag_visibility: params.nametag_visibility,
-                see_friendly_invisibles: params.options & SEE_FRIENDLY_INVISIBLES != 0,
             };
             for m in &team.members {
                 s.team_of.insert(m.clone(), name.to_string());
@@ -370,7 +366,6 @@ fn apply_team(s: &mut State, name: &str, method: &TeamMethod) {
                 team.prefix = to_spans_styled(&params.player_prefix, root);
                 team.suffix = to_spans_styled(&params.player_suffix, root);
                 team.nametag_visibility = params.nametag_visibility;
-                team.see_friendly_invisibles = params.options & SEE_FRIENDLY_INVISIBLES != 0;
             }
         }
         TeamMethod::Remove => {
@@ -407,12 +402,12 @@ fn apply_team(s: &mut State, name: &str, method: &TeamMethod) {
     }
 }
 
-fn team_color(color: ChatFormatting) -> Option<u32> {
-    crate::text::named_color(color.name())
+fn team_color(color: Option<ChatFormatting>) -> Option<u32> {
+    crate::text::named_color(color?.name())
 }
 
-fn team_slot(color: ChatFormatting) -> Option<usize> {
-    let ord = color as usize;
+fn team_slot(color: Option<ChatFormatting>) -> Option<usize> {
+    let ord = color? as usize;
     (ord < 16).then_some(TEAM_SLOT_BASE + ord)
 }
 
@@ -647,29 +642,15 @@ impl Lookup<'_> {
     ) -> NameTagText {
         name_tag(self.0, scoreboard_name, base, viewer)
     }
-
-    pub(crate) fn sees_friendly_invisible(&self, scoreboard_name: &str, viewer: &str) -> bool {
-        self.0
-            .allied(scoreboard_name, viewer)
-            .is_some_and(|team| team.see_friendly_invisibles)
-    }
-}
-
-impl State {
-    fn allied(&self, a: &str, b: &str) -> Option<&Team> {
-        let team_name = self.team_of.get(a)?;
-        (self.team_of.get(b) == Some(team_name))
-            .then(|| self.teams.get(team_name))
-            .flatten()
-    }
 }
 
 fn name_tag(s: &State, scoreboard_name: &str, base: Vec<Span>, viewer: &str) -> NameTagText {
     let mut hidden_by_team = false;
-    let team = s.team_of.get(scoreboard_name).and_then(|t| s.teams.get(t));
+    let team_name = s.team_of.get(scoreboard_name);
+    let team = team_name.and_then(|t| s.teams.get(t));
     if let Some(team) = team {
         let viewer_team = s.team_of.get(viewer);
-        let allied = s.allied(scoreboard_name, viewer).is_some();
+        let allied = viewer_team.is_some() && viewer_team == team_name;
         match team.nametag_visibility {
             NameTagVisibility::Always => {}
             NameTagVisibility::Never => hidden_by_team = true,
@@ -742,7 +723,7 @@ mod tests {
             "red".into(),
             Team {
                 color: Some(0xFF5555),
-                slot: team_slot(ChatFormatting::Red),
+                slot: team_slot(Some(ChatFormatting::Red)),
                 prefix: vec![Span {
                     text: "[R] ".into(),
                     style: Style::colored(0xFF5555),
@@ -750,7 +731,6 @@ mod tests {
                 suffix: Vec::new(),
                 members: vec!["Alice".into()],
                 nametag_visibility: NameTagVisibility::Always,
-                see_friendly_invisibles: false,
             },
         );
         s.team_of.insert("Alice".into(), "red".into());
@@ -862,13 +842,12 @@ mod tests {
         s.teams.insert(
             "reds".to_string(),
             Team {
-                color: team_color(ChatFormatting::Red),
-                slot: team_slot(ChatFormatting::Red),
+                color: team_color(Some(ChatFormatting::Red)),
+                slot: team_slot(Some(ChatFormatting::Red)),
                 prefix: Vec::new(),
                 suffix: Vec::new(),
                 members: Vec::new(),
                 nametag_visibility: NameTagVisibility::Always,
-                see_friendly_invisibles: false,
             },
         );
         s.team_of
@@ -878,10 +857,13 @@ mod tests {
 
     #[test]
     fn an_uncoloured_team_has_no_slot() {
-        assert_eq!(team_slot(ChatFormatting::Reset), None);
-        assert_eq!(team_slot(ChatFormatting::Bold), None);
-        assert_eq!(team_slot(ChatFormatting::Black), Some(TEAM_SLOT_BASE));
-        assert_eq!(team_slot(ChatFormatting::White), Some(TEAM_SLOT_BASE + 15));
+        assert_eq!(team_slot(None), None);
+        assert_eq!(team_slot(Some(ChatFormatting::Bold)), None);
+        assert_eq!(team_slot(Some(ChatFormatting::Black)), Some(TEAM_SLOT_BASE));
+        assert_eq!(
+            team_slot(Some(ChatFormatting::White)),
+            Some(TEAM_SLOT_BASE + 15)
+        );
     }
 
     #[test]

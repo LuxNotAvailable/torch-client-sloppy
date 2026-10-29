@@ -5,63 +5,13 @@ pub(crate) enum Fetched {
     Cancelled,
 }
 
-pub(crate) struct HttpError {
-    pub network: bool,
-    detail: String,
-}
-
-impl HttpError {
-    fn network(detail: impl Into<String>) -> HttpError {
-        HttpError {
-            network: true,
-            detail: detail.into(),
-        }
-    }
-
-    fn other(detail: impl Into<String>) -> HttpError {
-        HttpError {
-            network: false,
-            detail: detail.into(),
-        }
-    }
-}
-
-impl std::fmt::Display for HttpError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.detail)
-    }
-}
-
 #[cfg(not(target_arch = "wasm32"))]
 mod imp {
-    use super::{Fetched, HttpError, USER_AGENT};
+    use super::{Fetched, USER_AGENT};
     use std::io::Read;
     use std::sync::OnceLock;
 
     const CHUNK: usize = 64 * 1024;
-
-    fn chain(e: &dyn std::error::Error) -> String {
-        let mut out = e.to_string();
-        let mut source = e.source();
-        while let Some(cause) = source {
-            let next = cause.to_string();
-            if !out.ends_with(&next) {
-                out.push_str(": ");
-                out.push_str(&next);
-            }
-            source = cause.source();
-        }
-        out
-    }
-
-    fn classify(e: reqwest::Error) -> HttpError {
-        let detail = chain(&e);
-        if e.is_status() || e.is_builder() || e.is_redirect() {
-            HttpError::other(detail)
-        } else {
-            HttpError::network(detail)
-        }
-    }
 
     fn client() -> &'static reqwest::blocking::Client {
         static CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
@@ -79,25 +29,25 @@ mod imp {
         })
     }
 
-    pub(super) async fn get_string(url: &str) -> Result<String, HttpError> {
+    pub(super) async fn get_string(url: &str) -> Result<String, String> {
         client()
             .get(url)
             .send()
             .and_then(|r| r.error_for_status())
             .and_then(|r| r.text())
-            .map_err(classify)
+            .map_err(|e| e.to_string())
     }
 
     pub(super) async fn get_bytes(
         url: &str,
         expected: u64,
         progress: &mut dyn FnMut(u64, u64) -> bool,
-    ) -> Result<Fetched, HttpError> {
+    ) -> Result<Fetched, String> {
         let mut resp = client()
             .get(url)
             .send()
             .and_then(|r| r.error_for_status())
-            .map_err(classify)?;
+            .map_err(|e| e.to_string())?;
         let total = if expected > 0 {
             expected
         } else {
@@ -107,9 +57,7 @@ mod imp {
         let mut out = Vec::with_capacity(total as usize);
         let mut buf = vec![0u8; CHUNK];
         loop {
-            let n = resp
-                .read(&mut buf)
-                .map_err(|e| HttpError::network(chain(&e)))?;
+            let n = resp.read(&mut buf).map_err(|e| e.to_string())?;
             if n == 0 {
                 break;
             }
@@ -121,15 +69,15 @@ mod imp {
         Ok(Fetched::Body(out))
     }
 
-    #[cfg(feature = "audio")]
-    pub(super) fn get_bytes_blocking(url: &str) -> Result<Vec<u8>, HttpError> {
+    #[cfg(audio)]
+    pub(super) fn get_bytes_blocking(url: &str) -> Result<Vec<u8>, String> {
         client()
             .get(url)
             .send()
             .and_then(|r| r.error_for_status())
             .and_then(|r| r.bytes())
             .map(|b| b.to_vec())
-            .map_err(classify)
+            .map_err(|e| e.to_string())
     }
 
     #[cfg(explore_modrinth)]
@@ -147,7 +95,7 @@ mod imp {
 
 #[cfg(target_arch = "wasm32")]
 mod imp {
-    use super::{Fetched, HttpError};
+    use super::Fetched;
     use wasm_bindgen::{JsCast, JsValue};
     use wasm_bindgen_futures::JsFuture;
 
@@ -155,37 +103,31 @@ mod imp {
         format!("{what}: {e:?}")
     }
 
-    async fn response(url: &str) -> Result<web_sys::Response, HttpError> {
-        let window = web_sys::window().ok_or(HttpError::other("no window"))?;
+    async fn response(url: &str) -> Result<web_sys::Response, String> {
+        let window = web_sys::window().ok_or("no window")?;
         let value = JsFuture::from(window.fetch_with_str(url))
             .await
-            .map_err(|e| HttpError::network(err("fetch failed", e)))?;
-        let resp: web_sys::Response = value
-            .dyn_into()
-            .map_err(|e| HttpError::other(err("not a response", e)))?;
+            .map_err(|e| err("fetch failed", e))?;
+        let resp: web_sys::Response = value.dyn_into().map_err(|e| err("not a response", e))?;
         if !resp.ok() {
-            return Err(HttpError::other(format!("http {}", resp.status())));
+            return Err(format!("http {}", resp.status()));
         }
         Ok(resp)
     }
 
-    pub(super) async fn get_string(url: &str) -> Result<String, HttpError> {
+    pub(super) async fn get_string(url: &str) -> Result<String, String> {
         let resp = response(url).await?;
-        let text = JsFuture::from(
-            resp.text()
-                .map_err(|e| HttpError::other(err("no body", e)))?,
-        )
-        .await
-        .map_err(|e| HttpError::network(err("body failed", e)))?;
-        text.as_string()
-            .ok_or_else(|| HttpError::other("body is not text"))
+        let text = JsFuture::from(resp.text().map_err(|e| err("no body", e))?)
+            .await
+            .map_err(|e| err("body failed", e))?;
+        text.as_string().ok_or_else(|| "body is not text".into())
     }
 
     pub(super) async fn get_bytes(
         url: &str,
         expected: u64,
         progress: &mut dyn FnMut(u64, u64) -> bool,
-    ) -> Result<Fetched, HttpError> {
+    ) -> Result<Fetched, String> {
         let resp = response(url).await?;
         let total = if expected > 0 {
             expected
@@ -198,19 +140,17 @@ mod imp {
                 .unwrap_or(0)
         };
 
-        let body = resp
-            .body()
-            .ok_or(HttpError::other("response has no body"))?;
+        let body = resp.body().ok_or("response has no body")?;
         let reader: web_sys::ReadableStreamDefaultReader = body
             .get_reader()
             .dyn_into()
-            .map_err(|e| HttpError::other(err("not a byte reader", e.into())))?;
+            .map_err(|e| err("not a byte reader", e.into()))?;
 
         let mut out: Vec<u8> = Vec::with_capacity(total as usize);
         loop {
             let chunk = JsFuture::from(reader.read())
                 .await
-                .map_err(|e| HttpError::network(err("read failed", e)))?;
+                .map_err(|e| err("read failed", e))?;
             let done = js_sys::Reflect::get(&chunk, &JsValue::from_str("done"))
                 .map(|v| v.as_bool().unwrap_or(false))
                 .unwrap_or(false);
@@ -218,7 +158,7 @@ mod imp {
                 break;
             }
             let value = js_sys::Reflect::get(&chunk, &JsValue::from_str("value"))
-                .map_err(|e| HttpError::other(err("chunk has no value", e)))?;
+                .map_err(|e| err("chunk has no value", e))?;
             let array = js_sys::Uint8Array::new(&value);
             let at = out.len();
             out.resize(at + array.length() as usize, 0);
@@ -232,7 +172,7 @@ mod imp {
     }
 }
 
-pub(crate) async fn get_string(url: &str) -> Result<String, HttpError> {
+pub(crate) async fn get_string(url: &str) -> Result<String, String> {
     imp::get_string(url).await
 }
 
@@ -240,12 +180,12 @@ pub(crate) async fn get_bytes(
     url: &str,
     expected: u64,
     progress: &mut dyn FnMut(u64, u64) -> bool,
-) -> Result<Fetched, HttpError> {
+) -> Result<Fetched, String> {
     imp::get_bytes(url, expected, progress).await
 }
 
-#[cfg(all(not(target_arch = "wasm32"), feature = "audio"))]
-pub(crate) fn get_bytes_blocking(url: &str) -> Result<Vec<u8>, HttpError> {
+#[cfg(all(not(target_arch = "wasm32"), audio))]
+pub(crate) fn get_bytes_blocking(url: &str) -> Result<Vec<u8>, String> {
     imp::get_bytes_blocking(url)
 }
 

@@ -4,7 +4,8 @@ macro_rules! gpu_label {
     };
 }
 
-mod compile;
+pub(crate) mod center_depth;
+pub(crate) mod compile;
 mod depthcopy;
 mod endflash;
 mod entities;
@@ -93,7 +94,7 @@ fn install_error_handler(device: &RenderDevice) {
 }
 
 fn timing_requested() -> bool {
-    crate::platform::env::flag("MC_SHADERPACK_TIMING")
+    std::env::var_os("MC_SHADERPACK_TIMING").is_some_and(|v| v != "0")
 }
 
 const TIMED_STAGES: [&str; 11] = [
@@ -211,8 +212,7 @@ impl Plugin for ShaderPackPlugin {
             ),
         );
         if timing_requested() {
-            #[cfg(not(feature = "budget"))]
-            app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
+            // The frame profiler already records the render diagnostics.
             app.add_systems(Update, report_pack_timing);
         }
         app.add_plugins(bevy::render::extract_component::ExtractComponentPlugin::<
@@ -257,6 +257,7 @@ impl Plugin for ShaderPackPlugin {
                     entities::prepare_entity_draws
                         .in_set(RenderSystems::PrepareBindGroups)
                         .after(plan::prepare_plan),
+                    center_depth::read_back.in_set(RenderSystems::Cleanup),
                 ),
             )
             .add_render_graph_node::<ViewNodeRunner<node::PackFrameNode>>(
@@ -278,6 +279,7 @@ impl Plugin for ShaderPackPlugin {
             return;
         };
         install_error_handler(render_app.world().resource::<RenderDevice>());
+        render_app.init_resource::<center_depth::CenterDepth>();
         formats::init_formats(
             render_app
                 .world()

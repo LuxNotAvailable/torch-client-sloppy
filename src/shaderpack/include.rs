@@ -402,8 +402,7 @@ mod tests {
 
         let mut expanded = 0;
         for pack in packs {
-            let at = crate::shaderpack::discover::dir().join(&pack.name);
-            let source = Source::open(&at, crate::shaderpack::ROOT)
+            let source = crate::shaderpack::discover::open(&pack.name)
                 .unwrap_or_else(|e| panic!("{}: {e}", pack.name));
             let mut cache = Cache::new();
 

@@ -12,7 +12,7 @@ const ALL: &[Var] = &[
         default: if cfg!(feature = "asset_download") {
             "the downloaded asset set"
         } else {
-            "reference/minecraft-26.1.1/assets/minecraft in the checkout"
+            "reference/minecraft-26.3/assets/minecraft in the checkout"
         },
         enabled: true,
     },
@@ -22,7 +22,7 @@ const ALL: &[Var] = &[
         default: if cfg!(feature = "asset_download") {
             "the downloaded asset set"
         } else {
-            "reference/minecraft-26.1.1/data/minecraft in the checkout"
+            "reference/minecraft-26.3/data/minecraft in the checkout"
         },
         enabled: true,
     },
@@ -58,24 +58,6 @@ const ALL: &[Var] = &[
         name: "MC_POOL_THREADS",
         what: "threads in the compute task pool",
         default: "4",
-        enabled: true,
-    },
-    Var {
-        name: "MC_PRESENT",
-        what: "`immediate`, `mailbox`, `fifo` or `fifo_relaxed`, over the VSync option",
-        default: "from the VSync option",
-        enabled: cfg!(not(target_arch = "wasm32")),
-    },
-    Var {
-        name: "MC_FRAME_LATENCY",
-        what: "frames the swapchain may queue ahead",
-        default: "3",
-        enabled: cfg!(not(target_arch = "wasm32")),
-    },
-    Var {
-        name: "MC_NO_HAND",
-        what: "`1` hides the first-person hand, to measure what it costs",
-        default: "off",
         enabled: true,
     },
     Var {
@@ -116,6 +98,12 @@ const ALL: &[Var] = &[
         enabled: true,
     },
     Var {
+        name: "MC_CPU_RIGS",
+        what: "pose mob models on the CPU, re-baking each mob's mesh, instead of in the vertex shader",
+        default: "off",
+        enabled: cfg!(not(target_arch = "wasm32")),
+    },
+    Var {
         name: "MC_COLLIDE_CHECK",
         what: "cross-check the fast collision path against the general one",
         default: "off",
@@ -126,18 +114,6 @@ const ALL: &[Var] = &[
         what: "draw every loaded section instead of culling occluded ones",
         default: "off",
         enabled: true,
-    },
-    Var {
-        name: "MC_SHADERPACK_CHECKED",
-        what: "`1` turns wgpu's runtime checks on for shader-pack pipelines",
-        default: "off",
-        enabled: cfg!(feature = "shader_support"),
-    },
-    Var {
-        name: "MC_SHADERPACK_TIMING",
-        what: "`1` times each stage of a shader pack's frame",
-        default: "off",
-        enabled: cfg!(feature = "shader_support"),
     },
     Var {
         name: "MC_NO_CUTOUT",
@@ -191,6 +167,18 @@ const ALL: &[Var] = &[
         enabled: cfg!(feature = "shader_support"),
     },
     Var {
+        name: "MC_SHADERPACK_TIMING",
+        what: "time each stage of a shader pack's frame on the GPU and log it",
+        default: "off",
+        enabled: cfg!(feature = "shader_support"),
+    },
+    Var {
+        name: "MC_SHADERPACK_CHECKED",
+        what: "compile shader pack modules through wgpu's validated path (bounds checks on) instead of the unchecked one, to chase GPU faults",
+        default: "off",
+        enabled: cfg!(feature = "shader_support"),
+    },
+    Var {
         name: "MC_SHAFTS",
         what: "volumetric light shafts in the post-processing chain",
         default: "off",
@@ -219,19 +207,19 @@ const ALL: &[Var] = &[
     },
     Var {
         name: "MC_DEBUG_CHUNKS",
-        what: "older spelling of MC_DEBUG=chunks",
+        what: "older spelling of MC_DEBUG=chunks, on if set to anything",
         default: "off",
         enabled: true,
     },
     Var {
         name: "MC_DEBUG_LIGHT",
-        what: "older spelling of MC_DEBUG=light",
+        what: "older spelling of MC_DEBUG=light, on if set to anything",
         default: "off",
         enabled: true,
     },
     Var {
         name: "MC_TRACE",
-        what: "older spelling of MC_DEBUG=packet: log the opening packet exchange",
+        what: "log every packet that crosses the connection",
         default: "off",
         enabled: true,
     },
@@ -240,13 +228,6 @@ const ALL: &[Var] = &[
         what: "log every inventory menu change",
         default: "off",
         enabled: true,
-    },
-    Var {
-        name: "MC_FAKE_BAN_ATTRIBUTES",
-        what: "JSON used in place of the player/attributes reply when checking for a multiplayer \
-               ban, for testing the ban notice",
-        default: "ask api.minecraftservices.com",
-        enabled: cfg!(all(feature = "online_mode", not(target_arch = "wasm32"))),
     },
     Var {
         name: "MC_BOT_KILL_SECS",
@@ -297,10 +278,6 @@ pub(crate) fn table() -> impl Iterator<Item = &'static Var> {
     ALL.iter().filter(|v| v.enabled)
 }
 
-pub(crate) fn flag(name: &str) -> bool {
-    std::env::var(name).is_ok_and(|v| !matches!(v.trim(), "" | "0" | "false"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::ALL;
@@ -331,7 +308,7 @@ mod tests {
 
     fn read_names(text: &str) -> Vec<String> {
         let mut names = Vec::new();
-        for call in ["env::var(\"", "env::var_os(\"", "env::flag(\""] {
+        for call in ["env::var(\"", "env::var_os(\""] {
             let mut rest = text;
             while let Some(at) = rest.find(call) {
                 rest = &rest[at + call.len()..];

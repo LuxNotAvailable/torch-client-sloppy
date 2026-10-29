@@ -21,7 +21,6 @@ pub mod no_fall;
 pub mod persist;
 pub mod registry;
 pub mod sneak;
-pub mod spam;
 pub mod special;
 #[cfg(feature = "click_gui")]
 mod store;
@@ -31,7 +30,6 @@ mod store;
 pub mod triggerbot;
 mod turn;
 mod value;
-pub mod vclip;
 pub mod zoom;
 
 pub use edge::{Edge, MS_PER_TICK, Phase, roll};

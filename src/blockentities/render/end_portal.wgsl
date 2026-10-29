@@ -135,9 +135,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     }
     var out = vec4(rgb, 1.0);
 #ifdef TONEMAP_IN_SHADER
-#ifndef TONEMAP_METHOD_NONE
     out = tone_mapping(out, view.color_grading);
-#endif
 #endif
     return out;
 }

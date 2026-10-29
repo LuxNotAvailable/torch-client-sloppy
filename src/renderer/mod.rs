@@ -1,12 +1,15 @@
 pub mod anim;
 mod atlas;
+mod block_anim;
 pub mod clouds;
 pub mod dimension;
 pub mod entity_material;
 pub mod environment;
 pub mod esp_material;
 pub mod frame_view;
+pub mod glint;
 pub mod hand;
+pub mod inventory_figure;
 pub mod input;
 pub mod intent;
 pub mod item_assets;
@@ -24,22 +27,25 @@ pub mod packvertex;
 pub mod panorama;
 pub mod player_model;
 pub mod post;
-pub mod reload;
+pub mod post_effects;
+pub mod rig_parts;
+pub mod screen_effects;
 mod screenshot;
 pub mod skin;
 pub mod sky;
+pub mod antialias;
 pub mod ssaa;
+pub mod view_bob;
 pub mod systems;
 pub mod terrain;
 pub mod terrain_pool;
+pub mod tethers;
 pub mod timeline;
 pub mod visgraph;
 pub mod world_text;
 
 pub use anim::{AnimInput, Armor, HeldItem, HumanoidAnim};
-pub use atlas::{
-    AtlasTables, BlockAtlas, MeshTiles, Sprites, Textures, build_block_atlas, placeholder_atlas,
-};
+pub use atlas::{Textures, build_block_atlas, placeholder_atlas, texture_is_opaque};
 pub use frame_view::{FrameView, FrameViewSystems};
 pub use mesh::{
     MeshBuf, build_section_mesh, lighting_enabled, set_lighting_enabled, set_smooth_lighting,
@@ -126,8 +132,8 @@ pub struct RenderedBlock {
     pub offset: crate::blocks::rand::ShapeOffset,
     #[cfg(feature = "builtin_shaders")]
     pub sways: bool,
-    #[cfg(feature = "shader_support")]
     pub state: u16,
+    #[cfg(feature = "shader_support")]
     pub translucent: bool,
 }
 

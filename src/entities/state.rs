@@ -99,6 +99,8 @@ impl Default for Display {
 #[derive(Clone, Debug)]
 pub struct Extras {
     pub swell: f32,
+    /// Sulfur cube fuse ticks left, partial-tick smooth; 0 when unprimed.
+    pub fuse_remaining: f32,
     pub peek: f32,
     pub render_offset: [f32; 3],
     pub eating: bool,
@@ -180,9 +182,7 @@ pub struct ExtrasShared {
     pub color: u8,
     pub item: HeldItem,
     pub item_rotation: i32,
-    pub hanging_direction: Direction,
-    pub xp_value: i32,
-    pub hook_owner: Option<i32>,
+    pub item_frame_direction: Direction,
     pub villager_kind: Option<&'static str>,
     pub villager_profession: Option<&'static str>,
     pub villager_level: u32,
@@ -229,6 +229,16 @@ pub struct ExtrasShared {
     pub damage: f32,
     pub display_block: Option<u32>,
     pub display_offset: i32,
+    /// An experience orb's value, which picks its icon.
+    pub xp_value: i32,
+    /// The block an end crystal beams to (`BeamTarget`).
+    pub beam_target: Option<[i32; 3]>,
+    /// The entity a guardian's laser locks on (`AttackTarget`), 0 for none.
+    pub attack_target: i32,
+    /// A fishing bobber's angler, from the add-entity data.
+    pub owner_id: i32,
+    /// Who holds this entity's lead (`ClientboundSetEntityLink`).
+    pub leash_holder: Option<i32>,
     pub display: Option<Box<Display>>,
     pub block_state: Option<u32>,
     pub fuse: i32,
@@ -244,6 +254,11 @@ pub struct ExtrasShared {
     pub leggings: Option<&'static str>,
     pub boots: Option<&'static str>,
     pub body_armor: Option<&'static str>,
+    /// Block state of a block item in the body slot (a sulfur cube's catch).
+    pub body_block: Option<u32>,
+    /// [`glint_bit`] flags for enchanted armour.
+    pub armor_glint: u8,
+    pub armor_trims: [Option<crate::entities::render::humanoid::armor::Trim>; 4],
     pub left_handed: bool,
     pub name: Option<String>,
     pub name_spans: Vec<crate::text::Span>,
@@ -311,6 +326,7 @@ impl Extras {
     pub fn with_shared(shared: std::sync::Arc<ExtrasShared>) -> Extras {
         Extras {
             swell: 0.0,
+            fuse_remaining: 0.0,
             peek: 0.0,
             render_offset: [0.0; 3],
             eating: false,
@@ -388,6 +404,11 @@ impl Default for Extras {
 impl Default for ExtrasShared {
     fn default() -> Self {
         ExtrasShared {
+            xp_value: 0,
+            beam_target: None,
+            attack_target: 0,
+            owner_id: 0,
+            leash_holder: None,
             is_baby: false,
             powered: false,
             size: 1,
@@ -402,9 +423,7 @@ impl Default for ExtrasShared {
             color: 16,
             item: HeldItem::default(),
             item_rotation: 0,
-            hanging_direction: Direction::South,
-            xp_value: 0,
-            hook_owner: None,
+            item_frame_direction: Direction::South,
             villager_kind: None,
             villager_profession: None,
             villager_level: 1,
@@ -466,6 +485,9 @@ impl Default for ExtrasShared {
             leggings: None,
             boots: None,
             body_armor: None,
+            body_block: None,
+            armor_glint: 0,
+            armor_trims: [None; 4],
             left_handed: false,
             name: None,
             name_spans: Vec::new(),
@@ -518,6 +540,10 @@ pub struct EntityState {
     pub death_time: f32,
     pub scale: f32,
     pub age_scale: f32,
+    #[allow(
+        dead_code,
+        reason = "half of the bounding box; the height is read and the width is carried with it"
+    )]
     pub bounding_box_width: f32,
     pub bounding_box_height: f32,
     pub eye_height: f32,
@@ -586,7 +612,7 @@ impl EntityState {
             age_scale: 1.0,
             bounding_box_width: 0.6,
             bounding_box_height: 1.8,
-            eye_height: crate::session::PlayerBody::STANDING.eye_height,
+            eye_height: 1.62,
             is_invisible: false,
             is_in_water: false,
             is_fully_frozen: false,
@@ -602,4 +628,12 @@ impl EntityState {
             carrier: None,
         }
     }
+}
+
+pub mod glint_bit {
+    pub const HEAD: u8 = 1;
+    pub const CHEST: u8 = 2;
+    pub const LEGS: u8 = 4;
+    pub const FEET: u8 = 8;
+    pub const BODY: u8 = 16;
 }

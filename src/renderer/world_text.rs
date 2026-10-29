@@ -59,16 +59,10 @@ struct Layout {
 struct Layouts {
     by_entity: HashMap<i32, Layout>,
     generation: u64,
-    fonts: u32,
 }
 
 impl Layouts {
     fn get(&mut self, id: i32, font: &Font, display: &Display) -> &Layout {
-        let fonts = crate::renderer::reload::generation();
-        if self.fonts != fonts {
-            self.fonts = fonts;
-            self.by_entity.clear();
-        }
         let generation = self.generation;
         let entry = self.by_entity.entry(id).or_insert_with(|| Layout {
             text: Vec::new(),
@@ -319,6 +313,9 @@ fn setup(
         let material = materials.add(EntityMaterial {
             texture: Some(gui.image.clone()),
             params: EntityParams::new(LightMode::Text, 0.0, Lit::full_bright()),
+            #[cfg(not(target_arch = "wasm32"))]
+            rig_parts: crate::renderer::rig_parts::PARTS,
+            glint: crate::renderer::entity_material::GLINT,
             alpha_mode: AlphaMode::Blend,
             depth_bias: 0,
             see_through,

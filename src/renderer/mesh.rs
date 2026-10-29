@@ -1,7 +1,8 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::lighter::{self, QuadLight};
-use super::{BlockGeom, MeshTiles, Occupancy, RenderedBlock};
+use super::{BlockGeom, Occupancy, RenderedBlock};
+use crate::TEXTURE_MAP;
 use crate::blocks::bake::tile_uv_rect;
 use crate::blocks::rand::position_seed;
 use crate::util::javarandom::JavaRandom;
@@ -69,8 +70,6 @@ pub struct PackedVertex {
 
 const _: () = assert!(std::mem::size_of::<PackedVertex>() == 20);
 
-pub use crate::entities::quads::QUAD_INDICES;
-
 #[derive(Default)]
 pub struct MeshBuf {
     pub verts: Vec<PackedVertex>,
@@ -78,81 +77,10 @@ pub struct MeshBuf {
     pub cutout_idx: Vec<u32>,
     pub min: [i16; 3],
     pub max: [i16; 3],
-    pub faces: [[u16; FACE_GROUPS]; 2],
     #[cfg(feature = "shader_support")]
     pub pack: Vec<super::packvertex::PackQuad>,
     #[cfg(feature = "shader_support")]
     pub pack_block: Option<super::packvertex::PackBlock>,
-}
-
-pub const FACE_GROUPS: usize = 7;
-pub const FACE_UNALIGNED: usize = 6;
-pub const FACE_STORAGE_ORDER: [usize; FACE_GROUPS] = [0, 4, 2, FACE_UNALIGNED, 3, 5, 1];
-
-fn face_rank(group: usize) -> usize {
-    FACE_STORAGE_ORDER
-        .iter()
-        .position(|&g| g == group)
-        .expect("a face group has a rank")
-}
-
-fn triangle_group(verts: &[PackedVertex], tri: &[u32]) -> usize {
-    let p = |i: u32| verts[i as usize].pos.map(i64::from);
-    let (p0, p1, p2) = (p(tri[0]), p(tri[1]), p(tri[2]));
-    let e1 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
-    let e2 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
-    let n = [
-        e1[1] * e2[2] - e1[2] * e2[1],
-        e1[2] * e2[0] - e1[0] * e2[2],
-        e1[0] * e2[1] - e1[1] * e2[0],
-    ];
-    match n {
-        [x, 0, 0] if x != 0 => usize::from(x > 0),
-        [0, y, 0] if y != 0 => 2 + usize::from(y > 0),
-        [0, 0, z] if z != 0 => 4 + usize::from(z > 0),
-        _ => FACE_UNALIGNED,
-    }
-}
-
-fn face_group(verts: &[PackedVertex], quad: &[u32]) -> usize {
-    let first = triangle_group(verts, &quad[..3]);
-    if first == triangle_group(verts, &quad[3..]) {
-        first
-    } else {
-        FACE_UNALIGNED
-    }
-}
-
-fn group_list(list: &mut Vec<u32>, verts: &[PackedVertex]) -> [u16; FACE_GROUPS] {
-    debug_assert!(list.len() % 6 == 0, "index lists are whole quads");
-    let groups: Vec<u8> = list
-        .chunks_exact(6)
-        .map(|q| face_group(verts, q) as u8)
-        .collect();
-    let mut counts = [0usize; FACE_GROUPS];
-    for &g in &groups {
-        counts[g as usize] += 1;
-    }
-    if counts.iter().any(|&c| c > u16::MAX as usize) {
-        return [0; FACE_GROUPS];
-    }
-    if groups.is_sorted_by_key(|&g| face_rank(g as usize)) {
-        return counts.map(|c| c as u16);
-    }
-    let mut at = [0usize; FACE_GROUPS];
-    let mut next = 0;
-    for g in FACE_STORAGE_ORDER {
-        at[g] = next;
-        next += counts[g];
-    }
-    let mut sorted = vec![0u32; list.len()];
-    for (quad, &g) in list.chunks_exact(6).zip(&groups) {
-        let to = at[g as usize] * 6;
-        sorted[to..to + 6].copy_from_slice(quad);
-        at[g as usize] += 1;
-    }
-    *list = sorted;
-    counts.map(|c| c as u16)
 }
 
 #[cfg(feature = "shader_support")]
@@ -274,56 +202,6 @@ impl MeshBuf {
         self.cutout_idx.shrink_to_fit();
     }
 
-    fn group_faces(&mut self) {
-        self.faces = [
-            group_list(&mut self.idx, &self.verts),
-            group_list(&mut self.cutout_idx, &self.verts),
-        ];
-    }
-
-    fn linearize(&mut self) {
-        debug_assert_eq!(
-            (self.idx.len() + self.cutout_idx.len()) / 6 * 4,
-            self.verts.len(),
-            "every vertex belongs to exactly one quad"
-        );
-        let mut verts = Vec::with_capacity(self.verts.len());
-        #[cfg(feature = "shader_support")]
-        let moves_pack = !self.pack.is_empty() && self.pack.len() * 4 == self.verts.len();
-        #[cfg(feature = "shader_support")]
-        let mut pack = Vec::with_capacity(if moves_pack { self.pack.len() } else { 0 });
-        for quad in self
-            .idx
-            .chunks_exact(6)
-            .chain(self.cutout_idx.chunks_exact(6))
-        {
-            let base = quad[0];
-            debug_assert_eq!(
-                quad,
-                QUAD_INDICES.map(|i| base + i),
-                "a quad off the fixed pattern"
-            );
-            let base = base as usize;
-            verts.extend_from_slice(&self.verts[base..base + 4]);
-            #[cfg(feature = "shader_support")]
-            if moves_pack {
-                pack.push(self.pack[base / 4]);
-            }
-        }
-        self.verts = verts;
-        #[cfg(feature = "shader_support")]
-        if moves_pack {
-            self.pack = pack;
-        }
-        let solid = (self.idx.len() / 6) as u32;
-        for (list, first) in [(&mut self.idx, 0), (&mut self.cutout_idx, solid)] {
-            for (q, quad) in list.chunks_exact_mut(6).enumerate() {
-                let base = (first + q as u32) * 4;
-                quad.copy_from_slice(&QUAD_INDICES.map(|i| base + i));
-            }
-        }
-    }
-
     fn push_vertex(&mut self, pos: [f32; 3], uv: [u16; 2], light: [u8; 4], color: [u8; 4]) {
         let q = |v: f32| (v * 256.0).round().clamp(i16::MIN as f32, i16::MAX as f32) as i16;
         let p = [q(pos[0]), q(pos[1]), q(pos[2])];
@@ -355,7 +233,7 @@ impl MeshBuf {
             Some(block) => pack_color(block.fluid_color(block.tint, fluid_face(corners))),
             None => col,
         };
-        for i in [0, 3, 2, 1] {
+        for i in 0..4 {
             self.push_vertex(corners[i], pack_uv(face_uvs[i]), light, col);
         }
         #[cfg(feature = "shader_support")]
@@ -378,7 +256,8 @@ impl MeshBuf {
             self.pack
                 .push(super::packvertex::quad(block, corners, face_uvs, normal));
         }
-        self.idx.extend(QUAD_INDICES.map(|i| base + i));
+        self.idx
+            .extend_from_slice(&[base + 2, base + 1, base, base + 3, base + 2, base]);
     }
 
     #[inline]
@@ -429,7 +308,7 @@ impl MeshBuf {
         } else {
             &mut self.cutout_idx
         };
-        idx.extend(QUAD_INDICES.map(|i| base + i));
+        idx.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 }
 
@@ -518,21 +397,22 @@ const CULL_NBR: [(i32, i32, i32); 6] = [
 ];
 
 pub fn build_section_mesh(
-    blocks: &[(i32, i32, i32, RenderedBlock)],
+    blocks: &[(i32, i32, i32, &RenderedBlock)],
     x_base: i32,
     y_base: i32,
     z_base: i32,
-    tiles: MeshTiles,
+    atlas_rows: u32,
     occ: &Occupancy,
 ) -> (MeshBuf, MeshBuf) {
     let mut buf = MeshBuf::new();
     let mut water = MeshBuf::new();
     let cardinal = super::dimension::current().cardinal();
-    let MeshTiles {
-        rows: atlas_rows,
-        water_still,
-        water_flow,
-    } = tiles;
+    let (water_still, water_flow) = {
+        let m = TEXTURE_MAP.get();
+        let still = m.and_then(|m| m.get("water_still").copied()).unwrap_or(0);
+        let flow = m.and_then(|m| m.get("water_flow").copied()).unwrap_or(0);
+        (still, flow)
+    };
 
     #[cfg(feature = "shader_support")]
     let pack_ids = super::packvertex::current();
@@ -563,9 +443,20 @@ pub fn build_section_mesh(
             water.pack_block = Some(block);
         }
 
+        if let Some(quads) = crate::blockentities::bake::quads_at(rb.state, [*bx, *by, *bz]) {
+            emit_block_entity(wx, wy, wz, &quads, occ, (*bx, *by, *bz), cardinal, &mut buf);
+        }
+
         match &rb.geom {
             BlockGeom::Model(baked) => {
-                let target = if rb.translucent { &mut water } else { &mut buf };
+                #[cfg(feature = "shader_support")]
+                let target = if pack_ids.is_some() && rb.translucent {
+                    &mut water
+                } else {
+                    &mut buf
+                };
+                #[cfg(not(feature = "shader_support"))]
+                let target = &mut buf;
                 emit_baked(wx, wy, wz, rb, baked, occ, *bx, *by, *bz, cardinal, target);
             }
             BlockGeom::Fluid {
@@ -627,9 +518,6 @@ pub fn build_section_mesh(
             );
         }
     }
-    buf.group_faces();
-    buf.linearize();
-    water.linearize();
     buf.shrink_to_fit();
     water.shrink_to_fit();
     (buf, water)
@@ -710,7 +598,12 @@ fn emit_baked(
                 }
                 let neighbour_in_group = occ.same_cull_group(nx, ny, nz, rb.cull_group);
                 if rb.cull_group == crate::util::block_model::LEAVES_CULL_GROUP {
-                    if neighbour_in_group && cull % 2 == 0 {
+                    // Between two leaves one face of the pair is enough, and a face
+                    // with a second leaf or solid block behind its neighbour is
+                    // buried: no gap in the canopy shows it (MoreCulling's depth 2).
+                    if neighbour_in_group
+                        && (cull % 2 == 0 || leaf_buried(occ, (nx, ny, nz), (dx, dy, dz)))
+                    {
                         continue;
                     }
                 } else if neighbour_in_group {
@@ -743,6 +636,40 @@ fn emit_baked(
             buf.push_baked(quad, wx, wy, wz, &lit, quad_tint, material);
         }
     }
+}
+
+/// A baked block entity: flat-lit from its own cell, shaded by facing, like
+/// the entity lighting its rig would get.
+#[allow(clippy::too_many_arguments)]
+fn emit_block_entity(
+    wx: f32,
+    wy: f32,
+    wz: f32,
+    quads: &[crate::blocks::BakedQuad],
+    occ: &Occupancy,
+    at: (i32, i32, i32),
+    cardinal: &[f32; 6],
+    buf: &mut MeshBuf,
+) {
+    let light = flat_light_coords(occ, at, at);
+    for quad in quads {
+        let lit = QuadLight::flat(quad.shade(cardinal), light);
+        buf.push_baked(
+            quad,
+            wx,
+            wy,
+            wz,
+            &lit,
+            crate::util::biome_color::NEUTRAL,
+            MATERIAL_SOLID,
+        );
+    }
+}
+
+fn leaf_buried(occ: &Occupancy, (x, y, z): (i32, i32, i32), (dx, dy, dz): (i32, i32, i32)) -> bool {
+    let (x, y, z) = (x + dx, y + dy, z + dz);
+    occ.is_solid(x, y, z)
+        || occ.same_cull_group(x, y, z, crate::util::block_model::LEAVES_CULL_GROUP)
 }
 
 fn flat_light_coords(occ: &Occupancy, state: (i32, i32, i32), pos: (i32, i32, i32)) -> u32 {
@@ -1065,12 +992,6 @@ mod tests {
     use azalea::block::BlockState;
     use azalea_registry::builtin::BlockKind;
 
-    const ONE_ROW: MeshTiles = MeshTiles {
-        rows: 1,
-        water_still: 0,
-        water_flow: 0,
-    };
-
     #[test]
     fn the_shade_table_matches_the_transfer_function() {
         assert_eq!(SRGB_TO_LINEAR[0], 0.0);
@@ -1098,8 +1019,8 @@ mod tests {
         let rb = crate::util::block_model::block_visual(BlockState::from(BlockKind::Stone));
         occ.set_solid(0, 0, 0);
         occ.set_full_cube(0, 0, 0);
-        let blocks = vec![(0, 0, 0, rb)];
-        let (buf, _) = build_section_mesh(&blocks, 0, 0, 0, ONE_ROW, &occ);
+        let blocks = vec![(0, 0, 0, &rb)];
+        let (buf, _) = build_section_mesh(&blocks, 0, 0, 0, 1, &occ);
         assert!(!buf.verts.is_empty(), "the block emitted no faces at all");
         for v in &buf.verts {
             assert_eq!(
@@ -1110,145 +1031,30 @@ mod tests {
         }
     }
 
-    fn quads_by_group(list: &[u32], faces: &[u16; FACE_GROUPS]) -> Vec<(usize, [u32; 6])> {
-        let mut out = Vec::new();
-        let mut at = 0;
-        for group in FACE_STORAGE_ORDER {
-            for _ in 0..faces[group] {
-                out.push((group, list[at..at + 6].try_into().unwrap()));
-                at += 6;
-            }
-        }
-        assert_eq!(at, list.len(), "the counts cover the whole list");
-        out
-    }
-
     #[test]
-    fn a_cube_puts_one_face_in_each_axis_group() {
+    fn a_leaf_buried_in_a_canopy_draws_nothing() {
+        use crate::util::block_model::LEAVES_CULL_GROUP;
         crate::blocks::tests::atlas_once();
+        let rb = crate::util::block_model::block_visual(BlockState::from(BlockKind::OakLeaves));
+        assert_eq!(rb.cull_group, LEAVES_CULL_GROUP);
         let mut occ = Occupancy::new(0, 0, -2, 20);
-        let rb = crate::util::block_model::block_visual(BlockState::from(BlockKind::Stone));
-        occ.set_solid(0, 0, 0);
-        occ.set_full_cube(0, 0, 0);
-        let (buf, _) = build_section_mesh(&[(0, 0, 0, rb)], 0, 0, 0, ONE_ROW, &occ);
-        assert_eq!(buf.faces[0], [1, 1, 1, 1, 1, 1, 0]);
-        assert_eq!(buf.faces[1], [0; FACE_GROUPS]);
-        for (group, quad) in quads_by_group(&buf.idx, &buf.faces[0]) {
-            let axis = group / 2;
-            let plane = if group % 2 == 1 { 256 } else { 0 };
-            for i in quad {
-                assert_eq!(buf.verts[i as usize].pos[axis], plane, "group {group}");
+        for x in 0..5 {
+            for y in 0..5 {
+                for z in 0..5 {
+                    occ.set_cull_group(x, y, z, LEAVES_CULL_GROUP);
+                }
             }
         }
-    }
-
-    #[test]
-    fn a_cross_plant_is_unaligned() {
-        crate::blocks::tests::atlas_once();
-        let occ = Occupancy::new(0, 0, -2, 20);
-        let rb = crate::util::block_model::block_visual(BlockState::from(BlockKind::Poppy));
-        let (buf, _) = build_section_mesh(&[(0, 0, 0, rb)], 0, 0, 0, ONE_ROW, &occ);
-        let quads = (buf.idx.len() + buf.cutout_idx.len()) / 6;
-        assert!(quads > 0, "the plant emitted no quads");
-        assert_eq!(
-            buf.faces[0][FACE_UNALIGNED] + buf.faces[1][FACE_UNALIGNED],
-            quads as u16
+        let (buried, _) = build_section_mesh(&[(2, 2, 2, &rb)], 0, 0, 0, 1, &occ);
+        assert!(
+            buried.verts.is_empty(),
+            "a leaf two deep on every side drew faces"
         );
-    }
 
-    #[test]
-    fn grouping_is_stable_and_moves_whole_quads() {
-        let v = |x: i16, y: i16, z: i16| PackedVertex {
-            pos: [x, y, z, 0],
-            ..Default::default()
-        };
-        let verts = vec![
-            v(0, 256, 0),
-            v(0, 256, 256),
-            v(256, 256, 256),
-            v(256, 256, 0),
-            v(0, 0, 0),
-            v(0, 0, 256),
-            v(0, 256, 256),
-            v(0, 256, 0),
-            v(0, 512, 0),
-            v(0, 512, 256),
-            v(256, 512, 256),
-            v(256, 512, 0),
-        ];
-        let quad = |b: u32| [b, b + 1, b + 2, b, b + 2, b + 3];
-        let mut list: Vec<u32> = [quad(0), quad(4), quad(8)].concat();
-        let faces = group_list(&mut list, &verts);
-        assert_eq!(faces, [1, 0, 0, 2, 0, 0, 0]);
-        assert_eq!(list, [quad(4), quad(0), quad(8)].concat());
-    }
-
-    #[test]
-    fn linearize_lays_quads_out_in_list_order() {
-        let v = |x: i16| PackedVertex {
-            pos: [x, 0, 0, 0],
-            ..Default::default()
-        };
-        let quad = |b: u32| QUAD_INDICES.map(|i| b + i);
-        let mut buf = MeshBuf::new();
-        buf.verts = (0..12).map(v).collect();
-        buf.idx = [quad(8), quad(0)].concat();
-        buf.cutout_idx = quad(4).to_vec();
-        buf.linearize();
-        let xs: Vec<i16> = buf.verts.iter().map(|v| v.pos[0]).collect();
-        assert_eq!(xs, [8, 9, 10, 11, 0, 1, 2, 3, 4, 5, 6, 7]);
-        assert_eq!(buf.idx, [quad(0), quad(4)].concat());
-        assert_eq!(buf.cutout_idx, quad(8));
-    }
-
-    #[test]
-    fn groups_are_stored_in_rank_order() {
-        let mut seen = FACE_STORAGE_ORDER;
-        seen.sort_unstable();
-        assert_eq!(seen, [0, 1, 2, 3, 4, 5, 6]);
-        assert_eq!(FACE_STORAGE_ORDER[3], FACE_UNALIGNED);
-        let v = |x: i16, y: i16, z: i16| PackedVertex {
-            pos: [x, y, z, 0],
-            ..Default::default()
-        };
-        let verts = vec![
-            v(0, 0, 0),
-            v(0, 0, 256),
-            v(0, 256, 256),
-            v(0, 256, 0),
-            v(256, 0, 0),
-            v(256, 256, 0),
-            v(256, 256, 256),
-            v(256, 0, 256),
-            v(0, 0, 0),
-            v(256, 0, 0),
-            v(256, 0, 256),
-            v(0, 0, 256),
-            v(0, 256, 0),
-            v(0, 256, 256),
-            v(256, 256, 256),
-            v(256, 256, 0),
-            v(0, 0, 0),
-            v(0, 256, 0),
-            v(256, 256, 0),
-            v(256, 0, 0),
-            v(0, 0, 256),
-            v(256, 0, 256),
-            v(256, 256, 256),
-            v(0, 256, 256),
-            v(0, 0, 0),
-            v(256, 128, 0),
-            v(256, 256, 256),
-            v(0, 128, 256),
-        ];
-        let quad = |b: u32| [b, b + 1, b + 2, b, b + 2, b + 3];
-        let mut list: Vec<u32> = (0..7).flat_map(|i| quad(i * 4)).collect();
-        let faces = group_list(&mut list, &verts);
-        assert_eq!(faces, [1; FACE_GROUPS]);
-        let stored: Vec<usize> = list
-            .chunks_exact(6)
-            .map(|q| face_group(&verts, q))
-            .collect();
-        assert_eq!(stored, FACE_STORAGE_ORDER);
+        let (rim, _) = build_section_mesh(&[(0, 2, 2, &rb)], 0, 0, 0, 1, &occ);
+        assert!(
+            !rim.verts.is_empty(),
+            "the canopy's outer face went missing"
+        );
     }
 }

@@ -7,7 +7,7 @@
     java -DbundlerMainClass=net.minecraft.data.Main -jar server.jar          --reports --output /tmp/gen
     cp /tmp/gen/reports/{registries,blocks}.json        <crate>/reference/minecraft-<version>/generated/reports/
     python3 protogen.py packets [--source PATH] [--version NAME] [--output PATH]
-    --version 26.1.1
+    --version 26.3
     --source  <crate>/reference/minecraft-<version>
     --output  <crate>/src/protocol/data/packets-<version>.json
     protocol number   <source>/version.json  ("protocol_version")
@@ -299,7 +299,7 @@ def main():
     modes = ap.add_subparsers(dest="mode", required=True)
 
     packets = modes.add_parser("packets", help="packet-id tables from decompiled source")
-    packets.add_argument("--version", default="26.1.1")
+    packets.add_argument("--version", default="26.3")
     packets.add_argument("--source")
     packets.add_argument("--output")
 

@@ -3,6 +3,7 @@ use std::path::Path;
 use std::sync::{Mutex, PoisonError};
 
 use serde_json::Value;
+use sha1::Digest;
 
 use crate::platform::{http, storage};
 
@@ -249,16 +250,22 @@ pub(crate) fn download(project_id: &str, versions: &[String]) -> Result<String, 
     {
         return Err(format!("not a pack zip: {name}"));
     }
-    if super::dir().join(&name).exists() {
+    let dir = super::dir();
+    let dest = dir.join(&name);
+    if dest.exists() {
         return Ok(name);
     }
 
     let bytes = http::get_as_blocking(&str_of(file, "url"), USER_AGENT)?;
     let expected = file["hashes"]["sha1"].as_str().unwrap_or_default();
-    if !super::sha1_hex(&bytes).eq_ignore_ascii_case(expected) {
+    if !sha1_hex(&bytes).eq_ignore_ascii_case(expected) {
         return Err("download does not match its hash".into());
     }
-    super::install(&name, &bytes)?;
+    let part = dir.join(format!("{name}.part"));
+    std::fs::create_dir_all(&dir)
+        .and_then(|()| std::fs::write(&part, &bytes))
+        .and_then(|()| std::fs::rename(&part, &dest))
+        .map_err(|e| e.to_string())?;
     edit_downloaded(|record| {
         record.insert(name.clone(), project_id.to_owned());
     });
@@ -304,9 +311,16 @@ pub(crate) fn installed_projects() -> Vec<String> {
                 .is_some_and(|e| e.eq_ignore_ascii_case("zip"))
         })
         .filter_map(|pack| {
-            let hash = super::sha1_hex(&std::fs::read(dir.join(&pack.name)).ok()?);
+            let hash = sha1_hex(&std::fs::read(dir.join(&pack.name)).ok()?);
             let version = get_json(&format!("{API}/version_file/{hash}?algorithm=sha1")).ok()?;
             Some(str_of(&version, "project_id")).filter(|id| !id.is_empty())
         })
+        .collect()
+}
+
+fn sha1_hex(bytes: &[u8]) -> String {
+    sha1::Sha1::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
         .collect()
 }

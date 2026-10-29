@@ -307,6 +307,32 @@ pub fn apply_weather(sky: &mut SkyState, rain: f32, thunder: f32) {
     }
 }
 
+static SKY_FLASH: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Ticks of lightning flash left (`ClientLevel.skyFlashTime`).
+pub fn set_sky_flash(ticks: f32) {
+    SKY_FLASH.store(ticks.max(0.0).to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn sky_flash() -> f32 {
+    f32::from_bits(SKY_FLASH.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// The lightning flash's layers: the sky 22% of the way to a pale blue (in
+/// sRGB), and full sky light, while it lasts.
+pub fn apply_sky_flash(sky: &mut SkyState, flashing: bool) {
+    if !flashing {
+        return;
+    }
+    let [r, g, b, a] = sky.sky_color.to_rgba_f32();
+    let mix = |from: f32, to: f32| from + (to - from) * 0.22;
+    let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u32;
+    sky.sky_color = super::timeline::Argb(
+        byte(a) << 24 | byte(mix(r, 0.8)) << 16 | byte(mix(g, 0.8)) << 8 | byte(mix(b, 1.0)),
+    );
+    sky.sky_light_factor = 1.0;
+}
+
 static RAIN_LEVEL: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 static THUNDER_LEVEL: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
@@ -481,8 +507,10 @@ mod tests {
         let bucket = blend.bucket_for(0);
         blend.add_weight(bucket, 216.0);
         let layer = blend.resolve(&bases());
-        assert_eq!(layer.sky_color, bases().sky_color);
-        assert_eq!(layer.fog_distance, (0.0, 1024.0));
+        // Row 0 as the biome table has it now: the table is process-wide and
+        // another test may have loaded the real biomes into it.
+        let alone = BiomeLayer::fold(crate::util::biome_color::env(0), &bases());
+        assert_eq!(layer, alone);
     }
 
     #[test]
@@ -590,6 +618,23 @@ mod tests {
     }
 }
 
+/// The chunk radius the server streams, 0 until it says.
+static SERVER_CHUNK_RADIUS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+pub fn set_server_chunk_radius(radius: u32) {
+    SERVER_CHUNK_RADIUS.store(radius, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Vanilla's `getEffectiveRenderDistance`: terrain only reaches as far as
+/// the server streams it, so fog that ends at the client's own setting would
+/// leave the edge of the world bare.
+pub fn effective_render_distance(client: i32) -> i32 {
+    match SERVER_CHUNK_RADIUS.load(std::sync::atomic::Ordering::Relaxed) {
+        0 => client,
+        server => client.min(server as i32),
+    }
+}
+
 #[derive(Resource)]
 pub struct Environment {
     pub sky: SkyState,
@@ -660,6 +705,7 @@ impl Environment {
             (0.0, 0.0)
         };
         apply_weather(&mut sky, rain, thunder);
+        apply_sky_flash(&mut sky, dim.can_have_weather() && sky_flash() > 0.0);
 
         self.rain_fog
             .advance(rain, delta_ticks, sky_light, has_precipitation);

@@ -1,6 +1,6 @@
 use azalea::block::BlockTrait;
 use azalea::block::fluid_state::{FluidKind, FluidState};
-use simdnbt::owned::Nbt;
+use simdnbt::owned::NbtCompound;
 
 use super::TickCtx;
 
@@ -17,7 +17,7 @@ const ROTATION_SPEED: f32 = -0.0375;
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Data {}
 
-pub fn decode(_tag: &Nbt) -> Data {
+pub fn decode(_tag: &NbtCompound) -> Data {
     Data::default()
 }
 

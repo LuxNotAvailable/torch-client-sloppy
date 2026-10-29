@@ -37,6 +37,7 @@ pub(crate) fn install_panic_hook() {
             let mut err = std::io::stderr().lock();
             let _ = err.write_all(report.as_bytes());
             let _ = err.flush();
+            super::logfile::write(&report, true);
             write_crash_log(&report);
         }
     }));
@@ -58,6 +59,14 @@ fn write_crash_log(report: &str) {
         .open(path)
     {
         let _ = file.write_all(report.as_bytes());
+        // What led up to it: the session log's last lines (the panic itself
+        // is the last of them, so it is not repeated).
+        let recent = super::logfile::recent();
+        let before = recent.len().saturating_sub(report.lines().count());
+        let _ = writeln!(file, "\n---------------- log before the panic ----------------");
+        for line in &recent[..before] {
+            let _ = writeln!(file, "{line}");
+        }
     }
 }
 

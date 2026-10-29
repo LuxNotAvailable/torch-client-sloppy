@@ -15,6 +15,9 @@ macro_rules! counted {
 pub(crate) mod alloc;
 pub(crate) mod budget;
 mod layer;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod logfile;
+pub(crate) mod frame_profile;
 pub(crate) mod panic_report;
 #[cfg(feature = "profiling")]
 pub(crate) mod profiling;
@@ -82,11 +85,13 @@ fn emit(level: Level, out: &str) {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn emit(_level: Level, out: &str) {
+fn emit(level: Level, out: &str) {
     use std::io::Write as _;
     let mut err = std::io::stderr().lock();
     let _ = err.write_all(out.as_bytes());
     let _ = err.write_all(b"\n");
+    drop(err);
+    logfile::write(out, matches!(level, Level::Warn | Level::Error));
 }
 
 pub fn debug_on(tag: &str) -> bool {
@@ -98,12 +103,8 @@ pub fn debug_on(tag: &str) -> bool {
             .map(|t| t.trim().to_ascii_lowercase())
             .filter(|t| !t.is_empty())
             .collect();
-        for (var, tag) in [
-            ("MC_DEBUG_CHUNKS", "chunks"),
-            ("MC_DEBUG_LIGHT", "light"),
-            ("MC_TRACE", "packet"),
-        ] {
-            if crate::platform::env::flag(var) {
+        for (var, tag) in [("MC_DEBUG_CHUNKS", "chunks"), ("MC_DEBUG_LIGHT", "light")] {
+            if std::env::var_os(var).is_some() {
                 tags.push(tag.to_string());
             }
         }

@@ -7,24 +7,21 @@ use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
-use bevy::{
-    asset::{Asset, embedded_asset},
-    pbr::{ExtendedMaterial, MaterialExtension, MaterialPlugin},
-    render::render_resource::AsBindGroup,
-    shader::ShaderRef,
-};
 #[cfg(feature = "builtin_shaders")]
 use bevy::{
+    asset::{Asset, embedded_asset},
     mesh::{MeshBuilder, MeshVertexBufferLayoutRef, SphereKind, SphereMeshBuilder},
-    pbr::{Material, MaterialPipeline},
-    render::render_resource::{RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError},
+    pbr::{Material, MaterialPipeline, MaterialPlugin},
+    render::render_resource::{
+        AsBindGroup, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
+    },
+    shader::ShaderRef,
 };
 
 use super::AppState;
 use super::dimension::{self, Skybox};
-use super::mesh::QUAD_INDICES;
 use super::systems::WorldCamera;
-use super::timeline::{self, Argb, HORIZON_HEIGHT, SkyState};
+use super::timeline::{self, Argb, SkyState};
 
 const SKY_SCALE: f32 = 16.0;
 
@@ -93,6 +90,111 @@ impl Material for SkyMaterial {
     }
 }
 
+/// What a sky part draws with: its source material's look, pinned behind the
+/// world. The parts are real geometry around the camera, and the sunrise fan
+/// in particular dips to eye level as it fades, so drawn at their true depth
+/// they would cover the ground.
+#[derive(Asset, TypePath, bevy::render::render_resource::AsBindGroup, Clone)]
+pub struct SkyPartMaterial {
+    #[uniform(0)]
+    tint: Vec4,
+    #[texture(1)]
+    #[sampler(2)]
+    texture: Option<Handle<Image>>,
+    alpha_mode: AlphaMode,
+    depth_bias: f32,
+}
+
+impl SkyPartMaterial {
+    fn of(source: &StandardMaterial) -> SkyPartMaterial {
+        SkyPartMaterial {
+            tint: source.base_color.to_linear().to_vec4(),
+            texture: source.base_color_texture.clone(),
+            alpha_mode: source.alpha_mode,
+            depth_bias: source.depth_bias,
+        }
+    }
+
+    fn matches(&self, source: &StandardMaterial) -> bool {
+        self.tint == source.base_color.to_linear().to_vec4()
+            && self.texture == source.base_color_texture
+            && self.alpha_mode == source.alpha_mode
+    }
+}
+
+impl bevy::pbr::Material for SkyPartMaterial {
+    fn vertex_shader() -> bevy::shader::ShaderRef {
+        super::embedded_shader("renderer/sky_part.wgsl")
+    }
+
+    fn fragment_shader() -> bevy::shader::ShaderRef {
+        super::embedded_shader("renderer/sky_part.wgsl")
+    }
+
+    fn alpha_mode(&self) -> AlphaMode {
+        self.alpha_mode
+    }
+
+    /// Orders the parts among themselves; it moves no depth.
+    fn depth_bias(&self) -> f32 {
+        self.depth_bias
+    }
+
+    fn enable_prepass() -> bool {
+        false
+    }
+
+    fn enable_shadows() -> bool {
+        false
+    }
+
+    fn specialize(
+        _pipeline: &bevy::pbr::MaterialPipeline,
+        descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
+        layout: &bevy::mesh::MeshVertexBufferLayoutRef,
+        _key: bevy::pbr::MaterialPipelineKey<Self>,
+    ) -> Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
+        let mut attributes = vec![Mesh::ATTRIBUTE_POSITION.at_shader_location(0)];
+        for (attribute, location, def) in [
+            (Mesh::ATTRIBUTE_UV_0, 1, "SKY_UVS"),
+            (Mesh::ATTRIBUTE_COLOR, 2, "SKY_COLORS"),
+        ] {
+            if layout.0.contains(attribute.id) {
+                attributes.push(attribute.at_shader_location(location));
+                descriptor.vertex.shader_defs.push(def.into());
+                if let Some(fragment) = descriptor.fragment.as_mut() {
+                    fragment.shader_defs.push(def.into());
+                }
+            }
+        }
+        descriptor.vertex.buffers = vec![layout.0.get_layout(&attributes)?];
+        descriptor.primitive.cull_mode = None;
+        Ok(())
+    }
+}
+
+/// The sky part's `StandardMaterial`, which the sky updates and shader packs
+/// read; [`SkyPartMaterial`] mirrors it for drawing.
+#[derive(Component)]
+pub(crate) struct SkySource(pub Handle<StandardMaterial>);
+
+fn mirror_sky_materials(
+    sources: Res<Assets<StandardMaterial>>,
+    mut mirrors: ResMut<Assets<SkyPartMaterial>>,
+    parts: Query<(&SkySource, &MeshMaterial3d<SkyPartMaterial>)>,
+) {
+    for (source, mirror) in &parts {
+        let Some(source) = sources.get(&source.0) else {
+            continue;
+        };
+        if mirrors.get(&mirror.0).is_some_and(|m| !m.matches(source))
+            && let Some(mirror) = mirrors.get_mut(&mirror.0)
+        {
+            *mirror = SkyPartMaterial::of(source);
+        }
+    }
+}
+
 #[cfg(feature = "builtin_shaders")]
 #[derive(Component)]
 struct SkyDome;
@@ -105,66 +207,42 @@ const DOME_STACKS: u32 = 24;
 #[cfg(feature = "builtin_shaders")]
 const GLARE_GAIN: f32 = 6.0;
 
-const BIAS_SKY_DISC: f32 = -1000.0 * SKY_SCALE;
+const BIAS_SKY_DISC: f32 = 0.0;
 #[cfg(feature = "builtin_shaders")]
-const BIAS_SKY_DOME: f32 = BIAS_SKY_DISC;
-const BIAS_END_SKY: f32 = BIAS_SKY_DISC;
+const BIAS_SKY_DOME: f32 = -1000.0 * SKY_SCALE;
+const BIAS_END_SKY: f32 = 0.0;
 const BIAS_SUNRISE: f32 = 1000.0 * SKY_SCALE;
 const BIAS_SUN: f32 = 2000.0 * SKY_SCALE;
 const BIAS_MOON: f32 = 3000.0 * SKY_SCALE;
 const BIAS_STARS: f32 = 4000.0 * SKY_SCALE;
 const BIAS_DARK_DISC: f32 = 5000.0 * SKY_SCALE;
-
-pub type BackdropMaterial = ExtendedMaterial<StandardMaterial, FarPlane>;
-
-#[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
-pub struct FarPlane {}
-
-impl MaterialExtension for FarPlane {
-    fn vertex_shader() -> ShaderRef {
-        super::embedded_shader("renderer/sky_far.wgsl")
-    }
-
-    fn enable_prepass() -> bool {
-        false
-    }
-
-    fn enable_shadows() -> bool {
-        false
-    }
-}
-
-fn backdrop(base: StandardMaterial) -> BackdropMaterial {
-    ExtendedMaterial {
-        base,
-        extension: FarPlane {},
-    }
-}
+// Clouds share the transparent phase with the sky, so they must out-bias every
+// sky part or the sky disc sorts after them whenever the camera looks up.
+pub(super) const BIAS_CLOUDS: f32 = 6000.0 * SKY_SCALE;
 
 pub struct SkyPlugin;
 
 impl Plugin for SkyPlugin {
     fn build(&self, app: &mut App) {
-        embedded_asset!(app, "sky_far.wgsl");
-        app.add_plugins(MaterialPlugin::<BackdropMaterial>::default());
-        super::reload::touch_on_reload::<BackdropMaterial>(app);
         #[cfg(feature = "builtin_shaders")]
         {
             embedded_asset!(app, "sky.wgsl");
             app.add_plugins(MaterialPlugin::<SkyMaterial>::default());
-            super::reload::touch_on_reload::<SkyMaterial>(app);
         }
-        app.add_systems(
-            Update,
-            setup.run_if(resource_added::<crate::renderer::systems::AssetsReady>),
-        )
-        .add_systems(
-            PostUpdate,
-            update_sky
-                .before(TransformSystems::Propagate)
-                .run_if(in_state(AppState::InGame))
-                .run_if(resource_exists::<SkyAssets>),
-        );
+        bevy::asset::embedded_asset!(app, "sky_part.wgsl");
+        app.add_plugins(bevy::pbr::MaterialPlugin::<SkyPartMaterial>::default())
+            .add_systems(
+                Update,
+                setup.run_if(resource_added::<crate::renderer::systems::AssetsReady>),
+            )
+            .add_systems(
+                PostUpdate,
+                (update_sky, mirror_sky_materials)
+                    .chain()
+                    .before(TransformSystems::Propagate)
+                    .run_if(in_state(AppState::InGame))
+                    .run_if(resource_exists::<SkyAssets>),
+            );
     }
 }
 
@@ -190,9 +268,9 @@ pub(crate) enum SkyPart {
 struct SkyAssets {
     sky_disc_mesh: Handle<Mesh>,
     dark_disc_mesh: Handle<Mesh>,
-    sunrise_material: Handle<BackdropMaterial>,
-    star_material: Handle<BackdropMaterial>,
-    moon_materials: Vec<Handle<BackdropMaterial>>,
+    sunrise_material: Handle<StandardMaterial>,
+    star_material: Handle<StandardMaterial>,
+    moon_materials: Vec<Handle<StandardMaterial>>,
     discs_built_for: Option<(Argb, Argb, f32)>,
     moon_phase: usize,
 }
@@ -200,7 +278,8 @@ struct SkyAssets {
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<BackdropMaterial>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut part_materials: ResMut<Assets<SkyPartMaterial>>,
     #[cfg(feature = "builtin_shaders")] mut sky_materials: ResMut<Assets<SkyMaterial>>,
     mut images: ResMut<Assets<Image>>,
 ) {
@@ -239,37 +318,37 @@ fn setup(
         SkyDome,
     ));
 
-    let sky_material = materials.add(backdrop(StandardMaterial {
+    let sky_material = materials.add(StandardMaterial {
         depth_bias: BIAS_SKY_DISC,
         ..sky_material_props()
-    }));
-    let dark_material = materials.add(backdrop(StandardMaterial {
+    });
+    let dark_material = materials.add(StandardMaterial {
         depth_bias: BIAS_DARK_DISC,
         ..sky_material_props()
-    }));
-    let sunrise_material = materials.add(backdrop(StandardMaterial {
+    });
+    let sunrise_material = materials.add(StandardMaterial {
         depth_bias: BIAS_SUNRISE,
         ..sky_material_props()
-    }));
-    let star_material = materials.add(backdrop(StandardMaterial {
+    });
+    let star_material = materials.add(StandardMaterial {
         depth_bias: BIAS_STARS,
         ..celestial_material_props()
-    }));
+    });
 
-    let sun_material = materials.add(backdrop(StandardMaterial {
-        base_color_texture: Some(add_celestial(&mut images, celestial.join("sun.png"), false)),
+    let sun_material = materials.add(StandardMaterial {
+        base_color_texture: Some(images.add(load_celestial(&celestial.join("sun.png")))),
         depth_bias: BIAS_SUN,
         ..celestial_material_props()
-    }));
-    let moon_materials: Vec<Handle<BackdropMaterial>> = timeline::MOON_PHASE_NAMES
+    });
+    let moon_materials: Vec<Handle<StandardMaterial>> = timeline::MOON_PHASE_NAMES
         .iter()
         .map(|name| {
             let path = celestial.join(format!("moon/{name}.png"));
-            materials.add(backdrop(StandardMaterial {
-                base_color_texture: Some(add_celestial(&mut images, path, false)),
+            materials.add(StandardMaterial {
+                base_color_texture: Some(images.add(load_celestial(&path))),
                 depth_bias: BIAS_MOON,
                 ..celestial_material_props()
-            }))
+            })
         })
         .collect();
 
@@ -280,7 +359,7 @@ fn setup(
 
     commands.spawn((
         Mesh3d(sky_disc_mesh.clone()),
-        MeshMaterial3d(sky_material.clone()),
+        drawn(sky_material.clone(), &materials, &mut part_materials),
         Transform::IDENTITY,
         ChildOf(root),
         NotShadowCaster,
@@ -289,7 +368,7 @@ fn setup(
     ));
     commands.spawn((
         Mesh3d(dark_disc_mesh.clone()),
-        MeshMaterial3d(dark_material.clone()),
+        drawn(dark_material.clone(), &materials, &mut part_materials),
         Transform::from_xyz(0.0, DARK_DISC_OFFSET, 0.0),
         Visibility::Hidden,
         ChildOf(root),
@@ -299,7 +378,7 @@ fn setup(
     ));
     commands.spawn((
         Mesh3d(meshes.add(celestial_quad(false))),
-        MeshMaterial3d(sun_material),
+        drawn(sun_material, &materials, &mut part_materials),
         Transform::IDENTITY,
         ChildOf(root),
         NotShadowCaster,
@@ -308,7 +387,7 @@ fn setup(
     ));
     commands.spawn((
         Mesh3d(meshes.add(celestial_quad(true))),
-        MeshMaterial3d(moon_materials[0].clone()),
+        drawn(moon_materials[0].clone(), &materials, &mut part_materials),
         Transform::IDENTITY,
         ChildOf(root),
         NotShadowCaster,
@@ -317,7 +396,7 @@ fn setup(
     ));
     commands.spawn((
         Mesh3d(meshes.add(star_mesh())),
-        MeshMaterial3d(star_material.clone()),
+        drawn(star_material.clone(), &materials, &mut part_materials),
         Transform::IDENTITY,
         Visibility::Hidden,
         ChildOf(root),
@@ -327,7 +406,7 @@ fn setup(
     ));
     commands.spawn((
         Mesh3d(meshes.add(sunrise_mesh())),
-        MeshMaterial3d(sunrise_material.clone()),
+        drawn(sunrise_material.clone(), &materials, &mut part_materials),
         Transform::IDENTITY,
         Visibility::Hidden,
         ChildOf(root),
@@ -335,18 +414,16 @@ fn setup(
         NoFrustumCulling,
         SkyPart::SunriseFan,
     ));
-    let end_sky_material = materials.add(backdrop(StandardMaterial {
-        base_color_texture: Some(add_celestial(
-            &mut images,
-            crate::textures_dir().join("environment/end_sky.png"),
-            true,
-        )),
+    let end_sky_material = materials.add(StandardMaterial {
+        base_color_texture: Some(images.add(load_tiled(
+            &crate::textures_dir().join("environment/end_sky.png"),
+        ))),
         depth_bias: BIAS_END_SKY,
         ..sky_material_props()
-    }));
+    });
     commands.spawn((
         Mesh3d(meshes.add(end_sky_mesh())),
-        MeshMaterial3d(end_sky_material),
+        drawn(end_sky_material, &materials, &mut part_materials),
         Transform::IDENTITY,
         Visibility::Hidden,
         ChildOf(root),
@@ -364,6 +441,18 @@ fn setup(
         discs_built_for: None,
         moon_phase: 0,
     });
+}
+
+fn drawn(
+    source: Handle<StandardMaterial>,
+    materials: &Assets<StandardMaterial>,
+    part_materials: &mut Assets<SkyPartMaterial>,
+) -> (SkySource, MeshMaterial3d<SkyPartMaterial>) {
+    let mirror = materials
+        .get(&source)
+        .map(SkyPartMaterial::of)
+        .expect("a sky material is added before its part spawns");
+    (SkySource(source), MeshMaterial3d(part_materials.add(mirror)))
 }
 
 fn sky_material_props() -> StandardMaterial {
@@ -395,7 +484,7 @@ fn load_celestial(path: &std::path::Path) -> Image {
             (rgba.width(), rgba.height(), rgba.into_raw())
         }
         Err(e) => {
-            crate::log_warn!("assets", "sky: {} could not be read ({e})", path.display());
+            eprintln!("sky: {} could not be read ({e})", path.display());
             (1, 1, vec![0u8; 4])
         }
     };
@@ -414,20 +503,10 @@ fn load_celestial(path: &std::path::Path) -> Image {
     image
 }
 
-fn add_celestial(
-    images: &mut Assets<Image>,
-    path: std::path::PathBuf,
-    tiled: bool,
-) -> Handle<Image> {
-    let mut image = load_celestial(&path);
-    if tiled {
-        image.sampler = crate::entities::repeating_nearest();
-    }
-    let handle = images.add(image);
-    super::reload::track(&handle, move || {
-        Some(crate::platform::assets::open_image(&path).ok()?.to_rgba8())
-    });
-    handle
+fn load_tiled(path: &std::path::Path) -> Image {
+    let mut image = load_celestial(path);
+    image.sampler = crate::entities::repeating_nearest();
+    image
 }
 
 fn disc_mesh(yy: f32, sky: Argb, fog: Argb, sky_end: f32) -> Mesh {
@@ -560,7 +639,7 @@ fn end_sky_mesh() -> Mesh {
             positions.push((*rotation * Vec3::from(CORNERS[corner])).to_array());
             uvs.push(UVS[corner]);
         }
-        indices.extend(QUAD_INDICES.map(|i| base + i));
+        indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 
     let mut mesh = Mesh::new(
@@ -638,7 +717,7 @@ fn star_mesh() -> Mesh {
         ] {
             positions.push((rotation * corner + center).to_array());
         }
-        indices.extend(QUAD_INDICES.map(|i| base + i));
+        indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 
     let mut mesh = Mesh::new(
@@ -669,7 +748,7 @@ fn update_sky(
     env: Res<super::environment::Environment>,
     mut assets: ResMut<SkyAssets>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<BackdropMaterial>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
     #[cfg(feature = "builtin_shaders")] mut sky_materials: ResMut<Assets<SkyMaterial>>,
     #[cfg(feature = "builtin_shaders")] mut dome: Query<
         (&MeshMaterial3d<SkyMaterial>, &mut Visibility),
@@ -688,7 +767,7 @@ fn update_sky(
             &SkyPart,
             &mut Transform,
             &mut Visibility,
-            &mut MeshMaterial3d<BackdropMaterial>,
+            &mut SkySource,
         ),
         (Without<WorldCamera>, Without<SkyRoot>),
     >,
@@ -737,9 +816,7 @@ fn update_sky(
         camera.clear_color = ClearColorConfig::Custom(fog_color);
     }
 
-    if let Ok(mut rig) = root.single_mut()
-        && (rig.translation != world_transform.translation || rig.scale != Vec3::splat(SKY_SCALE))
-    {
+    if let Ok(mut rig) = root.single_mut() {
         rig.translation = world_transform.translation;
         rig.scale = Vec3::splat(SKY_SCALE);
     }
@@ -801,37 +878,34 @@ fn update_sky(
 
     for (part, mut transform, mut visibility, mut material) in parts.iter_mut() {
         if *part == SkyPart::EndSky {
-            visibility.set_if_neq(if skybox == Skybox::End {
+            *visibility = if skybox == Skybox::End {
                 Visibility::Inherited
             } else {
                 Visibility::Hidden
-            });
+            };
             continue;
         }
         if skybox != Skybox::Overworld {
-            visibility.set_if_neq(Visibility::Hidden);
+            *visibility = Visibility::Hidden;
             continue;
         }
         if dome_sky() && matches!(part, SkyPart::SkyDisc | SkyPart::DarkDisc) {
-            visibility.set_if_neq(Visibility::Hidden);
+            *visibility = Visibility::Hidden;
             continue;
         }
         match part {
-            SkyPart::SkyDisc => {
-                visibility.set_if_neq(Visibility::Inherited);
-            }
+            SkyPart::SkyDisc => *visibility = Visibility::Inherited,
             SkyPart::DarkDisc => {
-                visibility.set_if_neq(if eye_y < HORIZON_HEIGHT {
+                *visibility = if eye_y < dimension::horizon() && eye_fluid != Some(EyeFluid::Water)
+                {
                     Visibility::Inherited
                 } else {
                     Visibility::Hidden
-                });
+                };
             }
-            SkyPart::Sun => {
-                transform.set_if_neq(place(sky.sun_angle, SUN_HEIGHT, SUN_SIZE));
-            }
+            SkyPart::Sun => *transform = place(sky.sun_angle, SUN_HEIGHT, SUN_SIZE),
             SkyPart::Moon => {
-                transform.set_if_neq(place(sky.moon_angle, MOON_HEIGHT, MOON_SIZE));
+                *transform = place(sky.moon_angle, MOON_HEIGHT, MOON_SIZE);
                 if sky.moon_phase != assets.moon_phase {
                     assets.moon_phase = sky.moon_phase;
                     material.0 = assets.moon_materials[sky.moon_phase].clone();
@@ -839,50 +913,43 @@ fn update_sky(
             }
             SkyPart::Stars => {
                 let brightness = sky.star_brightness;
-                visibility.set_if_neq(if brightness > 0.0 {
+                *visibility = if brightness > 0.0 {
                     Visibility::Inherited
                 } else {
                     Visibility::Hidden
-                });
-                let rotation = yaw * Quat::from_rotation_x(sky.star_angle);
-                if transform.rotation != rotation {
-                    transform.rotation = rotation;
-                }
+                };
+                transform.rotation = yaw * Quat::from_rotation_x(sky.star_angle);
                 let want = Color::srgba(brightness, brightness, brightness, brightness);
                 if materials
                     .get(&assets.star_material)
-                    .is_some_and(|m| m.base.base_color != want)
+                    .is_some_and(|m| m.base_color != want)
                     && let Some(material) = materials.get_mut(&assets.star_material)
                 {
-                    material.base.base_color = want;
+                    material.base_color = want;
                 }
             }
             SkyPart::SunriseFan => {
-                visibility.set_if_neq(if sunrise_alpha > 0.001 {
+                *visibility = if sunrise_alpha > 0.001 {
                     Visibility::Inherited
                 } else {
                     Visibility::Hidden
-                });
+                };
                 if sunrise_alpha > 0.001 {
                     let flip = if sky.sun_angle.sin() < 0.0 {
                         180.0f32
                     } else {
                         0.0
                     };
-                    let translation = transform.translation;
-                    transform.set_if_neq(Transform {
-                        translation,
-                        rotation: Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)
-                            * Quat::from_rotation_z((flip + 90.0).to_radians()),
-                        scale: Vec3::new(1.0, 1.0, sunrise_alpha),
-                    });
+                    transform.rotation = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)
+                        * Quat::from_rotation_z((flip + 90.0).to_radians());
+                    transform.scale = Vec3::new(1.0, 1.0, sunrise_alpha);
                     let want = sky.sunrise_color.to_color();
                     if materials
                         .get(&assets.sunrise_material)
-                        .is_some_and(|m| m.base.base_color != want)
+                        .is_some_and(|m| m.base_color != want)
                         && let Some(material) = materials.get_mut(&assets.sunrise_material)
                     {
-                        material.base.base_color = want;
+                        material.base_color = want;
                     }
                 }
             }

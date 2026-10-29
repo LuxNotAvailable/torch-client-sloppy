@@ -12,6 +12,10 @@ pub(crate) enum Source {
         entries: Vec<zip::Entry>,
         index: HashMap<String, usize>,
     },
+    /// A pack compiled into the binary, as `(path, text)` pairs rooted at `/`.
+    Embedded {
+        files: &'static [(&'static str, &'static str)],
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -65,11 +69,7 @@ impl Source {
             return Ok(Source::Directory { root });
         }
 
-        Source::from_zip(std::fs::read(path).map_err(|e| e.to_string())?, root)
-    }
-
-    pub(crate) fn from_zip(bytes: Vec<u8>, root: &str) -> Result<Source, String> {
-        let missing = || format!("the pack has no {root} directory");
+        let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
         let entries = zip::entries(&bytes)?;
         let prefix = if root.is_empty() {
             String::new()
@@ -106,6 +106,10 @@ impl Source {
                 let entry = entries.get(*index.get(path)?)?;
                 zip::read(bytes, entry).ok()
             }
+            Source::Embedded { files } => files
+                .iter()
+                .find(|(at, _)| *at == path)
+                .map(|(_, text)| text.as_bytes().to_vec()),
         }
     }
 
@@ -126,6 +130,7 @@ impl Source {
                 out
             }
             Source::Archive { index, .. } => index.keys().cloned().collect(),
+            Source::Embedded { files } => files.iter().map(|(at, _)| (*at).to_owned()).collect(),
         }
     }
 
@@ -133,14 +138,7 @@ impl Source {
         match self {
             Source::Directory { root } => confined(root, path).is_some_and(|at| at.is_file()),
             Source::Archive { index, .. } => index.contains_key(path),
-        }
-    }
-
-    #[cfg(resource_packs)]
-    pub(crate) fn into_zip(self) -> Option<Vec<u8>> {
-        match self {
-            Source::Directory { .. } => None,
-            Source::Archive { bytes, .. } => Some(bytes),
+            Source::Embedded { files } => files.iter().any(|(at, _)| *at == path),
         }
     }
 }

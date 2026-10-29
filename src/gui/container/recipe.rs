@@ -1,7 +1,8 @@
 use super::banner;
 use super::{
-    GuiState, InvAction, Layout, Painter, ScreenCtx, Scroller, SlotStack, Snapshot, button,
-    close_window, error_icon, filled, first_row, open_window, scroll_rows,
+    GuiState, INV_H, INV_W, InvAction, Layout, Painter, ScreenCtx, Scroller, SlotStack, Snapshot,
+    button, dim_background, draw_title, error_icon, first_row, hovering, scroll_rows, slots,
+    window_origin,
 };
 
 const COLS: usize = 4;
@@ -16,7 +17,9 @@ pub fn draw_stonecutter(
     const ROWS: usize = 3;
     const VISIBLE: usize = COLS * ROWS;
 
-    let (left, top) = open_window(p, ctx, Layout::Stonecutter, "container/stonecutter");
+    let (left, top) = window_origin(Layout::Stonecutter, ctx);
+    dim_background(p, ctx.vw, ctx.vh);
+    p.blit_sheet("container/stonecutter", 0.0, 0.0, INV_W, INV_H, left, top);
 
     let input = snap.menu_slots.first().map_or("", |s| s.item);
     let matches = |r: &&crate::session::StonecutterRecipe| {
@@ -26,7 +29,7 @@ pub fn draw_stonecutter(
 
     let active = count > VISIBLE;
     let ui = &mut state.container;
-    if ctx.hovering(left + 52.0, top + 14.0, 4.0 * 16.0, 3.0 * 18.0) {
+    if hovering(ctx, left + 52.0, top + 14.0, 4.0 * 16.0, 3.0 * 18.0) {
         ui.scroll = scroll_rows(ui.scroll, ctx.input.scroll, rows_of(count), ROWS);
     }
     Scroller {
@@ -74,16 +77,18 @@ pub fn draw_stonecutter(
         }
     }
 
-    close_window(
+    let hovered = slots::panel(
         p,
-        state,
-        ctx,
-        snap,
-        out,
         Layout::Stonecutter,
         (left, top),
-        (8.0, 5.0),
-    )
+        ctx,
+        snap,
+        &mut state.slots,
+        out,
+    );
+    draw_title(p, &snap.container_title, left + 8.0, top + 5.0);
+    super::draw_inventory_label(p, left, top, INV_H);
+    hovered
 }
 
 pub fn draw_loom(
@@ -96,7 +101,9 @@ pub fn draw_loom(
     const ROWS: usize = 4;
     const VISIBLE: usize = COLS * ROWS;
 
-    let (left, top) = open_window(p, ctx, Layout::Loom, "container/loom");
+    let (left, top) = window_origin(Layout::Loom, ctx);
+    dim_background(p, ctx.vw, ctx.vh);
+    p.blit_sheet("container/loom", 0.0, 0.0, INV_W, INV_H, left, top);
 
     let patterns: &[Box<str>] = match snap
         .menu_slots
@@ -112,7 +119,7 @@ pub fn draw_loom(
     let active = count > VISIBLE;
 
     let ui = &mut state.container;
-    if ctx.hovering(left + 60.0, top + 13.0, 4.0 * 14.0, 4.0 * 14.0) {
+    if hovering(ctx, left + 60.0, top + 13.0, 4.0 * 14.0, 4.0 * 14.0) {
         ui.scroll = scroll_rows(ui.scroll, ctx.input.scroll, rows_of(count), ROWS);
     }
     Scroller {
@@ -167,16 +174,18 @@ pub fn draw_loom(
         banner::preview(p, stack(snap, 0), left + 141.0, top + 8.0);
     }
 
-    close_window(
+    let hovered = slots::panel(
         p,
-        state,
-        ctx,
-        snap,
-        out,
         Layout::Loom,
         (left, top),
-        (8.0, 4.0),
-    )
+        ctx,
+        snap,
+        &mut state.slots,
+        out,
+    );
+    draw_title(p, &snap.container_title, left + 8.0, top + 4.0);
+    super::draw_inventory_label(p, left, top, INV_H);
+    hovered
 }
 
 fn rows_of(count: usize) -> usize {
@@ -197,6 +206,10 @@ fn recipe_sprite(
     } else {
         plain
     }
+}
+
+fn filled(snap: &Snapshot, i: usize) -> bool {
+    snap.menu_slots.get(i).is_some_and(|s| !s.is_empty())
 }
 
 fn stack<'a>(snap: &'a Snapshot, i: usize) -> Option<&'a SlotStack> {

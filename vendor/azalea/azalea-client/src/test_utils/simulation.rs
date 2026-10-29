@@ -84,10 +84,13 @@ impl Simulation {
                     registry_id: Identifier::new("minecraft:dimension_type"),
                     entries: vec![(
                         Identifier::new("minecraft:overworld"),
-                        Some(NbtCompound::from_values(vec![
-                            ("height".into(), NbtTag::Int(384)),
-                            ("min_y".into(), NbtTag::Int(-64)),
-                        ])),
+                        Some(
+                            NbtCompound::from_values(vec![
+                                ("height".into(), NbtTag::Int(384)),
+                                ("min_y".into(), NbtTag::Int(-64)),
+                            ])
+                            .into(),
+                        ),
                     )]
                     .into_iter()
                     .collect(),
@@ -350,6 +353,7 @@ pub fn make_basic_login_packet(
             sea_level: 63,
         },
         enforces_secure_chat: false,
+        online_mode: false,
     }
 }
 
@@ -395,7 +399,7 @@ pub fn make_basic_empty_chunk(
         z: pos.z,
         chunk_data: ClientboundLevelChunkPacketData {
             heightmaps: Default::default(),
-            data: Arc::new(chunk_bytes.into()),
+            buffer: Arc::new(chunk_bytes.into()),
             block_entities: vec![],
         },
         light_data: ClientboundLightUpdatePacketData::default(),

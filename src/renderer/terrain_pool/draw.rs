@@ -15,8 +15,8 @@ use bevy::mesh::{
     MeshVertexBufferLayout, MeshVertexBufferLayoutRef, MeshVertexBufferLayouts, VertexBufferLayout,
 };
 use bevy::pbr::{
-    DistanceFog, FogFalloff, MeshPipeline, MeshPipelineKey, SetMeshViewBindGroup,
-    SetMeshViewBindingArrayBindGroup, ViewKeyCache,
+    MeshPipeline, MeshPipelineKey, SetMeshViewBindGroup, SetMeshViewBindingArrayBindGroup,
+    ViewKeyCache,
 };
 use bevy::prelude::*;
 use bevy::render::mesh::allocator::SlabId;
@@ -26,7 +26,7 @@ use bevy::render::render_phase::{
     PhaseItemExtraIndex, RenderCommand, RenderCommandResult, SetItemPipeline, TrackedRenderPass,
     ViewBinnedRenderPhases, ViewSortedRenderPhases,
 };
-use bevy::render::render_resource::binding_types::{sampler, texture_2d, uniform_buffer_sized};
+use bevy::render::render_resource::binding_types::{sampler, texture_2d, uniform_buffer};
 use bevy::render::render_resource::{
     BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, Buffer,
     BufferDescriptor, BufferUsages, Face, IndexFormat, PipelineCache, PrimitiveTopology,
@@ -44,8 +44,8 @@ use bevy::shader::{Shader, ShaderDefVal};
 use super::cull::{CullBuffers, DirectLists, TerrainViews};
 use super::pools::{SlotTable, TerrainPools};
 use super::{
-    FACE_RUNS, STREAM_CUTOUT, STREAM_SOLID, STREAM_WATER, STREAMS, SlotMeta, TerrainParams,
-    TerrainShaders, TerrainTextures, TerrainTier, TerrainView,
+    STREAM_CUTOUT, STREAM_SOLID, STREAM_WATER, STREAMS, SlotMeta, TerrainParams, TerrainShaders,
+    TerrainTextures, TerrainTier, TerrainView,
 };
 
 #[cfg(feature = "builtin_shaders")]
@@ -154,12 +154,10 @@ impl TerrainItem for Shadow {
 #[derive(Resource)]
 pub struct TerrainParamsBuffer(pub Buffer);
 
-const PARAMS_SIZE: u64 = 48;
-
 #[derive(Resource, Default)]
 pub struct TerrainBindGroup {
     pub group: Option<BindGroup>,
-    key: Option<(TextureViewId, TextureViewId, u64)>,
+    key: Option<(TextureViewId, TextureViewId, TextureViewId, u64)>,
 }
 
 #[derive(Resource)]
@@ -197,7 +195,7 @@ fn terrain_layouts() -> (BindGroupLayoutDescriptor, BindGroupLayoutDescriptor) {
         sampler(SamplerBindingType::Filtering),
         texture_2d(TextureSampleType::Float { filterable: true }),
         sampler(SamplerBindingType::Filtering),
-        uniform_buffer_sized(false, NonZeroU64::new(PARAMS_SIZE)),
+        uniform_buffer::<Vec4>(false),
     );
     let indirect = BindGroupLayoutEntries::sequential(
         ShaderStages::VERTEX_FRAGMENT,
@@ -210,6 +208,7 @@ fn terrain_layouts() -> (BindGroupLayoutDescriptor, BindGroupLayoutDescriptor) {
             bevy::render::render_resource::binding_types::storage_buffer_read_only_sized(
                 false, meta_size,
             ),
+            texture_2d(TextureSampleType::Uint),
         ),
     );
     let direct = BindGroupLayoutEntries::sequential(
@@ -221,6 +220,7 @@ fn terrain_layouts() -> (BindGroupLayoutDescriptor, BindGroupLayoutDescriptor) {
             common.3,
             common.4,
             texture_2d(TextureSampleType::Sint),
+            texture_2d(TextureSampleType::Uint),
         ),
     );
     (
@@ -523,8 +523,7 @@ pub fn draw_region<'w>(
             return Err(DrawSkipped::NoCullSlot);
         };
         let region = ((view_index * cull.pool_count) + pool_index) * STREAMS + stream;
-        let region_commands = cull.region_commands();
-        let commands_offset = region as u64 * region_commands * INDIRECT_ARGS_SIZE;
+        let commands_offset = region as u64 * cull.slot_cap as u64 * INDIRECT_ARGS_SIZE;
         if stream == STREAM_WATER {
             let count = cull.water_count(view_index, pool_index);
             if count > 0 {
@@ -536,16 +535,12 @@ pub fn draw_region<'w>(
                 commands_offset,
                 &cull.counts,
                 region as u64 * 4,
-                region_commands as u32,
+                cull.slot_cap,
             );
         } else {
             let draw_end = pools.draw_end.min(cull.slot_cap);
             if draw_end > 0 {
-                pass.multi_draw_indexed_indirect(
-                    &cull.commands,
-                    commands_offset,
-                    draw_end * FACE_RUNS,
-                );
+                pass.multi_draw_indexed_indirect(&cull.commands, commands_offset, draw_end);
             }
         }
         return Ok(());
@@ -649,6 +644,7 @@ pub fn queue_terrain(
     ticks: SystemChangeTick,
     #[cfg(feature = "shader_support")] takeover: Option<Res<PackTakeover>>,
 ) {
+    crate::prof_span!("render:terrain_queue_terrain");
     if pools.pools.is_empty() {
         return;
     }
@@ -803,58 +799,10 @@ pub fn prepare_params(
     queue: Res<RenderQueue>,
     buffer: Res<TerrainParamsBuffer>,
     params: Option<Res<TerrainParams>>,
-    fog: Query<&DistanceFog, With<TerrainView>>,
 ) {
     let params = params.as_deref().copied().unwrap_or_default();
-    let (color, ramps) = fog.iter().next().map(fog_values).unwrap_or_default();
-    let values: [f32; 12] = [
-        params.cutoff,
-        params.mip_bias,
-        params.shadow_mip,
-        0.0,
-        color[0],
-        color[1],
-        color[2],
-        color[3],
-        ramps[0],
-        ramps[1],
-        ramps[2],
-        ramps[3],
-    ];
+    let values = [params.cutoff, params.mip_bias, params.shadow_mip, 0.0f32];
     queue.write_buffer(&buffer.0, 0, bytemuck::bytes_of(&values));
-}
-
-fn fog_values(fog: &DistanceFog) -> ([f32; 4], [f32; 4]) {
-    let encode = |c: f32| c.max(0.0).powf(1.0 / 2.2);
-    let color = LinearRgba::from(fog.color);
-    let environmental = LinearRgba::from(fog.directional_light_color);
-    let render = match fog.falloff {
-        FogFalloff::Linear { start, end } => (start, end),
-        FogFalloff::Exponential { density } | FogFalloff::ExponentialSquared { density } => {
-            (density, 0.0)
-        }
-        FogFalloff::Atmospheric { extinction, .. } => (extinction.x, extinction.y),
-    };
-    let environmental = fog_ramp(environmental.red, environmental.green);
-    let render = fog_ramp(render.0, render.1);
-    (
-        [
-            encode(color.red),
-            encode(color.green),
-            encode(color.blue),
-            color.alpha,
-        ],
-        [environmental.0, environmental.1, render.0, render.1],
-    )
-}
-
-fn fog_ramp(start: f32, end: f32) -> (f32, f32) {
-    let slope = 1.0 / (end - start);
-    if end > start && slope.is_finite() {
-        (start, slope)
-    } else {
-        (start, f32::MAX)
-    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -868,16 +816,20 @@ pub fn prepare_terrain_bind_group(
     params: Res<TerrainParamsBuffer>,
     mut bind_group: ResMut<TerrainBindGroup>,
 ) {
+    crate::prof_span!("render:terrain_prepare_terrain_bind_group");
     let Some(textures) = textures else { return };
-    let (Some(atlas), Some(lightmap)) =
-        (images.get(&textures.atlas), images.get(&textures.lightmap))
-    else {
+    let (Some(atlas), Some(lightmap), Some(anim)) = (
+        images.get(&textures.atlas),
+        images.get(&textures.lightmap),
+        images.get(&textures.anim),
+    ) else {
         return;
     };
 
     let key = (
         atlas.texture_view.id(),
         lightmap.texture_view.id(),
+        anim.texture_view.id(),
         pools.tables_generation,
     );
     if bind_group.key == Some(key) && bind_group.group.is_some() {
@@ -895,6 +847,7 @@ pub fn prepare_terrain_bind_group(
                 &lightmap.sampler,
                 params.0.as_entire_binding(),
                 meta.as_entire_binding(),
+                &anim.texture_view,
             )),
         ),
         SlotTable::Direct { origins_view, .. } => device.create_bind_group(
@@ -907,6 +860,7 @@ pub fn prepare_terrain_bind_group(
                 &lightmap.sampler,
                 params.0.as_entire_binding(),
                 origins_view,
+                &anim.texture_view,
             )),
         ),
     };
@@ -957,7 +911,7 @@ pub fn finish(app: &mut App) {
     let device = render_app.world().resource::<RenderDevice>().clone();
     let buffer = device.create_buffer(&BufferDescriptor {
         label: Some("terrain_params"),
-        size: PARAMS_SIZE,
+        size: 16,
         usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });

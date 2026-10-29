@@ -21,6 +21,9 @@ pub enum Leaf {
     AzaleaTint,
     Cherry,
     PaleOak,
+    RedPoplar,
+    OrangePoplar,
+    YellowPoplar,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -291,6 +294,9 @@ fn leaf_particle(name: &str) -> Option<(Leaf, f32)> {
     match name {
         "cherry_leaves" => Some((Leaf::Cherry, 0.1)),
         "pale_oak_leaves" => Some((Leaf::PaleOak, 0.02)),
+        "red_poplar_leaves" => Some((Leaf::RedPoplar, 0.01)),
+        "orange_poplar_leaves" => Some((Leaf::OrangePoplar, 0.01)),
+        "yellow_poplar_leaves" => Some((Leaf::YellowPoplar, 0.01)),
         "azalea_leaves" | "flowering_azalea_leaves" => Some((Leaf::AzaleaTint, 0.01)),
         _ if name.ends_with("_leaves") => Some((Leaf::BiomeTinted, 0.01)),
         _ => None,

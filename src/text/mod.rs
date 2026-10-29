@@ -85,37 +85,6 @@ pub struct Span {
     pub style: Style,
 }
 
-impl Span {
-    pub fn new(text: impl Into<String>) -> Span {
-        Span {
-            text: text.into(),
-            style: Style::default(),
-        }
-    }
-
-    pub fn colored(text: impl Into<String>, rgb: u32) -> Span {
-        Span {
-            text: text.into(),
-            style: Style::colored(rgb),
-        }
-    }
-}
-
-pub fn contains_ci(hay: &str, needle: &str) -> bool {
-    let (h, n) = (hay.as_bytes(), needle.as_bytes());
-    if n.is_empty() {
-        return true;
-    }
-    if n.len() > h.len() {
-        return false;
-    }
-    (0..=h.len() - n.len()).any(|i| {
-        n.iter()
-            .zip(&h[i..])
-            .all(|(a, b)| a.eq_ignore_ascii_case(b))
-    })
-}
-
 pub const FORMAT_COLORS: [u32; 16] = [
     0x000000, 0x0000AA, 0x00AA00, 0x00AAAA, 0xAA0000, 0xAA00AA, 0xFFAA00, 0xAAAAAA, 0x555555,
     0x5555FF, 0x55FF55, 0x55FFFF, 0xFF5555, 0xFF55FF, 0xFFFF55, 0xFFFFFF,
@@ -606,13 +575,6 @@ impl Font {
         }
     }
 
-    pub fn wrap_nonempty(&self, spans: &[Span], max_width: f32) -> Vec<Vec<Span>> {
-        if spans.iter().all(|s| s.text.is_empty()) {
-            return Vec::new();
-        }
-        self.wrap(spans, max_width)
-    }
-
     pub fn wrap(&self, spans: &[Span], max_width: f32) -> Vec<Vec<Span>> {
         let flat: Vec<(char, Style)> = spans
             .iter()
@@ -965,8 +927,7 @@ mod tests {
     }
 
     fn assets() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("reference/minecraft-26.1.1/assets/minecraft")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("reference/minecraft-26.3/assets/minecraft")
     }
 
     fn font() -> Font {

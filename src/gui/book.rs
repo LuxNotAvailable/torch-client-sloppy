@@ -224,6 +224,7 @@ pub enum BookOut {
 
 pub fn draw_edit(p: &mut Painter, state: &mut BookState, ctx: &ScreenCtx) -> Option<BookOut> {
     let (left, top) = frame(p, ctx);
+    let blink = p.frame;
 
     let turn = arrows(p, ctx, left, top, back_visible(state.page), true)
         .saturating_add(page_key(ctx.input))
@@ -241,7 +242,7 @@ pub fn draw_edit(p: &mut Painter, state: &mut BookState, ctx: &ScreenCtx) -> Opt
         .handle_input(ctx.input, &p.atlas.font, TEXT_WIDTH);
     state
         .field
-        .draw(p, field_x, field_y, TEXT_WIDTH, TEXT_COLOR);
+        .draw(p, field_x, field_y, TEXT_WIDTH, TEXT_COLOR, blink);
 
     indicator(p, left, top, state.page, num_pages);
 
@@ -274,6 +275,7 @@ pub fn draw_edit(p: &mut Painter, state: &mut BookState, ctx: &ScreenCtx) -> Opt
 pub fn draw_sign(p: &mut Painter, state: &mut BookState, ctx: &ScreenCtx) -> Option<BookOut> {
     let (left, top) = frame(p, ctx);
     let text_left = left + TEXT_X;
+    let blink = p.frame;
 
     let label_text = label!("book.editTitle");
     let w = p.atlas.font.width_str(label_text);
@@ -288,13 +290,14 @@ pub fn draw_sign(p: &mut Painter, state: &mut BookState, ctx: &ScreenCtx) -> Opt
     let title_w = p.atlas.font.width_str(&state.title.text);
     let box_x = ((ctx.vw - TEXT_WIDTH) / 2.0).floor() - 3.0 + (TEXT_WIDTH - title_w) / 2.0;
     let box_y = top + 48.0;
-    let box_h = 8.0;
+    const GLYPH_H: f32 = 8.0;
+    let box_h = GLYPH_H;
     state.title.focused = true;
     state
         .title
         .handle_mouse(ctx.input, &p.atlas.font, box_x, box_y, title_w, box_h);
     state.title.handle_input(ctx.input);
-    state.title.draw(p, box_x, box_y, TEXT_WIDTH, box_h);
+    state.title.draw(p, box_x, box_y, TEXT_WIDTH, box_h, blink);
 
     let byline = tooltip::translate("book.byAuthor", &[state.author.clone()]);
     let w = p.atlas.font.width_str(&byline);

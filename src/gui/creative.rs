@@ -2,7 +2,6 @@ use std::borrow::Cow;
 use std::sync::OnceLock;
 
 use crate::generated_items::{CREATIVE_TABS, TabRow, item};
-use crate::gui::container::LABEL_COLOR;
 use crate::gui::painter::Painter;
 use crate::gui::screens::dim_background;
 use crate::gui::slots::{self, Drag, Layout, MenuModel, Mode, SlotClick, SlotState};
@@ -31,9 +30,6 @@ const SCROLL_TRACK_H: f32 = 112.0;
 const SCROLLER_W: f32 = 12.0;
 const SCROLLER_H: f32 = 15.0;
 
-const DESTROY_X: f32 = 173.0;
-const DESTROY_Y: f32 = 112.0;
-
 const SEARCH_X: f32 = 82.0;
 const SEARCH_Y: f32 = 6.0;
 const SEARCH_W: f32 = 80.0;
@@ -42,6 +38,8 @@ const SEARCH_H: f32 = 9.0;
 const TAB_W: f32 = 26.0;
 const TAB_H: f32 = 32.0;
 const TAB_SPACING: f32 = 27.0;
+
+const TITLE_COLOR: u32 = 0x40_4040;
 
 const TAB_SEARCH: usize = CREATIVE_TABS.len();
 const TAB_INVENTORY: usize = CREATIVE_TABS.len() + 1;
@@ -439,15 +437,9 @@ pub fn draw(
     st.tab = st.tab.min(TAB_COUNT - 1);
     st.hovered_tab_title = None;
 
-    if st.tab == TAB_SEARCH && ctx.input.left_click {
-        st.search
-            .note_tap(ctx.hovering(left + SEARCH_X, top + SEARCH_Y, SEARCH_W, SEARCH_H));
-    }
+    st.search.focused = st.tab == TAB_SEARCH;
     if std::mem::take(&mut st.just_opened) {
-        st.search.focused = st.tab == TAB_SEARCH;
         st.search.sync_keyboard();
-    } else if st.tab != TAB_SEARCH {
-        st.search.focused = false;
     } else if st.search.handle_input(ctx.input) {
         st.dirty = true;
         st.scroll = 0.0;
@@ -474,11 +466,18 @@ pub fn draw(
     p.blit_sheet(info.background, 0.0, 0.0, IMAGE_W, IMAGE_H, left, top);
 
     if info.show_title {
-        p.text_plain(info.title, left + 8.0, top + SEARCH_Y, LABEL_COLOR, false);
+        p.text_plain(info.title, left + 8.0, top + SEARCH_Y, TITLE_COLOR, false);
     }
     if st.tab == TAB_SEARCH {
-        st.search
-            .draw(p, left + SEARCH_X, top + SEARCH_Y, SEARCH_W, SEARCH_H);
+        let frame = p.frame;
+        st.search.draw(
+            p,
+            left + SEARCH_X,
+            top + SEARCH_Y,
+            SEARCH_W,
+            SEARCH_H,
+            frame,
+        );
     }
 
     if info.can_scroll {
@@ -495,6 +494,17 @@ pub fn draw(
     }
 
     draw_tab(p, &info, true, left, top);
+    if st.tab == TAB_INVENTORY {
+        p.figure(crate::renderer::inventory_figure::Figure {
+            x0: left + 73.0,
+            y0: top + 6.0,
+            x1: left + 105.0,
+            y1: top + 49.0,
+            size: 20.0,
+            offset_y: 0.0625,
+            mouse: ctx.mouse(),
+        });
+    }
 
     let mut clicked_tab = None;
     for i in 0..TAB_COUNT {
@@ -537,50 +547,6 @@ pub fn draw(
         )
     };
 
-    #[cfg(feature = "mobile_ui")]
-    let hovered_slot = {
-        for i in 0..slots::MENU_SLOTS {
-            if let Some((x, y)) = creative_slot_pos(st.tab, i, left, top) {
-                slot_state.note_touch_slot(x, y);
-            }
-        }
-        if st.tab == TAB_INVENTORY {
-            slot_state.note_touch_slot(left + DESTROY_X, top + DESTROY_Y);
-        }
-        let on_grid = ctx
-            .mouse()
-            .is_some_and(|m| grid_cell_at(m.x, m.y, left, top).is_some());
-        let on_destroy = st.tab == TAB_INVENTORY
-            && ctx.hovering(left + DESTROY_X - 1.0, top + DESTROY_Y - 1.0, PITCH, PITCH);
-        hovered_slot.or_else(|| {
-            if on_grid || on_destroy {
-                return None;
-            }
-            let at = (0..slots::MENU_SLOTS)
-                .filter_map(|i| creative_slot_pos(st.tab, i, left, top).map(|pos| (i, pos)));
-            slots::nearest_slot(ctx, at)
-        })
-    };
-    if let Some(pos) = hovered_slot.and_then(|i| creative_slot_pos(st.tab, i, left, top)) {
-        slot_state.rest = Some(pos);
-    }
-    #[cfg(feature = "mobile_ui")]
-    {
-        let grid_cell = ctx
-            .mouse()
-            .filter(|_| st.tab != TAB_INVENTORY)
-            .and_then(|m| grid_cell_at(m.x, m.y, left, top))
-            .map(|cell| {
-                (
-                    left + GRID_X + (cell % COLS) as f32 * PITCH,
-                    top + GRID_Y + (cell / COLS) as f32 * PITCH,
-                )
-            });
-        slot_state.tooltip_anchor = hovered_slot
-            .and_then(|i| creative_slot_pos(st.tab, i, left, top))
-            .or(grid_cell);
-    }
-
     let consumed = slots::drag_step(
         ctx,
         snap,
@@ -607,14 +573,8 @@ pub fn draw(
             TAB_H + 1.0,
         )
     });
-    let margin = slots::THROW_MARGIN;
-    let outside = !ctx.hovering(
-        left - margin,
-        top - margin,
-        IMAGE_W + 2.0 * margin,
-        IMAGE_H + 2.0 * margin,
-    ) && !on_tab;
-    if outside && !consumed {
+    let outside = !ctx.hovering(left, top, IMAGE_W, IMAGE_H) && !on_tab;
+    if outside {
         for right in [false, true] {
             let released = if right {
                 ctx.input.right_release
@@ -630,7 +590,7 @@ pub fn draw(
     #[cfg(feature = "mobile_ui")]
     {
         let destroy = if st.tab == TAB_INVENTORY {
-            ctx.hovering(left + DESTROY_X - 1.0, top + DESTROY_Y - 1.0, PITCH, PITCH)
+            ctx.hovering(left + 173.0 - 1.0, top + 112.0 - 1.0, PITCH, PITCH)
         } else {
             ctx.mouse()
                 .and_then(|m| grid_cell_at(m.x, m.y, left, top))
@@ -880,6 +840,7 @@ fn draw_hotbar_row(
     hovered_slot
 }
 
+#[cfg(feature = "mobile_ui")]
 fn creative_slot_pos(tab: usize, slot: usize, left: f32, top: f32) -> Option<(f32, f32)> {
     if tab == TAB_INVENTORY {
         return inventory_tab_slot_pos(slot).map(|(x, y)| (left + x, top + y));
@@ -941,13 +902,10 @@ fn draw_inventory_tab(
         }
     }
 
-    let (dx, dy) = (left + DESTROY_X, top + DESTROY_Y);
+    let (dx, dy) = (left + 173.0, top + 112.0);
     if ctx.hovering(dx - 1.0, dy - 1.0, PITCH, PITCH) {
         p.slot_highlight(dx, dy);
-        let clear_all = ctx.input.shift && (ctx.input.left_click || ctx.input.right_click);
-        #[cfg(feature = "mobile_ui")]
-        let clear_all = clear_all || ctx.input.right_click;
-        if clear_all {
+        if ctx.input.shift && (ctx.input.left_click || ctx.input.right_click) {
             let mut menu = MenuModel::from_snapshot(snap, cursor.clone());
             for slot in menu.slots.iter_mut().skip(1) {
                 *slot = SlotStack::default();
@@ -1165,7 +1123,7 @@ mod visual {
 
     use super::*;
     use crate::gui::atlas::build_gui_atlas;
-    use crate::gui::preview::save_upscaled;
+    use crate::gui::preview::{output_dir, rasterize, upscale};
     use crate::gui::render::GuiInput;
     use crate::gui::{GuiState, Screen};
     use crate::session::{Gamemode, SessionState, SharedMutex, SharedState};
@@ -1226,7 +1184,8 @@ mod visual {
                 #[cfg(feature = "skins")]
                 &mut Default::default(),
             );
-            save_upscaled(&p, vw as u32, vh as u32, name);
+            let img = rasterize(&p, vw as u32, vh as u32, [70, 110, 170, 255]);
+            upscale(&img, 2).save(output_dir().join(name)).unwrap();
         }
     }
 }

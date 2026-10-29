@@ -26,6 +26,7 @@ pub(crate) fn extract_entity_draws(
             Option<&bevy::camera::visibility::RenderLayers>,
             Has<crate::blockentities::BeRigNode>,
             Has<crate::util::particles::ParticleBatch>,
+            Has<crate::blockentities::BeamNode>,
         )>,
     >,
     materials: Extract<Res<Assets<crate::renderer::entity_material::EntityMaterial>>>,
@@ -35,6 +36,7 @@ pub(crate) fn extract_entity_draws(
     visibilities: Extract<Query<&Visibility>>,
     render: Option<ResMut<PackRender>>,
 ) {
+    crate::prof_span!("render:pack_extract_entity_draws");
     let Some(mut render) = render else { return };
     let Some(install) = render.install.as_deref_mut() else {
         return;
@@ -98,7 +100,8 @@ pub(crate) fn extract_entity_draws(
             .unwrap_or(-1)
     };
     let world = bevy::camera::visibility::RenderLayers::default();
-    for (entity, mesh, material, transform, visible, inherited, layers, block, particle) in &meshes
+    for (entity, mesh, material, transform, visible, inherited, layers, block, particle, beam) in
+        &meshes
     {
         if layers.is_some_and(|l| !l.intersects(&world)) {
             continue;
@@ -130,6 +133,9 @@ pub(crate) fn extract_entity_draws(
             EntityKind::Entity if glowing && programs[EntityKind::SpiderEyes.index()].is_some() => {
                 EntityKind::SpiderEyes
             }
+            EntityKind::Block if beam && pass_of(EntityKind::BeaconBeam).is_some() => {
+                EntityKind::BeaconBeam
+            }
             _ if blend => kind.translucent(),
             _ => kind,
         };
@@ -158,7 +164,8 @@ pub(crate) fn extract_entity_draws(
             },
             item_id: 0,
             stage: drawn_as.render_stage(),
-            order: 0,
+            // Layers over the same surface draw after what they cover.
+            order: material.depth_bias.clamp(0, i32::from(u8::MAX)) as u8,
             relative: false,
             flags: if [LightMode::Flat as u32, LightMode::Emissive as u32]
                 .contains(&material.params.mode)
@@ -187,7 +194,7 @@ pub(crate) fn extract_standard_draws(
         Query<(
             &crate::renderer::sky::SkyPart,
             &Mesh3d,
-            &MeshMaterial3d<crate::renderer::sky::BackdropMaterial>,
+            &crate::renderer::sky::SkySource,
             &GlobalTransform,
             &ViewVisibility,
         )>,
@@ -206,12 +213,15 @@ pub(crate) fn extract_standard_draws(
     >,
     hand: Extract<
         Query<(
+            Entity,
             &Mesh3d,
-            &MeshMaterial3d<crate::renderer::hand::HandMaterial>,
+            &MeshMaterial3d<StandardMaterial>,
             &GlobalTransform,
             &ViewVisibility,
+            &bevy::camera::visibility::RenderLayers,
         )>,
     >,
+    hand_camera: Extract<Query<&GlobalTransform, With<crate::renderer::hand::HandCamera>>>,
     overlays: Extract<
         Query<
             (
@@ -228,10 +238,9 @@ pub(crate) fn extract_standard_draws(
         >,
     >,
     materials: Extract<Res<Assets<StandardMaterial>>>,
-    sky_materials: Extract<Res<Assets<crate::renderer::sky::BackdropMaterial>>>,
-    hand_materials: Extract<Res<Assets<crate::renderer::hand::HandMaterial>>>,
     render: Option<ResMut<PackRender>>,
 ) {
+    crate::prof_span!("render:pack_extract_standard_draws");
     use crate::renderer::sky::SkyPart;
     use crate::shaderpack::features::render_stage;
     let Some(mut render) = render else { return };
@@ -240,6 +249,8 @@ pub(crate) fn extract_standard_draws(
     };
     let (installed, frame) = (&*install.installed, &mut install.frame);
     let has = |kind: EntityKind| installed.entities[kind.index()].is_some();
+    frame.hand_entities.clear();
+    let mut hand_entities = std::mem::take(&mut frame.hand_entities);
     let inputs = frame.inputs;
     let mut push = |kind: EntityKind,
                     mesh: &Mesh3d,
@@ -281,6 +292,14 @@ pub(crate) fn extract_standard_draws(
     {
         let (scale, _, translation) = root.to_scale_rotation_translation();
         let local = Mat4::from_scale(scale.recip()) * Mat4::from_translation(-translation);
+        // `sunPathRotation` tilts the celestial sphere, and Iris draws the
+        // sun, moon and stars on it, so they stay where `sunPosition` (and
+        // a pack's sun glow) says. The uniforms put the tilt between the
+        // sphere's yaw and its daily turn; in the sphere's own frame that is
+        // this rotation, applied around the camera.
+        let tilt = Mat4::from_rotation_y((-90.0f32).to_radians())
+            * Mat4::from_rotation_z(installed.constants.sun_path_rotation.to_radians())
+            * Mat4::from_rotation_y(90.0f32.to_radians());
         let parts = installed.sky_parts;
         for (part, mesh, material, transform, visible) in &sky {
             let (kind, stage, order, wanted) = match part {
@@ -295,15 +314,17 @@ pub(crate) fn extract_standard_draws(
             if !visible.get() || !wanted || !has(kind) {
                 continue;
             }
-            let Some(material) = sky_materials.get(&material.0).map(|m| &m.base) else {
+            let Some(material) = materials.get(&material.0) else {
                 continue;
             };
             let second = material.alpha_mode == AlphaMode::Add;
+            let celestial = matches!(part, SkyPart::Sun | SkyPart::Moon | SkyPart::Stars);
+            let model = local * transform.to_matrix();
             push(
                 kind,
                 mesh,
                 material,
-                local * transform.to_matrix(),
+                if celestial { tilt * model } else { model },
                 true,
                 render_stage(stage),
                 order,
@@ -358,12 +379,17 @@ pub(crate) fn extract_standard_draws(
         );
     }
 
-    if EntityKind::ALL.iter().any(|k| k.is_hand() && has(*k)) {
-        for (mesh, material, transform, visible) in &hand {
-            if !visible.get() {
+    if EntityKind::ALL.iter().any(|k| k.is_hand() && has(*k))
+        && let Ok(camera) = hand_camera.single()
+    {
+        let view = camera.to_matrix().inverse();
+        let layer =
+            bevy::camera::visibility::RenderLayers::layer(crate::renderer::hand::HAND_LAYER);
+        for (entity, mesh, material, transform, visible, layers) in &hand {
+            if !visible.get() || !layers.intersects(&layer) {
                 continue;
             }
-            let Some(material) = hand_materials.get(&material.0).map(|m| &m.base) else {
+            let Some(material) = materials.get(&material.0) else {
                 continue;
             };
             let translucent = blended(material.alpha_mode);
@@ -375,11 +401,12 @@ pub(crate) fn extract_standard_draws(
             if !has(kind) {
                 continue;
             }
+            hand_entities.insert(entity, mesh.0.id());
             push(
                 kind,
                 mesh,
                 material,
-                transform.to_matrix(),
+                view * transform.to_matrix(),
                 true,
                 kind.render_stage(),
                 0,
@@ -387,7 +414,9 @@ pub(crate) fn extract_standard_draws(
             );
         }
     }
+    frame.hand_entities = hand_entities;
 }
+
 
 fn overlay(params: &crate::renderer::entity_material::EntityParams) -> Vec4 {
     let strength = (1.0 - params.light1.w).clamp(0.0, 1.0);

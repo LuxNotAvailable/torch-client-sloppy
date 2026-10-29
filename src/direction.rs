@@ -77,17 +77,6 @@ impl Direction {
     }
 
     #[inline]
-    pub const fn counter_clockwise(self) -> Direction {
-        match self {
-            Direction::North => Direction::West,
-            Direction::South => Direction::East,
-            Direction::West => Direction::South,
-            Direction::East => Direction::North,
-            other => other,
-        }
-    }
-
-    #[inline]
     pub const fn step_x(self) -> f32 {
         self.offset().0 as f32
     }

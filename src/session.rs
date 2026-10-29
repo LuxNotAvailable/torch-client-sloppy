@@ -11,8 +11,7 @@ pub const MOVE_SNEAK: u8 = 1 << 7;
 
 pub const MAX_AIR_SUPPLY: i32 = 300;
 
-pub const VANILLA_MAX_HEALTH: f32 =
-    crate::client::tracking::ranged(azalea_registry::builtin::Attribute::MaxHealth).default as f32;
+pub const VANILLA_MAX_HEALTH: f32 = 20.0;
 
 #[derive(Default)]
 pub struct SharedState {
@@ -28,7 +27,6 @@ pub struct SharedState {
     pub end_notice: Option<String>,
     pub disconnect_reason: Option<Vec<crate::text::Span>>,
     pub reload_chunks_requested: bool,
-    pub remesh_chunks_requested: bool,
     pub leave_bed_requested: bool,
     pub respawn_requested: bool,
     pub in_world: bool,
@@ -120,11 +118,17 @@ pub struct SessionState {
     pub current_address: Option<String>,
     pub advanced_tooltips: bool,
     pub fly_toggle: bool,
+    /// Degrees the player's view turns with the boat they steer, for the
+    /// camera to take (`AbstractBoat.positionRider`).
+    pub vehicle_yaw_nudge: f32,
+    /// The yaw of the boat this player steers, which the camera keeps the
+    /// look within 105° of (`AbstractBoat.clampRotation`).
+    pub steered_boat_yaw: Option<f32>,
     pub flying: bool,
     pub auto_jump: bool,
     pub fov: FovState,
-    pub camera_eye: CameraEye,
-    pub other_players: Vec<OtherPlayerInfo>,
+    pub view_bob: ViewBob,
+    pub other_players: std::sync::Arc<Vec<OtherPlayerInfo>>,
     pub menu_slots: Vec<SlotStack>,
     pub hotbar: std::sync::Arc<[SlotStack]>,
     pub armor: crate::renderer::Armor,
@@ -138,7 +142,6 @@ pub struct SessionState {
     pub merchant_hint: i32,
     pub merchant_future_xp: u32,
     pub stonecutter_recipes: std::sync::Arc<[StonecutterRecipe]>,
-    pub recipes: crate::client::recipes::RecipeBookState,
     pub horse: Option<HorseMenu>,
     pub horse_published_state_id: u32,
     pub inv_actions: Vec<InvAction>,
@@ -161,12 +164,13 @@ pub struct SessionState {
     pub swimming: bool,
     pub sleeping: bool,
     pub bed_orientation: Option<crate::direction::Direction>,
-    pub camera_distance: Option<f32>,
-    pub local_body: PlayerBody,
     pub sleep_timer: u32,
     pub player_pos_prev: [f32; 3],
     pub game_time: u64,
     pub last_tick_time: Option<crate::platform::time::Instant>,
+    /// Client ticks handled, so the renderer can pace them by count rather
+    /// than by when each one happened to land.
+    pub tick_seq: u64,
     pub hotbar_target: Option<u8>,
     pub spectator_teleport_target: Option<u128>,
     pub fly_speed_scroll: f32,
@@ -188,12 +192,8 @@ pub struct SessionState {
     pub seen_advancements: Vec<Option<azalea_registry::identifier::Identifier>>,
     pub dialog_show: Option<std::sync::Arc<crate::play::dialog::Dialog>>,
     pub dialog_clear: bool,
-    pub win_game: bool,
-    pub code_of_conduct: Option<String>,
-    pub reconfiguring: bool,
     pub dialog_submits: Vec<crate::play::dialog::Submit>,
     pub server_links: Vec<ServerLink>,
-    pub server_packs: crate::client::server_packs::ServerPacks,
     pub targeted_block: Option<TargetedBlock>,
     pub targeted_entity: bool,
     pub crosshair_entity: Option<i32>,
@@ -306,6 +306,43 @@ impl SessionState {
     }
 }
 
+/// `ClientAvatarState`'s walk distance and bob, which drive view bobbing.
+#[derive(Clone, Copy, Default, Debug, PartialEq)]
+pub struct ViewBob {
+    pub walk: f32,
+    pub walk_prev: f32,
+    pub bob: f32,
+    pub bob_prev: f32,
+}
+
+impl ViewBob {
+    /// One tick, as `AbstractClientPlayer` runs it: the bob eases 40% of the
+    /// way toward the horizontal speed (at most 0.1) while walking on the
+    /// ground, toward 0 otherwise, and the walk distance grows by 0.6 of the
+    /// horizontal distance moved. Riding drops the bob to 0 at once.
+    pub fn tick(&mut self, moved: f32, speed: f32, walking: bool, riding: bool) {
+        self.walk_prev = self.walk;
+        self.bob_prev = self.bob;
+        if riding {
+            self.bob = 0.0;
+        } else {
+            let target = if walking { speed.min(0.1) } else { 0.0 };
+            self.bob += (target - self.bob) * 0.4;
+        }
+        self.walk += moved * 0.6;
+    }
+
+    /// `getBackwardsInterpolatedWalkDistance` and `getInterpolatedBob`.
+    pub fn sample(&self, partial: f32) -> (f32, f32) {
+        let walked = self.walk - self.walk_prev;
+        (
+            -(self.walk + walked * partial),
+            self.bob_prev + (self.bob - self.bob_prev) * partial,
+        )
+    }
+}
+
+#[derive(Clone, Copy)]
 pub struct FovState {
     pub prev: f32,
     pub cur: f32,
@@ -325,32 +362,6 @@ impl Default for FovState {
 }
 
 impl FovState {
-    pub fn sample(&self, partial: f32) -> f32 {
-        self.prev + (self.cur - self.prev) * partial
-    }
-}
-
-pub struct CameraEye {
-    pub prev: f32,
-    pub cur: f32,
-}
-
-impl Default for CameraEye {
-    fn default() -> Self {
-        let eye = PlayerBody::STANDING.eye_height;
-        Self {
-            prev: eye,
-            cur: eye,
-        }
-    }
-}
-
-impl CameraEye {
-    pub fn tick(&mut self, target: f32) {
-        self.prev = self.cur;
-        self.cur += (target - self.cur) * 0.5;
-    }
-
     pub fn sample(&self, partial: f32) -> f32 {
         self.prev + (self.cur - self.prev) * partial
     }
@@ -524,8 +535,9 @@ pub struct LevelParticle {
     pub particle: azalea::entity::particle::Particle,
     pub pos: [f64; 3],
     pub dist: [f32; 3],
-    pub max_speed: f32,
+    pub max_speed: [f32; 3],
     pub count: u32,
+    pub randomization: azalea_protocol::packets::game::c_level_particles::ParticleRandomization,
     pub override_limiter: bool,
     pub always_show: bool,
 }
@@ -564,6 +576,7 @@ pub struct SlotStack {
     pub banner_patterns: Option<Box<[Box<str>]>>,
     pub book: Option<Box<Book>>,
     pub banner_layers: Option<Box<[crate::blockentities::banner::BannerLayer]>>,
+    pub glint: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -625,56 +638,6 @@ impl Default for SkinPrefs {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct PlayerBody {
-    pub invisible: bool,
-    pub on_fire: bool,
-    pub scale: f32,
-    pub bounding_box: [f32; 2],
-    pub eye_height: f32,
-}
-
-impl PlayerBody {
-    pub const STANDING: PlayerBody = PlayerBody {
-        invisible: false,
-        on_fire: false,
-        scale: 1.0,
-        bounding_box: [0.6, 1.8],
-        eye_height: 1.62,
-    };
-
-    pub fn hidden_to(&self, viewer: Gamemode) -> bool {
-        invisible_to(self.invisible, viewer)
-    }
-}
-
-impl Default for PlayerBody {
-    fn default() -> Self {
-        Self::STANDING
-    }
-}
-
-pub fn player_dimensions(
-    pose: azalea::entity::Pose,
-    scale: f32,
-) -> azalea::entity::dimensions::EntityDimensions {
-    let d = azalea::entity::dimensions::calculate_dimensions(
-        azalea_registry::builtin::EntityKind::Player,
-        pose,
-    );
-    let s = if d.fixed { 1.0 } else { scale };
-    azalea::entity::dimensions::EntityDimensions {
-        width: d.width * s,
-        height: d.height * s,
-        eye_height: d.eye_height * s,
-        fixed: d.fixed,
-    }
-}
-
-pub fn invisible_to(invisible: bool, viewer: Gamemode) -> bool {
-    invisible && viewer != Gamemode::Spectator
-}
-
 #[derive(Clone, Default)]
 pub struct OtherPlayerInfo {
     pub id: i32,
@@ -683,7 +646,6 @@ pub struct OtherPlayerInfo {
     pub hidden_by_team: bool,
     pub health: Option<f32>,
     pub max_health: f32,
-    pub body: PlayerBody,
     pub gamemode: Option<Gamemode>,
     pub below_name: Vec<crate::text::Span>,
     pub discrete: bool,
@@ -700,9 +662,6 @@ pub enum ContainerKind {
     Crafting,
     Furnace(FurnaceKind),
     Hopper,
-    ShulkerBox,
-    Dispenser,
-    Crafter,
     Grindstone,
     Enchantment,
     Loom,
@@ -934,6 +893,7 @@ pub struct HealthDisplay {
     pub regenerating: bool,
     pub hunger_effect: bool,
     pub ticks_frozen: i32,
+    pub on_fire: bool,
     pub vehicle: Option<(f32, f32)>,
 }
 
@@ -1000,11 +960,27 @@ pub enum InvAction {
         secondary: Option<u32>,
     },
     RenameItem(String),
-    SlotStateChanged {
-        slot: u8,
-        enabled: bool,
-    },
+    /// A sort or bulk transfer, planned into clicks against the live menu.
+    Sort(SortRequest),
     Close,
+}
+
+/// Which part of an open menu a sort or transfer works on: the container's
+/// storage, or the player's main inventory (the hotbar stays put).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SortSide {
+    Container,
+    Player,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SortRequest {
+    /// Merges and orders the stacks on one side.
+    Sort(SortSide),
+    /// Moves the stacks on `from` whose item the other side already holds.
+    MoveMatching { from: SortSide },
+    /// Moves everything on `from` that fits on the other side.
+    MoveAll { from: SortSide },
 }
 
 #[derive(Clone, Copy)]

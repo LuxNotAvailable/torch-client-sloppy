@@ -3,8 +3,10 @@ import lib.code.utils
 import lib.extract
 from lib.utils import identifier_to_path, to_camel_case, to_snake_case
 
+
 DATA_COMPONENTS_DIR = "azalea-inventory/src/components/mod.rs"
 DEFAULT_DATA_COMPONENTS_DIR = "azalea-inventory/src/default_components/generated.rs"
+
 
 def generate(version_id: str):
     expected_variants = get_expected_variants(version_id)
@@ -42,6 +44,7 @@ def generate(version_id: str):
 
     print("Done!")
 
+
 def get_expected_variants(version_id: str):
     expected_variants = []
     registries = lib.extract.get_builtin_registries_report(version_id)
@@ -56,6 +59,7 @@ def get_expected_variants(version_id: str):
 
     return expected_variants
 
+
 def get_actual_variants():
     actual_variants = []
     with open(DATA_COMPONENTS_DIR, "r") as f:
@@ -69,12 +73,14 @@ def get_actual_variants():
             if line.startswith("    "):
                 variant_name = line.strip(" ,").split()[0]
                 if variant_name[0] in "#/":
+                    # skip comments
                     continue
                 actual_variants.append(variant_name)
         elif line == "define_data_components!(":
             in_define_macro = True
 
     return actual_variants
+
 
 def remove_variant(variant: str):
     with open(DATA_COMPONENTS_DIR, "r") as f:
@@ -95,6 +101,7 @@ def remove_variant(variant: str):
                     break
                 variant_name = line.strip().split()[0].strip(",")
                 if variant_name[0] in "#/":
+                    # skip comments
                     continue
                 if variant_name == variant:
                     first_line_with_variant = i
@@ -108,16 +115,17 @@ def remove_variant(variant: str):
 
     code = code[:first_line_with_variant] + code[line_after_variant:]
 
-    line_before_struct = None
-    line_after_struct = None
+    # now remove the struct
+    line_before_struct = None  # this is the #[derive] line
+    line_after_struct = None  # impl DataComponent for ... {\n...\n}
     for i, line in enumerate(list(code)):
         if line == f"pub struct {variant} {{" or line == f"pub struct {variant};":
             line_before_struct = i - 1
-        elif line == "}":
+        elif line == "}" and line_before_struct:
             line_after_struct = i + 1
             break
     if line_before_struct is None:
-        raise ValueError(f"Couldn't find struct {variant}")
+        input(f"Warning: Couldn't find struct {variant}. (press enter to continue)")
     if line_after_struct is None:
         raise ValueError(f"Couldn't find impl DataComponent for {variant}")
 
@@ -125,6 +133,7 @@ def remove_variant(variant: str):
 
     with open(DATA_COMPONENTS_DIR, "w") as f:
         f.write("\n".join(code))
+
 
 def add_variant(variant: str):
     with open(DATA_COMPONENTS_DIR, "r") as f:
@@ -149,6 +158,7 @@ def add_variant(variant: str):
         + code[last_line_in_define_macro:]
     )
 
+    # now insert the struct
     code.append("")
     code.append("#[derive(Clone, PartialEq, AzBuf, Debug, Serialize)]")
     code.append(f"pub struct {variant} {{")
@@ -157,6 +167,7 @@ def add_variant(variant: str):
 
     with open(DATA_COMPONENTS_DIR, "w") as f:
         f.write("\n".join(code))
+
 
 def update_default_variants(version_id: str):
     items = lib.extract.get_items_report(version_id)
@@ -183,6 +194,7 @@ use crate::{
 
 """.splitlines()
 
+    #  { max_stack_size: { air: 64, ... } }
     components_to_item_defaults = {}
 
     for item_resource_id, data in items.items():
@@ -196,6 +208,7 @@ use crate::{
                 component_value
             )
 
+    # sort the dict by component id to reduce reordering on updates
     components_to_item_defaults = dict(
         sorted(components_to_item_defaults.items(), key=lambda k: k[0])
     )
@@ -210,6 +223,7 @@ use crate::{
         item_resource_ids[item_protocol_id] = item_resource_id
 
     enum_and_struct_fields = get_enum_and_struct_fields()
+    # a few types that exist elsewhere
     enum_and_struct_fields["ConsumeEffect::ApplyEffects"] = {
         "effects": "Vec<MobEffectInstance>",
         "probability": "f32",
@@ -225,6 +239,7 @@ use crate::{
         "sound": "SoundEvent",
     }
 
+    # we can't call ::new() on enum variants, so define the defaults manually here
     enum_variant_defaults = {
         "ConsumeEffect::ApplyEffects": {
             "effects": [],
@@ -236,6 +251,7 @@ use crate::{
     }
 
     def python_to_rust_value(python_value: Any, target_rust_type: Optional[str]):
+        # manual implementations
         if isinstance(python_value, dict) and len(python_value) > 0:
             if target_rust_type == "ConsumeEffect":
                 variant = to_camel_case(python_value["type"].split(":")[-1])
@@ -288,6 +304,7 @@ use crate::{
             hashmap_key = hashmap_key.strip()
             hashmap_value = hashmap_value.strip()
 
+            # HashMap::from_iter([("honey_level".to_owned(), "0".to_owned())])
             t = "HashMap::from_iter(["
             for k, v in python_value.items():
                 t += f"({python_to_rust_value(k, hashmap_key)}, {python_to_rust_value(v, hashmap_value)}),"
@@ -301,13 +318,14 @@ use crate::{
                     list(python_value.values())[0], target_rust_type
                 )
             return f'"{python_value}"'
-        elif target_rust_type in {'i64', 'u64', 'f64', 'i32', 'u32', 'f32', 'i16', 'u16', 'i8', 'u8'}:
+        elif target_rust_type in {'i64', 'u64', 'f64', 'i32', 'u32', 'f32', 'i16', 'u16', 'i8', 'u8'}:  # fmt: skip
             if isinstance(python_value, dict) and len(python_value) == 1:
                 return python_to_rust_value(
                     list(python_value.values())[0], target_rust_type
                 )
             return str(python_value)
         elif target_rust_type == "EntityKind":
+            # Special handling for EntityKind - can be from NBT compound id field or direct string
             entity_id = None
             if isinstance(python_value, dict) and "id" in python_value:
                 entity_id = python_value["id"]
@@ -315,11 +333,14 @@ use crate::{
                 entity_id = python_value
 
             if entity_id and entity_id.startswith("minecraft:"):
-                entity_name = entity_id[10:]
+                entity_name = entity_id[10:]  # Remove "minecraft:" prefix
                 entity_name_camel = to_camel_case(entity_name)
                 return f"EntityKind::{entity_name_camel}"
             raise ValueError(f"Unknown or missing EntityKind: {python_value}")
         elif target_rust_type == "NbtCompound":
+            # NbtCompound::from_values([
+            #     ("id".into(), "minecraft:allay".into()),
+            # ]),
             t = "NbtCompound::from_values(vec!["
             for k, v in python_value.items():
                 if isinstance(v, str):
@@ -328,19 +349,26 @@ use crate::{
                     t += f'("{k}".into(), {python_to_rust_value(v, "FIXME_UNKNOWN_NBT")}),'
             t = t.rstrip(",") + "])"
             return t
+        elif target_rust_type in "ResolvableInt":
+            if isinstance(python_value, (str, dict)):
+                return f"ResolvableInt::Reference {{ context_int_provider: {python_to_rust_value(python_value, 'Identifier')} }}"
+            raise ValueError(f"Unhandled ResolvableInt: {python_value}")
+        elif target_rust_type in "ResolvableFloat":
+            if isinstance(python_value, (str, dict)):
+                return f"ResolvableFloat::Reference {{ context_float_provider: {python_to_rust_value(python_value, 'Identifier')} }}"
+            raise ValueError(f"Unhandled ResolvableFloat: {python_value}")
+        elif target_rust_type == "FormattedText":
+            if python_value == "":
+                return "Default::default()"
+            raise ValueError(f"Unhandled FormattedText: {python_value!r}")
 
         if isinstance(python_value, dict):
-            if target_rust_type == "Identifier" and len(python_value) == 1:
+            if (
+                target_rust_type == "Identifier"
+                or target_rust_type.startswith(("HolderSet<", "Vec<"))
+            ) and len(python_value) == 1:
                 return python_to_rust_value(
-                    list(python_value.values())[0], target_rust_type
-                )
-            elif target_rust_type.startswith("HolderSet<") and len(python_value) == 1:
-                return python_to_rust_value(
-                    list(python_value.values())[0], target_rust_type
-                )
-            elif target_rust_type.startswith("Vec<") and len(python_value) == 1:
-                return python_to_rust_value(
-                    list(python_value.values())[0], target_rust_type
+                    next(iter(python_value.values())), target_rust_type
                 )
             elif target_rust_type == "ItemStack":
                 item_rust_value = python_to_rust_value(python_value["id"], "ItemKind")
@@ -351,29 +379,37 @@ use crate::{
                     return f"ItemStack::new({item_rust_value}, {python_to_rust_value(python_value['count'], 'i32')})"
 
             if "::" in target_rust_type and target_rust_type in enum_variant_defaults:
+                # we can't call ::new() on enum variants, so extend the python type with the defaults
                 python_value = {
                     **enum_variant_defaults[target_rust_type],
                     **python_value,
                 }
 
+            # the :: check is so we don't do this for enum variants
             if len(python_value) == 0 and "::" not in target_rust_type:
                 if (
                     target_rust_type in enum_and_struct_fields
                     and len(enum_and_struct_fields[target_rust_type]) == 0
                 ):
+                    # don't do ::new() for structs with no fields (like `Glider`)
                     return f"{target_rust_type}"
+                # this ::new has to be implemented manually for these types
                 t = f"{target_rust_type.split('<')[0]}::new()"
             else:
+                # create a struct based on the defaults
                 t = f"{target_rust_type} {{"
                 for k, v in python_value.items():
                     if k == "type":
+                        # azalea's convention is to use "kind" instead of "type"
                         k = "kind"
 
+                    # get the type of the fields
                     inner_type = enum_and_struct_fields.get(target_rust_type, {}).get(
                         k, "FIXME_UNKNOWN_TYPE"
                     )
                     t += f"{k}: {python_to_rust_value(v, inner_type)},"
 
+                # add ..Struct::new(), unless we already know that all of the fields are there
                 if len(python_value) < len(
                     enum_and_struct_fields.get(target_rust_type, [])
                 ):
@@ -388,10 +424,13 @@ use crate::{
             if "Referenced(Identifier)" in fields_for_rust_type:
                 return f"{target_rust_type}::Referenced({python_to_rust_value(python_value, 'Identifier')})"
             elif target_rust_type.startswith("HolderSet<"):
-                holderset_type = target_rust_type.split("<", 1)[1].split(",", 1)[0]
+                holderset_type = (
+                    target_rust_type.split("<", 1)[1].split(",", 1)[0].rstrip(">")
+                )
                 main_vec = python_to_rust_value(
                     [python_value], f"Vec<{holderset_type}>"
                 )
+
                 return f"HolderSet::Direct {{ contents: {main_vec} }}"
             elif target_rust_type.startswith(
                 "azalea_registry::Holder<"
@@ -400,12 +439,18 @@ use crate::{
                 inner_type = python_to_rust_value(python_value, holder_type)
                 return f"azalea_registry::Holder::Reference({inner_type})"
             elif target_rust_type == "Identifier":
+                # convert something like minecraft:air into "minecraft:air".into().
+                # note that this can't be static/const because Identifier contains a `Box<str>`.
                 return f'"{python_value}".into()'
             elif target_rust_type.startswith("azalea_registry::data::"):
+                # TODO: this is intentionally incorrect, see the comment in
+                # azalea-registry/src/data.rs to see how to fix this properly
                 return f"{target_rust_type}::new_raw(0)"
             else:
+                # enum variant
                 return f"{target_rust_type}::{to_camel_case(identifier_to_path(python_value))}"
         if isinstance(python_value, list):
+            # convert Vec<Thing> into Thing
             main_vec = "vec!["
             inner_type = (
                 target_rust_type.split("<", 1)[1]
@@ -415,11 +460,13 @@ use crate::{
                 if (target_rust_type and "<" in target_rust_type)
                 else None
             )
+            # convert [Thing; 2] into Thing
             if target_rust_type.startswith("[") and target_rust_type.endswith("]"):
                 inner_type = target_rust_type.split(";")[0].strip("[]")
                 main_vec = "["
 
             if inner_type is None:
+                # if the only field is a Vec, use that as the type
                 rust_type_fields = enum_and_struct_fields.get(target_rust_type, {})
                 if len(rust_type_fields) == 1 and isinstance(rust_type_fields, dict):
                     _field_name, field_type = list(rust_type_fields.items())[0]
@@ -427,6 +474,7 @@ use crate::{
 
             vectors = []
             for v in python_value:
+                # handle tags correctly
                 if isinstance(v, str) and v.startswith("#minecraft:"):
                     tag_name = to_snake_case(identifier_to_path(v)).upper()
                     if inner_type == "EntityKind":
@@ -438,6 +486,9 @@ use crate::{
                     else:
                         tag_module = "FIXME_UNKNOWN_MODULE"
 
+                    # TODO: it's not currently possible to have a holderset for data registry items
+                    # (because registries would need to be translated during packet parsing/writing),
+                    # so we leave this empty for now.
                     if inner_type in {"BannerPatternKind", "DamageKind"}:
                         pass
                     else:
@@ -454,6 +505,7 @@ use crate::{
             if len(vectors) == 1:
                 as_vec = vectors[0]
             else:
+                # concat
                 as_vec = f"[{','.join(vectors)}].concat()"
 
             if target_rust_type.startswith("HolderSet<"):
@@ -471,10 +523,15 @@ use crate::{
         ):
             field_name, field_type = list(component_struct_fields.items())[0]
 
+            # if field_type not in ["i32", "u32", "f32", "bool"]:
+            #     continue
+
             def transform_value_fn(rust_value: str):
                 return f"{component_struct_name} {{ {field_name}: {rust_value} }}"
         else:
             field_type = component_struct_name
+            # if component_resource_id != "rarity":
+            #     continue
 
             def transform_value_fn(rust_value: str):
                 return rust_value
@@ -488,6 +545,8 @@ use crate::{
             field_type = "&str"
 
         elif component_resource_id == "entity_data":
+            # Special handling for EntityData to use EntityData structure
+            # Keep rust_value as "value" so it gets processed correctly
             field_type = "EntityKind"
 
             def transform_value_fn(rust_value: str):
@@ -510,16 +569,29 @@ use crate::{
             len(item_defaults) - default_values_frequency[most_common_default_value]
         )
 
+        # if it looks like there's a default (like, vec![]) that's used for most items, then we
+        # always use a match statement with a default handler
         includes_every_item_but_mostly_same_values = (
             len(item_resource_ids) == len(item_defaults)
             and default_values_count_except_most_common <= 128
         )
 
-        if len(item_defaults) > 128 and not includes_every_item_but_mostly_same_values:
+        forbidden_for_lookup_table = {
+            # the definition for CookingFuel requires allocations
+            "cooking_fuel"
+        }
+
+        # use a lookup table for some components to avoid big match statements
+        if (
+            len(item_defaults) > 128
+            and not includes_every_item_but_mostly_same_values
+            and component_resource_id not in forbidden_for_lookup_table
+        ):
             static_values_name = component_resource_id.upper() + "_VALUES"
 
             values_set = set(item_defaults.values())
             if len(values_set) == 1:
+                # always returns the same value
                 code.append(f"impl DefaultableComponent for {component_struct_name} {{")
                 code.append(
                     "    fn default_for_item(_item: ItemKind) -> Option<Self> {"
@@ -530,10 +602,15 @@ use crate::{
                 code.append("}")
                 continue
 
-            none_value = 0
-            while none_value in values_set:
-                none_value += 1
+            # find a sentinel value that isn't already being used
             none_value_is_used = False
+            if isinstance(item_resource_ids[0], int):
+                none_value = 0
+                while none_value in values_set:
+                    none_value += 1
+            else:
+                # can't be Default::default() because it needs to be const to work in a static
+                none_value = f"{field_type}::new()"
 
             static_def_line = f"static {static_values_name}: [{field_type}; {len(item_resource_ids)}] = ["
             for item_protocol_id, item_resource_id in enumerate(item_resource_ids):
@@ -597,11 +674,17 @@ use crate::{
     with open(DEFAULT_DATA_COMPONENTS_DIR, "w") as f:
         f.write("\n".join(code))
 
+
 def get_enum_and_struct_fields():
+    """
+    Returns a map like map like `{ "MaxStackSize": { "count": i32 }, "Rarity": [ "common", ... ], ... }`
+    with an entry for each struct in components/mod.rs.
+    """
 
     with open(DATA_COMPONENTS_DIR, "r") as f:
         code = f.read().split("\n")
 
+    # we copy from here to `metadatas` if we find a DataComponent impl for the struct
     all_enum_and_struct_fields = {}
 
     i = 0
@@ -609,6 +692,7 @@ def get_enum_and_struct_fields():
         line = code[i]
         if line.startswith("pub struct "):
             struct_name = line.split()[2].strip(":;")
+            # map like { "count": i32 }
             this_struct_fields = {}
             if line[-1] not in "};":
                 while line != "}":
@@ -621,6 +705,7 @@ def get_enum_and_struct_fields():
             all_enum_and_struct_fields[struct_name] = this_struct_fields
         elif line.startswith("pub enum "):
             enum_name = line.split()[2].strip(":")
+            # list of string values
             this_enum_variants = []
             if line[-1] not in "};":
                 while line != "}":

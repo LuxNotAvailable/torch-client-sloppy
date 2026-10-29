@@ -146,6 +146,7 @@ pub(crate) fn prepare_entity_draws(
     images: Res<RenderAssets<GpuImage>>,
     render: Option<ResMut<PackRender>>,
 ) {
+    crate::prof_span!("render:pack_prepare_entity_draws");
     let Some(mut render) = render else { return };
     let Some(install) = render.install.as_deref_mut() else {
         return;

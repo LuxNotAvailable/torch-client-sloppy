@@ -13,6 +13,7 @@ pub struct ClientboundExplode {
     pub explosion_particle: Particle,
     pub explosion_sound: azalea_registry::Holder<SoundEvent, CustomSound>,
     pub block_particles: Vec<Weighted<ExplosionParticleInfo>>,
+    pub play_sound: bool,
 }
 
 #[derive(AzBuf, Clone, Debug, PartialEq)]

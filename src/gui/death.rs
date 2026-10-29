@@ -84,7 +84,7 @@ pub fn draw(
         TITLE
     };
     p.scaled(TITLE_SCALE, 0.0, 0.0, |p| {
-        p.text_centered(title, ctx.vw / TITLE_SCALE / 2.0, 30.0, 0xFFFFFF, true);
+        widgets::draw_title(p, ctx.vw / TITLE_SCALE, 30.0, title);
     });
     if let Some(cause) = &state.cause {
         let w = p.atlas.font.width(cause);
@@ -135,7 +135,7 @@ fn draw_confirm(
     let block_h = LINE_HEIGHT + CONFIRM_PAD + WIDGET_HEIGHT;
     let y = ((ctx.vh - block_h) / 2.0).floor().max(0.0);
 
-    p.text_centered(QUIT_CONFIRM, ctx.vw / 2.0, y, 0xFFFFFF, true);
+    widgets::draw_title(p, ctx.vw, y, QUIT_CONFIRM);
 
     let row_y = y + LINE_HEIGHT + CONFIRM_PAD;
     let row_w = CONFIRM_BUTTON_W * 2.0 + CONFIRM_GAP;

@@ -6,13 +6,13 @@ use crate::shaderpack::lang::{self, Lang};
 use crate::shaderpack::options::{Kind, Opt, Options, Values};
 use crate::shaderpack::properties::{self, Element, Properties, ROOT_SCREEN};
 use crate::shaderpack::{discover, features};
-use crate::util::pack::{Pack, Source};
+use crate::util::pack::Pack;
 
 use super::options::{
     BIG_W, COLUMN_STEP, COLUMN_W, GRID_LEFT_OFFSET, LAYOUT, ROW_H, ROW_INSET, draw_title,
-    row_visible, scroll_masked,
+    masked_input, scroll_input,
 };
-use super::widgets::{FOOTER_GAP, FOOTER_W, WIDGET_HEIGHT, centered_row_x};
+use super::widgets::WIDGET_HEIGHT;
 
 const PACKS_TITLE: &str = "Shader Packs";
 pub(in crate::gui) const SHADER_PACKS: &str = "Shader Packs...";
@@ -22,6 +22,8 @@ const SETTINGS: &str = "Settings...";
 const RESET: &str = "Reset";
 const DONE: &str = "Done";
 const OPEN_FOLDER: &str = "Open Shader Pack Folder";
+const FOOTER_W: f32 = 150.0;
+const FOOTER_GAP: f32 = 8.0;
 const PROFILE: &str = "Profile";
 const CUSTOM: &str = "Custom";
 const ON: &str = "ON";
@@ -154,7 +156,7 @@ impl State {
 }
 
 fn load(name: &str) -> Result<Loaded, String> {
-    let source = Source::open(&discover::dir().join(name), crate::shaderpack::ROOT)?;
+    let source = discover::open(name)?;
 
     let texts: Vec<String> = crate::shaderpack::include::option_texts(&source);
     let options = crate::shaderpack::options::discover(texts.iter().map(String::as_str));
@@ -330,17 +332,24 @@ pub fn draw_packs(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     let rows = state.shaderpacks.packs.len() + 1;
     let content_h = rows as f32 * LIST_ROW_H;
 
-    let input = scroll_masked(
+    scroll_input(
         &mut state.shaderpacks.list_scroll,
         &mut state.shaderpacks.list_scroll_drag,
         ctx,
         left,
         BIG_W,
-        (list_x, list_y, list_w, list_h),
+        list_y,
+        list_h,
         content_h,
     );
     let top = (list_y - state.shaderpacks.list_scroll).floor();
-    let list_ctx = &ctx.with_input(&input);
+
+    let input = masked_input(ctx, (list_x, list_y, list_w, list_h), false);
+    let list_ctx = &ScreenCtx {
+        input: &input,
+        vw: ctx.vw,
+        vh: ctx.vh,
+    };
 
     let clip = p.push_clip(list_x, list_y, list_w, list_h);
 
@@ -358,13 +367,7 @@ pub fn draw_packs(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         }
     }
     if state.shaderpacks.packs.is_empty() {
-        p.text_centered(
-            NO_PACKS,
-            ctx.vw / 2.0,
-            top + LIST_ROW_H + 6.0,
-            0xA0_A0A0,
-            true,
-        );
+        text_center(p, NO_PACKS, ctx.vw / 2.0, top + LIST_ROW_H + 6.0, 0xA0_A0A0);
     }
     p.pop_clip(clip);
 
@@ -391,7 +394,7 @@ pub fn draw_packs(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
                 .skip(range.start)
                 .take(range.end - range.start)
                 .collect();
-            p.text_centered(line.trim_end(), ctx.vw / 2.0, y, *color, true);
+            text_center(p, line.trim_end(), ctx.vw / 2.0, y, *color);
             y += crate::text::LINE_HEIGHT;
         }
     }
@@ -403,7 +406,7 @@ pub fn draw_packs(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         .as_ref()
         .is_some_and(|l| !l.options.is_empty());
     let count = if has_options { 3.0 } else { 2.0 };
-    let mut x = centered_row_x(ctx.vw, count * FOOTER_W + (count - 1.0) * FOOTER_GAP);
+    let mut x = (ctx.vw / 2.0 - (count * FOOTER_W + (count - 1.0) * FOOTER_GAP) / 2.0).floor();
     if Button::new(x, footer_y, FOOTER_W, WIDGET_HEIGHT, OPEN_FOLDER).draw(p, ctx) {
         crate::platform::url::open_folder(&discover::dir());
     }
@@ -462,18 +465,25 @@ pub fn draw_options(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     let left = (ctx.vw / 2.0 - grid_w / 2.0).floor();
     let cell_w = COLUMN_W.min(grid_w / columns as f32 - 4.0);
 
-    let input = scroll_masked(
+    scroll_input(
         &mut state.shaderpacks.scroll,
         &mut state.shaderpacks.scroll_drag,
         ctx,
         left,
         grid_w,
-        (list_x, list_y, list_w, list_h),
+        list_y,
+        list_h,
         content_h,
     );
     let top = (list_y - state.shaderpacks.scroll).floor();
 
-    let masked = ctx.with_input(&input);
+    let dragging = state.shaderpacks.scroll_drag.is_some();
+    let input = masked_input(ctx, (list_x, list_y, list_w, list_h), dragging);
+    let masked = ScreenCtx {
+        input: &input,
+        vw: ctx.vw,
+        vh: ctx.vh,
+    };
     crate::gui::focus::suspend();
     let clip = p.push_clip(list_x, list_y, list_w, list_h);
 
@@ -485,7 +495,7 @@ pub fn draw_options(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         let row_index = index / columns as usize;
         let x = left + column as f32 * COLUMN_STEP;
         let y = top + row_index as f32 * ROW_H + ROW_INSET;
-        if !row_visible(y, ROW_H, list_y, list_h) {
+        if y + ROW_H < list_y || y > list_y + list_h {
             continue;
         }
         if let Element::Option(name) = element
@@ -735,7 +745,10 @@ fn tag(label: &str, value: &str, changed: bool) -> String {
 
 fn draw_comment(p: &mut Painter, ctx: &ScreenCtx, text: &str) {
     let Some(mouse) = ctx.input.mouse else { return };
-    let spans = [crate::text::Span::new(text)];
+    let spans = [crate::text::Span {
+        text: text.to_owned(),
+        style: crate::text::Style::default(),
+    }];
     let lines: Vec<String> = p
         .atlas
         .font
@@ -751,3 +764,8 @@ fn draw_comment(p: &mut Painter, ctx: &ScreenCtx, text: &str) {
 const MESSAGE_ERROR: u32 = 0xFF_5555;
 const MESSAGE_WARNING: u32 = 0xFF_FF55;
 const MESSAGE_MARGIN: f32 = 8.0;
+
+fn text_center(p: &mut Painter, s: &str, cx: f32, y: f32, color: u32) {
+    let x = (cx - p.atlas.font.width_str(s) / 2.0).floor();
+    p.text_str(s, x, y, color, true);
+}

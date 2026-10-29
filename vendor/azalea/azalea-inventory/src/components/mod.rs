@@ -9,7 +9,7 @@ use std::{
     mem::ManuallyDrop,
 };
 
-use azalea_buf::{AzBuf, BufReadError};
+use azalea_buf::{AzBuf, AzBufVar, BufReadError};
 use azalea_chat::FormattedText;
 use azalea_core::{
     attribute_modifier_operation::AttributeModifierOperation,
@@ -198,7 +198,6 @@ define_data_components!(
     BlocksAttacks,
     StoredEnchantments,
     DyedColor,
-    MapColor,
     MapId,
     MapDecorations,
     MapPostProcessing,
@@ -263,7 +262,6 @@ define_data_components!(
     DamageType,
     PiercingWeapon,
     KineticWeapon,
-    SwingAnimation,
     ZombieNautilusVariant,
     AttackRange,
     AdditionalTradeCost,
@@ -272,7 +270,46 @@ define_data_components!(
     CowSoundVariant,
     ChickenSoundVariant,
     CatSoundVariant,
+    SulfurCubeContent,
+    BlockTransformer,
+    ProvidesPotteryPattern,
+    AttackAnimation,
+    InteractAnimation,
+    VillagerFood,
+    Compostable,
+    CookingFuel,
+    BrewingFuel,
+    MobVisibility,
+    SignTextFront,
+    SignTextBack,
+    Waxed,
+    CushionColor,
 );
+
+
+/// Length-prefixed list of item stacks in one of [`ItemStack`]'s template
+/// layouts.
+macro_rules! template_list_codec {
+    ($ty:ident, $read:ident, $write:ident) => {
+        impl AzBuf for $ty {
+            fn azalea_read(buf: &mut Cursor<&[u8]>) -> Result<Self, BufReadError> {
+                let len = u32::azalea_read_var(buf)? as usize;
+                let mut items = Vec::with_capacity(len.min(256));
+                for _ in 0..len {
+                    items.push(ItemStack::$read(buf)?);
+                }
+                Ok(Self { items })
+            }
+            fn azalea_write(&self, buf: &mut impl io::Write) -> io::Result<()> {
+                (self.items.len() as u32).azalea_write_var(buf)?;
+                for item in &self.items {
+                    item.$write(buf)?;
+                }
+                Ok(())
+            }
+        }
+    };
+}
 
 #[derive(AzBuf, Clone, Debug, PartialEq, Serialize)]
 #[serde(transparent)]
@@ -598,12 +635,6 @@ pub struct DyedColor {
 
 #[derive(AzBuf, Clone, Debug, PartialEq, Serialize)]
 #[serde(transparent)]
-pub struct MapColor {
-    pub color: i32,
-}
-
-#[derive(AzBuf, Clone, Debug, PartialEq, Serialize)]
-#[serde(transparent)]
 pub struct MapId {
     #[var]
     pub id: i32,
@@ -621,17 +652,19 @@ pub enum MapPostProcessing {
     Scale,
 }
 
-#[derive(AzBuf, Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(transparent)]
 pub struct ChargedProjectiles {
     pub items: Vec<ItemStack>,
 }
+template_list_codec!(ChargedProjectiles, read_template, write_template);
 
-#[derive(AzBuf, Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(transparent)]
 pub struct BundleContents {
     pub items: Vec<ItemStack>,
 }
+template_list_codec!(BundleContents, read_template, write_template);
 
 #[derive(AzBuf, Clone, Debug, PartialEq, Serialize)]
 pub struct PotionContents {
@@ -835,9 +868,10 @@ pub struct BannerPatterns {
     pub patterns: Vec<BannerPatternLayer>,
 }
 
-#[derive(AzBuf, Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(AzBuf, Clone, Copy, Debug, PartialEq, Serialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum DyeColor {
+    #[default]
     White,
     Orange,
     Magenta,
@@ -862,17 +896,44 @@ pub struct BaseColor {
     pub color: DyeColor,
 }
 
-#[derive(AzBuf, Clone, Debug, PartialEq, Serialize)]
-#[serde(transparent)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct PotDecorations {
-    pub items: Vec<ItemKind>,
+    pub back: Option<ItemStack>,
+    pub left: Option<ItemStack>,
+    pub right: Option<ItemStack>,
+    pub front: Option<ItemStack>,
+}
+impl AzBuf for PotDecorations {
+    fn azalea_read(buf: &mut Cursor<&[u8]>) -> Result<Self, BufReadError> {
+        let mut side = || -> Result<Option<ItemStack>, BufReadError> {
+            Ok(match ItemStack::read_optional_template(buf)? {
+                ItemStack::Empty => None,
+                stack => Some(stack),
+            })
+        };
+        Ok(Self {
+            back: side()?,
+            left: side()?,
+            right: side()?,
+            front: side()?,
+        })
+    }
+    fn azalea_write(&self, buf: &mut impl io::Write) -> io::Result<()> {
+        for side in [&self.back, &self.left, &self.right, &self.front] {
+            side.as_ref()
+                .unwrap_or(&ItemStack::Empty)
+                .write_optional_template(buf)?;
+        }
+        Ok(())
+    }
 }
 
-#[derive(AzBuf, Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(transparent)]
 pub struct Container {
     pub items: Vec<ItemStack>,
 }
+template_list_codec!(Container, read_optional_template, write_optional_template);
 
 #[derive(AzBuf, Clone, Debug, PartialEq, Serialize)]
 #[serde(transparent)]
@@ -974,10 +1035,20 @@ pub enum ItemUseAnimation {
     Brush,
 }
 
-#[derive(AzBuf, Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(transparent)]
 pub struct UseRemainder {
     pub convert_into: ItemStack,
+}
+impl AzBuf for UseRemainder {
+    fn azalea_read(buf: &mut Cursor<&[u8]>) -> Result<Self, BufReadError> {
+        Ok(Self {
+            convert_into: ItemStack::read_template(buf)?,
+        })
+    }
+    fn azalea_write(&self, buf: &mut impl io::Write) -> io::Result<()> {
+        self.convert_into.write_template(buf)
+    }
 }
 
 #[derive(AzBuf, Clone, Debug, PartialEq, Serialize)]
@@ -1627,21 +1698,8 @@ pub struct ProvidesTrimMaterial {
 
 #[derive(AzBuf, Clone, Debug, PartialEq, Serialize)]
 pub struct DirectTrimMaterial {
-    #[serde(flatten)]
-    pub assets: MaterialAssetGroup,
+    pub palette_id: Identifier,
     pub description: FormattedText,
-}
-#[derive(AzBuf, Clone, Debug, PartialEq, Serialize)]
-pub struct MaterialAssetGroup {
-    pub assert_name: AssetInfo,
-    #[serde(skip_serializing_if = "is_default")]
-    pub override_armor_assets: Vec<(Identifier, AssetInfo)>,
-}
-
-#[derive(AzBuf, Clone, Debug, PartialEq, Serialize)]
-#[serde(transparent)]
-pub struct AssetInfo {
-    pub suffix: String,
 }
 
 #[derive(AzBuf, Clone, Debug, PartialEq, Serialize)]
@@ -1794,35 +1852,6 @@ impl Default for KineticWeaponCondition {
 }
 
 #[derive(AzBuf, Clone, Debug, PartialEq, Serialize)]
-pub struct SwingAnimation {
-    #[serde(rename = "type")]
-    pub kind: SwingAnimationKind,
-    #[var]
-    pub duration: i32,
-}
-impl SwingAnimation {
-    pub const fn new() -> Self {
-        Self {
-            kind: SwingAnimationKind::Whack,
-            duration: 6,
-        }
-    }
-}
-impl Default for SwingAnimation {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[derive(AzBuf, Clone, Copy, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SwingAnimationKind {
-    None,
-    Whack,
-    Stab,
-}
-
-#[derive(AzBuf, Clone, Debug, PartialEq, Serialize)]
 pub struct AttackRange {
     pub min_reach: f32,
     pub max_reach: f32,
@@ -1850,32 +1879,221 @@ impl Default for AttackRange {
 }
 
 #[derive(Clone, PartialEq, AzBuf, Debug, Serialize)]
+#[serde(transparent)]
 pub struct AdditionalTradeCost {
     #[var]
     pub cost: i32,
 }
 
 #[derive(Clone, PartialEq, AzBuf, Debug, Serialize)]
+#[serde(transparent)]
 pub struct Dye {
     pub color: DyeColor,
 }
 
 #[derive(Clone, PartialEq, AzBuf, Debug, Serialize)]
+#[serde(transparent)]
 pub struct PigSoundVariant {
     pub value: azalea_registry::data::PigSoundVariant,
 }
 
 #[derive(Clone, PartialEq, AzBuf, Debug, Serialize)]
+#[serde(transparent)]
 pub struct CowSoundVariant {
     pub value: azalea_registry::data::CowSoundVariant,
 }
 
 #[derive(Clone, PartialEq, AzBuf, Debug, Serialize)]
+#[serde(transparent)]
 pub struct ChickenSoundVariant {
     pub value: azalea_registry::data::ChickenSoundVariant,
 }
 
 #[derive(Clone, PartialEq, AzBuf, Debug, Serialize)]
+#[serde(transparent)]
 pub struct CatSoundVariant {
     pub value: azalea_registry::data::CatSoundVariant,
+}
+
+#[derive(Clone, PartialEq, Debug, Serialize)]
+#[serde(transparent)]
+pub struct SulfurCubeContent {
+    pub absorbed_block_item_stack: ItemStack,
+}
+impl AzBuf for SulfurCubeContent {
+    fn azalea_read(buf: &mut Cursor<&[u8]>) -> Result<Self, BufReadError> {
+        Ok(Self {
+            absorbed_block_item_stack: ItemStack::read_template(buf)?,
+        })
+    }
+    fn azalea_write(&self, buf: &mut impl io::Write) -> io::Result<()> {
+        self.absorbed_block_item_stack.write_template(buf)
+    }
+}
+
+#[derive(Clone, PartialEq, AzBuf, Debug, Serialize)]
+pub struct BlockTransformer {
+    pub value: azalea_registry::data::BlockTransformer,
+}
+
+#[derive(Clone, PartialEq, AzBuf, Debug, Serialize)]
+pub struct ProvidesPotteryPattern {
+    pub value: azalea_registry::data::DecoratedPotPattern,
+}
+
+#[derive(Clone, PartialEq, AzBuf, Debug, Serialize)]
+pub struct AttackAnimation {
+    pub value: SwingAnimation,
+}
+#[derive(Clone, PartialEq, AzBuf, Debug, Serialize)]
+pub struct SwingAnimation {
+    #[serde(rename = "type")]
+    pub kind: SwingAnimationKind,
+    #[var]
+    pub duration: i32,
+}
+impl SwingAnimation {
+    pub const fn new() -> Self {
+        Self {
+            kind: SwingAnimationKind::Whack,
+            duration: 6,
+        }
+    }
+}
+impl Default for SwingAnimation {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+#[derive(AzBuf, Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SwingAnimationKind {
+    None,
+    Whack,
+    Stab,
+}
+
+#[derive(Clone, PartialEq, AzBuf, Debug, Serialize)]
+pub struct InteractAnimation {
+    pub value: SwingAnimation,
+}
+
+#[derive(Clone, PartialEq, AzBuf, Debug, Serialize)]
+pub struct VillagerFood {
+    #[var]
+    pub nutrition: i32,
+}
+
+#[derive(Clone, PartialEq, AzBuf, Debug, Serialize)]
+pub struct Compostable {
+    pub layers: ResolvableInt,
+}
+#[derive(Clone, PartialEq, Debug, Serialize)]
+pub enum ResolvableInt {
+    Reference { context_int_provider: Identifier },
+    Constant { value: i32 },
+}
+#[derive(Clone, PartialEq, Debug, Serialize)]
+pub enum ResolvableFloat {
+    Reference { context_float_provider: Identifier },
+    Constant { value: f32 },
+}
+macro_rules! resolvable_codec {
+    ($ty:ident, $value:ty, $key:ident) => {
+        impl AzBuf for $ty {
+            fn azalea_read(buf: &mut Cursor<&[u8]>) -> Result<Self, BufReadError> {
+                Ok(if bool::azalea_read(buf)? {
+                    Self::Constant {
+                        value: <$value>::azalea_read(buf)?,
+                    }
+                } else {
+                    Self::Reference {
+                        $key: Identifier::azalea_read(buf)?,
+                    }
+                })
+            }
+            fn azalea_write(&self, buf: &mut impl io::Write) -> io::Result<()> {
+                match self {
+                    Self::Constant { value } => {
+                        true.azalea_write(buf)?;
+                        value.azalea_write(buf)
+                    }
+                    Self::Reference { $key } => {
+                        false.azalea_write(buf)?;
+                        $key.azalea_write(buf)
+                    }
+                }
+            }
+        }
+    };
+}
+resolvable_codec!(ResolvableInt, i32, context_int_provider);
+resolvable_codec!(ResolvableFloat, f32, context_float_provider);
+impl Default for ResolvableInt {
+    fn default() -> Self {
+        Self::Constant { value: 0 }
+    }
+}
+impl Default for ResolvableFloat {
+    fn default() -> Self {
+        Self::Constant { value: 0. }
+    }
+}
+
+#[derive(Clone, PartialEq, AzBuf, Debug, Serialize, Default)]
+pub struct CookingFuel {
+    pub burn_time: ResolvableInt,
+    pub speed_multiplier: ResolvableFloat,
+}
+impl CookingFuel {
+    pub const fn new() -> Self {
+        Self {
+            burn_time: ResolvableInt::Constant { value: 0 },
+            speed_multiplier: ResolvableFloat::Constant { value: 0. },
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, AzBuf, Debug, Serialize)]
+pub struct BrewingFuel {
+    pub uses: ResolvableInt,
+    pub speed_multiplier: ResolvableFloat,
+}
+
+#[derive(Clone, PartialEq, AzBuf, Debug, Serialize)]
+pub struct MobVisibility {
+    pub targeting_entity_types: HolderSet<EntityKind, Identifier>,
+    pub visibility: f32,
+}
+
+#[derive(Clone, PartialEq, AzBuf, Debug, Serialize)]
+#[serde(transparent)]
+pub struct SignTextFront {
+    pub value: SignText,
+}
+#[derive(Clone, PartialEq, AzBuf, Debug, Serialize)]
+#[serde(transparent)]
+pub struct SignTextBack {
+    pub value: SignText,
+}
+
+#[derive(Clone, PartialEq, AzBuf, Debug, Serialize, Default)]
+pub struct SignText {
+    pub messages: [FormattedText; 4],
+    pub filtered_messages_for_serialization: Option<[FormattedText; 4]>,
+    pub color: DyeColor,
+    pub has_glowing_text: bool,
+}
+impl SignText {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[derive(Clone, PartialEq, AzBuf, Debug, Serialize)]
+pub struct Waxed;
+
+#[derive(Clone, PartialEq, AzBuf, Debug, Serialize)]
+pub struct CushionColor {
+    pub value: DyeColor,
 }

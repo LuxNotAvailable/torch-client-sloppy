@@ -89,7 +89,7 @@ fn pick(s: &SharedState, eye: [f32; 3], range: f32, fov: f32) -> Option<(i32, [f
     };
 
     if super::entities::kind_enabled(EntityKind::Player) {
-        for p in &s.session.other_players {
+        for p in s.session.other_players.iter() {
             if p.health.is_some_and(|h| h <= 0.0) {
                 continue;
             }

@@ -14,12 +14,12 @@ use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 
 use super::input::{
-    CameraAngles, FreecamState, ThirdPersonState, apply_gui_nav, bot_movement_input,
-    flight_toggle_input, freecam_movement, fullscreen_key, handle_hotbar_keys,
+    CameraAngles, FreecamState, THIRD_PERSON_DISTANCE, ThirdPersonState, apply_gui_nav,
+    bot_movement_input, flight_toggle_input, freecam_movement, handle_hotbar_keys,
     handle_hotbar_scroll, handle_keybinds, handle_mouse_input, handle_spectator_action_key,
     handle_spectator_fly_speed_scroll, mouse_look, reload_all_chunks, toggle_advanced_tooltips,
-    toggle_chunk_borders, toggle_freecam, toggle_screen, toggle_third_person, web_pointer_lock,
-    window_focus_cursor,
+    toggle_chunk_borders, toggle_freecam, toggle_screen, toggle_third_person, web_fullscreen,
+    web_pointer_lock, window_focus_cursor,
 };
 use super::overlays::{
     BlockOutline, BlockOutlineMarker, BreakOverlay, BreakOverlayMarker, ChunkBorderMarker,
@@ -54,23 +54,10 @@ pub struct ChunkMaterial(pub Handle<StandardMaterial>);
 )]
 pub struct WaterMaterial(pub Handle<StandardMaterial>);
 
-#[derive(Resource)]
+#[derive(Resource, Default)]
 pub struct LightmapState {
     flicker: f32,
-    flicker_tick: u64,
-    flicker_rng: crate::util::javarandom::JavaRandom,
     pub current: super::lightmap::State,
-}
-
-impl Default for LightmapState {
-    fn default() -> Self {
-        LightmapState {
-            flicker: 0.0,
-            flicker_tick: 0,
-            flicker_rng: crate::util::javarandom::JavaRandom::new(0),
-            current: Default::default(),
-        }
-    }
 }
 
 fn update_environment(
@@ -93,7 +80,7 @@ fn update_environment(
         dim,
         ticks,
         &layer,
-        gui.options.render_distance as i32,
+        super::environment::effective_render_distance(gui.options.render_distance as i32),
         delta_ticks,
         || super::lightmap::levels_at([eye[0] as f32, eye[1] as f32, eye[2] as f32]).1 as f32,
         crate::client::envprobe::camera_has_precipitation(),
@@ -102,20 +89,19 @@ fn update_environment(
 
 fn update_lightmap(
     env: Res<super::environment::Environment>,
-    view: Res<FrameView>,
     mut pixels: ResMut<super::terrain::LightmapPixels>,
     mut state: ResMut<LightmapState>,
+    time: Res<Time>,
     gui: Res<crate::gui::GuiState>,
 ) {
     crate::prof_span!("render:update_lightmap");
-    let tick = view.game_time;
-    let behind = tick.wrapping_sub(state.flicker_tick).min(20);
-    for _ in 0..behind {
-        let rng = &mut state.flicker_rng;
-        let noise = [rng.next_f32(), rng.next_f32(), rng.next_f32()];
-        state.flicker = super::lightmap::tick_flicker(state.flicker, noise);
-    }
-    state.flicker_tick = tick;
+    let t = time.elapsed_secs();
+    let noise = [
+        (t * 12.9898).sin().abs(),
+        (t * 78.233).sin().abs(),
+        (t * 37.719).sin().abs(),
+    ];
+    state.flicker = super::lightmap::tick_flicker(state.flicker, noise);
 
     let gamma = gui.options.gamma as f32 / 100.0;
     let lm =
@@ -185,6 +171,8 @@ impl ChunkIndex {
         ops: &TerrainOps,
     ) {
         let origin = [cx * 16, sec_y, cz * 16];
+        crate::blockentities::transient::section_rebuilt(origin);
+        crate::blockentities::bake::section_rebuilt(origin);
         let Self {
             columns,
             free_slots,
@@ -273,6 +261,8 @@ impl ChunkIndex {
     }
 
     pub fn clear(&mut self, ops: &TerrainOps) {
+        crate::blockentities::transient::clear();
+        crate::blockentities::bake::clear();
         ops.push(TerrainOp::ClearAll);
         self.columns.clear();
         self.free_slots.clear();
@@ -302,6 +292,9 @@ pub struct BlockAtlasHandle(pub Handle<Image>);
 
 #[derive(Resource)]
 struct PendingAtlas(Image);
+
+#[derive(Resource)]
+pub struct BlockTileMap(pub HashMap<String, u32>);
 
 #[derive(Resource, Default)]
 struct ProfVisible {
@@ -372,6 +365,7 @@ fn setup(
     commands.insert_resource(super::terrain_pool::TerrainTextures {
         atlas: atlas.clone(),
         lightmap,
+        anim: images.add(super::block_anim::table_image()),
     });
 
     let break_mat = materials.add(StandardMaterial {
@@ -473,7 +467,6 @@ fn setup(
         },
         Msaa::Off,
         Tonemapping::None,
-        RenderLayers::from_layers(&[0, super::hand::HAND_LAYER]),
         Projection::Perspective(PerspectiveProjection {
             fov: VANILLA_FOV_DEGREES.to_radians(),
             ..default()
@@ -559,10 +552,10 @@ fn poll_shared_state(
     if !freecam.active {
         let [ix, iy, iz] = view.player_lerp;
         if let Ok(mut transform) = camera.single_mut() {
-            let eye = Vec3::new(ix, iy + view.camera_eye_height, iz);
+            let eye = Vec3::new(ix, iy + view.eye_height, iz);
             if third_person.active {
                 let forward = angles.rotation() * Vec3::NEG_Z;
-                transform.translation = eye - forward * view.camera_distance;
+                transform.translation = eye - forward * THIRD_PERSON_DISTANCE;
             } else if view.sleeping {
                 let mc_yaw = match view.bed_orientation {
                     Some(dir) => dir.to_y_rot() - 180.0,
@@ -757,12 +750,11 @@ pub fn scene_camera(
 fn skip_redundant_blits(
     primary_window: Query<Entity, With<PrimaryWindow>>,
     mut cameras: Query<(&mut Camera, &bevy::camera::RenderTarget)>,
-    mut last: Local<HashMap<bevy::camera::NormalizedRenderTarget, isize>>,
 ) {
-    use bevy::camera::CameraOutputMode;
+    use bevy::camera::{CameraOutputMode, NormalizedRenderTarget};
 
     let primary = primary_window.single().ok();
-    last.clear();
+    let mut last: HashMap<NormalizedRenderTarget, isize> = HashMap::new();
     for (camera, target) in cameras.iter() {
         if !camera.is_active {
             continue;
@@ -794,22 +786,33 @@ fn skip_redundant_blits(
 
 fn no_cutout() -> bool {
     static OFF: OnceLock<bool> = OnceLock::new();
-    *OFF.get_or_init(|| crate::platform::env::flag("MC_NO_CUTOUT"))
+    *OFF.get_or_init(|| {
+        matches!(
+            std::env::var("MC_NO_CUTOUT").as_deref(),
+            Ok("1") | Ok("true")
+        )
+    })
 }
 
 pub fn eye_height(crouching: bool) -> f32 {
-    let pose = if crouching {
-        azalea::entity::Pose::Crouching
+    if crouching {
+        EYE_HEIGHT_CROUCHING
     } else {
-        azalea::entity::Pose::Standing
-    };
-    crate::session::player_dimensions(pose, 1.0).eye_height
+        EYE_HEIGHT
+    }
 }
 
+const EYE_HEIGHT: f32 = 1.62;
+const EYE_HEIGHT_CROUCHING: f32 = 1.27;
+pub const SLEEPING_EYE_HEIGHT: f32 = 0.2;
 const SLEEPING_CAMERA_NUDGE: f32 = 0.3;
 
 pub fn session_eye_height(session: &crate::session::SessionState) -> f32 {
-    session.local_body.eye_height
+    if session.sleeping {
+        SLEEPING_EYE_HEIGHT
+    } else {
+        eye_height(session.crouching)
+    }
 }
 
 const NAME_TAG_SCALE: f32 = 0.025;
@@ -903,7 +906,6 @@ impl TagProjector {
 
 fn collect_player_tags(
     players: &[crate::session::OtherPlayerInfo],
-    viewer: crate::session::Gamemode,
     partial: f32,
     projector: &TagProjector,
     tags: &mut Vec<crate::gui::hud::NameTag>,
@@ -925,14 +927,11 @@ fn collect_player_tags(
         if info.hidden_by_team && !on {
             continue;
         }
-        if info.body.hidden_to(viewer) && !on {
-            continue;
-        }
         if info.name_tag.is_empty() {
             continue;
         }
         let feet = info.anim.position(partial);
-        let height = info.body.bounding_box[1];
+        let height = if info.discrete { 1.5 } else { 1.8 };
         let range = match (on, info.discrete) {
             (true, _) => f32::INFINITY,
             (false, true) => NAME_TAG_RANGE_DISCRETE,
@@ -960,7 +959,6 @@ fn collect_player_tags(
 fn collect_nametags(
     entities: &[crate::entities::feed::EntityAnim],
     crosshair_entity: Option<i32>,
-    viewer: crate::session::Gamemode,
     partial: f32,
     projector: &TagProjector,
     tags: &mut Vec<crate::gui::hud::NameTag>,
@@ -973,9 +971,7 @@ fn collect_nametags(
         if !extras.name_visible && crosshair_entity != Some(anim.id) {
             continue;
         }
-        if crate::session::invisible_to(anim.is_invisible(), viewer)
-            && anim.kind != azalea_registry::builtin::EntityKind::ArmorStand
-        {
+        if anim.is_invisible() && anim.kind != azalea_registry::builtin::EntityKind::ArmorStand {
             continue;
         }
         let pos = anim.position(partial);
@@ -1001,14 +997,17 @@ fn collect_hud_info(
     block_entity_rigs: Res<crate::blockentities::BeRigs>,
     images: Res<Assets<Image>>,
     mut state: ResMut<crate::gui::GuiState>,
-    (mut memory_cache, frame_gate, mut gated_ms, mut fps): (
+    (mut memory_cache, frame_gate, mut gated_ms, mut fps, diagnostics): (
         Local<Option<(Instant, crate::gui::hud::MemoryUse)>>,
         Res<FrameGate>,
         Local<f32>,
         Local<FpsWindow>,
+        Option<Res<bevy::diagnostic::DiagnosticsStore>>,
     ),
 ) {
     crate::prof_span!("render:collect_hud_info");
+    let profiling_page = prof.shown && prof.page == crate::gui::hud::DebugPage::Profiler;
+    crate::diag::frame_profile::set_enabled(profiling_page);
     let hud_visible = !state.in_menu() && !state.hide_gui;
     let camera = camera_q.single().ok();
     let mut nametags = std::mem::take(&mut state.hud.nametags);
@@ -1030,8 +1029,7 @@ fn collect_hud_info(
         };
         if let Some(projector) = &projector {
             collect_player_tags(
-                &s.session.other_players,
-                s.session.gamemode,
+                &view.players,
                 view.partial,
                 projector,
                 &mut nametags,
@@ -1057,7 +1055,6 @@ fn collect_hud_info(
         collect_nametags(
             &view.entities,
             view.crosshair_entity,
-            view.gamemode,
             view.partial,
             projector,
             &mut nametags,
@@ -1124,6 +1121,14 @@ fn collect_hud_info(
             pipeline: {
                 crate::prof_span!("hud:counts");
                 crate::diag::counts()
+            },
+            frame_profile: profiling_page
+                .then(crate::diag::frame_profile::report)
+                .flatten(),
+            passes: if profiling_page {
+                diagnostics.as_deref().map(render_passes).unwrap_or_default()
+            } else {
+                Vec::new()
             },
         }
     });
@@ -1324,13 +1329,10 @@ fn log_frame_rate(
     let c = crate::diag::counts();
     crate::log_info!(
         "render",
-        "render distance {} chunks, supersampling {}, frame cap {}",
+        "render distance {} chunks, antialiasing {} {}, frame cap {}",
         gui.options.render_distance,
-        if gui.options.antialiasing {
-            "on"
-        } else {
-            "off"
-        },
+        gui.options.antialiasing.mode.caption(),
+        gui.options.antialiasing.level_caption().unwrap_or_default(),
         if gui.options.max_fps >= crate::gui::MAX_FPS_UNLIMITED {
             "unlimited".to_string()
         } else {
@@ -1391,7 +1393,7 @@ pub(super) fn apply_cursor(mut opts: Mut<CursorOptions>, grab: CursorGrabMode, v
     opts.visible = visible;
 }
 
-fn world_cursor() -> (CursorGrabMode, bool) {
+pub(super) fn world_cursor() -> (CursorGrabMode, bool) {
     #[cfg(feature = "mobile_ui")]
     {
         (CursorGrabMode::None, true)
@@ -1402,23 +1404,9 @@ fn world_cursor() -> (CursorGrabMode, bool) {
     }
 }
 
-pub(super) fn reset_menu_state(state: &mut crate::gui::GuiState, shared: &Shared) {
-    if state.screen == crate::gui::Screen::Creative
-        && let Some(cursor) = state.slots.take_cursor()
-    {
-        let mut s = shared.0.lock().unwrap();
-        let session = &mut s.session;
-        crate::gui::slots::stow_creative_cursor(
-            cursor,
-            &session.menu_slots,
-            &mut session.inv_actions,
-        );
-    }
+pub(super) fn reset_menu_state(state: &mut crate::gui::GuiState) {
     state.slots.reset_for_screen_change();
     state.container.reset();
-    state.recipe_book.reset();
-    state.ghost.clear();
-    state.book_clock = None;
 }
 
 pub(super) fn enter_screen(
@@ -1431,7 +1419,7 @@ pub(super) fn enter_screen(
     if next != state.screen {
         crate::platform::keyboard::hide();
     }
-    reset_menu_state(state, shared);
+    reset_menu_state(state);
     if next != state.screen {
         crate::gui::focus::clear();
     }
@@ -1635,28 +1623,26 @@ fn report_render_spans(
     }
     *last = Some(now);
 
-    for (suffix, label) in [("/elapsed_cpu", "cpu"), ("/elapsed_gpu", "gpu")] {
-        let mut spans: Vec<(String, f64)> = diagnostics
-            .iter()
-            .filter_map(|diagnostic| {
-                let path = diagnostic.path().as_str();
-                let node = path.strip_prefix("render/")?.strip_suffix(suffix)?;
-                Some((node.to_owned(), diagnostic.smoothed()?))
-            })
-            .collect();
-        if spans.is_empty() {
-            continue;
-        }
-        let total: f64 = spans.iter().map(|(_, ms)| ms).sum();
-        spans.sort_by(|a, b| b.1.total_cmp(&a.1));
-        spans.truncate(8);
-        let line = spans
-            .iter()
-            .map(|(node, ms)| format!("{node} {ms:.3}"))
-            .collect::<Vec<_>>()
-            .join("  ");
-        crate::log_info!("render", "graph {label} {total:.2} ms total: {line}");
+    let mut spans: Vec<(String, f64)> = diagnostics
+        .iter()
+        .filter_map(|diagnostic| {
+            let path = diagnostic.path().as_str();
+            let node = path.strip_prefix("render/")?.strip_suffix("/elapsed_cpu")?;
+            Some((node.to_owned(), diagnostic.smoothed()?))
+        })
+        .collect();
+    if spans.is_empty() {
+        return;
     }
+    let total: f64 = spans.iter().map(|(_, ms)| ms).sum();
+    spans.sort_by(|a, b| b.1.total_cmp(&a.1));
+    spans.truncate(8);
+    let line = spans
+        .iter()
+        .map(|(node, ms)| format!("{node} {ms:.3}"))
+        .collect::<Vec<_>>()
+        .join("  ");
+    crate::log_info!("render", "graph cpu {total:.2} ms total: {line}");
 }
 
 #[cfg(feature = "budget")]
@@ -1677,16 +1663,6 @@ fn budget_render_begin() {
 #[cfg(feature = "budget")]
 fn budget_mark_upload() {
     crate::diag::budget::render_mark(crate::diag::budget::Phase::Upload);
-}
-
-#[cfg(feature = "budget")]
-fn budget_mark_views() {
-    crate::diag::budget::render_mark(crate::diag::budget::Phase::Views);
-}
-
-#[cfg(feature = "budget")]
-fn budget_mark_views_after() {
-    crate::diag::budget::render_mark(crate::diag::budget::Phase::Views);
 }
 
 #[cfg(feature = "budget")]
@@ -1782,7 +1758,7 @@ fn apply_fov(
     let Ok(mut projection) = camera.single_mut() else {
         return;
     };
-    if let Projection::Perspective(perspective) = &*projection {
+    if let Projection::Perspective(perspective) = &mut *projection {
         let modifier = view.fov_modifier;
 
         let zoom = crate::modules::zoom::settings();
@@ -1796,9 +1772,7 @@ fn apply_fov(
 
         let base_fov = state.options.fov as f32 + (target_fov - state.options.fov as f32) * ease.0;
         let fov = (base_fov * modifier).to_radians();
-        if perspective.fov != fov
-            && let Projection::Perspective(perspective) = &mut *projection
-        {
+        if perspective.fov != fov {
             perspective.fov = fov;
         }
     }
@@ -1874,16 +1848,28 @@ fn sync_bot_options(
     s.session.fov.first_person = first_person;
 }
 
-#[cfg(feature = "audio")]
+/// `MusicManager.tick`, at the game's twenty ticks a second.
+#[cfg(audio)]
+fn tick_music(
+    time: Res<Time>,
+    state: Res<State<AppState>>,
+    mut owed: Local<f32>,
+) {
+    const TICK: f32 = 0.05;
+    *owed = (*owed + time.delta_secs()).min(TICK * 10.0);
+    let in_game = *state.get() == AppState::InGame;
+    while *owed >= TICK {
+        *owed -= TICK;
+        crate::audio::tick_music(in_game);
+    }
+}
+
+#[cfg(audio)]
 fn sync_audio_listener(camera_q: Query<&GlobalTransform, With<WorldCamera>>) {
     let Ok(transform) = camera_q.single() else {
         return;
     };
-    crate::audio::set_listener(
-        transform.translation().into(),
-        (*transform.forward()).into(),
-        (*transform.right()).into(),
-    );
+    crate::audio::set_listener(transform.translation().into(), (*transform.right()).into());
 }
 
 fn sync_smooth_lighting(state: Res<crate::gui::GuiState>, mut last: Local<Option<bool>>) {
@@ -1933,45 +1919,12 @@ fn sync_vsync(
     }
     *last = Some(wanted);
     if let Ok(mut window) = windows.single_mut() {
-        window.present_mode = present_override().unwrap_or(if wanted {
+        window.present_mode = if wanted {
             bevy::window::PresentMode::AutoVsync
         } else {
             bevy::window::PresentMode::AutoNoVsync
-        });
+        };
     }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn present_override() -> Option<bevy::window::PresentMode> {
-    use bevy::window::PresentMode;
-    let mode = match std::env::var("MC_PRESENT").ok()?.as_str() {
-        "immediate" => PresentMode::Immediate,
-        "mailbox" => PresentMode::Mailbox,
-        "fifo" => PresentMode::Fifo,
-        "fifo_relaxed" => PresentMode::FifoRelaxed,
-        other => {
-            crate::log_info!(
-                "render",
-                "MC_PRESENT={other} is not a present mode; ignored"
-            );
-            return None;
-        }
-    };
-    crate::log_info!("render", "present mode forced to {mode:?} by MC_PRESENT");
-    Some(mode)
-}
-
-#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
-const DESKTOP_FRAME_LATENCY: std::num::NonZeroU32 = std::num::NonZeroU32::new(3).unwrap();
-
-#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
-fn frame_latency_override() -> Option<std::num::NonZeroU32> {
-    let latency = std::env::var("MC_FRAME_LATENCY").ok()?.parse().ok()?;
-    crate::log_info!(
-        "render",
-        "frame latency set to {latency} by MC_FRAME_LATENCY"
-    );
-    Some(latency)
 }
 
 fn auto_harness(
@@ -2086,26 +2039,134 @@ fn dump_flamegraph(
     }
 }
 
-fn instance_flags() -> bevy::render::settings::InstanceFlags {
-    use bevy::render::settings::InstanceFlags;
-    InstanceFlags::default()
-        .difference(InstanceFlags::VALIDATION_INDIRECT_CALL)
-        .with_env()
+fn wgpu_settings() -> bevy::render::settings::WgpuSettings {
+    let mut settings = bevy::render::settings::WgpuSettings {
+        disabled_features: withheld_features(),
+        constrained_limits: constrained_limits(),
+        ..default()
+    };
+    if let Some(backends) = chosen_backends() {
+        settings.backends = Some(backends);
+    }
+    settings
+}
+
+static STARTED_BACKEND: std::sync::OnceLock<crate::gui::RenderBackend> =
+    std::sync::OnceLock::new();
+
+/// The Renderer setting this run started with, after any fallback.
+pub(crate) fn started_backend() -> crate::gui::RenderBackend {
+    STARTED_BACKEND.get().copied().unwrap_or_default()
+}
+
+/// The Renderer setting as wgpu backends; `None` leaves wgpu's own choice.
+/// A backend with no adapter falls back to that too, since starting on it
+/// would fail before any menu could undo the setting.
+fn chosen_backends() -> Option<bevy::render::settings::Backends> {
+    let chosen = resolve_backend();
+    let _ = STARTED_BACKEND.set(chosen.0);
+    chosen.1
+}
+
+fn resolve_backend() -> (
+    crate::gui::RenderBackend,
+    Option<bevy::render::settings::Backends>,
+) {
+    use crate::gui::RenderBackend;
+    use bevy::render::settings::Backends;
+
+    let wanted = RenderBackend::stored();
+    let backends = match wanted {
+        RenderBackend::Auto => return (RenderBackend::Auto, None),
+        RenderBackend::Vulkan => Backends::VULKAN,
+    };
+    if !has_adapter(backends) {
+        crate::log_warn!(
+            "render",
+            "no {} adapter on this machine; starting on the automatic renderer",
+            wanted.caption()
+        );
+        return (RenderBackend::Auto, None);
+    }
+    crate::log_info!("render", "renderer: {}", wanted.caption());
+    (wanted, Some(backends))
+}
+
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+fn has_adapter(backends: bevy::render::settings::Backends) -> bool {
+    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        backends,
+        ..default()
+    });
+    !instance.enumerate_adapters(backends).is_empty()
+}
+
+/// The setting is desktop-only; elsewhere the platform's renderer stands.
+#[cfg(any(target_arch = "wasm32", target_os = "android"))]
+fn has_adapter(_backends: bevy::render::settings::Backends) -> bool {
+    false
+}
+
+/// Render-graph passes from Bevy's render diagnostics: smoothed GPU time
+/// (when the device has timestamp queries) and CPU encode time, in ms.
+fn render_passes(
+    diagnostics: &bevy::diagnostic::DiagnosticsStore,
+) -> Vec<crate::gui::hud::PassTime> {
+    let mut passes: Vec<crate::gui::hud::PassTime> = Vec::new();
+    for diagnostic in diagnostics.iter() {
+        let path = diagnostic.path().as_str();
+        let Some(rest) = path.strip_prefix("render/") else {
+            continue;
+        };
+        let (name, gpu) = match (rest.strip_suffix("/elapsed_gpu"), rest.strip_suffix("/elapsed_cpu")) {
+            (Some(name), _) => (name, true),
+            (_, Some(name)) => (name, false),
+            _ => continue,
+        };
+        // A pass that stopped running (a shader pack turned off) keeps its
+        // last value in the store; only passes measured lately count.
+        let recent = diagnostic
+            .measurement()
+            .is_some_and(|m| m.time.elapsed() < std::time::Duration::from_secs(1));
+        let Some(ms) = diagnostic.smoothed().filter(|_| recent) else {
+            continue;
+        };
+        let slot = match passes.iter().position(|p| p.name == name) {
+            Some(i) => &mut passes[i],
+            None => {
+                passes.push(crate::gui::hud::PassTime {
+                    name: name.to_owned(),
+                    ..Default::default()
+                });
+                passes.last_mut().unwrap()
+            }
+        };
+        if gpu {
+            slot.gpu_ms = Some(ms as f32);
+        } else {
+            slot.cpu_ms = ms as f32;
+        }
+    }
+    // A node with nothing to do this frame (no pack installed) still opens
+    // its span; a pass at zero is not a pass worth a row.
+    passes.retain(|p| p.gpu_ms.unwrap_or(0.0).max(p.cpu_ms) >= 0.005);
+    passes.sort_by(|a, b| {
+        b.gpu_ms
+            .unwrap_or(b.cpu_ms)
+            .total_cmp(&a.gpu_ms.unwrap_or(a.cpu_ms))
+    });
+    passes
 }
 
 fn withheld_features() -> Option<bevy::render::settings::WgpuFeatures> {
-    use bevy::render::settings::WgpuFeatures;
-    let withheld = if cfg!(target_os = "android") {
-        WgpuFeatures::BUFFER_BINDING_ARRAY
-    } else {
-        WgpuFeatures::empty()
-    };
-    let withheld = if cfg!(feature = "budget") {
-        withheld | WgpuFeatures::PIPELINE_STATISTICS_QUERY
-    } else {
-        withheld
-    };
-    (!withheld.is_empty()).then_some(withheld)
+    #[cfg(target_os = "android")]
+    {
+        Some(bevy::render::settings::WgpuFeatures::BUFFER_BINDING_ARRAY)
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        None
+    }
 }
 
 fn constrained_limits() -> Option<bevy::render::settings::WgpuLimits> {
@@ -2163,13 +2224,14 @@ fn select_debug_page(
     if !held {
         return;
     }
-    const PAGES: [(KeyCode, crate::gui::hud::DebugPage); 7] = [
+    const PAGES: [(KeyCode, crate::gui::hud::DebugPage); 8] = [
         (KeyCode::Digit1, crate::gui::hud::DebugPage::Overview),
         (KeyCode::Digit2, crate::gui::hud::DebugPage::Performance),
         (KeyCode::Digit3, crate::gui::hud::DebugPage::World),
         (KeyCode::Digit4, crate::gui::hud::DebugPage::Network),
         (KeyCode::Digit5, crate::gui::hud::DebugPage::Workers),
         (KeyCode::Digit6, crate::gui::hud::DebugPage::Memory),
+        (KeyCode::Digit7, crate::gui::hud::DebugPage::Profiler),
         (KeyCode::Digit0, crate::gui::hud::DebugPage::Help),
     ];
     for (key, page) in PAGES {
@@ -2183,6 +2245,7 @@ fn select_debug_page(
 pub fn run(
     shared: Arc<SharedMutex>,
     atlas: Image,
+    tile_map: HashMap<String, u32>,
     gui_atlas: std::sync::Arc<crate::gui::atlas::GuiAtlas>,
     startup: crate::gui::render::StartupState,
     have_assets: bool,
@@ -2198,10 +2261,6 @@ pub fn run(
                     present_mode: bevy::window::PresentMode::AutoNoVsync,
                     #[cfg(not(target_os = "android"))]
                     present_mode: bevy::window::PresentMode::AutoVsync,
-                    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
-                    desired_maximum_frame_latency: Some(
-                        frame_latency_override().unwrap_or(DESKTOP_FRAME_LATENCY),
-                    ),
                     #[cfg(target_arch = "wasm32")]
                     canvas: Some("#canvas".into()),
                     #[cfg(target_arch = "wasm32")]
@@ -2217,21 +2276,17 @@ pub fn run(
             })
             .set(bevy::render::RenderPlugin {
                 render_creation: bevy::render::settings::RenderCreation::Automatic(
-                    bevy::render::settings::WgpuSettings {
-                        disabled_features: withheld_features(),
-                        constrained_limits: constrained_limits(),
-                        instance_flags: instance_flags(),
-                        ..default()
-                    },
+                    wgpu_settings(),
                 ),
                 ..default()
             })
-            .disable::<bevy::app::PanicHandlerPlugin>(),
+            .disable::<bevy::app::PanicHandlerPlugin>()
+            // Only FXAA is used. The bundle's TAA needs bevy_post_process's
+            // MotionBlur node, which the default build leaves out.
+            .disable::<bevy::anti_alias::AntiAliasPlugin>(),
     )
-    .add_plugins((
-        #[cfg(feature = "budget")]
-        bevy::render::diagnostic::RenderDiagnosticsPlugin,
-    ))
+    .add_plugins(bevy::anti_alias::fxaa::FxaaPlugin)
+    .add_plugins(crate::diag::frame_profile::FrameProfilePlugin)
     .insert_resource(bevy::winit::WinitSettings {
         focused_mode: bevy::winit::UpdateMode::Continuous,
         unfocused_mode: unfocused_update_mode(),
@@ -2249,17 +2304,24 @@ pub fn run(
     .add_plugins(crate::renderer::terrain::TerrainMaterialPlugin)
     .add_plugins(crate::renderer::terrain_pool::TerrainPoolPlugin)
     .add_plugins(crate::renderer::entity_material::EntityMaterialPlugin)
+    .add_plugins(crate::renderer::glint::GlintPlugin)
+    .add_plugins(crate::renderer::screen_effects::ScreenEffectsPlugin)
+    .add_plugins(crate::renderer::post_effects::PostEffectsPlugin)
     .add_plugins(crate::renderer::esp_material::EspMaterialPlugin)
     .add_plugins(crate::renderer::sky::SkyPlugin)
     .add_plugins(crate::renderer::ssaa::SsaaPlugin)
+    .add_plugins(crate::renderer::antialias::AntialiasPlugin)
+    .add_plugins(crate::renderer::view_bob::ViewBobPlugin)
+    .add_plugins(crate::renderer::inventory_figure::InventoryFigurePlugin)
+    .add_plugins(crate::renderer::tethers::TethersPlugin)
     .add_plugins(crate::renderer::clouds::CloudPlugin)
     .add_plugins(crate::renderer::post::PostPlugin)
     .add_plugins(crate::entities::EntityPlugin)
     .add_plugins(crate::util::particles::ParticlePlugin)
     .add_plugins(crate::renderer::world_text::WorldTextPlugin)
-    .add_plugins(crate::renderer::reload::ReloadPlugin)
     .insert_resource(Shared(shared))
     .insert_resource(PendingAtlas(atlas))
+    .insert_resource(BlockTileMap(tile_map))
     .insert_resource(ClearColor(SKY_COLOR))
     .init_resource::<ChunkIndex>()
     .init_resource::<CameraAngles>()
@@ -2312,8 +2374,8 @@ pub fn run(
         Update,
         apply_fov.after(FrameViewSystems).before(collect_hud_info),
     );
-    #[cfg(feature = "audio")]
-    app.add_systems(Update, sync_audio_listener);
+    #[cfg(audio)]
+    app.add_systems(Update, (sync_audio_listener, tick_music));
     #[cfg(not(target_arch = "wasm32"))]
     app.add_systems(Update, sync_vsync);
     app.add_systems(Last, trace_reextracted_meshes)
@@ -2347,7 +2409,7 @@ pub fn run(
         .add_systems(Update, window_focus_cursor)
         .add_systems(Update, crate::renderer::input::track_lifecycle)
         .add_systems(Update, log_window_geometry)
-        .add_systems(Update, fullscreen_key)
+        .add_systems(Update, web_fullscreen)
         .add_systems(
             Update,
             web_pointer_lock
@@ -2473,17 +2535,7 @@ pub fn run(
                 budget_mark_upload
                     .after(Set::PrepareMeshes)
                     .before(Set::ManageViews),
-                budget_mark_views
-                    .in_set(Set::ManageViews)
-                    .after(bevy::render::camera::sort_cameras)
-                    .after(bevy::pbr::prepare_lights)
-                    .before(bevy::render::view::prepare_windows),
                 budget_mark_acquire
-                    .in_set(Set::ManageViews)
-                    .after(bevy::render::view::prepare_windows)
-                    .before(bevy::render::view::prepare_view_attachments)
-                    .before(bevy::render::view::prepare_view_targets),
-                budget_mark_views_after
                     .after(Set::ManageViews)
                     .before(Set::Queue),
                 budget_mark_prepare.after(Set::Prepare).before(Set::Render),
@@ -2535,6 +2587,10 @@ pub fn run(
 
     #[cfg(not(target_arch = "wasm32"))]
     super::input::run_exit_tasks();
+    #[cfg(not(target_arch = "wasm32"))]
+    crate::diag::logfile::flush();
+    #[cfg(resource_packs)]
+    crate::resourcepacks::restart_if_requested();
 }
 
 #[cfg(test)]

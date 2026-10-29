@@ -2,11 +2,12 @@ use std::collections::HashMap;
 use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI, TAU};
 
 use bevy::asset::RenderAssetUsages;
+use bevy::camera::visibility::RenderLayers;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 
 use super::anim::{AnimSample, ArmPose, Armor, HeldItem};
-use super::entity_material::{ALPHA_CUTOUT, EntityMaterial, LightMode, Lit, diffuse_lights};
+use super::entity_material::{EntityMaterial, LightMode, Lit, diffuse_lights};
 use super::item_assets::ItemAssets;
 use crate::entities::geom;
 use crate::entities::models::humanoid::armor as armor_mesh;
@@ -456,27 +457,50 @@ pub struct AvatarRoot {
     pub world_offset: Vec3,
 }
 
-pub fn root_pose(s: &AnimSample, scale: f32) -> AvatarRoot {
-    let living = crate::entities::living_rotations(
-        &crate::entities::RotationState {
-            body_rot: s.body_yaw,
-            is_shaking: false,
-            age_ticks: s.age_ticks,
-            death_time: s.death_time,
-            is_auto_spin_attack: s.spin_attack,
-            x_rot: s.pitch,
-            sleeping: s.sleeping,
-            bed_orientation: s.bed_orientation,
-            eye_height: crate::session::player_dimensions(azalea::entity::Pose::Standing, scale)
-                .eye_height,
-            is_upside_down: false,
-            bounding_box_height: 0.0,
-            scale: 1.0,
-        },
-        FLIP_DEGREES,
-    );
-    let mut rot = living.rotation * living.extra_rotation;
+pub fn root_pose(s: &AnimSample) -> AvatarRoot {
+    let mut rot = if s.sleeping {
+        Quat::IDENTITY
+    } else {
+        Quat::from_rotation_y((180.0 - s.body_yaw).to_radians())
+    };
     let mut offset = Vec3::ZERO;
+
+    if s.sleeping {
+        let angle = match s.bed_orientation {
+            Some(crate::direction::Direction::South) => 90.0,
+            Some(crate::direction::Direction::West) => 0.0,
+            Some(crate::direction::Direction::North) => 270.0,
+            Some(crate::direction::Direction::East) => 180.0,
+            _ => s.body_yaw,
+        };
+        rot *= Quat::from_rotation_y(angle.to_radians())
+            * Quat::from_rotation_z(FLIP_DEGREES.to_radians())
+            * Quat::from_rotation_y(270.0_f32.to_radians());
+        let mut world_offset = Vec3::ZERO;
+        if let Some(dir) = s.bed_orientation {
+            let head_offset = crate::renderer::systems::eye_height(false) - 0.1;
+            world_offset = Vec3::new(
+                -dir.step_x() * head_offset,
+                0.0,
+                -dir.step_z() * head_offset,
+            );
+        }
+        return AvatarRoot {
+            rotation: rot,
+            model_offset: Vec3::ZERO,
+            world_offset,
+        };
+    }
+
+    if s.death_time > 0.0 {
+        let fall = (((s.death_time - 1.0) / 20.0 * 1.6).max(0.0))
+            .sqrt()
+            .min(1.0);
+        rot *= Quat::from_rotation_z((fall * FLIP_DEGREES).to_radians());
+    } else if s.spin_attack {
+        rot *= Quat::from_rotation_x((-90.0 - s.pitch).to_radians());
+        rot *= Quat::from_rotation_y((s.age_ticks * -75.0).to_radians());
+    }
 
     if s.fall_flying {
         if !s.spin_attack {
@@ -492,7 +516,7 @@ pub fn root_pose(s: &AnimSample, scale: f32) -> AvatarRoot {
     AvatarRoot {
         rotation: rot,
         model_offset: offset,
-        world_offset: living.world_offset,
+        world_offset: Vec3::ZERO,
     }
 }
 
@@ -724,29 +748,26 @@ const ARMOR_PARTS: [(&str, usize); 7] = [
 fn bake_wings(meshes: &mut Assets<Mesh>) -> [Handle<Mesh>; 2] {
     let baked = geom::bake(&crate::entities::models::humanoid::elytra::layer());
     ["left_wing", "right_wing"].map(|name| {
-        let mesh = part_in_model_units(&baked, name).unwrap_or_else(|| {
-            Mesh::new(
+        let mesh = baked
+            .find(name)
+            .and_then(|id| baked.parts[id].mesh.as_ref())
+            .cloned();
+        let Some(mut mesh) = mesh else {
+            return meshes.add(Mesh::new(
                 PrimitiveTopology::TriangleList,
                 RenderAssetUsages::default(),
-            )
-        });
+            ));
+        };
+        mesh.asset_usage = RenderAssetUsages::default();
+        if let Some(bevy::mesh::VertexAttributeValues::Float32x3(positions)) =
+            mesh.attribute_mut(Mesh::ATTRIBUTE_POSITION)
+        {
+            for p in positions.iter_mut() {
+                *p = [p[0] * 16.0, p[1] * 16.0, p[2] * 16.0];
+            }
+        }
         meshes.add(mesh)
     })
-}
-
-fn part_in_model_units(baked: &geom::BakedModel, name: &str) -> Option<Mesh> {
-    let mut mesh = baked
-        .find(name)
-        .and_then(|id| baked.parts[id].mesh.clone())?;
-    mesh.asset_usage = RenderAssetUsages::default();
-    if let Some(bevy::mesh::VertexAttributeValues::Float32x3(positions)) =
-        mesh.attribute_mut(Mesh::ATTRIBUTE_POSITION)
-    {
-        for p in positions.iter_mut() {
-            *p = p.map(|c| c * 16.0);
-        }
-    }
-    Some(mesh)
 }
 
 const LEGGINGS_SLOT: usize = 2;
@@ -764,9 +785,21 @@ fn bake_armor(layer: geom::LayerDef, meshes: &mut Assets<Mesh>) -> Vec<ArmorMesh
     let baked = geom::bake(&layer);
     let mut out = Vec::new();
     for (name, part) in ARMOR_PARTS {
-        let Some(mesh) = part_in_model_units(&baked, name) else {
+        let Some(mesh) = baked
+            .find(name)
+            .and_then(|id| baked.parts[id].mesh.as_ref())
+        else {
             continue;
         };
+        let mut mesh = mesh.clone();
+        mesh.asset_usage = RenderAssetUsages::default();
+        if let Some(bevy::mesh::VertexAttributeValues::Float32x3(positions)) =
+            mesh.attribute_mut(Mesh::ATTRIBUTE_POSITION)
+        {
+            for p in positions.iter_mut() {
+                *p = [p[0] * 16.0, p[1] * 16.0, p[2] * 16.0];
+            }
+        }
         out.push(ArmorMesh {
             part,
             mesh: meshes.add(mesh),
@@ -775,11 +808,24 @@ fn bake_armor(layer: geom::LayerDef, meshes: &mut Assets<Mesh>) -> Vec<ArmorMesh
     out
 }
 
-fn armor_texture(slot: usize, item: &str) -> String {
-    if slot == LEGGINGS_SLOT {
-        armor_tex::leggings_layer_texture(Some(item))
-    } else {
-        armor_tex::humanoid_texture(Some(item))
+fn armor_texture(slot: usize, item: &str, trim: Option<armor_tex::Trim>) -> String {
+    armor_tex::armor_slot_texture(slot, Some(item), trim)
+}
+
+#[derive(Resource, Default)]
+struct ArmorTextures(HashMap<String, Option<Handle<Image>>>);
+
+impl ArmorTextures {
+    fn get(&mut self, path: &str, images: &mut Assets<Image>) -> Option<Handle<Image>> {
+        if let Some(cached) = self.0.get(path) {
+            return cached.clone();
+        }
+        let handle = crate::entities::load_entity_image(path, images);
+        if handle.is_none() {
+            eprintln!("player_model: armour texture {path} could not be read");
+        }
+        self.0.insert(path.to_string(), handle.clone());
+        handle
     }
 }
 
@@ -829,6 +875,8 @@ struct ArmorSlotRig {
     boxes: Vec<Entity>,
     material: Handle<EntityMaterial>,
     worn: Option<&'static str>,
+    trim: Option<armor_tex::Trim>,
+    glint: bool,
 }
 
 struct HeldRig {
@@ -862,7 +910,6 @@ struct Rig {
     overlay: Handle<EntityMaterial>,
     armor: [ArmorSlotRig; 4],
     lit: Lit,
-    body_hidden: bool,
     #[cfg(feature = "skins")]
     cape: CapeRig,
     wings: WingsRig,
@@ -876,6 +923,8 @@ struct Rig {
 pub(crate) struct PlayerRigs {
     entries: Vec<Rig>,
     local: Option<Rig>,
+    /// The local player again, for the inventory to show.
+    figure: Option<Rig>,
     scratch: SlotScratch,
 }
 
@@ -902,6 +951,7 @@ pub struct PlayerModelPlugin;
 impl Plugin for PlayerModelPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PlayerRigs>()
+            .init_resource::<ArmorTextures>()
             .add_systems(
                 Update,
                 setup_player_model.run_if(resource_added::<crate::renderer::systems::AssetsReady>),
@@ -978,27 +1028,52 @@ fn setup_player_model(
         armor: ARMOR_LAYERS.map(|layer| bake_armor(layer(), &mut meshes)),
     };
 
-    rigs.local = Some(spawn_rig(&mut commands, &assets, &mut materials));
+    rigs.local = Some(spawn_rig(
+        &mut commands,
+        &assets,
+        &mut materials,
+        RenderLayers::default(),
+    ));
+    rigs.figure = Some(spawn_rig(
+        &mut commands,
+        &assets,
+        &mut materials,
+        RenderLayers::layer(super::inventory_figure::FIGURE_LAYER),
+    ));
     commands.insert_resource(assets);
 }
 
+/// Spawns a player rig whose meshes draw on `layers`: the world's for the
+/// players in it, the inventory figure's for the copy the inventory shows.
 fn spawn_rig(
     commands: &mut Commands,
     assets: &PlayerModelAssets,
     materials: &mut Assets<EntityMaterial>,
+    layers: RenderLayers,
 ) -> Rig {
     let lit = Lit::full_bright();
     let skin_material = |materials: &mut Assets<EntityMaterial>| {
-        materials.add(EntityMaterial::cutout(
+        materials.add(EntityMaterial::new(
             Some(assets.skin.clone()),
             LightMode::Cardinal,
+            AlphaMode::Mask(0.1),
+            0.1,
             lit,
+            0,
         ))
     };
     let base = skin_material(materials);
     let overlay = skin_material(materials);
-    let held_materials =
-        [(); 2].map(|_| materials.add(EntityMaterial::cutout(None, LightMode::Flat, lit)));
+    let held_materials = [(); 2].map(|_| {
+        materials.add(EntityMaterial::new(
+            None,
+            LightMode::Flat,
+            AlphaMode::Mask(0.1),
+            0.1,
+            lit,
+            0,
+        ))
+    });
 
     let root = commands
         .spawn((
@@ -1037,6 +1112,7 @@ fn spawn_rig(
                 Transform::from_translation(Vec3::from(def.pivot)),
                 Visibility::Inherited,
                 RigPart,
+                layers.clone(),
                 Name::new(def.name),
             ))
             .id();
@@ -1060,6 +1136,7 @@ fn spawn_rig(
                     shown: HeldItem::default(),
                     blocking: false,
                 },
+                layers.clone(),
                 Name::new(if arm == PART_RIGHT_ARM {
                     "right_hand_item"
                 } else {
@@ -1075,7 +1152,14 @@ fn spawn_rig(
     });
 
     #[cfg(feature = "skins")]
-    let cape_material = materials.add(EntityMaterial::cutout(None, LightMode::Cardinal, lit));
+    let cape_material = materials.add(EntityMaterial::new(
+        None,
+        LightMode::Cardinal,
+        AlphaMode::Mask(0.1),
+        0.1,
+        lit,
+        0,
+    ));
     #[cfg(feature = "skins")]
     let cape = {
         let entity = commands
@@ -1085,6 +1169,7 @@ fn spawn_rig(
                 Transform::from_translation(Vec3::from(CAPE.pivot)),
                 Visibility::Hidden,
                 RigPart,
+                layers.clone(),
                 Name::new(CAPE.name),
             ))
             .id();
@@ -1097,7 +1182,14 @@ fn spawn_rig(
         }
     };
 
-    let wings_material = materials.add(EntityMaterial::cutout(None, LightMode::Cardinal, lit));
+    let wings_material = materials.add(EntityMaterial::new(
+        None,
+        LightMode::Cardinal,
+        AlphaMode::Mask(0.1),
+        0.1,
+        lit,
+        0,
+    ));
     let wings = [0usize, 1].map(|i| {
         let entity = commands
             .spawn((
@@ -1106,6 +1198,7 @@ fn spawn_rig(
                 Transform::default(),
                 Visibility::Hidden,
                 RigPart,
+                layers.clone(),
                 Name::new(if i == 0 { "left_wing" } else { "right_wing" }),
             ))
             .id();
@@ -1113,8 +1206,16 @@ fn spawn_rig(
         entity
     });
 
-    let armor_materials =
-        [(); 4].map(|_| materials.add(EntityMaterial::cutout(None, LightMode::Cardinal, lit)));
+    let armor_materials = [(); 4].map(|_| {
+        materials.add(EntityMaterial::new(
+            None,
+            LightMode::Cardinal,
+            AlphaMode::Mask(0.1),
+            0.1,
+            lit,
+            0,
+        ))
+    });
     let armor = std::array::from_fn(|slot| ArmorSlotRig {
         boxes: assets.armor[slot]
             .iter()
@@ -1126,6 +1227,7 @@ fn spawn_rig(
                         Transform::default(),
                         Visibility::Hidden,
                         RigArmor,
+                        layers.clone(),
                         Name::new(ARMOR_SLOT_NAMES[slot]),
                     ))
                     .id();
@@ -1135,6 +1237,8 @@ fn spawn_rig(
             .collect(),
         material: armor_materials[slot].clone(),
         worn: None,
+        trim: None,
+        glint: false,
     });
 
     Rig {
@@ -1163,7 +1267,6 @@ fn spawn_rig(
         overlay,
         armor,
         lit,
-        body_hidden: false,
         #[cfg(feature = "skins")]
         cape,
         wings: WingsRig {
@@ -1248,9 +1351,14 @@ struct ItemCtx<'a> {
     assets: &'a mut ItemAssets,
     meshes: &'a mut Assets<Mesh>,
     images: &'a mut Assets<Image>,
+    materials: &'a mut Assets<StandardMaterial>,
     entity_materials: &'a mut Assets<EntityMaterial>,
     no_item: Handle<Mesh>,
-    entity_images: &'a mut crate::entities::EntityImages,
+    armor_textures: &'a mut ArmorTextures,
+    /// Players with a fishing bobber out, whose rods show cast; the local
+    /// player's rigs have no id and go by `local_id`.
+    casters: Vec<i32>,
+    local_id: i32,
     #[cfg(feature = "skins")]
     skins: &'a mut super::skin::SkinTextures,
     #[cfg(feature = "skins")]
@@ -1264,7 +1372,6 @@ struct WornSkin {
 }
 
 fn sync_player_models(
-    shared: Res<crate::renderer::systems::Shared>,
     view: Res<crate::renderer::frame_view::FrameView>,
     freecam: Res<crate::renderer::input::FreecamState>,
     third_person: Res<crate::renderer::input::ThirdPersonState>,
@@ -1275,10 +1382,15 @@ fn sync_player_models(
     mut item_assets: ResMut<ItemAssets>,
     mut item_meshes: ResMut<Assets<Mesh>>,
     mut item_images: ResMut<Assets<Image>>,
+    mut item_materials: ResMut<Assets<StandardMaterial>>,
     mut entity_materials: ResMut<Assets<EntityMaterial>>,
-    mut entity_images: ResMut<crate::entities::EntityImages>,
+    mut armor_textures: ResMut<ArmorTextures>,
     #[cfg(feature = "skins")] mut skin_textures: ResMut<super::skin::SkinTextures>,
-    lightmap: Res<crate::renderer::systems::LightmapState>,
+    (lightmap, occlusion, figure): (
+        Res<crate::renderer::systems::LightmapState>,
+        Res<crate::renderer::occlusion::OcclusionState>,
+        Res<super::inventory_figure::InventoryFigure>,
+    ),
 ) {
     crate::prof_span!("render:sync_player_models");
     let Some(assets) = assets else { return };
@@ -1286,9 +1398,17 @@ fn sync_player_models(
         assets: &mut item_assets,
         meshes: &mut item_meshes,
         images: &mut item_images,
+        materials: &mut item_materials,
         entity_materials: &mut entity_materials,
         no_item: assets.no_item.clone(),
-        entity_images: &mut entity_images,
+        armor_textures: &mut armor_textures,
+        casters: view
+            .entities
+            .iter()
+            .filter(|e| e.kind == azalea_registry::builtin::EntityKind::FishingBobber)
+            .map(|e| e.shared().owner_id)
+            .collect(),
+        local_id: crate::client::tracking::local_entity_id(),
         #[cfg(feature = "skins")]
         skins: &mut skin_textures,
         #[cfg(feature = "skins")]
@@ -1297,10 +1417,10 @@ fn sync_player_models(
     let dirs = diffuse_lights(crate::renderer::dimension::current());
 
     let partial = view.partial;
-    let players: Vec<(i32, [f32; 3], AnimSample, WornSkin, Body)> = {
-        let s = shared.0.lock().unwrap();
-        s.session
-            .other_players
+    // The players of the tick being drawn, which `partial` is measured
+    // against; the session's own may already be a tick ahead.
+    let players: Vec<(i32, [f32; 3], AnimSample, WornSkin)> = {
+        view.players
             .iter()
             .map(|p| {
                 (
@@ -1311,7 +1431,6 @@ fn sync_player_models(
                         #[cfg(feature = "skins")]
                         state: p.skin.clone(),
                     },
-                    Body::of(&p.body, view.gamemode),
                 )
             })
             .collect()
@@ -1344,7 +1463,7 @@ fn sync_player_models(
     taken.resize(rigs.entries.len(), false);
     assign.clear();
     unmatched.clear();
-    for (k, (id, _, _, _, _)) in players.iter().enumerate() {
+    for (k, (id, _, _, _)) in players.iter().enumerate() {
         match slot_of.get(id) {
             Some(&i) if !taken[i] => {
                 taken[i] = true;
@@ -1363,8 +1482,12 @@ fn sync_player_models(
         let slot = match free.pop() {
             Some(i) => i,
             None => {
-                rigs.entries
-                    .push(spawn_rig(&mut commands, &assets, items.entity_materials));
+                rigs.entries.push(spawn_rig(
+                    &mut commands,
+                    &assets,
+                    items.entity_materials,
+                    RenderLayers::default(),
+                ));
                 taken.push(false);
                 rigs.entries.len() - 1
             }
@@ -1373,18 +1496,29 @@ fn sync_player_models(
         assign[k] = Some(slot);
     }
 
-    let light = crate::client::worldsync::light_map().read();
-    for ((id, feet, sample, worn, body), slot) in players.iter().zip(assign.iter()) {
+    #[cfg(feature = "shader_support")]
+    let pose_hidden = crate::renderer::packvertex::player_shadow();
+    #[cfg(not(feature = "shader_support"))]
+    let pose_hidden = false;
+    for ((id, feet, sample, worn), slot) in players.iter().zip(assign.iter()) {
         let Some(slot) = *slot else { continue };
         rigs.entries[slot].id = Some(*id);
-        let lit = player_lit(&lightmap.current, &light, *feet, sample, body.scale, dirs);
+        let lit = player_lit(&lightmap.current, *feet, sample, dirs);
+        let f = Vec3::from_array(*feet);
+        let shown =
+            if occlusion.reaches_box(f - Vec3::new(0.5, 0.5, 0.5), f + Vec3::new(0.5, 2.3, 0.5)) {
+                RigVisibility::Shown
+            } else if pose_hidden {
+                RigVisibility::HiddenPosed
+            } else {
+                RigVisibility::Hidden
+            };
         apply_rig(
             &mut rigs.entries[slot],
             *feet,
             sample,
             worn,
-            *body,
-            RigVisibility::Shown,
+            shown,
             lit,
             &mut queries,
             &mut items,
@@ -1397,24 +1531,48 @@ fn sync_player_models(
         }
         rigs.entries[i].id = None;
         if let Ok((_, mut vis)) = queries.0.get_mut(rigs.entries[i].root) {
-            vis.set_if_neq(Visibility::Hidden);
+            *vis = Visibility::Hidden;
         }
     }
     rigs.scratch = scratch;
 
-    #[cfg(feature = "shader_support")]
-    let pose_hidden = crate::renderer::packvertex::player_shadow();
-    #[cfg(not(feature = "shader_support"))]
-    let pose_hidden = false;
+    // The inventory figure: vanilla's world light at the player, under the
+    // inventory's own light directions.
+    if let Some(rig) = &mut rigs.figure {
+        match figure.0 {
+            Some(figure) => {
+                let pose = figure.pose(&local_pose);
+                let lit = Lit {
+                    dirs: super::inventory_figure::inventory_lights(),
+                    ..player_lit(&lightmap.current, local_pos, &local_pose, dirs)
+                };
+                let origin = super::inventory_figure::FIGURE_ORIGIN.to_array();
+                apply_rig(
+                    rig,
+                    origin,
+                    &pose,
+                    &local_skin,
+                    RigVisibility::Shown,
+                    lit,
+                    &mut queries,
+                    &mut items,
+                );
+                if let Ok((mut transform, _)) = queries.0.get_mut(rig.root) {
+                    transform.rotation = figure.lean() * transform.rotation;
+                }
+            }
+            None => {
+                if let Ok((_, mut vis)) = queries.0.get_mut(rig.root)
+                    && *vis != Visibility::Hidden
+                {
+                    *vis = Visibility::Hidden;
+                }
+            }
+        }
+    }
+
     if let Some(local) = &mut rigs.local {
-        let lit = player_lit(
-            &lightmap.current,
-            &light,
-            local_pos,
-            &local_pose,
-            view.local_body.scale,
-            dirs,
-        );
+        let lit = player_lit(&lightmap.current, local_pos, &local_pose, dirs);
         let shown = if freecam.active || third_person.active {
             RigVisibility::Shown
         } else if pose_hidden {
@@ -1427,14 +1585,12 @@ fn sync_player_models(
             local_pos,
             &local_pose,
             &local_skin,
-            Body::of(&view.local_body, view.gamemode),
             shown,
             lit,
             &mut queries,
             &mut items,
         );
     }
-    drop(light);
 
     let mut surplus = rigs
         .entries
@@ -1487,7 +1643,14 @@ fn update_held_item(
     let slot = held_context(left_hand).name();
     let gpu = items
         .assets
-        .get(&key, slot, blocking, items.meshes, items.images)
+        .get(
+            &key,
+            slot,
+            blocking,
+            items.meshes,
+            items.images,
+            items.materials,
+        )
         .cloned();
     match gpu {
         Some(gpu) => {
@@ -1547,7 +1710,7 @@ fn update_wings(
             chest,
             crate::entities::render::humanoid::armor::LAYER_WINGS,
         );
-        items.entity_images.get(&path, items.images)
+        items.armor_textures.get(&path, items.images)
     });
     let texture = texture.flatten();
 
@@ -1669,40 +1832,25 @@ fn update_skin(
     }
 }
 
-pub(crate) fn player_eye(feet: [f32; 3], sample: &AnimSample, scale: f32) -> [f32; 3] {
-    use azalea::entity::Pose;
-    let pose = if sample.sleeping {
-        Pose::Sleeping
-    } else if sample.fall_flying {
-        Pose::FallFlying
-    } else if sample.visually_swimming {
-        Pose::Swimming
-    } else if sample.spin_attack {
-        Pose::SpinAttack
-    } else if sample.crouching {
-        Pose::Crouching
-    } else {
-        Pose::Standing
-    };
-    let eye_height = crate::session::player_dimensions(pose, scale).eye_height;
-    [feet[0], feet[1] + eye_height, feet[2]]
-}
-
 fn player_lit(
     lm: &crate::renderer::lightmap::State,
-    light: &crate::lighting::level::LightMap,
     feet: [f32; 3],
     sample: &AnimSample,
-    scale: f32,
     dirs: [Vec3; 2],
 ) -> Lit {
-    let eye = player_eye(feet, sample, scale);
+    let eye_height = if sample.sleeping {
+        crate::renderer::systems::SLEEPING_EYE_HEIGHT
+    } else {
+        crate::renderer::systems::eye_height(sample.crouching)
+    };
+    let eye = [feet[0], feet[1] + eye_height, feet[2]];
     Lit {
         tint: [1.0; 4],
-        light: crate::renderer::lightmap::entity_light_in(lm, light, eye, false),
+        light: crate::renderer::lightmap::entity_light(lm, eye, false),
         dirs,
-        overlay_alpha: crate::entities::hurt_overlay_alpha(sample.has_red_overlay),
+        overlay_alpha: if sample.has_red_overlay { 0.698 } else { 1.0 },
         overlay_white: false,
+        glint: false,
     }
 }
 
@@ -1713,79 +1861,30 @@ enum RigVisibility {
     HiddenPosed,
 }
 
-#[derive(Clone, Copy)]
-struct Body {
-    hidden: bool,
-    scale: f32,
-}
-
-impl Body {
-    fn of(body: &crate::session::PlayerBody, viewer: crate::session::Gamemode) -> Body {
-        Body {
-            hidden: body.hidden_to(viewer),
-            scale: body.scale,
-        }
-    }
-}
-
-const BODY_HIDDEN_CUTOFF: f32 = 2.0;
-
-fn hide_body(rig: &mut Rig, hidden: bool, materials: &mut Assets<EntityMaterial>) {
-    if rig.body_hidden == hidden {
-        return;
-    }
-    rig.body_hidden = hidden;
-    let cutoff = if hidden {
-        BODY_HIDDEN_CUTOFF
-    } else {
-        ALPHA_CUTOUT
-    };
-    #[cfg(feature = "skins")]
-    let cape = Some(&rig.cape.material);
-    #[cfg(not(feature = "skins"))]
-    let cape = None;
-    for handle in [&rig.base, &rig.overlay].into_iter().chain(cape) {
-        if let Some(material) = materials.get_mut(handle) {
-            material.params.light.w = cutoff;
-        }
-    }
-}
-
 #[cfg_attr(not(feature = "skins"), allow(unused_variables))]
 fn apply_rig(
     rig: &mut Rig,
     feet: [f32; 3],
     sample: &AnimSample,
     worn: &WornSkin,
-    body: Body,
     shown: RigVisibility,
     lit: Lit,
     queries: &mut RigQueries,
     items: &mut ItemCtx,
 ) {
-    let root = root_pose(sample, body.scale);
-    let Ok((mut transform, mut vis)) = queries.0.get_mut(rig.root) else {
-        return;
-    };
-    let translation = Vec3::from(feet) + root.world_offset;
-    let scale = Vec3::splat(body.scale);
-    if transform.translation != translation
-        || transform.rotation != root.rotation
-        || transform.scale != scale
-    {
-        transform.translation = translation;
+    let root = root_pose(sample);
+    if let Ok((mut transform, mut vis)) = queries.0.get_mut(rig.root) {
+        transform.translation = Vec3::from(feet) + root.world_offset;
         transform.rotation = root.rotation;
-        transform.scale = scale;
+        *vis = if shown == RigVisibility::Shown {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
     }
-    vis.set_if_neq(if shown == RigVisibility::Shown {
-        Visibility::Visible
-    } else {
-        Visibility::Hidden
-    });
     if shown == RigVisibility::Hidden {
         return;
     }
-    hide_body(rig, body.hidden, items.entity_materials);
     if let Ok(mut transform) = queries.1.get_mut(rig.flip) {
         transform.translation =
             root.model_offset + Vec3::new(0.0, -AVATAR_SCALE * MODEL_Y_OFFSET, 0.0);
@@ -1820,11 +1919,15 @@ fn apply_rig(
         (&sample.main_hand, &sample.off_hand)
     };
     let [right_held, left_held] = &rig.held;
+    // A cast rod shows its cast model through the same switch as a raised
+    // shield ("using").
+    let casting = items.casters.contains(&rig.id.unwrap_or(items.local_id));
+    let cast = |item: &HeldItem| casting && item.id == "fishing_rod";
     update_held_item(
         right_held.node,
         right_item,
         false,
-        sample.right_arm_pose == ArmPose::Block,
+        sample.right_arm_pose == ArmPose::Block || cast(right_item),
         &right_held.material,
         items,
         &mut queries.3,
@@ -1833,7 +1936,7 @@ fn apply_rig(
         left_held.node,
         left_item,
         true,
-        sample.left_arm_pose == ArmPose::Block,
+        sample.left_arm_pose == ArmPose::Block || cast(left_item),
         &left_held.material,
         items,
         &mut queries.3,
@@ -1842,19 +1945,27 @@ fn apply_rig(
     update_armor(rig, &sample.armor, items, &mut queries.4);
     update_wings(rig, &sample.armor, items, &mut queries.5);
 
-    if lit != rig.lit {
-        #[cfg(feature = "skins")]
-        let cape = Some(&rig.cape.material);
-        #[cfg(not(feature = "skins"))]
-        let cape = None;
+    let glint_changed = rig
+        .armor
+        .iter()
+        .enumerate()
+        .any(|(i, s)| s.glint != sample.armor.glints(i));
+    if lit != rig.lit || glint_changed {
         for handle in [&rig.base, &rig.overlay, &rig.wings.material]
             .into_iter()
-            .chain(cape)
             .chain(rig.held.iter().map(|held| &held.material))
-            .chain(rig.armor.iter().map(|slot| &slot.material))
         {
             if let Some(material) = items.entity_materials.get_mut(handle) {
                 material.params.set(lit);
+            }
+        }
+        for (i, slot) in rig.armor.iter_mut().enumerate() {
+            slot.glint = sample.armor.glints(i);
+            if let Some(material) = items.entity_materials.get_mut(&slot.material) {
+                material.params.set(Lit {
+                    glint: slot.glint,
+                    ..lit
+                });
             }
         }
         rig.lit = lit;
@@ -1871,15 +1982,16 @@ fn update_armor(
     >,
 ) {
     for (index, slot) in rig.armor.iter_mut().enumerate() {
-        if slot.worn == armor[index] {
+        if slot.worn == armor[index] && slot.trim == armor.trims[index] {
             continue;
         }
         slot.worn = armor[index];
+        slot.trim = armor.trims[index];
 
         let texture = match &armor[index] {
             Some(item) => {
-                let path = armor_texture(index, item);
-                items.entity_images.get(&path, items.images)
+                let path = armor_texture(index, item, slot.trim);
+                items.armor_textures.get(&path, items.images)
             }
             None => None,
         };
@@ -2121,7 +2233,7 @@ mod tests {
     #[test]
     fn death_tips_the_model_a_quarter_turn() {
         let alive = AnimSample::default();
-        let root = root_pose(&alive, 1.0);
+        let root = root_pose(&alive);
         assert_eq!(root.model_offset, Vec3::ZERO);
         assert_eq!(root.world_offset, Vec3::ZERO);
         let rot = root.rotation;
@@ -2131,7 +2243,7 @@ mod tests {
             death_time: 20.0,
             ..Default::default()
         };
-        let rot = root_pose(&dead, 1.0).rotation;
+        let rot = root_pose(&dead).rotation;
         let expect = Quat::from_rotation_y(PI) * Quat::from_rotation_z(FRAC_PI_2);
         assert!(rot.abs_diff_eq(expect, 1e-6), "{rot:?} != {expect:?}");
     }
@@ -2144,7 +2256,7 @@ mod tests {
             body_yaw: 123.0,
             ..Default::default()
         };
-        let root = root_pose(&asleep, 1.0);
+        let root = root_pose(&asleep);
         assert!(
             root.world_offset
                 .abs_diff_eq(Vec3::new(0.0, 0.0, -1.52), 1e-5),
@@ -2154,19 +2266,13 @@ mod tests {
         assert_eq!(root.model_offset, Vec3::ZERO);
         let mut spun = asleep;
         spun.body_yaw = -47.0;
-        assert!(
-            root.rotation
-                .abs_diff_eq(root_pose(&spun, 1.0).rotation, 1e-6)
-        );
+        assert!(root.rotation.abs_diff_eq(root_pose(&spun).rotation, 1e-6));
 
         let unknown_orientation = AnimSample {
             sleeping: true,
             bed_orientation: None,
             ..Default::default()
         };
-        assert_eq!(
-            root_pose(&unknown_orientation, 1.0).world_offset,
-            Vec3::ZERO
-        );
+        assert_eq!(root_pose(&unknown_orientation).world_offset, Vec3::ZERO);
     }
 }

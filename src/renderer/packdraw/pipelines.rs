@@ -32,13 +32,14 @@ use crate::shaderpack::transform::ImageAccess;
 
 fn checked_shaders() -> bool {
     static CHECKED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *CHECKED.get_or_init(|| crate::platform::env::flag("MC_SHADERPACK_CHECKED"))
+    *CHECKED.get_or_init(|| std::env::var_os("MC_SHADERPACK_CHECKED").is_some_and(|v| v != "0"))
 }
 
 pub(super) struct Pipelines {
     pub(super) geometry: [Option<RenderPipeline>; 3],
     pub(super) screen: Vec<Option<RenderPipeline>>,
-    pub(super) shadow: Option<(RenderPipeline, RenderPipeline)>,
+    /// Per terrain layer, by [`Geometry`] slot.
+    pub(super) shadow: Option<[Option<RenderPipeline>; 3]>,
     pub(super) entities: [Option<(RenderPipeline, RenderPipeline)>; EntityKind::COUNT],
     pub(super) compute: Vec<Option<[ComputePipeline; 2]>>,
 }
@@ -351,18 +352,25 @@ struct EntityPassState {
 }
 
 fn entity_pass_state(kind: EntityKind, second: bool) -> EntityPassState {
+    // Equal depth passes: layered models (a banner's dyed masks, a sheep's
+    // wool) draw the same surface again over itself, in their depth-bias
+    // order (`EntityDraw::order`), where vanilla offsets them.
     let cutout = EntityPassState {
         blend: None,
-        depth: Some((true, CompareFunction::Less)),
+        depth: Some((true, CompareFunction::LessEqual)),
         cull: None,
     };
     let blended = EntityPassState {
         blend: Some(BlendState::ALPHA_BLENDING),
-        depth: Some((false, CompareFunction::Less)),
+        depth: Some((false, CompareFunction::LessEqual)),
         cull: None,
     };
     match kind {
-        EntityKind::Entity | EntityKind::Block | EntityKind::Particle | EntityKind::Hand => {
+        EntityKind::Entity
+        | EntityKind::Block
+        | EntityKind::Particle
+        | EntityKind::Hand
+        | EntityKind::BeaconBeam => {
             if second {
                 blended
             } else {
@@ -455,18 +463,23 @@ fn shadow_color_targets(installed: &Installed, buffers: &[u8]) -> Vec<Option<Col
 
 fn color_targets(
     installed: &Installed,
+    program: &str,
     buffers: &[u8],
     blend: bool,
 ) -> Vec<Option<ColorTargetState>> {
     blended_targets(
         installed,
+        program,
         buffers,
         blend.then_some(BlendState::ALPHA_BLENDING),
     )
 }
 
+/// Each buffer's blend: the pack's `blend.<program>[.<buffer>]` where it set
+/// one, else this draw's default.
 fn blended_targets(
     installed: &Installed,
+    program: &str,
     buffers: &[u8],
     blend: Option<BlendState>,
 ) -> Vec<Option<ColorTargetState>> {
@@ -474,7 +487,10 @@ fn blended_targets(
         .iter()
         .map(|buffer| {
             let format = installed.targets.settings[*buffer as usize].format;
-            let blend = blend.filter(|_| format.sample_kind() == SampleKind::Float);
+            let blend = installed
+                .blends
+                .resolve(program, *buffer, blend)
+                .filter(|_| format.sample_kind() == SampleKind::Float);
             Some(ColorTargetState {
                 format: wgpu_format(format),
                 blend,
@@ -491,6 +507,7 @@ pub(crate) fn prepare_pipelines(
     takeover: Option<ResMut<PackTakeover>>,
     render: Option<ResMut<PackRender>>,
 ) {
+    crate::prof_span!("render:pack_prepare_pipelines");
     let (Some(terrain), Some(mut takeover), Some(mut render)) = (terrain, takeover, render) else {
         return;
     };
@@ -551,7 +568,12 @@ fn build_pipelines(
             primitive: pack_triangles(PrimitiveTopology::TriangleList, Some(Face::Back)),
             depth: Some((true, CompareFunction::Less)),
             fragment: program.fragment_for(super::compile::geometry_alpha(geometry, false)),
-            targets: color_targets(installed, &program.draw_buffers, geometry.translucent()),
+            targets: color_targets(
+                installed,
+                &program.name,
+                &program.draw_buffers,
+                geometry.translucent(),
+            ),
         }))
     });
     let screen = (0..installed.programs.len())
@@ -568,31 +590,34 @@ fn build_pipelines(
                 primitive: PrimitiveState::default(),
                 depth: None,
                 fragment: &program.fragment,
-                targets: color_targets(installed, &program.draw_buffers, false),
+                targets: color_targets(installed, &program.name, &program.draw_buffers, false),
             }))
         })
         .collect();
-    let shadow_pipelines = installed.shadow.filter(|_| shadow).map(|index| {
-        let program = &installed.programs[index];
-        let mut variant = |geometry: Geometry, cutout: bool| {
-            builder.render(PackPipeline {
-                label: pipeline_label(
-                    generation,
-                    format_args!("{}{}", program.name, if cutout { " cutout" } else { "" }),
-                ),
+    let shadow_pipelines = installed.shadow.filter(|_| shadow).map(|_| {
+        std::array::from_fn(|slot| {
+            let index = installed.shadow_streams[slot]?;
+            let program = &installed.programs[index];
+            let geometry = Geometry::ALL[slot];
+            // Faces toward the light are front faces from the shadow view.
+            let primitive = if geometry == Geometry::TerrainSolid
+                && installed.shadow_casters.solid_back_faces
+            {
+                pack_triangles(PrimitiveTopology::TriangleList, Some(Face::Front))
+            } else {
+                PrimitiveState::default()
+            };
+            Some(builder.render(PackPipeline {
+                label: pipeline_label(generation, format_args!("{} {geometry:?}", program.name)),
                 layouts: vec![&layouts[index], terrain_layout, quads_layout],
                 vertex: &program.vertex,
                 buffers: vec![packed_vertex_layout()],
-                primitive: PrimitiveState::default(),
+                primitive,
                 depth: Some((true, CompareFunction::Less)),
                 fragment: program.fragment_for(super::compile::geometry_alpha(geometry, true)),
                 targets: shadow_color_targets(installed, &program.draw_buffers),
-            })
-        };
-        (
-            variant(Geometry::TerrainSolid, false),
-            variant(Geometry::TerrainCutout, true),
-        )
+            }))
+        })
     });
     let entities = std::array::from_fn(|at| {
         let kind = EntityKind::ALL[at];
@@ -617,7 +642,7 @@ fn build_pipelines(
                 targets: if kind == EntityKind::ShadowCaster {
                     shadow_color_targets(installed, &program.draw_buffers)
                 } else {
-                    blended_targets(installed, &program.draw_buffers, state.blend)
+                    blended_targets(installed, &program.name, &program.draw_buffers, state.blend)
                 },
             })
         };
@@ -734,7 +759,7 @@ mod tests {
             "fast clouds draw both faces"
         );
         let hand = state(EntityKind::Hand, false);
-        assert!(hand.depth == Some((true, CompareFunction::Less)));
+        assert!(hand.depth == Some((true, CompareFunction::LessEqual)));
         assert_eq!(
             EntityKind::Hand.alpha_tests()[0],
             Some(super::super::compile::ONE_TENTH_ALPHA)
@@ -751,7 +776,8 @@ mod tests {
         );
         let hand_water = state(EntityKind::HandWater, false);
         assert!(
-            hand_water.blend.is_some() && hand_water.depth == Some((false, CompareFunction::Less))
+            hand_water.blend.is_some()
+                && hand_water.depth == Some((false, CompareFunction::LessEqual))
         );
     }
 }

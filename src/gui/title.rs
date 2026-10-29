@@ -2,7 +2,7 @@ use std::sync::OnceLock;
 
 use crate::gui::menu;
 use crate::gui::painter::Painter;
-use crate::gui::widgets::{Button, WIDGET_HEIGHT, WIDGET_WIDTH_BIG, centered_x};
+use crate::gui::widgets::{Button, WIDGET_HEIGHT, WIDGET_WIDTH_BIG};
 use crate::gui::{GuiState, Screen, ScreenCtx};
 use crate::platform::time::{SystemTime, UNIX_EPOCH};
 use crate::text::{Span, Style, texts};
@@ -10,15 +10,13 @@ use crate::text::{Span, Style, texts};
 const MULTIPLAYER: &str = "Multiplayer";
 const OPTIONS: &str = "Options...";
 const QUIT: &str = "Quit Game";
-const EDIT_PROFILE: &str = "Edit Profile";
+const EDIT_PROFILE: &str = "Manage Profiles";
 const PROFILE_LABEL_PAD: f32 = 8.0;
 
+/// The logo is drawn as wide as vanilla's, its height kept to `logo.png`'s
+/// own proportions.
 const LOGO_W: f32 = 256.0;
-const LOGO_H: f32 = 44.0;
 const LOGO_Y: f32 = 30.0;
-const EDITION_W: f32 = 128.0;
-const EDITION_H: f32 = 14.0;
-const EDITION_OVERLAP: f32 = 7.0;
 
 const BOTTOM_ROW_STEP: f32 = 36.0;
 
@@ -32,48 +30,27 @@ fn first_row_y(vh: f32) -> f32 {
     (vh / 4.0).floor() + 48.0
 }
 
-pub(crate) fn logo(p: &mut Painter, vw: f32, y: f32) {
-    p.sprite(
-        "title/minecraft",
-        (vw / 2.0 - LOGO_W / 2.0).floor(),
-        y,
-        LOGO_W,
-        LOGO_H,
-    );
-    p.sprite(
-        "title/edition",
-        (vw / 2.0 - EDITION_W / 2.0).floor(),
-        y + LOGO_H - EDITION_OVERLAP,
-        EDITION_W,
-        EDITION_H,
-    );
-}
-
 pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     if crate::renderer::panorama::absent() {
         menu::background(p, ctx.vw, ctx.vh);
     }
 
     let logo_x = (ctx.vw / 2.0 - LOGO_W / 2.0).floor();
-    logo(p, ctx.vw, LOGO_Y);
+    let logo_h = p
+        .atlas
+        .sprite(crate::gui::atlas::TORCH_LOGO)
+        .map_or(44.0, |s| (LOGO_W * s.region.h as f32 / s.region.w.max(1) as f32).round());
+    p.sprite(crate::gui::atlas::TORCH_LOGO, logo_x, LOGO_Y, LOGO_W, logo_h);
 
     if let Some(splash) = session_splash() {
-        let splash_x = logo_x + LOGO_W * 0.7;
-        let splash_y = LOGO_Y + LOGO_H - 3.0;
-        p.scaled(1.5, splash_x, splash_y, |p| {
-            p.text_str(splash, 0.0, 0.0, 0xFFFF00, true);
-        });
+        draw_splash(p, ctx, splash);
     }
 
-    let x = centered_x(ctx.vw);
+    let x = ((ctx.vw - WIDGET_WIDTH_BIG) / 2.0).floor();
     let top = first_row_y(ctx.vh);
 
-    #[cfg(feature = "online_mode")]
-    crate::client::ban::check_once();
     if Button::new(x, top, WIDGET_WIDTH_BIG, WIDGET_HEIGHT, MULTIPLAYER).draw(p, ctx) {
         state.nav = Some(Screen::Multiplayer);
-        #[cfg(feature = "online_mode")]
-        crate::gui::bannotice::before_multiplayer(state);
     }
 
     let bottom = top + BOTTOM_ROW_STEP;
@@ -106,14 +83,6 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         state.nav = Some(Screen::Credits);
     }
 
-    #[cfg(all(feature = "update_checker", not(target_arch = "wasm32")))]
-    if let Some(tag) = crate::client::update_checker::available() {
-        let label = format!("Update available: {tag}");
-        if link(p, ctx, &label, 0xFFFF00, 2.0, ctx.vh - 30.0) {
-            crate::platform::url::open(crate::client::update_checker::RELEASES_URL);
-        }
-    }
-
     #[cfg(all(feature = "mobile_ui", target_arch = "wasm32"))]
     {
         const W: f32 = 90.0;
@@ -129,16 +98,6 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
 
     {
         let w = p.atlas.font.width_str(EDIT_PROFILE) + 2.0 * PROFILE_LABEL_PAD;
-        #[cfg(feature = "tutorial")]
-        crate::gui::tutorial::mark(
-            crate::gui::tutorial::Spot::EditProfile,
-            crate::gui::hud_layout::Rect::new(
-                (ctx.vw - w - 4.0).floor(),
-                ctx.vh - WIDGET_HEIGHT - 14.0,
-                w,
-                WIDGET_HEIGHT,
-            ),
-        );
         if Button::new(
             (ctx.vw - w - 4.0).floor(),
             ctx.vh - WIDGET_HEIGHT - 14.0,
@@ -166,37 +125,29 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
 }
 
 const DISCLAIMER: &str = "Not affiliated with Mojang or Microsoft.";
-const CREDITS: &str = "(Open Credits)";
+const CREDITS: &str = "(Credits)";
 
 fn credits_link(p: &mut Painter, ctx: &ScreenCtx, x: f32, y: f32) -> bool {
-    #[cfg(feature = "tutorial")]
-    crate::gui::tutorial::mark(
-        crate::gui::tutorial::Spot::Credits,
-        crate::gui::hud_layout::Rect::new(
-            x,
-            y - 1.0,
-            p.atlas.font.width_str(CREDITS),
-            crate::text::LINE_HEIGHT + 1.0,
-        ),
-    );
-    link(p, ctx, CREDITS, 0xFFFFFF, x, y)
-}
-
-fn link(p: &mut Painter, ctx: &ScreenCtx, text: &str, color: u32, x: f32, y: f32) -> bool {
-    let w = p.atlas.font.width_str(text);
+    let w = p.atlas.font.width_str(CREDITS);
     let (hx, hy, hw, hh) = (x, y - 1.0, w, crate::text::LINE_HEIGHT + 1.0);
     let hovered = ctx.hovering(hx, hy, hw, hh);
     let span = Span {
-        text: text.to_owned(),
+        text: CREDITS.to_owned(),
         style: Style {
-            color,
+            color: 0xFFFFFF,
             underline: hovered,
             ..Style::default()
         },
     };
     p.text(std::slice::from_ref(&span), x, y, true);
-    let clicked = crate::gui::widgets::click_in(ctx, hx, hy, hw, hh);
-    #[cfg(feature = "audio")]
+    #[cfg(not(feature = "mobile_ui"))]
+    let clicked = hovered && ctx.input.left_click;
+    #[cfg(feature = "mobile_ui")]
+    let clicked = hovered
+        && ctx.input.left_release
+        && crate::gui::widgets::touch_tap::pressed_in(hx, hy, hw, hh)
+        && !crate::gui::widgets::touch_tap::scrolled();
+    #[cfg(audio)]
     if clicked {
         crate::gui::widgets::play_click();
     }
@@ -205,17 +156,30 @@ fn link(p: &mut Painter, ctx: &ScreenCtx, text: &str, color: u32, x: f32, y: f32
 
 const EAGLER_MODE: &str = "Eagler mode (wss:// enabled)";
 
+/// `SplashRenderer`: yellow, turned 20 degrees up, at the logo's right end,
+/// pulsing in size once a second and shrunk to fit long lines.
+fn draw_splash(p: &mut Painter, ctx: &ScreenCtx, splash: &str) {
+    let width = p.atlas.font.width_str(splash);
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() % 1000) as f32;
+    let phase = 1.8 - (millis / 1000.0 * std::f32::consts::TAU).sin().abs() * 0.1;
+    let scale = phase * 100.0 / (width + 32.0);
+    let radians = -std::f32::consts::PI / 9.0;
+    p.rotated(scale, radians, ctx.vw / 2.0 + 123.0, 69.0, |p| {
+        p.text_str(splash, (-width / 2.0).trunc(), -8.0, 0xFFFF00, true);
+    });
+}
+
 fn session_splash() -> Option<&'static str> {
-    static SPLASH: OnceLock<Option<String>> = OnceLock::new();
-    SPLASH
-        .get_or_init(|| {
-            let seed = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_nanos() as u64)
-                .unwrap_or(0);
-            texts::splash_for(seed)
-        })
-        .as_deref()
+    static SPLASH: OnceLock<Option<&'static str>> = OnceLock::new();
+    *SPLASH.get_or_init(|| {
+        let seed = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
+        texts::splash_for(seed)
+    })
 }
 
 #[cfg(test)]
@@ -231,7 +195,7 @@ mod tests {
     #[test]
     fn the_bottom_row_lines_up_with_the_column() {
         let vw = 854.0;
-        let left = centered_x(vw);
+        let left = ((vw - WIDGET_WIDTH_BIG) / 2.0).floor();
         let right = (vw / 2.0).floor() + 2.0;
         assert_eq!(left + HALF_WIDTH + BUTTON_GAP, right);
         assert_eq!(right + HALF_WIDTH, left + WIDGET_WIDTH_BIG);

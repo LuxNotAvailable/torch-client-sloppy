@@ -7,10 +7,7 @@ pub fn no_item_required() -> &'static [Box<str>] {
     PATTERNS.get_or_init(|| {
         let Some(json) = crate::util::datapack::entry("tags/banner_pattern", "no_item_required")
         else {
-            crate::log_warn!(
-                "gui",
-                "loom: no banner_pattern/no_item_required tag; the pattern grid is empty"
-            );
+            eprintln!("[loom] no banner_pattern/no_item_required tag; the pattern grid is empty");
             return Box::from([]);
         };
         let out: Vec<Box<str>> = json

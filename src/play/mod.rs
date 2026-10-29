@@ -1,12 +1,15 @@
+pub(crate) mod boat;
 pub(crate) mod commands;
 pub(crate) mod dialog;
 pub(crate) mod entity_feed;
 pub(crate) mod flight;
+pub(crate) mod gliding;
 pub(crate) mod interaction;
 pub(crate) mod inventory_bridge;
+pub(crate) mod inventory_sort;
+pub(crate) mod looking;
 pub(crate) mod mob_effects;
 pub(crate) mod no_fall;
 pub(crate) mod placement;
 pub(crate) mod redstone;
 pub(crate) mod riding;
-pub(crate) mod vclip;

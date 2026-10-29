@@ -1,7 +1,3 @@
-#[cfg(not(feature = "module_panel"))]
-mod columns;
-#[cfg(feature = "module_panel")]
-mod panel;
 mod picker;
 pub(crate) mod theme;
 
@@ -9,10 +5,9 @@ use bevy::prelude::Vec2;
 
 use crate::gui::keybinds::Bound;
 use crate::modules::list::BitList;
-use crate::modules::registry::{COUNT, Category, Id, Kind, Mode, SettingDef, module};
+use crate::modules::registry::{COUNT, Category, Id, Kind, Mode, ModuleDef, SettingDef, module};
 use crate::modules::{Value, store};
-use crate::text::contains_ci;
-use picker::{Picker, Row};
+use picker::{Picker, Row, contains_ci};
 
 use crate::gui::ScreenCtx;
 use crate::gui::painter::{self, Painter};
@@ -20,8 +15,7 @@ use crate::gui::render::GuiInput;
 use crate::gui::widgets::{MultiLineTextBox, TextBox};
 
 const GAP: f32 = 4.0;
-const TOUCH: bool = cfg!(feature = "module_panel");
-const TOP_H: f32 = if TOUCH { 24.0 } else { 16.0 };
+const TOP_H: f32 = 16.0;
 const HEADER_H: f32 = 15.0;
 const PAD_BOTTOM: f32 = 4.0;
 const INDENT: f32 = 5.0;
@@ -29,44 +23,36 @@ const INDENT: f32 = 5.0;
 const RESET_W: f32 = 7.0;
 const RESET_EDGE: f32 = 3.0;
 
-const TOGGLE_H: f32 = if TOUCH { 20.0 } else { 12.0 };
-const SLIDER_H: f32 = if TOUCH { 26.0 } else { 19.0 };
-const TRACK_Y: f32 = if TOUCH { 18.0 } else { 13.0 };
-const TRACK_H: f32 = if TOUCH { 4.0 } else { 2.0 };
-const KNOB_D: f32 = if TOUCH { 12.0 } else { 6.0 };
-const ENUM_H: f32 = if TOUCH { 22.0 } else { 15.0 };
+const TOGGLE_H: f32 = 12.0;
+const SLIDER_H: f32 = 19.0;
+const ENUM_H: f32 = 15.0;
 const CHOICE_H: f32 = ENUM_H - 3.0;
-const SHOW_BIND: bool = !cfg!(target_os = "android");
-const BIND_H: f32 = if TOUCH { 20.0 } else { 12.0 };
-const BLOCK_H: f32 = if TOUCH { 20.0 } else { 12.0 };
-const CHIP: f32 = if TOUCH { 14.0 } else { 9.0 };
-const CHANNEL_H: f32 = if TOUCH { 30.0 } else { 22.0 };
-const LIST_H: f32 = if TOUCH { 22.0 } else { 13.0 };
+const BIND_H: f32 = 12.0;
+const BLOCK_H: f32 = 12.0;
+const CHANNEL_H: f32 = 22.0;
+const LIST_H: f32 = 13.0;
 const TEXTBOX_ROW_H: f32 = 13.0 + FIELD_H + 3.0;
-const OPTION_H: f32 = if TOUCH { 20.0 } else { 11.0 };
+const OPTION_H: f32 = 11.0;
 
 fn options_h(n: usize) -> f32 {
     2.0 + n as f32 * OPTION_H
 }
-const SWATCH: f32 = if TOUCH { 16.0 } else { 11.0 };
-const SWATCH_H: f32 = 15.0 + SWATCH;
+const SWATCH_H: f32 = 26.0;
+const SWATCH: f32 = 11.0;
 const TEXT_H: f32 = 8.0;
 
 const POP_SECS: f32 = 0.16;
 const POP_FROM: f32 = 0.93;
 
-#[cfg(not(feature = "module_panel"))]
 const BUTTON_W: f32 = PROFILE_W;
-const BUTTON_H: f32 = if TOUCH { 20.0 } else { 12.0 };
-const PILL_W: f32 = if TOUCH { 24.0 } else { 16.0 };
-const PILL_H: f32 = if TOUCH { 12.0 } else { 8.0 };
+const BUTTON_H: f32 = 12.0;
 
 const SEARCH_ROWS: usize = 6;
 
 const TIP_W: f32 = 118.0;
 const TIP_PAD: f32 = 4.0;
 const TIP_LINE: f32 = 10.0;
-const FIELD_H: f32 = if TOUCH { 18.0 } else { 13.0 };
+const FIELD_H: f32 = 13.0;
 const HINT_H: f32 = 11.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -74,7 +60,6 @@ enum Control {
     Setting(u16),
     Channel(u8),
     Config(Cfg),
-    #[cfg(not(feature = "module_panel"))]
     BarProfile,
 }
 
@@ -108,17 +93,6 @@ enum CfgRow {
         name: &'static str,
         field: fn(&mut Look) -> &mut bool,
     },
-}
-
-fn cfg_shown(row: CfgRow) -> bool {
-    !(TOUCH
-        && matches!(
-            row,
-            CfgRow::Slider {
-                ctl: Cfg::RowHeight | Cfg::ColumnWidth,
-                ..
-            }
-        ))
 }
 
 const CFG: [CfgRow; 11] = [
@@ -180,10 +154,8 @@ const CFG: [CfgRow; 11] = [
     },
 ];
 
-#[cfg(not(feature = "module_panel"))]
 const PROFILE_W: f32 = 92.0;
 
-#[cfg(not(feature = "module_panel"))]
 const PROFILE_TIP: &str = "Which modules may run. Legit permits only what the server cannot see. Ctrl+] raises, Ctrl+[ lowers.";
 
 const SCALE_MIN: f32 = 0.6;
@@ -346,24 +318,12 @@ enum Window {
     Search,
     Config,
     Overlay,
-    #[cfg(feature = "module_panel")]
-    Grid,
-    #[cfg(feature = "module_panel")]
-    Sheet,
 }
 
 #[derive(Clone, Copy)]
 enum Drag {
-    #[cfg(not(feature = "module_panel"))]
-    Window {
-        window: Window,
-        dx: f32,
-        dy: f32,
-    },
-    Slider {
-        id: Control,
-        handle: u8,
-    },
+    Window { window: Window, dx: f32, dy: f32 },
+    Slider { id: Control, handle: u8 },
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -380,6 +340,12 @@ struct Hit {
     y: f32,
     w: f32,
     h: f32,
+}
+
+#[derive(Clone, Copy)]
+enum Tail {
+    Dots,
+    Category,
 }
 
 struct Editor {
@@ -399,18 +365,10 @@ struct FieldEdit {
     text: TextBox,
 }
 
-struct NumberEdit {
-    ctl: Control,
-    handle: u8,
-    text: TextBox,
-    commit: bool,
-}
-
 enum KeyOwner {
     None,
     Capture(Id),
     Field(FieldEdit),
-    Number(NumberEdit),
 }
 
 impl KeyOwner {
@@ -454,7 +412,6 @@ enum Keys {
     Capture(Id),
     Overlay,
     Field,
-    Number,
     Search,
     Nothing,
 }
@@ -483,7 +440,10 @@ impl Pane<'_> {
     }
 
     pub fn hovering(&self, x: f32, y: f32, w: f32, h: f32) -> bool {
-        self.mouse.is_some_and(|m| inside(m, x, y, w, h))
+        match self.mouse {
+            Some(m) => m.x >= x && m.x < x + w && m.y >= y && m.y < y + h,
+            None => false,
+        }
     }
 
     pub fn copy_pointer(&self, dst: &mut GuiInput, click: bool) {
@@ -547,10 +507,6 @@ pub struct ClickGuiState {
     applied: f32,
     scale_set: bool,
     opened_at: Option<f32>,
-    #[cfg(feature = "module_panel")]
-    modules: panel::State,
-    #[cfg(feature = "module_panel")]
-    close: bool,
 }
 
 impl Default for ClickGuiState {
@@ -569,7 +525,12 @@ impl Default for ClickGuiState {
             band: (0.0, 0.0),
             search: Panel::at(0.0, 0.0),
             config: Panel::at(0.0, 0.0),
-            field: TextBox::pinned(48, ""),
+            field: {
+                let mut f = TextBox::new(48, "Type to search");
+                f.focused = true;
+                f.browser_keyboard = false;
+                f
+            },
             mouse_input: GuiInput::default(),
             matches: Vec::with_capacity(COUNT),
             selected: 0,
@@ -584,10 +545,6 @@ impl Default for ClickGuiState {
             applied: 1.0,
             scale_set: false,
             opened_at: None,
-            #[cfg(feature = "module_panel")]
-            modules: panel::State::default(),
-            #[cfg(feature = "module_panel")]
-            close: false,
         }
     }
 }
@@ -629,16 +586,11 @@ pub(crate) fn text_y(top: f32, h: f32) -> f32 {
     (top + (h - TEXT_H) * 0.5).floor()
 }
 
-#[cfg(not(feature = "module_panel"))]
 fn profile_x(vw: f32) -> f32 {
     (vw - GAP - PROFILE_W).floor()
 }
 
 const EPS: f32 = 1e-3;
-
-fn inside(at: Vec2, x: f32, y: f32, w: f32, h: f32) -> bool {
-    at.x >= x && at.x < x + w && at.y >= y && at.y < y + h
-}
 
 fn differs(a: f32, b: f32) -> bool {
     (a - b).abs() >= EPS
@@ -656,6 +608,14 @@ fn changed(slot: usize, kind: Kind) -> bool {
     }
 }
 
+fn cat_tag(cat: &'static str) -> &'static str {
+    &cat[..3.min(cat.len())]
+}
+
+fn cat_w(p: &Painter, cat: &str) -> f32 {
+    p.atlas.font.width_str(cat)
+}
+
 impl ClickGuiState {
     fn contents(&mut self, p: &mut Painter, ui: &Ui) {
         self.tip = None;
@@ -668,10 +628,13 @@ impl ClickGuiState {
         self.top_bar(p, ui);
         match self.tab {
             Tab::Modules => {
-                #[cfg(not(feature = "module_panel"))]
-                self.columns(p, ui);
-                #[cfg(feature = "module_panel")]
-                self.module_panel(p, ui);
+                for i in 0..self.order.len() {
+                    let pi = self.order[i] as usize;
+                    let active =
+                        self.focus == Focus::On(Window::Column(pi as u8)) && self.drag.is_none();
+                    self.panel(p, ui, pi, active);
+                }
+                self.search_window(p, ui);
                 self.overlay_window(p, ui);
             }
             Tab::Config => {
@@ -679,13 +642,7 @@ impl ClickGuiState {
                 self.overlay_window(p, ui);
             }
         }
-        #[cfg(not(feature = "module_panel"))]
         self.profile_control(p, ui);
-        #[cfg(feature = "module_panel")]
-        {
-            let (x, y, w, h) = panel::tab_bar_rect(ui);
-            self.record(Focus::Bar, x, y, w, h);
-        }
         self.tooltip(p, ui);
     }
 
@@ -701,9 +658,7 @@ impl ClickGuiState {
         let h = 2.0 * TIP_PAD + lines * TIP_LINE;
 
         let x = (mx + 9.0).min(ui.vw - w - 2.0).max(2.0).floor();
-        let y = if TOUCH && my - 14.0 - h >= 2.0 {
-            my - 14.0 - h
-        } else if my + 6.0 + h > ui.vh {
+        let y = if my + 6.0 + h > ui.vh {
             (my - 6.0 - h).max(2.0)
         } else {
             my + 6.0
@@ -760,9 +715,7 @@ impl ClickGuiState {
                 self.owner = KeyOwner::None;
             }
             Keys::Overlay => self.overlay = None,
-            Keys::Field | Keys::Number => self.owner = KeyOwner::None,
-            #[cfg(feature = "module_panel")]
-            Keys::Search if self.expanded.is_some() => self.close_sheet(),
+            Keys::Field => self.owner = KeyOwner::None,
             Keys::Search | Keys::Nothing => return false,
         }
         true
@@ -777,10 +730,6 @@ impl ClickGuiState {
             Keys::Overlay
         } else if self.owner.field().is_some_and(|f| self.field_alive(f.slot)) {
             Keys::Field
-        } else if let KeyOwner::Number(n) = &self.owner
-            && self.number_alive(n.ctl)
-        {
-            Keys::Number
         } else if self.tab == Tab::Modules {
             Keys::Search
         } else {
@@ -800,30 +749,13 @@ impl ClickGuiState {
             .is_some_and(|id| module(id).slots().contains(&(slot as usize)) && self.block_open(id))
     }
 
-    fn number_alive(&self, ctl: Control) -> bool {
-        match ctl {
-            Control::Setting(slot) => self.field_alive(slot),
-            Control::Config(_) => self.tab == Tab::Config,
-            _ => false,
-        }
-    }
-
     pub fn opened(&mut self) {
         self.opened_at = None;
-        #[cfg(feature = "module_panel")]
-        {
-            self.close = false;
-        }
         self.field.clear();
         self.field.focused = true;
         self.matches.clear();
         self.selected = 0;
         self.match_top = 0;
-    }
-
-    #[cfg(feature = "module_panel")]
-    pub fn take_close(&mut self) -> bool {
-        std::mem::take(&mut self.close)
     }
 
     fn pop(&mut self, now: f32) -> f32 {
@@ -840,10 +772,7 @@ impl ClickGuiState {
         if !self.placed {
             self.placed = true;
             let n = self.panels.len() as f32 + 1.0;
-            #[cfg(not(feature = "module_panel"))]
             let need = n * (self.look.panel_w + GAP) + GAP;
-            #[cfg(feature = "module_panel")]
-            let need = panel::MIN_W + 2.0 * GAP;
             if !self.scale_set && need > ui.vw {
                 let was = self.look.scale;
                 self.look.scale = (was * ui.vw / need).clamp(AUTO_SCALE_MIN, 1.0);
@@ -863,7 +792,6 @@ impl ClickGuiState {
             self.config.x = ((ui.vw - CONFIG_W) * 0.5).floor();
             self.config.y = top;
         }
-
         let (w, right) = (self.look.panel_w, (ui.vw - 24.0).floor());
         let overlay_w = self.overlay_w();
         let bottom = (ui.vh - HEADER_H).max(0.0).floor();
@@ -882,7 +810,6 @@ impl ClickGuiState {
             self.drag = None;
         }
         match self.drag {
-            #[cfg(not(feature = "module_panel"))]
             Some(Drag::Window { window, dx, dy }) => {
                 if let Some(m) = ui.mouse() {
                     let p = self.window_mut(window);
@@ -903,8 +830,6 @@ impl ClickGuiState {
             .find(|h| self.live(h.focus) && ui.hovering(h.x, h.y, h.w, h.h))
             .map(|h| h.focus);
         self.focus = found.unwrap_or(Focus::None);
-        #[cfg(feature = "module_panel")]
-        self.track_touch(ui);
         let press = ui.input.left_click || ui.input.right_click;
         if press
             && let Focus::On(Window::Column(pi)) = self.focus
@@ -926,8 +851,6 @@ impl ClickGuiState {
             Focus::None => false,
             Focus::Bar => true,
             Focus::On(Window::Column(_) | Window::Search) => self.tab == Tab::Modules,
-            #[cfg(feature = "module_panel")]
-            Focus::On(Window::Grid | Window::Sheet) => self.tab == Tab::Modules,
             Focus::On(Window::Config) => self.tab == Tab::Config,
             Focus::On(Window::Overlay) => {
                 self.overlay.is_some() && matches!(self.tab, Tab::Modules | Tab::Config)
@@ -945,8 +868,6 @@ impl ClickGuiState {
             Window::Search => &mut self.search,
             Window::Config => &mut self.config,
             Window::Overlay => &mut self.overlay_win,
-            #[cfg(feature = "module_panel")]
-            Window::Grid | Window::Sheet => self.modules.view(window),
         }
     }
 
@@ -955,7 +876,6 @@ impl ClickGuiState {
             KeyOwner::None => false,
             KeyOwner::Capture(id) => !self.block_open(*id),
             KeyOwner::Field(f) => !self.field_alive(f.slot),
-            KeyOwner::Number(n) => !self.number_alive(n.ctl),
         };
         if stale {
             self.owner = KeyOwner::None;
@@ -982,18 +902,6 @@ impl ClickGuiState {
                     store().set_text_at(f.slot as usize, &f.text.text);
                 }
             }
-            Keys::Number => {
-                let KeyOwner::Number(n) = &mut self.owner else {
-                    return;
-                };
-                n.text.focused = true;
-                if n.text.handle_input(ui.input) && n.text.text.chars().any(|c| !is_number_char(c))
-                {
-                    let kept: String = n.text.text.chars().filter(|&c| is_number_char(c)).collect();
-                    n.text.set_text(&kept);
-                }
-                n.commit |= ui.input.enter;
-            }
             Keys::Search => self.search_keys(ui),
         }
     }
@@ -1002,8 +910,6 @@ impl ClickGuiState {
         self.field.focused = true;
         if self.field.handle_input(ui.input) {
             self.refresh_matches();
-            #[cfg(feature = "module_panel")]
-            self.close_sheet();
         }
         if self.matches.is_empty() {
             return;
@@ -1041,31 +947,27 @@ impl ClickGuiState {
     }
 
     fn hit(&self, ui: &Ui, x: f32, y: f32, w: f32, h: f32) -> bool {
-        ui.mouse().is_some_and(|m| self.band_has(m, x, y, w, h))
-    }
-
-    fn band_has(&self, at: Vec2, x: f32, y: f32, w: f32, h: f32) -> bool {
         let (top, bottom) = self.band;
         let (y0, y1) = (y.max(top), (y + h).min(bottom));
-        inside(at, x, y0, w, y1 - y0)
+        y1 > y0 && ui.hovering(x, y0, w, y1 - y0)
     }
 
-    #[cfg(not(feature = "module_panel"))]
-    fn press(&self, ui: &Ui, x: f32, y: f32, w: f32, h: f32, active: bool) -> bool {
-        active && ui.input.left_click && self.hit(ui, x, y, w, h)
+    fn content_height(&self, pi: usize) -> f32 {
+        if self.panels[pi].collapsed {
+            return 0.0;
+        }
+        let cat = Category::ALL[pi];
+        let rows = cat.modules().filter(|m| store().allowed(m.id)).count();
+        let mut h = rows as f32 * self.look.row_h + PAD_BOTTOM;
+        if let Some(id) = self.expanded
+            && module(id).category == cat
+            && store().allowed(id)
+        {
+            h += self.settings_height(id);
+        }
+        h
     }
 
-    #[cfg(not(feature = "module_panel"))]
-    fn lit(&self, ui: &Ui, x: f32, y: f32, w: f32, h: f32, active: bool) -> bool {
-        active && self.hit(ui, x, y, w, h)
-    }
-
-    #[cfg(not(feature = "module_panel"))]
-    fn hint(&self, ui: &Ui, x: f32, y: f32, w: f32, h: f32, active: bool) -> bool {
-        active && self.hit(ui, x, y, w, h)
-    }
-
-    #[cfg(not(feature = "module_panel"))]
     fn fit(&self, content_h: f32, y: f32, vh: f32) -> f32 {
         content_h.min((vh - y - HEADER_H - GAP).max(3.0 * self.look.row_h))
     }
@@ -1103,8 +1005,6 @@ impl ClickGuiState {
             text,
         }));
         self.owner.drop_field();
-        #[cfg(feature = "module_panel")]
-        self.modules.sheet_opened();
         let top = GAP + TOP_H + GAP;
         let h = HEADER_H + editor_view_of(lines);
         self.overlay_win = Panel::at(
@@ -1115,14 +1015,12 @@ impl ClickGuiState {
 
     fn open_picker(&mut self, list: &'static BitList, ui: &Ui) {
         self.overlay = Some(Overlay::Picker(Picker::new(list)));
-        #[cfg(feature = "module_panel")]
-        self.modules.sheet_opened();
         self.overlay_win = Panel::at(((ui.vw - list.width) * 0.5).floor(), GAP + TOP_H + GAP);
     }
 
     fn settings_height(&self, id: Id) -> f32 {
         let m = module(id);
-        6.0 + (if SHOW_BIND { BIND_H } else { 0.0 })
+        6.0 + BIND_H
             + m.slots()
                 .zip(m.settings())
                 .map(|(slot, d)| self.setting_height(slot, d))
@@ -1145,51 +1043,46 @@ impl ClickGuiState {
         }
     }
 
-    fn top_bar(&mut self, p: &mut Painter, ui: &Ui) {
-        let active = self.focus == Focus::Bar && self.drag.is_none();
-        #[cfg(not(feature = "module_panel"))]
-        let y = GAP;
-        self.band = (0.0, ui.vh);
-
-        #[cfg(not(feature = "module_panel"))]
-        {
-            let look = self.look;
-            let hovered = active && ui.hovering(GAP, y, BUTTON_W, BUTTON_H);
-            p.rounded_rect(
-                GAP,
-                y,
-                BUTTON_W,
-                BUTTON_H,
-                TAB_RADIUS,
-                if hovered {
-                    look.accent()
-                } else {
-                    look.header()
-                },
-            );
-            const LABEL: &str = "Reset layout";
-            let tw = p.atlas.font.width_str(LABEL);
-            p.text_plain(
-                LABEL,
-                GAP + ((BUTTON_W - tw) * 0.5).floor(),
-                text_y(y, BUTTON_H),
-                if hovered { theme::TEXT_ON } else { look.text() },
-                look.shadow,
-            );
-            if hovered && ui.input.left_click {
-                self.reset_layout();
-            }
-        }
-
-        #[cfg(feature = "module_panel")]
-        self.tab_bar(p, ui, active);
-        #[cfg(not(feature = "module_panel"))]
-        self.tab_strip(p, ui, y, active);
+    fn search_h(&self) -> f32 {
+        let body = if self.matches.is_empty() {
+            HINT_H
+        } else {
+            self.matches.len().min(SEARCH_ROWS) as f32 * self.look.row_h
+        };
+        HEADER_H + 3.0 + FIELD_H + 3.0 + body + PAD_BOTTOM
     }
 
-    #[cfg(not(feature = "module_panel"))]
-    fn tab_strip(&mut self, p: &mut Painter, ui: &Ui, y: f32, active: bool) {
+    fn top_bar(&mut self, p: &mut Painter, ui: &Ui) {
         let look = self.look;
+        let active = self.focus == Focus::Bar && self.drag.is_none();
+        let y = GAP;
+
+        let hovered = active && ui.hovering(GAP, y, BUTTON_W, BUTTON_H);
+        p.rounded_rect(
+            GAP,
+            y,
+            BUTTON_W,
+            BUTTON_H,
+            TAB_RADIUS,
+            if hovered {
+                look.accent()
+            } else {
+                look.header()
+            },
+        );
+        const LABEL: &str = "Reset layout";
+        let tw = p.atlas.font.width_str(LABEL);
+        p.text_plain(
+            LABEL,
+            GAP + ((BUTTON_W - tw) * 0.5).floor(),
+            text_y(y, BUTTON_H),
+            if hovered { theme::TEXT_ON } else { look.text() },
+            look.shadow,
+        );
+        if hovered && ui.input.left_click {
+            self.reset_layout();
+        }
+
         let widths = TABS.map(|(_, name)| (p.atlas.font.width_str(name) + 2.0 * TAB_PAD).floor());
         let strip_w = widths.iter().sum::<f32>() + 2.0 * STRIP_PAD;
         let sx = ((ui.vw - strip_w) * 0.5).floor();
@@ -1224,7 +1117,6 @@ impl ClickGuiState {
         }
     }
 
-    #[cfg(not(feature = "module_panel"))]
     fn profile_control(&mut self, p: &mut Painter, ui: &Ui) {
         let active = self.focus == Focus::Bar && self.drag.is_none();
         let x = profile_x(ui.vw);
@@ -1232,7 +1124,7 @@ impl ClickGuiState {
         if !active && ui.input.left_click {
             self.dropdown = self.dropdown.filter(|d| *d != Control::BarProfile);
         }
-        let hovered = self.hint(ui, x, GAP, PROFILE_W, CHOICE_H, active);
+        let hovered = active && self.hit(ui, x, GAP, PROFILE_W, CHOICE_H);
         let now = store().profile();
         let picked = self.choice(
             p,
@@ -1286,7 +1178,6 @@ impl ClickGuiState {
         self.dropdown = None;
     }
 
-    #[cfg(not(feature = "module_panel"))]
     fn reset_layout(&mut self) {
         for panel in self
             .panels
@@ -1307,7 +1198,112 @@ impl ClickGuiState {
         self.placed = false;
     }
 
-    #[cfg(not(feature = "module_panel"))]
+    fn panel(&mut self, p: &mut Painter, ui: &Ui, pi: usize, active: bool) {
+        let look = self.look;
+        let cat = Category::ALL[pi];
+        let Panel {
+            x, y, collapsed, ..
+        } = self.panels[pi];
+        let w = look.panel_w;
+        let content_h = self.content_height(pi);
+        let view_h = self.fit(content_h, y, ui.vh);
+        let window = Window::Column(pi as u8);
+        let scroll = self.scroll(window, ui, active, content_h, view_h);
+
+        p.rounded_rect(x, y, w, HEADER_H + view_h, look.radius, look.panel());
+        self.record(Focus::On(window), x, y, w, HEADER_H + view_h);
+        self.title_bar(p, ui, window, x, y, w, cat.name(), collapsed, active);
+        if collapsed {
+            return;
+        }
+
+        let guard = p.push_clip(x, y + HEADER_H, w, view_h);
+        self.band = (y + HEADER_H, y + HEADER_H + view_h);
+        let outlined = self.outlined();
+        let mut cy = y + HEADER_H - scroll;
+        for m in cat.modules() {
+            if !store().allowed(m.id) {
+                continue;
+            }
+            let hovered = self.module_row(
+                p,
+                ui,
+                x,
+                cy,
+                w,
+                m,
+                outlined == Some(m.id),
+                Tail::Dots,
+                active,
+            );
+            if hovered {
+                if ui.input.left_click {
+                    store().toggle(m.id);
+                }
+                if ui.input.right_click {
+                    self.expanded = (self.expanded != Some(m.id)).then_some(m.id);
+                    self.dropdown = None;
+                    self.owner.drop_field();
+                }
+            }
+            cy += look.row_h;
+
+            if self.expanded == Some(m.id) {
+                cy = self.settings(p, ui, x, cy, m.id, active);
+            }
+        }
+        p.pop_clip(guard);
+    }
+
+    #[allow(clippy::too_many_arguments, reason = "one widget, flat arguments")]
+    fn module_row(
+        &mut self,
+        p: &mut Painter,
+        ui: &Ui,
+        x: f32,
+        y: f32,
+        w: f32,
+        m: &'static ModuleDef,
+        outlined: bool,
+        tail: Tail,
+        active: bool,
+    ) -> bool {
+        let look = self.look;
+        let on = store().armed(m.id);
+        let hovered = active && self.hit(ui, x, y, w, look.row_h);
+        let bg = match (on, hovered) {
+            (true, true) => look.accent_hi(),
+            (true, false) => look.accent(),
+            (false, true) => look.row_hover(),
+            (false, false) => theme::ROW,
+        };
+        if bg >> 24 != 0 {
+            p.fill(x, y, w, look.row_h, bg);
+        }
+        if outlined {
+            p.outline(x, y, w, look.row_h, look.accent_hi());
+        }
+        let ty = text_y(y, look.row_h);
+        let name = if on { theme::TEXT_ON } else { look.text() };
+        let dim = if on { theme::TEXT_ON } else { look.text_dim() };
+        match tail {
+            Tail::Dots => {
+                self.label(p, m.name, x + 8.0, ty, w - 21.0, name);
+                theme::dots(p, x + w - 10.0, (y + look.row_h * 0.5).floor() - 2.0, dim);
+            }
+            Tail::Category => {
+                let cat = cat_tag(m.category.name());
+                let cw = cat_w(p, cat);
+                self.label(p, m.name, x + 8.0, ty, w - 22.0 - cw, name);
+                p.text_plain(cat, x + w - 8.0 - cw, ty, dim, look.shadow);
+            }
+        }
+        if hovered && let Some(cursor) = ui.mouse() {
+            self.tip = Some((m.desc, cursor.x, cursor.y));
+        }
+        hovered
+    }
+
     #[allow(
         clippy::too_many_arguments,
         reason = "one window chrome, flat arguments"
@@ -1393,35 +1389,23 @@ impl ClickGuiState {
         )
     }
 
-    #[allow(clippy::too_many_arguments, reason = "one widget, flat arguments")]
-    fn settings(
-        &mut self,
-        p: &mut Painter,
-        ui: &Ui,
-        x: f32,
-        y: f32,
-        w: f32,
-        id: Id,
-        active: bool,
-    ) -> f32 {
+    fn settings(&mut self, p: &mut Painter, ui: &Ui, x: f32, y: f32, id: Id, active: bool) -> f32 {
         let look = self.look;
         let h = self.settings_height(id);
-        p.fill(x, y, w, h, look.nest());
+        p.fill(x, y, look.panel_w, h, look.nest());
         p.fill(x, y, 1.5, h, look.accent());
 
         let ix = x + INDENT;
-        let rx = x + w - RESET_EDGE - RESET_W;
+        let rx = x + look.panel_w - RESET_EDGE - RESET_W;
         let iw = rx - ix - 2.0;
         let mut sy = y + 3.0;
-        if SHOW_BIND {
-            self.bind_row(p, ui, ix, sy, rx - ix - 2.0, id, active);
-            sy += BIND_H;
-        }
+        self.bind_row(p, ui, ix, sy, rx - ix - 2.0, id, active);
+        sy += BIND_H;
         let m = module(id);
         for (slot, d) in m.slots().zip(m.settings()) {
             let ctl = Control::Setting(slot as u16);
             let row_h = self.setting_height(slot, d);
-            if !d.tip.is_empty() && self.hint(ui, x, sy, w, row_h, active) {
+            if active && !d.tip.is_empty() && self.hit(ui, x, sy, look.panel_w, row_h) {
                 if let Some(cursor) = ui.mouse() {
                     self.tip = Some((d.tip, cursor.x, cursor.y));
                 }
@@ -1432,9 +1416,6 @@ impl ClickGuiState {
                 _ => sy + 1.0,
             };
             if self.revert(p, ui, rx, label_y, changed(slot, d.kind), active) {
-                if matches!(&self.owner, KeyOwner::Number(n) if n.ctl == ctl) {
-                    self.owner = KeyOwner::None;
-                }
                 match d.kind {
                     Kind::Text { default, .. } => self.set_text(slot as u16, default),
                     kind => {
@@ -1470,17 +1451,13 @@ impl ClickGuiState {
                 }
                 (
                     Kind::Range {
-                        min,
-                        max,
-                        decimals,
-                        log,
-                        ..
+                        min, max, decimals, ..
                     },
                     Some(Value::Range(lo, hi)),
                 ) => {
                     let was = (lo, hi);
                     let (lo, hi) = self.range(
-                        p, ui, ix, sy, iw, d.name, lo, hi, min, max, decimals, log, ctl, active,
+                        p, ui, ix, sy, iw, d.name, lo, hi, min, max, decimals, ctl, active,
                     );
                     if (lo, hi) != was {
                         store().set_value(slot, Value::Range(lo, hi));
@@ -1528,6 +1505,62 @@ impl ClickGuiState {
         y + h
     }
 
+    fn search_window(&mut self, p: &mut Painter, ui: &Ui) {
+        let look = self.look;
+        let active = self.focus == Focus::On(Window::Search) && self.drag.is_none();
+        let Panel {
+            x, y, collapsed, ..
+        } = self.search;
+        let w = look.panel_w;
+        let h = if collapsed { HEADER_H } else { self.search_h() };
+        p.rounded_rect(x, y, w, h, look.radius, look.solid());
+        self.record(Focus::On(Window::Search), x, y, w, h);
+        self.title_bar(p, ui, Window::Search, x, y, w, "Search", collapsed, active);
+        if collapsed {
+            return;
+        }
+
+        let fy = y + HEADER_H + 3.0;
+        self.sync_pointer(ui, active);
+        search_field(
+            p,
+            look,
+            &self.mouse_input,
+            &mut self.field,
+            x + 5.0,
+            fy,
+            w - 10.0,
+            "Type to search",
+        );
+
+        let mut ry = fy + FIELD_H + 3.0;
+        self.band = (ry, ry + SEARCH_ROWS as f32 * look.row_h);
+        let shown = self.matches.len().min(SEARCH_ROWS);
+        for i in 0..shown {
+            let Some(&id) = self.matches.get(self.match_top + i) else {
+                break;
+            };
+            let picked = self.match_top + i == self.selected;
+            let hovered =
+                self.module_row(p, ui, x, ry, w, module(id), picked, Tail::Category, active);
+            if hovered {
+                if ui.input.left_click {
+                    store().toggle(id);
+                    self.selected = self.match_top + i;
+                }
+            }
+            ry += look.row_h;
+        }
+        if self.matches.is_empty() {
+            let line = if self.field.text.is_empty() {
+                "Enter toggles"
+            } else {
+                "No match"
+            };
+            self.label(p, line, x + 8.0, ry + 2.0, w - 16.0, look.text_dim());
+        }
+    }
+
     fn sync_pointer(&mut self, ui: &Ui, active: bool) {
         ui.copy_pointer(&mut self.mouse_input, active);
     }
@@ -1551,66 +1584,50 @@ impl ClickGuiState {
         let m = ui.vw.max(ui.vh);
         p.fill(-m, -m, ui.vw + 2.0 * m, ui.vh + 2.0 * m, OVERLAY_SCRIM);
         self.overlay = match overlay {
-            Overlay::Picker(k) => self.picker_window(p, ui, k).map(Overlay::Picker),
+            Overlay::Picker(k) => Some(Overlay::Picker(self.picker_window(p, ui, k))),
             Overlay::Editor(e) => self.editor_window(p, ui, e).map(Overlay::Editor),
         };
     }
 
-    fn picker_window(&mut self, p: &mut Painter, ui: &Ui, mut k: Picker) -> Option<Picker> {
+    fn picker_window(&mut self, p: &mut Painter, ui: &Ui, mut k: Picker) -> Picker {
         let list = k.list;
         let look = self.look;
         let active = self.focus == Focus::On(Window::Overlay) && self.drag.is_none();
+        let Panel {
+            x, y, collapsed, ..
+        } = self.overlay_win;
 
         k.query.focused = true;
         let dirty = k.query.handle_input(ui.input);
         k.rebuild(dirty);
+        let pw = list.width;
+        if collapsed {
+            p.rounded_rect(x, y, pw, HEADER_H, look.radius, look.raised());
+            self.record(Focus::On(Window::Overlay), x, y, pw, HEADER_H);
+            self.title_bar(p, ui, Window::Overlay, x, y, pw, list.title, true, active);
+            return k;
+        }
+        let head = HEADER_H + picker_head(list);
         let rows = k.rows.len();
         let content =
             rows as f32 * BLOCK_H + k.channels.map_or(0.0, |_| 3.0 * CHANNEL_H) + PAD_BOTTOM;
-        #[cfg(not(feature = "module_panel"))]
-        let (x, y, pw, view, scroll) = {
-            let Panel {
-                x, y, collapsed, ..
-            } = self.overlay_win;
-            let pw = list.width;
-            if collapsed {
-                p.rounded_rect(x, y, pw, HEADER_H, look.radius, look.raised());
-                self.record(Focus::On(Window::Overlay), x, y, pw, HEADER_H);
-                self.title_bar(p, ui, Window::Overlay, x, y, pw, list.title, true, active);
-                return Some(k);
-            }
-            let head = HEADER_H + picker_head(list);
-            let view = self.fit(content, y + head - HEADER_H, ui.vh);
-            let scroll = self.scroll(Window::Overlay, ui, active, content, view);
+        let view = self.fit(content, y + head - HEADER_H, ui.vh);
+        let scroll = self.scroll(Window::Overlay, ui, active, content, view);
 
-            p.rounded_rect(x, y, pw, head + view, look.radius, look.raised());
-            self.record(Focus::On(Window::Overlay), x, y, pw, head + view);
-            self.title_bar(p, ui, Window::Overlay, x, y, pw, list.title, false, active);
-            (x, y + HEADER_H, pw, view, scroll)
-        };
-        #[cfg(feature = "module_panel")]
-        let sheet = self.overlay_sheet(p, ui, list.title, picker_head(list), content, active)?;
-        #[cfg(feature = "module_panel")]
-        let panel::SheetArea {
-            x,
-            y,
-            w: pw,
-            view,
-            scroll,
-            ..
-        } = sheet;
+        p.rounded_rect(x, y, pw, head + view, look.radius, look.raised());
+        self.record(Focus::On(Window::Overlay), x, y, pw, head + view);
+        self.title_bar(p, ui, Window::Overlay, x, y, pw, list.title, false, active);
 
-        let fy = y + 3.0;
+        let fy = y + HEADER_H + 3.0;
         self.sync_pointer(ui, active);
         search_field(
             p,
             look,
-            Some(&self.mouse_input),
+            &self.mouse_input,
             &mut k.query,
             x + 5.0,
             fy,
             pw - 10.0,
-            FIELD_H,
             "Search",
         );
 
@@ -1620,7 +1637,7 @@ impl ClickGuiState {
             for (i, &preset) in list.presets.iter().enumerate() {
                 let bx = (x + 5.0 + i as f32 * step).floor();
                 let bw = step.floor() - 2.0;
-                let over = self.lit(ui, bx, py, bw, PRESET_H - 4.0, active);
+                let over = active && self.hit(ui, bx, py, bw, PRESET_H - 4.0);
                 p.rounded_rect(
                     bx,
                     py,
@@ -1638,13 +1655,13 @@ impl ClickGuiState {
                     if over { theme::TEXT_ON } else { look.text() },
                     look.shadow,
                 );
-                if self.press(ui, bx, py, bw, PRESET_H - 4.0, active) {
+                if over && ui.input.left_click {
                     list.apply_preset(preset);
                 }
             }
         }
 
-        let top = y + picker_head(list);
+        let top = y + head;
         let guard = p.push_clip(x, top, pw, view);
         self.band = (top, top + view);
         let first = (scroll / BLOCK_H).floor().max(0.0) as usize;
@@ -1655,28 +1672,25 @@ impl ClickGuiState {
                 break;
             };
             match row {
-                Row::Header(g) => self.picker_header(p, ui, &mut k, x, ry, pw, g as usize, active),
+                Row::Header(g) => self.picker_header(p, ui, &mut k, x, ry, g as usize, active),
                 Row::Item(i) => {
-                    ry = self.picker_item(p, ui, &mut k, x, ry, pw, i as usize, active);
+                    ry = self.picker_item(p, ui, &mut k, x, ry, i as usize, active);
                     continue;
                 }
             }
             ry += BLOCK_H;
         }
         p.pop_clip(guard);
-        #[cfg(feature = "module_panel")]
-        p.pop_clip(sheet.clip);
-        Some(k)
+        k
     }
 
     fn editor_window(&mut self, p: &mut Painter, ui: &Ui, mut e: Editor) -> Option<Editor> {
         let look = self.look;
         let active = self.focus == Focus::On(Window::Overlay) && self.drag.is_none();
-        #[cfg(not(feature = "module_panel"))]
-        let ew = EDITOR_W;
-        #[cfg(feature = "module_panel")]
-        let ew = panel::frame(ui).2;
-        let inner_w = ew - 2.0 * EDITOR_PAD;
+        let Panel {
+            x, y, collapsed, ..
+        } = self.overlay_win;
+        let inner_w = EDITOR_W - 2.0 * EDITOR_PAD;
 
         if ui.input.enter {
             return None;
@@ -1687,49 +1701,42 @@ impl ClickGuiState {
             store().set_text_at(e.slot as usize, e.text.text());
         }
         let lines = e.text.line_count(&p.atlas.font, inner_w);
-        let view = editor_view_of(lines);
-
-        #[cfg(not(feature = "module_panel"))]
-        let (x, y) = {
-            let Panel {
-                x, y, collapsed, ..
-            } = self.overlay_win;
-            let shown = if collapsed { 0.0 } else { view };
-            p.rounded_rect(x, y, EDITOR_W, HEADER_H + shown, look.radius, look.raised());
-            self.record(Focus::On(Window::Overlay), x, y, EDITOR_W, HEADER_H + shown);
-            self.title_bar(
-                p,
-                ui,
-                Window::Overlay,
-                x,
-                y,
-                EDITOR_W,
-                &e.title,
-                collapsed,
-                active,
-            );
-            if collapsed {
-                return Some(e);
-            }
-            (x, y + HEADER_H)
+        let view = if collapsed {
+            0.0
+        } else {
+            editor_view_of(lines)
         };
-        #[cfg(feature = "module_panel")]
-        let sheet = self.overlay_sheet(p, ui, &e.title, view, 0.0, active)?;
-        #[cfg(feature = "module_panel")]
-        let (x, y) = (sheet.x, sheet.y);
+
+        p.rounded_rect(x, y, EDITOR_W, HEADER_H + view, look.radius, look.raised());
+        self.record(Focus::On(Window::Overlay), x, y, EDITOR_W, HEADER_H + view);
+        self.title_bar(
+            p,
+            ui,
+            Window::Overlay,
+            x,
+            y,
+            EDITOR_W,
+            &e.title,
+            collapsed,
+            active,
+        );
+        if collapsed {
+            return Some(e);
+        }
 
         let box_h = editor_box_h(lines);
-        let (bx, by, bw) = (x + 5.0, y + 3.0, ew - 10.0);
+        let (bx, by, bw) = (x + 5.0, y + HEADER_H + 3.0, EDITOR_W - 10.0);
         p.rounded_rect(bx, by, bw, box_h, 3.0, look.nest());
         p.fill(bx + 2.0, by + box_h - 1.0, bw - 4.0, 1.0, look.accent());
 
-        self.band = (y, y + view);
+        self.band = (y + HEADER_H, y + HEADER_H + view);
         self.sync_pointer(ui, active);
         let tx = x + EDITOR_PAD;
         let ty = by + 3.0;
         e.text
             .handle_mouse(&self.mouse_input, &p.atlas.font, tx, ty, inner_w);
-        e.text.draw(p, tx, ty, inner_w, look.text_title());
+        let frame = p.frame;
+        e.text.draw(p, tx, ty, inner_w, look.text_title(), frame);
 
         let used = e.text.text().chars().count();
         self.scratch.clear();
@@ -1741,7 +1748,7 @@ impl ClickGuiState {
         let cy = by + box_h + 4.0;
         p.text_plain(
             &self.scratch,
-            (x + ew - 5.0 - cw).floor(),
+            (x + EDITOR_W - 5.0 - cw).floor(),
             cy,
             if used >= e.max_len {
                 look.accent()
@@ -1750,10 +1757,7 @@ impl ClickGuiState {
             },
             look.shadow,
         );
-        #[cfg(not(feature = "module_panel"))]
         p.text_plain("Enter to close", x + 5.0, cy, look.text_dim(), look.shadow);
-        #[cfg(feature = "module_panel")]
-        p.pop_clip(sheet.clip);
         Some(e)
     }
 
@@ -1765,7 +1769,6 @@ impl ClickGuiState {
         k: &mut Picker,
         x: f32,
         y: f32,
-        pw: f32,
         g: usize,
         active: bool,
     ) {
@@ -1773,14 +1776,9 @@ impl ClickGuiState {
         let list = k.list;
         let open = k.is_open(g);
         let (on, total) = list.group_on(g);
-        let lit = TOUCH && self.lit(ui, x, y, pw, BLOCK_H, active);
-        p.fill(
-            x,
-            y,
-            pw,
-            BLOCK_H,
-            if lit { look.nest_hi() } else { look.nest() },
-        );
+        let pw = list.width;
+        let hovered = active && self.hit(ui, x, y, pw, BLOCK_H);
+        p.fill(x, y, pw, BLOCK_H, look.nest());
         theme::chevron(
             p,
             x + 5.0,
@@ -1802,7 +1800,7 @@ impl ClickGuiState {
             let _ = write!(self.scratch, "{on}/{total}");
         }
         let cw = p.atlas.font.width_str(&self.scratch);
-        let sw = PILL_W + 6.0;
+        let sw = 22.0;
         p.text_plain(
             &self.scratch,
             x + pw - sw - cw - 4.0,
@@ -1811,13 +1809,15 @@ impl ClickGuiState {
             look.shadow,
         );
         let all = on == total && total > 0;
-        let (px, py) = (x + pw - PILL_W - 4.0, y + (BLOCK_H - PILL_H) * 0.5);
+        let (sww, ph) = (16.0, 8.0);
+        let (px, py) = (x + pw - sww - 4.0, y + (BLOCK_H - ph) * 0.5);
+        let over = active && self.hit(ui, px, y, sww + 4.0, BLOCK_H);
         pill(p, look, px, py, all);
-        if self.press(ui, px, y, PILL_W + 4.0, BLOCK_H, active) {
+        if over && ui.input.left_click {
             list.set_group(g, !all);
             return;
         }
-        if self.press(ui, x, y, pw, BLOCK_H, active) {
+        if hovered && ui.input.left_click {
             k.toggle_group(g);
         }
     }
@@ -1830,14 +1830,14 @@ impl ClickGuiState {
         k: &mut Picker,
         x: f32,
         y: f32,
-        pw: f32,
         i: usize,
         active: bool,
     ) -> f32 {
         let list = k.list;
         let on = list.enabled(i);
-        let chip = if list.colored { CHIP } else { 0.0 };
+        let chip = if list.colored { 9.0 } else { 0.0 };
         let inset = 10.0;
+        let pw = list.width;
         let w = pw - inset - 6.0 - chip - if list.colored { 4.0 } else { 0.0 };
 
         if self.toggle(p, ui, x + inset, y, w, list.label(i), on, active) != on {
@@ -1849,13 +1849,12 @@ impl ClickGuiState {
             let rgb = list.color(i);
             let open = k.channels == Some(i as u32);
             let cx = x + pw - chip - 6.0;
-            let cy = y + ((BLOCK_H - (chip - 2.0)) * 0.5).floor();
-            let over = self.lit(ui, cx - 1.0, cy - 1.0, chip + 2.0, chip, active);
+            let over = active && self.hit(ui, cx - 1.0, y + 1.0, chip + 2.0, chip);
             if open || over {
-                p.rounded_rect(cx - 1.5, cy - 1.5, chip + 3.0, chip + 3.0, 3.0, theme::KNOB);
+                p.rounded_rect(cx - 1.5, y + 0.5, chip + 3.0, chip + 3.0, 3.0, theme::KNOB);
             }
-            p.rounded_rect(cx, cy, chip, chip - 2.0, 2.0, 0xFF00_0000 | rgb);
-            if self.press(ui, cx - 1.0, cy - 1.0, chip + 2.0, chip, active) {
+            p.rounded_rect(cx, y + 2.0, chip, chip - 2.0, 2.0, 0xFF00_0000 | rgb);
+            if over && ui.input.left_click {
                 k.channels = (!open).then_some(i as u32);
             }
             if open {
@@ -1903,62 +1902,49 @@ impl ClickGuiState {
     }
 
     fn config_content_h(&self) -> f32 {
-        6.0 + CFG
-            .iter()
-            .filter(|&&row| cfg_shown(row))
-            .map(|&row| self.cfg_row_h(row))
-            .sum::<f32>()
+        6.0 + CFG.iter().map(|&row| self.cfg_row_h(row)).sum::<f32>()
     }
 
     fn config_window(&mut self, p: &mut Painter, ui: &Ui) {
         let look = self.look;
         let active = self.focus == Focus::On(Window::Config) && self.drag.is_none();
-        #[cfg(not(feature = "module_panel"))]
-        let (x, top, cw, view_h, scroll) = {
-            let Panel {
-                x, y, collapsed, ..
-            } = self.config;
-            let content_h = if collapsed {
-                0.0
-            } else {
-                self.config_content_h()
-            };
-            let view_h = self.fit(content_h, y, ui.vh);
-            let scroll = self.scroll(Window::Config, ui, active, content_h, view_h);
-
-            p.rounded_rect(x, y, CONFIG_W, HEADER_H + view_h, look.radius, look.panel());
-            self.record(Focus::On(Window::Config), x, y, CONFIG_W, HEADER_H + view_h);
-            self.title_bar(
-                p,
-                ui,
-                Window::Config,
-                x,
-                y,
-                CONFIG_W,
-                "Config",
-                collapsed,
-                active,
-            );
-            if collapsed {
-                return;
-            }
-            (x, y + HEADER_H, CONFIG_W, view_h, scroll)
+        let Panel {
+            x, y, collapsed, ..
+        } = self.config;
+        let content_h = if collapsed {
+            0.0
+        } else {
+            self.config_content_h()
         };
-        #[cfg(feature = "module_panel")]
-        let (x, top, cw, view_h, scroll) = self.config_frame(p, ui, active);
+        let view_h = self.fit(content_h, y, ui.vh);
+        let scroll = self.scroll(Window::Config, ui, active, content_h, view_h);
 
-        let guard = p.push_clip(x, top, cw, view_h);
-        self.band = (top, top + view_h);
+        p.rounded_rect(x, y, CONFIG_W, HEADER_H + view_h, look.radius, look.panel());
+        self.record(Focus::On(Window::Config), x, y, CONFIG_W, HEADER_H + view_h);
+        self.title_bar(
+            p,
+            ui,
+            Window::Config,
+            x,
+            y,
+            CONFIG_W,
+            "Config",
+            collapsed,
+            active,
+        );
+        if collapsed {
+            return;
+        }
+
+        let guard = p.push_clip(x, y + HEADER_H, CONFIG_W, view_h);
+        self.band = (y + HEADER_H, y + HEADER_H + view_h);
         let ix = x + INDENT;
-        let rx = x + cw - RESET_EDGE - RESET_W;
+        let rx = x + CONFIG_W - RESET_EDGE - RESET_W;
         let iw = rx - ix - 2.0;
-        let mut cy = top + 3.0 - scroll;
+        let mut cy = y + HEADER_H + 3.0 - scroll;
         let def = Look::default();
 
         for row in CFG {
-            if !cfg_shown(row) {
-                continue;
-            }
             match row {
                 CfgRow::Profile => {
                     let profile = store().profile();
@@ -2054,7 +2040,7 @@ impl ClickGuiState {
         rx: f32,
         active: bool,
     ) {
-        let was = self.look.scale * 100.0;
+        let s = self.look.scale * 100.0;
         let s = self.slider(
             p,
             ui,
@@ -2062,7 +2048,7 @@ impl ClickGuiState {
             cy,
             iw,
             "Scale",
-            was,
+            s,
             SCALE_MIN * 100.0,
             SCALE_MAX * 100.0,
             0,
@@ -2070,7 +2056,7 @@ impl ClickGuiState {
             active,
         );
         self.look.scale = (s / 100.0).clamp(SCALE_MIN, SCALE_MAX);
-        self.scale_set |= self.dragging_scale() || s != was;
+        self.scale_set |= self.dragging_scale();
         if self.revert(p, ui, rx, cy + 1.0, self.scale_set, active) {
             self.look.scale = Look::default().scale;
             self.scale_set = false;
@@ -2121,7 +2107,7 @@ impl ClickGuiState {
             } else {
                 theme::lighten(theme::SURFACES[i].base, 0x1E)
             };
-            let over = self.lit(ui, sx, sy, SWATCH, SWATCH, active);
+            let over = active && self.hit(ui, sx, sy, SWATCH, SWATCH);
             let on = i as u8 == index;
             if on || over {
                 p.rounded_rect(
@@ -2138,7 +2124,7 @@ impl ClickGuiState {
                 );
             }
             p.rounded_rect(sx, sy, SWATCH, SWATCH, 3.0, 0xFF00_0000 | rgb);
-            if self.press(ui, sx, sy, SWATCH, SWATCH, active) {
+            if over && ui.input.left_click {
                 picked = i as u8;
             }
         }
@@ -2158,19 +2144,18 @@ impl ClickGuiState {
         active: bool,
     ) -> bool {
         let look = self.look;
-        if TOUCH && self.lit(ui, x, y, w, TOGGLE_H, active) {
-            p.rounded_rect(x - 2.0, y, w + 4.0, TOGGLE_H, 2.0, look.row_hover());
-        }
+        let hovered = active && self.hit(ui, x, y, w, TOGGLE_H);
+        let (pw, ph) = (16.0, 8.0);
         self.label(
             p,
             name,
             x,
             text_y(y, TOGGLE_H),
-            w - PILL_W - 4.0,
+            w - pw - 4.0,
             if on { look.text() } else { look.text_dim() },
         );
-        pill(p, look, x + w - PILL_W, y + (TOGGLE_H - PILL_H) * 0.5, on);
-        on ^ self.press(ui, x, y, w, TOGGLE_H, active)
+        pill(p, look, x + w - pw, y + (TOGGLE_H - ph) * 0.5, on);
+        on ^ (hovered && ui.input.left_click)
     }
 
     #[allow(clippy::too_many_arguments, reason = "one widget, flat arguments")]
@@ -2194,7 +2179,7 @@ impl ClickGuiState {
         }
         let bw = (p.atlas.font.width_str(&self.scratch) + 16.0).max(30.0);
         let bx = x + w - bw;
-        let hovered = self.lit(ui, bx, y, bw, LIST_H - 2.0, active);
+        let hovered = active && self.hit(ui, bx, y, bw, LIST_H - 2.0);
 
         self.label(p, name, x, text_y(y, LIST_H), w - bw - 4.0, look.text());
         p.rounded_rect(
@@ -2230,7 +2215,7 @@ impl ClickGuiState {
                 look.text_dim()
             },
         );
-        if self.press(ui, bx, y, bw, LIST_H - 2.0, active) {
+        if hovered && ui.input.left_click {
             if open {
                 self.overlay = None;
             } else {
@@ -2263,12 +2248,7 @@ impl ClickGuiState {
         self.label(p, name, x, y + 1.0, w - cw, look.text());
         if expand {
             let cx = x + w - 7.0;
-            let (hx, hw) = if TOUCH {
-                (x + w - 24.0, 26.0)
-            } else {
-                (cx - 2.0, cw)
-            };
-            let over = self.lit(ui, hx, y, hw, 11.0, active);
+            let over = active && self.hit(ui, cx - 2.0, y, cw, 11.0);
             theme::chevron(
                 p,
                 cx,
@@ -2277,7 +2257,7 @@ impl ClickGuiState {
                 true,
                 if over { look.accent() } else { look.text_dim() },
             );
-            if self.press(ui, hx, y, hw, 11.0, active) {
+            if over && ui.input.left_click {
                 self.open_editor(slot, id, name, max_len, &p.atlas.font, ui);
             }
         }
@@ -2287,12 +2267,16 @@ impl ClickGuiState {
 
         let hovered = active && self.hit(ui, x, fy, w, FIELD_H);
         let mine = self.owner.field_on(slot).is_some();
-        if !mine && self.press(ui, x, fy, w, FIELD_H, active) {
-            let mut text = TextBox::pinned(max_len, "");
-            store().with_text(slot as usize, |t| text.set_text(t));
-            self.owner = KeyOwner::Field(FieldEdit { slot, text });
-        } else if active && ui.input.left_click && !hovered && mine {
-            self.owner = KeyOwner::None;
+        if active && ui.input.left_click {
+            if hovered && !mine {
+                let mut text = TextBox::new(max_len, "");
+                text.browser_keyboard = false;
+                text.focused = true;
+                store().with_text(slot as usize, |t| text.set_text(t));
+                self.owner = KeyOwner::Field(FieldEdit { slot, text });
+            } else if !hovered && mine {
+                self.owner = KeyOwner::None;
+            }
         }
 
         let guard = p.push_clip(x + 3.0, fy, w - 6.0, FIELD_H);
@@ -2310,8 +2294,8 @@ impl ClickGuiState {
                 w - 8.0,
                 FIELD_H,
             );
-            f.text
-                .draw(p, x + 4.0, text_y(fy, FIELD_H), w - 8.0, FIELD_H);
+            let frame = p.frame;
+            f.text.draw(p, x + 4.0, fy, w - 8.0, FIELD_H, frame);
         } else {
             let shadow = look.shadow;
             store().with_text(slot as usize, |t| {
@@ -2338,7 +2322,7 @@ impl ClickGuiState {
         let lw = p.atlas.font.width_str(label);
         let bw = (lw + 8.0).max(28.0);
         let bx = x + w - bw;
-        let hovered = self.lit(ui, bx, y, bw, BIND_H - 1.0, active);
+        let hovered = active && self.hit(ui, bx, y, bw, BIND_H - 1.0);
 
         self.label(
             p,
@@ -2375,7 +2359,7 @@ impl ClickGuiState {
             },
             look.shadow,
         );
-        if self.press(ui, bx, y, bw, BIND_H - 1.0, active) {
+        if hovered && ui.input.left_click {
             self.owner = if capturing {
                 KeyOwner::None
             } else {
@@ -2417,23 +2401,28 @@ impl ClickGuiState {
     ) -> f32 {
         let look = self.look;
         let mut v = value;
-        let ty = y + TRACK_Y;
+        let ty = y + 13.0;
         if self.grab(ui, id, 0, x, w, y, active)
             && let Some(t) = self.track_t(ui, x, w)
         {
-            v = track_value(t, min, max, false);
+            v = min + (max - min) * t;
         }
+        let f = ((v - min) / (max - min).max(f32::EPSILON)).clamp(0.0, 1.0);
 
-        let (tw, typed) = self.readout(p, ui, x + w, y, v, min, max, decimals, id, 0, active);
-        if let Some(t) = typed {
-            v = t;
-        }
-        let f = track_t_of(v, min, max, false);
+        self.number(v, decimals);
+        let tw = p.atlas.font.width_str(&self.scratch);
+        p.text_plain(
+            &self.scratch,
+            x + w - tw,
+            y + 1.0,
+            look.text_dim(),
+            look.shadow,
+        );
         self.label(p, name, x, y + 1.0, w - tw - 4.0, look.text());
 
-        p.rounded_rect(x, ty, w, TRACK_H, TRACK_H * 0.5, look.track());
-        p.rounded_rect(x, ty, w * f, TRACK_H, TRACK_H * 0.5, look.accent());
-        knob(p, x + w * f, ty);
+        p.rounded_rect(x, ty, w, 2.0, 1.0, look.track());
+        p.rounded_rect(x, ty, w * f, 2.0, 1.0, look.accent());
+        p.rounded_rect(x + w * f - 3.0, ty - 2.0, 6.0, 6.0, 3.0, theme::KNOB);
         v
     }
 
@@ -2451,61 +2440,54 @@ impl ClickGuiState {
         min: f32,
         max: f32,
         decimals: u8,
-        log: bool,
         id: Control,
         active: bool,
     ) -> (f32, f32) {
         let look = self.look;
         let (mut lo, mut hi) = (low, high);
-        let ty = y + TRACK_Y;
+        let ty = y + 13.0;
+        let span = (max - min).max(f32::EPSILON);
 
         let nearer = ui
             .mouse()
             .map(|m| {
                 let t = ((m.x - x) / w).clamp(0.0, 1.0);
-                let at = |v| (t - track_t_of(v, min, max, log)).abs();
-                u8::from(at(hi) < at(lo))
+                u8::from((t - (hi - min) / span).abs() < (t - (lo - min) / span).abs())
             })
             .unwrap_or(0);
         if self.grab(ui, id, nearer, x, w, y, active)
             && let Some(t) = self.track_t(ui, x, w)
             && let Some(Drag::Slider { handle, .. }) = self.drag
         {
-            let v = track_value(t, min, max, log);
+            let v = min + span * t;
             if handle == 0 {
                 lo = v.min(hi);
             } else {
                 hi = v.max(lo);
             }
         }
-
-        let (hw, typed_hi) = self.readout(p, ui, x + w, y, hi, min, max, decimals, id, 1, active);
-        let sep_w = p.atlas.font.width_str(RANGE_SEP);
-        let sep_x = x + w - hw - sep_w;
-        p.text_plain(RANGE_SEP, sep_x, y + 1.0, look.text_dim(), look.shadow);
-        let (lw, typed_lo) = self.readout(p, ui, sep_x, y, lo, min, max, decimals, id, 0, active);
-        if let Some(v) = typed_lo {
-            lo = v;
-            hi = hi.max(v);
-        }
-        if let Some(v) = typed_hi {
-            hi = v;
-            lo = lo.min(v);
-        }
-        let (fl, fh) = (track_t_of(lo, min, max, log), track_t_of(hi, min, max, log));
-        self.label(p, name, x, y + 1.0, w - hw - sep_w - lw - 4.0, look.text());
-
-        p.rounded_rect(x, ty, w, TRACK_H, TRACK_H * 0.5, look.track());
-        p.rounded_rect(
-            x + w * fl,
-            ty,
-            w * (fh - fl),
-            TRACK_H,
-            TRACK_H * 0.5,
-            look.accent(),
+        let (fl, fh) = (
+            ((lo - min) / span).clamp(0.0, 1.0),
+            ((hi - min) / span).clamp(0.0, 1.0),
         );
-        knob(p, x + w * fl, ty);
-        knob(p, x + w * fh, ty);
+
+        self.number(lo, decimals);
+        self.scratch.push_str(" - ");
+        self.append(hi, decimals);
+        let tw = p.atlas.font.width_str(&self.scratch);
+        p.text_plain(
+            &self.scratch,
+            x + w - tw,
+            y + 1.0,
+            look.text_dim(),
+            look.shadow,
+        );
+        self.label(p, name, x, y + 1.0, w - tw - 4.0, look.text());
+
+        p.rounded_rect(x, ty, w, 2.0, 1.0, look.track());
+        p.rounded_rect(x + w * fl, ty, w * (fh - fl), 2.0, 1.0, look.accent());
+        p.rounded_rect(x + w * fl - 3.0, ty - 2.0, 6.0, 6.0, 3.0, theme::KNOB);
+        p.rounded_rect(x + w * fh - 3.0, ty - 2.0, 6.0, 6.0, 3.0, theme::KNOB);
         (lo, hi)
     }
 
@@ -2527,7 +2509,7 @@ impl ClickGuiState {
         let mut index = index;
         let open = self.dropdown == Some(id);
         let box_h = CHOICE_H;
-        let hovered = self.lit(ui, x, y, w, box_h, active);
+        let hovered = active && self.hit(ui, x, y, w, box_h);
         p.rounded_rect(
             x,
             y,
@@ -2565,7 +2547,7 @@ impl ClickGuiState {
             !open,
             look.text_dim(),
         );
-        if self.press(ui, x, y, w, box_h, active) {
+        if hovered && ui.input.left_click {
             self.dropdown = if open { None } else { Some(id) };
         }
         if !open {
@@ -2575,7 +2557,7 @@ impl ClickGuiState {
         let mut oy = y + box_h + options_h(0);
         for (i, option) in options.iter().enumerate() {
             let on = i as u8 == index;
-            let over = self.lit(ui, x, oy, w, OPTION_H, active);
+            let over = active && self.hit(ui, x, oy, w, OPTION_H);
             if on || over {
                 p.rounded_rect(
                     x,
@@ -2593,7 +2575,7 @@ impl ClickGuiState {
                 if on { theme::TEXT_ON } else { look.text() },
                 look.shadow,
             );
-            if self.press(ui, x, oy, w, OPTION_H, active) {
+            if over && ui.input.left_click {
                 index = i as u8;
                 self.dropdown = None;
             }
@@ -2602,7 +2584,6 @@ impl ClickGuiState {
         index
     }
 
-    #[cfg(not(feature = "module_panel"))]
     #[allow(clippy::too_many_arguments, reason = "one widget, flat arguments")]
     fn grab(
         &mut self,
@@ -2633,12 +2614,7 @@ impl ClickGuiState {
         if !changed {
             return false;
         }
-        let (hx, hy, hw, hh) = if TOUCH {
-            (x - 5.0, y - 6.0, RESET_W + 8.0, 19.0)
-        } else {
-            (x - 1.0, y - 1.0, RESET_W + 2.0, 10.0)
-        };
-        let hovered = self.lit(ui, hx, hy, hw, hh, active);
+        let hovered = active && self.hit(ui, x - 1.0, y - 1.0, RESET_W + 2.0, 10.0);
         theme::revert(
             p,
             x,
@@ -2649,7 +2625,7 @@ impl ClickGuiState {
                 0xFF00_0000 | self.look.text_dim()
             },
         );
-        self.press(ui, hx, hy, hw, hh, active)
+        hovered && ui.input.left_click
     }
 
     fn track_t(&self, ui: &Ui, x: f32, w: f32) -> Option<f32> {
@@ -2662,115 +2638,19 @@ impl ClickGuiState {
         p.pop_clip(guard);
     }
 
-    #[allow(clippy::too_many_arguments, reason = "one widget, flat arguments")]
-    fn readout(
-        &mut self,
-        p: &mut Painter,
-        ui: &Ui,
-        right: f32,
-        y: f32,
-        v: f32,
-        min: f32,
-        max: f32,
-        decimals: u8,
-        ctl: Control,
-        handle: u8,
-        active: bool,
-    ) -> (f32, Option<f32>) {
-        let look = self.look;
-        let (bx, by) = (right - NUMBER_W, y - 1.0);
-        let in_box = active && self.hit(ui, bx, by, NUMBER_W, NUMBER_H);
-        if let KeyOwner::Number(n) = &mut self.owner
-            && n.ctl == ctl
-            && n.handle == handle
-        {
-            if n.commit || (ui.input.left_click && !in_box) {
-                let typed = parse_number(&n.text.text, min, max, decimals);
-                self.owner = KeyOwner::None;
-                return (NUMBER_W, typed);
-            }
-            p.rounded_rect(bx, by, NUMBER_W, NUMBER_H, 2.0, look.nest());
-            p.fill(
-                bx + 1.0,
-                by + NUMBER_H - 1.0,
-                NUMBER_W - 2.0,
-                1.0,
-                look.accent(),
-            );
-            n.text.color = look.text_title();
-            n.text.draw(p, bx + 2.0, y + 1.0, NUMBER_W - 4.0, TEXT_H);
-            return (NUMBER_W, None);
-        }
-
-        self.number(v, decimals);
-        let tw = p.atlas.font.width_str(&self.scratch);
-        let pad = if TOUCH { 6.0 } else { 1.0 };
-        let (hx, hw) = (right - tw - pad, tw + 2.0 * pad);
-        let typeable =
-            !matches!(ctl, Control::Channel(_)) && !matches!(self.owner, KeyOwner::Number(_));
-        let over = typeable && self.lit(ui, hx, by, hw, NUMBER_H, active);
-        p.text_plain(
-            &self.scratch,
-            right - tw,
-            y + 1.0,
-            if over { look.text() } else { look.text_dim() },
-            look.shadow,
-        );
-        if typeable && self.press(ui, hx, by, hw, NUMBER_H, active) {
-            let mut text = TextBox::new(NUMBER_LEN, "");
-            text.set_text(&self.scratch);
-            text.anchor = 0;
-            self.owner = KeyOwner::Number(NumberEdit {
-                ctl,
-                handle,
-                text,
-                commit: false,
-            });
-        }
-        (tw, None)
+    fn number(&mut self, v: f32, decimals: u8) {
+        self.scratch.clear();
+        self.append(v, decimals);
     }
 
-    fn number(&mut self, v: f32, decimals: u8) {
+    fn append(&mut self, v: f32, decimals: u8) {
         use std::fmt::Write;
-        self.scratch.clear();
         let _ = match decimals {
             0 => write!(self.scratch, "{v:.0}"),
             1 => write!(self.scratch, "{v:.1}"),
             _ => write!(self.scratch, "{v:.2}"),
         };
     }
-}
-
-const NUMBER_W: f32 = 30.0;
-const NUMBER_H: f32 = 9.0;
-const NUMBER_LEN: usize = 10;
-const RANGE_SEP: &str = " - ";
-
-fn track_t_of(v: f32, min: f32, max: f32, log: bool) -> f32 {
-    let t = if log {
-        (v / min).ln() / (max / min).ln()
-    } else {
-        (v - min) / (max - min).max(f32::EPSILON)
-    };
-    t.max(0.0).min(1.0)
-}
-
-fn track_value(t: f32, min: f32, max: f32, log: bool) -> f32 {
-    if log {
-        min * (max / min).powf(t)
-    } else {
-        min + (max - min) * t
-    }
-}
-
-fn is_number_char(c: char) -> bool {
-    c.is_ascii_digit() || c == '.' || c == '-'
-}
-
-fn parse_number(s: &str, min: f32, max: f32, decimals: u8) -> Option<f32> {
-    let v: f32 = s.trim().parse().ok()?;
-    let scale = 10f32.powi(i32::from(decimals.min(2)));
-    Some(((v * scale).round() / scale).clamp(min, max))
 }
 
 const CONFIG_W: f32 = 150.0;
@@ -2780,33 +2660,37 @@ const EDITOR_MAX_LINES: usize = 8;
 const EDITOR_PAD: f32 = 7.0;
 
 #[allow(clippy::too_many_arguments, reason = "one widget, flat arguments")]
-pub(crate) fn search_field(
+fn search_field(
     p: &mut Painter,
     look: Look,
-    pointer: Option<&GuiInput>,
+    pointer: &GuiInput,
     field: &mut TextBox,
     x: f32,
     y: f32,
     w: f32,
-    h: f32,
     hint: &str,
 ) {
-    p.rounded_rect(x, y, w, h, 3.0, look.nest());
-    p.fill(x + 2.0, y + h - 1.0, w - 4.0, 1.0, look.accent());
+    p.rounded_rect(x, y, w, FIELD_H, 3.0, look.nest());
+    p.fill(x + 2.0, y + FIELD_H - 1.0, w - 4.0, 1.0, look.accent());
     field.color = look.text_title();
-    let guard = p.push_clip(x + 3.0, y, w - 6.0, h);
-    if let Some(pointer) = pointer {
-        field.handle_mouse(pointer, &p.atlas.font, x + 4.0, y, w - 8.0, h);
-    }
+    let guard = p.push_clip(x + 3.0, y, w - 6.0, FIELD_H);
+    field.handle_mouse(pointer, &p.atlas.font, x + 4.0, y, w - 8.0, FIELD_H);
     if field.text.is_empty() {
-        p.text_plain(hint, x + 9.0, text_y(y, h), look.text_dim(), look.shadow);
+        p.text_plain(
+            hint,
+            x + 9.0,
+            text_y(y, FIELD_H),
+            look.text_dim(),
+            look.shadow,
+        );
     }
-    field.draw(p, x + 4.0, text_y(y, h), w - 8.0, h);
+    let frame = p.frame;
+    field.draw(p, x + 4.0, y, w - 8.0, FIELD_H, frame);
     p.pop_clip(guard);
 }
 
 fn pill(p: &mut Painter, look: Look, x: f32, y: f32, on: bool) {
-    let (w, h) = (PILL_W, PILL_H);
+    let (w, h) = (16.0, 8.0);
     p.rounded_rect(
         x,
         y,
@@ -2820,18 +2704,6 @@ fn pill(p: &mut Painter, look: Look, x: f32, y: f32, on: bool) {
     p.rounded_rect(kx, y + 0.5, knob, knob, knob * 0.5, theme::KNOB);
 }
 
-fn knob(p: &mut Painter, x: f32, ty: f32) {
-    let r = KNOB_D * 0.5;
-    p.rounded_rect(
-        x - r,
-        ty + TRACK_H * 0.5 - r,
-        KNOB_D,
-        KNOB_D,
-        r,
-        theme::KNOB,
-    );
-}
-
 fn editor_box_h(lines: usize) -> f32 {
     3.0 + lines.clamp(EDITOR_MIN_LINES, EDITOR_MAX_LINES) as f32 * crate::text::LINE_HEIGHT
 }
@@ -2840,7 +2712,7 @@ fn editor_view_of(lines: usize) -> f32 {
     3.0 + editor_box_h(lines) + 4.0 + TEXT_H + PAD_BOTTOM
 }
 
-const PRESET_H: f32 = if TOUCH { 22.0 } else { 15.0 };
+const PRESET_H: f32 = 15.0;
 
 fn picker_head(list: &BitList) -> f32 {
     FIELD_H
@@ -2850,41 +2722,4 @@ fn picker_head(list: &BitList) -> f32 {
         } else {
             PRESET_H
         }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_track_maps_back_to_its_value() {
-        for log in [false, true] {
-            for v in [1.0, 20.0, 333.0, 1200.0] {
-                let back = track_value(track_t_of(v, 1.0, 1200.0, log), 1.0, 1200.0, log);
-                assert!(
-                    (back - v).abs() < v * 1e-4,
-                    "{v} came back as {back}, log {log}"
-                );
-            }
-        }
-        let t = track_t_of(20.0, 1.0, 1200.0, true);
-        assert!((t - 0.4225).abs() < 1e-3, "{t}");
-        assert_eq!(
-            track_t_of(0.0, 1.0, 1200.0, true),
-            0.0,
-            "below a log track's floor"
-        );
-        assert_eq!(track_t_of(5.0, 5.0, 5.0, true), 0.0, "zero-width log track");
-    }
-
-    #[test]
-    fn a_typed_number_is_rounded_and_clamped() {
-        assert_eq!(parse_number("47", 1.0, 1200.0, 0), Some(47.0));
-        assert_eq!(parse_number(" 2.6 ", 1.0, 1200.0, 0), Some(3.0));
-        assert_eq!(parse_number("0.056", 0.0, 0.2, 2), Some(0.06));
-        assert_eq!(parse_number("99999", 1.0, 1200.0, 0), Some(1200.0));
-        assert_eq!(parse_number("-4", 1.0, 1200.0, 0), Some(1.0));
-        assert_eq!(parse_number("", 1.0, 1200.0, 0), None);
-        assert_eq!(parse_number("1-2", 1.0, 1200.0, 0), None);
-    }
 }

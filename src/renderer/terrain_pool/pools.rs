@@ -10,7 +10,6 @@ use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::{Extract, ExtractSchedule, Render, RenderApp, RenderSystems};
 use offset_allocator::{Allocation, Allocator};
 
-use super::super::mesh::QUAD_INDICES;
 use super::{
     META_LIVE, META_WATER, ORIGIN_ROW, SLOTS_INITIAL, STREAM_CUTOUT, STREAM_SOLID, STREAM_WATER,
     STREAMS, SlotMeta, TerrainOp, TerrainOpQueue, TerrainOps, TerrainStats, TerrainTier,
@@ -23,7 +22,12 @@ const POOL_VERTICES: u32 = 3_200_000;
 #[cfg(any(target_arch = "wasm32", target_os = "android"))]
 const POOL_VERTICES: u32 = 1_200_000;
 
-const PAGE_QUADS: u32 = 1 << 13;
+#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+const POOL_INDICES: u32 = 6_400_000;
+#[cfg(any(target_arch = "wasm32", target_os = "android"))]
+const POOL_INDICES: u32 = 2_400_000;
+
+const PAGE_INDICES: u32 = 1 << 16;
 
 const PAGE_ALLOCS: u32 = 512;
 
@@ -31,8 +35,10 @@ pub struct Pool {
     pub vertices: Buffer,
     pub indices: Buffer,
     valloc: Allocator,
+    ialloc: Allocator,
     pages: [Vec<Page>; STREAMS as usize],
     pub vertex_capacity: u32,
+    pub index_capacity: u32,
     #[cfg(feature = "shader_support")]
     pub pack_quads: Option<PackQuads>,
 }
@@ -44,19 +50,27 @@ pub struct PackQuads {
 }
 
 impl Pool {
-    fn new(device: &RenderDevice, vertex_capacity: u32, indices: Buffer) -> Self {
+    fn new(device: &RenderDevice, vertex_capacity: u32, index_capacity: u32) -> Self {
         let vertices = device.create_buffer(&BufferDescriptor {
             label: Some("terrain_pool_vertices"),
             size: vertex_capacity as u64 * 20,
             usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let indices = device.create_buffer(&BufferDescriptor {
+            label: Some("terrain_pool_indices"),
+            size: index_capacity as u64 * 4,
+            usage: BufferUsages::INDEX | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         Self {
             vertices,
             indices,
             valloc: Allocator::new(vertex_capacity / 4),
+            ialloc: Allocator::new(index_capacity),
             pages: Default::default(),
             vertex_capacity,
+            index_capacity,
             #[cfg(feature = "shader_support")]
             pack_quads: None,
         }
@@ -70,15 +84,15 @@ impl Pool {
             .map_or(0, |_| self.pack_byte_size());
         #[cfg(not(feature = "shader_support"))]
         let pack = 0;
-        self.vertex_capacity as u64 * 20 + pack
+        self.vertex_capacity as u64 * 20 + self.index_capacity as u64 * 4 + pack
     }
 
-    fn allocate_quads(&mut self, stream: u32, count: u32) -> Option<QuadRange> {
+    fn allocate_indices(&mut self, stream: u32, count: u32) -> Option<IndexRange> {
         let pages = &mut self.pages[stream as usize];
         for page in pages.iter_mut() {
             if let Some(sub) = page.sub.allocate(count) {
                 page.live += 1;
-                return Some(QuadRange {
+                return Some(IndexRange {
                     stream,
                     page: page.first,
                     sub,
@@ -86,11 +100,11 @@ impl Pool {
                 });
             }
         }
-        let size = page_size(count.max(PAGE_QUADS));
-        let range = self.valloc.allocate(size)?;
+        let size = page_size(count.max(PAGE_INDICES));
+        let range = self.ialloc.allocate(size)?;
         let mut sub_alloc = Allocator::with_max_allocs(size, PAGE_ALLOCS);
         let Some(sub) = sub_alloc.allocate(count) else {
-            self.valloc.free(range);
+            self.ialloc.free(range);
             return None;
         };
         let first = range.offset;
@@ -100,7 +114,7 @@ impl Pool {
             sub: sub_alloc,
             live: 1,
         });
-        Some(QuadRange {
+        Some(IndexRange {
             stream,
             page: first,
             sub,
@@ -108,7 +122,7 @@ impl Pool {
         })
     }
 
-    fn free_quads(&mut self, range: QuadRange) {
+    fn free_indices(&mut self, range: IndexRange) {
         let pages = &mut self.pages[range.stream as usize];
         let Some(i) = pages.iter().position(|p| p.first == range.page) else {
             return;
@@ -117,29 +131,35 @@ impl Pool {
         pages[i].live -= 1;
         if pages[i].live == 0 {
             let page = pages.remove(i);
-            self.valloc.free(page.range);
+            self.ialloc.free(page.range);
         }
     }
 
-    fn free_slot(&mut self, ranges: [Option<QuadRange>; 2]) {
+    fn free_slot_indices(&mut self, ranges: [Option<IndexRange>; 2]) {
         for range in ranges.into_iter().flatten() {
-            self.free_quads(range);
+            self.free_indices(range);
         }
     }
 
-    fn allocate_slot(&mut self, streams: [(u32, u32); 2]) -> Option<[Option<QuadRange>; 2]> {
-        let mut ranges = [None; 2];
+    fn allocate_slot(
+        &mut self,
+        vertex_count: u32,
+        streams: [(u32, u32); 2],
+    ) -> Option<(Allocation, [Option<IndexRange>; 2])> {
+        let vertex = self.valloc.allocate(vertex_count.div_ceil(4))?;
+        let mut indices = [None; 2];
         for (k, &(stream, count)) in streams.iter().enumerate() {
             if count == 0 {
                 continue;
             }
-            let Some(range) = self.allocate_quads(stream, count) else {
-                self.free_slot(ranges);
+            let Some(range) = self.allocate_indices(stream, count) else {
+                self.free_slot_indices(indices);
+                self.valloc.free(vertex);
                 return None;
             };
-            ranges[k] = Some(range);
+            indices[k] = Some(range);
         }
-        Some(ranges)
+        Some((vertex, indices))
     }
 
     #[cfg(feature = "shader_support")]
@@ -202,22 +222,11 @@ fn page_size(count: u32) -> u32 {
 }
 
 #[derive(Clone, Copy)]
-struct QuadRange {
+struct IndexRange {
     stream: u32,
     page: u32,
     sub: Allocation,
     first: u32,
-}
-
-fn new_quad_indices(device: &RenderDevice, quads: u32) -> Buffer {
-    let indices: Vec<u32> = (0..quads)
-        .flat_map(|q| QUAD_INDICES.map(|i| q * 4 + i))
-        .collect();
-    device.create_buffer_with_data(&BufferInitDescriptor {
-        label: Some("terrain_quad_indices"),
-        contents: bytemuck::cast_slice(&indices),
-        usage: BufferUsages::INDEX,
-    })
 }
 
 #[cfg(feature = "shader_support")]
@@ -266,22 +275,25 @@ fn write_quads(
 #[derive(Clone, Copy)]
 struct SlotState {
     pool: u32,
-    ranges: [Option<QuadRange>; 2],
+    vertex: Allocation,
+    indices: [Option<IndexRange>; 2],
     vertex_count: u32,
+    index_count: u32,
 }
 
 impl SlotState {
     fn bytes(&self) -> u64 {
-        self.vertex_count as u64 * 20
+        self.vertex_count as u64 * 20 + self.index_count as u64 * 4
     }
 }
 
 struct Retired {
     pool: u32,
-    ranges: [Option<QuadRange>; 2],
+    vertex: Allocation,
+    indices: [Option<IndexRange>; 2],
 }
 
-const META_STRIDE: u64 = 96;
+const META_STRIDE: u64 = 64;
 const _: () = assert!(std::mem::size_of::<SlotMeta>() == META_STRIDE as usize);
 
 pub enum SlotTable {
@@ -305,24 +317,20 @@ pub struct TerrainPools {
     pub tables_generation: u64,
     pub draw_end: u32,
     pub water_slots: Vec<u32>,
-    pub water_generation: u64,
-    pub vis_generation: u64,
+    water_sort: std::collections::HashMap<u32, WaterSort>,
 
     slots: Vec<Option<SlotState>>,
-    water_index: Vec<u32>,
     live_slots: usize,
     used_bytes: u64,
     retired_this_frame: Vec<Retired>,
     retired_last_frame: Vec<Retired>,
     pool_vertex_capacity: u32,
-    quad_indices: Option<Buffer>,
+    pool_index_capacity: u32,
     tier: TerrainTier,
     pub(super) stats: TerrainStats,
     #[cfg(feature = "shader_support")]
     pub quads_layout: bevy::render::render_resource::BindGroupLayout,
 }
-
-const NOT_WATER: u32 = u32::MAX;
 
 fn new_origins(device: &RenderDevice, slot_cap: u32) -> (Texture, TextureView) {
     let texture = device.create_texture(&TextureDescriptor {
@@ -365,6 +373,7 @@ impl TerrainPools {
         let slot_cap = SLOTS_INITIAL;
 
         let pool_vertex_capacity = clamp_units(POOL_VERTICES, 20, limits.max_buffer_size);
+        let pool_index_capacity = clamp_units(POOL_INDICES, 4, limits.max_buffer_size);
 
         let meta_cpu = vec![SlotMeta::default(); slot_cap as usize];
         let vis_cpu = vec![u32::MAX; slot_cap.div_ceil(32) as usize];
@@ -401,16 +410,14 @@ impl TerrainPools {
             tables_generation: 0,
             draw_end: 0,
             water_slots: Vec::new(),
-            water_generation: 0,
-            vis_generation: 0,
+            water_sort: std::collections::HashMap::new(),
             slots: vec![None; slot_cap as usize],
-            water_index: vec![NOT_WATER; slot_cap as usize],
             live_slots: 0,
             used_bytes: 0,
             retired_this_frame: Vec::new(),
             retired_last_frame: Vec::new(),
             pool_vertex_capacity,
-            quad_indices: None,
+            pool_index_capacity,
             tier,
             stats,
             #[cfg(feature = "shader_support")]
@@ -429,7 +436,6 @@ impl TerrainPools {
         self.meta_cpu.resize(new_cap as usize, SlotMeta::default());
         self.vis_cpu.resize(new_cap.div_ceil(32) as usize, u32::MAX);
         self.slots.resize(new_cap as usize, None);
-        self.water_index.resize(new_cap as usize, NOT_WATER);
         self.slot_cap = new_cap;
 
         match &mut self.table {
@@ -553,29 +559,13 @@ impl TerrainPools {
         );
     }
 
-    fn set_water(&mut self, slot: u32, water: bool) {
-        let at = self.water_index[slot as usize];
-        let was = at != NOT_WATER;
-        if was && !water {
-            self.water_slots.swap_remove(at as usize);
-            if let Some(&moved) = self.water_slots.get(at as usize) {
-                self.water_index[moved as usize] = at;
-            }
-            self.water_index[slot as usize] = NOT_WATER;
-        } else if water && !was {
-            self.water_index[slot as usize] = self.water_slots.len() as u32;
-            self.water_slots.push(slot);
-        }
-        if was || water {
-            self.water_generation += 1;
-        }
-    }
-
     fn retire_slot(&mut self, slot: u32) {
+        self.water_sort.remove(&slot);
         if let Some(state) = self.slots[slot as usize].take() {
             self.retired_this_frame.push(Retired {
                 pool: state.pool,
-                ranges: state.ranges,
+                vertex: state.vertex,
+                indices: state.indices,
             });
             self.live_slots -= 1;
             self.used_bytes -= state.bytes();
@@ -585,32 +575,27 @@ impl TerrainPools {
     fn allocate(
         &mut self,
         device: &RenderDevice,
+        vertex_count: u32,
         streams: [(u32, u32); 2],
-    ) -> Option<(u32, [Option<QuadRange>; 2])> {
+    ) -> Option<(u32, Allocation, [Option<IndexRange>; 2])> {
         for (i, pool) in self.pools.iter_mut().enumerate() {
-            if let Some(ranges) = pool.allocate_slot(streams) {
-                return Some((i as u32, ranges));
+            if let Some((vertex, indices)) = pool.allocate_slot(vertex_count, streams) {
+                return Some((i as u32, vertex, indices));
             }
         }
-        let quads: u32 = streams.iter().map(|&(_, count)| count).sum();
-        let quad_capacity = self.pool_vertex_capacity / 4;
-        if quads > quad_capacity {
+        let index_count: u32 = streams.iter().map(|&(_, count)| count).sum();
+        if vertex_count > self.pool_vertex_capacity || index_count > self.pool_index_capacity {
             return None;
         }
-        let indices = self
-            .quad_indices
-            .get_or_insert_with(|| new_quad_indices(device, quad_capacity))
-            .clone();
         let index = self.pools.len() as u32;
-        let mut pool = Pool::new(device, self.pool_vertex_capacity, indices);
-        let ranges = pool.allocate_slot(streams)?;
+        let mut pool = Pool::new(device, self.pool_vertex_capacity, self.pool_index_capacity);
+        let (vertex, indices) = pool.allocate_slot(vertex_count, streams)?;
         self.pools.push(pool);
-        Some((index, ranges))
+        Some((index, vertex, indices))
     }
 
     fn publish_stats(&self) {
-        let indices = self.quad_indices.as_ref().map_or(0, |b| b.size());
-        let capacity: u64 = self.pools.iter().map(Pool::byte_size).sum::<u64>() + indices;
+        let capacity: u64 = self.pools.iter().map(Pool::byte_size).sum();
         self.stats
             .0
             .live_slots
@@ -647,7 +632,136 @@ pub fn build(app: &mut App, stats: TerrainStats) {
         .insert_resource(stats)
         .init_resource::<TerrainOpQueue>()
         .add_systems(ExtractSchedule, extract_ops)
-        .add_systems(Render, apply_ops.in_set(RenderSystems::PrepareResources));
+        .add_systems(
+            Render,
+            (apply_ops, sort_water)
+                .chain()
+                .in_set(RenderSystems::PrepareResources),
+        );
+}
+
+/// A water section's quads, kept to re-sort them back to front as the camera
+/// moves. Water writes depth (so the sky and particles stay behind it) and its
+/// sides are two-sided, so drawn in mesh order a near face could hide the far
+/// side of the same column or not, block by block. Vanilla sorts each
+/// translucent section the same way.
+struct WaterSort {
+    pool: u32,
+    first_index: u32,
+    origin: [i32; 3],
+    /// Quad centres relative to `origin`.
+    centres: Vec<Vec3>,
+    /// The section's index list as uploaded, six per quad.
+    indices: Vec<u32>,
+    /// The eye block it was last sorted for.
+    sorted_for: Option<IVec3>,
+}
+
+impl WaterSort {
+    fn new(pool: u32, first_index: u32, origin: [i32; 3], mesh: &crate::renderer::mesh::MeshBuf) -> Self {
+        let indices: Vec<u32> = mesh.idx.iter().chain(&mesh.cutout_idx).copied().collect();
+        // A quad's six indices name its four vertices in any order (fluid
+        // quads start at their third), so its first vertex is the lowest.
+        let base = indices.iter().copied().min().unwrap_or(0);
+        let centres = indices
+            .chunks_exact(6)
+            .map(|quad| {
+                let first = (quad.iter().copied().min().unwrap_or(base) - base) as usize;
+                let corners = mesh.verts.get(first..first + 4).unwrap_or(&[]);
+                let sum = corners.iter().fold(Vec3::ZERO, |acc, v| {
+                    acc + Vec3::new(v.pos[0] as f32, v.pos[1] as f32, v.pos[2] as f32)
+                });
+                sum / (corners.len().max(1) as f32 * 256.0)
+            })
+            .collect();
+        WaterSort {
+            pool,
+            first_index,
+            origin,
+            centres,
+            indices,
+            sorted_for: None,
+        }
+    }
+
+    /// The index list with the quads farthest from `eye` (relative to the
+    /// origin) first.
+    fn back_to_front(&self, eye: Vec3, order: &mut Vec<(f32, u32)>, out: &mut Vec<u32>) {
+        order.clear();
+        order.extend(
+            self.centres
+                .iter()
+                .enumerate()
+                .map(|(i, c)| (c.distance_squared(eye), i as u32)),
+        );
+        order.sort_unstable_by(|a, b| b.0.total_cmp(&a.0));
+        out.clear();
+        out.extend(order.iter().flat_map(|&(_, quad)| {
+            let at = quad as usize * 6;
+            self.indices[at..at + 6].iter().copied()
+        }));
+    }
+
+    fn eye_from(&self, eye: bevy::math::DVec3) -> Vec3 {
+        (eye - IVec3::from(self.origin).as_dvec3()).as_vec3()
+    }
+}
+
+/// Sections nearer than this re-sort whenever the eye enters a new block;
+/// farther ones only when it enters a new section.
+const WATER_SORT_NEAR: f32 = 48.0;
+/// Quads re-sorted per frame at most; the rest wait, nearest first.
+const WATER_SORT_BUDGET: usize = 65_536;
+
+fn sort_water(
+    mut pools: ResMut<TerrainPools>,
+    render_queue: Res<RenderQueue>,
+    views: Query<&bevy::render::view::ExtractedView, With<super::TerrainView>>,
+    mut scratch: Local<(Vec<(f32, u32)>, Vec<(f32, u32)>, Vec<u32>)>,
+) {
+    let Some(view) = views.iter().next() else {
+        return;
+    };
+    let eye = view.world_from_view.translation().as_dvec3();
+    let eye_block = eye.floor().as_ivec3();
+    let (due, order, out) = &mut *scratch;
+
+    due.clear();
+    for (&slot, sort) in &pools.water_sort {
+        let rel = sort.eye_from(eye);
+        let distance = (rel - Vec3::splat(8.0)).length();
+        let stale = match sort.sorted_for {
+            None => true,
+            Some(at) if distance < WATER_SORT_NEAR => at != eye_block,
+            Some(at) => at >> 4 != eye_block >> 4,
+        };
+        if stale {
+            due.push((distance, slot));
+        }
+    }
+    due.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+
+    let mut budget = WATER_SORT_BUDGET;
+    for &(_, slot) in due.iter() {
+        let pools = &mut *pools;
+        let Some(sort) = pools.water_sort.get_mut(&slot) else {
+            continue;
+        };
+        if sort.centres.len() > budget && budget < WATER_SORT_BUDGET {
+            break;
+        }
+        budget = budget.saturating_sub(sort.centres.len());
+
+        sort.back_to_front(sort.eye_from(eye), order, out);
+        if let Some(pool) = pools.pools.get(sort.pool as usize) {
+            render_queue.write_buffer(
+                &pool.indices,
+                sort.first_index as u64 * 4,
+                bytemuck::cast_slice(out),
+            );
+        }
+        sort.sorted_for = Some(eye_block);
+    }
 }
 
 fn extract_ops(main_ops: Extract<Res<TerrainOps>>, mut queue: ResMut<TerrainOpQueue>) {
@@ -674,7 +788,8 @@ pub fn apply_ops(
     let due = std::mem::take(&mut pools.retired_last_frame);
     for r in due {
         if let Some(pool) = pools.pools.get_mut(r.pool as usize) {
-            pool.free_slot(r.ranges);
+            pool.valloc.free(r.vertex);
+            pool.free_slot_indices(r.indices);
         }
     }
     pools.retired_last_frame = std::mem::take(&mut pools.retired_this_frame);
@@ -695,6 +810,7 @@ pub fn apply_ops(
 
     let ops = std::mem::take(&mut queue.0);
     let changed = !ops.is_empty();
+    let slots_changed = ops.iter().any(|op| !matches!(op, TerrainOp::Visibility(_)));
     for op in ops {
         match op {
             TerrainOp::Upload {
@@ -719,34 +835,43 @@ pub fn apply_ops(
                 if mesh.is_empty() || unnameable {
                     pools.meta_cpu[slot as usize] = SlotMeta::default();
                     pools.write_meta_slot(&render_queue, slot);
-                    pools.set_water(slot, false);
                     continue;
                 }
 
                 let vertex_count = mesh.verts.len() as u32;
                 let index_count = mesh.index_count() as u32;
                 let solid_count = mesh.idx.len() as u32;
-                debug_assert!(vertex_count % 4 == 0, "terrain meshes are quads");
-                let quads = vertex_count / 4;
-                let solid_quads = solid_count / 6;
                 let streams = if water {
-                    [(STREAM_WATER, quads), (STREAM_WATER, 0)]
+                    [(STREAM_WATER, index_count), (STREAM_WATER, 0)]
                 } else {
                     [
-                        (STREAM_SOLID, solid_quads),
-                        (STREAM_CUTOUT, quads - solid_quads),
+                        (STREAM_SOLID, solid_count),
+                        (STREAM_CUTOUT, index_count - solid_count),
                     ]
                 };
-                let Some((pool_index, ranges)) = pools.allocate(&device, streams) else {
+                let Some((pool_index, vertex, indices)) =
+                    pools.allocate(&device, vertex_count, streams)
+                else {
                     crate::log_warn!(
                         "render",
-                        "terrain: section at slot {slot} has {vertex_count} verts, \
-                         too large for a fresh pool; dropped"
+                        "terrain: section at slot {slot} has {vertex_count} verts / \
+                         {index_count} indices, too large for a fresh pool; dropped"
                     );
                     pools.meta_cpu[slot as usize] = SlotMeta::default();
                     pools.write_meta_slot(&render_queue, slot);
-                    pools.set_water(slot, false);
                     continue;
+                };
+
+                debug_assert!(vertex_count % 4 == 0, "terrain meshes are quads");
+                let first_vertex = vertex.offset * 4;
+
+                let base_vertex = if pools.tier.indirect && pools.tier.base_vertex {
+                    first_vertex
+                } else {
+                    for i in mesh.idx.iter_mut().chain(mesh.cutout_idx.iter_mut()) {
+                        *i += first_vertex;
+                    }
+                    0
                 };
 
                 if !pools.tier.indirect {
@@ -755,41 +880,42 @@ pub fn apply_ops(
                     }
                 }
 
-                let spans = if water {
-                    [0..quads, quads..quads]
-                } else {
-                    [0..solid_quads, solid_quads..quads]
-                };
-
                 #[cfg(feature = "shader_support")]
                 if let Some(layout) = &quads_layout
                     && !mesh.pack.is_empty()
                     && mesh.pack.len() * 4 == mesh.verts.len()
                 {
-                    let texture = &pools.pools[pool_index as usize]
-                        .pack_quads(&device, layout)
-                        .texture;
-                    for (range, span) in ranges.iter().zip(&spans) {
-                        if let Some(range) = range {
-                            let span = span.start as usize..span.end as usize;
-                            write_quads(&render_queue, texture, range.first, &mesh.pack[span]);
-                        }
-                    }
+                    let quads = pools.pools[pool_index as usize].pack_quads(&device, layout);
+                    write_quads(&render_queue, &quads.texture, vertex.offset, &mesh.pack);
                 }
                 let pool = &pools.pools[pool_index as usize];
-                for (range, span) in ranges.iter().zip(&spans) {
-                    if let Some(range) = range {
-                        let verts = &mesh.verts[span.start as usize * 4..span.end as usize * 4];
+                render_queue.write_buffer(
+                    &pool.vertices,
+                    first_vertex as u64 * 20,
+                    bytemuck::cast_slice(&mesh.verts),
+                );
+                let first_index = indices[0].map_or(0, |r| r.first);
+                let cutout_first = match indices[1] {
+                    Some(r) => r.first,
+                    None if water => first_index + solid_count,
+                    None => 0,
+                };
+                for (first, list) in [(first_index, &mesh.idx), (cutout_first, &mesh.cutout_idx)] {
+                    if !list.is_empty() {
                         render_queue.write_buffer(
-                            &pool.vertices,
-                            range.first as u64 * 80,
-                            bytemuck::cast_slice(verts),
+                            &pool.indices,
+                            first as u64 * 4,
+                            bytemuck::cast_slice(list),
                         );
                     }
                 }
-                let first_index = ranges[0].map_or(0, |r| r.first * 6);
-                let cutout_first = ranges[1].map_or(0, |r| r.first * 6);
-                let base_vertex = 0;
+
+                if water {
+                    pools.water_sort.insert(
+                        slot,
+                        WaterSort::new(pool_index, first_index, origin, &mesh),
+                    );
+                }
 
                 let (min, max) = mesh.bounds();
                 pools.meta_cpu[slot as usize] = SlotMeta {
@@ -803,22 +929,18 @@ pub fn apply_ops(
                     flags: META_LIVE | if water { META_WATER } else { 0 },
                     pool: pool_index,
                     cutout_first: if water { 0 } else { cutout_first },
-                    faces: if water {
-                        [0; 8]
-                    } else {
-                        SlotMeta::pack_faces(&mesh.faces)
-                    },
                 };
                 let state = SlotState {
                     pool: pool_index,
-                    ranges,
+                    vertex,
+                    indices,
                     vertex_count,
+                    index_count,
                 };
                 pools.live_slots += 1;
                 pools.used_bytes += state.bytes();
                 pools.slots[slot as usize] = Some(state);
                 pools.write_meta_slot(&render_queue, slot);
-                pools.set_water(slot, water);
 
                 let word = (slot / 32) as usize;
                 pools.vis_cpu[word] |= 1 << (slot % 32);
@@ -831,7 +953,6 @@ pub fn apply_ops(
                 pools.retire_slot(slot);
                 pools.meta_cpu[slot as usize] = SlotMeta::default();
                 pools.write_meta_slot(&render_queue, slot);
-                pools.set_water(slot, false);
             }
             TerrainOp::ClearAll => {
                 for slot in 0..pools.slot_cap {
@@ -840,12 +961,6 @@ pub fn apply_ops(
                 for m in pools.meta_cpu.iter_mut() {
                     *m = SlotMeta::default();
                 }
-                let pools = &mut *pools;
-                for &slot in &pools.water_slots {
-                    pools.water_index[slot as usize] = NOT_WATER;
-                }
-                pools.water_slots.clear();
-                pools.water_generation += 1;
                 if let SlotTable::Indirect { meta, .. } = &pools.table {
                     let bytes = pools.meta_cpu.len() * META_STRIDE as usize;
                     render_queue.write_buffer(meta, 0, &vec![0u8; bytes]);
@@ -854,16 +969,10 @@ pub fn apply_ops(
             }
             TerrainOp::Visibility(bits) => {
                 let n = bits.len().min(pools.vis_cpu.len());
-                let same = pools.vis_cpu[..n] == bits[..n]
-                    && pools.vis_cpu[n..].iter().all(|&w| w == u32::MAX);
-                if same {
-                    continue;
-                }
                 pools.vis_cpu[..n].copy_from_slice(&bits[..n]);
                 for w in pools.vis_cpu[n..].iter_mut() {
                     *w = u32::MAX;
                 }
-                pools.vis_generation += 1;
                 if let SlotTable::Indirect { vis, .. } = &pools.table {
                     render_queue.write_buffer(vis, 0, bytemuck::cast_slice(&pools.vis_cpu));
                 }
@@ -878,6 +987,78 @@ pub fn apply_ops(
             .rposition(Option::is_some)
             .map_or(0, |i| i as u32 + 1);
     }
+    if slots_changed && pools.tier.indirect {
+        let pools = &mut *pools;
+        let end = (pools.draw_end as usize).min(pools.meta_cpu.len());
+        pools.water_slots.clear();
+        pools.water_slots.extend(
+            (0u32..)
+                .zip(&pools.meta_cpu[..end])
+                .filter(|(_, meta)| meta.flags & META_WATER != 0)
+                .map(|(slot, _)| slot),
+        );
+    }
 
     pools.publish_stats();
+}
+
+#[cfg(test)]
+mod water_sort_tests {
+    use super::*;
+    use crate::renderer::mesh::{MeshBuf, PackedVertex};
+
+    fn quad_at(mesh: &mut MeshBuf, x: f32) {
+        let base = mesh.verts.len() as u32;
+        for (dx, dy) in [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)] {
+            mesh.verts.push(PackedVertex {
+                pos: [((x + dx) * 256.0) as i16, (dy * 256.0) as i16, 0, 0],
+                ..Default::default()
+            });
+        }
+        mesh.idx
+            .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+
+    #[test]
+    fn the_farther_quad_draws_first_from_either_side() {
+        let mut mesh = MeshBuf::default();
+        quad_at(&mut mesh, 0.0);
+        quad_at(&mut mesh, 10.0);
+        let sort = WaterSort::new(0, 0, [0, 0, 0], &mesh);
+        assert_eq!(sort.centres[1], Vec3::new(10.5, 0.5, 0.0));
+        let (mut order, mut out) = (Vec::new(), Vec::new());
+
+        sort.back_to_front(Vec3::new(-5.0, 0.5, 0.0), &mut order, &mut out);
+        assert_eq!(&out[..6], &mesh.idx[6..12], "seen from -x, the quad at x=10 is behind");
+
+        sort.back_to_front(Vec3::new(20.0, 0.5, 0.0), &mut order, &mut out);
+        assert_eq!(&out[..6], &mesh.idx[..6], "seen from +x, the quad at x=0 is behind");
+    }
+
+    #[test]
+    fn centres_ignore_a_vertex_offset_baked_into_the_indices() {
+        let mut mesh = MeshBuf::default();
+        quad_at(&mut mesh, 3.0);
+        for i in &mut mesh.idx {
+            *i += 4096;
+        }
+        let sort = WaterSort::new(0, 0, [0, 0, 0], &mesh);
+        assert_eq!(sort.centres[0], Vec3::new(3.5, 0.5, 0.0));
+    }
+
+    #[test]
+    fn a_fluid_quad_starting_at_its_third_vertex_finds_its_first() {
+        // `MeshBuf::push_quad` (fluids) winds a quad from its third vertex,
+        // so the last quad's first index points two past its start.
+        let mut mesh = MeshBuf::default();
+        quad_at(&mut mesh, 0.0);
+        quad_at(&mut mesh, 5.0);
+        for quad in mesh.idx.chunks_exact_mut(6) {
+            let base = quad[0];
+            quad.copy_from_slice(&[base + 2, base + 1, base, base + 3, base + 2, base]);
+        }
+        let sort = WaterSort::new(0, 0, [0, 0, 0], &mesh);
+        assert_eq!(sort.centres[0], Vec3::new(0.5, 0.5, 0.0));
+        assert_eq!(sort.centres[1], Vec3::new(5.5, 0.5, 0.0));
+    }
 }

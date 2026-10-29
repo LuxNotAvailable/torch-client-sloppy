@@ -97,7 +97,6 @@ mod tests {
                     low: 0.0,
                     high: 0.0,
                     decimals: 0,
-                    log: false,
                 },
             ),
         ];

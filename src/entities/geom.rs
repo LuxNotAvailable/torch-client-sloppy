@@ -1,9 +1,8 @@
 use bevy::platform::collections::HashMap;
 
-use bevy::mesh::{Indices, VertexAttributeValues};
+use bevy::asset::RenderAssetUsages;
+use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
 use bevy::prelude::*;
-
-use super::quads::QuadMesh;
 
 pub use crate::direction::{Direction, Faces};
 
@@ -670,71 +669,87 @@ fn cube_mesh(cubes: &[CubeDef], tex_w: u32, tex_h: u32) -> Option<Mesh> {
     if cubes.is_empty() {
         return None;
     }
-    let mut out = QuadMesh::new();
+    let mut positions: Vec<[f32; 3]> = Vec::new();
+    let mut normals: Vec<[f32; 3]> = Vec::new();
+    let mut uvs: Vec<[f32; 2]> = Vec::new();
+    let mut indices: Vec<u32> = Vec::new();
+
     for cube in cubes {
-        push_cube(&mut out, cube, [tex_w as f32, tex_h as f32], 1.0 / 16.0);
-    }
-    Some(out.finish())
-}
+        let [w, h, d] = cube.size;
+        let sx = tex_w as f32 * cube.tex_scale[0];
+        let sy = tex_h as f32 * cube.tex_scale[1];
 
-pub fn push_cube(out: &mut QuadMesh, cube: &CubeDef, sheet: [f32; 2], scale: f32) {
-    let [w, h, d] = cube.size;
-    let sx = sheet[0] * cube.tex_scale[0];
-    let sy = sheet[1] * cube.tex_scale[1];
-
-    let mut min_x = (cube.origin[0] - cube.grow.0) * scale;
-    let min_y = (cube.origin[1] - cube.grow.1) * scale;
-    let min_z = (cube.origin[2] - cube.grow.2) * scale;
-    let mut max_x = (cube.origin[0] + w + cube.grow.0) * scale;
-    let max_y = (cube.origin[1] + h + cube.grow.1) * scale;
-    let max_z = (cube.origin[2] + d + cube.grow.2) * scale;
-    if cube.mirror {
-        std::mem::swap(&mut min_x, &mut max_x);
-    }
-    let t0 = [min_x, min_y, min_z];
-    let t1 = [max_x, min_y, min_z];
-    let t2 = [max_x, max_y, min_z];
-    let t3 = [min_x, max_y, min_z];
-    let l0 = [min_x, min_y, max_z];
-    let l1 = [max_x, min_y, max_z];
-    let l2 = [max_x, max_y, max_z];
-    let l3 = [min_x, max_y, max_z];
-    let u0 = cube.tex[0];
-    let u1 = u0 + d;
-    let u2 = u0 + d + w;
-    let u22 = u0 + d + w + w;
-    let u3 = u0 + d + w + d;
-    let u4 = u0 + d + w + d + w;
-    let v0 = cube.tex[1];
-    let v1 = v0 + d;
-    let v2 = v0 + d + h;
-
-    let faces: [(Direction, [[f32; 3]; 4], [f32; 4]); 6] = [
-        (Direction::Down, [l1, l0, t0, t1], [u1, v0, u2, v1]),
-        (Direction::Up, [t2, t3, l3, l2], [u2, v1, u22, v0]),
-        (Direction::West, [t0, l0, l3, t3], [u0, v1, u1, v2]),
-        (Direction::North, [t1, t0, t3, t2], [u1, v1, u2, v2]),
-        (Direction::East, [l1, t1, t2, l2], [u2, v1, u3, v2]),
-        (Direction::South, [l0, l1, l2, l3], [u3, v1, u4, v2]),
-    ];
-
-    for (face, mut corners, [fu0, fv0, fu1, fv1]) in faces {
-        if !cube.faces.contains(face) {
-            continue;
-        }
-        let mut uvs = [
-            [fu1 / sx, fv0 / sy],
-            [fu0 / sx, fv0 / sy],
-            [fu0 / sx, fv1 / sy],
-            [fu1 / sx, fv1 / sy],
-        ];
+        let mut min_x = cube.origin[0] - cube.grow.0;
+        let min_y = cube.origin[1] - cube.grow.1;
+        let min_z = cube.origin[2] - cube.grow.2;
+        let mut max_x = cube.origin[0] + w + cube.grow.0;
+        let max_y = cube.origin[1] + h + cube.grow.1;
+        let max_z = cube.origin[2] + d + cube.grow.2;
         if cube.mirror {
-            corners.reverse();
-            uvs.reverse();
+            std::mem::swap(&mut min_x, &mut max_x);
         }
-        let normal = if cube.mirror { face.mirrored() } else { face }.normal();
-        out.quad(corners, uvs, normal);
+        let t0 = [min_x, min_y, min_z];
+        let t1 = [max_x, min_y, min_z];
+        let t2 = [max_x, max_y, min_z];
+        let t3 = [min_x, max_y, min_z];
+        let l0 = [min_x, min_y, max_z];
+        let l1 = [max_x, min_y, max_z];
+        let l2 = [max_x, max_y, max_z];
+        let l3 = [min_x, max_y, max_z];
+        let u0 = cube.tex[0];
+        let u1 = cube.tex[0] + d;
+        let u2 = cube.tex[0] + d + w;
+        let u22 = cube.tex[0] + d + w + w;
+        let u3 = cube.tex[0] + d + w + d;
+        let u4 = cube.tex[0] + d + w + d + w;
+        let v0 = cube.tex[1];
+        let v1 = cube.tex[1] + d;
+        let v2 = cube.tex[1] + d + h;
+
+        let faces: [(Direction, [[f32; 3]; 4], [f32; 4]); 6] = [
+            (Direction::Down, [l1, l0, t0, t1], [u1, v0, u2, v1]),
+            (Direction::Up, [t2, t3, l3, l2], [u2, v1, u22, v0]),
+            (Direction::West, [t0, l0, l3, t3], [u0, v1, u1, v2]),
+            (Direction::North, [t1, t0, t3, t2], [u1, v1, u2, v2]),
+            (Direction::East, [l1, t1, t2, l2], [u2, v1, u3, v2]),
+            (Direction::South, [l0, l1, l2, l3], [u3, v1, u4, v2]),
+        ];
+
+        for (face, corners, [fu0, fv0, fu1, fv1]) in faces {
+            if !cube.faces.contains(face) {
+                continue;
+            }
+            let mut verts = [
+                (corners[0], [fu1 / sx, fv0 / sy]),
+                (corners[1], [fu0 / sx, fv0 / sy]),
+                (corners[2], [fu0 / sx, fv1 / sy]),
+                (corners[3], [fu1 / sx, fv1 / sy]),
+            ];
+            if cube.mirror {
+                verts.reverse();
+            }
+            let normal = if cube.mirror { face.mirrored() } else { face }.normal();
+            let base = positions.len() as u32;
+            for (pos, uv) in verts {
+                positions.push([pos[0] / 16.0, pos[1] / 16.0, pos[2] / 16.0]);
+                normals.push(normal);
+                uvs.push(uv);
+            }
+            indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        }
     }
+
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    let white = vec![[1.0f32; 4]; positions.len()];
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, white);
+    mesh.insert_indices(Indices::U32(indices));
+    Some(mesh)
 }
 
 #[cfg(test)]

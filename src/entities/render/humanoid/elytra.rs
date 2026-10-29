@@ -9,11 +9,11 @@ use crate::entities::{RenderSpec, TexturePath};
 use super::armor::{self, LAYER_WINGS};
 
 pub fn register(registry: &mut Registry, kinds: &[EntityKind]) {
-    registry.add_many(
+    registry.add_many_shared(
         kinds,
         RenderSpec::new("elytra", model::layer, texture, setup).with_visible(visible),
     );
-    registry.add_many(
+    registry.add_many_shared(
         kinds,
         RenderSpec::new("elytra_baby", model::baby_layer, texture, setup)
             .with_visible(visible_baby),
@@ -21,6 +21,9 @@ pub fn register(registry: &mut Registry, kinds: &[EntityKind]) {
 }
 
 fn texture(st: &EntityState) -> TexturePath {
+    if !wearing(st) {
+        return "entity/equipment/wings/elytra".into();
+    }
     armor::slot_texture(st.extras.chestplate, LAYER_WINGS).into()
 }
 

@@ -23,6 +23,8 @@ pub struct BossBar {
         reason = "published boss-bar state the renderer does not consume yet"
     )]
     pub darken: bool,
+    /// `BossEvent.shouldPlayBossMusic`.
+    pub music: bool,
     #[allow(
         dead_code,
         reason = "published boss-bar state the renderer does not consume yet"
@@ -48,6 +50,11 @@ fn state() -> &'static Mutex<Vec<Bar>> {
     STATE.get_or_init(Default::default)
 }
 
+/// `BossHealthOverlay.shouldPlayMusic`.
+pub(crate) fn plays_music() -> bool {
+    state().lock().is_ok_and(|bars| bars.iter().any(|b| b.bar.music))
+}
+
 pub(crate) fn reset() {
     state().lock().unwrap().clear();
 }
@@ -69,6 +76,7 @@ pub(crate) fn packet(shared: &Arc<SharedMutex>, packet: &ClientboundGamePacket) 
                 color: color_index(add.style.color),
                 overlay: overlay_index(add.style.overlay),
                 darken: add.properties.darken_screen,
+                music: add.properties.play_music,
                 fog: add.properties.create_world_fog,
             };
             match bars.iter_mut().find(|b| b.id == id) {
@@ -98,6 +106,7 @@ pub(crate) fn packet(shared: &Arc<SharedMutex>, packet: &ClientboundGamePacket) 
         Operation::UpdateProperties(properties) => {
             if let Some(b) = bars.iter_mut().find(|b| b.id == id) {
                 b.bar.darken = properties.darken_screen;
+                b.bar.music = properties.play_music;
                 b.bar.fog = properties.create_world_fog;
             }
         }

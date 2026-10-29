@@ -1,9 +1,12 @@
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
+
+use bevy::prelude::*;
 
 use crate::client::assets::{Stage, download};
 use crate::gui::painter::Painter;
 use crate::gui::{GuiState, Screen, ScreenCtx};
-use crate::util::bytes::Bytes;
+use crate::{log_info, log_warn};
 
 const PROMPT: &str = "The Mojang assets must be downloaded";
 const TOP_UP_PROMPT: &str = "Some Mojang assets are missing";
@@ -44,6 +47,8 @@ const BAR_H: f32 = 10.0;
 
 const LINE: f32 = 12.0;
 
+const MB: f64 = 1_048_576.0;
+
 pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     p.gradient_v(0.0, 0.0, ctx.vw, ctx.vh, 0xFF1B1B21, 0xFF0C0C10);
 
@@ -54,12 +59,12 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
 
     let top_up = TOP_UP.load(Ordering::Relaxed);
     let prompt = if top_up { TOP_UP_PROMPT } else { PROMPT };
-    p.text_centered(prompt, cx, mid - 46.0, 0xFFFFFF, false);
+    centered(p, prompt, cx, mid - 46.0, 0xFFFFFF);
 
     match stage {
         Stage::Idle | Stage::Cancelled => {
             if stage == Stage::Cancelled {
-                p.text_centered("Download cancelled", cx, mid - 46.0 + LINE, 0xFFAA55, false);
+                centered(p, "Download cancelled", cx, mid - 46.0 + LINE, 0xFFAA55);
             }
             let row = mid + 6.0;
             let left = (cx - BUTTON_W - BUTTON_GAP * 0.5).floor();
@@ -90,21 +95,21 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
             bar(p, ctx, mid - 14.0, frac);
 
             let percent = format!("{}%", (frac * 100.0) as u32);
-            p.text_centered(&percent, cx, mid + 2.0, 0xFFFFFF, false);
+            centered(p, &percent, cx, mid + 2.0, 0xFFFFFF);
 
             let detail = match stage {
                 Stage::Asking => "Contacting Mojang".to_string(),
-                Stage::Downloading | Stage::Fetching => of_total(done, total),
-                Stage::Sounds => format!("Sounds {}", of_total(done, total)),
+                Stage::Downloading | Stage::Fetching => megabytes(done, total),
+                Stage::Sounds => format!("Sounds {}", megabytes(done, total)),
                 _ => "Unpacking the assets".to_string(),
             };
-            p.text_centered(&detail, cx, mid + 2.0 + LINE, 0xA0A0A8, false);
+            centered(p, &detail, cx, mid + 2.0 + LINE, 0xA0A0A8);
 
             let sounds = dl.sounds_running();
             if sounds && stage != Stage::Sounds {
                 let (done, total) = dl.sound_progress();
-                let line = format!("Sounds {}", of_total(done, total));
-                p.text_centered(&line, cx, mid + 2.0 + LINE * 2.0, 0x70707A, false);
+                let line = format!("Sounds {}", megabytes(done, total));
+                centered(p, &line, cx, mid + 2.0 + LINE * 2.0, 0x70707A);
             }
 
             let row = mid + 40.0;
@@ -128,25 +133,13 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         }
         Stage::Done => {
             prepare();
-            p.text_centered("The assets are ready", cx, mid - 14.0, 0x7FDF7F, false);
-            p.text_centered(
-                "Preparing the atlases",
-                cx,
-                mid - 14.0 + LINE,
-                0xA0A0A8,
-                false,
-            );
+            centered(p, "The assets are ready", cx, mid - 14.0, 0x7FDF7F);
+            centered(p, "Preparing the atlases", cx, mid - 14.0 + LINE, 0xA0A0A8);
         }
 
         Stage::Failed => {
-            let error = dl.error();
-            let hint = if error == crate::client::assets::NETWORK_FAILURE {
-                "Check the connection and try again"
-            } else {
-                "The log says more"
-            };
-            p.text_centered(error, cx, mid - 14.0, 0xFF5555, false);
-            p.text_centered(hint, cx, mid - 14.0 + LINE, 0xA0A0A8, false);
+            centered(p, dl.error(), cx, mid - 14.0, 0xFF5555);
+            centered(p, "The log says more", cx, mid - 14.0 + LINE, 0xA0A0A8);
             let row = mid + 20.0;
             let left = (cx - BUTTON_W - BUTTON_GAP * 0.5).floor();
             let right = (cx + BUTTON_GAP * 0.5).floor();
@@ -160,8 +153,13 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     }
 }
 
-fn of_total(done: u64, total: u64) -> String {
-    format!("{} of {}", Bytes(done), Bytes(total))
+fn megabytes(done: u64, total: u64) -> String {
+    format!("{:.1} MB of {:.1} MB", done as f64 / MB, total as f64 / MB)
+}
+
+fn centered(p: &mut Painter, s: &str, cx: f32, y: f32, rgb: u32) {
+    let w = p.atlas.font.width_str(s);
+    p.text_str(s, (cx - w * 0.5).floor(), y, rgb, false);
 }
 
 fn button(p: &mut Painter, ctx: &ScreenCtx, x: f32, y: f32, label: &str) -> bool {
@@ -173,9 +171,10 @@ fn button(p: &mut Painter, ctx: &ScreenCtx, x: f32, y: f32, label: &str) -> bool
     };
     p.fill(x, y, BUTTON_W, BUTTON_H, face);
     p.outline(x, y, BUTTON_W, BUTTON_H, edge);
-    p.text_centered(
+    let w = p.atlas.font.width_str(label);
+    p.text_str(
         label,
-        x + BUTTON_W * 0.5,
+        (x + (BUTTON_W - w) * 0.5).floor(),
         (y + (BUTTON_H - 8.0) * 0.5).floor(),
         0xFFFFFF,
         false,
@@ -193,6 +192,14 @@ fn bar(p: &mut Painter, ctx: &ScreenCtx, y: f32, frac: f32) {
     }
     p.outline(x, y, w, BAR_H, 0xFF6E_6E7A);
 }
+
+struct Prepared {
+    block_atlas: Image,
+    block_tiles: std::collections::HashMap<String, u32>,
+    gui_atlas: crate::gui::atlas::GuiAtlas,
+}
+
+static PREPARED: Mutex<Option<Prepared>> = Mutex::new(None);
 
 static PREPARING: AtomicBool = AtomicBool::new(false);
 
@@ -218,9 +225,67 @@ fn build() {
         );
         return;
     }
-    crate::renderer::reload::install_downloaded();
+    let textures_dir = crate::textures_dir().to_string_lossy().into_owned();
+    let textures = crate::renderer::Textures::blocks(&textures_dir);
+    let (block_atlas, block_tiles) = crate::renderer::build_block_atlas(&textures, &textures_dir);
+    let gui_atlas = crate::gui::atlas::build_gui_atlas(&crate::assets_root());
+    *PREPARED.lock().unwrap() = Some(Prepared {
+        block_atlas,
+        block_tiles,
+        gui_atlas,
+    });
+    log_info!("assets", "atlases rebuilt from the installed set");
     #[cfg(target_arch = "wasm32")]
     if let Some(archive) = crate::client::assets::take_installed() {
         crate::client::mesh_worker::spawn(&archive);
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn adopt_downloaded_assets(
+    mut commands: Commands,
+    mut images: ResMut<Assets<Image>>,
+    mut standard: ResMut<Assets<StandardMaterial>>,
+    block: Option<Res<crate::renderer::systems::BlockAtlasHandle>>,
+    chunk: Option<Res<crate::renderer::systems::ChunkMaterial>>,
+    water: Option<Res<crate::renderer::systems::WaterMaterial>>,
+    gui: Option<ResMut<crate::gui::render::GuiAssets>>,
+    break_overlay: Option<Res<crate::renderer::overlays::BreakOverlay>>,
+    after: Res<crate::gui::render::AfterDownloadScreen>,
+    mut state: ResMut<GuiState>,
+) {
+    let Some(prepared) = PREPARED.lock().unwrap().take() else {
+        return;
+    };
+    let (Some(block), Some(chunk), Some(water), Some(mut gui)) = (block, chunk, water, gui) else {
+        *PREPARED.lock().unwrap() = Some(prepared);
+        return;
+    };
+
+    let rows = crate::renderer::atlas_rows(&prepared.block_atlas);
+    crate::TEXTURE_MAP.set(prepared.block_tiles.clone()).ok();
+    crate::ATLAS_ROWS.set(rows).ok();
+    commands.insert_resource(crate::renderer::systems::BlockTileMap(prepared.block_tiles));
+
+    if let Err(e) = images.insert(&block.0, prepared.block_atlas) {
+        log_warn!("assets", "the block atlas could not be replaced: {e}");
+    }
+    standard.get_mut(&chunk.0);
+    standard.get_mut(&water.0);
+    if let Some(overlay) = break_overlay.as_ref() {
+        standard.get_mut(&overlay.material);
+    }
+
+    let (image, unihex) = crate::gui::render::atlas_textures(&prepared.gui_atlas);
+    if let Err(e) = images.insert(&gui.image, image) {
+        log_warn!("assets", "the gui atlas could not be replaced: {e}");
+    }
+    if let Err(e) = images.insert(&gui.unihex_image, unihex) {
+        log_warn!("assets", "the unifont texture could not be replaced: {e}");
+    }
+    gui.atlas = std::sync::Arc::new(prepared.gui_atlas);
+
+    commands.insert_resource(crate::renderer::systems::AssetsReady);
+    state.screen = after.0;
+    log_info!("assets", "the downloaded set is live");
 }

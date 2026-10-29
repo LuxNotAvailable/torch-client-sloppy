@@ -11,6 +11,7 @@ use crate::items::model::{DisplayContext, DisplayTransforms};
 #[derive(Clone)]
 pub struct ItemGpu {
     pub mesh: Handle<Mesh>,
+    pub material: Handle<StandardMaterial>,
     pub texture: Handle<Image>,
     pub display: DisplayTransforms,
     pub bounds: (Vec3, Vec3),
@@ -29,90 +30,18 @@ impl ItemGpu {
 #[derive(Resource)]
 pub struct ItemAssets {
     builder: ItemMeshes,
-    built: HashMap<String, Built>,
+    built: HashMap<String, Option<ItemGpu>>,
     contextual: HashMap<String, bool>,
     using_sensitive: HashMap<String, bool>,
-}
-
-struct Built {
-    args: ItemArgs,
-    gpu: Option<ItemGpu>,
-}
-
-#[derive(Clone)]
-pub struct ItemArgs {
-    key: String,
-    id: String,
-    ctx: String,
-    using: bool,
-}
-
-pub struct ItemParts {
-    mesh: Mesh,
-    texture: Image,
-    display: DisplayTransforms,
-    bounds: (Vec3, Vec3),
 }
 
 impl ItemAssets {
     pub fn new() -> ItemAssets {
         ItemAssets {
-            builder: ItemMeshes::new(crate::blocks::registry().assets().clone()),
+            builder: ItemMeshes::new(crate::items::model::shared()),
             built: HashMap::new(),
             contextual: HashMap::new(),
             using_sensitive: HashMap::new(),
-        }
-    }
-
-    pub fn reload_args(&mut self) -> Vec<ItemArgs> {
-        self.built.retain(|_, built| built.gpu.is_some());
-        self.built
-            .values()
-            .map(|built| built.args.clone())
-            .collect()
-    }
-
-    pub fn rebuild(
-        builder: &ItemMeshes,
-        args: Vec<ItemArgs>,
-    ) -> Vec<(ItemArgs, Option<ItemParts>)> {
-        args.into_iter()
-            .map(|args| {
-                let parts = parts(builder, &args.id, &args.ctx, args.using);
-                (args, parts)
-            })
-            .collect()
-    }
-
-    pub fn adopt(
-        &mut self,
-        builder: ItemMeshes,
-        rebuilt: Vec<(ItemArgs, Option<ItemParts>)>,
-        meshes: &mut Assets<Mesh>,
-        images: &mut Assets<Image>,
-    ) {
-        self.builder = builder;
-        self.contextual.clear();
-        self.using_sensitive.clear();
-        for (args, parts) in rebuilt {
-            let Some(gpu) = self
-                .built
-                .get_mut(&args.key)
-                .and_then(|built| built.gpu.as_mut())
-            else {
-                continue;
-            };
-            match parts {
-                Some(parts) => {
-                    let _ = meshes.insert(&gpu.mesh, parts.mesh);
-                    let _ = images.insert(&gpu.texture, parts.texture);
-                    gpu.display = parts.display;
-                    gpu.bounds = parts.bounds;
-                }
-                None => {
-                    self.built.remove(&args.key);
-                }
-            }
         }
     }
 
@@ -127,6 +56,7 @@ impl ItemAssets {
         using: bool,
         meshes: &mut Assets<Mesh>,
         images: &mut Assets<Image>,
+        materials: &mut Assets<StandardMaterial>,
     ) -> Option<&ItemGpu> {
         if id.is_empty() {
             return None;
@@ -154,83 +84,91 @@ impl ItemAssets {
             (true, true) => Cow::Owned(format!("{id}@{ctx}@using")),
         };
         if !self.built.contains_key(key.as_ref()) {
-            let gpu = parts(&self.builder, id, ctx, using).map(|parts| ItemGpu {
-                mesh: meshes.add(parts.mesh),
-                texture: images.add(parts.texture),
-                display: parts.display,
-                bounds: parts.bounds,
-            });
-            let args = ItemArgs {
-                key: key.to_string(),
-                id: id.to_owned(),
-                ctx: ctx.to_owned(),
-                using,
-            };
-            self.built.insert(key.to_string(), Built { args, gpu });
+            let built = self.build(id, ctx, using, meshes, images, materials);
+            self.built.insert(key.to_string(), built);
         }
         self.built
             .get(key.as_ref())
-            .and_then(|built| built.gpu.as_ref())
-    }
-}
-
-fn parts(builder: &ItemMeshes, id: &str, ctx: &str, using: bool) -> Option<ItemParts> {
-    let built = builder.build(id, ctx, using)?;
-    if built.vertices.is_empty() {
-        return None;
+            .and_then(|entry| entry.as_ref())
     }
 
-    let texture = super::rgba_image(
-        built.image.width(),
-        built.image.height(),
-        built.image.into_raw(),
-        RenderAssetUsages::RENDER_WORLD,
-    );
+    fn build(
+        &self,
+        id: &str,
+        ctx: &str,
+        using: bool,
+        meshes: &mut Assets<Mesh>,
+        images: &mut Assets<Image>,
+        materials: &mut Assets<StandardMaterial>,
+    ) -> Option<ItemGpu> {
+        let built = self.builder.build(id, ctx, using)?;
+        if built.vertices.is_empty() {
+            return None;
+        }
 
-    let mut mesh = Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::RENDER_WORLD,
-    );
-    mesh.insert_attribute(
-        Mesh::ATTRIBUTE_POSITION,
-        built.vertices.iter().map(|v| v.pos).collect::<Vec<_>>(),
-    );
-    mesh.insert_attribute(
-        Mesh::ATTRIBUTE_UV_0,
-        built.vertices.iter().map(|v| v.uv).collect::<Vec<_>>(),
-    );
-    mesh.insert_attribute(
-        Mesh::ATTRIBUTE_NORMAL,
-        built.vertices.iter().map(|v| v.normal).collect::<Vec<_>>(),
-    );
-    mesh.insert_attribute(
-        Mesh::ATTRIBUTE_COLOR,
-        built
-            .vertices
-            .iter()
-            .map(|v| {
-                [
-                    crate::util::mth::srgb_to_linear(v.color[0]),
-                    crate::util::mth::srgb_to_linear(v.color[1]),
-                    crate::util::mth::srgb_to_linear(v.color[2]),
-                    1.0,
-                ]
-            })
-            .collect::<Vec<_>>(),
-    );
-    mesh.insert_indices(Indices::U32(built.indices));
+        let texture = images.add(super::rgba_image(
+            built.image.width(),
+            built.image.height(),
+            built.image.into_raw(),
+            RenderAssetUsages::RENDER_WORLD,
+        ));
 
-    let mut min = Vec3::splat(f32::INFINITY);
-    let mut max = Vec3::splat(f32::NEG_INFINITY);
-    for v in &built.vertices {
-        min = min.min(Vec3::from(v.pos));
-        max = max.max(Vec3::from(v.pos));
+        let material = materials.add(StandardMaterial {
+            base_color: Color::WHITE,
+            base_color_texture: Some(texture.clone()),
+            unlit: true,
+            alpha_mode: AlphaMode::Mask(0.1),
+            double_sided: true,
+            cull_mode: None,
+            ..default()
+        });
+
+        let mut mesh = Mesh::new(
+            PrimitiveTopology::TriangleList,
+            RenderAssetUsages::RENDER_WORLD,
+        );
+        mesh.insert_attribute(
+            Mesh::ATTRIBUTE_POSITION,
+            built.vertices.iter().map(|v| v.pos).collect::<Vec<_>>(),
+        );
+        mesh.insert_attribute(
+            Mesh::ATTRIBUTE_UV_0,
+            built.vertices.iter().map(|v| v.uv).collect::<Vec<_>>(),
+        );
+        mesh.insert_attribute(
+            Mesh::ATTRIBUTE_NORMAL,
+            built.vertices.iter().map(|v| v.normal).collect::<Vec<_>>(),
+        );
+        mesh.insert_attribute(
+            Mesh::ATTRIBUTE_COLOR,
+            built
+                .vertices
+                .iter()
+                .map(|v| {
+                    [
+                        crate::util::mth::srgb_to_linear(v.color[0]),
+                        crate::util::mth::srgb_to_linear(v.color[1]),
+                        crate::util::mth::srgb_to_linear(v.color[2]),
+                        1.0,
+                    ]
+                })
+                .collect::<Vec<_>>(),
+        );
+        mesh.insert_indices(Indices::U32(built.indices));
+
+        let mut min = Vec3::splat(f32::INFINITY);
+        let mut max = Vec3::splat(f32::NEG_INFINITY);
+        for v in &built.vertices {
+            min = min.min(Vec3::from(v.pos));
+            max = max.max(Vec3::from(v.pos));
+        }
+
+        Some(ItemGpu {
+            mesh: meshes.add(mesh),
+            material,
+            texture,
+            display: built.display,
+            bounds: (min, max),
+        })
     }
-
-    Some(ItemParts {
-        mesh,
-        texture,
-        display: built.display,
-        bounds: (min, max),
-    })
 }

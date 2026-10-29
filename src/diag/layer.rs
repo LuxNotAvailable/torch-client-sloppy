@@ -1,8 +1,10 @@
 use super::stats::{Stat, bump};
 
 pub fn custom_layers(_app: &mut bevy::app::App) -> Option<bevy::log::BoxedLayer> {
-    #[cfg_attr(not(feature = "profiling"), expect(unused_mut))]
+    #[cfg_attr(all(target_arch = "wasm32", not(feature = "profiling")), expect(unused_mut))]
     let mut layers: Vec<bevy::log::BoxedLayer> = vec![Box::new(DropCounter)];
+    #[cfg(not(target_arch = "wasm32"))]
+    layers.push(Box::new(crate::diag::logfile::FileLayer));
     #[cfg(feature = "profiling")]
     layers.extend(crate::diag::profiling::bridge_layer());
     Some(Box::new(layers))

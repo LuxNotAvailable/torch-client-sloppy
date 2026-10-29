@@ -3,7 +3,6 @@ use bevy::render::view::ExtractedView;
 
 use super::builtins::{BUILTINS, Builtin, Value};
 use super::{BlockHead, MatrixSet};
-use crate::renderer::hand::HAND_FOV_DEGREES;
 use crate::renderer::packdraw::inputs::{Inputs, MAX_ARMOR, MAX_HUNGER};
 use crate::shaderpack::directives::Constants;
 use crate::shaderpack::expressions::Smooth;
@@ -15,6 +14,8 @@ pub(crate) const NEAR: f32 = 0.05;
 const FAR_PLANE_PER_BLOCK: f32 = 4.0;
 
 const DAY_TICKS: f64 = 24000.0;
+
+const HAND_FOV_DEGREES: f32 = 70.0;
 
 const CAMERA_WALK_RANGE: f64 = 30000.0;
 const CAMERA_TP_RANGE: f64 = 1000.0;
@@ -60,6 +61,7 @@ pub(crate) struct History {
     unshifted_previous: Option<bevy::math::DVec3>,
     eye_brightness: [Smooth; 2],
     wetness: Smooth,
+    center_depth: Smooth,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -95,6 +97,7 @@ pub(crate) struct FrameValues {
     shadow_projection: Mat4,
     hand_projection: Mat4,
     eye_brightness_smooth: IVec2,
+    center_depth_smooth: f32,
     wetness: f32,
     inputs: Inputs,
 }
@@ -165,6 +168,12 @@ impl FrameValues {
             ) as i32
         });
 
+        let center_depth_smooth = history.center_depth.update(
+            crate::renderer::packdraw::center_depth::sample(),
+            constants.center_depth_half_life,
+            constants.center_depth_half_life,
+            frame_time,
+        );
         let shadow_model_view = shadow_model_view(shadow_angle, constants, camera);
         let shadow_projection = Mat4::orthographic_rh_gl(
             -constants.shadow_distance,
@@ -212,6 +221,7 @@ impl FrameValues {
             shadow_projection,
             hand_projection: hand_projection(size.x / size.y, far_plane),
             eye_brightness_smooth: IVec2::from(smooth_brightness),
+            center_depth_smooth,
             wetness,
             inputs,
         }
@@ -277,6 +287,7 @@ impl FrameValues {
             B::ThunderStrength => Value::Float(inputs.thunder),
             B::EyeBrightness => Value::IVec2(inputs.eye_light * 16),
             B::EyeBrightnessSmooth => Value::IVec2(self.eye_brightness_smooth),
+            B::CenterDepthSmooth => Value::Float(self.center_depth_smooth),
             B::IsEyeInWater => Value::Int(inputs.eye_in as i32),
             B::Blindness => Value::Float(inputs.blindness),
             B::NightVision => Value::Float(inputs.night_vision),
@@ -308,6 +319,29 @@ impl FrameValues {
             B::NoEntityColor => Value::Vec4(Vec4::ZERO),
             B::AtlasSize => Value::IVec2(inputs.atlas_size),
             B::Biome => Value::Int(inputs.biome.map_or(-1, i32::from)),
+            // Vanilla fogs terrain in a cylinder unless the eye is in a fluid.
+            B::FogShape => Value::Int(i32::from(inputs.eye_in == super::super::inputs::EyeIn::Air)),
+            // Vanilla's darkness pulse on the lightmap.
+            B::DarknessLightFactor => Value::Float(
+                (self.time_counter * 20.0 * std::f32::consts::PI * 0.025).cos().max(0.0)
+                    * 0.45
+                    * inputs.darkness,
+            ),
+            // Vanilla's fog is linear: GL_LINEAR.
+            B::FogMode => Value::Int(0x2601),
+            // Vanilla's cloud level; NaN where the dimension has no clouds.
+            B::CloudHeight => Value::Float(match crate::renderer::dimension::current() {
+                crate::renderer::dimension::Dimension::Overworld => {
+                    crate::renderer::timeline::CLOUD_HEIGHT
+                }
+                _ => f32::NAN,
+            }),
+            B::BiomeCategory => Value::Int(
+                inputs
+                    .biome
+                    .and_then(crate::util::biome_color::biome_name)
+                    .map_or(0, super::builtins::biome_category),
+            ),
             B::ShadowModelView => Value::Mat4(self.shadow_model_view),
             B::ShadowModelViewInverse => Value::Mat4(self.shadow_model_view_inverse),
             B::ShadowProjection => Value::Mat4(self.shadow_projection),

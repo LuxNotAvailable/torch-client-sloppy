@@ -15,50 +15,111 @@ const ACTION_INTERACT: i32 = 0;
 const ACTION_ATTACK: i32 = 1;
 
 pub(crate) struct Ids {
-    to_native: &'static Remap,
-    from_native: &'static Remap,
+    pub(super) to_native: &'static Remap,
+    pub(super) from_native: &'static Remap,
+    /// Carries what `to_native` produced on to azalea's own numbering, for a
+    /// hop whose native side is older than the version azalea speaks. Only
+    /// used to pick a payload shape, never written out.
+    kinds: Option<&'static Remap>,
+    /// Component patches change shape between versions, so each hop walks
+    /// them its own way.
+    pub(super) patch: PatchWalker,
 }
 
-type Rewrite = fn(&Ids, &[u8]) -> Option<Box<[u8]>>;
+pub(super) type PatchWalker = fn(&Ids, &mut Reader, &mut Vec<u8>) -> Option<()>;
 
-struct HopSpec {
-    wire: fn() -> &'static PacketTable,
-    to_native: fn() -> &'static Remap,
-    from_native: fn() -> &'static Remap,
-    inbound: &'static [(&'static str, Rewrite)],
-    outbound: &'static [(&'static str, &'static str, Rewrite)],
+impl Ids {
+    pub(super) fn kind(&self, space: IdSpace, native: i32) -> Option<i32> {
+        match self.kinds {
+            Some(kinds) => kinds.map(space, native),
+            None => Some(native),
+        }
+    }
+}
+
+/// What an inbound rewrite turned a frame into.
+pub(crate) enum Rewritten {
+    Body(Box<[u8]>),
+    /// Becomes the native packet named here.
+    As(&'static str, Box<[u8]>),
+    Drop,
+}
+
+pub(super) type Rewrite = fn(&Ids, &[u8]) -> Option<Rewritten>;
+pub(super) type OutRewrite = fn(&Ids, &[u8]) -> Option<Box<[u8]>>;
+
+/// Lifts a rewrite that only ever produces a new body.
+macro_rules! body {
+    ($f:path) => {
+        |ids: &Ids, body: &[u8]| $f(ids, body).map(Rewritten::Body)
+    };
+}
+pub(super) use body;
+
+pub(super) struct HopSpec {
+    pub(super) wire: fn() -> &'static PacketTable,
+    pub(super) native: fn() -> &'static PacketTable,
+    pub(super) to_native: fn() -> &'static Remap,
+    pub(super) from_native: fn() -> &'static Remap,
+    pub(super) kinds: Option<fn() -> &'static Remap>,
+    pub(super) patch: PatchWalker,
+    pub(super) inbound: &'static [(Phase, &'static str, Rewrite)],
+    pub(super) outbound: &'static [(Phase, &'static str, &'static str, OutRewrite)],
 }
 
 const V774: HopSpec = HopSpec {
     wire: PacketTable::v1_21_11,
-    to_native: Remap::to_native,
-    from_native: Remap::from_native,
+    native: PacketTable::v26_1,
+    to_native: Remap::v774_to_v775,
+    from_native: Remap::v775_to_v774,
+    kinds: Some(Remap::v775_to_v777),
+    patch: patch_774,
     inbound: &[
-        ("set_time", set_time),
-        ("level_chunk_with_light", level_chunk),
-        ("block_update", block_update),
-        ("section_blocks_update", section_blocks_update),
-        ("set_entity_data", entity_data),
-        ("container_set_content", container_set_content),
-        ("container_set_slot", container_set_slot),
-        ("set_cursor_item", set_cursor_item),
-        ("set_player_inventory", set_player_inventory),
-        ("set_equipment", set_equipment),
-        ("add_entity", add_entity),
-        ("block_event", block_event),
-        ("award_stats", award_stats),
-        ("level_event", level_event),
-        ("level_particles", level_particles),
-        ("explode", explode),
-        ("sound", sound),
-        ("sound_entity", sound),
-        ("update_recipes", update_recipes),
+        (Phase::Game, "set_time", body!(set_time)),
+        (Phase::Game, "level_chunk_with_light", body!(level_chunk)),
+        (Phase::Game, "block_update", body!(block_update)),
+        (
+            Phase::Game,
+            "section_blocks_update",
+            body!(section_blocks_update),
+        ),
+        (Phase::Game, "set_entity_data", body!(entity_data)),
+        (
+            Phase::Game,
+            "container_set_content",
+            body!(container_set_content),
+        ),
+        (Phase::Game, "container_set_slot", body!(container_set_slot)),
+        (Phase::Game, "set_cursor_item", body!(set_cursor_item)),
+        (
+            Phase::Game,
+            "set_player_inventory",
+            body!(set_player_inventory),
+        ),
+        (Phase::Game, "set_equipment", body!(set_equipment)),
+        (Phase::Game, "add_entity", body!(add_entity)),
+        (Phase::Game, "block_event", body!(block_event)),
+        (Phase::Game, "award_stats", body!(award_stats)),
+        (Phase::Game, "level_event", body!(level_event)),
+        (Phase::Game, "level_particles", body!(level_particles)),
+        (Phase::Game, "explode", body!(explode)),
+        (Phase::Game, "sound", body!(sound)),
+        (Phase::Game, "sound_entity", body!(sound)),
+        (Phase::Game, "update_recipes", body!(update_recipes)),
+        (Phase::Configuration, "update_tags", body!(update_tags)),
+        (Phase::Game, "update_tags", body!(update_tags)),
     ],
     outbound: &[
-        ("attack", "interact", attack),
-        ("interact", "interact", interact_use),
-        ("container_click", "container_click", container_click),
+        (Phase::Game, "attack", "interact", attack),
+        (Phase::Game, "interact", "interact", interact_use),
         (
+            Phase::Game,
+            "container_click",
+            "container_click",
+            container_click,
+        ),
+        (
+            Phase::Game,
             "set_creative_mode_slot",
             "set_creative_mode_slot",
             creative_slot,
@@ -66,15 +127,34 @@ const V774: HopSpec = HopSpec {
     ],
 };
 
+/// One phase's id maps and rewrites.
+struct PhaseHop {
+    /// Wire clientbound id to native id, `None` where native has no such packet.
+    inbound: Box<[Option<u32>]>,
+    /// Native serverbound id to wire id, `None` where the wire has no such packet.
+    outbound: Box<[Option<u32>]>,
+    inbound_rewrite: Box<[Option<Rewrite>]>,
+    outbound_rewrite: Box<[Option<(Option<u32>, OutRewrite)>]>,
+    /// Nothing in this phase moves or changes shape.
+    passthrough: bool,
+}
+
 pub(crate) struct Hop {
     ids: Ids,
     wire: &'static PacketTable,
     native: &'static PacketTable,
-    inbound_game: Box<[u32]>,
-    outbound_game: Box<[Option<u32>]>,
-    inbound_rewrite: Box<[Option<Rewrite>]>,
-    outbound_rewrite: Box<[Option<(Option<u32>, Rewrite)>]>,
+    phases: [PhaseHop; 5],
     trace: bool,
+}
+
+fn phase_of(phase: ConnectionProtocol) -> Phase {
+    match phase {
+        ConnectionProtocol::Handshake => Phase::Handshake,
+        ConnectionProtocol::Status => Phase::Status,
+        ConnectionProtocol::Login => Phase::Login,
+        ConnectionProtocol::Configuration => Phase::Configuration,
+        ConnectionProtocol::Game => Phase::Game,
+    }
 }
 
 impl Hop {
@@ -83,70 +163,99 @@ impl Hop {
         HOP.get_or_init(|| Hop::build(&V774))
     }
 
+    pub(crate) fn v775() -> &'static Hop {
+        static HOP: OnceLock<Hop> = OnceLock::new();
+        HOP.get_or_init(|| Hop::build(&super::v775::SPEC))
+    }
+
     fn build(spec: &HopSpec) -> Hop {
         let old = (spec.wire)();
-        let new = PacketTable::native();
-        let id = |dir, name: &str| {
-            new.id(Phase::Game, dir, name)
-                .unwrap_or_else(|| panic!("775 has no game packet {name}"))
-        };
+        let new = (spec.native)();
+        let phases = Phase::ALL.map(|phase| {
+            let inbound: Box<[Option<u32>]> = (0..old.count(phase, Direction::Clientbound))
+                .map(|wire| {
+                    let name = old
+                        .name_of(phase, Direction::Clientbound, wire as u32)
+                        .expect("in range");
+                    new.id(phase, Direction::Clientbound, name)
+                })
+                .collect();
+            let outbound: Box<[Option<u32>]> = (0..new.count(phase, Direction::Serverbound))
+                .map(|native| {
+                    let name = new
+                        .name_of(phase, Direction::Serverbound, native as u32)
+                        .expect("in range");
+                    old.id(phase, Direction::Serverbound, name)
+                })
+                .collect();
 
-        let inbound_game = (0..old.count(Phase::Game, Direction::Clientbound))
-            .map(|wire| {
-                let name = old
-                    .name_of(Phase::Game, Direction::Clientbound, wire as u32)
-                    .expect("in range");
-                id(Direction::Clientbound, name)
-            })
-            .collect();
-        let outbound_game = (0..new.count(Phase::Game, Direction::Serverbound))
-            .map(|native| {
-                let name = new
-                    .name_of(Phase::Game, Direction::Serverbound, native as u32)
-                    .expect("in range");
-                old.id(Phase::Game, Direction::Serverbound, name)
-            })
-            .collect();
+            let mut inbound_rewrite: Box<[Option<Rewrite>]> =
+                vec![None; new.count(phase, Direction::Clientbound)].into_boxed_slice();
+            for &(_, name, rewrite) in spec.inbound.iter().filter(|e| e.0 == phase) {
+                let native = new
+                    .id(phase, Direction::Clientbound, name)
+                    .unwrap_or_else(|| panic!("{phase:?} has no native clientbound {name}"));
+                assert!(
+                    inbound_rewrite[native as usize].replace(rewrite).is_none(),
+                    "{name} is rewritten inbound twice"
+                );
+            }
+            let mut outbound_rewrite: Box<[Option<(Option<u32>, OutRewrite)>]> =
+                vec![None; new.count(phase, Direction::Serverbound)].into_boxed_slice();
+            for &(_, name, wire_name, rewrite) in spec.outbound.iter().filter(|e| e.0 == phase) {
+                let native = new
+                    .id(phase, Direction::Serverbound, name)
+                    .unwrap_or_else(|| panic!("{phase:?} has no native serverbound {name}"));
+                let wire = old.id(phase, Direction::Serverbound, wire_name);
+                assert!(
+                    outbound_rewrite[native as usize]
+                        .replace((wire, rewrite))
+                        .is_none(),
+                    "{name} is rewritten outbound twice"
+                );
+            }
 
-        let mut inbound_rewrite: Box<[Option<Rewrite>]> =
-            vec![None; new.count(Phase::Game, Direction::Clientbound)].into_boxed_slice();
-        for &(name, rewrite) in spec.inbound {
-            let native = id(Direction::Clientbound, name) as usize;
-            assert!(
-                inbound_rewrite[native].replace(rewrite).is_none(),
-                "{name} is rewritten inbound twice"
-            );
-        }
-        let mut outbound_rewrite: Box<[Option<(Option<u32>, Rewrite)>]> =
-            vec![None; new.count(Phase::Game, Direction::Serverbound)].into_boxed_slice();
-        for &(name, wire_name, rewrite) in spec.outbound {
-            let native = id(Direction::Serverbound, name) as usize;
-            let wire = old.id(Phase::Game, Direction::Serverbound, wire_name);
-            assert!(
-                outbound_rewrite[native].replace((wire, rewrite)).is_none(),
-                "{name} is rewritten outbound twice"
-            );
-        }
+            let identity = |map: &[Option<u32>], other: usize| {
+                map.len() == other && map.iter().enumerate().all(|(i, id)| *id == Some(i as u32))
+            };
+            let passthrough = identity(&inbound, new.count(phase, Direction::Clientbound))
+                && identity(&outbound, old.count(phase, Direction::Serverbound))
+                && inbound_rewrite.iter().all(Option::is_none)
+                && outbound_rewrite.iter().all(Option::is_none);
+            PhaseHop {
+                inbound,
+                outbound,
+                inbound_rewrite,
+                outbound_rewrite,
+                passthrough,
+            }
+        });
 
         Hop {
             ids: Ids {
                 to_native: (spec.to_native)(),
                 from_native: (spec.from_native)(),
+                kinds: spec.kinds.map(|kinds| kinds()),
+                patch: spec.patch,
             },
             wire: old,
             native: new,
-            inbound_game,
-            outbound_game,
-            inbound_rewrite,
-            outbound_rewrite,
+            phases,
             trace: crate::diag::debug_on("proto"),
         }
     }
 
+    #[cfg(test)]
+    pub(super) fn ids(&self) -> &Ids {
+        &self.ids
+    }
+
     pub(crate) fn inbound(&self, phase: ConnectionProtocol, raw: Box<[u8]>) -> Box<[u8]> {
-        if phase != ConnectionProtocol::Game {
+        let key = phase_of(phase);
+        let hop = &self.phases[key as usize];
+        if hop.passthrough {
             if self.trace {
-                passed_through("in", phase, &raw);
+                passed_through(self.native, "in", key, &raw);
             }
             return raw;
         }
@@ -154,38 +263,47 @@ impl Hop {
         let Some(wire_id) = r.varint().and_then(|id| u32::try_from(id).ok()) else {
             return raw;
         };
-        let Some(&native_id) = self.inbound_game.get(wire_id as usize) else {
+        let Some(&slot) = hop.inbound.get(wire_id as usize) else {
             return raw;
+        };
+        let Some(native_id) = slot else {
+            if self.trace {
+                self.trace_frame("in", key, Direction::Clientbound, wire_id, None, false);
+            }
+            return Box::new([]);
         };
         let body = r.rest();
 
-        let rewritten = self
+        let rewritten = hop
             .inbound_rewrite
             .get(native_id as usize)
             .copied()
             .flatten()
             .and_then(|rewrite| rewrite(&self.ids, body));
 
+        let target = match &rewritten {
+            Some(Rewritten::Body(_)) | None => Some(native_id),
+            Some(Rewritten::As(name, _)) => self.native.id(key, Direction::Clientbound, name),
+            Some(Rewritten::Drop) => None,
+        };
         if self.trace {
-            self.trace_frame(
-                "in",
-                Direction::Clientbound,
-                wire_id,
-                Some(native_id),
-                rewritten.is_some(),
-            );
+            let rewrote = rewritten.is_some();
+            self.trace_frame("in", key, Direction::Clientbound, wire_id, target, rewrote);
         }
-        match rewritten {
-            Some(body) => frame(native_id, &body),
-            None if native_id != wire_id => frame(native_id, body),
-            None => raw,
+        match (rewritten, target) {
+            (Some(Rewritten::Body(body) | Rewritten::As(_, body)), Some(id)) => frame(id, &body),
+            (Some(_), _) => Box::new([]),
+            (None, _) if native_id != wire_id => frame(native_id, body),
+            (None, _) => raw,
         }
     }
 
     pub(crate) fn outbound(&self, phase: ConnectionProtocol, raw: Box<[u8]>) -> Box<[u8]> {
-        if phase != ConnectionProtocol::Game {
+        let key = phase_of(phase);
+        let hop = &self.phases[key as usize];
+        if hop.passthrough {
             if self.trace {
-                passed_through("out", phase, &raw);
+                passed_through(self.native, "out", key, &raw);
             }
             return raw;
         }
@@ -195,11 +313,12 @@ impl Hop {
         };
         let body = r.rest();
 
-        if let Some(&Some((wire_id, rewrite))) = self.outbound_rewrite.get(native_id as usize) {
+        if let Some(&Some((wire_id, rewrite))) = hop.outbound_rewrite.get(native_id as usize) {
             let body = rewrite(&self.ids, body);
             if self.trace {
                 self.trace_frame(
                     "out",
+                    key,
                     Direction::Serverbound,
                     native_id,
                     wire_id.filter(|_| body.is_some()),
@@ -212,13 +331,16 @@ impl Hop {
             };
         }
 
-        let wire_id = self
-            .outbound_game
-            .get(native_id as usize)
-            .copied()
-            .flatten();
+        let wire_id = hop.outbound.get(native_id as usize).copied().flatten();
         if self.trace {
-            self.trace_frame("out", Direction::Serverbound, native_id, wire_id, false);
+            self.trace_frame(
+                "out",
+                key,
+                Direction::Serverbound,
+                native_id,
+                wire_id,
+                false,
+            );
         }
         match wire_id {
             Some(wire_id) if wire_id != native_id => frame(wire_id, body),
@@ -227,35 +349,38 @@ impl Hop {
         }
     }
 
-    fn trace_frame(&self, way: &str, dir: Direction, from: u32, to: Option<u32>, body: bool) {
+    fn trace_frame(
+        &self,
+        way: &str,
+        phase: Phase,
+        dir: Direction,
+        from: u32,
+        to: Option<u32>,
+        body: bool,
+    ) {
         let (from_table, to_table) = match dir {
             Direction::Clientbound => (self.wire, self.native),
             Direction::Serverbound => (self.native, self.wire),
         };
         let name = |table: &PacketTable, id: Option<u32>| match id {
             Some(id) => table
-                .name_of(Phase::Game, dir, id)
+                .name_of(phase, dir, id)
                 .map_or_else(|| format!("?{id}"), |name| format!("{name}({id})")),
             None => "suppressed".to_owned(),
         };
         crate::log_debug!(
             "proto",
-            "{way} {} -> {}{}",
+            "{way} {phase:?} {} -> {}{} ({} -> {})",
             name(from_table, Some(from)),
             name(to_table, to),
-            if body { " +body" } else { "" }
+            if body { " +body" } else { "" },
+            from_table.version().protocol,
+            to_table.version().protocol,
         );
     }
 }
 
-fn passed_through(way: &str, phase: ConnectionProtocol, raw: &[u8]) {
-    let phase_key = match phase {
-        ConnectionProtocol::Handshake => Phase::Handshake,
-        ConnectionProtocol::Status => Phase::Status,
-        ConnectionProtocol::Login => Phase::Login,
-        ConnectionProtocol::Configuration => Phase::Configuration,
-        ConnectionProtocol::Game => Phase::Game,
-    };
+fn passed_through(native: &PacketTable, way: &str, phase: Phase, raw: &[u8]) {
     let dir = if way == "in" {
         Direction::Clientbound
     } else {
@@ -264,39 +389,53 @@ fn passed_through(way: &str, phase: ConnectionProtocol, raw: &[u8]) {
     let id = Reader::new(raw).varint().unwrap_or(-1);
     let name = u32::try_from(id)
         .ok()
-        .and_then(|id| PacketTable::native().name_of(phase_key, dir, id))
+        .and_then(|id| native.name_of(phase, dir, id))
         .unwrap_or("?");
     crate::log_debug!("proto", "{way} {phase:?} {name}({id}) passed through");
 }
 
+/// The hops from the server's version up to azalea's, applied in order on the
+/// way in and in reverse on the way out.
 pub(crate) struct Translator {
-    hop: &'static Hop,
+    hops: &'static [&'static Hop],
 }
 
 impl Translator {
-    pub(crate) fn v774() -> Self {
-        Self { hop: Hop::v774() }
-    }
-
     pub(crate) fn for_protocol(protocol: i32) -> Option<Self> {
-        match protocol {
-            774 => Some(Self::v774()),
-            _ => None,
-        }
+        static V775: OnceLock<[&'static Hop; 1]> = OnceLock::new();
+        static V774: OnceLock<[&'static Hop; 2]> = OnceLock::new();
+        let hops: &'static [&'static Hop] = match protocol {
+            775 => V775.get_or_init(|| [Hop::v775()]),
+            774 => V774.get_or_init(|| [Hop::v774(), Hop::v775()]),
+            _ => return None,
+        };
+        Some(Self { hops })
     }
 }
 
 impl azalea::connection::PacketTranslator for Translator {
-    fn inbound(&mut self, phase: ConnectionProtocol, raw: Box<[u8]>) -> Box<[u8]> {
-        self.hop.inbound(phase, raw)
+    fn inbound(&mut self, phase: ConnectionProtocol, mut raw: Box<[u8]>) -> Box<[u8]> {
+        for hop in self.hops {
+            if raw.is_empty() {
+                break;
+            }
+            raw = hop.inbound(phase, raw);
+        }
+        raw
     }
 
-    fn outbound(&mut self, phase: ConnectionProtocol, raw: Box<[u8]>) -> Box<[u8]> {
-        self.hop.outbound(phase, raw)
+    fn outbound(&mut self, phase: ConnectionProtocol, mut raw: Box<[u8]>) -> Box<[u8]> {
+        for hop in self.hops.iter().rev() {
+            if raw.is_empty() {
+                break;
+            }
+            raw = hop.outbound(phase, raw);
+        }
+        raw
     }
 }
 
-fn frame(id: u32, body: &[u8]) -> Box<[u8]> {
+pub(super) fn frame(id: u32, body: &[u8]) -> Box<[u8]> {
     let mut out = Vec::with_capacity(varint_len(id as i32) + body.len());
     write_varint(&mut out, id as i32);
     out.extend_from_slice(body);
@@ -352,15 +491,15 @@ fn interact_use(_ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     interact(body, false)
 }
 
-fn state(ids: &Ids, id: i32) -> Option<i32> {
+pub(super) fn state(ids: &Ids, id: i32) -> Option<i32> {
     ids.to_native.map(IdSpace::BlockState, id)
 }
 
-fn block(ids: &Ids, id: i32) -> Option<i32> {
+pub(super) fn block(ids: &Ids, id: i32) -> Option<i32> {
     ids.to_native.map(IdSpace::Block, id)
 }
 
-fn skip_lp_vec3(r: &mut Reader) -> Option<()> {
+pub(super) fn skip_lp_vec3(r: &mut Reader) -> Option<()> {
     let flags = r.u8()?;
     if flags != 0 {
         r.take(5)?;
@@ -371,7 +510,7 @@ fn skip_lp_vec3(r: &mut Reader) -> Option<()> {
     Some(())
 }
 
-fn copy_payload(
+pub(super) fn copy_payload(
     r: &mut Reader,
     out: &mut Vec<u8>,
     probe: &mut Vec<u8>,
@@ -393,11 +532,17 @@ fn copy_payload(
     Some(())
 }
 
-fn particle(ids: &Ids, r: &mut Reader, out: &mut Vec<u8>, probe: &mut Vec<u8>) -> Option<()> {
+pub(super) fn particle(
+    ids: &Ids,
+    r: &mut Reader,
+    out: &mut Vec<u8>,
+    probe: &mut Vec<u8>,
+) -> Option<()> {
     let native = ids.to_native.map(IdSpace::ParticleType, r.varint()?)?;
     write_varint(out, native);
+    let kind = ids.kind(IdSpace::ParticleType, native)?;
 
-    match ParticleKind::from_u32(u32::try_from(native).ok()?)? {
+    match ParticleKind::from_u32(u32::try_from(kind).ok()?)? {
         ParticleKind::Block
         | ParticleKind::BlockMarker
         | ParticleKind::FallingDust
@@ -406,15 +551,15 @@ fn particle(ids: &Ids, r: &mut Reader, out: &mut Vec<u8>, probe: &mut Vec<u8>) -
             let id = state(ids, r.varint()?)?;
             write_varint(out, id);
         }
-        ParticleKind::Item => item_stack(ids, r, out)?,
-        _ => copy_payload(r, out, probe, native, |cursor| {
+        ParticleKind::Item => template(ids, r, out)?,
+        _ => copy_payload(r, out, probe, kind, |cursor| {
             azalea::entity::particle::Particle::azalea_read(cursor).is_ok()
         })?,
     }
     Some(())
 }
 
-fn sound_holder(ids: &Ids, r: &mut Reader, out: &mut Vec<u8>) -> Option<()> {
+pub(super) fn sound_holder(ids: &Ids, r: &mut Reader, out: &mut Vec<u8>) -> Option<()> {
     let raw = r.varint()?;
     if raw == 0 {
         write_varint(out, 0);
@@ -439,43 +584,156 @@ const SERIALIZER_OPTIONAL_BLOCK_STATE: i32 = 15;
 const SERIALIZER_PARTICLE: i32 = 16;
 const SERIALIZER_PARTICLES: i32 = 17;
 
-fn item_stack(ids: &Ids, r: &mut Reader, out: &mut Vec<u8>) -> Option<()> {
+/// The slot layout: a count, then the item and its patch when not empty.
+pub(super) fn item_stack(ids: &Ids, r: &mut Reader, out: &mut Vec<u8>) -> Option<()> {
     let count = r.varint()?;
     write_varint(out, count);
     if count <= 0 {
         return Some(());
     }
-    let item = ids.to_native.map(IdSpace::Item, r.varint()?)?;
-    write_varint(out, item);
+    item(ids, r, out)?;
+    (ids.patch)(ids, r, out)
+}
 
+/// The `ItemStackTemplate` layout nested stacks use: item, count, patch.
+pub(super) fn template(ids: &Ids, r: &mut Reader, out: &mut Vec<u8>) -> Option<()> {
+    item(ids, r, out)?;
+    write_varint(out, r.varint()?);
+    (ids.patch)(ids, r, out)
+}
+
+/// 26.1 component ids whose payload azalea can no longer read: the first two
+/// were removed in 26.3 and the last changed shape.
+pub(super) const MAP_COLOR_775: i32 = 45;
+pub(super) const SWING_ANIMATION_775: i32 = 40;
+pub(super) const POT_DECORATIONS_775: i32 = 74;
+
+fn patch_774(ids: &Ids, r: &mut Reader, out: &mut Vec<u8>) -> Option<()> {
     let with_payload = r.count()?;
     let without = r.count()?;
     write_varint(out, with_payload as i32);
     write_varint(out, without as i32);
 
     for _ in 0..with_payload {
-        let kind = component(ids, r, out)?;
-        let mut cursor = std::io::Cursor::new(r.rest());
-        let mut value =
-            azalea_inventory::components::DataComponentUnion::azalea_read_as(kind, &mut cursor)
-                .ok()?;
-        unsafe { value.drop_as(kind) };
-        let length = usize::try_from(cursor.position()).ok()?;
-        out.extend_from_slice(r.take(length)?);
+        let native = ids.to_native.map(IdSpace::DataComponentType, r.varint()?)?;
+        write_varint(out, native);
+        match native {
+            MAP_COLOR_775 => out.extend_from_slice(r.take(4)?),
+            SWING_ANIMATION_775 => {
+                write_varint(out, r.varint()?);
+                write_varint(out, r.varint()?);
+            }
+            POT_DECORATIONS_775 => {
+                let sides = r.count()?;
+                write_varint(out, sides as i32);
+                for _ in 0..sides {
+                    item(ids, r, out)?;
+                }
+            }
+            _ => {
+                let kind = ids.kind(IdSpace::DataComponentType, native)?;
+                let kind = DataComponentKind::from_u32(u32::try_from(kind).ok()?)?;
+                component_payload(ids, kind, r, out)?;
+            }
+        }
     }
     for _ in 0..without {
-        component(ids, r, out)?;
+        let native = ids.to_native.map(IdSpace::DataComponentType, r.varint()?)?;
+        write_varint(out, native);
     }
     Some(())
 }
 
-fn component(ids: &Ids, r: &mut Reader, out: &mut Vec<u8>) -> Option<DataComponentKind> {
-    let id = ids.to_native.map(IdSpace::DataComponentType, r.varint()?)?;
-    write_varint(out, id);
-    DataComponentKind::from_u32(u32::try_from(id).ok()?)
+/// Copies a payload both sides lay out alike, walking the stacks that
+/// container-like components hold so their item ids move too.
+pub(super) fn component_payload(
+    ids: &Ids,
+    kind: DataComponentKind,
+    r: &mut Reader,
+    out: &mut Vec<u8>,
+) -> Option<()> {
+    match kind {
+        DataComponentKind::Container => {
+            let slots = r.count()?;
+            write_varint(out, slots as i32);
+            for _ in 0..slots {
+                let present = r.u8()?;
+                out.push(present);
+                if present != 0 {
+                    template(ids, r, out)?;
+                }
+            }
+        }
+        DataComponentKind::BundleContents | DataComponentKind::ChargedProjectiles => {
+            let stacks = r.count()?;
+            write_varint(out, stacks as i32);
+            for _ in 0..stacks {
+                template(ids, r, out)?;
+            }
+        }
+        DataComponentKind::UseRemainder => template(ids, r, out)?,
+        _ => {
+            let mut cursor = std::io::Cursor::new(r.rest());
+            let mut value =
+                azalea_inventory::components::DataComponentUnion::azalea_read_as(kind, &mut cursor)
+                    .ok()?;
+            unsafe { value.drop_as(kind) };
+            let length = usize::try_from(cursor.position()).ok()?;
+            out.extend_from_slice(r.take(length)?);
+        }
+    }
+    Some(())
 }
 
-fn entity_data(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
+/// Tags name their entries by id, and the registries tags cover most are the
+/// ones that shift between versions. An entry with no counterpart is left out.
+pub(super) fn update_tags(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
+    let mut r = Reader::new(body);
+    let mut out = Vec::with_capacity(body.len());
+    let registries = r.count()?;
+    write_varint(&mut out, registries as i32);
+    for _ in 0..registries {
+        let name_len = r.count()?;
+        let name = r.take(name_len)?;
+        write_varint(&mut out, name_len as i32);
+        out.extend_from_slice(name);
+        let space = match name.strip_prefix(b"minecraft:").unwrap_or(name) {
+            b"block" => Some(IdSpace::Block),
+            b"item" => Some(IdSpace::Item),
+            b"entity_type" => Some(IdSpace::EntityType),
+            b"game_event" => Some(IdSpace::GameEvent),
+            b"block_entity_type" => Some(IdSpace::BlockEntityType),
+            b"mob_effect" => Some(IdSpace::MobEffect),
+            b"potion" => Some(IdSpace::Potion),
+            b"attribute" => Some(IdSpace::Attribute),
+            b"particle_type" => Some(IdSpace::ParticleType),
+            b"sound_event" => Some(IdSpace::SoundEvent),
+            b"data_component_type" => Some(IdSpace::DataComponentType),
+            _ => None,
+        };
+        let tags = r.count()?;
+        write_varint(&mut out, tags as i32);
+        for _ in 0..tags {
+            identifier(&mut r, &mut out)?;
+            let entries = r.count()?;
+            let mut moved = Vec::with_capacity(entries);
+            for _ in 0..entries {
+                let id = r.varint()?;
+                match space {
+                    Some(space) => moved.extend(ids.to_native.map(space, id)),
+                    None => moved.push(id),
+                }
+            }
+            write_varint(&mut out, moved.len() as i32);
+            for id in moved {
+                write_varint(&mut out, id);
+            }
+        }
+    }
+    (r.remaining() == 0).then(|| out.into_boxed_slice())
+}
+
+pub(super) fn entity_data(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     let mut r = Reader::new(body);
     let mut out = Vec::with_capacity(body.len() + 8);
     write_varint(&mut out, r.varint()?);
@@ -517,13 +775,14 @@ fn entity_data(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
             _ => {}
         }
 
-        copy_payload(&mut r, &mut out, &mut probe, serializer, |cursor| {
+        let kind = ids.kind(IdSpace::EntityDataSerializer, serializer)?;
+        copy_payload(&mut r, &mut out, &mut probe, kind, |cursor| {
             azalea::entity::EntityDataValue::azalea_read(cursor).is_ok()
         })?;
     }
 }
 
-fn stacks(
+pub(super) fn stacks(
     ids: &Ids,
     body: &[u8],
     header: usize,
@@ -551,15 +810,15 @@ fn stacks(
     Some(out.into_boxed_slice())
 }
 
-fn container_set_content(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
+pub(super) fn container_set_content(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     stacks(ids, body, 2, true, 1)
 }
 
-fn set_cursor_item(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
+pub(super) fn set_cursor_item(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     stacks(ids, body, 0, false, 0)
 }
 
-fn set_player_inventory(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
+pub(super) fn set_player_inventory(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     stacks(ids, body, 1, false, 0)
 }
 
@@ -597,20 +856,20 @@ fn update_recipes(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     (r.remaining() == 0).then(|| out.into_boxed_slice())
 }
 
-fn identifier(r: &mut Reader, out: &mut Vec<u8>) -> Option<()> {
+pub(super) fn identifier(r: &mut Reader, out: &mut Vec<u8>) -> Option<()> {
     let len = r.count()?;
     write_varint(out, len as i32);
     out.extend_from_slice(r.take(len)?);
     Some(())
 }
 
-fn item(ids: &Ids, r: &mut Reader, out: &mut Vec<u8>) -> Option<()> {
+pub(super) fn item(ids: &Ids, r: &mut Reader, out: &mut Vec<u8>) -> Option<()> {
     let id = ids.to_native.map(IdSpace::Item, r.varint()?)?;
     write_varint(out, id);
     Some(())
 }
 
-fn ingredient(ids: &Ids, r: &mut Reader, out: &mut Vec<u8>) -> Option<()> {
+pub(super) fn ingredient(ids: &Ids, r: &mut Reader, out: &mut Vec<u8>) -> Option<()> {
     let size = r.count()?;
     write_varint(out, size as i32);
     if size == 0 {
@@ -666,7 +925,7 @@ fn slot_display(ids: &Ids, r: &mut Reader, out: &mut Vec<u8>) -> Option<()> {
     Some(())
 }
 
-fn container_set_slot(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
+pub(super) fn container_set_slot(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     let mut r = Reader::new(body);
     let mut out = Vec::with_capacity(body.len() + 4);
     write_varint(&mut out, r.varint()?);
@@ -676,7 +935,7 @@ fn container_set_slot(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     Some(out.into_boxed_slice())
 }
 
-fn set_equipment(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
+pub(super) fn set_equipment(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     let mut r = Reader::new(body);
     let mut out = Vec::with_capacity(body.len() + 8);
     write_varint(&mut out, r.varint()?);
@@ -690,7 +949,7 @@ fn set_equipment(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     }
 }
 
-fn hashed_stack(ids: &Ids, r: &mut Reader, out: &mut Vec<u8>) -> Option<bool> {
+pub(super) fn hashed_stack(ids: &Ids, r: &mut Reader, out: &mut Vec<u8>) -> Option<bool> {
     let present = r.u8()?;
     out.push(present);
     if present == 0 {
@@ -714,13 +973,13 @@ fn hashed_stack(ids: &Ids, r: &mut Reader, out: &mut Vec<u8>) -> Option<bool> {
     Some(ok)
 }
 
-fn back(ids: &Ids, space: IdSpace, raw: i32, out: &mut Vec<u8>, ok: &mut bool) {
+pub(super) fn back(ids: &Ids, space: IdSpace, raw: i32, out: &mut Vec<u8>, ok: &mut bool) {
     let id = ids.from_native.map(space, raw);
     *ok &= id.is_some();
     write_varint(out, id.unwrap_or_default());
 }
 
-fn container_click(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
+pub(super) fn container_click(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     let mut r = Reader::new(body);
     let mut out = Vec::with_capacity(body.len());
     write_varint(&mut out, r.varint()?);
@@ -750,7 +1009,7 @@ fn container_click(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     Some(out.into_boxed_slice())
 }
 
-fn creative_slot(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
+pub(super) fn creative_slot(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     let mut r = Reader::new(body);
     let mut out = Vec::with_capacity(body.len() + 4);
     out.extend_from_slice(r.take(2)?);
@@ -803,7 +1062,7 @@ fn level_particles(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     Some(out.into_boxed_slice())
 }
 
-fn explode(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
+pub(super) fn explode(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     let mut r = Reader::new(body);
     let mut out = Vec::with_capacity(body.len() + 8);
     out.extend_from_slice(r.take(3 * 8 + 4 + 4)?);
@@ -827,7 +1086,7 @@ fn explode(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     Some(out.into_boxed_slice())
 }
 
-fn sound(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
+pub(super) fn sound(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     let mut r = Reader::new(body);
     let mut out = Vec::with_capacity(body.len() + 2);
     sound_holder(ids, &mut r, &mut out)?;
@@ -835,7 +1094,7 @@ fn sound(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     Some(out.into_boxed_slice())
 }
 
-fn block_event(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
+pub(super) fn block_event(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     let mut r = Reader::new(body);
     let mut out = Vec::with_capacity(body.len() + 1);
     out.extend_from_slice(r.take(8 + 1 + 1)?);
@@ -847,7 +1106,7 @@ fn block_event(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
 const STAT_MINED: i32 = 0;
 const STAT_DROPPED: i32 = 5;
 
-fn award_stats(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
+pub(super) fn award_stats(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     let mut r = Reader::new(body);
     let count = r.count()?;
     let mut out = Vec::with_capacity(body.len() + count);
@@ -873,7 +1132,8 @@ fn add_entity(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     let mut r = Reader::new(body);
     r.varint()?;
     r.take(16)?;
-    if r.varint()? != EntityKind::FallingBlock.to_u32() as i32 {
+    let native = ids.to_native.map(IdSpace::EntityType, r.varint()?)?;
+    if ids.kind(IdSpace::EntityType, native)? != EntityKind::FallingBlock.to_u32() as i32 {
         return None;
     }
     r.take(3 * 8)?;
@@ -891,7 +1151,7 @@ fn add_entity(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
 const LEVEL_EVENT_DESTROY_BLOCK: u32 = 2001;
 const LEVEL_EVENT_BRUSH_COMPLETE: u32 = 3008;
 
-fn level_event(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
+pub(super) fn level_event(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     let mut r = Reader::new(body);
     let event = r.take(4)?;
     let kind = u32::from_be_bytes(event.try_into().ok()?);
@@ -909,7 +1169,7 @@ fn level_event(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     Some(out.into_boxed_slice())
 }
 
-fn block_update(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
+pub(super) fn block_update(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     let mut r = Reader::new(body);
     let pos = r.take(8)?;
     let id = state(ids, r.varint()?)?;
@@ -919,7 +1179,7 @@ fn block_update(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     Some(out.into_boxed_slice())
 }
 
-fn section_blocks_update(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
+pub(super) fn section_blocks_update(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     let mut r = Reader::new(body);
     let section = r.take(8)?;
     let count = r.count()?;
@@ -991,14 +1251,14 @@ fn rewrite_level_chunk(ids: &Ids, body: &[u8]) -> Result<Box<[u8]>, String> {
 }
 
 #[derive(Debug)]
-enum Bail {
+pub(super) enum Bail {
     Short,
     NoTarget(i32),
     TooWide { id: i32, bits: u8 },
 }
 
 #[derive(Debug)]
-struct Failure {
+pub(super) struct Failure {
     bail: Bail,
     section: usize,
     part: &'static str,
@@ -1015,23 +1275,37 @@ impl fmt::Display for Failure {
         match self.bail {
             Bail::Short => write!(f, "the blob ended early"),
             Bail::NoTarget(id) => {
-                write!(f, "774 block state {id} has no 775 id")
+                write!(
+                    f,
+                    "block state {id} has no counterpart in the newer version"
+                )
             }
             Bail::TooWide { id, bits } => write!(
                 f,
-                "774 block state {id} moved to an id too wide for the {bits}-bit \
+                "block state {id} moved to an id too wide for the {bits}-bit \
                  container the server packed"
             ),
         }
     }
 }
 
-fn sections(ids: &Ids, blob: &[u8]) -> Result<Vec<u8>, Failure> {
+pub(super) fn sections(ids: &Ids, blob: &[u8]) -> Result<Vec<u8>, Failure> {
+    remap_sections(ids, blob, false)
+}
+
+/// Rewrites every section's block states. A wire older than 26.1 has no fluid
+/// count, so one is added.
+pub(super) fn remap_sections(
+    ids: &Ids,
+    blob: &[u8],
+    fluid_count_on_wire: bool,
+) -> Result<Vec<u8>, Failure> {
+    let counts = if fluid_count_on_wire { 4 } else { 2 };
     let mut r = Reader::new(blob);
     let mut out = Vec::with_capacity(blob.len() + 64);
     let mut section = 0;
     while r.remaining() > 0 {
-        let Some(count) = r.take(2) else {
+        let Some(count) = r.take(counts) else {
             let bail = Bail::Short;
             return Err(Failure {
                 bail,
@@ -1041,7 +1315,9 @@ fn sections(ids: &Ids, blob: &[u8]) -> Result<Vec<u8>, Failure> {
             });
         };
         out.extend_from_slice(count);
-        out.extend_from_slice(&[0, 0]);
+        if !fluid_count_on_wire {
+            out.extend_from_slice(&[0, 0]);
+        }
         if let Err(bail) = container(
             ids,
             &mut r,
@@ -1077,7 +1353,7 @@ fn sections(ids: &Ids, blob: &[u8]) -> Result<Vec<u8>, Failure> {
     Ok(out)
 }
 
-fn container(
+pub(super) fn container(
     ids: &Ids,
     r: &mut Reader,
     out: &mut Vec<u8>,
@@ -1086,7 +1362,15 @@ fn container(
     remap: bool,
 ) -> Result<(), Bail> {
     let bits = r.u8().ok_or(Bail::Short)?;
-    out.push(bits);
+    let direct = bits > indirect_max && remap;
+    // A direct container is read at the width of the reader's own registry,
+    // which is wider than the server's once enough states were added.
+    let out_bits = if direct {
+        bits.max(native_state_bits(ids))
+    } else {
+        bits
+    };
+    out.push(out_bits);
 
     let id = |r: &mut Reader, out: &mut Vec<u8>| -> Result<(), Bail> {
         let raw = r.varint().ok_or(Bail::Short)?;
@@ -1117,32 +1401,54 @@ fn container(
         .take(longs.checked_mul(8).ok_or(Bail::Short)?)
         .ok_or(Bail::Short)?;
 
-    if bits > indirect_max && remap {
-        let mask = (1u64 << bits) - 1;
-        let mut index = 0;
-        for word in packed.chunks_exact(8) {
-            let word = u64::from_be_bytes(word.try_into().map_err(|_| Bail::Short)?);
-            let mut rewritten = 0u64;
-            for slot in 0..per_long {
-                if index >= size {
-                    break;
-                }
-                let raw = i32::try_from((word >> (slot * usize::from(bits))) & mask)
-                    .map_err(|_| Bail::Short)?;
-                let moved = state(ids, raw).ok_or(Bail::NoTarget(raw))?;
-                let moved = u64::try_from(moved).map_err(|_| Bail::TooWide { id: raw, bits })?;
-                if moved > mask {
-                    return Err(Bail::TooWide { id: raw, bits });
-                }
-                rewritten |= moved << (slot * usize::from(bits));
-                index += 1;
-            }
-            out.extend_from_slice(&rewritten.to_be_bytes());
-        }
-    } else {
+    if !direct {
         out.extend_from_slice(packed);
+        return Ok(());
+    }
+
+    let mask = (1u64 << bits) - 1;
+    let out_mask = (1u64 << out_bits) - 1;
+    let out_per_long = 64 / usize::from(out_bits);
+    let mut word_out = 0u64;
+    let mut filled = 0;
+    let mut index = 0;
+    for word in packed.chunks_exact(8) {
+        let word = u64::from_be_bytes(word.try_into().map_err(|_| Bail::Short)?);
+        for slot in 0..per_long {
+            if index >= size {
+                break;
+            }
+            let raw = i32::try_from((word >> (slot * usize::from(bits))) & mask)
+                .map_err(|_| Bail::Short)?;
+            let moved = state(ids, raw).ok_or(Bail::NoTarget(raw))?;
+            let moved = u64::try_from(moved).map_err(|_| Bail::TooWide { id: raw, bits })?;
+            if moved > out_mask {
+                return Err(Bail::TooWide {
+                    id: raw,
+                    bits: out_bits,
+                });
+            }
+            word_out |= moved << (filled * usize::from(out_bits));
+            filled += 1;
+            if filled == out_per_long {
+                out.extend_from_slice(&word_out.to_be_bytes());
+                word_out = 0;
+                filled = 0;
+            }
+            index += 1;
+        }
+    }
+    if filled > 0 {
+        out.extend_from_slice(&word_out.to_be_bytes());
     }
     Ok(())
+}
+
+/// The bit width a reader on the native side gives a direct block-state
+/// container: enough for every state its registry has.
+fn native_state_bits(ids: &Ids) -> u8 {
+    let states = ids.from_native.count(IdSpace::BlockState).max(2);
+    (u32::BITS - (states as u32 - 1).leading_zeros()) as u8
 }
 
 #[cfg(test)]
@@ -1158,7 +1464,7 @@ mod tests {
     }
 
     fn native_serverbound(name: &str) -> u32 {
-        PacketTable::native()
+        PacketTable::v26_1()
             .id(Phase::Game, Direction::Serverbound, name)
             .unwrap_or_else(|| panic!("775 has {name}"))
     }
@@ -1167,12 +1473,12 @@ mod tests {
     fn every_inbound_id_lands_on_the_same_name() {
         let h = hop();
         let old = PacketTable::v1_21_11();
-        let new = PacketTable::native();
+        let new = PacketTable::v26_1();
         for wire in 0..old.count(Phase::Game, Direction::Clientbound) {
             let name = old
                 .name_of(Phase::Game, Direction::Clientbound, wire as u32)
                 .unwrap();
-            let native = h.inbound_game[wire];
+            let native = h.phases[Phase::Game as usize].inbound[wire].expect("775 has it");
             assert_eq!(
                 new.name_of(Phase::Game, Direction::Clientbound, native),
                 Some(name),
@@ -1185,13 +1491,13 @@ mod tests {
     fn every_outbound_id_lands_on_the_same_name_or_is_suppressed() {
         let h = hop();
         let old = PacketTable::v1_21_11();
-        let new = PacketTable::native();
+        let new = PacketTable::v26_1();
         let mut suppressed = Vec::new();
         for native in 0..new.count(Phase::Game, Direction::Serverbound) {
             let name = new
                 .name_of(Phase::Game, Direction::Serverbound, native as u32)
                 .unwrap();
-            match h.outbound_game[native] {
+            match h.phases[Phase::Game as usize].outbound[native] {
                 Some(wire) => assert_eq!(
                     old.name_of(Phase::Game, Direction::Serverbound, wire),
                     Some(name)
@@ -1233,7 +1539,7 @@ mod tests {
     #[test]
     fn a_packet_774_never_had_is_dropped() {
         let h = hop();
-        let native = PacketTable::native();
+        let native = PacketTable::v26_1();
         for name in ["set_game_rule", "spectate_entity"] {
             let id = native
                 .id(Phase::Game, Direction::Serverbound, name)
@@ -1250,6 +1556,57 @@ mod tests {
     }
 
     #[test]
+    fn a_chained_774_stack_lands_on_777_ids() {
+        let mut body = Vec::new();
+        write_varint(&mut body, 1);
+        write_varint(&mut body, ITEM_AT_THE_SEAM);
+        write_varint(&mut body, 0);
+        write_varint(&mut body, 0);
+        let mut middle = Vec::new();
+        item_stack(ids(), &mut Reader::new(&body), &mut middle).unwrap();
+        let mut out = Vec::new();
+        item_stack(Hop::v775().ids(), &mut Reader::new(&middle), &mut out).unwrap();
+
+        let mut cursor = std::io::Cursor::new(&out[..]);
+        let stack = azalea_inventory::ItemStack::azalea_read(&mut cursor).unwrap();
+        let expected = Remap::v775_to_v777()
+            .map(IdSpace::Item, ITEM_AT_THE_SEAM + 1)
+            .unwrap();
+        assert_eq!(stack.kind().to_u32() as i32, expected);
+    }
+
+    #[test]
+    fn tags_move_by_their_registry() {
+        let mut body = Vec::new();
+        write_varint(&mut body, 2);
+        for (registry, id) in [
+            ("minecraft:item", ITEM_AT_THE_SEAM),
+            ("minecraft:dialog", 7),
+        ] {
+            write_varint(&mut body, registry.len() as i32);
+            body.extend_from_slice(registry.as_bytes());
+            write_varint(&mut body, 1);
+            write_varint(&mut body, 3);
+            body.extend_from_slice(b"a:b");
+            write_varint(&mut body, 1);
+            write_varint(&mut body, id);
+        }
+        let out = update_tags(ids(), &body).expect("a whole packet");
+        let mut r = Reader::new(&out);
+        r.count();
+        for (registry, id) in [
+            ("minecraft:item", ITEM_AT_THE_SEAM + 1),
+            ("minecraft:dialog", 7),
+        ] {
+            assert_eq!(r.count().and_then(|n| r.take(n)), Some(registry.as_bytes()));
+            r.count();
+            r.count().and_then(|n| r.take(n));
+            assert_eq!(r.count(), Some(1));
+            assert_eq!(r.varint(), Some(id), "{registry}");
+        }
+    }
+
+    #[test]
     fn the_other_phases_pass_through() {
         let h = hop();
         for phase in [
@@ -1258,7 +1615,7 @@ mod tests {
             ConnectionProtocol::Login,
             ConnectionProtocol::Configuration,
         ] {
-            let raw: Box<[u8]> = Box::new([0x03, 0xAA, 0xBB]);
+            let raw: Box<[u8]> = Box::new([0x01, 0xAA, 0xBB]);
             assert_eq!(&*h.inbound(phase, raw.clone()), &*raw);
             assert_eq!(&*h.outbound(phase, raw.clone()), &*raw);
         }
@@ -1705,8 +2062,13 @@ mod tests {
 
     #[test]
     fn a_component_past_the_seam_keeps_its_payload() {
-        let native = DataComponentKind::MapId.to_u32() as i32;
-        let wire = Remap::from_native()
+        let native = Remap::v777_to_v775()
+            .map(
+                IdSpace::DataComponentType,
+                DataComponentKind::MapId.to_u32() as i32,
+            )
+            .expect("map_id exists in 775");
+        let wire = Remap::v775_to_v774()
             .map(IdSpace::DataComponentType, native)
             .expect("775 map_id exists in 774");
         assert_ne!(wire, native, "pick a component that actually moved");
@@ -1865,11 +2227,14 @@ mod tests {
     #[test]
     fn a_particles_payload_shape_survives_the_remap() {
         for wire in 0..PARTICLES_774 {
-            let native = Remap::to_native()
+            let native = Remap::v774_to_v775()
                 .map(IdSpace::ParticleType, wire)
                 .unwrap_or_else(|| panic!("774 particle {wire} does not map"));
+            let kind = Remap::v775_to_v777()
+                .map(IdSpace::ParticleType, native)
+                .expect("every 775 particle exists in 777");
             let mut alone = Vec::new();
-            write_varint(&mut alone, native);
+            write_varint(&mut alone, kind);
             let mut cursor = std::io::Cursor::new(&alone[..]);
             let payload_free = azalea::entity::particle::Particle::azalea_read(&mut cursor).is_ok();
             assert_eq!(
@@ -1884,8 +2249,11 @@ mod tests {
     fn without_the_remap_five_ids_would_change_shape() {
         let mismatched: Vec<i32> = (0..PARTICLES_774)
             .filter(|wire| {
+                let kind = Remap::v775_to_v777()
+                    .map(IdSpace::ParticleType, *wire)
+                    .expect("a 774 particle id is a 775 one");
                 let mut alone = Vec::new();
-                write_varint(&mut alone, *wire);
+                write_varint(&mut alone, kind);
                 let mut cursor = std::io::Cursor::new(&alone[..]);
                 let payload_free =
                     azalea::entity::particle::Particle::azalea_read(&mut cursor).is_ok();
@@ -1970,7 +2338,7 @@ mod tests {
 
     #[test]
     fn a_sound_moves_through_the_holder() {
-        let native = Remap::to_native()
+        let native = Remap::v774_to_v775()
             .map(IdSpace::SoundEvent, SOUND_774)
             .expect("774 sound 280 exists in 775");
         assert_ne!(native, SOUND_774, "pick a sound that actually moved");
@@ -2026,7 +2394,7 @@ mod tests {
         assert_eq!(r.varint(), Some(moved(FIRST_RUN)));
         assert_eq!(
             r.varint(),
-            Remap::to_native()
+            Remap::v774_to_v775()
                 .map(IdSpace::SoundEvent, SOUND_774)
                 .map(|id| id + 1)
         );
@@ -2157,7 +2525,12 @@ mod tests {
 
     #[test]
     fn a_falling_block_moves_its_state_and_nothing_else_does() {
-        let falling = EntityKind::FallingBlock.to_u32() as i32;
+        let entity_775 = |kind: EntityKind| {
+            Remap::v777_to_v775()
+                .map(IdSpace::EntityType, kind.to_u32() as i32)
+                .expect("an entity 775 had")
+        };
+        let falling = entity_775(EntityKind::FallingBlock);
         let out = add_entity(ids(), &add_entity_bytes(falling, LAST_RUN)).expect("a falling block");
         let mut r = Reader::new(&out);
         r.varint();
@@ -2166,7 +2539,7 @@ mod tests {
         r.take(3 * 8 + 1 + 3);
         assert_eq!(r.varint(), Some(moved(LAST_RUN)));
 
-        let arrow = EntityKind::Arrow.to_u32() as i32;
+        let arrow = entity_775(EntityKind::Arrow);
         assert!(
             add_entity(ids(), &add_entity_bytes(arrow, LAST_RUN)).is_none(),
             "only a falling block reads that field as a state"
@@ -2229,7 +2602,7 @@ mod tests {
     fn a_775_only_item_empties_the_desync_check_rather_than_the_frame() {
         const GOLDEN_DANDELION: i32 = 230;
         assert_eq!(
-            Remap::from_native().map(IdSpace::Item, GOLDEN_DANDELION),
+            Remap::v775_to_v774().map(IdSpace::Item, GOLDEN_DANDELION),
             None,
             "775 inserted this one, so 774 has nothing to call it"
         );

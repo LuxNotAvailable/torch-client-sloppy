@@ -2,9 +2,16 @@ use std::collections::HashMap;
 
 use azalea::block::BlockTrait;
 
-use crate::blocks::Blocks;
+use crate::TEXTURE_MAP;
 use crate::blocks::rand::ShapeOffset;
 use crate::renderer::{BlockGeom, RenderedBlock, TintKind};
+
+fn tex(name: &str) -> u32 {
+    TEXTURE_MAP
+        .get()
+        .and_then(|m| m.get(name).copied())
+        .unwrap_or(0)
+}
 
 fn bool_prop(props: &HashMap<&str, &str>, key: &str) -> bool {
     props.get(key).map(|v| *v == "true").unwrap_or(false)
@@ -77,42 +84,48 @@ pub fn emissive_rendering(name: &str, props: &HashMap<&str, &str>) -> bool {
     }
 }
 
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 pub struct SoundGroup {
     pub break_event: &'static str,
     pub place_event: &'static str,
     pub step_event: &'static str,
+    /// Each fourth tick of mining it (`ClientLevel.playBreakingSound`).
+    pub hit_event: &'static str,
+    #[allow(dead_code, reason = "for landing from a fall, not played yet")]
+    pub fall_event: &'static str,
 }
 
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 macro_rules! sound_group {
     ($name:literal) => {
         SoundGroup {
             break_event: concat!("block.", $name, ".break"),
             place_event: concat!("block.", $name, ".place"),
             step_event: concat!("block.", $name, ".step"),
+            hit_event: concat!("block.", $name, ".hit"),
+            fall_event: concat!("block.", $name, ".fall"),
         }
     };
 }
 
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 static WOOD: SoundGroup = sound_group!("wood");
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 static SAND: SoundGroup = sound_group!("sand");
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 static GRAVEL: SoundGroup = sound_group!("gravel");
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 static GRASS: SoundGroup = sound_group!("grass");
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 static GLASS: SoundGroup = sound_group!("glass");
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 static METAL: SoundGroup = sound_group!("metal");
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 static WOOL: SoundGroup = sound_group!("wool");
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 static STONE: SoundGroup = sound_group!("stone");
 
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 pub fn sound_group(name: &str) -> &'static SoundGroup {
     if name.ends_with("_planks")
         || name.contains("_log")
@@ -149,7 +162,7 @@ pub fn sound_group(name: &str) -> &'static SoundGroup {
     }
 }
 
-#[cfg(all(test, feature = "audio"))]
+#[cfg(all(test, audio))]
 mod sound_group_tests {
     use super::*;
 
@@ -168,11 +181,6 @@ mod sound_group_tests {
 }
 
 pub fn block_visual(state: azalea::block::BlockState) -> RenderedBlock {
-    block_visual_in(state, &crate::blocks::registry())
-}
-
-pub fn block_visual_in(state: azalea::block::BlockState, blocks: &Blocks) -> RenderedBlock {
-    let tex = |name: &str| blocks.sprites().tile(name).unwrap_or(0);
     let block: Box<dyn BlockTrait> = Box::<dyn BlockTrait>::from(state);
     let name = block.id();
     let props = block.property_map();
@@ -196,6 +204,9 @@ pub fn block_visual_in(state: azalea::block::BlockState, blocks: &Blocks) -> Ren
             | "cherry_leaves"
             | "azalea_leaves"
             | "flowering_azalea_leaves"
+            | "red_poplar_leaves"
+            | "orange_poplar_leaves"
+            | "yellow_poplar_leaves"
             | "lily_pad"
     ) {
         TintKind::None
@@ -223,8 +234,8 @@ pub fn block_visual_in(state: azalea::block::BlockState, blocks: &Blocks) -> Ren
             offset: ShapeOffset::None,
             #[cfg(feature = "builtin_shaders")]
             sways: false,
-            #[cfg(feature = "shader_support")]
             state: state.id(),
+            #[cfg(feature = "shader_support")]
             translucent: false,
         };
     }
@@ -257,13 +268,13 @@ pub fn block_visual_in(state: azalea::block::BlockState, blocks: &Blocks) -> Ren
             offset: ShapeOffset::None,
             #[cfg(feature = "builtin_shaders")]
             sways: false,
-            #[cfg(feature = "shader_support")]
             state: state.id(),
+            #[cfg(feature = "shader_support")]
             translucent: false,
         };
     }
 
-    let baked = blocks.baked(state.id(), name, &props);
+    let baked = crate::blocks::registry().baked(state.id(), name, &props);
     let is_solid = baked.is_solid;
     let full_cube = baked.full_cube;
     #[cfg(feature = "builtin_shaders")]
@@ -282,12 +293,13 @@ pub fn block_visual_in(state: azalea::block::BlockState, blocks: &Blocks) -> Ren
         offset: ShapeOffset::for_block(name),
         #[cfg(feature = "builtin_shaders")]
         sways,
-        #[cfg(feature = "shader_support")]
         state: state.id(),
+        #[cfg(feature = "shader_support")]
         translucent: translucent_layer(name),
     }
 }
 
+#[cfg(feature = "shader_support")]
 fn translucent_layer(name: &str) -> bool {
     matches!(
         name,

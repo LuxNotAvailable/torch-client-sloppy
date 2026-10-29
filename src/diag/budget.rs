@@ -36,7 +36,6 @@ static BOT: AtomicU64 = AtomicU64::new(0);
 counted! {
     pub enum Phase / PHASE_COUNT {
         Upload,
-        Views,
         Acquire,
         Prepare,
         Draw,
@@ -163,7 +162,6 @@ pub struct Budget {
     pub views: u64,
     pub draws: u64,
     pub bot_ms: f32,
-    pub gpu_busy: Option<u32>,
     pub outside_ms: f32,
     pub tps: f32,
 }
@@ -184,16 +182,11 @@ impl Budget {
                 self.frame_ms, self.ours_ms, self.gfx_ms, self.bot_ms, self.outside_ms
             ),
             format!(
-                "upl {:.1} vw {:.1} acq {:.1} pre {:.1} dr {:.1}{}",
+                "upl {:.1} acq {:.1} pre {:.1} dr {:.1}",
                 self.phase(Phase::Upload),
-                self.phase(Phase::Views),
                 self.phase(Phase::Acquire),
                 self.phase(Phase::Prepare),
                 self.phase(Phase::Draw),
-                match self.gpu_busy {
-                    Some(busy) => format!(" gpu {busy}%"),
-                    None => String::new(),
-                },
             ),
             format!(
                 "gui {:.1} occ {:.1} poll {:.1}",
@@ -268,7 +261,6 @@ pub fn sample() -> Option<Budget> {
         slots,
         rest_ms: (ours - slots.iter().sum::<f32>()).max(0.0),
         bot_ms: bot,
-        gpu_busy: gpu_busy_percent(),
         outside_ms: frame - ours - gfx - bot,
         tps: ticks / (span_us as f32 / 1_000_000.0),
         columns: VISIBLE_COLUMNS.load(Relaxed),
@@ -281,8 +273,4 @@ pub fn sample() -> Option<Budget> {
 
 fn ms(us: u64) -> f32 {
     us as f32 / 1000.0
-}
-
-fn gpu_busy_percent() -> Option<u32> {
-    None
 }

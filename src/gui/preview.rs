@@ -120,13 +120,6 @@ pub fn output_dir() -> PathBuf {
     dir
 }
 
-pub fn save_upscaled(p: &Painter, width: u32, height: u32, name: &str) {
-    let img = rasterize(p, width, height, [70, 110, 170, 255]);
-    let path = output_dir().join(name);
-    upscale(&img, 2).save(&path).unwrap();
-    println!("[preview] wrote {}", path.display());
-}
-
 fn edge(a: &[f32; 2], b: &[f32; 2], c: &[f32; 2]) -> f32 {
     (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
 }
@@ -142,7 +135,7 @@ mod tests {
     use crate::gui::render::GuiInput;
     use crate::gui::{GuiState, Screen, screens};
     use crate::session::{Gamemode, SessionState, SharedState, SlotStack};
-    use crate::text::{Span, parse_formatted};
+    use crate::text::{Span, Style, parse_formatted};
     use bevy::prelude::Vec2;
 
     fn stack(id: &'static str, count: u8) -> SlotStack {
@@ -341,10 +334,6 @@ mod tests {
         let mut inp = input(vw, vh, None);
         inp.time = 200.5;
         inp.typed = "es".chars().collect();
-        inp.edits = "es"
-            .chars()
-            .map(crate::gui::render::EditKey::Char)
-            .collect();
         let mut p = Painter::new(&atlas, 0);
         click_gui!(&mut p, &inp);
         let mut inp = input(vw, vh, None);
@@ -371,6 +360,42 @@ mod tests {
             &rasterize_scaled(&p, vw as u32, vh as u32, SCALE, [70, 110, 170, 255]),
             "gui_clickgui_config.png",
         );
+    }
+
+    #[test]
+    fn preview_option_screens() {
+        let atlas = build_gui_atlas(&crate::assets_root());
+        let (vw, vh) = (427.0_f32, 240.0_f32);
+        let shared = shared_with(demo_menu(), Gamemode::Survival);
+        for (screen, name) in [
+            (Screen::Options, "gui_options.png"),
+            (Screen::SkinCustomisation, "gui_options_skin.png"),
+            (Screen::Controls, "gui_options_controls.png"),
+            (Screen::ChatSettings, "gui_options_chat.png"),
+            (Screen::VideoSettings, "gui_options_video.png"),
+            (
+                Screen::Container(crate::session::ContainerKind::Chest(3)),
+                "gui_chest.png",
+            ),
+        ] {
+            let mut state = GuiState {
+                screen,
+                ..Default::default()
+            };
+            let mut p = Painter::new(&atlas, 0);
+            screens::draw(
+                &mut p,
+                &mut state,
+                &input(vw, vh, None),
+                &shared,
+                #[cfg(feature = "skins")]
+                &mut Default::default(),
+            );
+            save(
+                &rasterize_scaled(&p, vw as u32, vh as u32, SCALE, [70, 110, 170, 255]),
+                name,
+            );
+        }
     }
 
     #[test]
@@ -516,7 +541,15 @@ mod tests {
             p.text(&parse_formatted(row), 4.0, y, true);
             y += 12.0;
         }
-        p.text(&[Span::new("no shadow, plain white")], 4.0, y, false);
+        p.text(
+            &[Span {
+                text: "no shadow, plain white".into(),
+                style: Style::default(),
+            }],
+            4.0,
+            y,
+            false,
+        );
         save(
             &rasterize_scaled(&p, 320, 120, SCALE, [0, 0, 0, 255]),
             "gui_text.png",

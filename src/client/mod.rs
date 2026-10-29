@@ -3,8 +3,6 @@ pub(crate) mod advancements;
 pub(crate) mod assets;
 #[cfg(feature = "online_mode")]
 pub(crate) mod auth;
-#[cfg(feature = "online_mode")]
-pub(crate) mod ban;
 pub(crate) mod bossbar;
 pub(crate) mod bot;
 pub(crate) mod chat_recv;
@@ -16,15 +14,11 @@ pub(crate) mod envprobe;
 pub(crate) mod mesh_worker;
 pub(crate) mod packets;
 pub(crate) mod recipes;
-pub(crate) mod server_packs;
-pub(crate) mod server_screens;
 #[cfg(feature = "skins")]
 pub(crate) mod skins;
 pub(crate) mod tablist;
 pub(crate) mod tick;
 pub(crate) mod tracking;
-#[cfg(all(feature = "update_checker", not(target_arch = "wasm32")))]
-pub(crate) mod update_checker;
 pub(crate) mod viewwindow;
 pub(crate) mod worker;
 pub(crate) mod worldsync;

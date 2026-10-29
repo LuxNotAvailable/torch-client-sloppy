@@ -311,7 +311,12 @@ impl WorldView {
             z: z >> 4,
         };
         let min_y = self.min_y;
-        let Some(chunk) = self.chunk(col) else {
+        // Borrow the cached handle: cloning the Arc for every lookup bounced its
+        // refcount against the mesher threads holding the same chunk.
+        if !self.chunks.contains_key(&col) {
+            self.chunk(col);
+        }
+        let Some(Some(chunk)) = self.chunks.get(&col) else {
             return BlockState::from(BlockKind::Bedrock);
         };
         let chunk = chunk.read();

@@ -27,8 +27,11 @@ use bevy_ecs::prelude::*;
 use clip::box_traverse_blocks;
 use collision::{BLOCK_SHAPE, VoxelShape, move_colliding};
 
-use crate::collision::{MoveCtx, entity_collisions::update_last_bounding_box};
-use crate::inside_block::{InsideBlockCtx, handle_entity_inside_block};
+use crate::{
+    client_movement::ClientMovementState,
+    collision::{MoveCtx, entity_collisions::update_last_bounding_box},
+    inside_block::{InsideBlockCtx, handle_entity_inside_block},
+};
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq, SystemSet)]
 pub struct PhysicsSystems;
@@ -69,6 +72,7 @@ pub fn ai_step(
             &ActiveEffects,
             &WorldName,
             &EntityKindComponent,
+            &ClientMovementState,
         ),
         (With<LocalEntity>, With<HasClientLoaded>),
     >,
@@ -83,6 +87,7 @@ pub fn ai_step(
         active_effects,
         world_name,
         entity_kind,
+        client_movement,
     ) in &mut query
     {
         let is_player = **entity_kind == EntityKind::Player;
@@ -113,6 +118,10 @@ pub fn ai_step(
         } else {
             physics.x_acceleration *= 0.98;
             physics.z_acceleration *= 0.98;
+        }
+
+        if client_movement.trying_to_crouch && physics.is_in_water() {
+            go_down_in_water(&mut physics);
         }
 
         if jumping == Some(&Jumping(true)) {
@@ -166,7 +175,11 @@ pub const fn block_speed_factor(block: BlockKind) -> f32 {
 }
 
 fn jump_in_liquid(physics: &mut Physics) {
-    physics.velocity.y += 0.04;
+    physics.velocity.y += 0.04f32 as f64;
+}
+
+fn go_down_in_water(physics: &mut Physics) {
+    physics.velocity.y -= 0.04f32 as f64;
 }
 
 #[allow(clippy::type_complexity)]

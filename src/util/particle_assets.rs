@@ -1,7 +1,5 @@
 use std::collections::HashMap;
-use std::sync::Arc;
-
-use crate::util::reload::Reloadable;
+use std::sync::OnceLock;
 
 pub(crate) const PARTICLE_TILE_PX: u32 = 32;
 
@@ -26,18 +24,9 @@ pub(crate) fn tile_uv(tile: u32, rows: u32) -> [f32; 4] {
     ]
 }
 
-static SPRITES: Reloadable<HashMap<String, Vec<String>>> = Reloadable::new(load_sprites);
-
-pub(crate) fn reset() {
-    SPRITES.reset();
-}
-
-fn particle_sprites() -> Arc<HashMap<String, Vec<String>>> {
-    SPRITES.get()
-}
-
-fn load_sprites() -> HashMap<String, Vec<String>> {
-    {
+fn particle_sprites() -> &'static HashMap<String, Vec<String>> {
+    static SPRITES: OnceLock<HashMap<String, Vec<String>>> = OnceLock::new();
+    SPRITES.get_or_init(|| {
         let dir = crate::assets_root().join("particles");
         let mut out = HashMap::new();
         for path in crate::platform::assets::read_dir(&dir) {
@@ -67,7 +56,7 @@ fn load_sprites() -> HashMap<String, Vec<String>> {
         }
         crate::log_info!("particles", "{} particle sprite sheets loaded", out.len());
         out
-    }
+    })
 }
 
 pub(crate) fn build_atlas() -> ParticleAtlasData {
@@ -102,7 +91,7 @@ pub(crate) fn build_atlas() -> ParticleAtlasData {
     }
 
     let mut sheets: HashMap<String, Vec<u32>> = HashMap::new();
-    for (particle_type, sprites) in particle_sprites().iter() {
+    for (particle_type, sprites) in particle_sprites() {
         let resolved: Vec<u32> = sprites
             .iter()
             .filter_map(|sprite| tiles.get(sprite.as_str()).copied())

@@ -84,7 +84,11 @@ async fn pump(
                 tx.send_binary(body).await?;
             }
             message = rx.recv() => {
-                match message?.unwrap_or(Frame::Close(None)) {
+                let Some(message) = message? else {
+                    log_info!("net", "eagler: the server closed the websocket");
+                    return Ok(());
+                };
+                match message {
                     Frame::Binary(payload) if is_injected(&payload) => {
                         note_injected(&payload);
                     }
@@ -323,6 +327,7 @@ impl Bridge {
         if let Login::Hello(_) = self.login {
             let packet = azalea_protocol::packets::Packet::into_variant(ClientboundLoginFinished {
                 game_profile: self.profile.clone(),
+                session_id: uuid::Uuid::nil(),
             });
             let raw = azalea_protocol::write::serialize_packet(&packet)
                 .map_err(|e| io::Error::other(format!("eagler: {e}")))?;

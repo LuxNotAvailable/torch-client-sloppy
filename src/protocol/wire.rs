@@ -78,6 +78,68 @@ impl<'a> Reader<'a> {
     }
 }
 
+const NBT_MAX_DEPTH: usize = 512;
+
+impl Reader<'_> {
+    fn i32(&mut self) -> Option<i32> {
+        Some(i32::from_be_bytes(self.take(4)?.try_into().ok()?))
+    }
+
+    /// Steps over one network NBT value: a type byte, then that tag's payload
+    /// with no root name.
+    pub(crate) fn skip_nbt(&mut self) -> Option<()> {
+        let kind = self.u8()?;
+        if kind == 0 {
+            return Some(());
+        }
+        self.skip_nbt_payload(kind, 0)
+    }
+
+    fn skip_nbt_payload(&mut self, kind: u8, depth: usize) -> Option<()> {
+        if depth > NBT_MAX_DEPTH {
+            return None;
+        }
+        let sized = |r: &mut Self, width: usize| -> Option<()> {
+            let len = usize::try_from(r.i32()?).ok()?;
+            r.take(len.checked_mul(width)?).map(drop)
+        };
+        match kind {
+            1 => self.take(1).map(drop),
+            2 => self.take(2).map(drop),
+            3 | 5 => self.take(4).map(drop),
+            4 | 6 => self.take(8).map(drop),
+            7 => sized(self, 1),
+            8 => {
+                let len = usize::from(self.u16()?);
+                self.take(len).map(drop)
+            }
+            9 => {
+                let element = self.u8()?;
+                let len = usize::try_from(self.i32()?).ok()?;
+                if element == 0 {
+                    return Some(());
+                }
+                for _ in 0..len {
+                    self.skip_nbt_payload(element, depth + 1)?;
+                }
+                Some(())
+            }
+            10 => loop {
+                let field = self.u8()?;
+                if field == 0 {
+                    return Some(());
+                }
+                let name = usize::from(self.u16()?);
+                self.take(name)?;
+                self.skip_nbt_payload(field, depth + 1)?;
+            },
+            11 => sized(self, 4),
+            12 => sized(self, 8),
+            _ => None,
+        }
+    }
+}
+
 pub(crate) fn write_varint(out: &mut Vec<u8>, value: i32) {
     let mut value = value as u32;
     loop {
@@ -173,6 +235,33 @@ mod tests {
         let mut out = Vec::new();
         write_varint(&mut out, 300);
         assert_eq!(Reader::new(&out).count(), Some(300));
+    }
+
+    #[test]
+    fn nbt_is_skipped_to_its_last_byte() {
+        let mut compound = vec![10u8];
+        compound.extend_from_slice(&[8, 0, 4]);
+        compound.extend_from_slice(b"text");
+        compound.extend_from_slice(&[0, 2]);
+        compound.extend_from_slice(b"hi");
+        compound.extend_from_slice(&[9, 0, 1, b'l', 3]);
+        compound.extend_from_slice(&2i32.to_be_bytes());
+        compound.extend_from_slice(&[0, 0, 0, 7, 0, 0, 0, 9]);
+        compound.push(0);
+        let mut bytes = compound.clone();
+        bytes.push(0xEE);
+        let mut r = Reader::new(&bytes);
+        assert_eq!(r.skip_nbt(), Some(()));
+        assert_eq!(r.pos(), compound.len());
+
+        let mut plain_string = vec![8u8, 0, 3];
+        plain_string.extend_from_slice(b"abc");
+        let mut r = Reader::new(&plain_string);
+        assert_eq!(r.skip_nbt(), Some(()));
+        assert_eq!(r.remaining(), 0);
+
+        assert_eq!(Reader::new(&[0]).skip_nbt(), Some(()));
+        assert_eq!(Reader::new(&[10, 8, 0]).skip_nbt(), None);
     }
 
     #[test]

@@ -22,13 +22,7 @@ const NO: &str = "No";
 const GREY: u32 = 0xA0A0A0;
 
 pub fn draw(p: &mut Painter, ctx: &ScreenCtx, shared: &Arc<SharedMutex>) -> Option<Screen> {
-    p.text_centered(
-        TITLE,
-        ctx.vw / 2.0,
-        (ctx.vh / 2.0 - 60.0).floor(),
-        0xFFFFFF,
-        true,
-    );
+    widgets::draw_title(p, ctx.vw, (ctx.vh / 2.0 - 60.0).floor(), TITLE);
 
     let cy = (ctx.vh / 2.0).floor();
     for (i, line) in BODY.iter().enumerate() {

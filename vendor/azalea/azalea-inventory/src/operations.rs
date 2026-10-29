@@ -248,14 +248,6 @@ fn armor_slot_for(item: ItemKind) -> Option<usize> {
 
 impl Menu {
     pub fn quick_move_stack(&mut self, slot_index: usize) -> ItemStack {
-        self.quick_move_stack_with_disabled(slot_index, 0)
-    }
-
-    pub fn quick_move_stack_with_disabled(
-        &mut self,
-        slot_index: usize,
-        disabled_slots: u16,
-    ) -> ItemStack {
         let slot = self.slot(slot_index);
         if slot.is_none() {
             return ItemStack::Empty;
@@ -363,22 +355,25 @@ impl Menu {
             },
             MenuLocation::Generic3x3(l) => match l {
                 Generic3x3MenuLocation::Contents => {
-                    self.quick_move_to_player_reversed(slot_index);
+                    self.try_move_item_to_slots(slot_index, self.player_slots_range());
                 }
                 Generic3x3MenuLocation::Player => {
-                    self.try_move_item_to_slots(slot_index, Menu::GENERIC3X3_CONTENTS_SLOTS);
+                    self.try_move_item_to_slots_or_toggle_hotbar(
+                        slot_index,
+                        Menu::GENERIC3X3_CONTENTS_SLOTS,
+                    );
                 }
             },
             MenuLocation::Crafter3x3(l) => match l {
                 Crafter3x3MenuLocation::Contents => {
-                    self.quick_move_to_player_reversed(slot_index);
+                    self.try_move_item_to_slots(slot_index, self.player_slots_range());
                 }
                 Crafter3x3MenuLocation::Player => {
-                    let enabled = Menu::CRAFTER3X3_CONTENTS_SLOTS
-                        .filter(move |i| disabled_slots >> i & 1 == 0);
-                    self.try_move_item_to_slot_order(slot_index, enabled);
+                    self.try_move_item_to_slots_or_toggle_hotbar(
+                        slot_index,
+                        Menu::GENERIC3X3_CONTENTS_SLOTS,
+                    );
                 }
-                Crafter3x3MenuLocation::Result => {}
             },
             MenuLocation::Anvil(l) => match l {
                 AnvilMenuLocation::Player => {
@@ -529,10 +524,13 @@ impl Menu {
             },
             MenuLocation::ShulkerBox(l) => match l {
                 ShulkerBoxMenuLocation::Player => {
-                    self.try_move_item_to_slots(slot_index, Menu::SHULKER_BOX_CONTENTS_SLOTS);
+                    self.try_move_item_to_slots_or_toggle_hotbar(
+                        slot_index,
+                        Menu::SHULKER_BOX_CONTENTS_SLOTS,
+                    );
                 }
                 _ => {
-                    self.quick_move_to_player_reversed(slot_index);
+                    self.try_move_item_to_slots(slot_index, self.player_slots_range());
                 }
             },
             MenuLocation::Smithing(l) => match l {
@@ -608,17 +606,11 @@ impl Menu {
         }
     }
 
-    pub fn may_place(&self, target_slot_index: usize, item: &ItemStackData) -> bool {
-        match self.location_for_slot(target_slot_index) {
-            Some(
-                MenuLocation::Merchant(MerchantMenuLocation::Result)
-                | MenuLocation::Crafter3x3(Crafter3x3MenuLocation::Result),
-            ) => false,
-            Some(MenuLocation::ShulkerBox(ShulkerBoxMenuLocation::Contents)) => {
-                !item.kind.to_str().ends_with("shulker_box")
-            }
-            _ => true,
-        }
+    pub fn may_place(&self, target_slot_index: usize, _item: &ItemStackData) -> bool {
+        !matches!(
+            self.location_for_slot(target_slot_index),
+            Some(MenuLocation::Merchant(MerchantMenuLocation::Result))
+        )
     }
 
     pub fn can_take_item_for_pick_all(&self, slot_index: usize) -> bool {
@@ -635,11 +627,8 @@ impl Menu {
         )
     }
 
-    pub fn may_pickup(&self, source_slot_index: usize) -> bool {
-        !matches!(
-            self.location_for_slot(source_slot_index),
-            Some(MenuLocation::Crafter3x3(Crafter3x3MenuLocation::Result))
-        )
+    pub fn may_pickup(&self, _source_slot_index: usize) -> bool {
+        true
     }
 
     pub fn allow_modification(&self, target_slot_index: usize) -> bool {

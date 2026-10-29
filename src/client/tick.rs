@@ -18,8 +18,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::client::tracking::{
-    Components, EntityAttributes, GAME_TIME, LOCAL_ANIM_ID, anim_states, equipment, flag,
-    head_yaws, set_current_world,
+    GAME_TIME, LOCAL_ANIM_ID, anim_states, equipment, head_yaws, set_current_world,
 };
 use crate::client::{chat_sign, chat_text, viewwindow, worldsync};
 use crate::play::entity_feed::{bed_orientation_at, collect_entities};
@@ -63,8 +62,6 @@ struct TickSnapshot {
     swimming: bool,
     sleeping: bool,
     bed_orientation: Option<crate::direction::Direction>,
-    camera_distance: f32,
-    local_body: crate::session::PlayerBody,
     attack_strength: f32,
     attack_delay: f32,
     fov_modifier: f32,
@@ -108,7 +105,64 @@ fn read_tick_snapshot(bot: &Client, shared: &Arc<SharedMutex>) -> Option<TickSna
 
     let world = bot.world().ok();
 
-    #[cfg(feature = "audio")]
+    #[cfg(voice)]
+    {
+        use azalea::entity::{EntityUuid, Pose, Position};
+        let eye = |pose: Option<Pose>| {
+            crate::renderer::systems::eye_height(pose == Some(Pose::Crouching)) as f64
+        };
+        let mut eyes = std::collections::HashMap::new();
+        for player in bot.nearby_players().unwrap_or_default() {
+            let (Some(id), Some(at)) = (
+                player.get_component::<EntityUuid>(),
+                player.get_component::<Position>(),
+            ) else {
+                continue;
+            };
+            let y = at.y + eye(player.get_component::<Pose>().map(|p| *p));
+            eyes.insert(**id, [at.x as f32, y as f32, at.z as f32]);
+        }
+        let me = bot.component::<EntityUuid>().ok().map(|id| **id);
+        let own = eye(bot.component::<Pose>().ok().map(|p| *p));
+        crate::voice::tick(me, [pos.x as f32, (pos.y + own) as f32, pos.z as f32], eyes);
+    }
+
+    #[cfg(audio)]
+    world_sounds(bot, pos, &entity_anims);
+
+    #[cfg(audio)]
+    {
+        use azalea_registry::builtin::EntityKind;
+        crate::audio::remember_items(entity_anims.iter().filter_map(|e| {
+            let orb = match e.kind {
+                EntityKind::ExperienceOrb => true,
+                EntityKind::Item => false,
+                _ => return None,
+            };
+            let at = e.pos.map(|v| v as f32);
+            Some((e.id, crate::audio::EntityAt { at, orb }))
+        }));
+    }
+
+    #[cfg(audio)]
+    {
+        let ecs = bot.ecs.read();
+        let index = ecs.get::<azalea::entity::indexing::EntityIdIndex>(bot.entity);
+        crate::audio::tick_entities(|id| {
+            let entity =
+                index?.get_by_minecraft_entity(azalea_core::entity_id::MinecraftEntityId(id))?;
+            let at = ecs.get::<azalea::entity::Position>(entity)?;
+            let orb = ecs
+                .get::<azalea::entity::EntityKindComponent>(entity)
+                .is_some_and(|k| **k == azalea_registry::builtin::EntityKind::ExperienceOrb);
+            Some(crate::audio::EntityAt {
+                at: [at.x as f32, at.y as f32, at.z as f32],
+                orb,
+            })
+        });
+    }
+
+    #[cfg(audio)]
     {
         use std::sync::atomic::Ordering;
 
@@ -155,24 +209,6 @@ fn read_tick_snapshot(bot: &Client, shared: &Arc<SharedMutex>) -> Option<TickSna
         }
     }
     let advanced_tooltips = reads.advanced_tooltips;
-    if let Ok(id) = bot.component::<azalea_core::entity_id::MinecraftEntityId>() {
-        crate::client::tracking::LOCAL_ENTITY_ID.store(id.0, std::sync::atomic::Ordering::Relaxed);
-    }
-    let (scale, max_health, vehicle_max_health, camera_distance, armor_attribute) = {
-        use azalea_registry::builtin::Attribute as Attr;
-        let map = crate::client::tracking::attributes().lock().unwrap();
-        let own = EntityAttributes::of(&map, crate::client::tracking::local_entity_id());
-        let mount = crate::client::tracking::local_vehicle_id().and_then(|id| map.get(&id));
-        (
-            own.scale(),
-            own.max_health(),
-            mount
-                .and_then(|m| m.value(Attr::MaxHealth))
-                .map(|v| v as f32),
-            own.camera_distance(mount),
-            own.value(Attr::Armor),
-        )
-    };
     let (
         menu_slots,
         hotbar,
@@ -208,8 +244,21 @@ fn read_tick_snapshot(bot: &Client, shared: &Arc<SharedMutex>) -> Option<TickSna
                     .collect()
             })
             .unwrap_or_default();
-        let armor: crate::renderer::Armor =
-            std::array::from_fn(|i| player_slots.get(5 + i).and_then(item_id));
+        let armor = crate::renderer::Armor {
+            worn: std::array::from_fn(|i| player_slots.get(5 + i).and_then(item_id)),
+            glint: (0..4)
+                .filter(|&i| {
+                    matches!(player_slots.get(5 + i), Some(ItemStack::Present(d))
+                        if crate::play::inventory_bridge::has_glint(d))
+                })
+                .fold(0, |bits, i| bits | 1 << i),
+            trims: std::array::from_fn(|i| match (player_slots.get(5 + i), registries) {
+                (Some(ItemStack::Present(d)), Some(r)) => {
+                    crate::play::inventory_bridge::armor_trim(d, r)
+                }
+                _ => None,
+            }),
+        };
         let carried = inventory
             .as_ref()
             .map(|inv| slot_stack(&inv.carried, registries, advanced_tooltips))
@@ -231,11 +280,7 @@ fn read_tick_snapshot(bot: &Client, shared: &Arc<SharedMutex>) -> Option<TickSna
                 (inv.id, kind, title)
             })
             .unwrap_or_else(|_| (0, ContainerKind::None, crate::session::empty_spans()));
-        let armor_value = armor_value(
-            armor_attribute,
-            &player_slots,
-            bot.selected_hotbar_slot().unwrap_or(0),
-        );
+        let armor_value = armor_value(&player_slots, bot.selected_hotbar_slot().unwrap_or(0));
         (
             menu_slots,
             hotbar,
@@ -302,13 +347,7 @@ fn read_tick_snapshot(bot: &Client, shared: &Arc<SharedMutex>) -> Option<TickSna
         .ok()
         .map(|gm| Gamemode::from_azalea(*gm))
         .unwrap_or(Gamemode::Survival);
-    let (health_display, jumpable_mount) = health_display(
-        bot,
-        &active_effects,
-        armor_value,
-        max_health,
-        vehicle_max_health,
-    );
+    let (health_display, jumpable_mount) = health_display(bot, &active_effects, armor_value);
     let crouching = bot
         .component::<azalea::entity::Pose>()
         .map(|p| *p == azalea::entity::Pose::Crouching)
@@ -316,26 +355,16 @@ fn read_tick_snapshot(bot: &Client, shared: &Arc<SharedMutex>) -> Option<TickSna
     let (fall_flying, swimming) = {
         use azalea::entity::metadata;
         (
-            flag::<metadata::FallFlying>(bot),
-            flag::<metadata::Swimming>(bot),
+            bot.component::<metadata::FallFlying>()
+                .map(|c| c.0)
+                .unwrap_or(false),
+            bot.component::<metadata::Swimming>()
+                .map(|c| c.0)
+                .unwrap_or(false),
         )
     };
     let sleeping = local_sleeping_pos.is_some();
     let bed_orientation = local_sleeping_pos.and_then(|pos| bed_orientation_at(bot, pos));
-    let local_body = {
-        use azalea::entity::Pose;
-        let pose = if sleeping {
-            Pose::Sleeping
-        } else if fall_flying {
-            Pose::FallFlying
-        } else {
-            bot.component::<Pose>().map(|p| *p).unwrap_or_default()
-        };
-        player_body(bot, pose, scale, gamemode == Gamemode::Spectator, || {
-            let me = crate::client::bot::username();
-            crate::client::tablist::with_lookup(|tab| tab.sees_friendly_invisible(&me, &me))
-        })
-    };
 
     let attack_delay = {
         use azalea::attack::get_attack_strength_delay;
@@ -391,8 +420,6 @@ fn read_tick_snapshot(bot: &Client, shared: &Arc<SharedMutex>) -> Option<TickSna
         swimming,
         sleeping,
         bed_orientation,
-        camera_distance,
-        local_body,
         attack_strength,
         attack_delay,
         fov_modifier,
@@ -507,9 +534,9 @@ struct Ticker {
 }
 static TICKER: std::sync::OnceLock<std::sync::Mutex<Ticker>> = std::sync::OnceLock::new();
 
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 static TRAVELLED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 static LAST_XZ: std::sync::Mutex<Option<(f64, f64)>> = std::sync::Mutex::new(None);
 
 pub(crate) fn reset_session_locals(blocking: bool) {
@@ -522,7 +549,7 @@ pub(crate) fn reset_session_locals(blocking: bool) {
     if let Some(mut ticker) = ticker {
         *ticker = Ticker::default();
     }
-    #[cfg(feature = "audio")]
+    #[cfg(audio)]
     {
         TRAVELLED.store(0, std::sync::atomic::Ordering::Relaxed);
         let last = if blocking {
@@ -554,7 +581,8 @@ fn trace_menu_change(
     new_carried: &SlotStack,
     applied_clicks: usize,
 ) {
-    if !azalea::inventory::trace_enabled() {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ON.get_or_init(|| std::env::var_os("MC_INV_TRACE").is_some()) {
         return;
     }
     let describe = |s: &SlotStack| {
@@ -638,7 +666,11 @@ fn apply_local_trades(session: &mut crate::session::SessionState, actions: &[Inv
 }
 
 fn trace_trade(what: &str) {
-    azalea::inventory::trace(format_args!("[trade] {what}"));
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ON.get_or_init(|| std::env::var_os("MC_INV_TRACE").is_some()) {
+        return;
+    }
+    eprintln!("[trade] {what}");
 }
 
 fn block_distance_sqr(pos: AzBlockPos, point: [f64; 3]) -> f64 {
@@ -654,8 +686,130 @@ fn block_distance_sqr(pos: AzBlockPos, point: [f64; 3]) -> f64 {
     dx * dx + dy * dy + dz * dz
 }
 
+/// Where rain fell near the camera this tick, as `tickRainParticles` picks
+/// it: a random column within ten blocks whose top is within ten blocks of
+/// the camera and where it rains rather than snows. Also whether that spot
+/// is above the camera with a roof over the camera (`weather.rain.above`).
+#[cfg(audio)]
+fn rain_spot(eye: [f64; 3]) -> Option<([f32; 3], bool)> {
+    use azalea_core::position::BlockPos;
+    const RADIUS: i32 = 10;
+    let rain = crate::renderer::environment::rain_level();
+    if rain <= 0.0 {
+        return None;
+    }
+    let biome = crate::client::envprobe::camera_biome()?;
+    let env = crate::util::biome_color::env(biome);
+    if !env.has_precipitation || env.frozen {
+        return None;
+    }
+    let world = crate::client::tracking::current_world().lock().unwrap().clone()?;
+    let world = world.read();
+    let camera = eye.map(|v| v.floor() as i32);
+    let top = |x: i32, z: i32, from: i32, to: i32| -> Option<i32> {
+        (to..=from).rev().find(|y| {
+            world
+                .get_block_state(BlockPos::new(x, *y, z))
+                .is_some_and(|s| !s.is_air())
+        })
+    };
+    // The share of columns that get a drop, as the particle count scales.
+    let tries = ((0.225 * 441.0 * rain * rain) as u32).clamp(1, 8);
+    let mut spot = None;
+    for _ in 0..tries {
+        let x = camera[0] + crate::audio::random_below((2 * RADIUS + 1) as u32) as i32 - RADIUS;
+        let z = camera[2] + crate::audio::random_below((2 * RADIUS + 1) as u32) as i32 - RADIUS;
+        let Some(y) = top(x, z, camera[1] + 10, camera[1] - 10) else {
+            continue;
+        };
+        // `coldEnoughToSnow`: biome temperature less 0.00125 a block above 80.
+        let temperature = env.temperature - (y - 80).max(0) as f32 * 0.00125;
+        if temperature < 0.15 {
+            continue;
+        }
+        spot = Some([x, y, z]);
+    }
+    let [x, y, z] = spot?;
+    let roofed = top(camera[0], camera[2], camera[1] + 64, camera[1] + 1).is_some();
+    Some(([x as f32 + 0.5, y as f32 + 1.0, z as f32 + 0.5], y > camera[1] + 1 && roofed))
+}
+
+/// The game tick's ambience and where the music should follow.
+#[cfg(audio)]
+fn world_sounds(
+    bot: &Client,
+    pos: azalea_core::position::Vec3,
+    entity_anims: &[crate::entities::feed::EntityAnim],
+) {
+    use azalea::entity::{Physics, PlayerAbilities, Pose};
+    use azalea_registry::builtin::EntityKind;
+    use crate::util::block_model::{EyeFluid, eye_fluid_at};
+    let pose = bot.component::<Pose>().ok().map(|p| *p);
+    let eye_y = pos.y + crate::renderer::systems::eye_height(pose == Some(Pose::Crouching)) as f64;
+    let feet = [pos.x, pos.y, pos.z];
+    let eye = [pos.x, eye_y, pos.z];
+    let underwater = eye_fluid_at(eye[0], eye[1], eye[2]) == Some(EyeFluid::Water);
+    let velocity = bot
+        .component::<Physics>()
+        .map_or([0.0; 3], |p| [p.velocity.x, p.velocity.y, p.velocity.z]);
+    let dimension = crate::renderer::dimension::current().registry_id();
+    let biome = crate::client::envprobe::camera_biome().and_then(crate::util::biome_color::biome_name);
+    let minecarts: Vec<(i32, [f64; 3])> = entity_anims
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.kind,
+                EntityKind::Minecart
+                    | EntityKind::ChestMinecart
+                    | EntityKind::FurnaceMinecart
+                    | EntityKind::HopperMinecart
+                    | EntityKind::TntMinecart
+                    | EntityKind::SpawnerMinecart
+                    | EntityKind::CommandBlockMinecart
+            )
+        })
+        .map(|e| (e.id, e.pos))
+        .collect();
+    let light = |p: [i32; 3]| crate::renderer::lightmap::levels_at(p.map(|v| v as f32));
+    let surroundings = crate::audio::ambience::Surroundings {
+        dimension,
+        biome,
+        feet,
+        eye,
+        underwater,
+        fall_flying: pose == Some(Pose::FallFlying),
+        velocity,
+        light: &light,
+        rain: rain_spot(eye),
+        minecarts: &minecarts,
+    };
+    let creative = bot
+        .component::<PlayerAbilities>()
+        .is_ok_and(|a| a.instant_break && a.can_fly);
+    let situation = crate::audio::music::Situation::InGame {
+        dimension: dimension.to_owned(),
+        biome: biome.map(str::to_owned),
+        creative,
+        underwater,
+        end_boss: crate::client::bossbar::plays_music(),
+    };
+    crate::audio::tick_world(&surroundings, situation);
+}
+
 pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
     let _ticking = crate::diag::TickGuard::new();
+
+    crate::play::looking::tick(bot);
+
+    #[cfg(voice)]
+    for (channel, payload) in crate::voice::take_outgoing() {
+        bot.write_packet(
+            azalea_protocol::packets::game::s_custom_payload::ServerboundCustomPayload {
+                identifier: channel.into(),
+                data: payload.into(),
+            },
+        );
+    }
 
     let (inv_actions, horse) = {
         let mut s = shared.lock().unwrap();
@@ -667,13 +821,6 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
             s.session.merchant_hint = hint;
         }
         apply_local_trades(&mut s.session, &actions);
-        for action in &actions {
-            if let InvAction::SlotStateChanged { slot, enabled } = *action
-                && let Some(d) = s.session.container_data.get_mut(slot as usize)
-            {
-                *d = i16::from(!enabled);
-            }
-        }
         let horse = if actions.is_empty() {
             None
         } else {
@@ -684,7 +831,6 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
     let applied_clicks = inv_actions.len();
     let closing = inv_actions.iter().any(|a| matches!(a, InvAction::Close));
     apply_inv_actions(bot, inv_actions, horse);
-    crate::client::recipes::send_queued(bot, shared);
     if closing {
         shared.lock().unwrap().session.horse = None;
     }
@@ -722,8 +868,6 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
         swimming,
         sleeping,
         bed_orientation,
-        camera_distance,
-        local_body,
         attack_strength,
         attack_delay,
         fov_modifier,
@@ -731,9 +875,21 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
         xp_level,
     } = snapshot;
 
-    let env =
-        crate::client::envprobe::sample(bot, [pos.x, pos.y + local_body.eye_height as f64, pos.z]);
+    let env = crate::client::envprobe::sample(
+        bot,
+        [
+            pos.x,
+            pos.y + crate::renderer::systems::eye_height(crouching) as f64,
+            pos.z,
+        ],
+    );
 
+    let (bob_ground, bob_speed) = bot
+        .component::<azalea::entity::Physics>()
+        .map_or((false, 0.0), |p| {
+            (p.on_ground(), (p.velocity.x.powi(2) + p.velocity.z.powi(2)).sqrt() as f32)
+        });
+    let bob_riding = crate::client::tracking::local_vehicle_id().is_some();
     let (
         flags,
         auto_jump_enabled,
@@ -753,16 +909,23 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
         swap_hands,
     ) = {
         let mut s = shared.lock().unwrap();
+        {
+            let [px, _, pz] = s.session.player_pos;
+            let moved = ((pos.x as f32 - px).powi(2) + (pos.z as f32 - pz).powi(2)).sqrt();
+            let walking = bob_ground && !s.session.dead && !s.session.swimming;
+            s.session.view_bob.tick(moved, bob_speed, walking, bob_riding);
+        }
         s.session.player_pos_prev = s.session.player_pos;
         s.session.player_pos = [pos.x as f32, pos.y as f32, pos.z as f32];
         s.session.last_tick_time = Some(crate::platform::time::Instant::now());
+        s.session.tick_seq = s.session.tick_seq.wrapping_add(1);
         s.session.game_time = s.session.game_time.wrapping_add(1);
         s.session.day_clock.advance();
         if let Some(env) = env {
             s.session.env_prev = s.session.env.or(Some(env));
             s.session.env = Some(env);
         }
-        s.session.other_players = other_positions;
+        s.session.other_players = Arc::new(other_positions);
         s.session.local_anim = local_anim;
         #[cfg(feature = "skins")]
         {
@@ -864,7 +1027,9 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
             _ => 0,
         };
         s.session.merchant_future_xp = future_xp;
-        s.session.hotbar_selected = hotbar_sel;
+        // The target is taken below and applied this tick, so publish it now;
+        // the snapshot slot predates it and would bounce the HUD back a slot.
+        s.session.hotbar_selected = s.session.hotbar_target.unwrap_or(hotbar_sel);
         s.session.health = health;
         if dead && !s.session.dead && !s.session.show_death_screen {
             s.respawn_requested = true;
@@ -882,10 +1047,6 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
         s.session.swimming = swimming;
         s.session.sleeping = sleeping;
         s.session.bed_orientation = bed_orientation;
-        s.session.camera_distance = Some(camera_distance);
-        s.session.local_body = local_body;
-        let eye_target = crate::renderer::systems::session_eye_height(&s.session);
-        s.session.camera_eye.tick(eye_target);
         s.session.sleep_timer = if sleeping {
             (s.session.sleep_timer + 1).min(100)
         } else if s.session.sleep_timer > 0 {
@@ -1015,14 +1176,13 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
         let range = bot
             .component::<azalea::entity::Attributes>()
             .map(|a| a.block_interaction_range.calculate())
-            .unwrap_or(
-                crate::client::tracking::ranged(
-                    azalea_registry::builtin::Attribute::BlockInteractionRange,
-                )
-                .default,
-            )
+            .unwrap_or(4.5)
             + 4.0;
-        let eye = [pos.x, pos.y + local_body.eye_height as f64, pos.z];
+        let eye = [
+            pos.x,
+            pos.y + crate::renderer::systems::eye_height(crouching) as f64,
+            pos.z,
+        ];
         if !still_sign || block_distance_sqr(sign_pos, eye) >= range * range {
             let mut s = shared.lock().unwrap();
             if s.session.sign_edit_open_pos == Some(sign_pos) {
@@ -1115,13 +1275,12 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
 
     viewwindow::apply_client_information_requests(bot, shared);
 
-    let (quit, disconnect, reload_chunks, remesh_chunks, leave_bed, respawn) = {
+    let (quit, disconnect, reload_chunks, leave_bed, respawn) = {
         let mut s = shared.lock().unwrap();
         (
             std::mem::take(&mut s.quit_requested),
             std::mem::take(&mut s.disconnect_requested),
             std::mem::take(&mut s.reload_chunks_requested),
-            std::mem::take(&mut s.remesh_chunks_requested),
             std::mem::take(&mut s.leave_bed_requested),
             std::mem::take(&mut s.respawn_requested),
         )
@@ -1137,8 +1296,6 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
 
     if reload_chunks || crate::client::mesh_worker::take_died() {
         worldsync::reload_all_chunks(bot, shared);
-    } else if remesh_chunks {
-        worldsync::remesh_all_chunks(bot);
     }
 
     if leave_bed {
@@ -1202,7 +1359,7 @@ fn collect_other_players(bot: &Client) -> (Vec<OtherPlayerInfo>, HashSet<i32>) {
     let heads = head_yaws().lock().unwrap();
     let equip = equipment().lock().unwrap();
     let mut anims = anim_states().lock().unwrap();
-    let attributes = crate::client::tracking::attributes().lock().unwrap();
+    let max_healths = crate::client::tracking::max_healths().lock().unwrap();
     let viewer = crate::client::bot::username();
     let avatar_metadata_trusted = avatar_metadata_trusted();
 
@@ -1238,16 +1395,32 @@ fn collect_other_players(bot: &Client) -> (Vec<OtherPlayerInfo>, HashSet<i32>) {
                 interpolated: true,
                 main_hand: worn.main_hand,
                 off_hand: worn.off_hand,
-                armor: [worn.helmet, worn.chestplate, worn.leggings, worn.boots],
-                using_offhand: flag::<metadata::AbstractLivingUsingOffhand>(eref),
+                armor: crate::renderer::Armor {
+                    worn: [worn.helmet, worn.chestplate, worn.leggings, worn.boots],
+                    glint: worn.armor_glint & 0xF,
+                    trims: worn.armor_trims,
+                },
+                using_offhand: eref
+                    .get_component::<metadata::AbstractLivingUsingOffhand>()
+                    .map(|c| c.0)
+                    .unwrap_or(false),
                 #[cfg(feature = "skins")]
                 on_ground: eref
                     .get_component::<azalea::entity::Physics>()
                     .is_some_and(|p| p.on_ground()),
                 crouching: pose == Pose::Crouching
-                    || flag::<metadata::AbstractEntityShiftKeyDown>(eref),
-                sprinting: flag::<metadata::Sprinting>(eref),
-                fall_flying: flag::<metadata::FallFlying>(eref),
+                    || eref
+                        .get_component::<metadata::AbstractEntityShiftKeyDown>()
+                        .map(|c| c.0)
+                        .unwrap_or(false),
+                sprinting: eref
+                    .get_component::<metadata::Sprinting>()
+                    .map(|c| c.0)
+                    .unwrap_or(false),
+                fall_flying: eref
+                    .get_component::<metadata::FallFlying>()
+                    .map(|c| c.0)
+                    .unwrap_or(false),
                 visually_swimming: pose == Pose::Swimming,
                 spin_attack: pose == Pose::SpinAttack,
                 sleeping: pose == Pose::Sleeping,
@@ -1255,7 +1428,10 @@ fn collect_other_players(bot: &Client) -> (Vec<OtherPlayerInfo>, HashSet<i32>) {
                     .get_component::<metadata::SleepingPos>()
                     .and_then(|c| c.0)
                     .and_then(|pos| bed_orientation_at(bot, pos)),
-                using_item: flag::<metadata::AbstractLivingUsingItem>(eref),
+                using_item: eref
+                    .get_component::<metadata::AbstractLivingUsingItem>()
+                    .map(|c| c.0)
+                    .unwrap_or(false),
                 passenger: pose == Pose::Sitting,
                 main_arm_left: avatar_metadata_trusted
                     && eref
@@ -1278,17 +1454,6 @@ fn collect_other_players(bot: &Client) -> (Vec<OtherPlayerInfo>, HashSet<i32>) {
                 crate::text::styled(&username, crate::text::Style::default()),
                 &viewer,
             );
-            let gamemode = profile
-                .as_ref()
-                .and_then(|g| tab.gamemode(g.0.uuid.as_u128()));
-            let attrs = EntityAttributes::of(&attributes, id);
-            let body = player_body(
-                eref,
-                pose,
-                attrs.scale(),
-                gamemode == Some(Gamemode::Spectator),
-                || tab.sees_friendly_invisible(&username, &viewer),
-            );
             out.push(OtherPlayerInfo {
                 id,
                 username,
@@ -1296,9 +1461,13 @@ fn collect_other_players(bot: &Client) -> (Vec<OtherPlayerInfo>, HashSet<i32>) {
                 below_name: tag.below,
                 hidden_by_team: tag.hidden_by_team,
                 health,
-                max_health: attrs.max_health(),
-                body,
-                gamemode,
+                max_health: max_healths
+                    .get(&id)
+                    .copied()
+                    .unwrap_or(crate::session::VANILLA_MAX_HEALTH),
+                gamemode: profile
+                    .as_ref()
+                    .and_then(|g| tab.gamemode(g.0.uuid.as_u128())),
                 #[cfg(feature = "skins")]
                 skin: {
                     let (refs, default_index) = profile
@@ -1349,6 +1518,7 @@ fn tick_local_anim(
                     tint: st.potion.as_ref().map(|c| c.color()),
                     map_id: st.map_id,
                     layers: st.banner_layers.clone(),
+                    glint: st.glint,
                 })
                 .unwrap_or_default()
         };
@@ -1472,6 +1642,7 @@ pub(crate) fn held_item(stack: &ItemStack) -> renderer::HeldItem {
         count: data.count.clamp(0, u8::MAX as i32) as u8,
         map_id: data.get_component::<comp::MapId>().map(|m| m.id),
         layers: None,
+        glint: crate::play::inventory_bridge::has_glint(data),
     }
 }
 
@@ -1486,14 +1657,12 @@ fn health_display(
     bot: &Client,
     active_effects: &[crate::play::mob_effects::MobEffectInstance],
     armor: u8,
-    max_health: f32,
-    vehicle_max: Option<f32>,
 ) -> (crate::session::HealthDisplay, bool) {
     use crate::session::{HealthDisplay, HeartKind};
     use azalea::entity::metadata;
     use azalea_core::entity_id::MinecraftEntityId;
 
-    let has = |id: &str| crate::play::mob_effects::find(active_effects, id).is_some();
+    let has = |id: &str| active_effects.iter().any(|e| e.id == id);
     let ticks_frozen = bot
         .component::<metadata::TicksFrozen>()
         .map(|t| t.0)
@@ -1508,8 +1677,22 @@ fn health_display(
         HeartKind::Normal
     };
 
+    let local_id = bot.component::<MinecraftEntityId>().map(|id| id.0).ok();
+    if let Some(id) = local_id {
+        crate::client::tracking::LOCAL_ENTITY_ID.store(id, std::sync::atomic::Ordering::Relaxed);
+    }
+
     let vehicle_id = crate::client::tracking::local_vehicle_id();
 
+    let (max_health, vehicle_max) = {
+        let map = crate::client::tracking::max_healths().lock().unwrap();
+        (
+            local_id
+                .and_then(|id| map.get(&id).copied())
+                .unwrap_or(crate::session::VANILLA_MAX_HEALTH),
+            vehicle_id.and_then(|id| map.get(&id).copied()),
+        )
+    };
     let saddled = vehicle_id.is_some_and(|id| {
         equipment()
             .lock()
@@ -1550,42 +1733,29 @@ fn health_display(
             regenerating: has("regeneration"),
             hunger_effect: has("hunger"),
             ticks_frozen,
+            on_fire: bot.component::<metadata::OnFire>().is_ok_and(|f| f.0),
             vehicle,
         },
         jumpable,
     )
 }
 
-fn player_body(
-    player: &impl Components,
-    pose: azalea::entity::Pose,
-    scale: f32,
-    spectator: bool,
-    team_sees: impl FnOnce() -> bool,
-) -> crate::session::PlayerBody {
-    use azalea::entity::metadata;
-    let d = crate::session::player_dimensions(pose, scale);
-    crate::session::PlayerBody {
-        invisible: flag::<metadata::Invisible>(player) && !team_sees(),
-        on_fire: flag::<metadata::OnFire>(player) && !spectator,
-        scale,
-        bounding_box: [d.width, d.height],
-        eye_height: d.eye_height,
-    }
-}
-
 fn is_rideable_jumping(kind: azalea_registry::builtin::EntityKind) -> bool {
     use azalea_registry::builtin::EntityKind as K;
     matches!(
         kind,
-        K::Horse | K::Donkey | K::Mule | K::SkeletonHorse | K::ZombieHorse | K::Camel
+        K::Horse
+            | K::Donkey
+            | K::Mule
+            | K::SkeletonHorse
+            | K::ZombieHorse
+            | K::Camel
+            | K::Nautilus
+            | K::ZombieNautilus
     )
 }
 
-fn armor_value(attribute: Option<f64>, player_slots: &[ItemStack], selected: u8) -> u8 {
-    if let Some(value) = attribute {
-        return value.floor() as u8;
-    }
+fn armor_value(player_slots: &[ItemStack], selected: u8) -> u8 {
     use azalea_core::attribute_modifier_operation::AttributeModifierOperation as Op;
     use azalea_inventory::components as comp;
     use azalea_inventory::default_components::get_default_component;

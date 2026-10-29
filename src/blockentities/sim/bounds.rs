@@ -1,5 +1,5 @@
 use azalea_registry::builtin::BlockEntityKind;
-use simdnbt::owned::{Nbt, NbtCompound};
+use simdnbt::owned::NbtCompound;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Mode {
@@ -38,7 +38,7 @@ pub struct Data {
     pub errors: Vec<[i32; 3]>,
 }
 
-pub fn decode(kind: BlockEntityKind, tag: &Nbt) -> Data {
+pub fn decode(kind: BlockEntityKind, tag: &NbtCompound) -> Data {
     match kind {
         BlockEntityKind::StructureBlock => structure(tag),
         BlockEntityKind::TestInstanceBlock => test_instance(tag),
@@ -61,7 +61,7 @@ fn vec3(tag: &NbtCompound, key: &str, default: [i32; 3], range: (i32, i32)) -> [
     out
 }
 
-fn structure(tag: &Nbt) -> Data {
+fn structure(tag: &NbtCompound) -> Data {
     let tag: &NbtCompound = tag;
     let mode = tag.string("mode").map(|s| s.to_string());
     let show_air = tag.byte("showair").unwrap_or(0) != 0;
@@ -130,7 +130,7 @@ fn structure_box(pos: [i32; 3], size: [i32; 3], turn: Turn, flip: Flip) -> ([i32
     )
 }
 
-fn test_instance(tag: &Nbt) -> Data {
+fn test_instance(tag: &NbtCompound) -> Data {
     let mut out = Data {
         test_instance: true,
         ..Data::default()

@@ -159,3 +159,21 @@ pub fn shield_layer() -> LayerDef {
 }
 
 pub fn no_anim(_model: &BakedModel, _parts: &mut [PartState], _st: &EntityState) {}
+
+pub fn cushion_layer() -> LayerDef {
+    let mut mesh = MeshDef::new();
+    mesh.root().child(
+        "cushion",
+        CubeList::new().tex_offs(0, 0).add_box_grow(
+            -31.0,
+            -4.0,
+            -1.0,
+            16.0,
+            4.0,
+            16.0,
+            crate::entities::geom::Grow::all(-0.005),
+        ),
+        PartPose::offset(23.0, 4.0, -7.0),
+    );
+    LayerDef::create(mesh, 64, 64)
+}

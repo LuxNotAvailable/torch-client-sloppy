@@ -1,6 +1,3 @@
-use std::collections::HashMap;
-use std::hash::Hash;
-
 use bevy::asset::{Asset, embedded_asset};
 use bevy::mesh::{Mesh, MeshVertexBufferLayoutRef};
 use bevy::pbr::{Material, MaterialPipeline, MaterialPlugin};
@@ -74,6 +71,8 @@ pub struct Lit {
     pub dirs: [Vec3; 2],
     pub overlay_alpha: f32,
     pub overlay_white: bool,
+    /// Enchantment shimmer over this layer.
+    pub glint: bool,
 }
 
 impl Lit {
@@ -84,6 +83,7 @@ impl Lit {
             dirs: diffuse_lights(Dimension::Overworld),
             overlay_alpha: 1.0,
             overlay_white: false,
+            glint: false,
         }
     }
 }
@@ -106,7 +106,7 @@ impl EntityParams {
         self.light.z = lit.light.color[2];
         self.light0 = lit.dirs[0].extend(if lit.overlay_white { 1.0 } else { 0.0 });
         self.light1 = lit.dirs[1].extend(lit.overlay_alpha);
-        self.light_floor = Vec3::from(lit.light.floor).extend(0.0);
+        self.light_floor = Vec3::from(lit.light.floor).extend(if lit.glint { 1.0 } else { 0.0 });
         self.light_block = Vec3::from(lit.light.block).extend(0.0);
         self.light_sky = Vec3::from(lit.light.sky).extend(0.0);
         #[cfg(feature = "shader_support")]
@@ -134,6 +134,12 @@ pub struct EntityMaterial {
     pub texture: Option<Handle<Image>>,
     #[uniform(2)]
     pub params: EntityParams,
+    #[cfg(not(target_arch = "wasm32"))]
+    #[storage(3, read_only, visibility(vertex))]
+    pub rig_parts: Handle<bevy::render::storage::ShaderStorageBuffer>,
+    #[texture(4)]
+    #[sampler(5)]
+    pub glint: Handle<Image>,
     pub alpha_mode: AlphaMode,
     pub depth_bias: i32,
     pub see_through: bool,
@@ -156,8 +162,6 @@ impl From<&EntityMaterial> for EntityMaterialKey {
     }
 }
 
-pub const ALPHA_CUTOUT: f32 = 0.1;
-
 impl EntityMaterial {
     pub fn new(
         texture: Option<Handle<Image>>,
@@ -170,80 +174,13 @@ impl EntityMaterial {
         EntityMaterial {
             texture,
             params: EntityParams::new(mode, cutoff, lit),
+            #[cfg(not(target_arch = "wasm32"))]
+            rig_parts: super::rig_parts::PARTS,
+            glint: GLINT,
             alpha_mode,
             depth_bias,
             see_through: false,
         }
-    }
-
-    pub fn cutout(texture: Option<Handle<Image>>, mode: LightMode, lit: Lit) -> EntityMaterial {
-        EntityMaterial::new(
-            texture,
-            mode,
-            AlphaMode::Mask(ALPHA_CUTOUT),
-            ALPHA_CUTOUT,
-            lit,
-            0,
-        )
-    }
-
-    pub fn relight(
-        materials: &mut Assets<EntityMaterial>,
-        handle: &Handle<EntityMaterial>,
-        lit: Lit,
-    ) {
-        let Some(material) = materials.get(handle) else {
-            return;
-        };
-        let mut params = material.params;
-        params.set(lit);
-        if params != material.params
-            && let Some(material) = materials.get_mut(handle)
-        {
-            material.params = params;
-        }
-    }
-}
-
-pub struct SharedMaterials<K, const CAP: usize> {
-    entries: HashMap<K, (Handle<EntityMaterial>, u64)>,
-    epoch: u64,
-}
-
-impl<K, const CAP: usize> Default for SharedMaterials<K, CAP> {
-    fn default() -> Self {
-        SharedMaterials {
-            entries: HashMap::default(),
-            epoch: 0,
-        }
-    }
-}
-
-impl<K: Hash + Eq, const CAP: usize> SharedMaterials<K, CAP> {
-    pub fn begin_frame(&mut self) {
-        self.epoch = self.epoch.wrapping_add(1);
-    }
-
-    pub fn get(
-        &mut self,
-        key: K,
-        lit: Lit,
-        materials: &mut Assets<EntityMaterial>,
-        build: impl FnOnce() -> EntityMaterial,
-    ) -> Handle<EntityMaterial> {
-        if let Some((handle, epoch)) = self.entries.get_mut(&key) {
-            if *epoch != self.epoch {
-                EntityMaterial::relight(materials, handle, lit);
-                *epoch = self.epoch;
-            }
-            return handle.clone();
-        }
-        if self.entries.len() >= CAP {
-            self.entries.clear();
-        }
-        let handle = materials.add(build());
-        self.entries.insert(key, (handle.clone(), self.epoch));
-        handle
     }
 }
 
@@ -258,6 +195,15 @@ impl Material for EntityMaterial {
 
     fn alpha_mode(&self) -> AlphaMode {
         self.alpha_mode
+    }
+
+    /// Orders blended layers drawn over the same surface (a banner's dyed
+    /// patterns): Bevy sorts transparent draws by distance plus this, so
+    /// without it coplanar layers tie and swap from frame to frame. A
+    /// millimetre a step keeps the stack in order without moving it past
+    /// anything else; the depth test is offset in the pipeline (`specialize`).
+    fn depth_bias(&self) -> f32 {
+        self.depth_bias as f32 * 0.001
     }
 
     fn enable_prepass() -> bool {
@@ -284,24 +230,26 @@ impl Material for EntityMaterial {
         layout: &MeshVertexBufferLayoutRef,
         key: bevy::pbr::MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
-        let vertex_layout = layout.0.get_layout(&[
+        let rigged = cfg!(not(target_arch = "wasm32"))
+            && layout.0.contains(super::rig_parts::ATTRIBUTE_PART);
+        let mut attributes = vec![
             Mesh::ATTRIBUTE_POSITION.at_shader_location(0),
             Mesh::ATTRIBUTE_NORMAL.at_shader_location(1),
             Mesh::ATTRIBUTE_UV_0.at_shader_location(2),
             Mesh::ATTRIBUTE_COLOR.at_shader_location(3),
-        ])?;
+        ];
+        if rigged {
+            attributes.push(super::rig_parts::ATTRIBUTE_PART.at_shader_location(4));
+            descriptor.vertex.shader_defs.push("RIGGED".into());
+        }
+        let vertex_layout = layout.0.get_layout(&attributes)?;
         descriptor.vertex.buffers = vec![vertex_layout];
         descriptor.primitive.cull_mode = None;
         if let Some(depth_stencil) = descriptor.depth_stencil.as_mut() {
             depth_stencil.bias.constant = key.bind_group_data.depth_bias;
             if key.bind_group_data.see_through {
                 depth_stencil.depth_compare =
-                    bevy::render::render_resource::CompareFunction::GreaterEqual;
-                descriptor.vertex.shader_defs.push("SEE_THROUGH".into());
-                descriptor
-                    .vertex
-                    .shader_defs
-                    .push(super::hand::band_floor_def());
+                    bevy::render::render_resource::CompareFunction::Always;
             }
         }
         if key.bind_group_data.fancy {
@@ -314,6 +262,64 @@ impl Material for EntityMaterial {
     }
 }
 
+/// The armor glint texture every entity material binds; materials wait for it
+/// until the assets are ready.
+pub const GLINT: Handle<Image> = bevy::asset::uuid_handle!("2b7e4c19-8d5a-4f63-b0e2-91c7a6d34f85");
+
+/// The item glint texture, for the GUI and hand glints.
+pub const GLINT_ITEM: Handle<Image> =
+    bevy::asset::uuid_handle!("c41f0a7e-5b2d-4e98-a3c6-7d18e9b25f04");
+
+/// Kept as stored, without the sRGB decode: the glint blend works on the
+/// encoded values, as vanilla's does on its sRGB framebuffer.
+fn glint_image(name: &str) -> Image {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
+    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+
+    let file = crate::assets_root().join(format!("textures/misc/{name}.png"));
+    let (w, h, data) = match crate::platform::assets::open_image(&file) {
+        Ok(img) => {
+            let rgba = img.to_rgba8();
+            (rgba.width(), rgba.height(), rgba.into_raw())
+        }
+        Err(e) => {
+            warn!("glint texture {name} not found ({e}); that glint is off");
+            (1, 1, vec![0, 0, 0, 255])
+        }
+    };
+    let mut image = Image::new(
+        Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8Unorm,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+        address_mode_u: ImageAddressMode::Repeat,
+        address_mode_v: ImageAddressMode::Repeat,
+        mag_filter: ImageFilterMode::Linear,
+        min_filter: ImageFilterMode::Linear,
+        ..ImageSamplerDescriptor::nearest()
+    });
+    image
+}
+
+fn load_glint(mut images: ResMut<Assets<Image>>) {
+    for (handle, name) in [
+        (&GLINT, "enchanted_glint_armor"),
+        (&GLINT_ITEM, "enchanted_glint_item"),
+    ] {
+        images
+            .insert(handle, glint_image(name))
+            .expect("a uuid handle has no generation to go stale");
+    }
+}
+
 pub struct EntityMaterialPlugin;
 
 impl Plugin for EntityMaterialPlugin {
@@ -321,8 +327,14 @@ impl Plugin for EntityMaterialPlugin {
         embedded_asset!(app, "entity.wgsl");
         #[cfg(feature = "builtin_shaders")]
         embedded_asset!(app, "entity_prepass.wgsl");
-        app.add_plugins(MaterialPlugin::<EntityMaterial>::default());
-        crate::renderer::reload::touch_on_reload::<EntityMaterial>(app);
+        app.add_plugins((
+            super::rig_parts::RigPartsPlugin,
+            MaterialPlugin::<EntityMaterial>::default(),
+        ))
+        .add_systems(
+            Update,
+            load_glint.run_if(resource_added::<super::systems::AssetsReady>),
+        );
     }
 }
 

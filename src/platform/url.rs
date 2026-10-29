@@ -19,9 +19,7 @@ pub(crate) fn open(url: &str) {
         }
     }
     #[cfg(target_os = "android")]
-    if !android(url) {
-        crate::platform::clipboard::set(url);
-    }
+    crate::platform::clipboard::set(url);
     #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
     match native(url) {
         Ok(mut child) => {
@@ -33,31 +31,6 @@ pub(crate) fn open(url: &str) {
             });
         }
         Err(_) => crate::platform::clipboard::set(url),
-    }
-}
-
-#[cfg(target_os = "android")]
-fn android(url: &str) -> bool {
-    use jni::{JValue, jni_sig, jni_str, objects::JObject};
-
-    let result = crate::platform::java::with_activity(|env, activity| {
-        let class = crate::platform::java::app_class(env, activity, "com.torchclient.game.Links")?;
-        let url: JObject = env.new_string(url)?.into();
-        env.call_static_method(
-            &class,
-            jni_str!("open"),
-            jni_sig!("(Landroid/app/Activity;Ljava/lang/String;)Z"),
-            &[JValue::Object(activity), JValue::Object(&url)],
-        )?
-        .z()
-    });
-    match result {
-        Some(Ok(opened)) => opened,
-        Some(Err(e)) => {
-            crate::log_warn!("url", "could not open a link: {e}");
-            false
-        }
-        None => false,
     }
 }
 

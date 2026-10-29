@@ -12,6 +12,40 @@ use crate::client::worker::JobScope;
 use crate::session::SharedMutex;
 use crate::{CHUNK_Q, SHARED, blockentities, lighting};
 
+/// Where this player last tried to place, and when: a block appearing there
+/// soon after is theirs, whose place sound the server leaves to this client
+/// (`BlockItem.place` plays it for everyone but the placer).
+#[cfg(audio)]
+static LOCAL_PLACES: Mutex<Vec<(AzBlockPos, crate::platform::time::Instant)>> = Mutex::new(Vec::new());
+
+#[cfg(audio)]
+const LOCAL_PLACE_WINDOW: std::time::Duration = std::time::Duration::from_millis(600);
+
+/// A placement this player just sent, at either cell it could fill.
+#[cfg(audio)]
+pub(crate) fn note_local_place(cells: [AzBlockPos; 2]) {
+    let now = crate::platform::time::Instant::now();
+    if let Ok(mut places) = LOCAL_PLACES.lock() {
+        places.retain(|(_, at)| now.duration_since(*at) < LOCAL_PLACE_WINDOW);
+        places.extend(cells.map(|cell| (cell, now)));
+    }
+}
+
+#[cfg(audio)]
+fn placed_locally(pos: AzBlockPos) -> bool {
+    let now = crate::platform::time::Instant::now();
+    LOCAL_PLACES.lock().is_ok_and(|mut places| {
+        places.retain(|(_, at)| now.duration_since(*at) < LOCAL_PLACE_WINDOW);
+        match places.iter().position(|(cell, _)| *cell == pos) {
+            Some(i) => {
+                places.swap_remove(i);
+                true
+            }
+            None => false,
+        }
+    })
+}
+
 pub(crate) fn install_block_change_hook() {
     let hook_installed =
         azalea_world::block_change::set_block_change_hook(Box::new(|pos, old, new| {
@@ -35,7 +69,7 @@ pub(crate) fn install_block_change_hook() {
                 send_light(lighting::LightJob::Block { world, pos });
             }
 
-            #[cfg(feature = "audio")]
+            #[cfg(audio)]
             {
                 let at = [pos.x as f32 + 0.5, pos.y as f32 + 0.5, pos.z as f32 + 0.5];
                 if crate::audio::audible_at(at) {
@@ -48,7 +82,11 @@ pub(crate) fn install_block_change_hook() {
                         let block: Box<dyn BlockTrait> = Box::<dyn BlockTrait>::from(state);
                         matches!(block.id(), "water" | "lava" | "bubble_column")
                     };
-                    let event = if old.is_air() && !new.is_air() && !is_fluid(new) {
+                    let event = if old.is_air()
+                        && !new.is_air()
+                        && !is_fluid(new)
+                        && placed_locally(pos)
+                    {
                         Some(name(new).place_event)
                     } else {
                         None
@@ -153,6 +191,18 @@ pub(crate) fn send_light(job: lighting::LightJob) {
     match LIGHT_THREAD.get() {
         Some(t) => t.send(job),
         None => crate::diag::bump(crate::diag::Stat::LightJobsDropped),
+    }
+}
+
+/// Re-meshes the section holding `pos` with no block change, for the mesher
+/// to pick up state it reads on the side (baked block entities).
+pub(crate) fn remesh_block(pos: [i32; 3]) {
+    let (Some(world), Some(q)) = (current_world().lock().unwrap().clone(), CHUNK_Q.get()) else {
+        return;
+    };
+    let (cx, cz) = (pos[0] >> 4, pos[2] >> 4);
+    if meshed_chunks().lock().unwrap().contains(&(cx, cz)) {
+        q.push(world, cx, cz, JobScope::Section(pos[1] >> 4));
     }
 }
 
@@ -294,23 +344,6 @@ pub(crate) fn reload_all_chunks(bot: &Client, shared: &Arc<SharedMutex>) {
     }
 }
 
-pub(crate) fn remesh_all_chunks(bot: &Client) {
-    if crate::client::mesh_worker::active() {
-        return;
-    }
-    let (Ok(world), Some(q)) = (bot.world(), CHUNK_Q.get()) else {
-        return;
-    };
-    let mut cols: Vec<(i32, i32)> = meshed_chunks().lock().unwrap().iter().copied().collect();
-    if let Ok(pos) = bot.position() {
-        let (px, pz) = ((pos.x as i32) >> 4, (pos.z as i32) >> 4);
-        cols.sort_unstable_by_key(|&(x, z)| (x - px).pow(2) + (z - pz).pow(2));
-    }
-    for (cx, cz) in cols {
-        q.push(world.clone(), cx, cz, JobScope::Column);
-    }
-}
-
 const COMPACT_INTERVAL: u32 = 256;
 static FORGOTTEN_SINCE_COMPACT: AtomicU32 = AtomicU32::new(0);
 
@@ -373,11 +406,21 @@ pub(crate) fn reset_level(shared: &Arc<SharedMutex>) {
     s.session.unloaded_chunks.clear();
 }
 
-pub(crate) fn set_dimension(common: &azalea_protocol::packets::common::CommonPlayerSpawnInfo) {
+pub(crate) fn set_dimension(
+    world: &azalea::local_player::WorldHolder,
+    common: &azalea_protocol::packets::common::CommonPlayerSpawnInfo,
+) {
     use crate::renderer::dimension::Dimension;
 
     crate::renderer::dimension::set_current(Dimension::from_path(common.dimension.path()));
     crate::renderer::dimension::set_sea_level(common.sea_level);
+    let floor = common.is_flat.then(|| {
+        let world = world.shared.read();
+        common
+            .dimension_type(&world.registries)
+            .map_or(-64, |(_, kind)| kind.min_y)
+    });
+    crate::renderer::dimension::set_horizon(floor);
 }
 
 #[cfg(test)]

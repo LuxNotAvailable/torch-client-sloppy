@@ -33,26 +33,9 @@ pub struct Inventory {
     pub quick_craft_slots: HashSet<u16>,
 
     pub selected_hotbar_slot: u8,
-
-    pub crafter_disabled_slots: u16,
 }
 
 impl Inventory {
-    pub fn set_crafter_slot_disabled(&mut self, slot: usize, disabled: bool) {
-        let crafter_open = matches!(
-            self.container_menu,
-            Some(azalea_inventory::Menu::Crafter3x3 { .. })
-        );
-        if slot >= 9 || !crafter_open {
-            return;
-        }
-        if disabled {
-            self.crafter_disabled_slots |= 1 << slot;
-        } else {
-            self.crafter_disabled_slots &= !(1 << slot);
-        }
-    }
-
     pub fn menu(&self) -> &azalea_inventory::Menu {
         match &self.container_menu {
             Some(menu) => menu,
@@ -384,15 +367,9 @@ impl Inventory {
                     self.menu().location_for_slot(slot),
                     Some(MenuLocation::Merchant(MerchantMenuLocation::Result))
                 );
-                if !self.menu().may_pickup(slot) {
-                    return;
-                }
                 if self.craft_grid_range_for_result(slot).is_none() && !merchant_result {
-                    let disabled = self.crafter_disabled_slots;
                     loop {
-                        let new_slot_item = self
-                            .menu_mut()
-                            .quick_move_stack_with_disabled(slot, disabled);
+                        let new_slot_item = self.menu_mut().quick_move_stack(slot);
                         let slot_item = self.menu().slot(slot).unwrap();
                         if new_slot_item.is_empty() || slot_item.kind() != new_slot_item.kind() {
                             break;
@@ -482,9 +459,6 @@ impl Inventory {
                 let (ThrowClick::Single { slot: slot_index }
                 | ThrowClick::All { slot: slot_index }) = c;
                 let slot_index = *slot_index as usize;
-                if !self.menu().may_pickup(slot_index) {
-                    return;
-                }
 
                 let Some(slot) = self.menu_mut().slot_mut(slot_index) else {
                     return;
@@ -701,7 +675,6 @@ impl Default for Inventory {
             quick_craft_kind: QuickCraftKind::Middle,
             quick_craft_slots: HashSet::new(),
             selected_hotbar_slot: 0,
-            crafter_disabled_slots: 0,
         }
     }
 }
@@ -733,7 +706,6 @@ mod tests {
             quick_craft_kind: QuickCraftKind::Middle,
             quick_craft_slots: HashSet::new(),
             selected_hotbar_slot: 0,
-            crafter_disabled_slots: 0,
         };
 
         inventory.simulate_click(

@@ -1,4 +1,4 @@
-use simdnbt::owned::Nbt;
+use simdnbt::owned::NbtCompound;
 
 use crate::blockentities::feed::BlockEntityData;
 
@@ -10,7 +10,7 @@ pub struct Data {
     pub age: i64,
 }
 
-pub fn decode(tag: &Nbt) -> Data {
+pub fn decode(tag: &NbtCompound) -> Data {
     Data {
         age: tag.long("Age").unwrap_or(0),
     }

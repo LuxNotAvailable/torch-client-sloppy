@@ -8,7 +8,6 @@ use crate::{
     renderer::{self, HumanoidAnim},
 };
 use azalea::prelude::*;
-use azalea_registry::builtin::Attribute as Attr;
 
 static MESHED: OnceLock<SideMutex<HashSet<(i32, i32)>>> = OnceLock::new();
 
@@ -78,7 +77,11 @@ pub struct Equipment {
     pub leggings: Option<&'static str>,
     pub boots: Option<&'static str>,
     pub body_armor: Option<&'static str>,
+    pub body_block: Option<u32>,
     pub saddle: Option<&'static str>,
+    /// Enchanted armour, one `glint_bit` per slot.
+    pub armor_glint: u8,
+    pub armor_trims: [Option<crate::entities::render::humanoid::armor::Trim>; 4],
 }
 
 static EQUIPMENT: OnceLock<SideMutex<HashMap<i32, Equipment>>> = OnceLock::new();
@@ -87,126 +90,10 @@ pub(crate) fn equipment() -> &'static SideMutex<HashMap<i32, Equipment>> {
     EQUIPMENT.get_or_init(Default::default)
 }
 
-#[derive(Clone, Debug, Default)]
-pub(crate) struct EntityAttributes(HashMap<Attr, azalea::entity::attributes::AttributeInstance>);
+static MAX_HEALTH: OnceLock<SideMutex<HashMap<i32, f32>>> = OnceLock::new();
 
-impl EntityAttributes {
-    pub fn of(map: &HashMap<i32, EntityAttributes>, id: i32) -> &EntityAttributes {
-        static NONE: std::sync::LazyLock<EntityAttributes> =
-            std::sync::LazyLock::new(Default::default);
-        map.get(&id).unwrap_or(&NONE)
-    }
-
-    pub fn value(&self, attribute: Attr) -> Option<f64> {
-        self.0
-            .get(&attribute)
-            .map(|instance| ranged(attribute).sanitize(instance.calculate()))
-    }
-
-    pub fn value_or_default(&self, attribute: Attr) -> f64 {
-        self.value(attribute).unwrap_or(ranged(attribute).default)
-    }
-
-    pub fn scale(&self) -> f32 {
-        self.value_or_default(Attr::Scale) as f32
-    }
-
-    pub fn max_health(&self) -> f32 {
-        self.value_or_default(Attr::MaxHealth) as f32
-    }
-
-    pub fn camera_distance(&self, mount: Option<&EntityAttributes>) -> f32 {
-        let scaled =
-            |a: &EntityAttributes| a.scale() * a.value_or_default(Attr::CameraDistance) as f32;
-        let own = scaled(self);
-        own.max(mount.map_or(own, scaled))
-    }
-
-    fn replace(
-        &mut self,
-        snapshot: &azalea_protocol::packets::game::c_update_attributes::AttributeSnapshot,
-    ) {
-        self.0
-            .entry(snapshot.attribute)
-            .or_insert_with(|| azalea::entity::attributes::AttributeInstance::new(snapshot.base))
-            .apply_snapshot(snapshot.base, &snapshot.modifiers);
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct RangedAttribute {
-    pub default: f64,
-    pub min: f64,
-    pub max: f64,
-}
-
-impl RangedAttribute {
-    pub fn sanitize(self, value: f64) -> f64 {
-        if value.is_nan() {
-            self.min
-        } else {
-            value.clamp(self.min, self.max)
-        }
-    }
-}
-
-pub(crate) const fn ranged(attribute: Attr) -> RangedAttribute {
-    let (default, min, max) = match attribute {
-        Attr::Armor => (0.0, 0.0, 30.0),
-        Attr::ArmorToughness => (0.0, 0.0, 20.0),
-        Attr::AttackDamage => (2.0, 0.0, 2048.0),
-        Attr::AttackKnockback => (0.0, 0.0, 5.0),
-        Attr::AttackSpeed => (4.0, 0.0, 1024.0),
-        Attr::BlockBreakSpeed => (1.0, 0.0, 1024.0),
-        Attr::BlockInteractionRange => (4.5, 0.0, 64.0),
-        Attr::BurningTime => (1.0, 0.0, 1024.0),
-        Attr::CameraDistance => (4.0, 0.0, 32.0),
-        Attr::ExplosionKnockbackResistance => (0.0, 0.0, 1.0),
-        Attr::EntityInteractionRange => (3.0, 0.0, 64.0),
-        Attr::FallDamageMultiplier => (1.0, 0.0, 100.0),
-        Attr::FlyingSpeed => (0.4, 0.0, 1024.0),
-        Attr::FollowRange => (32.0, 0.0, 2048.0),
-        Attr::Gravity => (0.08, -1.0, 1.0),
-        Attr::JumpStrength => (0.41999998688697815, 0.0, 32.0),
-        Attr::KnockbackResistance => (0.0, 0.0, 1.0),
-        Attr::Luck => (0.0, -1024.0, 1024.0),
-        Attr::MaxAbsorption => (0.0, 0.0, 2048.0),
-        Attr::MaxHealth => (20.0, 1.0, 1024.0),
-        Attr::MiningEfficiency => (0.0, 0.0, 1024.0),
-        Attr::MovementEfficiency => (0.0, 0.0, 1.0),
-        Attr::MovementSpeed => (0.7, 0.0, 1024.0),
-        Attr::OxygenBonus => (0.0, 0.0, 1024.0),
-        Attr::SafeFallDistance => (3.0, -1024.0, 1024.0),
-        Attr::Scale => (1.0, 0.0625, 16.0),
-        Attr::SneakingSpeed => (0.3, 0.0, 1.0),
-        Attr::SpawnReinforcements => (0.0, 0.0, 1.0),
-        Attr::StepHeight => (0.6, 0.0, 10.0),
-        Attr::SubmergedMiningSpeed => (0.2, 0.0, 20.0),
-        Attr::SweepingDamageRatio => (0.0, 0.0, 1.0),
-        Attr::TemptRange => (10.0, 0.0, 2048.0),
-        Attr::WaterMovementEfficiency => (0.0, 0.0, 1.0),
-        Attr::WaypointTransmitRange => (0.0, 0.0, 6.0E7),
-        Attr::WaypointReceiveRange => (0.0, 0.0, 6.0E7),
-    };
-    RangedAttribute { default, min, max }
-}
-
-pub(crate) const DEFAULT_CAMERA_DISTANCE: f64 = ranged(Attr::CameraDistance).default;
-
-static ATTRIBUTES: OnceLock<SideMutex<HashMap<i32, EntityAttributes>>> = OnceLock::new();
-
-pub(crate) fn attributes() -> &'static SideMutex<HashMap<i32, EntityAttributes>> {
-    ATTRIBUTES.get_or_init(Default::default)
-}
-
-pub(crate) fn update_attributes(
-    packet: &azalea_protocol::packets::game::c_update_attributes::ClientboundUpdateAttributes,
-) {
-    let mut map = attributes().lock().unwrap();
-    let entry = map.entry(packet.entity_id.0).or_default();
-    for snapshot in &packet.values {
-        entry.replace(snapshot);
-    }
+pub(crate) fn max_healths() -> &'static SideMutex<HashMap<i32, f32>> {
+    MAX_HEALTH.get_or_init(Default::default)
 }
 
 pub(crate) static LOCAL_ENTITY_ID: std::sync::atomic::AtomicI32 =
@@ -226,27 +113,18 @@ pub(crate) fn local_vehicle_id() -> Option<i32> {
     }
 }
 
-pub(crate) trait Components {
-    fn read<C: azalea::ecs::component::Component, R>(&self, f: impl FnOnce(&C) -> R) -> Option<R>;
+#[derive(Clone, Copy, Default)]
+pub(crate) struct MountAttributes {
+    pub movement_speed: Option<f64>,
+    pub jump_strength: Option<f64>,
+    pub step_height: Option<f64>,
+    pub flying_speed: Option<f64>,
 }
 
-impl Components for azalea::EntityRef {
-    fn read<C: azalea::ecs::component::Component, R>(&self, f: impl FnOnce(&C) -> R) -> Option<R> {
-        self.get_component::<C>().map(|c| f(&c))
-    }
-}
+static MOUNT_ATTRIBUTES: OnceLock<SideMutex<HashMap<i32, MountAttributes>>> = OnceLock::new();
 
-impl Components for Client {
-    fn read<C: azalea::ecs::component::Component, R>(&self, f: impl FnOnce(&C) -> R) -> Option<R> {
-        self.component::<C>().ok().map(|c| f(&c))
-    }
-}
-
-pub(crate) fn flag<C>(entity: &impl Components) -> bool
-where
-    C: azalea::ecs::component::Component + std::ops::Deref<Target = bool>,
-{
-    entity.read(|c: &C| **c).unwrap_or(false)
+pub(crate) fn mount_attributes() -> &'static SideMutex<HashMap<i32, MountAttributes>> {
+    MOUNT_ATTRIBUTES.get_or_init(Default::default)
 }
 
 static META_INDEX_18: OnceLock<SideMutex<HashMap<i32, u8>>> = OnceLock::new();
@@ -331,6 +209,13 @@ static ADD_ENTITY_DATA: OnceLock<SideMutex<HashMap<i32, i32>>> = OnceLock::new()
 
 pub(crate) fn add_entity_data() -> &'static SideMutex<HashMap<i32, i32>> {
     ADD_ENTITY_DATA.get_or_init(Default::default)
+}
+
+static LEASH_LINKS: OnceLock<SideMutex<HashMap<i32, i32>>> = OnceLock::new();
+
+/// Leashed entity to the entity holding its lead.
+pub(crate) fn leash_links() -> &'static SideMutex<HashMap<i32, i32>> {
+    LEASH_LINKS.get_or_init(Default::default)
 }
 
 static PASSENGERS: OnceLock<SideMutex<HashMap<i32, Vec<i32>>>> = OnceLock::new();

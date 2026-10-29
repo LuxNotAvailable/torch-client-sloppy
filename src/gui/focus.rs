@@ -2,7 +2,6 @@ use std::cell::Cell;
 
 struct Ring {
     current: Cell<i32>,
-    keyboard: Cell<bool>,
     seq: Cell<i32>,
     step: Cell<i32>,
     first: Cell<i32>,
@@ -18,7 +17,6 @@ impl Ring {
     const fn new() -> Ring {
         Ring {
             current: Cell::new(-1),
-            keyboard: Cell::new(false),
             seq: Cell::new(0),
             step: Cell::new(0),
             first: Cell::new(-1),
@@ -109,12 +107,8 @@ pub fn end() {
         let claimed = r.claim.get();
         if claimed >= 0 {
             r.current.set(claimed);
-            r.keyboard.set(false);
         } else {
             let step = r.step.get();
-            if step != 0 {
-                r.keyboard.set(true);
-            }
             if step > 0 {
                 let n = r.next.get();
                 r.current.set(if n >= 0 { n } else { r.first.get() });
@@ -128,10 +122,6 @@ pub fn end() {
         }
         r.step.set(0);
     });
-}
-
-pub fn by_keyboard() -> bool {
-    RING.with(|r| r.keyboard.get())
 }
 
 pub fn clear() {

@@ -165,11 +165,13 @@ fn is_display_context(node: &Json) -> bool {
         == Some("display_context")
 }
 
+/// A condition on the item being in use. A fishing rod's `fishing_rod/cast`
+/// rides the same switch: its holder passes "using" while a bobber is out.
 fn is_using_item(node: &Json) -> bool {
-    node.get("property")
-        .and_then(Json::as_str)
-        .map(strip_namespace)
-        == Some("using_item")
+    matches!(
+        node.get("property").and_then(Json::as_str).map(strip_namespace),
+        Some("using_item" | "fishing_rod/cast")
+    )
 }
 
 pub(super) fn depends_on_using_item(node: &Json, depth: u32) -> bool {
@@ -1097,8 +1099,7 @@ pub fn bake_item_icons(assets: &Path) -> ItemIcons {
     dispatch_report.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
     let mut source_report: Vec<_> = source_counts.into_iter().collect();
     source_report.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
-    crate::log_info!(
-        "items",
+    eprintln!(
         "item icons: {} items (+{variant_count} potion variants), {}x{} atlas, {:.2?} on {} threads",
         ids.len() - variant_count,
         image.width(),
@@ -1106,10 +1107,10 @@ pub fn bake_item_icons(assets: &Path) -> ItemIcons {
         start.elapsed(),
         threads
     );
-    crate::log_debug!("items", "item icons: dispatch {:?}", dispatch_report);
-    crate::log_debug!("items", "item icons: source {:?}", source_report);
+    eprintln!("item icons: dispatch {:?}", dispatch_report);
+    eprintln!("item icons: source {:?}", source_report);
     if !fell_back.is_empty() {
-        crate::log_debug!("items", "item icons: no model geometry for {:?}", fell_back);
+        eprintln!("item icons: no model geometry for {:?}", fell_back);
     }
 
     ItemIcons { image, map }
@@ -1119,7 +1120,7 @@ pub fn bake_item_icons(assets: &Path) -> ItemIcons {
 mod tests {
     use super::*;
 
-    const ASSETS: &str = "reference/minecraft-26.1.1/assets/minecraft";
+    const ASSETS: &str = "reference/minecraft-26.3/assets/minecraft";
 
     #[test]
     fn parse_transformation_matches_vanillas_compose_order() {

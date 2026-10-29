@@ -85,7 +85,8 @@ pub fn draw(
             on_name_changed(&mut ui.sent, input, &ui.field.text, &hover, out);
         }
     }
-    ui.field.draw(p, fx, fy, fw, fh);
+    let frame = p.frame;
+    ui.field.draw(p, fx, fy - 2.0, fw, fh, frame);
 
     let hovered = slots::panel(
         p,

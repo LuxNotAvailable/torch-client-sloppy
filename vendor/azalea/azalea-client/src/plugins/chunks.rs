@@ -86,7 +86,7 @@ pub fn handle_receive_chunk_event(
 
         if let Err(e) = partial_world.chunks.replace_with_packet_data(
             &pos,
-            &mut Cursor::new(&event.packet.chunk_data.data),
+            &mut Cursor::new(&event.packet.chunk_data.buffer),
             heightmaps,
             &mut world.chunks,
         ) {
@@ -153,7 +153,7 @@ pub fn handle_chunk_batch_finished_event(
         if let Ok(mut chunk_batch_info) = query.get_mut(event.entity) {
             chunk_batch_info.batch_finished(event.batch_size);
             let desired_chunks_per_tick = chunk_batch_info.desired_chunks_per_tick();
-            tracing::debug!(
+            tracing::info!(
                 "chunk batch: {} chunks, {:?} per chunk, asking for {desired_chunks_per_tick:.3} \
                  chunks/tick",
                 event.batch_size,

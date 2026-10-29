@@ -4,8 +4,6 @@ use azalea_registry::builtin::{BlockKind, MobEffect};
 
 use crate::{ActiveEffects, Attributes, FluidOnEyes, Physics};
 
-const AQUA_AFFINITY_SUBMERGED_SPEED: f32 = 1.0;
-
 pub fn get_mine_progress(
     block: &dyn BlockTrait,
     held_item: &ItemStack,
@@ -39,7 +37,7 @@ pub fn get_mine_progress(
     (base_destroy_speed / destroy_time) / (divisor as f32)
 }
 
-fn has_correct_tool_for_drops(block: &dyn BlockTrait, item: &ItemStack) -> bool {
+pub fn has_correct_tool_for_drops(block: &dyn BlockTrait, item: &ItemStack) -> bool {
     if !block.behavior().requires_correct_tool_for_drops {
         return true;
     }
@@ -89,12 +87,8 @@ fn destroy_speed(
 
     speed *= attributes.block_break_speed.calculate() as f32;
 
-    if **fluid_on_eyes == FluidKind::Water {
-        let mut submerged = attributes.submerged_mining_speed.calculate() as f32;
-        if has_aqua_affinity {
-            submerged = submerged.max(AQUA_AFFINITY_SUBMERGED_SPEED);
-        }
-        speed *= submerged;
+    if **fluid_on_eyes == FluidKind::Water && !has_aqua_affinity {
+        speed /= 5.;
     }
 
     if !physics.on_ground {

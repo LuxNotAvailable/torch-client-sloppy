@@ -4,7 +4,7 @@ use crate::gui::ScreenCtx;
 use crate::gui::focus;
 use crate::gui::painter::Painter;
 use crate::gui::render::{EditKey, GuiInput, clipboard_get, clipboard_set};
-use crate::text::{Font, LINE_HEIGHT, Span, Style};
+use crate::text::{LINE_HEIGHT, Span, Style};
 
 #[derive(Default)]
 pub struct TextBox {
@@ -30,7 +30,7 @@ pub struct TextBox {
 
 const BORDER_INSET: f32 = 4.0;
 
-type Limit<'a> = Option<(&'a Font, f32)>;
+type Limit<'a> = Option<(&'a crate::text::Font, f32)>;
 
 impl TextBox {
     pub fn new(max_len: usize, placeholder: &str) -> TextBox {
@@ -50,14 +50,6 @@ impl TextBox {
         }
     }
 
-    pub fn pinned(max_len: usize, placeholder: &str) -> TextBox {
-        TextBox {
-            focused: true,
-            browser_keyboard: false,
-            ..TextBox::new(max_len, placeholder)
-        }
-    }
-
     pub fn clear(&mut self) {
         self.text.clear();
         self.cursor = 0;
@@ -66,16 +58,11 @@ impl TextBox {
     }
 
     pub fn set_text(&mut self, s: &str) {
-        let text = s
+        self.text = s
             .chars()
             .filter(|c| allowed_char(*c))
             .take(self.max_len)
             .collect();
-        self.replace_text(text);
-    }
-
-    fn replace_text(&mut self, text: String) {
-        self.text = text;
         self.cursor = self.char_count();
         self.anchor = self.cursor;
         self.scroll = 0;
@@ -86,19 +73,18 @@ impl TextBox {
     }
 
     fn byte_index(&self, char_index: usize) -> usize {
-        byte_at(&self.text, char_index)
+        self.text
+            .char_indices()
+            .nth(char_index)
+            .map(|(i, _)| i)
+            .unwrap_or(self.text.len())
     }
 
     fn selection_range(&self) -> (usize, usize) {
         (self.cursor.min(self.anchor), self.cursor.max(self.anchor))
     }
 
-    fn select_all(&mut self) {
-        self.anchor = 0;
-        self.cursor = self.char_count();
-    }
-
-    fn selected_text(&self) -> String {
+    pub fn selected_text(&self) -> String {
         let (a, b) = self.selection_range();
         let (ba, bb) = (self.byte_index(a), self.byte_index(b));
         self.text[ba..bb].to_string()
@@ -125,15 +111,11 @@ impl TextBox {
         if self.char_count() >= self.max_len {
             return false;
         }
-        self.splice_at_cursor(c.encode_utf8(&mut [0; 4]));
-        true
-    }
-
-    fn splice_at_cursor(&mut self, s: &str) {
         let at = self.byte_index(self.cursor);
-        self.text.insert_str(at, s);
-        self.cursor += s.chars().count();
+        self.text.insert(at, c);
+        self.cursor += 1;
         self.anchor = self.cursor;
+        true
     }
 
     pub fn insert_text(&mut self, s: &str) {
@@ -146,13 +128,13 @@ impl TextBox {
     }
 
     fn insert(&mut self, s: &str, limit: Limit<'_>) -> bool {
-        let mut filtered = s.chars().filter(|c| allowed_char(*c)).peekable();
-        if filtered.peek().is_none() && !s.is_empty() {
+        let filtered: String = s.chars().filter(|c| allowed_char(*c)).collect();
+        if filtered.is_empty() && !s.is_empty() {
             return false;
         }
         let (lo, hi) = self.selection_range();
         let room = self.max_len - (self.char_count() - (hi - lo)).min(self.max_len);
-        let add: String = filtered.take(room).collect();
+        let add: String = filtered.chars().take(room).collect();
         if let Some((font, max)) = limit {
             let (bl, bh) = (self.byte_index(lo), self.byte_index(hi));
             let kept = font.width_str(&self.text) - font.width_str(&self.text[bl..bh]);
@@ -166,7 +148,10 @@ impl TextBox {
         if add.is_empty() {
             return deleted;
         }
-        self.splice_at_cursor(&add);
+        let at = self.byte_index(self.cursor);
+        self.text.insert_str(at, &add);
+        self.cursor += add.chars().count();
+        self.anchor = self.cursor;
         true
     }
 
@@ -178,25 +163,28 @@ impl TextBox {
     }
 
     fn word_position_from(&self, dir: i32, from: usize) -> usize {
-        let len = self.char_count();
-        let from = from.min(len);
+        let chars: Vec<char> = self.text.chars().collect();
+        let len = chars.len();
+        let mut result = from.min(len);
         if dir > 0 {
-            let mut rest = self.text.chars().skip(from);
-            let Some(off) = rest.by_ref().position(|c| c == ' ') else {
-                return len;
-            };
-            from + off + 1 + rest.take_while(|&c| c == ' ').count()
+            match chars[result..].iter().position(|&c| c == ' ') {
+                Some(off) => {
+                    result += off;
+                    while result < len && chars[result] == ' ' {
+                        result += 1;
+                    }
+                }
+                None => result = len,
+            }
         } else {
-            let mut back = self.text[..self.byte_index(from)].chars().rev().peekable();
-            let mut result = from;
-            while back.next_if(|&c| c == ' ').is_some() {
+            while result > 0 && chars[result - 1] == ' ' {
                 result -= 1;
             }
-            while back.next_if(|&c| c != ' ').is_some() {
+            while result > 0 && chars[result - 1] != ' ' {
                 result -= 1;
             }
-            result
         }
+        result
     }
 
     fn word_position(&self, dir: i32) -> usize {
@@ -209,10 +197,9 @@ impl TextBox {
     }
 
     #[cfg(any(target_arch = "wasm32", target_os = "android"))]
-    fn sync_keyboard_inner(
-        &mut self,
-        #[cfg_attr(not(target_arch = "wasm32"), allow(unused_variables))] limit: Limit<'_>,
-    ) -> bool {
+    fn sync_keyboard_inner(&mut self, _limit: Limit<'_>) -> bool {
+        #[allow(unused_mut)]
+        let mut changed = false;
         if self.keyboard_active && !crate::platform::keyboard::has_focus() {
             self.keyboard_active = false;
         }
@@ -237,14 +224,14 @@ impl TextBox {
                 .filter(|&c| allowed_char(c))
                 .take(self.max_len)
                 .collect();
-            if let Some((font, max)) = limit
+            if let Some((font, max)) = _limit
                 && font.width_str(&clamped) > max
             {
                 clamped = self.text.clone();
             }
-            let changed = clamped != self.text;
-            if changed {
+            if clamped != self.text {
                 self.text = clamped.clone();
+                changed = true;
             }
             let len = self.char_count();
             self.cursor = cursor.min(len);
@@ -252,9 +239,8 @@ impl TextBox {
             if clamped != text {
                 crate::platform::keyboard::sync_selection(&clamped, self.anchor, self.cursor);
             }
-            return changed;
         }
-        false
+        changed
     }
 
     #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
@@ -267,19 +253,6 @@ impl TextBox {
         false
     }
 
-    pub fn note_tap(&mut self, inside: bool) {
-        if inside {
-            self.focused = true;
-            #[cfg(target_os = "android")]
-            {
-                self.keyboard_active = false;
-            }
-            crate::platform::keyboard::note_tap(true);
-        } else if self.focused {
-            crate::platform::keyboard::note_tap(false);
-        }
-    }
-
     pub fn push_keyboard(&self) {
         #[cfg(target_arch = "wasm32")]
         if self.keyboard_active {
@@ -288,25 +261,16 @@ impl TextBox {
     }
 
     pub fn handle_input(&mut self, input: &GuiInput) -> bool {
-        self.handle_edits(input, None, |_, _| false)
+        self.handle_input_inner(input, None)
     }
 
     pub fn handle_edits_validated(
         &mut self,
         input: &GuiInput,
-        font: &Font,
-        intercept: impl FnMut(&mut TextBox, EditKey) -> bool,
-    ) -> bool {
-        let limit = self.max_width.map(|w| (font, w));
-        self.handle_edits(input, limit, intercept)
-    }
-
-    fn handle_edits(
-        &mut self,
-        input: &GuiInput,
-        limit: Limit<'_>,
+        font: &crate::text::Font,
         mut intercept: impl FnMut(&mut TextBox, EditKey) -> bool,
     ) -> bool {
+        let limit = self.max_width.map(|w| (font, w));
         let (mut changed, live) = self.frame_input(input, limit);
         if !live {
             return changed;
@@ -327,6 +291,42 @@ impl TextBox {
         changed
     }
 
+    fn handle_input_inner(&mut self, input: &GuiInput, limit: Limit<'_>) -> bool {
+        let (mut changed, live) = self.frame_input(input, limit);
+        if !live {
+            return changed;
+        }
+        if let Some(edited) = self.apply_shortcut(input, limit) {
+            return changed | edited;
+        }
+
+        for c in &input.typed {
+            changed |= self.apply_edit(EditKey::Char(*c), input, limit);
+        }
+
+        let browser_backspace = self.take_browser_backspace();
+        if input.backspace || browser_backspace {
+            changed |= self.apply_edit(EditKey::Backspace, input, limit);
+            if browser_backspace {
+                self.push_browser_backspace();
+            }
+        }
+        if input.delete {
+            changed |= self.apply_edit(EditKey::Delete, input, limit);
+        }
+        for (down, key) in [
+            (input.left_arrow, EditKey::Left),
+            (input.right_arrow, EditKey::Right),
+            (input.home, EditKey::Home),
+            (input.end, EditKey::End),
+        ] {
+            if down {
+                self.apply_edit(key, input, limit);
+            }
+        }
+        changed
+    }
+
     fn frame_input(&mut self, input: &GuiInput, limit: Limit<'_>) -> (bool, bool) {
         let changed = self.sync_keyboard_inner(limit);
 
@@ -341,7 +341,8 @@ impl TextBox {
 
     fn apply_shortcut(&mut self, input: &GuiInput, limit: Limit<'_>) -> Option<bool> {
         if input.select_all {
-            self.select_all();
+            self.anchor = 0;
+            self.cursor = self.char_count();
             return Some(false);
         }
         if input.copy {
@@ -355,7 +356,7 @@ impl TextBox {
         if input.paste {
             let text = clipboard_get();
             let text = if self.strip_formatting {
-                strip_format_codes(&text)
+                strip_formatting(&text)
             } else {
                 text
             };
@@ -394,7 +395,11 @@ impl TextBox {
                         let target = self.word_position(-1);
                         self.delete_span(target, self.cursor);
                     } else if self.cursor > 0 {
-                        self.delete_span(self.cursor - 1, self.cursor);
+                        let from = self.byte_index(self.cursor - 1);
+                        let to = self.byte_index(self.cursor);
+                        self.text.replace_range(from..to, "");
+                        self.cursor -= 1;
+                        self.anchor = self.cursor;
                     }
                 }
                 true
@@ -405,7 +410,9 @@ impl TextBox {
                         let target = self.word_position(1);
                         self.delete_span(self.cursor, target);
                     } else if self.cursor < self.char_count() {
-                        self.delete_span(self.cursor, self.cursor + 1);
+                        let from = self.byte_index(self.cursor);
+                        let to = self.byte_index(self.cursor + 1);
+                        self.text.replace_range(from..to, "");
                     }
                 }
                 true
@@ -415,7 +422,10 @@ impl TextBox {
                     let pos = self.word_position(-1);
                     self.move_cursor_to(pos, input.shift);
                 } else if self.cursor > 0 {
-                    self.move_cursor_to(self.cursor - 1, input.shift);
+                    self.cursor -= 1;
+                    if !input.shift {
+                        self.anchor = self.cursor;
+                    }
                 }
                 false
             }
@@ -424,16 +434,25 @@ impl TextBox {
                     let pos = self.word_position(1);
                     self.move_cursor_to(pos, input.shift);
                 } else if self.cursor < self.char_count() {
-                    self.move_cursor_to(self.cursor + 1, input.shift);
+                    self.cursor += 1;
+                    if !input.shift {
+                        self.anchor = self.cursor;
+                    }
                 }
                 false
             }
             EditKey::Home => {
-                self.move_cursor_to(0, input.shift);
+                self.cursor = 0;
+                if !input.shift {
+                    self.anchor = 0;
+                }
                 false
             }
             EditKey::End => {
-                self.move_cursor_to(self.char_count(), input.shift);
+                self.cursor = self.char_count();
+                if !input.shift {
+                    self.anchor = self.cursor;
+                }
                 false
             }
             EditKey::Up | EditKey::Down | EditKey::Enter => false,
@@ -441,11 +460,8 @@ impl TextBox {
     }
 
     fn text_origin(&self, x: f32, y: f32, h: f32) -> (f32, f32) {
-        if self.bordered {
-            (x + BORDER_INSET, y + (h - 8.0) / 2.0)
-        } else {
-            (x, y)
-        }
+        let inset = if self.bordered { BORDER_INSET } else { 0.0 };
+        (x + inset, y + (h - 8.0) / 2.0)
     }
 
     fn text_width(&self, w: f32) -> f32 {
@@ -456,22 +472,15 @@ impl TextBox {
         }
     }
 
-    fn clicked_pos(&self, font: &Font, tx: f32, tw: f32, mx: f32) -> usize {
-        let offset = (mx - tx).clamp(0.0, tw);
-        let mut acc = 0.0;
-        let mut n = 0;
-        for c in self.text.chars().skip(self.scroll) {
-            let a = font.advance(c, false);
-            if acc + a > offset {
-                break;
-            }
-            acc += a;
-            n += 1;
-        }
-        self.scroll + n
-    }
-
-    pub fn handle_mouse(&mut self, input: &GuiInput, font: &Font, x: f32, y: f32, w: f32, h: f32) {
+    pub fn handle_mouse(
+        &mut self,
+        input: &GuiInput,
+        font: &crate::text::Font,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+    ) {
         let was = (self.cursor, self.anchor);
 
         if input.left_release {
@@ -481,15 +490,36 @@ impl TextBox {
         let (tx, _ty) = self.text_origin(x, y, h);
 
         let tw = self.text_width(w);
+        let clicked_pos = |mx: f32| -> usize {
+            let offset = (mx - tx).clamp(0.0, tw);
+            let visible: Vec<char> = self.text.chars().skip(self.scroll).collect();
+            let mut acc = 0.0;
+            let mut n = 0;
+            for c in &visible {
+                let a = font.advance(*c, false);
+                if acc + a > offset {
+                    break;
+                }
+                acc += a;
+                n += 1;
+            }
+            self.scroll + n
+        };
 
         if input.left_click {
             if let Some(m) = input.mouse {
                 let inside = m.x >= x && m.x <= x + w && m.y >= y && m.y <= y + h;
-                self.note_tap(inside);
                 if inside {
-                    let pos = self.clicked_pos(font, tx, tw, m.x);
+                    self.focused = true;
+                    #[cfg(target_os = "android")]
+                    {
+                        self.keyboard_active = false;
+                    }
+                    crate::platform::keyboard::note_tap(true);
+                    let pos = clicked_pos(m.x);
                     if input.triple_click {
-                        self.select_all();
+                        self.anchor = 0;
+                        self.cursor = self.char_count();
                     } else if input.double_click {
                         let start = self.word_position_from(-1, pos);
                         let end = self.word_position_from(1, pos);
@@ -499,6 +529,8 @@ impl TextBox {
                         self.move_cursor_to(pos, input.shift);
                     }
                     self.dragging = true;
+                } else if self.focused {
+                    crate::platform::keyboard::note_tap(false);
                 }
             }
         } else if self.dragging && input.left_down {
@@ -508,10 +540,10 @@ impl TextBox {
                     let pos = self.cursor - 1;
                     self.move_cursor_to(pos, true);
                 } else if m.x > tx + tw {
-                    let pos = (self.clicked_pos(font, tx, tw, tx + tw) + 1).min(self.char_count());
+                    let pos = (clicked_pos(tx + tw) + 1).min(self.char_count());
                     self.move_cursor_to(pos, true);
                 } else {
-                    let pos = self.clicked_pos(font, tx, tw, m.x);
+                    let pos = clicked_pos(m.x);
                     self.move_cursor_to(pos, true);
                 }
             }
@@ -530,6 +562,8 @@ impl TextBox {
     }
 
     pub fn update(&mut self, p: &mut Painter, ctx: &ScreenCtx, x: f32, y: f32, w: f32, h: f32) {
+        let frame = p.frame;
+
         let ring = focus::next(true);
         self.handle_mouse(ctx.input, &p.atlas.font, x, y, w, h);
         let took = std::mem::take(&mut self.pending_focus)
@@ -554,26 +588,10 @@ impl TextBox {
             keyboard_lift::note_focused_field(y + h);
         }
         self.handle_input(ctx.input);
-        self.draw(p, x, y, w, h);
+        self.draw(p, x, y, w, h, frame);
     }
 
-    pub(crate) fn scroll_to_caret(&mut self, font: &Font, w: f32) -> usize {
-        self.scroll = self.scroll.min(self.cursor);
-        let mut start = self.byte_index(self.scroll);
-        let caret_b = self.byte_index(self.cursor);
-        let mut caret_w = font.width_str(&self.text[start..caret_b]);
-        while caret_w > w && self.scroll < self.cursor {
-            let Some(c) = self.text[start..].chars().next() else {
-                break;
-            };
-            caret_w -= font.advance(c, false);
-            start += c.len_utf8();
-            self.scroll += 1;
-        }
-        start
-    }
-
-    pub fn draw(&mut self, p: &mut Painter, x: f32, y: f32, w: f32, h: f32) {
+    pub fn draw(&mut self, p: &mut Painter, x: f32, y: f32, w: f32, h: f32, frame: u32) {
         if self.bordered {
             let frame_color = if self.focused {
                 0xFFFF_FFFF
@@ -586,57 +604,84 @@ impl TextBox {
         let font = &p.atlas.font;
         let (tx, text_y) = self.text_origin(x, y, h);
         let w = self.text_width(w);
+        let x = tx;
 
-        let start = self.scroll_to_caret(font, w);
-
-        let mut shown_w = 0.0;
-        let mut end = start;
-        for c in self.text[start..].chars() {
-            let a = font.advance(c, false);
-            if shown_w + a > w {
+        if self.cursor < self.scroll {
+            self.scroll = self.cursor;
+        }
+        loop {
+            let visible: String = self.text.chars().skip(self.scroll).collect();
+            let caret_off = self.cursor.saturating_sub(self.scroll);
+            let upto: String = visible.chars().take(caret_off).collect();
+            if font.width_str(&upto) <= w || self.scroll >= self.cursor {
                 break;
             }
-            shown_w += a;
-            end += c.len_utf8();
+            self.scroll += 1;
         }
-        let shown = &self.text[start..end];
-        let at = |n: usize| byte_at(shown, n);
+
+        let visible: String = self.text.chars().skip(self.scroll).collect();
+        let shown = trim_to_width(font, &visible, w);
 
         let shadow = !self.no_shadow;
         if self.text.is_empty() && !self.focused {
-            p.text_plain(&self.placeholder, tx, text_y, 0x707070, shadow);
+            p.text(
+                &[Span {
+                    text: self.placeholder.clone(),
+                    style: Style::colored(0x707070),
+                }],
+                tx,
+                text_y,
+                shadow,
+            );
         } else {
-            p.text_plain(shown, tx, text_y, self.color, shadow);
+            p.text(
+                &[Span {
+                    text: shown.clone(),
+                    style: Style::colored(self.color),
+                }],
+                tx,
+                text_y,
+                shadow,
+            );
             let (sa, sb) = self.selection_range();
             if sa != sb {
-                let a = at(sa.max(self.scroll) - self.scroll);
-                let b = at(sb.max(self.scroll) - self.scroll);
-                let mid = &shown[a..b];
-                let x0 = tx + font.width_str(&shown[..a]);
-                let x1 = (x0 + font.width_str(mid)).min(tx + w);
-                draw_selection(p, mid, x0, x1, text_y, text_y - 1.0, text_y + 10.0);
+                let a = sa.max(self.scroll) - self.scroll;
+                let b = sb.max(self.scroll) - self.scroll;
+                let pre: String = shown.chars().take(a).collect();
+                let mid: String = shown.chars().skip(a).take(b - a).collect();
+                let x0 = tx + font.width_str(&pre);
+                let x1 = (x0 + font.width_str(&mid)).min(x + w);
+                draw_selection(p, &mid, x0, x1, text_y, text_y - 1.0, text_y + 10.0);
             }
         }
 
-        let len = self.char_count();
         if let Some(suggestion) = &self.suggestion
-            && self.cursor >= len
-            && len < self.max_len
+            && self.cursor >= self.char_count()
+            && self.char_count() < self.max_len
         {
-            p.text_plain(suggestion, tx + shown_w, text_y, 0x808080, shadow);
+            let x = tx + font.width_str(&shown);
+            p.text(
+                &[Span {
+                    text: suggestion.clone(),
+                    style: Style::colored(0x808080),
+                }],
+                x,
+                text_y,
+                shadow,
+            );
         }
 
-        if self.focused && blink_on(p.frame) {
-            let cx = tx + font.width_str(&shown[..at(self.cursor - self.scroll)]);
-            draw_caret(
-                p,
-                cx,
-                text_y,
-                self.cursor >= len,
-                self.color,
-                shadow,
-                (-1.0, 10.0),
-            );
+        if self.focused && (frame / 6) % 2 == 0 {
+            let pre: String = shown
+                .chars()
+                .take(self.cursor.saturating_sub(self.scroll))
+                .collect();
+            let cx = tx + font.width_str(&pre);
+            if self.cursor >= self.char_count() {
+                draw_append_caret(p, cx, text_y, self.color, shadow);
+            } else {
+                draw_insert_caret(p, cx - 1.0, text_y, 10.0, self.color);
+            }
         }
     }
 }
@@ -666,12 +711,13 @@ impl MultiLineTextBox {
     }
 
     pub fn set_text(&mut self, s: &str) {
-        self.inner
-            .replace_text(s.chars().take(self.inner.max_len).collect());
+        self.inner.text = s.chars().take(self.inner.max_len).collect();
+        self.inner.cursor = self.inner.text.chars().count();
+        self.inner.anchor = self.inner.cursor;
         self.stale = true;
     }
 
-    fn relayout(&mut self, font: &Font, width: f32) {
+    fn relayout(&mut self, font: &crate::text::Font, width: f32) {
         if !self.stale && self.width == width {
             return;
         }
@@ -680,29 +726,30 @@ impl MultiLineTextBox {
         self.stale = false;
     }
 
-    pub fn line_count(&mut self, font: &Font, width: f32) -> usize {
+    pub fn line_count(&mut self, font: &crate::text::Font, width: f32) -> usize {
         self.relayout(font, width);
         self.lines.len()
     }
 
-    fn line_at(lines: &[std::ops::Range<usize>], cursor: usize) -> usize {
-        lines.iter().rposition(|r| r.start <= cursor).unwrap_or(0)
+    fn line_at(&self, cursor: usize) -> usize {
+        self.lines
+            .iter()
+            .rposition(|r| r.start <= cursor)
+            .unwrap_or(0)
     }
 
-    pub fn handle_input(&mut self, input: &GuiInput, font: &Font, width: f32) -> bool {
+    pub fn handle_input(&mut self, input: &GuiInput, font: &crate::text::Font, width: f32) -> bool {
         self.relayout(font, width);
         if !self.inner.focused {
             return self.inner.handle_input(input);
         }
 
-        let mutating = input.paste
+        let mutating = input.enter
+            || input.backspace
+            || input.delete
+            || input.paste
             || input.cut
-            || input.edits.iter().any(|k| {
-                matches!(
-                    k,
-                    EditKey::Char(_) | EditKey::Backspace | EditKey::Delete | EditKey::Enter
-                )
-            });
+            || !input.typed.is_empty();
         let undo = mutating.then(|| {
             (
                 self.inner.text.clone(),
@@ -711,42 +758,12 @@ impl MultiLineTextBox {
             )
         });
 
-        let Self { inner, lines, .. } = self;
-        let mut fresh = false;
-        let mut entered = false;
-        let mut changed = inner.handle_edits(input, None, |field, key| {
-            match key {
-                EditKey::Enter => {
-                    entered |= field.insert_raw('\n');
-                    fresh = false;
-                    return true;
-                }
-                EditKey::Up | EditKey::Down | EditKey::Home | EditKey::End => {}
-                EditKey::Left | EditKey::Right => return false,
-                EditKey::Char(_) | EditKey::Backspace | EditKey::Delete => {
-                    fresh = false;
-                    return false;
-                }
-            }
-            if !fresh {
-                font.wrap_ranges(&field.text, width, lines);
-                fresh = true;
-            }
-            let line = Self::line_at(lines, field.cursor);
-            let column = field.cursor - lines[line].start;
-            let same_column =
-                |target: &std::ops::Range<usize>| (target.start + column).min(target.end);
-            let pos = match key {
-                EditKey::Up if line > 0 => same_column(&lines[line - 1]),
-                EditKey::Down if line + 1 < lines.len() => same_column(&lines[line + 1]),
-                EditKey::Home => lines[line].start,
-                EditKey::End => lines[line].end,
-                _ => return true,
-            };
-            field.move_cursor_to(pos, input.shift);
-            true
-        });
-        changed |= entered;
+        let mut changed = if input.enter {
+            self.inner.insert_raw('\n')
+        } else {
+            false
+        };
+        changed |= self.inner.handle_input(input);
 
         if changed {
             self.stale = true;
@@ -763,10 +780,44 @@ impl MultiLineTextBox {
                 changed = false;
             }
         }
+
+        let line = self.line_at(self.inner.cursor);
+        let column = self.inner.cursor - self.lines[line].start;
+        let goto = |this: &mut Self, pos: usize| {
+            this.inner.cursor = pos;
+            if !input.shift {
+                this.inner.anchor = pos;
+            }
+        };
+        if input.up_arrow && line > 0 {
+            let target = &self.lines[line - 1];
+            let pos = (target.start + column).min(target.end);
+            goto(self, pos);
+        }
+        if input.down_arrow && line + 1 < self.lines.len() {
+            let target = &self.lines[line + 1];
+            let pos = (target.start + column).min(target.end);
+            goto(self, pos);
+        }
+        if input.home {
+            let pos = self.lines[line].start;
+            goto(self, pos);
+        }
+        if input.end {
+            let pos = self.lines[line].end;
+            goto(self, pos);
+        }
         changed
     }
 
-    pub fn handle_mouse(&mut self, input: &GuiInput, font: &Font, x: f32, y: f32, width: f32) {
+    pub fn handle_mouse(
+        &mut self,
+        input: &GuiInput,
+        font: &crate::text::Font,
+        x: f32,
+        y: f32,
+        width: f32,
+    ) {
         if !input.left_click {
             return;
         }
@@ -776,8 +827,10 @@ impl MultiLineTextBox {
         } else {
             self.lines.len() + 1
         };
-        let on_page =
-            m.x >= x && m.x <= x + width && m.y >= y && m.y <= y + page_rows as f32 * LINE_HEIGHT;
+        let on_page = m.x >= x
+            && m.x <= x + width
+            && m.y >= y
+            && m.y <= y + page_rows as f32 * crate::text::LINE_HEIGHT;
         if on_page {
             crate::platform::keyboard::note_tap(true);
         } else if self.inner.focused {
@@ -785,14 +838,14 @@ impl MultiLineTextBox {
         }
         self.relayout(font, width);
         let rows = self.lines.len() as f32;
-        if m.x < x || m.x > x + width || m.y < y || m.y > y + rows * LINE_HEIGHT {
+        if m.x < x || m.x > x + width || m.y < y || m.y > y + rows * crate::text::LINE_HEIGHT {
             return;
         }
-        let row = (((m.y - y) / LINE_HEIGHT) as usize).min(self.lines.len() - 1);
+        let row = (((m.y - y) / crate::text::LINE_HEIGHT) as usize).min(self.lines.len() - 1);
         let range = self.lines[row].clone();
         let mut pos = range.start;
         let mut w = 0.0f32;
-        for c in char_slice(&self.inner.text, range).chars() {
+        for c in self.inner.text.chars().skip(range.start).take(range.len()) {
             let adv = font.advance(c, false);
             if x + w + adv / 2.0 > m.x {
                 break;
@@ -804,65 +857,53 @@ impl MultiLineTextBox {
         self.inner.anchor = pos;
     }
 
-    pub fn draw(&mut self, p: &mut Painter, x: f32, y: f32, width: f32, color: u32) {
+    pub fn draw(&mut self, p: &mut Painter, x: f32, y: f32, width: f32, color: u32, frame: u32) {
         self.relayout(&p.atlas.font, width);
-        let (sa, sb) = self.inner.selection_range();
+        let (sa, sb) = (
+            self.inner.cursor.min(self.inner.anchor),
+            self.inner.cursor.max(self.inner.anchor),
+        );
         for (row, range) in self.lines.iter().enumerate() {
-            let ly = y + row as f32 * LINE_HEIGHT;
-            let line = char_slice(&self.inner.text, range.clone());
-            p.text_str(line, x, ly, color, false);
+            let ly = y + row as f32 * crate::text::LINE_HEIGHT;
+            let line: String = self
+                .inner
+                .text
+                .chars()
+                .skip(range.start)
+                .take(range.len())
+                .collect();
+            p.text_str(&line, x, ly, color, false);
             let (a, b) = (
                 sa.clamp(range.start, range.end),
                 sb.clamp(range.start, range.end),
             );
             if a != b {
-                let pre = char_slice(line, 0..a - range.start);
-                let mid = char_slice(line, a - range.start..b - range.start);
-                let x0 = x + p.atlas.font.width_str(pre);
-                let x1 = x0 + p.atlas.font.width_str(mid);
-                draw_selection(p, mid, x0, x1, ly, ly - 1.0, ly + 10.0);
+                let pre: String = line.chars().take(a - range.start).collect();
+                let mid: String = line.chars().skip(a - range.start).take(b - a).collect();
+                let x0 = x + p.atlas.font.width_str(&pre);
+                let x1 = x0 + p.atlas.font.width_str(&mid);
+                draw_selection(p, &mid, x0, x1, ly, ly - 1.0, ly + 10.0);
             }
         }
 
-        if self.inner.focused && blink_on(p.frame) {
-            let row = Self::line_at(&self.lines, self.inner.cursor);
-            let start = self.lines[row].start;
-            let pre = char_slice(&self.inner.text, start..self.inner.cursor);
-            let cx = x + p.atlas.font.width_str(pre);
-            let cy = y + row as f32 * LINE_HEIGHT;
-            let at_end = self.inner.cursor >= self.inner.char_count();
-            draw_caret(p, cx, cy, at_end, color, false, (-1.0, 10.0));
+        if self.inner.focused && (frame / 6) % 2 == 0 {
+            let row = self.line_at(self.inner.cursor);
+            let range = self.lines[row].clone();
+            let pre: String = self
+                .inner
+                .text
+                .chars()
+                .skip(range.start)
+                .take(self.inner.cursor - range.start)
+                .collect();
+            let cx = x + p.atlas.font.width_str(&pre);
+            let cy = y + row as f32 * crate::text::LINE_HEIGHT;
+            if self.inner.cursor >= self.inner.text.chars().count() {
+                draw_append_caret(p, cx, cy, color, false);
+            } else {
+                draw_insert_caret(p, cx - 1.0, cy, 10.0, color);
+            }
         }
-    }
-}
-
-pub(crate) fn byte_at(s: &str, n: usize) -> usize {
-    s.char_indices().nth(n).map_or(s.len(), |(i, _)| i)
-}
-
-pub(crate) fn char_slice(s: &str, r: std::ops::Range<usize>) -> &str {
-    let a = byte_at(s, r.start);
-    let b = a + byte_at(&s[a..], r.end.saturating_sub(r.start));
-    &s[a..b]
-}
-
-pub(crate) fn blink_on(frame: u32) -> bool {
-    (frame / 6) % 2 == 0
-}
-
-pub(crate) fn draw_caret(
-    p: &mut Painter,
-    x: f32,
-    y: f32,
-    append: bool,
-    color: u32,
-    shadow: bool,
-    insert: (f32, f32),
-) {
-    if append {
-        draw_append_caret(p, x, y, color, shadow);
-    } else {
-        draw_insert_caret(p, x + insert.0, y, insert.1, color);
     }
 }
 
@@ -891,25 +932,40 @@ pub(crate) fn allowed_char(c: char) -> bool {
     c != '\u{a7}' && (c as u32) >= 32 && c != '\u{7f}'
 }
 
-fn strip_format_codes(s: &str) -> String {
-    let mut chars = s.chars().filter(|&c| c != '\r').peekable();
+fn strip_formatting(s: &str) -> String {
+    let without_cr: Vec<char> = s.chars().filter(|&c| c != '\r').collect();
     let mut out = String::with_capacity(s.len());
-    while let Some(c) = chars.next() {
-        if c == '\u{a7}'
-            && chars
-                .next_if(|n| {
-                    n.is_ascii_hexdigit() || matches!(n.to_ascii_lowercase(), 'k'..='o' | 'r')
-                })
-                .is_some()
-        {
+    let mut i = 0;
+    while i < without_cr.len() {
+        let c = without_cr[i];
+        let code = without_cr.get(i + 1).is_some_and(|n| {
+            n.is_ascii_hexdigit() || matches!(n.to_ascii_lowercase(), 'k'..='o' | 'r')
+        });
+        if c == '\u{a7}' && code {
+            i += 2;
             continue;
         }
+        out.push(c);
+        i += 1;
+    }
+    out
+}
+
+fn trim_to_width(font: &crate::text::Font, s: &str, max: f32) -> String {
+    let mut out = String::new();
+    let mut w = 0.0;
+    for c in s.chars() {
+        let a = font.advance(c, false);
+        if w + a > max {
+            break;
+        }
+        w += a;
         out.push(c);
     }
     out
 }
 
-#[cfg(feature = "audio")]
+#[cfg(audio)]
 pub(in crate::gui) fn play_click() {
     crate::audio::play(
         "ui.button.click",
@@ -932,6 +988,10 @@ impl HeaderFooter {
 
     pub const fn new(header_h: f32, footer_h: f32) -> HeaderFooter {
         HeaderFooter { header_h, footer_h }
+    }
+
+    pub const fn default_heights() -> HeaderFooter {
+        HeaderFooter::new(HeaderFooter::DEFAULT_H, HeaderFooter::DEFAULT_H)
     }
 
     pub fn title_y(&self) -> f32 {
@@ -960,11 +1020,9 @@ pub fn centered_x(vw: f32) -> f32 {
     ((vw - WIDGET_WIDTH_BIG) / 2.0).floor()
 }
 
-pub(in crate::gui) const FOOTER_W: f32 = 150.0;
-pub(in crate::gui) const FOOTER_GAP: f32 = 8.0;
-
-pub(in crate::gui) fn centered_row_x(vw: f32, total_w: f32) -> f32 {
-    ((vw - total_w) / 2.0).floor()
+pub fn draw_title(p: &mut Painter, vw: f32, y: f32, title: &str) {
+    let w = p.atlas.font.width_str(title);
+    p.text_str(title, ((vw - w) / 2.0).floor(), y, 0xFFFFFF, true);
 }
 
 pub const WIDGET_HEIGHT: f32 = 20.0;
@@ -1044,6 +1102,14 @@ const LABEL_INACTIVE: u32 = 0xA0A0A0;
 
 const HANDLE_WIDTH: f32 = 8.0;
 
+fn draw_label(p: &mut Painter, label: &str, x: f32, y: f32, w: f32, h: f32, color: u32) {
+    let spans = [Span {
+        text: label.to_string(),
+        style: Style::colored(color),
+    }];
+    draw_label_spans(p, &spans, x, y, w, h);
+}
+
 pub(in crate::gui) fn draw_label_spans(
     p: &mut Painter,
     label: &[Span],
@@ -1073,7 +1139,7 @@ pub(in crate::gui) fn draw_button_spans(
     active: bool,
 ) -> bool {
     let hovered = ctx.hovering(x, y, w, h);
-    let focused = focus::next(active) && focus::by_keyboard();
+    let focused = focus::next(active);
     let sprite = match (active, hovered || focused) {
         (false, _) => "widget/button_disabled",
         (true, false) => "widget/button",
@@ -1095,13 +1161,12 @@ pub(in crate::gui) fn draw_button_spans(
             .collect();
         draw_label_spans(p, &greyed, x, y, w, h);
     }
-    let clicked = active && click_in(ctx, x, y, w, h);
-    #[cfg(not(feature = "mobile_ui"))]
+    let clicked = active && hovered && ctx.input.left_click;
     if clicked {
         focus::claim();
     }
     let pressed = clicked || (active && focused && ctx.input.select);
-    #[cfg(feature = "audio")]
+    #[cfg(audio)]
     if pressed {
         play_click();
     }
@@ -1130,19 +1195,38 @@ impl<'a> Button<'a> {
     }
 
     pub fn draw(&self, p: &mut Painter, ctx: &ScreenCtx) -> bool {
-        let label = [Span::colored(self.label, LABEL_ACTIVE)];
-        draw_button_spans(p, ctx, self.x, self.y, self.w, self.h, &label, self.active)
+        let hovered = ctx.hovering(self.x, self.y, self.w, self.h);
+        let focused = focus::next(self.active);
+        let sprite = match (self.active, hovered || focused) {
+            (false, _) => "widget/button_disabled",
+            (true, false) => "widget/button",
+            (true, true) => "widget/button_highlighted",
+        };
+        p.sprite(sprite, self.x, self.y, self.w, self.h);
+        let color = if self.active {
+            LABEL_ACTIVE
+        } else {
+            LABEL_INACTIVE
+        };
+        draw_label(p, self.label, self.x, self.y, self.w, self.h, color);
+        #[cfg(not(feature = "mobile_ui"))]
+        let clicked = self.active && hovered && ctx.input.left_click;
+        #[cfg(feature = "mobile_ui")]
+        let clicked = self.active
+            && hovered
+            && ctx.input.left_release
+            && touch_tap::pressed_in(self.x, self.y, self.w, self.h)
+            && !touch_tap::scrolled();
+        if clicked {
+            focus::claim();
+        }
+        let pressed = clicked || (self.active && focused && ctx.input.select);
+        #[cfg(audio)]
+        if pressed {
+            play_click();
+        }
+        pressed
     }
-}
-
-pub(in crate::gui) fn click_in(ctx: &ScreenCtx, x: f32, y: f32, w: f32, h: f32) -> bool {
-    #[cfg(not(feature = "mobile_ui"))]
-    return ctx.hovering(x, y, w, h) && ctx.input.left_click;
-    #[cfg(feature = "mobile_ui")]
-    return ctx.hovering(x, y, w, h)
-        && ctx.input.left_release
-        && touch_tap::pressed_in(x, y, w, h)
-        && !touch_tap::scrolled();
 }
 
 #[cfg(feature = "mobile_ui")]
@@ -1337,37 +1421,6 @@ pub fn slider_value_from_mouse(mouse_x: f32, x: f32, w: f32, min: i32, max: i32)
     slider_value_from_fraction(fraction, min, max)
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(in crate::gui) fn draw_slider(
-    p: &mut Painter,
-    x: f32,
-    y: f32,
-    w: f32,
-    h: f32,
-    frac: f32,
-    track_lit: bool,
-    handle_lit: bool,
-) {
-    let track = if track_lit {
-        "widget/slider_highlighted"
-    } else {
-        "widget/slider"
-    };
-    p.sprite(track, x, y, w, h);
-    let handle = if handle_lit {
-        "widget/slider_handle_highlighted"
-    } else {
-        "widget/slider_handle"
-    };
-    p.sprite(
-        handle,
-        x + (frac * (w - HANDLE_WIDTH)).floor(),
-        y,
-        HANDLE_WIDTH,
-        h,
-    );
-}
-
 pub struct Slider<F: Fn(i32) -> String> {
     pub id: u32,
     pub x: f32,
@@ -1391,7 +1444,6 @@ impl<F: Fn(i32) -> String> Slider<F> {
             value = slider_value_from_mouse(m.x, self.x, self.w, self.min, self.max);
         }
         if track {
-            #[cfg(not(feature = "mobile_ui"))]
             focus::claim();
             SLIDER_MOUSE_ACTIVE.store(self.id, Ordering::Relaxed);
         }
@@ -1400,28 +1452,22 @@ impl<F: Fn(i32) -> String> Slider<F> {
         }
         let dragging = SLIDER_DRAG.load(Ordering::Relaxed) == self.id;
 
-        let track_lit = focused && SLIDER_MOUSE_ACTIVE.load(Ordering::Relaxed) != self.id;
-        let frac = slider_fraction(value, self.min, self.max);
-        draw_slider(
-            p,
-            self.x,
-            self.y,
-            self.w,
-            self.h,
-            frac,
-            track_lit,
-            hovered || dragging,
-        );
+        let sprite = if focused && SLIDER_MOUSE_ACTIVE.load(Ordering::Relaxed) != self.id {
+            "widget/slider_highlighted"
+        } else {
+            "widget/slider"
+        };
+        p.sprite(sprite, self.x, self.y, self.w, self.h);
+        let handle = if hovered || dragging {
+            "widget/slider_handle_highlighted"
+        } else {
+            "widget/slider_handle"
+        };
+        let travel = (slider_fraction(value, self.min, self.max) * (self.w - HANDLE_WIDTH)).floor();
+        p.sprite(handle, self.x + travel, self.y, HANDLE_WIDTH, self.h);
 
         let label = (self.label)(value);
-        draw_label_spans(
-            p,
-            &[Span::colored(label, LABEL_ACTIVE)],
-            self.x,
-            self.y,
-            self.w,
-            self.h,
-        );
+        draw_label(p, &label, self.x, self.y, self.w, self.h, LABEL_ACTIVE);
         value
     }
 }

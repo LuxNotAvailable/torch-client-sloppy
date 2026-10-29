@@ -239,6 +239,8 @@ const INVENTORY: &str = "Inventory";
 const SPECTATOR: &str = "Spectator";
 const DEBUG: &str = "Debug";
 const CLIENT: &str = "Client";
+#[cfg(voice)]
+const VOICE: &str = "Voice Chat";
 
 #[rustfmt::skip]
 pub static BINDS: LazyLock<Vec<BindDef>> = LazyLock::new(|| {
@@ -289,9 +291,10 @@ pub static BINDS: LazyLock<Vec<BindDef>> = LazyLock::new(|| {
     BindDef { action: Action::ReloadChunks, id: "key.debug.reloadChunk", name: "Reload Chunks", category: DEBUG, default: Bound::Key(KeyCode::KeyA) },
     BindDef { action: Action::ChunkBorders, id: "key.debug.showChunkBorders", name: "Show Chunk Boundaries", category: DEBUG, default: Bound::Key(KeyCode::KeyG) },
     BindDef { action: Action::AdvancedTooltips, id: "key.debug.showAdvancedTooltips", name: "Show Advanced Tooltips", category: DEBUG, default: Bound::Key(KeyCode::KeyH) },
-    BindDef { action: Action::ReloadResourcePacks, id: "key.debug.reloadResourcePacks", name: "Reload Resource Packs", category: DEBUG, default: Bound::Key(KeyCode::KeyT) },
 
-    BindDef { action: Action::Freecam, id: "key.client.freecam", name: "Detached Camera", category: CLIENT, default: Bound::Key(KeyCode::KeyC) },
+    // Unbound by default, so a stray C no longer leaves the body behind. A new
+    // id, since every saved bind file still holds the old C.
+    BindDef { action: Action::Freecam, id: "key.client.detachedCamera", name: "Detached Camera", category: CLIENT, default: Bound::Unbound },
     ];
     #[cfg(target_arch = "wasm32")]
     binds.push(BindDef { action: Action::Pause, id: "key.client.pause", name: "Pause Menu", category: CLIENT, default: Bound::Key(KeyCode::Backquote) });
@@ -299,6 +302,14 @@ pub static BINDS: LazyLock<Vec<BindDef>> = LazyLock::new(|| {
     binds.push(BindDef { action: Action::ClickGui, id: "key.client.clickGui", name: "Click GUI", category: CLIENT, default: Bound::Key(KeyCode::ShiftRight) });
     #[cfg(feature = "hud_editor")]
     binds.push(BindDef { action: Action::HudEditor, id: "key.client.hudEditor", name: "Edit HUD", category: CLIENT, default: Bound::Unbound });
+    // Simple Voice Chat's defaults.
+    #[cfg(voice)]
+    binds.extend([
+        BindDef { action: Action::VoicePushToTalk, id: "key.push_to_talk", name: "Push to Talk", category: VOICE, default: Bound::Key(KeyCode::CapsLock) },
+        BindDef { action: Action::VoiceWhisper, id: "key.whisper", name: "Whisper", category: VOICE, default: Bound::Unbound },
+        BindDef { action: Action::VoiceMute, id: "key.mute_microphone", name: "Mute Microphone", category: VOICE, default: Bound::Key(KeyCode::KeyM) },
+        BindDef { action: Action::VoiceDisable, id: "key.disable_voice_chat", name: "Disable Voice Chat", category: VOICE, default: Bound::Key(KeyCode::KeyN) },
+    ]);
     binds
 });
 
@@ -339,7 +350,6 @@ pub enum Action {
     ReloadChunks,
     ChunkBorders,
     AdvancedTooltips,
-    ReloadResourcePacks,
     Freecam,
     #[cfg(target_arch = "wasm32")]
     Pause,
@@ -347,6 +357,14 @@ pub enum Action {
     ClickGui,
     #[cfg(feature = "hud_editor")]
     HudEditor,
+    #[cfg(voice)]
+    VoicePushToTalk,
+    #[cfg(voice)]
+    VoiceWhisper,
+    #[cfg(voice)]
+    VoiceMute,
+    #[cfg(voice)]
+    VoiceDisable,
 }
 
 pub const HOTBAR: [Action; 9] = [

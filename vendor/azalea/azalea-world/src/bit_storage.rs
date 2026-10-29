@@ -155,6 +155,24 @@ impl BitStorage {
         (((index * mul) + add) >> shift) as usize
     }
 
+    /// Calls `f` with every index and value in order, unpacking a whole cell at
+    /// a time rather than dividing out the cell for each index like `get` does.
+    #[inline]
+    pub fn for_each_value(&self, mut f: impl FnMut(usize, u64)) {
+        let mut index = 0;
+        for &cell in self.data.iter() {
+            let mut cell = cell;
+            for _ in 0..self.values_per_long {
+                if index >= self.size {
+                    return;
+                }
+                f(index, cell & self.mask);
+                cell >>= self.bits;
+                index += 1;
+            }
+        }
+    }
+
     #[inline]
     pub fn get(&self, index: usize) -> u64 {
         assert!(

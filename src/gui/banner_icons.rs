@@ -62,13 +62,6 @@ pub fn take_pending() -> (u32, Vec<(usize, String)>) {
     (icons.edge, std::mem::take(&mut icons.pending))
 }
 
-pub fn reset() {
-    let mut icons = icons();
-    icons.slots.clear();
-    icons.ready.clear();
-    icons.pending.clear();
-}
-
 pub fn mark_ready(slot: usize) {
     let mut icons = icons();
     if let Some(ready) = icons.ready.get_mut(slot) {

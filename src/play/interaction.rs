@@ -26,14 +26,55 @@ static USE_ITEM: Mutex<UseItem> = Mutex::new(UseItem {
     started: false,
     item: None,
     remaining: 0,
+    held: 0,
+    unconfirmed: None,
+    fx: None,
 });
 static SERVER_USING_ITEM: AtomicBool = AtomicBool::new(false);
+/// The server finished this player's use (entity event 9,
+/// `USE_ITEM_COMPLETE`), to act on at the next tick.
+static USE_COMPLETED: AtomicBool = AtomicBool::new(false);
+
+/// What a consumable plays while it is used and when it is finished:
+/// `Consumable.emitParticlesAndSounds`. The server leaves the player who eats
+/// out of these, so this client plays its own.
+#[derive(Clone)]
+struct ConsumeFx {
+    item: ItemStack,
+    sound: String,
+    drink: bool,
+    particles: bool,
+    /// `consumeTicks`.
+    ticks: i32,
+}
+
+impl ConsumeFx {
+    /// `shouldEmitParticlesAndSounds`: every fourth tick, once the first
+    /// 21.875% of the use has passed.
+    fn due(&self, remaining: i32) -> bool {
+        let used = self.ticks - remaining;
+        let wait = (self.ticks as f32 * 0.21875) as i32;
+        used > wait && remaining % 4 == 0
+    }
+}
 
 struct UseItem {
     started: bool,
     item: Option<ItemKind>,
     remaining: i32,
+    /// Ticks the use has lasted.
+    held: i32,
+    fx: Option<ConsumeFx>,
+    /// Ticks since this client started the use without the server reporting
+    /// it; `None` once the server does.
+    unconfirmed: Option<u32>,
 }
+
+/// How long a use this client started may go unconfirmed. A server that
+/// turned it down (a restart landing just as the last item finished, or a
+/// hunger update still in flight) never raises its using flag, so without
+/// this the held key would never try again.
+const USE_CONFIRM_TICKS: u32 = 20;
 static WAS_MINING: AtomicBool = AtomicBool::new(false);
 
 static LOCAL_BREAK: Mutex<Option<(BlockPos, crate::platform::time::Instant)>> = Mutex::new(None);
@@ -74,7 +115,10 @@ pub(crate) fn reset_session_state() {
         use_item.started = false;
         use_item.item = None;
         use_item.remaining = 0;
+        use_item.unconfirmed = None;
+        use_item.fx = None;
     }
+    USE_COMPLETED.store(false, Ordering::Relaxed);
     let local_break = match LOCAL_BREAK.try_lock() {
         Ok(guard) => Some(guard),
         Err(std::sync::TryLockError::Poisoned(poisoned)) => Some(poisoned.into_inner()),
@@ -159,8 +203,6 @@ pub fn handle_interaction(bot: &Client, shared: &Arc<SharedMutex>) {
     crate::modules::aim_assist::tick(bot, shared);
 
     crate::modules::auto_sell::tick(bot, shared);
-
-    crate::modules::spam::tick(shared);
 
     crate::modules::auto_totem::tick(bot, shared);
 
@@ -390,11 +432,13 @@ fn apply_place(bot: &Client, shared: &Arc<SharedMutex>, held: bool, clicked: boo
         let s = shared.lock().unwrap();
         s.move_flags & crate::session::MOVE_SNEAK != 0
     };
+    finish_completed_use(bot, shared);
     sync_server_using_item(bot);
-    updating_using_item(bot);
+    updating_using_item(bot, shared);
 
     let was_using = is_using_item();
     if was_using && !held {
+        riptide(bot);
         release_using_item(bot);
     }
     let (swing, delay) = place_step(
@@ -418,7 +462,7 @@ fn apply_place(bot: &Client, shared: &Arc<SharedMutex>, held: bool, clicked: boo
     );
     PLACE_DELAY.store(delay, Ordering::Relaxed);
     if swing {
-        swing_main_hand(bot, shared);
+        swing_main_hand(shared);
     }
 }
 
@@ -455,6 +499,10 @@ fn use_item(bot: &Client, shared: &Arc<SharedMutex>) -> bool {
         return false;
     }
     start_using_item(kind, duration);
+    USE_ITEM.lock().unwrap().fx = consume_fx(bot);
+    if !SERVER_USING_ITEM.load(Ordering::Relaxed) {
+        USE_ITEM.lock().unwrap().unconfirmed.get_or_insert(0);
+    }
     item_used(shared);
     false
 }
@@ -495,6 +543,7 @@ fn start_using_item(kind: ItemKind, duration: i32) {
     use_item.started = true;
     use_item.item = Some(kind);
     use_item.remaining = duration;
+    use_item.held = 0;
 }
 
 fn stop_using_item() {
@@ -502,6 +551,232 @@ fn stop_using_item() {
     use_item.started = false;
     use_item.item = None;
     use_item.remaining = 0;
+    use_item.unconfirmed = None;
+    use_item.fx = None;
+}
+
+/// Entity event 9 for this player: the server finished the use.
+pub(crate) fn note_use_item_complete() {
+    USE_COMPLETED.store(true, Ordering::Relaxed);
+}
+
+/// `Player.handleEntityEvent(9)`: the client finishes the use at once, with
+/// the consumable's 16 particles and its sound, rather than waiting for the
+/// using flag to drop. A held key starts the next use on this same tick, as
+/// `Minecraft.handleKeybinds` does once the player is no longer using.
+fn finish_completed_use(bot: &Client, shared: &Arc<SharedMutex>) {
+    if !USE_COMPLETED.swap(false, Ordering::Relaxed) {
+        return;
+    }
+    if !is_using_item() {
+        return;
+    }
+    let fx = USE_ITEM.lock().unwrap().fx.clone();
+    if let Some(fx) = fx {
+        emit_consume_fx(bot, shared, &fx, 16);
+    }
+    stop_using_item();
+    // The flag the server is about to clear: once it does, there is
+    // nothing left to stop.
+    SERVER_USING_ITEM.store(false, Ordering::Relaxed);
+}
+
+fn consume_fx(bot: &Client) -> Option<ConsumeFx> {
+    use azalea_inventory::components::{Consumable, ItemUseAnimation};
+    use azalea_registry::Holder;
+
+    let inventory = bot.component::<azalea::entity::inventory::Inventory>().ok()?;
+    let held = inventory.held_item();
+    let consumable = held.get_component::<Consumable>()?;
+    let sound = match &consumable.sound {
+        Holder::Reference(event) => crate::audio::event_name(event.to_str()).to_owned(),
+        Holder::Direct(custom) => crate::audio::event_name(&custom.sound_id.to_string()).to_owned(),
+    };
+    Some(ConsumeFx {
+        item: held.clone(),
+        sound,
+        drink: consumable.animation == ItemUseAnimation::Drink,
+        particles: consumable.has_consume_particles,
+        ticks: (consumable.consume_seconds * 20.0) as i32,
+    })
+}
+
+/// `emitParticlesAndSounds` for this player: the sound at the player's feet
+/// and `count` crumbs of the item thrown from the mouth (`spawnItemParticles`).
+fn emit_consume_fx(bot: &Client, shared: &Arc<SharedMutex>, fx: &ConsumeFx, count: u32) {
+    use crate::util::javarandom::JavaRandom;
+    static RNG: Mutex<Option<JavaRandom>> = Mutex::new(None);
+
+    let Ok(pos) = bot.position() else { return };
+    let (yaw, pitch) = bot
+        .component::<azalea::entity::LookDirection>()
+        .map_or((0.0, 0.0), |look| (look.y_rot(), look.x_rot()));
+    let mut guard = RNG.lock().unwrap();
+    let rng = guard.get_or_insert_with(|| JavaRandom::new(0x5EED_EA75));
+
+    let eat_volume = if rng.next_int(2) == 0 { 0.5 } else { 1.0 };
+    let eat_pitch = 1.0 + 0.2 * (rng.next_f32() - rng.next_f32());
+    let drink_pitch = 0.9 + rng.next_f32() * 0.1;
+    let (volume, sound_pitch) = if fx.drink {
+        (0.5, drink_pitch)
+    } else {
+        (eat_volume, eat_pitch)
+    };
+
+    if fx.particles && !fx.item.is_empty() {
+        let mut s = shared.lock().unwrap();
+        let eye_y = pos.y + crate::renderer::systems::eye_height(s.session.crouching) as f64;
+        let (pitch_rad, yaw_rad) = ((-pitch).to_radians(), (-yaw).to_radians());
+        // `Vec3.xRot`, then `Vec3.yRot`.
+        let turn = |[x, y, z]: [f32; 3]| {
+            let (c, s) = (pitch_rad.cos(), pitch_rad.sin());
+            let (y, z) = (y * c + z * s, z * c - y * s);
+            let (c, s) = (yaw_rad.cos(), yaw_rad.sin());
+            [x * c + z * s, y, z * c - x * s]
+        };
+        for _ in 0..count {
+            let d = turn([(rng.next_f32() - 0.5) * 0.1, rng.next_f32() * 0.1 + 0.1, 0.0]);
+            let y1 = -rng.next_f32() * 0.6 - 0.3;
+            let p = turn([(rng.next_f32() - 0.5) * 0.3, y1, 0.6]);
+            crate::session::push_particle_emit(
+                &mut s.session.particle_emits,
+                crate::session::ParticleEmit::Level(crate::session::LevelParticle {
+                    particle: azalea::entity::particle::Particle::Item(
+                        azalea::entity::particle::ItemParticle {
+                            item: fx.item.clone(),
+                        },
+                    ),
+                    pos: [pos.x + p[0] as f64, eye_y + p[1] as f64, pos.z + p[2] as f64],
+                    dist: [d[0], d[1] + 0.05, d[2]],
+                    max_speed: [1.0; 3],
+                    count: 0,
+                    randomization: Default::default(),
+                    override_limiter: false,
+                    always_show: false,
+                }),
+            );
+        }
+    }
+    drop(guard);
+    crate::audio::play_at(
+        &fx.sound,
+        crate::audio::category::SoundCategory::Players,
+        [pos.x as f32, pos.y as f32, pos.z as f32],
+        volume,
+        sound_pitch,
+    );
+}
+
+/// `TridentItem.releaseUsing` for a riptide trident: held for half a second
+/// and let go in water or rain, it throws the player along their look, and
+/// up out of a standing start. The client moves itself, so this happens here.
+fn riptide(bot: &Client) {
+    use azalea::entity::{LookDirection, Physics, Position};
+
+    let held_ticks = USE_ITEM.lock().unwrap().held;
+    if held_ticks < 10 || crate::client::tracking::local_vehicle_id().is_some() {
+        return;
+    }
+    let Ok(inventory) = bot.component::<azalea::entity::inventory::Inventory>() else {
+        return;
+    };
+    let held = inventory.held_item().clone();
+    drop(inventory);
+    if held.kind() != ItemKind::Trident {
+        return;
+    }
+    let level = {
+        let world = bot.world().ok();
+        let guard = world.as_ref().map(|w| w.read());
+        let registries = guard.as_ref().map(|g| &g.registries);
+        crate::play::inventory_bridge::slot_stack(&held, registries, false)
+            .enchantments
+            .iter()
+            .find(|(name, _)| crate::items::model::strip_namespace(name) == "riptide")
+            .map_or(0, |(_, level)| *level)
+    };
+    let strength = crate::play::gliding::riptide_strength(level);
+    if strength <= 0.0 || !in_water_or_rain(bot) {
+        return;
+    }
+    let Ok(look) = bot.component::<LookDirection>() else { return };
+    let push = crate::play::gliding::riptide_push(look.y_rot(), look.x_rot(), strength);
+    let mut ecs = bot.ecs.write();
+    let Some(mut physics) = ecs.get_mut::<Physics>(bot.entity) else { return };
+    physics.velocity = physics.velocity + push;
+    let on_ground = physics.on_ground();
+    let bb = physics.bounding_box;
+    drop(physics);
+    if on_ground {
+        let rise = free_rise(bot, &bb, 1.199_999_9);
+        if rise > 0.0
+            && let Some(mut position) = ecs.get_mut::<Position>(bot.entity)
+        {
+            position.y += rise;
+        }
+    }
+}
+
+/// How far the box can move straight up, up to `limit`, before it meets a
+/// block: `move(SELF, (0, limit, 0))` for a box with nothing above but blocks.
+fn free_rise(bot: &Client, bb: &azalea_core::aabb::Aabb, limit: f64) -> f64 {
+    use azalea::physics::collision::world_collisions::get_block_collisions_for;
+    let Ok(world) = bot.world() else { return 0.0 };
+    let world = world.read();
+    const STEP: f64 = 0.05;
+    let mut rise = 0.0;
+    while rise < limit {
+        let next = (rise + STEP).min(limit);
+        let probe = azalea_core::aabb::Aabb {
+            min: azalea_core::position::Vec3::new(bb.min.x, bb.max.y + rise, bb.min.z),
+            max: azalea_core::position::Vec3::new(bb.max.x, bb.max.y + next, bb.max.z),
+        };
+        if !get_block_collisions_for(&world, &probe, Default::default()).is_empty() {
+            break;
+        }
+        rise = next;
+    }
+    rise
+}
+
+/// `isInWaterOrRain`: in water, or where rain falls on the feet or the head
+/// (`isRainingAt`: raining, open to the sky, and a biome warm enough for rain).
+fn in_water_or_rain(bot: &Client) -> bool {
+    use azalea::entity::{Physics, Position};
+    use azalea_core::position::BlockPos;
+
+    if bot.component::<Physics>().is_ok_and(|p| p.is_in_water()) {
+        return true;
+    }
+    if crate::renderer::environment::rain_level() <= 0.2 {
+        return false;
+    }
+    let Some(biome) = crate::client::envprobe::camera_biome() else {
+        return false;
+    };
+    let env = crate::util::biome_color::env(biome);
+    let Ok(pos) = bot.component::<Position>() else { return false };
+    let Ok(world) = bot.world() else { return false };
+    let world = world.read();
+    let open_sky = |x: i32, y: i32, z: i32| {
+        (y + 1..y + 384).all(|above| {
+            // The `MOTION_BLOCKING` heightmap: blocks with collision, and fluids.
+            world
+                .get_block_state(BlockPos::new(x, above, z))
+                .is_none_or(|s| {
+                    use azalea::physics::collision::BlockWithShape;
+                    s.is_collision_shape_empty()
+                        && azalea::block::fluid_state::FluidState::from(s).is_empty()
+                })
+        })
+    };
+    let raining_at = |y: f64| {
+        let (x, y, z) = (pos.x.floor() as i32, y.floor() as i32, pos.z.floor() as i32);
+        // `coldEnoughToSnow`: biome temperature less 0.00125 a block above 80.
+        let temperature = env.temperature - (y - 80).max(0) as f32 * 0.00125;
+        env.has_precipitation && !env.frozen && temperature >= 0.15 && open_sky(x, y, z)
+    };
+    raining_at(pos.y) || raining_at(pos.y + 1.8)
 }
 
 fn release_using_item(bot: &Client) {
@@ -514,7 +789,7 @@ fn release_using_item(bot: &Client) {
     stop_using_item();
 }
 
-fn updating_using_item(bot: &Client) {
+fn updating_using_item(bot: &Client, shared: &Arc<SharedMutex>) {
     let (started, item) = {
         let use_item = USE_ITEM.lock().unwrap();
         (use_item.started, use_item.item)
@@ -522,11 +797,34 @@ fn updating_using_item(bot: &Client) {
     if !started {
         return;
     }
-    if held_item_kind(bot) != item {
-        stop_using_item();
-        return;
+    if let Some(fx) = tick_using_item(held_item_kind(bot) == item) {
+        emit_consume_fx(bot, shared, &fx, 5);
     }
-    USE_ITEM.lock().unwrap().remaining -= 1;
+}
+
+/// One tick of the use; the effects to play this tick (`onUseTick`), if any.
+fn tick_using_item(still_held: bool) -> Option<ConsumeFx> {
+    if !still_held {
+        stop_using_item();
+        return None;
+    }
+    let mut use_item = USE_ITEM.lock().unwrap();
+    let due = use_item
+        .fx
+        .as_ref()
+        .filter(|fx| fx.due(use_item.remaining))
+        .cloned();
+    use_item.remaining -= 1;
+    use_item.held += 1;
+    if let Some(ticks) = use_item.unconfirmed.as_mut() {
+        *ticks += 1;
+        if *ticks > USE_CONFIRM_TICKS {
+            drop(use_item);
+            stop_using_item();
+            return None;
+        }
+    }
+    due
 }
 
 fn sync_server_using_item(bot: &Client) {
@@ -534,6 +832,9 @@ fn sync_server_using_item(bot: &Client) {
         .component::<azalea::entity::metadata::AbstractLivingUsingItem>()
         .map(|using| using.0)
         .unwrap_or(false);
+    if server_using {
+        USE_ITEM.lock().unwrap().unconfirmed = None;
+    }
     if SERVER_USING_ITEM.swap(server_using, Ordering::Relaxed) == server_using {
         return;
     }
@@ -541,6 +842,7 @@ fn sync_server_using_item(bot: &Client) {
         (true, false) => {
             if let Some(kind) = held_item_kind(bot) {
                 start_using_item(kind, held_use_duration(bot));
+                USE_ITEM.lock().unwrap().fx = consume_fx(bot);
             }
         }
         (false, true) => stop_using_item(),
@@ -645,13 +947,8 @@ fn predict_open_toggle(bot: &Client, hit: &BlockHitResult) {
     }
 }
 
-fn swing_main_hand(bot: &Client, shared: &Arc<SharedMutex>) {
-    use azalea_protocol::packets::game::{s_interact::InteractionHand, s_swing::ServerboundSwing};
-
+fn swing_main_hand(shared: &Arc<SharedMutex>) {
     crate::client::tick::swing_local_player(false, shared);
-    bot.write_packet(ServerboundSwing {
-        hand: InteractionHand::MainHand,
-    });
 }
 
 fn item_used(shared: &Arc<SharedMutex>) {
@@ -767,6 +1064,14 @@ fn predict_place(bot: &Client, secondary_use: bool) -> bool {
     let Some(predicted) = predict_use(bot, UseKind::Place, secondary_use) else {
         return false;
     };
+    #[cfg(audio)]
+    {
+        let clicked = predicted.hit.block_pos;
+        crate::client::worldsync::note_local_place([
+            clicked,
+            clicked + predicted.hit.direction.normal(),
+        ]);
+    }
 
     bot.write_packet(ServerboundUseItemOn {
         hand: InteractionHand::MainHand,
@@ -958,7 +1263,7 @@ fn predict_use(bot: &Client, kind: UseKind, secondary_use: bool) -> Option<Predi
 
     match bucket_action {
         Some(BucketAction::Empty(_is_lava)) => {
-            #[cfg(feature = "audio")]
+            #[cfg(audio)]
             {
                 let at = [pos.x as f32 + 0.5, pos.y as f32 + 0.5, pos.z as f32 + 0.5];
                 let event = if _is_lava {
@@ -971,7 +1276,7 @@ fn predict_use(bot: &Client, kind: UseKind, secondary_use: bool) -> Option<Predi
         }
         Some(BucketAction::Fill(is_lava)) => {
             fill_held_bucket(bot, is_lava);
-            #[cfg(feature = "audio")]
+            #[cfg(audio)]
             {
                 let at = [pos.x as f32 + 0.5, pos.y as f32 + 0.5, pos.z as f32 + 0.5];
                 let event = if is_lava {
@@ -1057,6 +1362,40 @@ fn apply_pick_block(bot: &Client, ctrl: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The tests that drive the one `USE_ITEM`, taken in turn.
+    static USE_ITEM_TESTS: Mutex<()> = Mutex::new(());
+
+    fn bread_fx() -> ConsumeFx {
+        ConsumeFx {
+            item: ItemStack::Empty,
+            sound: "entity.generic.eat".into(),
+            drink: false,
+            particles: true,
+            ticks: 32,
+        }
+    }
+
+    #[test]
+    fn eating_crunches_every_fourth_tick_after_the_first_fifth() {
+        let fx = bread_fx();
+        let due: Vec<i32> = (1..=32).rev().filter(|&r| fx.due(r)).collect();
+        assert_eq!(due, [24, 20, 16, 12, 8, 4]);
+    }
+
+    #[test]
+    fn a_tick_of_eating_hands_back_the_effects_when_due() {
+        let _guard = USE_ITEM_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        stop_using_item();
+        start_using_item(ItemKind::Bread, 32);
+        USE_ITEM.lock().unwrap().fx = Some(bread_fx());
+        let mut played = 0;
+        for _ in 0..32 {
+            played += tick_using_item(true).is_some() as u32;
+        }
+        assert_eq!(played, 6);
+        stop_using_item();
+    }
 
     const P: BlockPos = BlockPos { x: 1, y: 2, z: 3 };
     const Q: BlockPos = BlockPos { x: 1, y: 2, z: 4 };
@@ -1202,6 +1541,7 @@ mod tests {
 
     #[test]
     fn the_use_item_state_machine_starts_ticks_down_and_stops() {
+        let _guard = USE_ITEM_TESTS.lock().unwrap_or_else(|e| e.into_inner());
         const APPLE: ItemKind = ItemKind::Apple;
         stop_using_item();
 
@@ -1220,7 +1560,34 @@ mod tests {
     }
 
     #[test]
+    fn a_use_the_server_never_confirms_ends_so_a_held_key_retries() {
+        let _guard = USE_ITEM_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        stop_using_item();
+        start_using_item(ItemKind::Bread, 32);
+        USE_ITEM.lock().unwrap().unconfirmed = Some(0);
+        for _ in 0..USE_CONFIRM_TICKS {
+            tick_using_item(true);
+            assert!(is_using_item());
+        }
+        tick_using_item(true);
+        assert!(!is_using_item());
+    }
+
+    #[test]
+    fn a_confirmed_use_outlasts_the_confirm_window() {
+        let _guard = USE_ITEM_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        stop_using_item();
+        start_using_item(ItemKind::Bread, 32);
+        for _ in 0..USE_CONFIRM_TICKS * 2 {
+            tick_using_item(true);
+        }
+        assert!(is_using_item(), "only the server ends a use it confirmed");
+        stop_using_item();
+    }
+
+    #[test]
     fn the_countdown_runs_past_zero_and_leaves_the_use_running() {
+        let _guard = USE_ITEM_TESTS.lock().unwrap_or_else(|e| e.into_inner());
         stop_using_item();
         start_using_item(ItemKind::Apple, 2);
 

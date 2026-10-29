@@ -126,19 +126,17 @@ impl<T: simdnbt::Deserialize> RegistryType<T> {
     fn append_nbt(&mut self, id: Identifier, entries: Vec<(Identifier, Option<NbtCompound>)>) {
         let map = &mut self.map;
         for (key, value) in entries {
-            let parsed = match &value {
-                Some(value) => nbt_to_serializable_type(value).map_err(|err| {
-                    error!("Error deserializing {id} entry {key}: {err:?}\n{value:?}");
-                }),
-                None => Err(()),
-            };
-            match parsed.or_else(|()| nbt_to_serializable_type(&NbtCompound::new())) {
-                Ok(value) => {
-                    map.insert(key, value);
+            if let Some(value) = value {
+                match nbt_to_serializable_type(&value) {
+                    Ok(value) => {
+                        map.insert(key, value);
+                    }
+                    Err(err) => {
+                        error!("Error deserializing {id} entry {key}: {err:?}\n{value:?}");
+                    }
                 }
-                Err(err) => {
-                    error!("No placeholder for {id} entry {key}, later ids will shift: {err:?}");
-                }
+            } else {
+                map.shift_remove(&key);
             }
         }
     }

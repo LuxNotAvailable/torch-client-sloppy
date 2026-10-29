@@ -23,6 +23,33 @@ pub struct OcclusionState {
 
 const TERRAIN_REFILL_INTERVAL: Duration = Duration::from_millis(250);
 
+/// Boxes spanning more sections than this on an axis are never culled.
+const MAX_CULL_SPAN: i32 = 4;
+
+impl OcclusionState {
+    /// Whether the last flood fill reached any section the box overlaps, so
+    /// something inside it may be seen. Unknown counts as reached: before the
+    /// first fill, with occlusion off, or outside the filled grid.
+    pub fn reaches_box(&self, min: Vec3, max: Vec3) -> bool {
+        if self.section.is_none() || disabled() {
+            return true;
+        }
+        let column = |v: f32| (v / 16.0).floor() as i32;
+        let (x0, x1) = (column(min.x), column(max.x));
+        let (y0, y1) = (column(min.y), column(max.y));
+        let (z0, z1) = (column(min.z), column(max.z));
+        if x1 - x0 >= MAX_CULL_SPAN || y1 - y0 >= MAX_CULL_SPAN || z1 - z0 >= MAX_CULL_SPAN {
+            return true;
+        }
+        let grid = &self.grid;
+        (y0..=y1).any(|y| {
+            (z0..=z1).any(|z| {
+                (x0..=x1).any(|x| grid.index((x, y * 16, z)).is_none_or(|i| grid.reached[i]))
+            })
+        })
+    }
+}
+
 #[derive(Default)]
 struct Grid {
     origin: (i32, i32, i32),
@@ -310,7 +337,12 @@ fn step(pos: (i32, i32, i32), face: Direction) -> (i32, i32, i32) {
 
 fn disabled() -> bool {
     static OFF: OnceLock<bool> = OnceLock::new();
-    *OFF.get_or_init(|| crate::platform::env::flag("MC_NO_OCCLUSION"))
+    *OFF.get_or_init(|| {
+        matches!(
+            std::env::var("MC_NO_OCCLUSION").as_deref(),
+            Ok("1") | Ok("true")
+        )
+    })
 }
 
 pub fn update_occlusion(
@@ -501,5 +533,26 @@ mod tests {
             );
         }
         assert!(!grid.reached[grid.index((0, -32, 0)).unwrap()]);
+    }
+
+    #[test]
+    fn a_box_buried_past_the_fill_is_culled_and_one_in_the_open_is_not() {
+        let mut state = OcclusionState::default();
+        let open = Vec3::new(4.0, 82.0, 4.0);
+        assert!(
+            state.reaches_box(open, open),
+            "no fill yet: draw everything"
+        );
+
+        state.grid.fill((0, 80, 0), 4, -64, 320, &surface_world(64));
+        state.section = Some((0, 80, 0));
+        assert!(state.reaches_box(open, open + 1.0));
+        let buried = Vec3::new(4.0, -30.0, 4.0);
+        assert!(!state.reaches_box(buried, buried + 1.0));
+        let far = Vec3::new(4000.0, -30.0, 4.0);
+        assert!(
+            state.reaches_box(far, far + 1.0),
+            "outside the grid is unknown"
+        );
     }
 }

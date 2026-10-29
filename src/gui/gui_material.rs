@@ -67,6 +67,19 @@ impl Plugin for GuiMaterialPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "gui.wgsl");
         app.add_plugins(MaterialPlugin::<GuiMaterial>::default());
-        crate::renderer::reload::touch_on_reload::<GuiMaterial>(app);
+    }
+}
+
+#[cfg(all(test, feature = "shader_support"))]
+mod tests {
+    #[test]
+    fn the_gui_shader_validates() {
+        let module = naga::front::wgsl::parse_str(include_str!("gui.wgsl")).expect("parses");
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::empty(),
+        )
+        .validate(&module)
+        .expect("validates");
     }
 }

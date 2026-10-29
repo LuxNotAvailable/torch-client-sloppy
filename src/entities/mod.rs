@@ -1,11 +1,8 @@
 pub mod bake;
 pub mod blockmodel;
 pub mod feed;
-pub mod fishing_line;
-pub mod flame;
 pub mod geom;
 pub mod keyframe;
-pub mod living;
 pub mod models;
 pub mod physics;
 pub mod quads;
@@ -24,9 +21,9 @@ pub use registry::Registry;
 pub use state::{Billboard, Carried, Carrier, Direction, EntityState, Pose};
 
 pub use crate::renderer::entity_material::LightMode;
-use crate::renderer::entity_material::{
-    ALPHA_CUTOUT, EntityMaterial, Lit, SharedMaterials, diffuse_lights,
-};
+use crate::renderer::entity_material::{EntityMaterial, Lit, diffuse_lights};
+use crate::renderer::rig_parts::{PartSlot, RigParts};
+use bevy::camera::primitives::Aabb;
 use geom::{BakedModel, LayerDef, PartState, PosedPart};
 
 pub const MODEL_Y_OFFSET: f32 = -1.501;
@@ -70,93 +67,50 @@ pub fn rotate_around(rotation: Quat, pivot: Vec3) -> Transform {
     }
 }
 
-pub struct RotationState {
-    pub body_rot: f32,
-    pub is_shaking: bool,
-    pub age_ticks: f32,
-    pub death_time: f32,
-    pub is_auto_spin_attack: bool,
-    pub x_rot: f32,
-    pub sleeping: bool,
-    pub bed_orientation: Option<Direction>,
-    pub eye_height: f32,
-    pub is_upside_down: bool,
-    pub bounding_box_height: f32,
-    pub scale: f32,
-}
-
-fn sleep_rotation(bed: Option<Direction>, body_rot: f32) -> f32 {
-    match bed {
-        None => body_rot,
-        Some(Direction::South) => 90.0,
-        Some(Direction::North) => 270.0,
-        Some(Direction::East) => 180.0,
-        Some(_) => 0.0,
-    }
-}
-
-pub fn living_rotations(s: &RotationState, flip_degrees: f32) -> RootPose {
+pub fn setup_rotations(st: &EntityState, flip_degrees: f32) -> RootPose {
     let mut pose = RootPose {
-        scale: s.scale,
+        scale: st.scale,
         ..RootPose::default()
     };
 
-    if s.sleeping
-        && let Some(dir) = s.bed_orientation
-    {
-        let head_offset = s.eye_height - 0.1;
-        pose.world_offset = Vec3::new(
-            -dir.step_x() * head_offset,
-            0.0,
-            -dir.step_z() * head_offset,
-        );
+    let mut body_rot = st.body_rot;
+    if st.is_fully_frozen {
+        body_rot += (st.age_ticks.floor() * 3.25).cos() * std::f32::consts::PI * 0.4;
     }
 
-    let mut body_rot = s.body_rot;
-    if s.is_shaking {
-        body_rot += (s.age_ticks.floor() * 3.25).cos() * std::f32::consts::PI * 0.4;
-    }
-
-    if !s.sleeping {
+    if !st.has_pose(Pose::Sleeping) {
         pose.rotation = Quat::from_rotation_y((180.0 - body_rot).to_radians());
     }
 
-    if s.death_time > 0.0 {
-        let fall = ((s.death_time - 1.0) / 20.0 * 1.6).sqrt().min(1.0);
+    if st.death_time > 0.0 {
+        let fall = (((st.death_time - 1.0) / 20.0 * 1.6).sqrt()).min(1.0);
         pose.extra_rotation = Quat::from_rotation_z((fall * flip_degrees).to_radians());
-    } else if s.is_auto_spin_attack {
-        pose.extra_rotation = Quat::from_rotation_x((-90.0 - s.x_rot).to_radians())
-            * Quat::from_rotation_y((s.age_ticks * -75.0).to_radians());
-    } else if s.sleeping {
-        pose.extra_rotation =
-            Quat::from_rotation_y(sleep_rotation(s.bed_orientation, body_rot).to_radians())
-                * Quat::from_rotation_z(flip_degrees.to_radians())
-                * Quat::from_rotation_y(270.0_f32.to_radians());
-    } else if s.is_upside_down {
-        pose.extra_offset = Vec3::new(0.0, (s.bounding_box_height + 0.1) / s.scale, 0.0);
+    } else if st.is_auto_spin_attack {
+        pose.extra_rotation = Quat::from_rotation_x((-90.0 - st.x_rot).to_radians())
+            * Quat::from_rotation_y((st.age_ticks * -75.0).to_radians());
+    } else if st.has_pose(Pose::Sleeping) {
+        let angle = match st.bed_orientation {
+            Some(Direction::South) => 90.0,
+            Some(Direction::West) => 0.0,
+            Some(Direction::North) => 270.0,
+            Some(Direction::East) => 180.0,
+            _ => body_rot,
+        };
+        pose.extra_rotation = Quat::from_rotation_y(angle.to_radians())
+            * Quat::from_rotation_z(flip_degrees.to_radians())
+            * Quat::from_rotation_y(270.0_f32.to_radians());
+        if let Some(dir) = st.bed_orientation {
+            let head_offset = st.eye_height - 0.1;
+            pose.world_offset = Vec3::new(
+                -dir.step_x() * head_offset,
+                0.0,
+                -dir.step_z() * head_offset,
+            );
+        }
+    } else if st.is_upside_down {
+        pose.extra_offset = Vec3::new(0.0, (st.bounding_box_height + 0.1) / st.scale, 0.0);
         pose.extra_rotation = Quat::from_rotation_z(std::f32::consts::PI);
     }
-    pose
-}
-
-pub fn setup_rotations(st: &EntityState, flip_degrees: f32) -> RootPose {
-    let mut pose = living_rotations(
-        &RotationState {
-            body_rot: st.body_rot,
-            is_shaking: st.is_fully_frozen,
-            age_ticks: st.age_ticks,
-            death_time: st.death_time,
-            is_auto_spin_attack: st.is_auto_spin_attack,
-            x_rot: st.x_rot,
-            sleeping: st.has_pose(Pose::Sleeping),
-            bed_orientation: st.bed_orientation,
-            eye_height: st.eye_height,
-            is_upside_down: st.is_upside_down,
-            bounding_box_height: st.bounding_box_height,
-            scale: st.scale,
-        },
-        flip_degrees,
-    );
 
     pose.world_offset += Vec3::from(st.extras.render_offset);
 
@@ -183,20 +137,31 @@ pub fn always_visible(_st: &EntityState) -> bool {
     true
 }
 
+fn never_glint(_: &EntityState) -> bool {
+    false
+}
+
 pub fn no_tint(_st: &EntityState) -> [f32; 4] {
     [1.0, 1.0, 1.0, 1.0]
 }
 
-pub(crate) fn hurt_overlay_alpha(has_red_overlay: bool) -> f32 {
-    if has_red_overlay { 0.698 } else { 1.0 }
+fn hurt_overlay_alpha(st: &EntityState) -> f32 {
+    if st.has_red_overlay { 0.698 } else { 1.0 }
 }
 
 fn tnt_flash_alpha(st: &EntityState) -> Option<f32> {
-    (st.kind == EntityKind::Tnt && (st.extras.fuse / 5) % 2 == 0).then_some(0.25)
+    let lit = |fuse: i32| (fuse / 5) % 2 == 0;
+    match st.kind {
+        EntityKind::Tnt => lit(st.extras.fuse).then_some(0.25),
+        EntityKind::SulfurCube if st.extras.fuse_remaining > 0.0 => {
+            lit(st.extras.fuse_remaining as i32).then_some(0.25)
+        }
+        _ => None,
+    }
 }
 
 fn overlay_alpha(st: &EntityState) -> f32 {
-    tnt_flash_alpha(st).unwrap_or_else(|| hurt_overlay_alpha(st.has_red_overlay))
+    tnt_flash_alpha(st).unwrap_or_else(|| hurt_overlay_alpha(st))
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -217,10 +182,6 @@ impl CameraView {
             pitch,
         }
     }
-
-    pub fn yaw_rotation(&self) -> Quat {
-        Quat::from_rotation_y(self.yaw)
-    }
 }
 
 impl Default for CameraView {
@@ -238,6 +199,17 @@ pub const VIEW_RANGE_BLOCKS: f32 = 64.0;
 
 pub fn display_quat(q: [f32; 4]) -> Quat {
     Quat::from_xyzw(q[0], q[1], q[2], q[3])
+}
+
+/// Entity culling: skip anything whose box only overlaps sections the
+/// terrain flood fill could not reach from the camera.
+fn in_open_view(st: &EntityState, occlusion: &crate::renderer::occlusion::OcclusionState) -> bool {
+    let half = st.bounding_box_width.max(1.0) * 0.5;
+    let feet = Vec3::from(st.pos);
+    occlusion.reaches_box(
+        feet - Vec3::new(half, 0.5, half),
+        feet + Vec3::new(half, st.bounding_box_height.max(1.0) + 0.5, half),
+    )
 }
 
 fn within_view_range(st: &EntityState, camera: &CameraView) -> bool {
@@ -471,6 +443,7 @@ pub struct RenderSpec {
     pub tint: fn(&EntityState) -> [f32; 4],
     pub respects_invisibility: bool,
     pub light: Option<LightMode>,
+    pub glint: fn(&EntityState) -> bool,
 }
 
 impl RenderSpec {
@@ -557,6 +530,7 @@ impl RenderSpec {
             tint: no_tint,
             respects_invisibility: true,
             light: None,
+            glint: never_glint,
         }
     }
 
@@ -585,6 +559,11 @@ impl RenderSpec {
 
     pub fn with_depth_bias(mut self, depth_bias: i32) -> RenderSpec {
         self.depth_bias = depth_bias;
+        self
+    }
+
+    pub fn with_glint(mut self, glint: fn(&EntityState) -> bool) -> RenderSpec {
+        self.glint = glint;
         self
     }
 
@@ -637,15 +616,23 @@ pub fn no_inner(_st: &EntityState) -> Transform {
 
 pub struct GpuSpec {
     pub model: BakedModel,
+    rigged: Option<RiggedSpec>,
+}
+
+struct RiggedSpec {
+    mesh: Handle<Mesh>,
+    bounds: Vec<Option<(Vec3, Vec3)>>,
 }
 
 #[derive(Resource, Default)]
 pub struct EntityAssets {
     specs: Vec<Option<GpuSpec>>,
+    images: HashMap<String, Option<Handle<Image>>>,
     block_atlas: Option<Handle<Image>>,
     block_meshes: HashMap<BlockRef, Option<Handle<Mesh>>>,
     built_meshes: HashMap<(usize, String), Handle<Mesh>>,
-    materials: SharedMaterials<MaterialKey, MAX_SHARED_MATERIALS>,
+    materials: HashMap<MaterialKey, SharedMaterial>,
+    epoch: u64,
     lights: crate::renderer::lightmap::LightCells,
 }
 
@@ -660,6 +647,7 @@ struct MaterialKey {
     dirs: [[u32; 3]; 2],
     overlay_alpha: u32,
     overlay_white: bool,
+    glint: bool,
 }
 
 impl MaterialKey {
@@ -674,8 +662,14 @@ impl MaterialKey {
             dirs: lit.dirs.map(|d| d.to_array().map(f32::to_bits)),
             overlay_alpha: lit.overlay_alpha.to_bits(),
             overlay_white: lit.overlay_white,
+            glint: lit.glint,
         }
     }
+}
+
+struct SharedMaterial {
+    handle: Handle<EntityMaterial>,
+    epoch: u64,
 }
 
 const MAX_SHARED_MATERIALS: usize = 4096;
@@ -698,7 +692,36 @@ impl EntityAssets {
         }
         self.specs[idx].get_or_insert_with(|| GpuSpec {
             model: geom::bake(&(model.layer)()),
+            rigged: None,
         })
+    }
+
+    fn rigged_mesh(&mut self, idx: usize, meshes: &mut Assets<Mesh>) -> Handle<Mesh> {
+        let gpu = self.specs[idx]
+            .as_mut()
+            .expect("a model's spec is baked before its rig spawns");
+        gpu.rigged
+            .get_or_insert_with(|| RiggedSpec {
+                mesh: meshes.add(bake::rigged_mesh(&gpu.model)),
+                bounds: bake::part_bounds(&gpu.model),
+            })
+            .mesh
+            .clone()
+    }
+
+    fn image(&mut self, path: &str, images: &mut Assets<Image>) -> Option<Handle<Image>> {
+        if let Some(cached) = self.images.get(path) {
+            return cached.clone();
+        }
+        let handle = load_entity_image(path, images);
+        if handle.is_none() {
+            match path.strip_prefix(crate::entities::render::humanoid::armor::STACK_PREFIX) {
+                Some(rest) => warn!("equipment stack would not compose: {rest}"),
+                None => warn!("entity texture not found: textures/{path}.png"),
+            }
+        }
+        self.images.insert(path.to_string(), handle.clone());
+        handle
     }
 
     fn material(
@@ -710,22 +733,37 @@ impl EntityAssets {
         materials: &mut Assets<EntityMaterial>,
     ) -> Handle<EntityMaterial> {
         let key = MaterialKey::new(texture.as_ref(), spec, lit, levels);
-        self.materials
-            .get(key, lit, materials, || entity_material(texture, spec, lit))
+        if let Some(shared) = self.materials.get_mut(&key) {
+            if shared.epoch != self.epoch {
+                shared.epoch = self.epoch;
+                refresh_params(materials, &shared.handle, lit);
+            }
+            return shared.handle.clone();
+        }
+        if self.materials.len() >= MAX_SHARED_MATERIALS {
+            self.materials.clear();
+        }
+        let handle = materials.add(entity_material(texture, spec, lit));
+        self.materials.insert(
+            key,
+            SharedMaterial {
+                handle: handle.clone(),
+                epoch: self.epoch,
+            },
+        );
+        handle
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn layer_material(
         &mut self,
         path: &str,
         spec: &RenderSpec,
         lit: Lit,
         levels: (u8, u8),
-        entity_images: &mut EntityImages,
         images: &mut Assets<Image>,
         materials: &mut Assets<EntityMaterial>,
     ) -> Option<(Handle<EntityMaterial>, Handle<Image>)> {
-        let texture = entity_images.get(path, images)?;
+        let texture = self.image(path, images)?;
         let material = self.material(Some(texture.clone()), spec, lit, levels, materials);
         Some((material, texture))
     }
@@ -766,18 +804,6 @@ impl EntityAssets {
         built
     }
 
-    pub(crate) fn block_mesh_keys(&mut self) -> Vec<(BlockRef, AssetId<Mesh>)> {
-        self.block_meshes.retain(|_, mesh| mesh.is_some());
-        self.block_meshes
-            .iter()
-            .filter_map(|(block, mesh)| Some((*block, mesh.as_ref()?.id())))
-            .collect()
-    }
-
-    pub(crate) fn forget_block_mesh(&mut self, block: &BlockRef) {
-        self.block_meshes.remove(block);
-    }
-
     fn built_mesh(
         &mut self,
         idx: usize,
@@ -793,6 +819,26 @@ impl EntityAssets {
         self.built_meshes
             .insert((idx, key.to_string()), handle.clone());
         handle
+    }
+}
+
+/// Re-lights a shared material, touching the asset only when its parameters
+/// actually move: a modified material re-extracts every mesh using it and
+/// marks their `Mesh3d` changed, which re-stamps their bounds from the mesh.
+pub(crate) fn refresh_params(
+    materials: &mut Assets<EntityMaterial>,
+    handle: &Handle<EntityMaterial>,
+    lit: Lit,
+) {
+    let Some(material) = materials.get(handle) else {
+        return;
+    };
+    let mut params = material.params;
+    params.set(lit);
+    if params != material.params
+        && let Some(material) = materials.get_mut(handle)
+    {
+        material.params = params;
     }
 }
 
@@ -812,17 +858,11 @@ pub(crate) struct SheetAnimation {
     pub frametime: u32,
 }
 
-static SHEET_ANIMATIONS: std::sync::LazyLock<
-    parking_lot::Mutex<HashMap<String, Option<SheetAnimation>>>,
-> = std::sync::LazyLock::new(Default::default);
-
-pub(crate) fn reset_sheet_animations() {
-    SHEET_ANIMATIONS.lock().clear();
-}
-
 pub(crate) fn sheet_animation(path: &str) -> Option<SheetAnimation> {
-    let cache = &*SHEET_ANIMATIONS;
-    if let Some(known) = cache.lock().get(path) {
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<HashMap<String, Option<SheetAnimation>>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(Default::default);
+    if let Some(known) = cache.lock().unwrap().get(path) {
         return *known;
     }
     let read = || {
@@ -845,74 +885,15 @@ pub(crate) fn sheet_animation(path: &str) -> Option<SheetAnimation> {
         })
     };
     let found = read();
-    cache.lock().insert(path.to_string(), found);
+    cache.lock().unwrap().insert(path.to_string(), found);
     found
 }
 
-#[derive(Resource, Default)]
-pub(crate) struct EntityImages {
-    nearest: HashMap<String, Option<Handle<Image>>>,
-    tiled: HashMap<String, Option<Handle<Image>>>,
-}
-
-impl EntityImages {
-    pub(crate) fn get(&mut self, path: &str, images: &mut Assets<Image>) -> Option<Handle<Image>> {
-        self.load(path, false, images)
-    }
-
-    pub(crate) fn tiled(
-        &mut self,
-        path: &str,
-        images: &mut Assets<Image>,
-    ) -> Option<Handle<Image>> {
-        self.load(path, true, images)
-    }
-
-    fn load(
-        &mut self,
-        path: &str,
-        tiled: bool,
-        images: &mut Assets<Image>,
-    ) -> Option<Handle<Image>> {
-        let cache = if tiled {
-            &mut self.tiled
-        } else {
-            &mut self.nearest
-        };
-        if let Some(cached) = cache.get(path) {
-            return cached.clone();
-        }
-        let handle = load_entity_image(path, images);
-        match &handle {
-            Some(handle) if tiled => {
-                if let Some(image) = images.get_mut(handle) {
-                    image.sampler = repeating_nearest();
-                }
-            }
-            Some(_) => {}
-            None => match path.strip_prefix(crate::entities::render::humanoid::armor::STACK_PREFIX)
-            {
-                Some(rest) => warn!("equipment stack would not compose: {rest}"),
-                None => warn!("entity texture not found: textures/{path}.png"),
-            },
-        }
-        cache.insert(path.to_string(), handle.clone());
-        handle
-    }
-}
-
 pub(crate) fn load_entity_image(path: &str, images: &mut Assets<Image>) -> Option<Handle<Image>> {
-    let decoded = decode_entity_texture(path)?;
-    let (w, h) = decoded.dimensions();
-    let image =
-        crate::renderer::rgba_image(w, h, decoded.into_raw(), RenderAssetUsages::RENDER_WORLD);
-    let handle = images.add(image);
-    let path = path.to_owned();
-    crate::renderer::reload::track(&handle, move || decode_entity_texture(&path));
-    Some(handle)
-}
+    use bevy::asset::RenderAssetUsages;
+    use bevy::image::ImageSampler;
+    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
-fn decode_entity_texture(path: &str) -> Option<image::RgbaImage> {
     let (path, frame) = match path.rsplit_once('#') {
         Some((sheet, frame)) => (sheet, frame.parse::<u32>().ok()),
         None => (path, None),
@@ -931,21 +912,32 @@ fn decode_entity_texture(path: &str) -> Option<image::RgbaImage> {
         decoded =
             image::imageops::crop_imm(&decoded, 0, y, decoded.width(), anim.height).to_image();
     }
-    Some(decoded)
-}
-
-impl Blend {
-    pub(crate) fn alpha(self) -> (AlphaMode, f32) {
-        match self {
-            Blend::Cutout => (AlphaMode::Mask(ALPHA_CUTOUT), ALPHA_CUTOUT),
-            Blend::Translucent => (AlphaMode::Blend, ALPHA_CUTOUT),
-            Blend::Additive => (AlphaMode::Add, 0.0),
-        }
-    }
+    let (w, h) = decoded.dimensions();
+    let mut image = Image::new(
+        Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        decoded.into_raw(),
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    image.sampler = ImageSampler::nearest();
+    Some(images.add(image))
 }
 
 fn entity_material(texture: Option<Handle<Image>>, spec: &RenderSpec, lit: Lit) -> EntityMaterial {
-    let (alpha_mode, cutoff) = spec.blend.alpha();
+    let cutoff = match spec.blend {
+        Blend::Cutout | Blend::Translucent => 0.1,
+        Blend::Additive => 0.0,
+    };
+    let alpha_mode = match spec.blend {
+        Blend::Cutout => AlphaMode::Mask(cutoff),
+        Blend::Translucent => AlphaMode::Blend,
+        Blend::Additive => AlphaMode::Add,
+    };
     EntityMaterial::new(
         texture,
         spec.effective_light_mode(),
@@ -968,11 +960,11 @@ fn entity_levels(light: &crate::lighting::level::LightMap, st: &EntityState) -> 
         let packed = st.extras.brightness_override;
         return (((packed >> 4) & 15) as u8, ((packed >> 20) & 15) as u8);
     }
-    use crate::renderer::lightmap::{cell_of, levels_in};
-    let (block, sky) = levels_in(
-        light,
-        cell_of([st.pos[0], st.pos[1] + st.eye_height, st.pos[2]]),
-    );
+    let (block, sky) = crate::renderer::lightmap::resolved_levels(light.at(
+        st.pos[0].floor() as i32,
+        (st.pos[1] + st.eye_height).floor() as i32,
+        st.pos[2].floor() as i32,
+    ));
     (block_light_level(st, block), sky)
 }
 
@@ -993,7 +985,7 @@ fn block_model_levels(light: &crate::lighting::level::LightMap, st: &EntityState
 }
 
 fn block_light_level(st: &EntityState, cell: u8) -> u8 {
-    let base = crate::renderer::lightmap::fire_block_light(cell, st.display_fire);
+    let base = if st.display_fire { 15 } else { cell };
     match st.kind {
         EntityKind::MagmaCube
         | EntityKind::Vex
@@ -1116,6 +1108,8 @@ mod display_tests {
             view_range: 1.0,
             ..state::Display::default()
         }));
+        assert!(!within_view_range(&st, &camera), "100 blocks is past a range of 64");
+        st.pos = [0.0, 0.0, 50.0];
         assert!(within_view_range(&st, &camera));
         st.pos = [0.0, 0.0, 65.0];
         assert!(!within_view_range(&st, &camera));
@@ -1187,6 +1181,9 @@ enum RigBody {
 struct BakedRig {
     node: Entity,
     mesh: Handle<Mesh>,
+    /// Set when the shared model mesh is posed on the GPU from these part
+    /// matrices; `None` re-bakes `mesh` on the CPU.
+    slot: Option<PartSlot>,
     baked: Option<BakedPose>,
 }
 
@@ -1264,15 +1261,6 @@ impl Plugin for EntityPlugin {
                     .after(crate::renderer::FrameViewSystems)
                     .run_if(in_state(crate::renderer::AppState::InGame)),
             );
-        app.init_resource::<flame::FlameAssets>()
-            .init_resource::<EntityImages>()
-            .init_resource::<fishing_line::FishingLines>()
-            .add_systems(
-                Update,
-                (flame::sync_flames, fishing_line::sync_fishing_lines)
-                    .after(crate::renderer::FrameViewSystems)
-                    .run_if(in_state(crate::renderer::AppState::InGame)),
-            );
     }
 }
 
@@ -1284,15 +1272,17 @@ fn sync_entities(
     mut assets: ResMut<EntityAssets>,
     mut rigs: ResMut<EntityRigs>,
     mut meshes: ResMut<Assets<Mesh>>,
-    (mut images, mut entity_images): (ResMut<Assets<Image>>, ResMut<EntityImages>),
+    mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<EntityMaterial>>,
-    standard_materials: Res<Assets<StandardMaterial>>,
+    mut standard_materials: ResMut<Assets<StandardMaterial>>,
     mut item_assets: ResMut<crate::renderer::item_assets::ItemAssets>,
-    (map_textures, chunk_material, lightmap, carried): (
+    (map_textures, chunk_material, lightmap, carried, occlusion, mut rig_parts): (
         Res<crate::renderer::maps::MapTextures>,
         Res<crate::renderer::systems::ChunkMaterial>,
         Res<crate::renderer::systems::LightmapState>,
         Res<CarriedEntities>,
+        Res<crate::renderer::occlusion::OcclusionState>,
+        ResMut<RigParts>,
     ),
     camera_q: Query<
         &GlobalTransform,
@@ -1302,16 +1292,26 @@ fn sync_entities(
         ),
     >,
     mut nodes: Query<(&mut Transform, &mut Visibility), With<EntityRigNode>>,
-    mut globals: Query<&mut GlobalTransform, With<EntityRigNode>>,
+    (mut globals, mut aabbs): (
+        Query<&mut GlobalTransform, With<EntityRigNode>>,
+        Query<&mut Aabb, With<EntityRigNode>>,
+    ),
     mut mats: Query<&mut MeshMaterial3d<EntityMaterial>>,
-    (mut variant_tick, mut frame, mut seen, mut idx): (
+    (mut variant_tick, mut frame, mut seen, mut idx, mut gpu_rigs_were): (
         Local<u32>,
         Local<Vec<EntityState>>,
         Local<HashMap<i32, (EntityKind, Option<Carried>)>>,
         Local<Vec<usize>>,
+        Local<Option<bool>>,
     ),
 ) {
     crate::prof_span!("render:sync_entities");
+    let gpu_rigs = crate::renderer::rig_parts::enabled();
+    if gpu_rigs_were.replace(gpu_rigs).is_some_and(|was| was != gpu_rigs) {
+        for (_, rig) in rigs.live.drain() {
+            despawn_rig(&mut commands, &mut rig_parts, &rig);
+        }
+    }
     *variant_tick = variant_tick.wrapping_add(1);
     let recompute_variants = *variant_tick % 4 == 0;
     let camera = camera_q
@@ -1350,9 +1350,7 @@ fn sync_entities(
     rigs.live.retain(|id, rig| {
         let keep = seen.get(id) == Some(&(rig.kind, rig.carried));
         if !keep {
-            for layer in rig.layers.iter().flatten() {
-                commands.entity(layer.pose_root).despawn();
-            }
+            despawn_rig(&mut commands, &mut rig_parts, rig);
         }
         keep
     });
@@ -1360,7 +1358,7 @@ fn sync_entities(
     let dirs = diffuse_lights(crate::renderer::dimension::current());
     let light = crate::client::worldsync::light_map().read();
     assets.lights.begin(&lightmap.current);
-    assets.materials.begin_frame();
+    assets.epoch = assets.epoch.wrapping_add(1);
 
     let mut copy_locals: Vec<Transform> = Vec::new();
     let mut posed: Vec<PosedPart> = Vec::new();
@@ -1370,7 +1368,7 @@ fn sync_entities(
         if spec_ids.is_empty() {
             continue;
         }
-        let in_range = within_view_range(st, &camera);
+        let in_range = within_view_range(st, &camera) && in_open_view(st, &occlusion);
         let flash = tnt_flash_alpha(st);
         let levels = entity_levels(&light, st);
         let lit = Lit {
@@ -1379,6 +1377,7 @@ fn sync_entities(
             dirs,
             overlay_alpha: flash.unwrap_or(1.0),
             overlay_white: flash.is_some(),
+            glint: false,
         };
 
         let rig = rigs.live.entry(st.id).or_insert_with(|| EntityRig {
@@ -1389,8 +1388,8 @@ fn sync_entities(
 
         for (slot, &idx) in rig.layers.iter_mut().zip(spec_ids) {
             let spec = &registry.specs[idx];
-            let hidden = crate::session::invisible_to(st.is_invisible, view.gamemode);
-            let show = in_range && (!hidden || !spec.respects_invisibility) && (spec.visible)(st);
+            let show =
+                in_range && (!st.is_invisible || !spec.respects_invisibility) && (spec.visible)(st);
             if slot.is_none() {
                 if !show {
                     continue;
@@ -1398,13 +1397,13 @@ fn sync_entities(
                 *slot = Some(spawn_layer(
                     &mut commands,
                     &mut assets,
+                    &mut rig_parts,
                     idx,
                     spec,
                     st,
                     lit,
                     levels,
                     &mut meshes,
-                    &mut entity_images,
                     &mut images,
                     &mut materials,
                 ));
@@ -1421,6 +1420,7 @@ fn sync_entities(
             let lit = Lit {
                 tint: (spec.tint)(st),
                 overlay_alpha: overlay_alpha(st),
+                glint: (spec.glint)(st),
                 ..lit
             };
             let mut placement = Transform::IDENTITY;
@@ -1436,7 +1436,6 @@ fn sync_entities(
                                 spec,
                                 lit,
                                 levels,
-                                &mut entity_images,
                                 &mut images,
                                 &mut materials,
                             ) {
@@ -1464,13 +1463,40 @@ fn sync_entities(
                         .baked
                         .as_ref()
                         .is_none_or(|b| b.states != layer.states || b.hook != root.hook);
-                    if stale && let Some(mesh) = meshes.get_mut(&baked.mesh) {
-                        let base = Mat4::from_scale(Vec3::new(-1.0, -1.0, 1.0))
-                            * root.hook.to_matrix()
-                            * Mat4::from_translation(Vec3::new(0.0, MODEL_Y_OFFSET, 0.0));
-                        gpu.model.pose_parts(&layer.states, base, &mut posed);
-                        let aabb = bake::layer(mesh, &gpu.model, &posed, &layer.states);
-                        commands.entity(baked.node).insert(aabb);
+                    let base = Mat4::from_scale(Vec3::new(-1.0, -1.0, 1.0))
+                        * root.hook.to_matrix()
+                        * Mat4::from_translation(Vec3::new(0.0, MODEL_Y_OFFSET, 0.0));
+                    let posed_now = match (stale, baked.slot, &gpu.rigged) {
+                        (false, ..) => false,
+                        (true, Some(slot), Some(rigged)) => {
+                            gpu.model.pose_parts(&layer.states, base, &mut posed);
+                            rig_parts.write(
+                                slot,
+                                posed
+                                    .iter()
+                                    .zip(&layer.states)
+                                    .map(|(p, s)| bake::part_drawn(p, s).then_some(p.mat)),
+                            );
+                            let aabb = bake::posed_aabb(&rigged.bounds, &posed, &layer.states);
+                            match aabbs.get_mut(baked.node) {
+                                Ok(mut held) => *held = aabb,
+                                Err(_) => {
+                                    commands.entity(baked.node).insert(aabb);
+                                }
+                            }
+                            true
+                        }
+                        (true, ..) => match meshes.get_mut(&baked.mesh) {
+                            Some(mesh) => {
+                                gpu.model.pose_parts(&layer.states, base, &mut posed);
+                                let aabb = bake::layer(mesh, &gpu.model, &posed, &layer.states);
+                                commands.entity(baked.node).insert(aabb);
+                                true
+                            }
+                            None => false,
+                        },
+                    };
+                    if posed_now {
                         let prev = baked.baked.get_or_insert_with(|| BakedPose {
                             states: Vec::new(),
                             hook: Transform::IDENTITY,
@@ -1486,7 +1512,14 @@ fn sync_entities(
                         if !single.key.is_named(&item) {
                             single.key = GeomKey::Named(Box::from(&*item));
                             let built = item_assets
-                                .get(&item, geom.display, false, &mut meshes, &mut images)
+                                .get(
+                                    &item,
+                                    geom.display,
+                                    false,
+                                    &mut meshes,
+                                    &mut images,
+                                    &mut standard_materials,
+                                )
                                 .map(|gpu| {
                                     (
                                         gpu.mesh.clone(),
@@ -1591,7 +1624,7 @@ fn sync_entities(
                                 {
                                     map_textures.get(path)
                                 }
-                                Some(path) => entity_images.get(path, &mut images),
+                                Some(path) => assets.image(path, &mut images),
                                 None => None,
                             };
                             if texture.is_some() && image.is_none() {
@@ -1652,6 +1685,18 @@ fn sync_entities(
                 &mut nodes,
                 &mut globals,
             );
+        }
+    }
+}
+
+fn despawn_rig(commands: &mut Commands, rig_parts: &mut RigParts, rig: &EntityRig) {
+    for layer in rig.layers.iter().flatten() {
+        commands.entity(layer.pose_root).despawn();
+        if let RigBody::Baked(BakedRig {
+            slot: Some(slot), ..
+        }) = &layer.body
+        {
+            rig_parts.release(*slot);
         }
     }
 }
@@ -1735,13 +1780,13 @@ fn spawn_chain(commands: &mut Commands) -> (Entity, Entity, Entity) {
 fn spawn_layer(
     commands: &mut Commands,
     assets: &mut EntityAssets,
+    rig_parts: &mut RigParts,
     idx: usize,
     spec: &RenderSpec,
     st: &EntityState,
     lit: Lit,
     levels: (u8, u8),
     meshes: &mut Assets<Mesh>,
-    entity_images: &mut EntityImages,
     images: &mut Assets<Image>,
     materials: &mut Assets<EntityMaterial>,
 ) -> LayerRig {
@@ -1751,23 +1796,27 @@ fn spawn_layer(
             let lit = Lit {
                 tint: (spec.tint)(st),
                 overlay_alpha: overlay_alpha(st),
+                glint: (spec.glint)(st),
                 ..lit
             };
-            let (material, tex) = match assets.layer_material(
-                &texture,
-                spec,
-                lit,
-                levels,
-                entity_images,
-                images,
-                materials,
-            ) {
-                Some((material, tex)) => (Some(material), Some(tex)),
-                None => (None, None),
-            };
+            let (material, tex) =
+                match assets.layer_material(&texture, spec, lit, levels, images, materials) {
+                    Some((material, tex)) => (Some(material), Some(tex)),
+                    None => (None, None),
+                };
             let states = assets.spec(idx, model).model.rest_pose();
+            let slot = crate::renderer::rig_parts::enabled()
+                .then(|| rig_parts.alloc(states.len() as u32))
+                .flatten();
+            let mesh = match slot {
+                Some(_) => assets.rigged_mesh(idx, meshes),
+                None => meshes.add(Mesh::new(
+                    PrimitiveTopology::TriangleList,
+                    RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+                )),
+            };
             spawn_model_rig(
-                commands, idx, states, spec.name, texture, lit, material, tex, meshes,
+                commands, idx, states, spec.name, texture, lit, material, tex, mesh, slot,
             )
         }
         _ => {
@@ -1793,13 +1842,9 @@ fn spawn_model_rig(
     lit: Lit,
     material: Option<Handle<EntityMaterial>>,
     tex: Option<Handle<Image>>,
-    meshes: &mut Assets<Mesh>,
+    mesh: Handle<Mesh>,
+    slot: Option<PartSlot>,
 ) -> LayerRig {
-    let mesh = meshes.add(Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
-    ));
-
     let mut node = commands.spawn((
         Mesh3d(mesh.clone()),
         Transform::default(),
@@ -1813,6 +1858,13 @@ fn spawn_model_rig(
     if let Some(material) = &material {
         node.insert(MeshMaterial3d(material.clone()));
     }
+    if let Some(slot) = slot {
+        // The shared mesh's own bounds are the unposed parts.
+        node.insert((
+            bevy::mesh::MeshTag(slot.offset),
+            bevy::camera::visibility::NoAutoAabb,
+        ));
+    }
     let node = node.id();
 
     LayerRig {
@@ -1823,6 +1875,7 @@ fn spawn_model_rig(
         body: RigBody::Baked(BakedRig {
             node,
             mesh,
+            slot,
             baked: None,
         }),
         texture,

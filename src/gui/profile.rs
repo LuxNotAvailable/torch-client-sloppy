@@ -1,6 +1,5 @@
 use crate::gui::accountlist::{self, Account, AccountKind, Accounts};
 use crate::gui::focus;
-use crate::gui::options::SCROLLBAR_GAP;
 use crate::gui::painter::Painter;
 use crate::gui::widgets::{self, Button, HeaderFooter, TextBox, WIDGET_HEIGHT, WIDGET_WIDTH_BIG};
 use crate::gui::{GuiState, Screen, ScreenCtx, menu};
@@ -30,6 +29,7 @@ const ROW_H: f32 = 36.0;
 const CONTENT_PAD: f32 = 2.0;
 const ICON_SIZE: f32 = 32.0;
 const TEXT_INSET: f32 = ICON_SIZE + 3.0;
+const SCROLLBAR_W: f32 = 6.0;
 const BUTTON_GAP: f32 = 4.0;
 const LOWER_ROW_BUTTON_W: f32 = 74.0;
 const BAR_W: f32 = 3.0 * LOWER_ROW_BUTTON_W + 2.0 * BUTTON_GAP;
@@ -43,7 +43,7 @@ pub struct ProfileState {
     loaded: bool,
     pub selected: Option<usize>,
     pub scroll: f32,
-    scrollbar_drag: Option<f32>,
+    scrollbar_drag: bool,
     editing: Option<usize>,
     username: TextBox,
     confirm_delete: Option<usize>,
@@ -60,7 +60,7 @@ impl Default for ProfileState {
             loaded: false,
             selected: None,
             scroll: 0.0,
-            scrollbar_drag: None,
+            scrollbar_drag: false,
             editing: None,
             username: TextBox::bordered(USERNAME_MAX_LEN, ""),
             confirm_delete: None,
@@ -146,8 +146,6 @@ impl ProfileState {
         if let Some(account) = self.accounts.active() {
             crate::client::bot::set_username(account.name.clone());
         }
-        #[cfg(feature = "online_mode")]
-        crate::client::ban::account_changed();
     }
 
     fn content_height(&self) -> f32 {
@@ -192,7 +190,7 @@ pub fn entry_screen() -> Screen {
 pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     state.profile.ensure_loaded();
     menu::background(p, ctx.vw, ctx.vh);
-    p.text_centered(TITLE, ctx.vw / 2.0, LAYOUT.title_y(), 0xFFFFFF, true);
+    widgets::draw_title(p, ctx.vw, LAYOUT.title_y(), TITLE);
 
     let (lx, ly, lw, lh) = LAYOUT.content_rect(ctx.vw, ctx.vh);
     menu::list_background(p, lx, ly, lw, lh, state.profile.scroll);
@@ -214,7 +212,7 @@ fn row_left(vw: f32) -> f32 {
 }
 
 fn scrollbar_x(vw: f32) -> f32 {
-    row_left(vw) + ROW_W + SCROLLBAR_GAP
+    row_left(vw) + ROW_W + SCROLLBAR_W + 2.0
 }
 
 fn draw_rows(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx, locked: bool) {
@@ -225,9 +223,10 @@ fn draw_rows(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx, locked: boo
     let list_focused = focus::next(!locked && !st.accounts.entries.is_empty());
 
     if st.accounts.entries.is_empty() {
-        p.text_centered(
+        let w = p.atlas.font.width_str(EMPTY);
+        p.text_str(
             EMPTY,
-            ctx.vw / 2.0,
+            ((ctx.vw - w) / 2.0).floor(),
             (ly + lh / 2.0 - 4.0).floor(),
             GREY,
             true,
@@ -327,12 +326,7 @@ fn draw_footer(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx, locked: b
     let top = ctx.vh - FOOTER_H + ((FOOTER_H - 2.0 * WIDGET_HEIGHT - BUTTON_GAP) / 2.0).floor();
     let bottom = top + WIDGET_HEIGHT + BUTTON_GAP;
 
-    let bar_x = widgets::centered_row_x(ctx.vw, BAR_W);
-    #[cfg(feature = "tutorial")]
-    crate::gui::tutorial::mark(
-        crate::gui::tutorial::Spot::Accounts,
-        crate::gui::hud_layout::Rect::new(bar_x, top, BAR_W, bottom + WIDGET_HEIGHT - top),
-    );
+    let bar_x = ((ctx.vw - BAR_W) / 2.0).floor();
 
     let selected = state
         .profile
@@ -447,9 +441,23 @@ fn draw_delete_confirm(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     p.fill(0.0, 0.0, ctx.vw, ctx.vh, 0xC0_000000);
 
     let cy = (ctx.vh / 2.0).floor();
-    p.text_centered(DELETE_QUESTION, ctx.vw / 2.0, cy - 40.0, 0xFFFFFF, true);
+    let question_w = p.atlas.font.width_str(DELETE_QUESTION);
+    p.text_str(
+        DELETE_QUESTION,
+        ((ctx.vw - question_w) / 2.0).floor(),
+        cy - 40.0,
+        0xFFFFFF,
+        true,
+    );
     let warning = format!("'{name}' will be removed from this client.");
-    p.text_centered(&warning, ctx.vw / 2.0, cy - 25.0, GREY, true);
+    let warn_w = p.atlas.font.width_str(&warning);
+    p.text_str(
+        &warning,
+        ((ctx.vw - warn_w) / 2.0).floor(),
+        cy - 25.0,
+        GREY,
+        true,
+    );
 
     let x = widgets::centered_x(ctx.vw);
     if Button::new(x, cy, WIDGET_WIDTH_BIG, WIDGET_HEIGHT, DELETE).draw(p, ctx) {
@@ -483,13 +491,27 @@ pub fn draw_add(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
 
     state.profile.ensure_loaded();
     menu::background(p, ctx.vw, ctx.vh);
-    p.text_centered(ADD_TITLE, ctx.vw / 2.0, LAYOUT.title_y(), 0xFFFFFF, true);
+    widgets::draw_title(p, ctx.vw, LAYOUT.title_y(), ADD_TITLE);
 
     let first_run = state.profile.first_run;
+    let question_w = p.atlas.font.width_str(QUESTION);
     let base = (ctx.vh / 4.0).floor();
-    p.text_centered(QUESTION, ctx.vw / 2.0, base + 20.0, 0xFFFFFF, true);
+    p.text_str(
+        QUESTION,
+        ((ctx.vw - question_w) / 2.0).floor(),
+        base + 20.0,
+        0xFFFFFF,
+        true,
+    );
     if first_run {
-        p.text_centered(REASSURANCE, ctx.vw / 2.0, base + 34.0, GREY, true);
+        let w = p.atlas.font.width_str(REASSURANCE);
+        p.text_str(
+            REASSURANCE,
+            ((ctx.vw - w) / 2.0).floor(),
+            base + 34.0,
+            GREY,
+            true,
+        );
     }
 
     let x = widgets::centered_x(ctx.vw);
@@ -531,12 +553,13 @@ pub fn draw_microsoft(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
 
     state.profile.ensure_loaded();
     menu::background(p, ctx.vw, ctx.vh);
-    p.text_centered(MS_TITLE, ctx.vw / 2.0, LAYOUT.title_y(), 0xFFFFFF, true);
+    widgets::draw_title(p, ctx.vw, LAYOUT.title_y(), MS_TITLE);
 
     let x = widgets::centered_x(ctx.vw);
     let base = (ctx.vh / 4.0).floor();
     let centered = |p: &mut Painter, text: &str, y: f32, color: u32| {
-        p.text_centered(text, ctx.vw / 2.0, y, color, true);
+        let w = p.atlas.font.width_str(text);
+        p.text_str(text, ((ctx.vw - w) / 2.0).floor(), y, color, true);
     };
 
     match auth::state() {
@@ -606,7 +629,14 @@ pub fn draw_edit(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     let editing = state.profile.editing.is_some();
     let title = if editing { EDIT_TITLE } else { ADD_TITLE };
     let x = widgets::centered_x(ctx.vw);
-    p.text_centered(title, ctx.vw / 2.0, 17.0, 0xFFFFFF, true);
+    let title_w = p.atlas.font.width_str(title);
+    p.text_str(
+        title,
+        ((ctx.vw - title_w) / 2.0).floor(),
+        17.0,
+        0xFFFFFF,
+        true,
+    );
     p.text_str(USERNAME_LABEL, x + 1.0, 53.0, 0xA0A0A0, true);
 
     let field = &mut state.profile.username;
@@ -624,7 +654,7 @@ pub fn draw_edit(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         active: valid,
     };
 
-    if (done.draw(p, ctx) || ctx.input.enter) && valid {
+    if (done.draw(p, ctx) || (ctx.input.enter && valid)) && valid {
         state.profile.commit_form();
         leave(state, Screen::Accounts);
     }

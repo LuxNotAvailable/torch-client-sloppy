@@ -12,8 +12,8 @@ use indexmap::IndexMap;
 
 #[derive(AzBuf, ClientboundGamePacket, Clone, Debug, PartialEq)]
 pub struct ClientboundUpdateAdvancements {
-    pub reset: bool,
-    pub added: Vec<AdvancementHolder>,
+    pub should_reset: bool,
+    pub added: Vec<PositionedAdvancement>,
     pub removed: Vec<Identifier>,
     pub progress: IndexMap<Identifier, AdvancementProgress>,
     pub show_advancements: bool,
@@ -36,15 +36,13 @@ pub struct DisplayInfo {
     pub show_toast: bool,
     pub hidden: bool,
     pub background: Option<Identifier>,
-    pub x: f32,
-    pub y: f32,
 }
 
 impl AzBuf for DisplayInfo {
     fn azalea_read(buf: &mut Cursor<&[u8]>) -> Result<Self, azalea_buf::BufReadError> {
         let title = AzBuf::azalea_read(buf)?;
         let description = AzBuf::azalea_read(buf)?;
-        let icon = AzBuf::azalea_read(buf)?;
+        let icon = ItemStack::read_template(buf)?;
         let frame = AzBuf::azalea_read(buf)?;
 
         let data = u32::azalea_read(buf)?;
@@ -57,8 +55,6 @@ impl AzBuf for DisplayInfo {
         } else {
             None
         };
-        let x = AzBuf::azalea_read(buf)?;
-        let y = AzBuf::azalea_read(buf)?;
         Ok(DisplayInfo {
             title,
             description,
@@ -67,14 +63,12 @@ impl AzBuf for DisplayInfo {
             show_toast,
             hidden,
             background,
-            x,
-            y,
         })
     }
     fn azalea_write(&self, buf: &mut impl Write) -> io::Result<()> {
         self.title.azalea_write(buf)?;
         self.description.azalea_write(buf)?;
-        self.icon.azalea_write(buf)?;
+        self.icon.write_template(buf)?;
         self.frame.azalea_write(buf)?;
 
         let mut data: u32 = 0;
@@ -92,8 +86,6 @@ impl AzBuf for DisplayInfo {
         if let Some(background) = &self.background {
             background.azalea_write(buf)?;
         }
-        self.x.azalea_write(buf)?;
-        self.y.azalea_write(buf)?;
         Ok(())
     }
 }
@@ -113,6 +105,12 @@ pub struct CriterionProgress {
 }
 
 #[derive(AzBuf, Clone, Debug, PartialEq)]
+pub struct PositionedAdvancement {
+    pub advancement: AdvancementHolder,
+    pub x: f32,
+    pub y: f32,
+}
+#[derive(AzBuf, Clone, Debug, PartialEq)]
 pub struct AdvancementHolder {
     pub id: Identifier,
     pub value: Advancement,
@@ -121,34 +119,35 @@ pub struct AdvancementHolder {
 #[cfg(test)]
 mod tests {
     use azalea_buf::AzBuf;
+    use azalea_registry::builtin::ItemKind;
 
     use super::*;
 
     #[test]
-    fn test() {
+    fn round_trips_positioned_advancements() {
         let packet = ClientboundUpdateAdvancements {
-            reset: true,
-            added: [AdvancementHolder {
-                id: Identifier::new("minecraft:test"),
-                value: Advancement {
-                    parent_id: None,
-                    display: Some(Box::new(DisplayInfo {
-                        title: FormattedText::from("title".to_owned()),
-                        description: FormattedText::from("description".to_owned()),
-                        icon: ItemStack::Empty,
-                        frame: FrameType::Task,
-                        show_toast: true,
-                        hidden: false,
-                        background: None,
-                        x: 0.0,
-                        y: 0.0,
-                    })),
-                    requirements: Vec::new(),
-                    sends_telemetry_event: false,
+            should_reset: true,
+            added: vec![PositionedAdvancement {
+                advancement: AdvancementHolder {
+                    id: Identifier::new("minecraft:test"),
+                    value: Advancement {
+                        parent_id: None,
+                        display: Some(Box::new(DisplayInfo {
+                            title: FormattedText::from("title".to_owned()),
+                            description: FormattedText::from("description".to_owned()),
+                            icon: ItemStack::new(ItemKind::Stone, 1),
+                            frame: FrameType::Task,
+                            show_toast: true,
+                            hidden: false,
+                            background: None,
+                        })),
+                        requirements: Vec::new(),
+                        sends_telemetry_event: false,
+                    },
                 },
-            }]
-            .into_iter()
-            .collect(),
+                x: 1.23,
+                y: 3.21,
+            }],
             removed: vec![Identifier::new("minecraft:test2")],
             progress: [(
                 Identifier::new("minecraft:test3"),
@@ -169,40 +168,8 @@ mod tests {
         let mut data = Vec::new();
         packet.azalea_write(&mut data).unwrap();
         let mut buf: Cursor<&[u8]> = Cursor::new(&data);
-
         let read_packet = ClientboundUpdateAdvancements::azalea_read(&mut buf).unwrap();
-        assert_eq!(packet.reset, read_packet.reset);
-        assert_eq!(packet.removed, read_packet.removed);
-
-        let advancement = packet
-            .added
-            .into_iter()
-            .find_map(|a| {
-                if a.id == Identifier::new("minecraft:test") {
-                    Some(a.value)
-                } else {
-                    None
-                }
-            })
-            .unwrap()
-            .clone();
-        let read_advancement = read_packet
-            .added
-            .into_iter()
-            .find_map(|a| {
-                if a.id == Identifier::new("minecraft:test") {
-                    Some(a.value)
-                } else {
-                    None
-                }
-            })
-            .unwrap()
-            .clone();
-        assert_eq!(advancement.parent_id, read_advancement.parent_id);
-
-        let display = advancement.display.unwrap();
-        let read_display = read_advancement.display.unwrap();
-        assert_eq!(display.title, read_display.title);
-        assert_eq!(display.description, read_display.description);
+        assert_eq!(packet, read_packet);
+        assert_eq!(buf.position() as usize, data.len());
     }
 }

@@ -79,14 +79,16 @@ pub(crate) fn supported(feature: Feature) -> bool {
 
         Feature::ComputeShaders | Feature::CustomImages | Feature::Ssbo => COMPUTE,
 
-        Feature::SeparateHardwareSamplers => true,
-
-        Feature::HigherShadowcolor
+        Feature::SeparateHardwareSamplers
         | Feature::PerBufferBlending
-        | Feature::EntityTranslucent
+        | Feature::HigherShadowcolor
+        | Feature::BlockEmissionAttribute => true,
+
+        // A pack may turn weather off; this client draws none to begin with.
+        Feature::CanDisableWeather => true,
+
+        Feature::EntityTranslucent
         | Feature::ReversedCulling
-        | Feature::BlockEmissionAttribute
-        | Feature::CanDisableWeather
         | Feature::FadeVariable
         | Feature::TextureFiltering => false,
     }
@@ -159,7 +161,7 @@ pub(crate) fn base_defines() -> Defines {
     defines
 }
 
-const RENDER_STAGES: [&str; 24] = [
+pub(crate) const RENDER_STAGES: [&str; 24] = [
     "NONE",
     "SKY",
     "SUNSET",

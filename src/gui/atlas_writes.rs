@@ -12,15 +12,9 @@ pub struct AtlasWrite {
 pub struct AtlasWrites {
     pub image: Option<Handle<Image>>,
     pub pending: Vec<AtlasWrite>,
-    pub layout: u32,
 }
 
 impl AtlasWrites {
-    pub fn replaced(&mut self) {
-        self.pending.clear();
-        self.layout = self.layout.wrapping_add(1);
-    }
-
     pub fn push(&mut self, region: Region, pixels: impl Into<std::sync::Arc<Vec<u8>>>) {
         let pixels = pixels.into();
         if pixels.len() as u32 == region.w * region.h * 4 {
@@ -38,10 +32,6 @@ pub fn extract_atlas_writes(
     };
     if target.image.is_none() {
         target.image = source.image.clone();
-    }
-    if target.layout != source.layout {
-        target.pending.clear();
-        target.layout = source.layout;
     }
     if !source.pending.is_empty() {
         let taken = std::mem::take(&mut source.pending);

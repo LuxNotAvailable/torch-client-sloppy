@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::OnceLock;
 
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
@@ -6,71 +7,10 @@ use bevy::prelude::*;
 
 use super::{ATLAS_COLS, TILE_PX};
 
-pub struct Sprites {
-    tiles: HashMap<String, u32>,
-    opaque: HashSet<String>,
-    rows: u32,
-}
+static OPAQUE_TEXTURES: OnceLock<HashSet<String>> = OnceLock::new();
 
-impl Default for Sprites {
-    fn default() -> Self {
-        Self {
-            tiles: HashMap::new(),
-            opaque: HashSet::new(),
-            rows: 1,
-        }
-    }
-}
-
-impl Sprites {
-    pub fn tile(&self, stem: &str) -> Option<u32> {
-        self.tiles.get(stem).copied()
-    }
-
-    pub fn rows(&self) -> u32 {
-        self.rows
-    }
-
-    pub fn is_opaque(&self, stem: &str) -> bool {
-        self.opaque.contains(stem)
-    }
-
-    pub fn mesh_tiles(&self) -> MeshTiles {
-        MeshTiles {
-            rows: self.rows,
-            water_still: self.tile("water_still").unwrap_or(0),
-            water_flow: self.tile("water_flow").unwrap_or(0),
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct MeshTiles {
-    pub rows: u32,
-    pub water_still: u32,
-    pub water_flow: u32,
-}
-
-pub struct BlockAtlas {
-    pub image: Image,
-    pub sprites: Sprites,
-    pub tables: AtlasTables,
-}
-
-pub struct AtlasTables {
-    tints: Option<crate::util::biome_color::Tints>,
-    #[cfg(feature = "shader_support")]
-    untinted: Option<std::sync::Arc<UntintedTiles>>,
-}
-
-impl AtlasTables {
-    pub fn publish(self) {
-        crate::util::biome_color::publish(self.tints);
-        #[cfg(feature = "shader_support")]
-        {
-            *UNTINTED.write() = self.untinted;
-        }
-    }
+pub fn texture_is_opaque(stem: &str) -> bool {
+    OPAQUE_TEXTURES.get().is_some_and(|set| set.contains(stem))
 }
 
 fn is_fully_opaque(rgba: &image::RgbaImage) -> bool {
@@ -145,21 +85,21 @@ fn decode_dir(dir: &str) -> BTreeMap<String, image::RgbaImage> {
 pub(crate) type UntintedTiles = Vec<(u32, Vec<Vec<u8>>)>;
 
 #[cfg(feature = "shader_support")]
-static UNTINTED: parking_lot::RwLock<Option<std::sync::Arc<UntintedTiles>>> =
-    parking_lot::RwLock::new(None);
+static UNTINTED: std::sync::RwLock<Option<std::sync::Arc<UntintedTiles>>> =
+    std::sync::RwLock::new(None);
 
 #[cfg(feature = "shader_support")]
 pub(crate) fn untinted_tiles() -> Option<std::sync::Arc<UntintedTiles>> {
-    UNTINTED.read().clone()
+    UNTINTED.read().ok().and_then(|t| t.clone())
 }
 
 #[cfg(feature = "shader_support")]
-fn collect_untinted(
+fn publish_untinted(
     entries: &[(&str, &image::RgbaImage)],
     biome_tinted: &[&str],
     tiles: &HashMap<String, u32>,
     n_mips: u32,
-) -> UntintedTiles {
+) {
     let (level0, atlas_w, atlas_h, _) = pack_tiles(entries);
     let tile_px = atlas_w / ATLAS_COLS;
     let chain = if n_mips > 1 {
@@ -187,31 +127,24 @@ fn collect_untinted(
         }
         out.push((tile, levels));
     }
-    out
+    if let Ok(mut slot) = UNTINTED.write() {
+        *slot = Some(std::sync::Arc::new(out));
+    }
 }
 
-pub fn build_block_atlas(textures: &Textures, textures_dir: &str) -> BlockAtlas {
+pub fn build_block_atlas(textures: &Textures, textures_dir: &str) -> (Image, HashMap<String, u32>) {
     use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
-    let tints = crate::util::biome_color::Tints::load(&format!("{textures_dir}/colormap"));
-    let plains = crate::util::biome_color::Tints::plains(tints.as_ref());
-    let (grass_tint, foliage_tint, dry_foliage_tint) =
-        (plains.grass, plains.foliage, plains.dry_foliage);
+    let colormap_dir = format!("{}/colormap", textures_dir);
+
+    crate::util::biome_color::init(&colormap_dir);
+    let grass_tint = crate::util::biome_color::plains_grass();
+    let foliage_tint = crate::util::biome_color::plains_foliage();
+    let dry_foliage_tint = crate::util::biome_color::plains_dry_foliage();
 
     if textures.block.is_empty() {
-        crate::log_warn!(
-            "atlas",
-            "cannot read block texture dir {textures_dir}/block"
-        );
-        return BlockAtlas {
-            image: placeholder_atlas(),
-            sprites: Sprites::default(),
-            tables: AtlasTables {
-                tints,
-                #[cfg(feature = "shader_support")]
-                untinted: None,
-            },
-        };
+        eprintln!("Cannot read block texture dir {textures_dir}/block");
+        return (placeholder_atlas(), HashMap::new());
     }
     let mut opaque: HashSet<String> = HashSet::new();
     let mut recoloured: BTreeMap<&str, image::RgbaImage> = BTreeMap::new();
@@ -250,8 +183,18 @@ pub fn build_block_atlas(textures: &Textures, textures_dir: &str) -> BlockAtlas 
         entries.push((stem.as_str(), rgba));
     }
     let opaque_count = opaque.len();
+    OPAQUE_TEXTURES.set(opaque).ok();
 
-    let (atlas_data, atlas_w, atlas_h, tex_to_tile) = pack_tiles(&entries);
+    let (frames, strips) = animation_frames(&entries, textures_dir);
+    let base_count = entries.len();
+    let mut packed = entries.clone();
+    packed.extend(frames.iter().map(|f| (f.name.as_str(), &f.image)));
+    let (atlas_data, atlas_w, atlas_h, mut tex_to_tile) = pack_tiles(&packed);
+    publish_animations(&frames, strips, &mut tex_to_tile, base_count + 1);
+    let entity_textures = crate::blockentities::bake::textures(textures_dir);
+    let (atlas_data, atlas_h, regions) =
+        append_regions(atlas_data, atlas_w, atlas_h, &entity_textures);
+    crate::blockentities::bake::set_regions(regions);
     #[cfg(feature = "shader_support")]
     let untinted_entries: Vec<(&str, &image::RgbaImage)> = entries
         .iter()
@@ -268,12 +211,7 @@ pub fn build_block_atlas(textures: &Textures, textures_dir: &str) -> BlockAtlas 
         atlas_data
     };
     #[cfg(feature = "shader_support")]
-    let untinted = std::sync::Arc::new(collect_untinted(
-        &untinted_entries,
-        &biome_tinted,
-        &tex_to_tile,
-        n_mips,
-    ));
+    publish_untinted(&untinted_entries, &biome_tinted, &tex_to_tile, n_mips);
 
     let mut image = Image::new_uninit(
         Extent3d {
@@ -290,29 +228,119 @@ pub fn build_block_atlas(textures: &Textures, textures_dir: &str) -> BlockAtlas 
     image.sampler = block_atlas_sampler();
     #[cfg(feature = "shader_support")]
     super::packdraw::allow_display_view(&mut image);
-    crate::log_info!(
-        "atlas",
-        "{} block textures loaded ({} fully opaque), atlas {}×{}, {} mip levels",
+    println!(
+        "[Atlas] {} block textures loaded ({} fully opaque), atlas {}×{}, {} mip levels",
         entries.len(),
         opaque_count,
         atlas_w,
         atlas_h,
         n_mips
     );
-    let rows = super::atlas_rows(&image);
-    BlockAtlas {
-        image,
-        sprites: Sprites {
-            tiles: tex_to_tile,
-            opaque,
-            rows,
-        },
-        tables: AtlasTables {
-            tints,
-            #[cfg(feature = "shader_support")]
-            untinted: Some(untinted),
-        },
+    (image, tex_to_tile)
+}
+
+struct AnimationFrame {
+    /// `<stem>#<frame index>`, only ever a key while packing.
+    name: String,
+    stem: String,
+    image: image::RgbaImage,
+}
+
+struct AnimatedStrip {
+    stem: String,
+    meta: super::block_anim::Meta,
+}
+
+/// Crops every frame but the first out of each animated strip. The first is
+/// what `blit_tile` already copies into the texture's own tile. The strips
+/// come back with the frames, so builds running at once never share them.
+fn animation_frames(
+    entries: &[(&str, &image::RgbaImage)],
+    textures_dir: &str,
+) -> (Vec<AnimationFrame>, Vec<AnimatedStrip>) {
+    let mut frames = Vec::new();
+    let mut strips = Vec::new();
+    for (stem, rgba) in entries {
+        let side = rgba.width();
+        if side == 0 || rgba.height() < side * 2 {
+            continue;
+        }
+        let count = rgba.height() / side;
+        let png = std::path::Path::new(textures_dir)
+            .join("block")
+            .join(format!("{stem}.png"));
+        let Some(meta) = super::block_anim::read_meta(&png, count) else {
+            continue;
+        };
+        let mut seen = std::collections::BTreeSet::new();
+        for &(index, _) in &meta.frames {
+            if index == 0 || !seen.insert(index) {
+                continue;
+            }
+            let image = image::imageops::crop_imm(*rgba, 0, index * side, side, side).to_image();
+            frames.push(AnimationFrame {
+                name: format!("{stem}#{index}"),
+                stem: (*stem).to_owned(),
+                image,
+            });
+        }
+        strips.push(AnimatedStrip {
+            stem: (*stem).to_owned(),
+            meta,
+        });
     }
+    (frames, strips)
+}
+
+/// Takes the frame tiles back out of the texture map, which only names real
+/// textures, and hands the playback order to the shader's remap table.
+fn publish_animations(
+    frames: &[AnimationFrame],
+    strips: Vec<AnimatedStrip>,
+    tiles: &mut HashMap<String, u32>,
+    tile_count: usize,
+) {
+    let mut frame_tiles: HashMap<(&str, u32), u32> = HashMap::new();
+    for frame in frames {
+        if let Some(tile) = tiles.remove(&frame.name) {
+            let index = frame
+                .name
+                .rsplit('#')
+                .next()
+                .and_then(|i| i.parse().ok())
+                .unwrap_or(0);
+            frame_tiles.insert((frame.stem.as_str(), index), tile);
+        }
+    }
+    let mut animations = Vec::with_capacity(strips.len());
+    for strip in &strips {
+        let Some(&base) = tiles.get(&strip.stem) else {
+            continue;
+        };
+        let resolve = |index: u32| {
+            if index == 0 {
+                Some(base)
+            } else {
+                frame_tiles.get(&(strip.stem.as_str(), index)).copied()
+            }
+        };
+        let frames: Option<Vec<(u16, u32)>> = strip
+            .meta
+            .frames
+            .iter()
+            .map(|&(index, time)| Some((u16::try_from(resolve(index)?).ok()?, time)))
+            .collect();
+        let (Some(frames), Ok(base)) = (frames, u16::try_from(base)) else {
+            continue;
+        };
+        animations.push(super::block_anim::BlockAnimation {
+            base,
+            frames: frames.into_boxed_slice(),
+            interpolate: strip.meta.interpolate,
+        });
+    }
+    let total = tile_count + frames.len();
+    super::block_anim::publish(total as u32, animations);
 }
 
 fn block_atlas_sampler() -> ImageSampler {
@@ -422,6 +450,9 @@ fn tinted(
         "cherry_leaves",
         "azalea_leaves",
         "flowering_azalea_leaves",
+        "red_poplar_leaves",
+        "orange_poplar_leaves",
+        "yellow_poplar_leaves",
     ];
 
     let flat = if stem == "leaf_litter" {
@@ -534,6 +565,10 @@ fn blit_gray_placeholder(atlas: &mut [u8], tile: u32, atlas_w: u32, tile_px: u32
 }
 
 pub fn placeholder_atlas() -> Image {
+    #[cfg(feature = "shader_support")]
+    if let Ok(mut slot) = UNTINTED.write() {
+        *slot = None;
+    }
     let mut data = vec![0u8; (TILE_PX * TILE_PX * 4) as usize];
     blit_gray_placeholder(&mut data, 0, TILE_PX, TILE_PX);
     #[cfg_attr(not(feature = "shader_support"), allow(unused_mut))]
@@ -545,16 +580,86 @@ pub fn placeholder_atlas() -> Image {
 
 const MAX_TILE_PX: u32 = 64;
 
+/// The largest tile a texture bigger than the rest can grow every tile to.
+/// Vanilla's signs, shelves and dried ghast tentacles are 32 px, two texels
+/// per model unit; squeezed into 16 px tiles they lose every other texel.
+/// The taller atlas this makes (about 5000 px) is past what web and Android
+/// GPUs allow, so they keep the common size.
+const MAX_DETAIL_TILE_PX: u32 = if cfg!(any(target_arch = "wasm32", target_os = "android")) {
+    TILE_PX
+} else {
+    32
+};
+
+/// The tile size: the most common texture size, or larger to keep the
+/// bigger textures whole.
 fn tile_px(entries: &[(&str, &image::RgbaImage)]) -> u32 {
     let mut counts: HashMap<u32, u32> = HashMap::new();
+    let mut largest = TILE_PX;
     for (_, rgba) in entries {
         let side = rgba.width().min(rgba.height()).next_power_of_two();
         *counts.entry(side.clamp(TILE_PX, MAX_TILE_PX)).or_default() += 1;
+        largest = largest.max(side.min(MAX_DETAIL_TILE_PX));
     }
-    counts
+    let common = counts
         .into_iter()
         .max_by_key(|&(side, count)| (count, side))
-        .map_or(TILE_PX, |(side, _)| side)
+        .map_or(TILE_PX, |(side, _)| side);
+    common.max(largest)
+}
+
+/// Tiles per side of a packed entity texture.
+const REGION_TILES: u32 = 4;
+
+/// Packs square entity textures as `REGION_TILES`-square blocks of tiles in new
+/// rows under the block tiles, so a model can map its whole sheet linearly.
+/// Returns the grown atlas, its height and each texture's UV rect.
+fn append_regions(
+    mut data: Vec<u8>,
+    atlas_w: u32,
+    atlas_h: u32,
+    textures: &[(String, image::RgbaImage)],
+) -> (Vec<u8>, u32, HashMap<String, [f32; 4]>) {
+    if textures.is_empty() {
+        return (data, atlas_h, HashMap::new());
+    }
+    let tile_px = atlas_w / ATLAS_COLS;
+    let side = REGION_TILES * tile_px;
+    let per_row = ATLAS_COLS / REGION_TILES;
+    let band_rows = (textures.len() as u32).div_ceil(per_row);
+    let new_h = atlas_h + band_rows * side;
+    data.resize((atlas_w * new_h * 4) as usize, 0);
+
+    let mut rects = HashMap::new();
+    for (i, (name, image)) in textures.iter().enumerate() {
+        let (col, row) = (i as u32 % per_row, i as u32 / per_row);
+        let (ox, oy) = (col * side, atlas_h + row * side);
+        let scaled;
+        let image = if image.width() == side {
+            image
+        } else {
+            scaled =
+                image::imageops::resize(image, side, side, image::imageops::FilterType::Nearest);
+            &scaled
+        };
+        for (y, line) in image.rows().enumerate() {
+            let dst = (((oy + y as u32) * atlas_w + ox) * 4) as usize;
+            for (x, p) in line.enumerate() {
+                data[dst + x * 4..dst + x * 4 + 4].copy_from_slice(&p.0);
+            }
+        }
+        let (w, h) = (atlas_w as f32, new_h as f32);
+        rects.insert(
+            name.clone(),
+            [
+                ox as f32 / w,
+                oy as f32 / h,
+                (ox + side) as f32 / w,
+                (oy + side) as f32 / h,
+            ],
+        );
+    }
+    (data, new_h, rects)
 }
 
 fn pack_tiles(entries: &[(&str, &image::RgbaImage)]) -> (Vec<u8>, u32, u32, HashMap<String, u32>) {

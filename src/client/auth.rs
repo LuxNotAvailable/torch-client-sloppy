@@ -264,41 +264,39 @@ fn fail(generation: u64, message: String) {
 
 const EXPIRY_MARGIN: u64 = 60;
 
+fn now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 pub async fn account() -> Result<azalea::account::Account, String> {
     client();
-    let Some(session) = active_session().await? else {
-        return Ok(azalea::account::Account::offline(
-            &crate::client::bot::username(),
-        ));
-    };
-    log_info!("auth", "joining as {} ({})", session.name, session.source);
-    Ok(MicrosoftAccount::new(session.name, session.uuid, session.token, session.refresh).into())
-}
-
-pub(crate) struct ActiveSession {
-    pub name: String,
-    pub uuid: uuid::Uuid,
-    pub token: String,
-    refresh: String,
-    source: &'static str,
-}
-
-pub(crate) async fn active_session() -> Result<Option<ActiveSession>, String> {
     #[cfg(not(target_arch = "wasm32"))]
     if let Some(session) = CLI_SESSION.get() {
-        return Ok(Some(ActiveSession {
-            name: session.name.clone(),
-            uuid: session.uuid,
-            token: session.token.clone(),
-            refresh: String::new(),
-            source: "session token from the command line",
-        }));
+        log_info!(
+            "auth",
+            "joining as {} (session token from the command line)",
+            session.name
+        );
+        return Ok(MicrosoftAccount::new(
+            session.name.clone(),
+            session.uuid,
+            session.token.clone(),
+            String::new(),
+        )
+        .into());
     }
 
     let accounts = accountlist::load();
     let entry = match accounts.active() {
         Some(entry) if entry.kind == AccountKind::Microsoft => entry.clone(),
-        _ => return Ok(None),
+        _ => {
+            return Ok(azalea::account::Account::offline(
+                &crate::client::bot::username(),
+            ));
+        }
     };
     let (Some(refresh), Some(uuid)) = (entry.token.as_deref(), entry.uuid.as_deref()) else {
         return Err(format!(
@@ -316,15 +314,14 @@ pub(crate) async fn active_session() -> Result<Option<ActiveSession>, String> {
 
     let usable = entry
         .session_expires
-        .is_some_and(|expires| expires > unix_secs() + EXPIRY_MARGIN);
-    if let Some(token) = entry.session.clone().filter(|_| usable) {
-        return Ok(Some(ActiveSession {
-            name: entry.name,
-            uuid,
-            token,
-            refresh,
-            source: "Microsoft, cached session",
-        }));
+        .is_some_and(|expires| expires > now() + EXPIRY_MARGIN);
+    if let Some(session) = entry.session.clone().filter(|_| usable) {
+        log_info!(
+            "auth",
+            "joining as {} (Microsoft, cached session)",
+            entry.name
+        );
+        return Ok(MicrosoftAccount::new(entry.name, uuid, session, refresh).into());
     }
 
     log_info!("auth", "renewing the session for {}", entry.name);
@@ -335,13 +332,8 @@ pub(crate) async fn active_session() -> Result<Option<ActiveSession>, String> {
         &session.token,
         session.expires,
     );
-    Ok(Some(ActiveSession {
-        name: entry.name,
-        uuid,
-        token: session.token,
-        refresh: session.refresh,
-        source: "Microsoft",
-    }))
+    log_info!("auth", "joining as {} (Microsoft)", entry.name);
+    Ok(MicrosoftAccount::new(entry.name, uuid, session.token, session.refresh).into())
 }
 
 struct Session {
@@ -469,29 +461,20 @@ impl azalea::account::AccountTrait for MicrosoftAccount {
     > {
         Box::pin(async move {
             let access_token = self.access_token.lock().clone();
-            let joined = azalea_auth::sessionserver::join(
-                azalea_auth::sessionserver::SessionServerJoinOpts {
-                    access_token: &access_token,
-                    public_key,
-                    private_key,
-                    uuid: &self.uuid,
-                    server_id,
-                    proxy,
-                },
-            )
-            .await;
-            if matches!(
-                joined,
-                Err(azalea_auth::sessionserver::ClientSessionServerError::Banned)
-            ) {
-                crate::client::ban::join_refused();
-            }
-            joined
+            azalea_auth::sessionserver::join(azalea_auth::sessionserver::SessionServerJoinOpts {
+                access_token: &access_token,
+                public_key,
+                private_key,
+                uuid: &self.uuid,
+                server_id,
+                proxy,
+            })
+            .await
         })
     }
 }
 
-pub(crate) fn client() -> &'static reqwest::Client {
+fn client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
         crate::install_crypto_provider();

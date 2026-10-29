@@ -1,58 +1,9 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ServerEntry {
     pub name: String,
     pub address: String,
-    pub resource_packs: PackPolicy,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum PackPolicy {
-    Enabled,
-    Disabled,
-    #[default]
-    Prompt,
-}
-
-impl PackPolicy {
-    fn key(self) -> &'static str {
-        match self {
-            PackPolicy::Enabled => "enabled",
-            PackPolicy::Disabled => "disabled",
-            PackPolicy::Prompt => "prompt",
-        }
-    }
-
-    fn from_key(key: &str) -> Option<PackPolicy> {
-        [
-            PackPolicy::Enabled,
-            PackPolicy::Disabled,
-            PackPolicy::Prompt,
-        ]
-        .into_iter()
-        .find(|p| p.key() == key)
-    }
-
-    pub fn next(self) -> PackPolicy {
-        match self {
-            PackPolicy::Enabled => PackPolicy::Disabled,
-            PackPolicy::Disabled => PackPolicy::Prompt,
-            PackPolicy::Prompt => PackPolicy::Enabled,
-        }
-    }
-
-    pub fn caption(self) -> String {
-        crate::gui::tooltip::translate(&format!("manageServer.resourcePack.{}", self.key()), &[])
-    }
-}
-
-pub fn pack_policy(address: &str) -> PackPolicy {
-    load()
-        .into_iter()
-        .find(|e| e.address == address)
-        .map(|e| e.resource_packs)
-        .unwrap_or_default()
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -90,16 +41,7 @@ fn parse(text: &str) -> Vec<ServerEntry> {
                 .and_then(|n| n.as_str())
                 .unwrap_or("")
                 .to_string();
-            let resource_packs = v
-                .get("resourcePacks")
-                .and_then(|p| p.as_str())
-                .and_then(PackPolicy::from_key)
-                .unwrap_or_default();
-            Some(ServerEntry {
-                name,
-                address,
-                resource_packs,
-            })
+            Some(ServerEntry { name, address })
         })
         .collect()
 }
@@ -111,7 +53,6 @@ fn serialize(entries: &[ServerEntry]) -> String {
             serde_json::json!({
                 "name": e.name,
                 "address": e.address,
-                "resourcePacks": e.resource_packs.key(),
             })
         })
         .collect();
@@ -129,6 +70,13 @@ pub fn display_name(entry: &ServerEntry) -> &str {
     }
 }
 
+pub fn is_temporary(path: &Path) -> bool {
+    if cfg!(target_os = "windows") {
+        return path.starts_with(std::env::temp_dir());
+    }
+    path.starts_with("/tmp")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,21 +87,13 @@ mod tests {
             ServerEntry {
                 name: "Local".into(),
                 address: "127.0.0.1:25565".into(),
-                resource_packs: PackPolicy::Enabled,
             },
             ServerEntry {
                 name: String::new(),
                 address: "example.com".into(),
-                resource_packs: PackPolicy::Prompt,
             },
         ];
         assert_eq!(parse(&serialize(&entries)), entries);
-    }
-
-    #[test]
-    fn a_missing_policy_is_prompt() {
-        let entries = parse(r#"[{"name": "Old", "address": "example.com"}]"#);
-        assert_eq!(entries[0].resource_packs, PackPolicy::Prompt);
     }
 
     #[test]
@@ -169,7 +109,6 @@ mod tests {
         let e = ServerEntry {
             name: "  ".into(),
             address: "example.com".into(),
-            ..Default::default()
         };
         assert_eq!(display_name(&e), "example.com");
     }

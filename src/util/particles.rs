@@ -7,7 +7,6 @@ use bevy::prelude::*;
 
 use azalea::entity::particle::Particle as P;
 
-use crate::entities::quads::QUAD_INDICES;
 use crate::renderer::AppState;
 use crate::renderer::entity_material::{
     EntityMaterial, EntityParams, LightMode, Lit, diffuse_lights,
@@ -30,6 +29,7 @@ impl Plugin for ParticlePlugin {
             .add_systems(
                 Update,
                 (
+                    share_item_icons,
                     spawn_particles,
                     spawn_crit_particles,
                     animate_tick_particles,
@@ -136,27 +136,7 @@ impl Default for ParticleRng {
 struct LiveParticles(Vec<Particle>);
 
 #[derive(Resource, Default)]
-pub(crate) struct ParticleAtlas(Option<Atlas>);
-
-impl ParticleAtlas {
-    pub(crate) fn is_built(&self) -> bool {
-        self.0.is_some()
-    }
-
-    pub(crate) fn adopt(
-        &mut self,
-        built: particle_assets::ParticleAtlasData,
-        images: &mut Assets<Image>,
-    ) {
-        let Some(atlas) = &mut self.0 else { return };
-        let (image, rebuilt) = Atlas::from_data(built);
-        let _ = images.insert(&atlas.image, image);
-        *atlas = Atlas {
-            image: atlas.image.clone(),
-            ..rebuilt
-        };
-    }
-}
+struct ParticleAtlas(Option<Atlas>);
 
 pub(crate) struct Atlas {
     image: Handle<Image>,
@@ -167,26 +147,6 @@ pub(crate) struct Atlas {
 }
 
 impl Atlas {
-    fn from_data(built: particle_assets::ParticleAtlasData) -> (Image, Atlas) {
-        let mut sheets = Vec::with_capacity(built.sheets.len());
-        let mut by_name = HashMap::with_capacity(built.sheets.len());
-        for (name, tiles) in built.sheets {
-            by_name.insert(name, sheets.len() as u16);
-            sheets.push(tiles);
-        }
-        let crit = by_name
-            .get("crit")
-            .map(|&i| particle_assets::tile_uv(sheets[i as usize][0], built.rows));
-        let atlas = Atlas {
-            image: Handle::default(),
-            rows: built.rows,
-            sheets,
-            by_name,
-            crit,
-        };
-        (built.image, atlas)
-    }
-
     fn sheet_index(&self, particle_type: &str) -> Option<u16> {
         self.by_name.get(particle_type).copied()
     }
@@ -205,10 +165,21 @@ fn load_particle_atlas(mut atlas: ResMut<ParticleAtlas>, mut images: ResMut<Asse
     if built.sheets.is_empty() {
         return;
     }
-    let (image, built) = Atlas::from_data(built);
+    let mut sheets = Vec::with_capacity(built.sheets.len());
+    let mut by_name = HashMap::with_capacity(built.sheets.len());
+    for (name, tiles) in built.sheets {
+        by_name.insert(name, sheets.len() as u16);
+        sheets.push(tiles);
+    }
+    let crit = by_name
+        .get("crit")
+        .map(|&i| particle_assets::tile_uv(sheets[i as usize][0], built.rows));
     atlas.0 = Some(Atlas {
-        image: images.add(image),
-        ..built
+        image: images.add(built.image),
+        rows: built.rows,
+        sheets,
+        by_name,
+        crit,
     });
 }
 
@@ -226,8 +197,17 @@ struct BatchKey {
     block_light: u8,
     sky_light: u8,
     dim: u8,
-    terrain: bool,
+    source: Source,
     translucent: bool,
+}
+
+/// The texture a particle's sprite comes from.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Source {
+    Sheet,
+    Terrain,
+    /// Item icons in the GUI atlas, for item particles.
+    Items,
 }
 
 #[derive(Resource, Default)]
@@ -275,6 +255,67 @@ const TRANSLUCENT: u8 = 1 << 2;
 const FULLBRIGHT: u8 = 1 << 3;
 const CRIT_DECAY: u8 = 1 << 4;
 const FADE_OUT: u8 = 1 << 5;
+const ITEMS: u8 = 1 << 6;
+
+/// The GUI atlas, whose item icons item particles are cut from.
+static ITEM_ICONS: std::sync::RwLock<Option<std::sync::Arc<crate::gui::atlas::GuiAtlas>>> =
+    std::sync::RwLock::new(None);
+
+fn share_item_icons(assets: Option<Res<crate::gui::render::GuiAssets>>, mut done: Local<bool>) {
+    if *done {
+        return;
+    }
+    let Some(assets) = assets else { return };
+    *done = true;
+    if let Ok(mut icons) = ITEM_ICONS.write() {
+        *icons = Some(assets.atlas.clone());
+    }
+}
+
+/// An item's icon in the GUI atlas, as UVs.
+fn item_icon_uv(id: &str) -> Option<[f32; 4]> {
+    let icons = ITEM_ICONS.read().ok()?;
+    let atlas = icons.as_ref()?;
+    let region = atlas.item_for_size(id, 16.0)?;
+    let (w, h) = atlas.size();
+    let (w, h) = (w as f32, h as f32);
+    Some([
+        region.x as f32 / w,
+        region.y as f32 / h,
+        (region.x + region.w) as f32 / w,
+        (region.y + region.h) as f32 / h,
+    ])
+}
+
+/// `BreakingItemParticle`: a quarter of the item's icon, flung at the
+/// given speed with a little scatter, falling under full gravity.
+fn item_recipe(
+    stack: &azalea_inventory::ItemStack,
+    arg: Vec3,
+    rng: &mut JavaRandom,
+) -> Option<Recipe> {
+    let azalea_inventory::ItemStack::Present(data) = stack else {
+        return None;
+    };
+    let name = data.kind.to_string();
+    let [u0, v0, u1, v1] = item_icon_uv(name.strip_prefix("minecraft:").unwrap_or(&name))?;
+    let (tw, th) = ((u1 - u0) / 4.0, (v1 - v0) / 4.0);
+    let uo = rng.next_f32() * 3.0;
+    let vo = rng.next_f32() * 3.0;
+    // `getU0` is the right edge of the window and `getU1` the left, so the
+    // piece is mirrored, as vanilla draws it.
+    let uv = [
+        u0 + (uo + 1.0) * tw,
+        v0 + vo * th,
+        u0 + uo * tw,
+        v0 + (vo + 1.0) * th,
+    ];
+    let mut r = base_recipe(Sprite::Fixed(uv), rng);
+    r.velocity = base_velocity(Vec3::ZERO, rng) * 0.1 + arg;
+    r.size /= 2.0;
+    r.flags = PHYSICS | ITEMS;
+    Some(r)
+}
 
 const DESTROY_GRID: i32 = 4;
 
@@ -644,12 +685,10 @@ fn spawn_level_particle(
         override_limiter: emit.override_limiter || overrides_limiter(&emit.particle),
         always_show: emit.always_show,
     };
+    let dist = Vec3::from_array(emit.dist);
+    let speed = Vec3::from_array(emit.max_speed);
     if emit.count == 0 {
-        let arg = Vec3::new(
-            emit.dist[0] * emit.max_speed,
-            emit.dist[1] * emit.max_speed,
-            emit.dist[2] * emit.max_speed,
-        );
+        let arg = dist * speed;
         add_level_particle(
             live,
             atlas,
@@ -664,21 +703,36 @@ fn spawn_level_particle(
         );
         return;
     }
+    use azalea_protocol::packets::game::c_level_particles::ParticleRandomization;
+    fn gaussian(rng: &mut JavaRandom) -> Vec3 {
+        Vec3::new(
+            rng.next_gaussian() as f32,
+            rng.next_gaussian() as f32,
+            rng.next_gaussian() as f32,
+        )
+    }
+    fn uniform(rng: &mut JavaRandom) -> Vec3 {
+        Vec3::new(
+            rng.next_f64() as f32,
+            rng.next_f64() as f32,
+            rng.next_f64() as f32,
+        )
+    }
     for _ in 0..emit.count.min(MAX_EMIT_COUNT) {
         if live.len() >= MAX_LIVE_PARTICLES {
             break;
         }
-        let pos = base
-            + Vec3::new(
-                rng.next_gaussian() as f32 * emit.dist[0],
-                rng.next_gaussian() as f32 * emit.dist[1],
-                rng.next_gaussian() as f32 * emit.dist[2],
-            );
-        let arg = Vec3::new(
-            rng.next_gaussian() as f32 * emit.max_speed,
-            rng.next_gaussian() as f32 * emit.max_speed,
-            rng.next_gaussian() as f32 * emit.max_speed,
-        );
+        let (pos, arg) = match emit.randomization {
+            ParticleRandomization::Default => {
+                let pos = base + gaussian(rng) * dist;
+                (pos, gaussian(rng) * speed)
+            }
+            ParticleRandomization::Alternative => (base + uniform(rng) * dist, speed),
+            ParticleRandomization::AlternativeWithSpeed => {
+                let pos = base + uniform(rng) * dist;
+                (pos, uniform(rng) * speed)
+            }
+        };
         add_level_particle(
             live,
             atlas,
@@ -1257,6 +1311,9 @@ fn emit_ambient(
                     }
                     Leaf::Cherry => P::CherryLeaves,
                     Leaf::PaleOak => P::PaleOakLeaves,
+                    Leaf::RedPoplar => P::RedPoplarLeaves,
+                    Leaf::OrangePoplar => P::OrangePoplarLeaves,
+                    Leaf::YellowPoplar => P::YellowPoplarLeaves,
                 };
                 ctx.below(&particle);
             }
@@ -1684,6 +1741,17 @@ fn particle_name(particle: &azalea::entity::particle::Particle) -> &'static str 
         Particle::Infested => "infested",
         Particle::CherryLeaves => "cherry_leaves",
         Particle::PaleOakLeaves => "pale_oak_leaves",
+        Particle::RedPoplarLeaves => "red_poplar_leaves",
+        Particle::OrangePoplarLeaves => "orange_poplar_leaves",
+        Particle::YellowPoplarLeaves => "yellow_poplar_leaves",
+        Particle::SulfurBubbles => "sulfur_bubbles",
+        Particle::NoxiousGas => "noxious_gas",
+        Particle::NoxiousGasCloud => "noxious_gas_cloud",
+        Particle::Geyser(_) => "geyser",
+        Particle::GeyserBase(_) => "geyser_base",
+        Particle::GeyserPoof(_) => "geyser_poof",
+        Particle::GeyserPlume(_) => "geyser_plume",
+        Particle::SulfurCubeGoo => "sulfur_cube_goo",
         Particle::TintedLeaves(_) => "tinted_leaves",
         Particle::SculkSoul => "sculk_soul",
         Particle::SculkCharge(_) => "sculk_charge",
@@ -2058,7 +2126,8 @@ fn recipe(
             Some(r)
         }
 
-        P::Item(_) | P::ItemSlime | P::ItemSnowball | P::ItemCobweb => None,
+        P::Item(item) => item_recipe(&item.item, arg, rng),
+        P::ItemSlime | P::ItemSnowball | P::ItemCobweb => None,
         P::GustEmitterLarge | P::GustEmitterSmall => None,
 
         _ => generic_recipe(atlas, name, arg, rng),
@@ -2373,7 +2442,9 @@ fn tick_particles(time: Res<Time>, mut live: ResMut<LiveParticles>) {
 #[derive(Component)]
 pub(crate) struct ParticleBatch;
 
+#[allow(clippy::too_many_arguments)]
 fn draw_particles(
+    gui_assets: Option<Res<crate::gui::render::GuiAssets>>,
     lightmap: Res<LightmapState>,
     chunk_material: Res<ChunkMaterial>,
     standard: Res<Assets<StandardMaterial>>,
@@ -2406,6 +2477,7 @@ fn draw_particles(
     let dim = crate::renderer::dimension::current();
     let dirs = diffuse_lights(dim);
     let terrain_atlas = particle_atlas(&chunk_material, &standard);
+    let item_atlas = gui_assets.as_ref().map(|a| a.image.clone());
     let sheet = atlas.0.as_ref();
     let origin = (camera.translation() / 16.0).floor() * 16.0;
     let rotation = camera.rotation();
@@ -2426,11 +2498,19 @@ fn draw_particles(
             if particle.tick_acc < 0.0 {
                 continue;
             }
-            let terrain = particle.flags & TERRAIN != 0;
-            if terrain && terrain_atlas.is_none() {
-                continue;
-            }
-            if !terrain && sheet.is_none() {
+            let source = if particle.flags & TERRAIN != 0 {
+                Source::Terrain
+            } else if particle.flags & ITEMS != 0 {
+                Source::Items
+            } else {
+                Source::Sheet
+            };
+            let missing = match source {
+                Source::Terrain => terrain_atlas.is_none(),
+                Source::Items => item_atlas.is_none(),
+                Source::Sheet => sheet.is_none(),
+            };
+            if missing {
                 continue;
             }
             let (block_light, sky_light) = if particle.flags & FULLBRIGHT != 0 {
@@ -2446,7 +2526,7 @@ fn draw_particles(
                 block_light,
                 sky_light,
                 dim: dim as u8,
-                terrain,
+                source,
                 translucent: particle.flags & TRANSLUCENT != 0,
             };
             let slot = match index.get(&key) {
@@ -2475,10 +2555,19 @@ fn draw_particles(
 
     for slot in 0..used {
         let key = batches.keys[slot];
-        let image = match (key.terrain, terrain_atlas.as_ref(), sheet) {
-            (true, Some(atlas), _) => atlas.clone(),
-            (false, _, Some(sheet)) => sheet.image.clone(),
-            _ => continue,
+        let image = match key.source {
+            Source::Terrain => match terrain_atlas.as_ref() {
+                Some(atlas) => atlas.clone(),
+                None => continue,
+            },
+            Source::Items => match item_atlas.as_ref() {
+                Some(atlas) => atlas.clone(),
+                None => continue,
+            },
+            Source::Sheet => match sheet {
+                Some(sheet) => sheet.image.clone(),
+                None => continue,
+            },
         };
         let material = batch_material(
             &mut material_cache,
@@ -2533,7 +2622,10 @@ fn draw_particles(
     hide_from(&batches.pool, used, &mut drawn);
 
     for (key, handle) in material_cache.0.iter() {
-        let lit = Lit {
+        let Some(material) = ent_materials.get_mut(handle) else {
+            continue;
+        };
+        material.params.set(Lit {
             tint: [1.0; 4],
             light: crate::renderer::lightmap::cell_light(
                 &lightmap.current,
@@ -2543,8 +2635,8 @@ fn draw_particles(
             dirs,
             overlay_alpha: 1.0,
             overlay_white: false,
-        };
-        EntityMaterial::relight(&mut ent_materials, handle, lit);
+            glint: false,
+        });
     }
 }
 
@@ -2599,8 +2691,12 @@ fn batch_material(
                 dirs,
                 overlay_alpha: 1.0,
                 overlay_white: false,
+                glint: false,
             },
         ),
+        #[cfg(not(target_arch = "wasm32"))]
+        rig_parts: crate::renderer::rig_parts::PARTS,
+        glint: crate::renderer::entity_material::GLINT,
         alpha_mode: if key.translucent {
             AlphaMode::Blend
         } else {
@@ -2690,7 +2786,7 @@ fn write_batch_mesh(
             uvs.push(uv);
             colors.push(p.tint);
         }
-        indices.extend(QUAD_INDICES.map(|i| base + i));
+        indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
@@ -2722,7 +2818,7 @@ fn particle_atlas(
         .and_then(|m| m.base_color_texture.clone())
 }
 
-fn particle_uv(state: azalea::block::BlockState) -> Option<[f32; 4]> {
+pub(crate) fn particle_uv(state: azalea::block::BlockState) -> Option<[f32; 4]> {
     use azalea::block::BlockTrait;
 
     if state.is_air() {

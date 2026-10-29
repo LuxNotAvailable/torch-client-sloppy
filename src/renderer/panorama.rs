@@ -3,10 +3,11 @@ use bevy::camera::visibility::RenderLayers;
 use bevy::camera::{Camera, ClearColorConfig, PerspectiveProjection, Projection};
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::gui::GuiState;
 use crate::renderer::AppState;
-use crate::renderer::hand::{HAND_LAYER, HandCamera, HandRoot};
+use crate::renderer::hand::HandCamera;
 use crate::renderer::sky::SkyRoot;
 use crate::renderer::systems::WorldCamera;
 
@@ -107,6 +108,10 @@ fn setup(
         let path = dir.join(face.file);
         let img = match crate::platform::assets::open_image(&path) {
             Ok(img) if img.width() <= 1 || img.height() <= 1 => {
+                crate::log_info!(
+                    "assets",
+                    "the panorama is the jar's stub; the menu keeps its plain background"
+                );
                 ABSENT.store(true, std::sync::atomic::Ordering::Relaxed);
                 return;
             }
@@ -117,16 +122,21 @@ fn setup(
             }
         };
         let (w, h) = img.dimensions();
-        let mut texture = super::rgba_image(w, h, img.into_raw(), RenderAssetUsages::RENDER_WORLD);
+        let mut texture = Image::new(
+            Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+            TextureDimension::D2,
+            img.into_raw(),
+            TextureFormat::Rgba8UnormSrgb,
+            RenderAssetUsages::RENDER_WORLD,
+        );
         texture.sampler = bevy::image::ImageSampler::linear();
-        let texture = images.add(texture);
-        super::reload::track(&texture, move || {
-            let img = crate::platform::assets::open_image(&path).ok()?;
-            (img.width() > 1 && img.height() > 1).then(|| img.to_rgba8())
-        });
 
         let material = materials.add(StandardMaterial {
-            base_color_texture: Some(texture),
+            base_color_texture: Some(images.add(texture)),
             unlit: true,
             cull_mode: None,
             fog_enabled: false,
@@ -205,7 +215,6 @@ fn spin(
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn toggle_cameras(
     state: Res<GuiState>,
     app_state: Res<State<AppState>>,
@@ -218,9 +227,8 @@ fn toggle_cameras(
             Without<WorldCamera>,
         ),
     >,
-    mut world: Query<(&mut Camera, &mut RenderLayers), With<WorldCamera>>,
+    mut world: Query<&mut Camera, With<WorldCamera>>,
     mut sky: Query<&mut Visibility, With<SkyRoot>>,
-    mut hand_root: Query<&mut Visibility, (With<HandRoot>, Without<SkyRoot>)>,
 ) {
     let in_menu = state.in_menu() || *app_state.get() != AppState::InGame;
 
@@ -232,46 +240,22 @@ fn toggle_cameras(
     if let Ok(mut c) = panorama.single_mut() {
         set(&mut c, in_menu);
     }
-    let pack = crate::renderer::terrain::pack_drawing();
-    let show_hand = !in_menu && !hand_disabled();
     if let Ok(mut c) = hand.single_mut() {
-        set(&mut c, show_hand && pack);
-    }
-    if let Ok((mut c, mut layers)) = world.single_mut() {
         set(&mut c, !in_menu);
-        let want = if pack {
-            RenderLayers::layer(0)
-        } else {
-            RenderLayers::from_layers(&[0, HAND_LAYER])
-        };
-        if *layers != want {
-            *layers = want;
-        }
     }
-    let shown = |visible: bool| {
-        if visible {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        }
-    };
+    if let Ok(mut c) = world.single_mut() {
+        set(&mut c, !in_menu);
+    }
     if let Ok(mut visibility) = sky.single_mut() {
-        let want = shown(!in_menu);
+        let want = if in_menu {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        };
         if *visibility != want {
             *visibility = want;
         }
     }
-    if let Ok(mut visibility) = hand_root.single_mut() {
-        let want = shown(show_hand);
-        if *visibility != want {
-            *visibility = want;
-        }
-    }
-}
-
-fn hand_disabled() -> bool {
-    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *OFF.get_or_init(|| crate::platform::env::flag("MC_NO_HAND"))
 }
 
 #[cfg(test)]

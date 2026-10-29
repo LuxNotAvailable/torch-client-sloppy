@@ -1,6 +1,5 @@
 use crate::gui::widgets::TextBox;
 use crate::modules::list::BitList;
-use crate::text::contains_ci;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Row {
@@ -19,7 +18,9 @@ pub struct Picker {
 
 impl Picker {
     pub fn new(list: &'static BitList) -> Picker {
-        let query = TextBox::pinned(32, "");
+        let mut query = TextBox::new(32, "Search");
+        query.browser_keyboard = false;
+        query.focused = true;
         Picker {
             list,
             query,
@@ -64,4 +65,19 @@ impl Picker {
             }
         }
     }
+}
+
+pub fn contains_ci(hay: &str, needle: &str) -> bool {
+    let (h, n) = (hay.as_bytes(), needle.as_bytes());
+    if n.is_empty() {
+        return true;
+    }
+    if n.len() > h.len() {
+        return false;
+    }
+    (0..=h.len() - n.len()).any(|i| {
+        n.iter()
+            .zip(&h[i..])
+            .all(|(a, b)| a.eq_ignore_ascii_case(b))
+    })
 }

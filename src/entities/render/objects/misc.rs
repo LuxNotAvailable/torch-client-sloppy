@@ -10,6 +10,16 @@ use crate::entities::{MODEL_Y_OFFSET, RenderSpec, RootPose};
 
 pub fn register(registry: &mut Registry) {
     registry.add(
+        EntityKind::Cushion,
+        RenderSpec::new(
+            "cushion",
+            misc::cushion_layer,
+            cushion_texture,
+            misc::no_anim,
+        )
+        .with_root(cushion_root),
+    );
+    registry.add(
         EntityKind::EndCrystal,
         RenderSpec::new(
             "end_crystal",
@@ -81,6 +91,27 @@ fn leash_knot_root(_st: &EntityState) -> RootPose {
     RootPose {
         scale: 1.0,
         hook: hook_for(mirror()),
+        ..RootPose::default()
+    }
+}
+
+fn cushion_texture(st: &EntityState) -> TexturePath {
+    let color = crate::util::dye::DYES
+        .get(st.extras.color as usize)
+        .map_or("white", |dye| dye.name);
+    format!("entity/cushion/{color}_cushion").into()
+}
+
+/// A cushion faces one of the four horizontal directions its yaw is nearest.
+fn cushion_root(st: &EntityState) -> RootPose {
+    let facing = (st.body_rot / 90.0).round().rem_euclid(4.0) * 90.0;
+    RootPose {
+        rotation: Quat::from_rotation_y((180.0 - facing).to_radians()),
+        scale: 1.0,
+        hook: hook_for(
+            Mat4::from_rotation_x(std::f32::consts::PI)
+                * Mat4::from_translation(Vec3::new(0.0, -0.25, 0.0)),
+        ),
         ..RootPose::default()
     }
 }

@@ -28,9 +28,6 @@ pub enum Layout {
     Crafting,
     Furnace,
     Hopper,
-    ShulkerBox,
-    Dispenser,
-    Crafter(u16),
     Grindstone,
     Enchantment,
     Loom,
@@ -59,17 +56,14 @@ enum SlotRule {
     One,
     Only(&'static [&'static str]),
     OneOnly(&'static [&'static str]),
-    FitsInContainer,
-    Display,
 }
 
 impl SlotRule {
     fn may_place(self, item: &str) -> bool {
         match self {
             SlotRule::Any | SlotRule::One => true,
-            SlotRule::Output | SlotRule::Display => false,
+            SlotRule::Output => false,
             SlotRule::Only(items) | SlotRule::OneOnly(items) => items.contains(&item),
-            SlotRule::FitsInContainer => !item.ends_with("shulker_box"),
         }
     }
 
@@ -115,23 +109,15 @@ struct MenuDef {
     own: &'static [SlotDef],
     inv: (f32, f32),
     past_end: Option<(f32, f32)>,
-    tail: &'static [SlotDef],
 }
 
 impl MenuDef {
     fn slot_count(&self) -> usize {
-        self.own.len() + PLAYER_SLOTS + self.tail.len()
-    }
-
-    fn slot(&self, i: usize) -> Option<&SlotDef> {
-        self.own.get(i).or_else(|| {
-            i.checked_sub(self.own.len() + PLAYER_SLOTS)
-                .and_then(|k| self.tail.get(k))
-        })
+        self.own.len() + PLAYER_SLOTS
     }
 
     fn slot_pos(&self, i: usize) -> (f32, f32) {
-        if let Some(def) = self.slot(i) {
+        if let Some(def) = self.own.get(i) {
             return def.pos;
         }
         match self.past_end {
@@ -141,7 +127,7 @@ impl MenuDef {
     }
 
     fn rule(&self, i: usize) -> SlotRule {
-        self.slot(i).map_or(SlotRule::Any, |def| def.rule)
+        self.own.get(i).map_or(SlotRule::Any, |def| def.rule)
     }
 }
 
@@ -161,7 +147,6 @@ static CRAFTING: MenuDef = MenuDef {
     ],
     inv: (8.0, 84.0),
     past_end: Some((77.0, 62.0)),
-    tail: &[],
 };
 
 static FURNACE: MenuDef = MenuDef {
@@ -169,7 +154,6 @@ static FURNACE: MenuDef = MenuDef {
     own: &[slot(56.0, 17.0), slot(56.0, 53.0), output(116.0, 35.0)],
     inv: (8.0, 84.0),
     past_end: Some((77.0, 62.0)),
-    tail: &[],
 };
 
 static HOPPER: MenuDef = MenuDef {
@@ -183,46 +167,6 @@ static HOPPER: MenuDef = MenuDef {
     ],
     inv: (8.0, 51.0),
     past_end: None,
-    tail: &[],
-};
-
-const fn grid<const N: usize>(x: f32, y: f32, cols: usize, rule: SlotRule) -> [SlotDef; N] {
-    let mut out = [slot(0.0, 0.0); N];
-    let mut i = 0;
-    while i < N {
-        out[i] = special(
-            x + (i % cols) as f32 * 18.0,
-            y + (i / cols) as f32 * 18.0,
-            None,
-            rule,
-        );
-        i += 1;
-    }
-    out
-}
-
-static SHULKER_BOX: MenuDef = MenuDef {
-    size: (INV_W, 167.0),
-    own: &grid::<27>(8.0, 18.0, 9, SlotRule::FitsInContainer),
-    inv: (8.0, 84.0),
-    past_end: None,
-    tail: &[],
-};
-
-static DISPENSER: MenuDef = MenuDef {
-    size: (INV_W, INV_H),
-    own: &grid::<9>(62.0, 17.0, 3, SlotRule::Any),
-    inv: (8.0, 84.0),
-    past_end: None,
-    tail: &[],
-};
-
-static CRAFTER: MenuDef = MenuDef {
-    size: (INV_W, INV_H),
-    own: &grid::<9>(26.0, 17.0, 3, SlotRule::Any),
-    inv: (8.0, 84.0),
-    past_end: None,
-    tail: &[special(134.0, 35.0, None, SlotRule::Display)],
 };
 
 static GRINDSTONE: MenuDef = MenuDef {
@@ -230,7 +174,6 @@ static GRINDSTONE: MenuDef = MenuDef {
     own: &[slot(49.0, 19.0), slot(49.0, 40.0), output(129.0, 34.0)],
     inv: (8.0, 84.0),
     past_end: None,
-    tail: &[],
 };
 
 static ENCHANTMENT: MenuDef = MenuDef {
@@ -246,7 +189,6 @@ static ENCHANTMENT: MenuDef = MenuDef {
     ],
     inv: (8.0, 84.0),
     past_end: None,
-    tail: &[],
 };
 
 static LOOM: MenuDef = MenuDef {
@@ -264,7 +206,6 @@ static LOOM: MenuDef = MenuDef {
     ],
     inv: (8.0, 84.0),
     past_end: None,
-    tail: &[],
 };
 
 static STONECUTTER: MenuDef = MenuDef {
@@ -272,7 +213,6 @@ static STONECUTTER: MenuDef = MenuDef {
     own: &[slot(20.0, 33.0), output(143.0, 33.0)],
     inv: (8.0, 84.0),
     past_end: None,
-    tail: &[],
 };
 
 static CARTOGRAPHY: MenuDef = MenuDef {
@@ -280,7 +220,6 @@ static CARTOGRAPHY: MenuDef = MenuDef {
     own: &[slot(15.0, 15.0), slot(15.0, 52.0), output(145.0, 39.0)],
     inv: (8.0, 84.0),
     past_end: None,
-    tail: &[],
 };
 
 static SMITHING: MenuDef = MenuDef {
@@ -298,7 +237,6 @@ static SMITHING: MenuDef = MenuDef {
     ],
     inv: (8.0, 84.0),
     past_end: None,
-    tail: &[],
 };
 
 static ANVIL: MenuDef = MenuDef {
@@ -306,7 +244,6 @@ static ANVIL: MenuDef = MenuDef {
     own: &[slot(27.0, 47.0), slot(76.0, 47.0), output(134.0, 47.0)],
     inv: (8.0, 84.0),
     past_end: None,
-    tail: &[],
 };
 
 static BEACON: MenuDef = MenuDef {
@@ -319,7 +256,6 @@ static BEACON: MenuDef = MenuDef {
     )],
     inv: (36.0, 137.0),
     past_end: None,
-    tail: &[],
 };
 
 static BREWING_STAND: MenuDef = MenuDef {
@@ -353,7 +289,6 @@ static BREWING_STAND: MenuDef = MenuDef {
     ],
     inv: (8.0, 84.0),
     past_end: None,
-    tail: &[],
 };
 
 static MERCHANT: MenuDef = MenuDef {
@@ -361,7 +296,6 @@ static MERCHANT: MenuDef = MenuDef {
     own: &[slot(136.0, 37.0), slot(162.0, 37.0), output(220.0, 37.0)],
     inv: (108.0, 84.0),
     past_end: None,
-    tail: &[],
 };
 
 impl Layout {
@@ -371,9 +305,6 @@ impl Layout {
             Layout::Crafting => &CRAFTING,
             Layout::Furnace => &FURNACE,
             Layout::Hopper => &HOPPER,
-            Layout::ShulkerBox => &SHULKER_BOX,
-            Layout::Dispenser => &DISPENSER,
-            Layout::Crafter(_) => &CRAFTER,
             Layout::Grindstone => &GRINDSTONE,
             Layout::Enchantment => &ENCHANTMENT,
             Layout::Loom => &LOOM,
@@ -442,7 +373,11 @@ impl Layout {
                     (98.0 + (k % 2) as f32 * 18.0, 18.0 + (k / 2) as f32 * 18.0)
                 }
                 5..=8 => (8.0, 8.0 + (i - 5) as f32 * 18.0),
-                9..=44 => standard_inventory(i - 9, 8.0, 84.0),
+                9..=35 => {
+                    let k = i - 9;
+                    (8.0 + (k % 9) as f32 * 18.0, 84.0 + (k / 9) as f32 * 18.0)
+                }
+                36..=44 => (8.0 + (i - 36) as f32 * 18.0, 142.0),
                 _ => (77.0, 62.0),
             },
         }
@@ -450,7 +385,7 @@ impl Layout {
 
     pub fn empty_icon(self, i: usize) -> Option<&'static str> {
         if let Some(def) = self.def() {
-            return def.slot(i).and_then(|s| s.icon);
+            return def.own.get(i).and_then(|s| s.icon);
         }
         Some(match (self, i) {
             (Layout::PlayerMenu, 5) => "container/slot/helmet",
@@ -465,7 +400,7 @@ impl Layout {
     }
 
     pub fn may_place(self, slot: usize, item: &str) -> bool {
-        if item.is_empty() || self.slot_disabled(slot) {
+        if item.is_empty() {
             return false;
         }
         if let Some(def) = self.def() {
@@ -478,22 +413,6 @@ impl Layout {
             }
             _ => true,
         }
-    }
-
-    fn is_output(self, slot: usize) -> bool {
-        match self.def() {
-            Some(def) => matches!(def.rule(slot), SlotRule::Output),
-            None => self == Layout::PlayerMenu && slot == 0,
-        }
-    }
-
-    pub fn may_pickup(self, slot: usize) -> bool {
-        self.def()
-            .is_none_or(|def| !matches!(def.rule(slot), SlotRule::Display))
-    }
-
-    pub fn slot_disabled(self, slot: usize) -> bool {
-        matches!(self, Layout::Crafter(mask) if slot < 9 && mask >> slot & 1 == 1)
     }
 
     pub fn mode(self, gamemode: Gamemode) -> Mode {
@@ -515,44 +434,14 @@ pub struct SlotState {
     pub drag: Drag,
     pub last_click_slot: Option<usize>,
     pub cursor: Option<SlotStack>,
-    cursor_base: SlotStack,
-    cursor_age: u8,
     pub menu_preview: MenuPreview,
-    pub rest: Option<(f32, f32)>,
-    #[cfg(feature = "mobile_ui")]
-    pub touch_slots: Vec<[f32; 4]>,
-    #[cfg(feature = "mobile_ui")]
-    pub touch_lift: f32,
-    #[cfg(feature = "mobile_ui")]
-    pub tooltip_anchor: Option<(f32, f32)>,
 }
 
 impl SlotState {
     pub fn reset_for_screen_change(&mut self) {
         self.drag.clear();
         self.last_click_slot = None;
-        self.cursor = None;
-        self.cursor_age = 0;
         self.menu_preview = MenuPreview::default();
-        self.rest = None;
-    }
-
-    #[cfg(feature = "mobile_ui")]
-    pub fn note_touch_slot(&mut self, x: f32, y: f32) {
-        self.touch_slots
-            .push([x - 1.0, y - 1.0, SLOT_PITCH, SLOT_PITCH]);
-    }
-
-    #[cfg(feature = "mobile_ui")]
-    pub fn touch_slot_at(&self, m: bevy::math::Vec2) -> bool {
-        let (mx, my) = (m.x, m.y + self.touch_lift);
-        self.touch_slots
-            .iter()
-            .any(|&[x, y, w, h]| mx >= x && mx < x + w && my >= y && my < y + h)
-    }
-
-    pub fn take_cursor(&mut self) -> Option<SlotStack> {
-        self.cursor.take().filter(|c| !c.is_empty())
     }
 
     pub fn cursor(&self, snap: &Snapshot) -> SlotStack {
@@ -560,25 +449,11 @@ impl SlotState {
     }
 
     pub fn set_cursor(&mut self, cursor: SlotStack, snap: &Snapshot) {
-        if cursor == snap.carried {
-            self.cursor = None;
-            return;
-        }
-        if self.cursor.as_ref() != Some(&cursor) {
-            self.cursor_base = snap.carried.clone();
-            self.cursor_age = 0;
-        }
-        self.cursor = Some(cursor);
-    }
-
-    fn retire_cursor(&mut self, snap: &Snapshot) {
-        if self.cursor.is_none() {
-            return;
-        }
-        self.cursor_age = self.cursor_age.saturating_add(1);
-        if snap.carried != self.cursor_base || self.cursor_age >= COMMIT_MAX_FRAMES {
-            self.cursor = None;
-        }
+        self.cursor = if cursor == snap.carried {
+            None
+        } else {
+            Some(cursor)
+        };
     }
 
     pub fn display_cursor(&self, snap: &Snapshot) -> SlotStack {
@@ -610,13 +485,11 @@ const COMMIT_MAX_FRAMES: u8 = 40;
 #[derive(Default)]
 pub struct MenuPreview {
     slots: Option<Vec<SlotStack>>,
-    base: Vec<SlotStack>,
     age: u8,
 }
 
 impl MenuPreview {
-    fn set(&mut self, slots: Vec<SlotStack>, snap: &Snapshot) {
-        self.base = (0..slots.len()).map(|i| snap.slot(i).clone()).collect();
+    fn set(&mut self, slots: Vec<SlotStack>) {
         self.slots = Some(slots);
         self.age = 0;
     }
@@ -630,8 +503,7 @@ fn retire_menu_preview(preview: &mut MenuPreview, snap: &Snapshot, count: usize)
     let Some(slots) = &preview.slots else { return };
     preview.age = preview.age.saturating_add(1);
     let landed = (0..count).all(|i| snap.slot(i) == &slots[i]);
-    let moved = (0..count).any(|i| preview.base.get(i).is_some_and(|b| snap.slot(i) != b));
-    if landed || moved || preview.age >= COMMIT_MAX_FRAMES {
+    if landed || preview.age >= COMMIT_MAX_FRAMES {
         preview.slots = None;
     }
 }
@@ -856,37 +728,6 @@ pub fn emit_outside_click(
     }
 }
 
-pub fn stow_creative_cursor(mut cursor: SlotStack, slots: &[SlotStack], out: &mut Vec<InvAction>) {
-    if slots.len() >= MENU_SLOTS {
-        let max = item_max_stack(cursor.item);
-        for i in HOTBAR_SLOTS.chain(INV_SLOTS) {
-            let existing = &slots[i];
-            if !MenuModel::same_item(&cursor, existing) || existing.count >= max {
-                continue;
-            }
-            let moved = (max - existing.count).min(cursor.count);
-            let mut merged = existing.clone();
-            merged.count += moved;
-            out.push(InvAction::CreativeSet {
-                slot: i as u16,
-                stack: merged,
-            });
-            cursor.count -= moved;
-            if cursor.count == 0 {
-                return;
-            }
-        }
-        if let Some(i) = HOTBAR_SLOTS.chain(INV_SLOTS).find(|i| slots[*i].is_empty()) {
-            out.push(InvAction::CreativeSet {
-                slot: i as u16,
-                stack: cursor,
-            });
-            return;
-        }
-    }
-    out.push(InvAction::CreativeDrop { stack: cursor });
-}
-
 const BEACON_PAYMENT_ITEMS: [&str; 5] = [
     "netherite_ingot",
     "emerald",
@@ -934,26 +775,18 @@ fn item_max_stack(id: &str) -> u8 {
 pub struct MenuModel {
     pub slots: Vec<SlotStack>,
     pub cursor: SlotStack,
-    layout: Layout,
 }
 
 impl MenuModel {
     pub fn from_snapshot(snap: &Snapshot, cursor: SlotStack) -> MenuModel {
-        MenuModel::for_layout(Layout::PlayerMenu, snap, cursor)
-    }
-
-    pub fn for_layout(layout: Layout, snap: &Snapshot, cursor: SlotStack) -> MenuModel {
         MenuModel {
-            slots: (0..layout.slot_count())
-                .map(|i| snap.slot(i).clone())
-                .collect(),
+            slots: (0..MENU_SLOTS).map(|i| snap.slot(i).clone()).collect(),
             cursor,
-            layout,
         }
     }
 
     fn slot_max(&self, slot: usize, stack: &SlotStack) -> u8 {
-        slot_capacity(self.layout, slot, stack.item)
+        slot_capacity(Layout::PlayerMenu, slot, stack.item)
     }
 
     fn safe_insert(&mut self, slot: usize, take: u8) {
@@ -999,15 +832,9 @@ impl MenuModel {
     }
 
     pub fn pickup(&mut self, slot: usize, right: bool) {
-        if !self.layout.may_pickup(slot) {
-            return;
-        }
-        if self.layout.is_output(slot) {
-            self.take_output(slot);
-            return;
-        }
         let clicked = self.slots[slot].clone();
-        let may_place = self.cursor.is_empty() || self.layout.may_place(slot, self.cursor.item);
+        let may_place =
+            self.cursor.is_empty() || Layout::PlayerMenu.may_place(slot, self.cursor.item);
         if clicked.is_empty() {
             if !self.cursor.is_empty() && may_place {
                 let take = if right { 1 } else { self.cursor.count };
@@ -1026,23 +853,6 @@ impl MenuModel {
         } else if may_place && self.cursor.count <= self.slot_max(slot, &self.cursor.clone()) {
             std::mem::swap(&mut self.cursor, &mut self.slots[slot]);
         }
-    }
-
-    fn take_output(&mut self, slot: usize) {
-        let result = self.slots[slot].clone();
-        if result.is_empty() {
-            return;
-        }
-        if self.cursor.is_empty() {
-            self.cursor = result;
-        } else if Self::same_item(&self.cursor, &result)
-            && self.cursor.count + result.count <= item_max_stack(result.item)
-        {
-            self.cursor.count += result.count;
-        } else {
-            return;
-        }
-        self.slots[slot] = SlotStack::default();
     }
 
     pub fn pickup_all(&mut self, slot: usize) {
@@ -1250,48 +1060,6 @@ impl MenuModel {
     }
 }
 
-fn crafter_toggle(
-    click: SlotClick,
-    slot: usize,
-    snap: &Snapshot,
-    menu: &mut MenuModel,
-    out: &mut Vec<InvAction>,
-) {
-    let Layout::Crafter(mask) = menu.layout else {
-        return;
-    };
-    if slot >= 9 || !menu.slots[slot].is_empty() || snap.gamemode == Gamemode::Spectator {
-        return;
-    }
-    let disabled = menu.layout.slot_disabled(slot);
-    let enabled = match click {
-        SlotClick::Pickup { .. } if disabled => true,
-        SlotClick::Pickup { .. } if menu.cursor.is_empty() => false,
-        SlotClick::Swap { button } if disabled => {
-            let item = match button {
-                0..=8 => snap.hotbar(button as usize),
-                40 => snap.offhand(),
-                _ => return,
-            };
-            if item.is_empty() {
-                return;
-            }
-            true
-        }
-        _ => return,
-    };
-    out.push(InvAction::SlotStateChanged {
-        slot: slot as u8,
-        enabled,
-    });
-    let bit = 1 << slot;
-    menu.layout = Layout::Crafter(if enabled { mask & !bit } else { mask | bit });
-}
-
-fn predicts(mode: Mode, layout: Layout, click: SlotClick) -> bool {
-    mode == Mode::Local || layout == Layout::PlayerMenu || matches!(click, SlotClick::Pickup { .. })
-}
-
 pub fn apply_click(
     mode: Mode,
     layout: Layout,
@@ -1302,9 +1070,9 @@ pub fn apply_click(
 ) {
     if mode == Mode::Protocol {
         out.push(InvAction::Click(click_operation(click, slot)));
-    }
-    if !predicts(mode, layout, click) {
-        return;
+        if layout != Layout::PlayerMenu {
+            return;
+        }
     }
     match click {
         SlotClick::Pickup { right } => menu.pickup(slot, right),
@@ -1339,20 +1107,16 @@ pub fn slot_clicks(
     if clicks.is_empty() {
         return (cursor.clone(), None);
     }
-    let predicted = clicks.iter().all(|c| predicts(mode, layout, *c));
-    let mut menu = MenuModel::for_layout(layout, snap, cursor.clone());
+    let mut menu = MenuModel::from_snapshot(snap, cursor.clone());
     for click in clicks {
-        crafter_toggle(click, slot, snap, &mut menu, out);
         apply_click(mode, layout, click, slot, &mut menu, out);
     }
-    match mode {
-        Mode::Local => {
-            menu.emit_creative_sets(snap, out);
-            (menu.cursor, None)
-        }
-        Mode::Protocol if predicted => (menu.cursor, Some(menu.slots)),
-        Mode::Protocol => (cursor.clone(), None),
+    if mode == Mode::Local {
+        menu.emit_creative_sets(snap, out);
     }
+    let preview =
+        (mode == Mode::Protocol && layout == Layout::PlayerMenu).then(|| menu.slots.clone());
+    (menu.cursor, preview)
 }
 
 pub fn panel(
@@ -1371,44 +1135,21 @@ pub fn panel(
         let (sx, sy) = layout.slot_pos(*i);
         ctx.hovering(left + sx - 1.0, top + sy - 1.0, SLOT_PITCH, SLOT_PITCH)
     });
-    #[cfg(feature = "mobile_ui")]
-    let hovered_index = hovered_index.or_else(|| {
-        let at = (0..count).map(|i| {
-            let (sx, sy) = layout.slot_pos(i);
-            (i, (left + sx, top + sy))
-        });
-        nearest_slot(ctx, at)
-    });
-    if let Some(i) = hovered_index {
-        let (sx, sy) = layout.slot_pos(i);
-        state.rest = Some((left + sx, top + sy));
-        #[cfg(feature = "mobile_ui")]
-        {
-            state.tooltip_anchor = state.rest;
-        }
-    }
 
     retire_committed_drag(&mut state.drag, snap);
     retire_menu_preview(&mut state.menu_preview, snap, count);
-    if mode == Mode::Protocol {
-        state.retire_cursor(snap);
-    }
 
     let mut cursor = state.cursor(snap);
 
     let drag_consumed_click = drag_step(ctx, snap, layout, hovered_index, state, &mut cursor, out);
 
-    if let Some(i) = hovered_index
-        && layout.may_pickup(i)
-    {
+    if let Some(i) = hovered_index {
         let (sx, sy) = layout.slot_pos(i);
         p.slot_highlight_back(left + sx, top + sy);
     }
 
     for i in 0..count {
         let (sx, sy) = layout.slot_pos(i);
-        #[cfg(feature = "mobile_ui")]
-        state.note_touch_slot(left + sx, top + sy);
         draw_menu_slot(
             p,
             layout,
@@ -1425,9 +1166,7 @@ pub fn panel(
 
     if let Some(i) = hovered_index {
         let (sx, sy) = layout.slot_pos(i);
-        if layout.may_pickup(i) {
-            p.slot_highlight_front(left + sx, top + sy);
-        }
+        p.slot_highlight_front(left + sx, top + sy);
         let stack = snap.slot(i);
         if !stack.is_empty() {
             hovered = Some(stack.clone());
@@ -1436,19 +1175,14 @@ pub fn panel(
             let (new_cursor, preview) = slot_clicks(ctx.input, mode, layout, i, snap, &cursor, out);
             cursor = new_cursor;
             if let Some(slots) = preview {
-                state.menu_preview.set(slots, snap);
+                state.menu_preview.set(slots);
             }
         }
     }
 
     let (w, h) = layout.size();
-    let outside = !ctx.hovering(
-        left - THROW_MARGIN,
-        top - THROW_MARGIN,
-        w + 2.0 * THROW_MARGIN,
-        h + 2.0 * THROW_MARGIN,
-    );
-    if outside && !drag_consumed_click {
+    let outside = !ctx.hovering(left, top, w, h);
+    if outside {
         for right in [false, true] {
             let released = if right {
                 ctx.input.right_release
@@ -1463,19 +1197,17 @@ pub fn panel(
 
     #[cfg(feature = "mobile_ui")]
     {
-        if !outside {
-            touch_release_place(
-                ctx,
-                snap,
-                layout,
-                mode,
-                hovered_index,
-                drag_consumed_click,
-                state,
-                &mut cursor,
-                out,
-            );
-        }
+        touch_release_place(
+            ctx,
+            snap,
+            layout,
+            mode,
+            hovered_index,
+            drag_consumed_click,
+            state,
+            &mut cursor,
+            out,
+        );
         let target = if outside {
             DropTarget::World
         } else if let Some(i) = hovered_index {
@@ -1490,30 +1222,6 @@ pub fn panel(
     state.set_cursor(cursor, snap);
     hovered
 }
-
-#[cfg(feature = "mobile_ui")]
-const SNAP_REACH: f32 = SLOT_PITCH / 2.0 + 4.0;
-
-#[cfg(feature = "mobile_ui")]
-pub(crate) fn nearest_slot(
-    ctx: &ScreenCtx,
-    slots: impl Iterator<Item = (usize, (f32, f32))>,
-) -> Option<usize> {
-    let m = ctx.mouse()?;
-    slots
-        .map(|(i, (x, y))| {
-            let (dx, dy) = ((m.x - x - 8.0).abs(), (m.y - y - 8.0).abs());
-            (i, dx.max(dy))
-        })
-        .filter(|(_, d)| *d <= SNAP_REACH)
-        .min_by(|a, b| a.1.total_cmp(&b.1))
-        .map(|(i, _)| i)
-}
-
-#[cfg(feature = "mobile_ui")]
-pub(crate) const THROW_MARGIN: f32 = SLOT_PITCH / 2.0;
-#[cfg(not(feature = "mobile_ui"))]
-pub(crate) const THROW_MARGIN: f32 = 0.0;
 
 fn retire_committed_drag(drag: &mut Drag, snap: &Snapshot) {
     if !drag.committed {
@@ -1563,14 +1271,6 @@ pub(crate) fn drag_step(
         state.last_click_slot = hovered;
     }
 
-    #[cfg(feature = "mobile_ui")]
-    if state.drag.active()
-        && state.drag.kind == Some(DragKind::Left)
-        && state.drag.slots.first().copied() != hovered
-    {
-        state.drag.slots.clear();
-        state.drag.remainder = None;
-    }
     if state.drag.active()
         && let Some(slot) = hovered
         && !state.drag.slots.contains(&slot)
@@ -1621,16 +1321,7 @@ pub(crate) fn drag_step(
     }
 
     if double && let Some(&slot) = slots.first() {
-        *cursor = apply_one(
-            mode,
-            layout,
-            SlotClick::PickupAll,
-            slot,
-            snap,
-            cursor,
-            state,
-            out,
-        );
+        *cursor = apply_one(mode, layout, SlotClick::PickupAll, slot, snap, cursor, out);
         return true;
     }
 
@@ -1645,7 +1336,7 @@ pub(crate) fn drag_step(
             right: kind == DragKind::Right,
         };
         if let Some(slot) = slots.first().copied().or(hovered) {
-            *cursor = apply_one(mode, layout, click, slot, snap, cursor, state, out);
+            *cursor = apply_one(mode, layout, click, slot, snap, cursor, out);
         }
         return true;
     }
@@ -1677,7 +1368,6 @@ pub(crate) fn drag_step(
     true
 }
 
-#[allow(clippy::too_many_arguments)]
 fn apply_one(
     mode: Mode,
     layout: Layout,
@@ -1685,24 +1375,15 @@ fn apply_one(
     slot: usize,
     snap: &Snapshot,
     cursor: &SlotStack,
-    state: &mut SlotState,
     out: &mut Vec<InvAction>,
 ) -> SlotStack {
-    let mut menu = MenuModel::for_layout(layout, snap, cursor.clone());
-    crafter_toggle(click, slot, snap, &mut menu, out);
+    let mut menu = MenuModel::from_snapshot(snap, cursor.clone());
     apply_click(mode, layout, click, slot, &mut menu, out);
-    match mode {
-        Mode::Local => {
-            menu.emit_creative_sets(snap, out);
-            menu.cursor
-        }
-        Mode::Protocol if predicts(mode, layout, click) => {
-            state.drag.clear();
-            state.menu_preview.set(menu.slots, snap);
-            menu.cursor
-        }
-        Mode::Protocol => cursor.clone(),
+    if mode == Mode::Local {
+        menu.emit_creative_sets(snap, out);
+        return menu.cursor;
     }
+    cursor.clone()
 }
 
 #[cfg(feature = "mobile_ui")]
@@ -1725,8 +1406,7 @@ pub(crate) fn touch_release_place(
     cursor: &mut SlotStack,
     out: &mut Vec<InvAction>,
 ) -> bool {
-    let released = ctx.input.left_release || ctx.input.right_release;
-    if drag_consumed || !released || cursor.is_empty() || state.drag.active() {
+    if drag_consumed || !ctx.input.left_release || cursor.is_empty() || state.drag.active() {
         return false;
     }
     let origin = state.last_click_slot;
@@ -1736,7 +1416,8 @@ pub(crate) fn touch_release_place(
         _ => origin,
     };
     let Some(target) = target else {
-        return false;
+        *cursor = SlotStack::default();
+        return true;
     };
     *cursor = apply_one(
         mode,
@@ -1745,7 +1426,6 @@ pub(crate) fn touch_release_place(
         target,
         snap,
         cursor,
-        state,
         out,
     );
     true
@@ -1821,15 +1501,7 @@ pub fn draw_menu_slot(
 
 pub fn draw_slot(p: &mut Painter, layout: Layout, i: usize, stack: &SlotStack, x: f32, y: f32) {
     if stack.is_empty() {
-        if layout.slot_disabled(i) {
-            p.sprite(
-                "container/crafter/disabled_slot",
-                x - 1.0,
-                y - 1.0,
-                18.0,
-                18.0,
-            );
-        } else if let Some(sprite) = layout.empty_icon(i) {
+        if let Some(sprite) = layout.empty_icon(i) {
             p.sprite(sprite, x, y, ITEM_SIZE, ITEM_SIZE);
         }
         return;
@@ -1841,7 +1513,11 @@ pub fn draw_stack(p: &mut Painter, stack: &SlotStack, x: f32, y: f32) {
     if stack.is_empty() {
         return;
     }
-    p.item_icon(&stack.model_key(), x, y);
+    if stack.glint {
+        p.item_icon_glint(&stack.model_key(), x, y);
+    } else {
+        p.item_icon(&stack.model_key(), x, y);
+    }
     p.item_decorations(x, y, stack.count, stack.damage, stack.max_damage);
     p.item_cooldown(x, y, stack.cooldown);
 }
@@ -1923,13 +1599,11 @@ mod tests {
                 format!("creative_drop({}x{})", stack.item, stack.count)
             }
             InvAction::Close => "close".into(),
-            InvAction::SlotStateChanged { slot, enabled } => {
-                format!("slot_state({slot},{enabled})")
-            }
             InvAction::ButtonClick(_)
             | InvAction::SelectTrade(_)
             | InvAction::SetBeacon { .. }
-            | InvAction::RenameItem(_) => "other".into(),
+            | InvAction::RenameItem(_)
+            | InvAction::Sort(_) => "other".into(),
         }
     }
 
@@ -2245,114 +1919,6 @@ mod tests {
         menu.pickup(5, false);
         assert_eq!(menu.slots[5].count, 1);
         assert_eq!(menu.cursor.count, 2);
-    }
-
-    #[test]
-    fn shulker_box_and_dispenser_layouts() {
-        let shulker = Layout::ShulkerBox;
-        assert_eq!(shulker.size(), (176.0, 167.0));
-        assert_eq!(shulker.slot_count(), 63);
-        assert_eq!(shulker.slot_pos(0), (8.0, 18.0));
-        assert_eq!(shulker.slot_pos(26), (152.0, 54.0));
-        assert_eq!(shulker.slot_pos(27), (8.0, 84.0));
-        assert_eq!(shulker.slot_pos(62), (152.0, 142.0));
-        assert!(shulker.may_place(4, "stone"));
-        assert!(!shulker.may_place(4, "shulker_box"));
-        assert!(!shulker.may_place(4, "red_shulker_box"));
-        assert!(
-            shulker.may_place(30, "red_shulker_box"),
-            "player rows take anything"
-        );
-
-        let dispenser = Layout::Dispenser;
-        assert_eq!(dispenser.size(), (176.0, 166.0));
-        assert_eq!(dispenser.slot_count(), 45);
-        assert_eq!(dispenser.slot_pos(0), (62.0, 17.0));
-        assert_eq!(dispenser.slot_pos(4), (80.0, 35.0));
-        assert_eq!(dispenser.slot_pos(8), (98.0, 53.0));
-        assert_eq!(dispenser.slot_pos(9), (8.0, 84.0));
-        assert!(dispenser.may_place(0, "red_shulker_box"));
-    }
-
-    #[test]
-    fn crafter_layout_and_slot_toggles() {
-        let crafter = Layout::Crafter(0b10);
-        assert_eq!(crafter.size(), (176.0, 166.0));
-        assert_eq!(crafter.slot_count(), 46);
-        assert_eq!(crafter.slot_pos(0), (26.0, 17.0));
-        assert_eq!(crafter.slot_pos(8), (62.0, 53.0));
-        assert_eq!(crafter.slot_pos(9), (8.0, 84.0));
-        assert_eq!(crafter.slot_pos(44), (152.0, 142.0));
-        assert_eq!(crafter.slot_pos(45), (134.0, 35.0));
-        assert!(crafter.may_place(0, "stone"));
-        assert!(!crafter.may_place(1, "stone"), "disabled slot");
-        assert!(crafter.may_place(10, "stone"));
-        assert!(!crafter.may_place(45, "stone"), "result slot");
-        assert!(!crafter.may_pickup(45));
-        assert!(crafter.may_pickup(0));
-
-        let survival = snap(Gamemode::Survival, &[(2, stack("stone", 1))]);
-        let click = |snap: &Snapshot, input: GuiInput, slot: usize| {
-            let mut out = Vec::new();
-            slot_clicks(
-                &input,
-                Mode::Protocol,
-                crafter,
-                slot,
-                snap,
-                &SlotStack::default(),
-                &mut out,
-            );
-            out.iter().map(describe).collect::<Vec<_>>()
-        };
-        assert_eq!(
-            click(&survival, left(), 0),
-            ["slot_state(0,false)", "pickup_left(0)"]
-        );
-        assert_eq!(
-            click(&survival, right(), 1),
-            ["slot_state(1,true)", "pickup_right(1)"]
-        );
-        assert_eq!(
-            click(&survival, left(), 2),
-            ["pickup_left(2)"],
-            "occupied slot"
-        );
-        assert_eq!(
-            click(&survival, left(), 10),
-            ["pickup_left(10)"],
-            "player row"
-        );
-        let spectator = snap(Gamemode::Spectator, &[]);
-        assert_eq!(click(&spectator, left(), 0), ["pickup_left(0)"]);
-
-        let mut key = GuiInput::default();
-        key.hotbar_keys[3] = true;
-        assert_eq!(click(&survival, key.clone(), 0), ["swap(0,3)"]);
-        assert_eq!(click(&survival, key.clone(), 1), ["swap(1,3)"]);
-        let mut hotbar = vec![SlotStack::default(); 10];
-        hotbar[3] = stack("stone", 4);
-        let holding = Snapshot {
-            hotbar: hotbar.into(),
-            ..snap(Gamemode::Survival, &[])
-        };
-        assert_eq!(click(&holding, key, 1), ["slot_state(1,true)", "swap(1,3)"]);
-
-        let mut state = SlotState::default();
-        let mut out = Vec::new();
-        let after = apply_one(
-            Mode::Protocol,
-            crafter,
-            SlotClick::Pickup { right: false },
-            1,
-            &survival,
-            &stack("stone", 5),
-            &mut state,
-            &mut out,
-        );
-        let out: Vec<_> = out.iter().map(describe).collect();
-        assert_eq!(out, ["slot_state(1,true)", "pickup_left(1)"]);
-        assert!(after.is_empty());
     }
 
     #[test]
@@ -2809,7 +2375,6 @@ mod tests {
         assert!(cursor.is_empty());
     }
 
-    #[cfg(not(feature = "mobile_ui"))]
     #[test]
     fn a_sweep_spreads_over_every_slot_it_crossed() {
         let (acts, cursor) = gesture(
@@ -2827,130 +2392,6 @@ mod tests {
             ]
         );
         assert!(cursor.is_empty());
-    }
-
-    #[cfg(feature = "mobile_ui")]
-    #[test]
-    fn a_touch_sweep_moves_the_stack_to_where_it_lifts() {
-        let (acts, cursor) = gesture(
-            Gamemode::Creative,
-            &[],
-            stack("stone", 9),
-            vec![press(9), hold(10), hold(11), release(Some(11))],
-        );
-        assert_eq!(acts, vec!["set(11,stonex9)".to_string()]);
-        assert!(cursor.is_empty());
-    }
-
-    #[cfg(feature = "mobile_ui")]
-    #[test]
-    fn a_touch_sweep_lifted_between_slots_keeps_the_stack() {
-        let (acts, cursor) = gesture(
-            Gamemode::Creative,
-            &[],
-            stack("stone", 9),
-            vec![press(9), hold(10), release(None)],
-        );
-        assert!(acts.is_empty(), "unexpected {acts:?}");
-        assert_eq!(cursor.count, 9);
-    }
-
-    #[cfg(feature = "mobile_ui")]
-    #[test]
-    fn a_release_with_no_slot_to_return_to_keeps_the_stack() {
-        let snapshot = Snapshot {
-            carried: stack("stone", 8),
-            ..snap(Gamemode::Survival, &[])
-        };
-        let mut state = SlotState::default();
-        let mut cursor = snapshot.carried.clone();
-        let mut out = Vec::new();
-        let input = GuiInput {
-            left_release: true,
-            ..Default::default()
-        };
-        let ctx = ScreenCtx {
-            input: &input,
-            vw: 400.0,
-            vh: 240.0,
-        };
-        touch_release_place(
-            &ctx,
-            &snapshot,
-            Layout::Stonecutter,
-            Mode::Protocol,
-            None,
-            false,
-            &mut state,
-            &mut cursor,
-            &mut out,
-        );
-        assert_eq!(out.len(), 0, "nothing is sent");
-        assert_eq!(cursor.count, 8, "the stack the server holds stays in hand");
-    }
-
-    #[test]
-    fn a_stale_cursor_prediction_gives_up_eventually() {
-        let snapshot = snap(Gamemode::Survival, &[]);
-        let mut state = SlotState::default();
-        state.set_cursor(stack("stone", 8), &snapshot);
-        for _ in 0..COMMIT_MAX_FRAMES - 1 {
-            state.retire_cursor(&snapshot);
-            let cursor = state.cursor(&snapshot);
-            state.set_cursor(cursor, &snapshot);
-        }
-        assert_eq!(state.cursor(&snapshot).count, 8, "still waiting");
-        state.retire_cursor(&snapshot);
-        assert!(
-            state.cursor(&snapshot).is_empty(),
-            "the server's cursor wins"
-        );
-    }
-
-    #[test]
-    fn a_cursor_prediction_yields_to_the_next_server_update() {
-        let before = snap(Gamemode::Survival, &[]);
-        let mut state = SlotState::default();
-        state.set_cursor(stack("stone", 1), &before);
-
-        let landed = Snapshot {
-            carried: stack("stone", 2),
-            ..snap(Gamemode::Survival, &[])
-        };
-        state.retire_cursor(&landed);
-        assert_eq!(state.cursor(&landed).count, 2);
-    }
-
-    #[test]
-    fn a_screen_change_forgets_the_predicted_cursor() {
-        let snapshot = snap(Gamemode::Survival, &[]);
-        let mut state = SlotState::default();
-        state.set_cursor(stack("stone", 8), &snapshot);
-        state.reset_for_screen_change();
-        assert!(state.cursor(&snapshot).is_empty());
-    }
-
-    #[test]
-    fn a_stowed_creative_cursor_merges_then_fills_then_drops() {
-        let slots = snap(
-            Gamemode::Creative,
-            &[(36, stack("stone", 60)), (37, stack("dirt", 1))],
-        )
-        .menu_slots;
-        let mut out = Vec::new();
-        stow_creative_cursor(stack("stone", 10), &slots, &mut out);
-        assert_eq!(
-            out.iter().map(describe).collect::<Vec<_>>(),
-            vec!["set(36,stonex64)", "set(38,stonex6)"]
-        );
-
-        let full = vec![stack("dirt", 64); MENU_SLOTS];
-        let mut out = Vec::new();
-        stow_creative_cursor(stack("stone", 10), &full, &mut out);
-        assert_eq!(
-            out.iter().map(describe).collect::<Vec<_>>(),
-            vec!["creative_drop(stonex10)"]
-        );
     }
 
     #[test]
@@ -3270,15 +2711,18 @@ mod tests {
         step(release, &snapshot, &mut state, &mut cursor, &mut out);
 
         assert_eq!(out.len(), 1, "one click queued");
-        assert!(cursor.is_empty(), "the place is predicted at once");
-        assert!(!state.drag.active());
-        assert_eq!(
-            state.menu_preview.slot(9).map(|s| s.count),
-            Some(8),
-            "the slot shows what is about to land in it"
+        assert!(
+            state.drag.committed,
+            "the gesture is over but still drawing"
+        );
+        assert!(
+            state
+                .drag
+                .slot_preview(Layout::Chest(3), 9, &snapshot, &cursor)
+                .is_some(),
+            "the slot still shows what is about to land in it"
         );
 
-        let count = Layout::Chest(3).slot_count();
         for _ in 0..3 {
             step(
                 GuiInput::default(),
@@ -3287,97 +2731,19 @@ mod tests {
                 &mut cursor,
                 &mut out,
             );
-            retire_menu_preview(&mut state.menu_preview, &snapshot, count);
+            retire_committed_drag(&mut state.drag, &snapshot);
         }
-        assert_eq!(out.len(), 1, "the release must not re-fire");
-        assert!(state.menu_preview.slot(9).is_some(), "still waiting");
+        assert_eq!(out.len(), 1, "the release must not re-fire while committed");
+        assert!(state.drag.committed, "still waiting on the snapshot");
 
-        let mut applied = snap(Gamemode::Survival, &[(9, stack("stone", 8))]);
-        applied.menu_slots.resize(count, SlotStack::default());
-        retire_menu_preview(&mut state.menu_preview, &applied, count);
-        assert!(state.menu_preview.slot(9).is_none());
-    }
-
-    #[test]
-    fn a_container_pickup_is_predicted() {
-        let snapshot = snap(Gamemode::Survival, &[(3, stack("stone", 20))]);
-        let mut out = Vec::new();
-        let (cursor, preview) = slot_clicks(
-            &left(),
-            Mode::Protocol,
-            Layout::Chest(3),
-            3,
-            &snapshot,
-            &SlotStack::default(),
-            &mut out,
-        );
-        assert_eq!(
-            out.iter().map(describe).collect::<Vec<_>>(),
-            vec!["pickup_left(3)"]
-        );
-        assert_eq!(cursor.count, 20);
-        assert!(preview.unwrap()[3].is_empty());
-    }
-
-    #[test]
-    fn a_container_quick_move_is_left_to_the_server() {
-        let snapshot = snap(Gamemode::Survival, &[(3, stack("stone", 20))]);
-        let mut out = Vec::new();
-        let shift = GuiInput {
-            shift: true,
-            ..left()
-        };
-        let (cursor, preview) = slot_clicks(
-            &shift,
-            Mode::Protocol,
-            Layout::Chest(3),
-            3,
-            &snapshot,
-            &SlotStack::default(),
-            &mut out,
-        );
-        assert_eq!(out.len(), 1);
-        assert!(cursor.is_empty());
-        assert!(preview.is_none());
-    }
-
-    #[test]
-    fn an_output_slot_gives_its_whole_result_and_takes_nothing() {
-        let snapshot = snap(Gamemode::Survival, &[(0, stack("stick", 4))]);
-        let mut menu = MenuModel::for_layout(Layout::Crafting, &snapshot, SlotStack::default());
-        menu.pickup(0, true);
-        assert_eq!(menu.cursor.count, 4, "a right click takes the whole result");
-        assert!(menu.slots[0].is_empty());
-
-        let mut menu = MenuModel::for_layout(Layout::Crafting, &snapshot, stack("stick", 62));
-        menu.pickup(0, false);
-        assert_eq!(
-            menu.cursor.count, 62,
-            "no room for the result on the cursor"
-        );
-        assert_eq!(menu.slots[0].count, 4);
-
-        let mut menu = MenuModel::for_layout(Layout::Crafting, &snapshot, stack("stick", 10));
-        menu.pickup(0, false);
-        assert_eq!(menu.cursor.count, 14);
-    }
-
-    #[test]
-    fn a_preview_yields_to_any_change_in_the_snapshot() {
-        let before = snap(Gamemode::Survival, &[(0, stack("stick", 4))]);
-        let mut preview = MenuPreview::default();
-        let mut predicted = before.menu_slots.clone();
-        predicted[0] = SlotStack::default();
-        preview.set(predicted, &before);
-
-        let crafted = snap(
-            Gamemode::Survival,
-            &[(0, stack("stick", 4)), (1, stack("oak_planks", 1))],
-        );
-        retire_menu_preview(&mut preview, &crafted, MENU_SLOTS);
+        let applied = snap(Gamemode::Survival, &[(9, stack("stone", 8))]);
+        retire_committed_drag(&mut state.drag, &applied);
+        assert!(!state.drag.committed);
         assert!(
-            preview.slot(0).is_none(),
-            "the bot's view replaces the guess"
+            state
+                .drag
+                .slot_preview(Layout::Chest(3), 9, &applied, &cursor)
+                .is_none()
         );
     }
 

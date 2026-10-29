@@ -79,6 +79,7 @@ fn beam_spec(
         .with_refresh(refresh)
         .with_full_bright(|_| true)
         .with_light(LightMode::Emissive)
+        .with_beam()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

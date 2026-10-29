@@ -338,9 +338,6 @@ fn mesh_buf(w: &mut Writer, buf: &MeshBuf) {
     w.bytes(bytemuck::cast_slice(&buf.verts));
     w.bytes(bytemuck::cast_slice(&buf.idx));
     w.bytes(bytemuck::cast_slice(&buf.cutout_idx));
-    for v in buf.faces.as_flattened() {
-        w.u32(u32::from(*v));
-    }
 }
 
 fn read_mesh_buf(r: &mut Reader) -> Option<MeshBuf> {
@@ -355,22 +352,17 @@ fn read_mesh_buf(r: &mut Reader) -> Option<MeshBuf> {
     let verts = read_pod(r.bytes()?)?;
     let idx = read_pod(r.bytes()?)?;
     let cutout_idx = read_pod(r.bytes()?)?;
-    let mut buf = MeshBuf {
+    Some(MeshBuf {
         verts,
         idx,
         cutout_idx,
         min,
         max,
-        faces: Default::default(),
         #[cfg(feature = "shader_support")]
         pack: Vec::new(),
         #[cfg(feature = "shader_support")]
         pack_block: None,
-    };
-    for v in buf.faces.as_flattened_mut() {
-        *v = u16::try_from(r.u32()?).ok()?;
-    }
-    Some(buf)
+    })
 }
 
 fn read_pod<T: bytemuck::Pod>(bytes: &[u8]) -> Option<Vec<T>> {

@@ -18,8 +18,6 @@ pub(crate) fn container_kind(menu: &Menu) -> ContainerKind {
         Menu::BlastFurnace { .. } => ContainerKind::Furnace(FurnaceKind::BlastFurnace),
         Menu::Smoker { .. } => ContainerKind::Furnace(FurnaceKind::Smoker),
         Menu::Hopper { .. } => ContainerKind::Hopper,
-        Menu::ShulkerBox { .. } => ContainerKind::ShulkerBox,
-        Menu::Generic3x3 { .. } => ContainerKind::Dispenser,
         Menu::Grindstone { .. } => ContainerKind::Grindstone,
         Menu::Enchantment { .. } => ContainerKind::Enchantment,
         Menu::Loom { .. } => ContainerKind::Loom,
@@ -31,8 +29,36 @@ pub(crate) fn container_kind(menu: &Menu) -> ContainerKind {
         Menu::Merchant { .. } => ContainerKind::Merchant,
         Menu::Lectern { .. } => ContainerKind::Lectern,
         Menu::Anvil { .. } => ContainerKind::Anvil,
-        Menu::Crafter3x3 { .. } => ContainerKind::Crafter,
-        Menu::Player(_) => ContainerKind::None,
+        _ => ContainerKind::None,
+    }
+}
+
+/// `ItemStack.hasFoil`: the override when an item sets one, otherwise whether
+/// it carries enchantments.
+/// The worn trim, by registry key names (vanilla palettes share them).
+pub(crate) fn armor_trim(
+    data: &azalea_inventory::ItemStackData,
+    registries: &azalea_core::registry_holder::RegistryHolder,
+) -> Option<crate::entities::render::humanoid::armor::Trim> {
+    use azalea_core::data_registry::DataRegistryWithKey;
+    let trim = data.get_component::<azalea_inventory::components::Trim>()?;
+    fn name<K: azalea_registry::DataRegistryKey>(key: Option<K>) -> Option<String> {
+        Some(key?.into_ident().path().to_owned())
+    }
+    let pattern = name(trim.pattern.key_owned(registries))?;
+    let material = name(trim.material.key_owned(registries))?;
+    Some(crate::entities::render::humanoid::armor::Trim::new(
+        &pattern, &material,
+    ))
+}
+
+pub(crate) fn has_glint(data: &azalea_inventory::ItemStackData) -> bool {
+    use azalea_inventory::components as comp;
+    match data.get_component::<comp::EnchantmentGlintOverride>() {
+        Some(o) => o.show_glint,
+        None => data
+            .get_component::<comp::Enchantments>()
+            .is_some_and(|e| !e.levels.is_empty()),
     }
 }
 
@@ -131,6 +157,7 @@ pub(crate) fn slot_stack(
         banner_patterns: banner_patterns(data, registries),
         banner_layers: banner_layers(data, registries),
         book: book(data).map(Box::new),
+        glint: has_glint(data),
     }
 }
 
@@ -410,7 +437,6 @@ fn creative_stack(
 pub(crate) fn apply_inv_actions(bot: &Client, actions: Vec<InvAction>, horse: Option<HorseMenu>) {
     use azalea_protocol::packets::game::s_container_button_click::ServerboundContainerButtonClick;
     use azalea_protocol::packets::game::s_container_close::ServerboundContainerClose;
-    use azalea_protocol::packets::game::s_container_slot_state_changed::ServerboundContainerSlotStateChanged;
     use azalea_protocol::packets::game::s_rename_item::ServerboundRenameItem;
     use azalea_protocol::packets::game::s_select_trade::ServerboundSelectTrade;
     use azalea_protocol::packets::game::s_set_beacon::ServerboundSetBeacon;
@@ -480,23 +506,27 @@ pub(crate) fn apply_inv_actions(bot: &Client, actions: Vec<InvAction>, horse: Op
             InvAction::RenameItem(name) => {
                 bot.write_packet(ServerboundRenameItem { name });
             }
-            InvAction::SlotStateChanged { slot, enabled } => {
-                let window_id = bot
-                    .component::<azalea::entity::inventory::Inventory>()
-                    .map(|i| i.id)
-                    .unwrap_or(0);
-                if let Some(mut inv) = bot
-                    .ecs
-                    .write()
-                    .get_mut::<azalea::entity::inventory::Inventory>(bot.entity)
-                {
-                    inv.set_crafter_slot_disabled(slot as usize, !enabled);
+            InvAction::Sort(request) => {
+                if horse.is_some() {
+                    continue;
                 }
-                bot.write_packet(ServerboundContainerSlotStateChanged {
-                    slot_id: slot as u32,
-                    container_id: window_id,
-                    new_state: enabled,
-                });
+                let Ok(inventory) = bot.component::<azalea::entity::inventory::Inventory>() else {
+                    continue;
+                };
+                let abilities = bot
+                    .component::<azalea::entity::PlayerAbilities>()
+                    .map(|a| a.clone())
+                    .unwrap_or_default();
+                let ops = crate::play::inventory_sort::plan(&inventory, &abilities, request);
+                let window_id = inventory.id;
+                drop(inventory);
+                for operation in ops {
+                    bot.ecs.write().trigger(ContainerClickEvent {
+                        entity: bot.entity,
+                        window_id,
+                        operation,
+                    });
+                }
             }
             InvAction::Close => {
                 if let Some(horse) = horse.as_ref() {

@@ -2,7 +2,7 @@ use azalea_core::position::BlockPos;
 
 use crate::gui::painter::Painter;
 use crate::gui::suggestions;
-use crate::gui::widgets::{Button, TextBox, WIDGET_HEIGHT};
+use crate::gui::widgets::{self, Button, TextBox, WIDGET_HEIGHT};
 use crate::gui::{Screen, ScreenCtx};
 use crate::session::{CommandBlockData, CommandBlockMode as Mode, CommandBlockUpdate, SharedMutex};
 
@@ -152,29 +152,30 @@ pub fn draw(
             .input
             .handle_mouse(ctx.input, &p.atlas.font, x, 50.0, BOX_W, WIDGET_HEIGHT);
     }
-    state.field.handle_edit(ctx.input);
+    if state.field.input.handle_input(ctx.input) {
+        state.field.suggest.allow = true;
+    }
     state
         .field
         .refresh(&p.atlas.font, shared, SUGGEST, anchor(ctx));
 
-    p.text_centered(
-        "Set Console Command for Block",
-        ctx.vw / 2.0,
-        20.0,
-        0xFFFFFF,
-        true,
-    );
+    widgets::draw_title(p, ctx.vw, 20.0, "Set Console Command for Block");
     p.text_str("Console Command", x + 1.0, 40.0, LABEL, true);
     if state.field.input.suggestion != state.field.suggest.ghost {
         state.field.input.suggestion = state.field.suggest.ghost.clone();
     }
-    state.field.input.draw(p, x, 50.0, BOX_W, WIDGET_HEIGHT);
+    let frame = p.frame;
+    state
+        .field
+        .input
+        .draw(p, x, 50.0, BOX_W, WIDGET_HEIGHT, frame);
 
     if !state.previous.text.is_empty() {
         p.text_str("Previous Output", x + 1.0, PREVIOUS_Y - 10.0, LABEL, true);
+        let frame = p.frame;
         state
             .previous
-            .draw(p, x, PREVIOUS_Y, PREVIOUS_W, WIDGET_HEIGHT);
+            .draw(p, x, PREVIOUS_Y, PREVIOUS_W, WIDGET_HEIGHT, frame);
     }
 
     let output = Button {
@@ -286,7 +287,7 @@ mod visual {
 
     use super::*;
     use crate::gui::atlas::build_gui_atlas;
-    use crate::gui::preview::save_upscaled;
+    use crate::gui::preview::{output_dir, rasterize, upscale};
     use crate::gui::render::GuiInput;
     use crate::gui::{GuiState, Screen};
     use crate::session::SharedMutex;
@@ -310,7 +311,8 @@ mod visual {
             #[cfg(feature = "skins")]
             &mut Default::default(),
         );
-        save_upscaled(&p, vw as u32, vh as u32, name);
+        let img = rasterize(&p, vw as u32, vh as u32, [70, 110, 170, 255]);
+        upscale(&img, 2).save(output_dir().join(name)).unwrap();
     }
 
     #[test]

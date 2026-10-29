@@ -207,6 +207,56 @@ impl AzBuf for ItemStack {
     }
 }
 
+/// Vanilla's `ItemStackTemplate` layout: item, count, components, with no
+/// empty form. Stacks nested inside components, particles, advancements and
+/// recipe displays use this instead of the count-first slot layout.
+impl ItemStack {
+    pub fn read_template(buf: &mut Cursor<&[u8]>) -> Result<Self, BufReadError> {
+        let kind = ItemKind::azalea_read(buf)?;
+        let count = i32::azalea_read_var(buf)?;
+        let component_patch = DataComponentPatch::azalea_read(buf)?;
+        Ok(ItemStackData {
+            kind,
+            count,
+            component_patch,
+        }
+        .into())
+    }
+
+    pub fn write_template(&self, buf: &mut impl Write) -> io::Result<()> {
+        match self {
+            ItemStack::Empty => {
+                ItemKind::Air.azalea_write(buf)?;
+                1_i32.azalea_write_var(buf)?;
+                DataComponentPatch::default().azalea_write(buf)
+            }
+            ItemStack::Present(data) => {
+                data.kind.azalea_write(buf)?;
+                data.count.azalea_write_var(buf)?;
+                data.component_patch.azalea_write(buf)
+            }
+        }
+    }
+
+    pub fn read_optional_template(buf: &mut Cursor<&[u8]>) -> Result<Self, BufReadError> {
+        if bool::azalea_read(buf)? {
+            Self::read_template(buf)
+        } else {
+            Ok(ItemStack::Empty)
+        }
+    }
+
+    pub fn write_optional_template(&self, buf: &mut impl Write) -> io::Result<()> {
+        match self {
+            ItemStack::Empty => false.azalea_write(buf),
+            ItemStack::Present(_) => {
+                true.azalea_write(buf)?;
+                self.write_template(buf)
+            }
+        }
+    }
+}
+
 impl From<ItemStackData> for ItemStack {
     fn from(item: ItemStackData) -> Self {
         if item.is_empty() {
@@ -422,7 +472,7 @@ impl DataComponentPatch {
                 .checked_add(length)
                 .filter(|end| *end <= data.len())
                 .ok_or_else(|| {
-                    BufReadError::Custom(format!(
+                    BufReadError::custom(format!(
                         "component of {length} bytes runs past the end of the buffer"
                     ))
                 })?;

@@ -116,11 +116,14 @@ fn parse_nodes(
         let mut context = context_so_far.clone();
         let mut reader = cursor;
 
-        if let Err(error) = parse_child(tree, child, input, &mut reader, &mut context) {
-            errors.push((child, error));
-            continue;
+        match parse_child(tree, child, input, &mut reader, &mut context) {
+            Err(error) => {
+                errors.push((child, error));
+                continue;
+            }
+            Ok(()) => {}
         }
-        if input.get(reader).is_some_and(|&c| c != ' ') {
+        if reader < input.len() && input[reader] != ' ' {
             errors.push((child, ParseError::ExpectedSeparator));
             continue;
         }
@@ -151,11 +154,14 @@ fn parse_nodes(
         }
     }
 
-    if let Some(best) = potentials
-        .into_iter()
-        .min_by_key(|p| (p.can_read(input), !p.errors.is_empty()))
-    {
-        return best;
+    if !potentials.is_empty() {
+        if potentials.len() > 1 {
+            potentials.sort_by(|a, b| {
+                let key = |p: &Parse| (p.can_read(input), !p.errors.is_empty());
+                key(a).cmp(&key(b))
+            });
+        }
+        return potentials.into_iter().next().unwrap();
     }
 
     Parse {
@@ -179,7 +185,7 @@ fn parse_child(
             let chars: Vec<char> = name.chars().collect();
             let end = start + chars.len();
             let matched = end <= input.len() && input[start..end] == chars[..];
-            if matched && matches!(input.get(end), None | Some(' ')) {
+            if matched && (end == input.len() || input[end] == ' ') {
                 *cursor = end;
                 context.with_node(child, Range::between(start, end));
                 Ok(())
@@ -197,34 +203,31 @@ fn parse_child(
     }
 }
 
-pub(super) fn read_while<'a>(
-    input: &'a [char],
-    cursor: &mut usize,
-    pred: impl Fn(char) -> bool,
-) -> &'a [char] {
+fn read_unquoted(input: &[char], cursor: &mut usize) -> String {
     let start = *cursor;
-    while input.get(*cursor).is_some_and(|&c| pred(c)) {
+    while *cursor < input.len() && is_unquoted_char(input[*cursor]) {
         *cursor += 1;
     }
-    &input[start..*cursor]
-}
-
-fn read_unquoted(input: &[char], cursor: &mut usize) -> String {
-    read_while(input, cursor, is_unquoted_char).iter().collect()
+    input[start..*cursor].iter().collect()
 }
 
 fn is_unquoted_char(c: char) -> bool {
     c.is_ascii_digit() || c.is_ascii_alphabetic() || matches!(c, '_' | '-' | '.' | '+')
 }
 
-fn read_token<'a>(input: &'a [char], cursor: &mut usize) -> &'a [char] {
-    read_while(input, cursor, |c| c != ' ')
+fn read_token(input: &[char], cursor: &mut usize) -> String {
+    let start = *cursor;
+    while *cursor < input.len() && input[*cursor] != ' ' {
+        *cursor += 1;
+    }
+    input[start..*cursor].iter().collect()
 }
 
 fn read_quotable(input: &[char], cursor: &mut usize) -> Result<String, String> {
-    let Some(&quote) = input.get(*cursor) else {
+    if *cursor >= input.len() {
         return Ok(String::new());
-    };
+    }
+    let quote = input[*cursor];
     if quote != '"' && quote != '\'' {
         return Ok(read_unquoted(input, cursor));
     }
@@ -259,7 +262,7 @@ fn read_balanced(
     open: char,
     close: char,
 ) -> Result<(), String> {
-    if input.get(*cursor) != Some(&open) {
+    if *cursor >= input.len() || input[*cursor] != open {
         return Err(format!("Expected '{open}'"));
     }
     let mut depth = 0usize;
@@ -291,14 +294,16 @@ fn read_balanced(
 }
 
 fn read_id_with_state(input: &[char], cursor: &mut usize) -> Result<(), String> {
-    if input.get(*cursor) == Some(&'#') {
+    if *cursor < input.len() && input[*cursor] == '#' {
         *cursor += 1;
     }
-    read_while(input, cursor, |c| is_unquoted_char(c) || c == ':');
-    if input.get(*cursor) == Some(&'[') {
+    while *cursor < input.len() && (is_unquoted_char(input[*cursor]) || input[*cursor] == ':') {
+        *cursor += 1;
+    }
+    if *cursor < input.len() && input[*cursor] == '[' {
         read_balanced(input, cursor, '[', ']')?;
     }
-    if input.get(*cursor) == Some(&'{') {
+    if *cursor < input.len() && input[*cursor] == '{' {
         read_balanced(input, cursor, '{', '}')?;
     }
     Ok(())
@@ -307,16 +312,17 @@ fn read_id_with_state(input: &[char], cursor: &mut usize) -> Result<(), String> 
 pub(super) const SELECTORS: [&str; 6] = ["@p", "@a", "@r", "@s", "@e", "@n"];
 
 fn read_selector(input: &[char], cursor: &mut usize) -> Result<(), String> {
-    if input.get(*cursor) == Some(&'@') {
+    if *cursor < input.len() && input[*cursor] == '@' {
         *cursor += 1;
-        let Some(&kind) = input.get(*cursor) else {
+        if *cursor >= input.len() {
             return Err("Missing selector type".to_string());
-        };
+        }
+        let kind = input[*cursor];
         if !SELECTORS.iter().any(|s| s.ends_with(kind)) {
             return Err(format!("Unknown selector type '@{kind}'"));
         }
         *cursor += 1;
-        if input.get(*cursor) == Some(&'[') {
+        if *cursor < input.len() && input[*cursor] == '[' {
             read_balanced(input, cursor, '[', ']')?;
         }
         return Ok(());
@@ -341,57 +347,57 @@ fn is_uuid(name: &str) -> bool {
 }
 
 fn read_world_coordinate(input: &[char], cursor: &mut usize, integer: bool) -> Result<(), String> {
-    let Some(&first) = input.get(*cursor) else {
+    if *cursor < input.len() && input[*cursor] == '^' {
+        return Err(MIXED_COORDINATES.to_string());
+    }
+    if *cursor >= input.len() {
         return Err(if integer {
             "Expected a block position".to_string()
         } else {
             "Expected a coordinate".to_string()
         });
-    };
-    if first == '^' {
-        return Err(MIXED_COORDINATES.to_string());
     }
-    let relative = first == '~';
+    let relative = input[*cursor] == '~';
     if relative {
         *cursor += 1;
     }
-    if matches!(input.get(*cursor), None | Some(' ')) {
+    if *cursor >= input.len() || input[*cursor] == ' ' {
         return Ok(());
     }
     read_number(input, cursor, integer && !relative)
 }
 
 fn read_local_coordinate(input: &[char], cursor: &mut usize) -> Result<(), String> {
-    match input.get(*cursor) {
-        None => return Err(incomplete(3)),
-        Some('^') => {}
-        Some(_) => return Err(MIXED_COORDINATES.to_string()),
+    if *cursor >= input.len() {
+        return Err(incomplete(3));
+    }
+    if input[*cursor] != '^' {
+        return Err(MIXED_COORDINATES.to_string());
     }
     *cursor += 1;
-    if matches!(input.get(*cursor), None | Some(' ')) {
+    if *cursor >= input.len() || input[*cursor] == ' ' {
         return Ok(());
     }
     read_number(input, cursor, false)
 }
 
 fn read_number(input: &[char], cursor: &mut usize, integer: bool) -> Result<(), String> {
-    if integer {
-        read_bounded::<i32>(input, cursor, "integer").map(|_| ())
-    } else {
-        read_bounded::<f64>(input, cursor, "double").map(|_| ())
-    }
-}
-
-fn read_bounded<T: std::str::FromStr>(
-    input: &[char],
-    cursor: &mut usize,
-    kind: &str,
-) -> Result<T, String> {
     let word = read_number_word(input, cursor);
     if word.is_empty() {
-        return Err(format!("Expected {kind}"));
+        return Err(format!(
+            "Expected {}",
+            if integer { "integer" } else { "double" }
+        ));
     }
-    word.parse().map_err(|_| format!("Invalid {kind} '{word}'"))
+    if integer {
+        word.parse::<i32>()
+            .map(|_| ())
+            .map_err(|_| format!("Invalid integer '{word}'"))
+    } else {
+        word.parse::<f64>()
+            .map(|_| ())
+            .map_err(|_| format!("Invalid double '{word}'"))
+    }
 }
 
 const MIXED_COORDINATES: &str =
@@ -408,10 +414,10 @@ fn read_coordinates(
     integer: bool,
     local: bool,
 ) -> Result<(), String> {
-    let is_local = local && input.get(*cursor) == Some(&'^');
+    let is_local = local && *cursor < input.len() && input[*cursor] == '^';
     for i in 0..axes {
         if i > 0 {
-            if input.get(*cursor) != Some(&' ') {
+            if *cursor >= input.len() || input[*cursor] != ' ' {
                 return Err(incomplete(axes));
             }
             *cursor += 1;
@@ -461,19 +467,41 @@ pub(super) fn parse_argument(
             }
         }
         BrigadierParser::Integer(n) => {
-            let v: i32 = read_bounded(input, cursor, "integer")?;
+            let word = read_number_word(input, cursor);
+            if word.is_empty() {
+                return Err("Expected integer".to_string());
+            }
+            let v: i32 = word
+                .parse()
+                .map_err(|_| format!("Invalid integer '{word}'"))?;
             check_range("Integer", v, n.min, n.max)
         }
         BrigadierParser::Long(n) => {
-            let v: i64 = read_bounded(input, cursor, "long")?;
+            let word = read_number_word(input, cursor);
+            if word.is_empty() {
+                return Err("Expected long".to_string());
+            }
+            let v: i64 = word.parse().map_err(|_| format!("Invalid long '{word}'"))?;
             check_range("Long", v, n.min, n.max)
         }
         BrigadierParser::Float(n) => {
-            let v: f32 = read_bounded(input, cursor, "float")?;
+            let word = read_number_word(input, cursor);
+            if word.is_empty() {
+                return Err("Expected float".to_string());
+            }
+            let v: f32 = word
+                .parse()
+                .map_err(|_| format!("Invalid float '{word}'"))?;
             check_range("Float", v, n.min, n.max)
         }
         BrigadierParser::Double(n) => {
-            let v: f64 = read_bounded(input, cursor, "double")?;
+            let word = read_number_word(input, cursor);
+            if word.is_empty() {
+                return Err("Expected double".to_string());
+            }
+            let v: f64 = word
+                .parse()
+                .map_err(|_| format!("Invalid double '{word}'"))?;
             check_range("Double", v, n.min, n.max)
         }
         BrigadierParser::String(kind) => match kind {
@@ -491,17 +519,31 @@ pub(super) fn parse_argument(
             *cursor = input.len();
             Ok(())
         }
-        BrigadierParser::FormattedText | BrigadierParser::Style | BrigadierParser::NbtTag => {
-            match input.get(*cursor) {
-                Some('{') => read_balanced(input, cursor, '{', '}'),
-                Some('[') => read_balanced(input, cursor, '[', ']'),
-                _ => read_quotable(input, cursor).map(|_| ()),
+        BrigadierParser::FormattedText | BrigadierParser::Style => {
+            if *cursor < input.len() && (input[*cursor] == '{' || input[*cursor] == '[') {
+                let (open, close) = if input[*cursor] == '{' {
+                    ('{', '}')
+                } else {
+                    ('[', ']')
+                };
+                read_balanced(input, cursor, open, close)
+            } else {
+                read_quotable(input, cursor).map(|_| ())
             }
         }
         BrigadierParser::NbtCompoundTag => read_balanced(input, cursor, '{', '}'),
+        BrigadierParser::NbtTag => {
+            if *cursor < input.len() && input[*cursor] == '{' {
+                read_balanced(input, cursor, '{', '}')
+            } else if *cursor < input.len() && input[*cursor] == '[' {
+                read_balanced(input, cursor, '[', ']')
+            } else {
+                read_quotable(input, cursor).map(|_| ())
+            }
+        }
         BrigadierParser::Entity(_) | BrigadierParser::GameProfile => read_selector(input, cursor),
         BrigadierParser::ScoreHolder { .. } => {
-            if input.get(*cursor) == Some(&'*') {
+            if *cursor < input.len() && input[*cursor] == '*' {
                 *cursor += 1;
                 Ok(())
             } else {
@@ -529,9 +571,11 @@ pub(super) fn parse_argument(
 }
 
 fn read_number_word(input: &[char], cursor: &mut usize) -> String {
-    read_while(input, cursor, |c| {
-        c.is_ascii_digit() || matches!(c, '.' | '-')
-    })
-    .iter()
-    .collect()
+    let start = *cursor;
+    while *cursor < input.len()
+        && (input[*cursor].is_ascii_digit() || matches!(input[*cursor], '.' | '-'))
+    {
+        *cursor += 1;
+    }
+    input[start..*cursor].iter().collect()
 }

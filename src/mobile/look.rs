@@ -73,66 +73,9 @@ impl LastTap {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-pub struct ZoomTaps {
-    pub latched: bool,
-    pub nth: u8,
-    last: Option<f32>,
-}
-
-impl ZoomTaps {
-    pub fn press(&mut self, now: f32, cfg: &MobileConfig) {
-        let more = self.last.is_some_and(|t| now - t <= cfg.double_tap_secs);
-        self.nth = if more { self.nth + 1 } else { 1 };
-    }
-
-    pub fn release(&mut self, tap: bool, now: f32) {
-        self.last = None;
-        if tap && self.nth >= 3 {
-            self.latched = !self.latched;
-        } else if tap {
-            self.last = Some(now);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_triple_tap_toggles_the_zoom_latch() {
-        let c = cfg();
-        let mut z = ZoomTaps::default();
-        for i in 0..6 {
-            let t = i as f32 * 0.2;
-            z.press(t, &c);
-            z.release(true, t + 0.05);
-            assert_eq!(z.latched, (2..5).contains(&i));
-        }
-
-        let mut slow = ZoomTaps::default();
-        for i in 0..3 {
-            let at = i as f32 * (c.double_tap_secs + 0.1);
-            slow.press(at, &c);
-            assert_eq!(slow.nth, 1);
-            slow.release(true, at);
-        }
-        assert!(!slow.latched);
-    }
-
-    #[test]
-    fn a_held_press_ends_the_run() {
-        let c = cfg();
-        let mut z = ZoomTaps::default();
-        z.press(0.0, &c);
-        z.release(true, 0.05);
-        z.press(0.2, &c);
-        assert_eq!(z.nth, 2);
-        z.release(false, 1.5);
-        z.press(1.6, &c);
-        assert_eq!(z.nth, 1);
-    }
 
     fn cfg() -> MobileConfig {
         MobileConfig::default()

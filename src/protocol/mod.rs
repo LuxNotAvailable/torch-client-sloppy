@@ -6,6 +6,7 @@
 pub(crate) mod hop;
 pub(crate) mod packets;
 pub(crate) mod remap;
+mod v775;
 pub(crate) mod version;
 pub(crate) mod wire;
 
@@ -130,7 +131,7 @@ pub(crate) fn session() -> i32 {
 }
 
 pub(crate) fn entity_metadata_is_native() -> bool {
-    session() == version::NATIVE.protocol
+    version::metadata_matches_native(session())
 }
 
 pub(crate) fn translator() -> Option<Box<dyn azalea::connection::PacketTranslator>> {

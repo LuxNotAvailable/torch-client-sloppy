@@ -14,65 +14,11 @@ pub struct MobEffectInstance {
     pub duration: i32,
     pub ambient: bool,
     pub show_icon: bool,
-    pub blend: [f32; 2],
 }
 
 impl MobEffectInstance {
     pub fn is_infinite(&self) -> bool {
         self.duration == -1
-    }
-
-    pub fn blend_factor(&self, partial: f32) -> f32 {
-        self.blend[0] + (self.blend[1] - self.blend[0]) * partial
-    }
-}
-
-pub fn find<'a>(effects: &'a [MobEffectInstance], id: &str) -> Option<&'a MobEffectInstance> {
-    effects.iter().find(|e| e.id == id)
-}
-
-pub fn effect_blend_factor(effects: &[MobEffectInstance], id: &str, partial: f32) -> f32 {
-    find(effects, id).map_or(0.0, |e| e.blend_factor(partial))
-}
-
-#[derive(Clone, Copy, Default)]
-struct BlendState {
-    previous: f32,
-    factor: f32,
-}
-
-impl BlendState {
-    fn has_effect(id: &str, duration: i32) -> bool {
-        let [_, _, advance] = effect_meta(id).blend;
-        duration == -1 || duration > advance
-    }
-
-    fn immediate(id: &str, duration: i32) -> BlendState {
-        let factor = if Self::has_effect(id, duration) {
-            1.0
-        } else {
-            0.0
-        };
-        BlendState {
-            previous: factor,
-            factor,
-        }
-    }
-
-    fn tick(&mut self, id: &str, duration: i32) {
-        self.previous = self.factor;
-        let has_effect = Self::has_effect(id, duration);
-        let target = if has_effect { 1.0 } else { 0.0 };
-        if self.factor != target {
-            let [blend_in, blend_out, _] = effect_meta(id).blend;
-            let ticks = if has_effect { blend_in } else { blend_out };
-            if ticks == 0 {
-                self.factor = target;
-            } else {
-                let max_delta = 1.0 / ticks as f32;
-                self.factor += (target - self.factor).clamp(-max_delta, max_delta);
-            }
-        }
     }
 }
 
@@ -87,7 +33,6 @@ struct EffectMeta {
     category: Category,
     color: u32,
     modifier: Option<(&'static str, f64, u8)>,
-    blend: [i32; 3],
 }
 
 fn effect_meta(id: &str) -> EffectMeta {
@@ -135,16 +80,10 @@ fn effect_meta(id: &str) -> EffectMeta {
         "breath_of_the_nautilus" => (B, 65518, None),
         _ => (H, 0xFFFFFF, None),
     };
-    let blend = match id {
-        "nausea" => [150, 20, 60],
-        "darkness" => [22; 3],
-        _ => [0; 3],
-    };
     EffectMeta {
         category,
         color,
         modifier,
-        blend,
     }
 }
 
@@ -212,7 +151,7 @@ pub fn compare(a: &MobEffectInstance, b: &MobEffectInstance) -> Ordering {
     }
 }
 
-type DurationState = HashMap<AzMobEffect, (i32, i32, BlendState)>;
+type DurationState = HashMap<AzMobEffect, (i32, i32)>;
 
 static STATE: OnceLock<Mutex<DurationState>> = OnceLock::new();
 
@@ -225,35 +164,25 @@ pub fn tick_active_effects(active: &ActiveEffects) -> Vec<MobEffectInstance> {
 
     let mut out = Vec::with_capacity(active.0.len());
     for (id, data) in &active.0 {
-        let name = id.to_str().trim_start_matches("minecraft:");
-        let entry = state.entry(*id).or_insert_with(|| {
-            let blend = if data.flags.blend {
-                BlendState::default()
-            } else {
-                BlendState::immediate(name, data.duration)
-            };
-            (data.duration, data.duration, blend)
-        });
+        let entry = state.entry(*id).or_insert((data.duration, data.duration));
         if data.duration == -1 {
-            (entry.0, entry.1) = (-1, -1);
+            *entry = (-1, -1);
         } else if entry.0 != data.duration {
-            (entry.0, entry.1) = (data.duration, data.duration);
+            *entry = (data.duration, data.duration);
         } else if entry.1 > 0 {
             entry.1 -= 1;
         }
-        entry.2.tick(name, entry.1);
 
         if entry.1 <= 0 && data.duration != -1 {
             continue;
         }
 
         out.push(MobEffectInstance {
-            id: name.to_string(),
+            id: id.to_str().trim_start_matches("minecraft:").to_string(),
             amplifier: data.amplifier,
             duration: entry.1,
             ambient: data.flags.ambient,
             show_icon: data.flags.show_icon,
-            blend: [entry.2.previous, entry.2.factor],
         });
     }
     out

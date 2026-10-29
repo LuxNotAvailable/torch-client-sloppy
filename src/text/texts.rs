@@ -1,8 +1,6 @@
-use std::sync::Arc;
+use std::sync::OnceLock;
 
 use serde_json::Value;
-
-use crate::util::reload::Reloadable;
 
 fn parse_splashes(text: &str) -> Vec<String> {
     text.lines()
@@ -12,51 +10,40 @@ fn parse_splashes(text: &str) -> Vec<String> {
         .collect()
 }
 
-static SPLASHES: Reloadable<Vec<String>> = Reloadable::new(|| {
-    crate::platform::assets::read_to_string(crate::assets_root().join("texts/splashes.txt"))
-        .map(|text| parse_splashes(&text))
-        .unwrap_or_default()
-});
-static END: Reloadable<Option<String>> = Reloadable::new(|| read_text("texts/end.txt"));
-static POST: Reloadable<Option<String>> = Reloadable::new(|| read_text("texts/postcredits.txt"));
-static CREDITS: Reloadable<Vec<CreditsSection>> = Reloadable::new(|| {
-    crate::platform::assets::read_to_string(crate::assets_root().join("texts/credits.json"))
-        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-        .map(|root| parse_credits(&root))
-        .unwrap_or_default()
-});
-
-fn read_text(path: &str) -> Option<String> {
-    crate::platform::assets::read_to_string(crate::assets_root().join(path))
-        .map(|text| text.into_owned())
+pub fn splashes() -> &'static [String] {
+    static SPLASHES: OnceLock<Vec<String>> = OnceLock::new();
+    SPLASHES
+        .get_or_init(|| {
+            crate::platform::assets::read_to_string(crate::assets_root().join("texts/splashes.txt"))
+                .map(|text| parse_splashes(&text))
+                .unwrap_or_default()
+        })
+        .as_slice()
 }
 
-pub(crate) fn reset() {
-    SPLASHES.reset();
-    END.reset();
-    POST.reset();
-    CREDITS.reset();
-}
-
-pub fn splashes() -> Arc<Vec<String>> {
-    SPLASHES.get()
-}
-
-pub fn splash_for(seed: u64) -> Option<String> {
+pub fn splash_for(seed: u64) -> Option<&'static str> {
     let list = splashes();
     if list.is_empty() {
         return None;
     }
     let index = (seed % list.len() as u64) as usize;
-    Some(list[index].clone())
+    Some(list[index].as_str())
 }
 
-pub fn end_poem() -> Option<String> {
-    END.get().as_ref().clone()
+pub fn end_poem() -> Option<&'static str> {
+    static END: OnceLock<Option<std::borrow::Cow<'static, str>>> = OnceLock::new();
+    END.get_or_init(|| {
+        crate::platform::assets::read_to_string(crate::assets_root().join("texts/end.txt"))
+    })
+    .as_deref()
 }
 
-pub fn post_credits() -> Option<String> {
-    POST.get().as_ref().clone()
+pub fn post_credits() -> Option<&'static str> {
+    static POST: OnceLock<Option<std::borrow::Cow<'static, str>>> = OnceLock::new();
+    POST.get_or_init(|| {
+        crate::platform::assets::read_to_string(crate::assets_root().join("texts/postcredits.txt"))
+    })
+    .as_deref()
 }
 
 #[derive(Debug, Clone)]
@@ -128,8 +115,16 @@ fn parse_credits(root: &Value) -> Vec<CreditsSection> {
         .collect()
 }
 
-pub fn credits() -> Arc<Vec<CreditsSection>> {
-    CREDITS.get()
+pub fn credits() -> &'static [CreditsSection] {
+    static CREDITS: OnceLock<Vec<CreditsSection>> = OnceLock::new();
+    CREDITS
+        .get_or_init(|| {
+            crate::platform::assets::read_to_string(crate::assets_root().join("texts/credits.json"))
+                .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+                .map(|root| parse_credits(&root))
+                .unwrap_or_default()
+        })
+        .as_slice()
 }
 
 #[cfg(test)]

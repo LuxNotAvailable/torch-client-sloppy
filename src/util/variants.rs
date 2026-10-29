@@ -51,12 +51,6 @@ impl WolfVariant {
     }
 }
 
-pub(crate) struct PaintingVariant {
-    pub(crate) asset_id: String,
-    pub(crate) width: u32,
-    pub(crate) height: u32,
-}
-
 struct Variants {
     cat: HashMap<String, MobVariant>,
     cow: HashMap<String, MobVariant>,
@@ -64,36 +58,32 @@ struct Variants {
     chicken: HashMap<String, MobVariant>,
     frog: HashMap<String, MobVariant>,
     wolf: HashMap<String, WolfVariant>,
-    painting: HashMap<String, PaintingVariant>,
 }
 
 static VARIANTS: OnceLock<Variants> = OnceLock::new();
 
 fn variants() -> &'static Variants {
-    VARIANTS.get_or_init(|| Variants {
-        cat: mob_registry("cat_variant"),
-        cow: mob_registry("cow_variant"),
-        pig: mob_registry("pig_variant"),
-        chicken: mob_registry("chicken_variant"),
-        frog: mob_registry("frog_variant"),
-        wolf: wolf_registry(),
-        painting: painting_registry(),
+    VARIANTS.get_or_init(|| {
+        let loaded = Variants {
+            cat: mob_registry("cat_variant"),
+            cow: mob_registry("cow_variant"),
+            pig: mob_registry("pig_variant"),
+            chicken: mob_registry("chicken_variant"),
+            frog: mob_registry("frog_variant"),
+            wolf: wolf_registry(),
+        };
+        crate::log_info!(
+            "variants",
+            "cat {}, wolf {}, cow {}, pig {}, chicken {}, frog {}",
+            loaded.cat.len(),
+            loaded.wolf.len(),
+            loaded.cow.len(),
+            loaded.pig.len(),
+            loaded.chicken.len(),
+            loaded.frog.len()
+        );
+        loaded
     })
-}
-
-fn painting_registry() -> HashMap<String, PaintingVariant> {
-    datapack::entries("painting_variant")
-        .into_iter()
-        .filter_map(|(id, json)| {
-            let size = |key: &str| json.get(key).and_then(Value::as_u64).map(|v| v as u32);
-            let variant = PaintingVariant {
-                asset_id: datapack::bare_id(json.get("asset_id")?)?.to_owned(),
-                width: size("width")?,
-                height: size("height")?,
-            };
-            Some((id, variant))
-        })
-        .collect()
 }
 
 fn mob_registry(registry: &str) -> HashMap<String, MobVariant> {
@@ -169,10 +159,6 @@ pub(crate) fn frog(id: &str) -> Option<&'static MobVariant> {
 
 pub(crate) fn wolf(id: &str) -> Option<&'static WolfVariant> {
     variants().wolf.get(key(id))
-}
-
-pub(crate) fn painting(id: &str) -> Option<&'static PaintingVariant> {
-    variants().painting.get(key(id))
 }
 
 #[cfg(test)]

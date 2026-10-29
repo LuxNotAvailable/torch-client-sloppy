@@ -4,15 +4,14 @@ use bevy::prelude::Transform;
 use crate::entities::MODEL_Y_OFFSET;
 use crate::entities::registry::Registry;
 
-pub mod billboard;
 pub mod blocks;
 pub mod boat;
 pub mod frame;
-pub mod lightning;
 pub mod minecart;
 pub mod misc;
 pub mod painting;
 pub mod projectile;
+pub mod sprites;
 pub mod thrown;
 
 pub fn register(registry: &mut Registry) {
@@ -23,9 +22,8 @@ pub fn register(registry: &mut Registry) {
     blocks::register(registry);
     frame::register(registry);
     thrown::register(registry);
-    billboard::register(registry);
-    lightning::register(registry);
     painting::register(registry);
+    sprites::register(registry);
 }
 
 pub(crate) fn mirror() -> Mat4 {

@@ -10,12 +10,17 @@ use super::hand::HandCamera;
 use super::panorama::PanoramaCamera;
 use super::systems::WorldCamera;
 
-const SSAA_SCALE: f32 = 2.0;
-
 const MIN_RENDER_SCALE: f32 = 0.5;
 
-fn render_scale(antialiasing: bool, scale_factor: f32) -> f32 {
-    let per_logical_pixel = if antialiasing { SSAA_SCALE } else { 1.0 };
+/// The scene's size against the window's. Supersampling scales physical
+/// pixels, so it works the same at any display scaling; without it the
+/// scene is one pixel per physical pixel, or (on mobile) may drop toward one
+/// per logical pixel.
+fn render_scale(supersample: Option<f32>, scale_factor: f32) -> f32 {
+    if let Some(scale) = supersample {
+        return scale;
+    }
+    let per_logical_pixel = 1.0;
     let scale_factor = if scale_factor.is_finite() && scale_factor > 0.0 {
         scale_factor
     } else {
@@ -76,11 +81,10 @@ fn apply_ssaa(
         window.physical_width().max(1),
         window.physical_height().max(1),
     );
+    let supersample = state.options.antialiasing.supersample();
     #[cfg(feature = "shader_support")]
-    let antialiasing = state.options.antialiasing && !crate::renderer::packvertex::active();
-    #[cfg(not(feature = "shader_support"))]
-    let antialiasing = state.options.antialiasing;
-    let scale = render_scale(antialiasing, window.scale_factor());
+    let supersample = supersample.filter(|_| !crate::renderer::packvertex::active());
+    let scale = render_scale(supersample, window.scale_factor());
     let enabled = scale != 1.0;
     let camera_count = scene_cameras.iter().count();
     if window_size == target.window_size
@@ -151,64 +155,31 @@ mod tests {
     }
 
     #[test]
-    fn scene_is_sized_per_logical_pixel() {
-        let cases = [
-            (1.0, false, 1.0),
-            (1.0, true, 2.0),
-            (2.0, false, test_floor()),
-            (2.0, true, 1.0),
-            (2.625, false, test_floor()),
-            (2.625, true, (2.0f32 / 2.625).max(test_floor())),
-            (3.5, false, test_floor()),
-            (3.5, true, (2.0f32 / 3.5).max(test_floor())),
-        ];
-        for (factor, antialiasing, want) in cases {
-            let got = render_scale(antialiasing, factor);
-            assert!(
-                (got - want).abs() < 1e-6,
-                "scale factor {factor}, antialiasing {antialiasing}: got {got}, want {want}",
-            );
+    fn supersampling_scales_physical_pixels_at_any_display_scaling() {
+        for factor in [1.0, 1.25, 1.5, 2.0, 2.625, 3.5] {
+            assert_eq!(render_scale(Some(1.5), factor), 1.5, "scale factor {factor}");
+            assert_eq!(render_scale(Some(2.0), factor), 2.0, "scale factor {factor}");
         }
     }
 
     #[test]
-    fn a_denser_display_never_costs_more() {
-        for antialiasing in [false, true] {
-            let asked_for = if antialiasing { SSAA_SCALE } else { 1.0 };
-            let mut previous = f32::INFINITY;
-            for step in 1..=80 {
-                let factor = step as f32 * 0.1;
-                let scale = render_scale(antialiasing, factor);
-
-                assert!(
-                    scale >= test_floor() - 1e-6,
-                    "factor {factor}: {scale} is below the floor",
-                );
-                assert!(
-                    scale <= asked_for + 1e-6,
-                    "factor {factor}: {scale} is more than the option asked for",
-                );
-                assert!(
-                    scale <= previous + 1e-6,
-                    "factor {factor}: {scale} rose above {previous}; a denser display got dearer",
-                );
-
-                let per_logical = scale * factor;
-                assert!(
-                    per_logical <= asked_for + 1e-6 || (scale - test_floor()).abs() < 1e-6,
-                    "factor {factor}: {per_logical} per logical pixel exceeds {asked_for} \
-                     without the floor being the reason",
-                );
-                previous = scale;
-            }
+    fn without_supersampling_a_denser_display_never_costs_more() {
+        let mut previous = f32::INFINITY;
+        for step in 1..=80 {
+            let factor = step as f32 * 0.1;
+            let scale = render_scale(None, factor);
+            assert!(scale >= test_floor() - 1e-6, "factor {factor}: {scale} is below the floor");
+            assert!(scale <= 1.0 + 1e-6, "factor {factor}: {scale} is above one per pixel");
+            assert!(scale <= previous + 1e-6, "factor {factor}: {scale} rose above {previous}");
+            previous = scale;
         }
     }
 
     #[test]
     fn an_unset_scale_factor_falls_back() {
         for bad in [0.0, -1.0, f32::NAN, f32::INFINITY] {
-            assert_eq!(render_scale(false, bad), 1.0, "scale factor {bad}");
-            assert_eq!(render_scale(true, bad), SSAA_SCALE, "scale factor {bad}");
+            assert_eq!(render_scale(None, bad), 1.0, "scale factor {bad}");
+            assert_eq!(render_scale(Some(2.0), bad), 2.0, "scale factor {bad}");
         }
     }
 }

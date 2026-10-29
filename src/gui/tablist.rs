@@ -101,8 +101,8 @@ pub fn draw(
     let mut max_line_width = total_width;
 
     let wrap_width = screen_w - 50.0;
-    let header_lines = font.wrap_nonempty(&list.header, wrap_width);
-    let footer_lines = font.wrap_nonempty(&list.footer, wrap_width);
+    let header_lines = wrap(font, &list.header, wrap_width);
+    let footer_lines = wrap(font, &list.footer, wrap_width);
     for line in header_lines.iter().chain(footer_lines.iter()) {
         max_line_width = max_line_width.max(width_of(line));
     }
@@ -313,8 +313,8 @@ pub fn draw_side(
     let width_of = |spans: &[Span]| font.width(spans).ceil();
 
     let wrap_width = ctx.vw - 50.0;
-    let header_lines = font.wrap_nonempty(&list.header, wrap_width);
-    let footer_lines = font.wrap_nonempty(&list.footer, wrap_width);
+    let header_lines = wrap(font, &list.header, wrap_width);
+    let footer_lines = wrap(font, &list.footer, wrap_width);
 
     let slot_width = HEAD + max_name_width + width_for_score + 13.0;
     let mut inner_w = slot_width;
@@ -449,6 +449,13 @@ pub fn hide(state: &mut TabListState) {
     }
 }
 
+fn wrap(font: &crate::text::Font, spans: &[Span], width: f32) -> Vec<Vec<Span>> {
+    if spans.is_empty() {
+        return Vec::new();
+    }
+    font.wrap(spans, width)
+}
+
 fn ping_icon(p: &mut Painter, slot_width: f32, xo: f32, yo: f32, latency: i32) {
     let sprite = match latency {
         l if l < 0 => "icon/ping_unknown",
@@ -502,7 +509,8 @@ fn hearts(
         } else {
             short
         };
-        p.text_centered(&text, (right + left) / 2.0, yo, rgb, true);
+        let x = ((right + left - p.atlas.font.width_str(&text).ceil()) / 2.0).floor();
+        p.text_str(&text, x, yo, rgb, true);
         return;
     }
 
@@ -590,9 +598,17 @@ mod visual {
     use super::*;
     use crate::client::tablist::TabObjective;
     use crate::gui::atlas::build_gui_atlas;
-    use crate::gui::preview::save_upscaled;
+    use crate::gui::preview::{output_dir, rasterize, upscale};
     use crate::gui::render::GuiInput;
+    use crate::text::Style;
     use bevy::prelude::Vec2;
+
+    fn span(text: &str, color: u32) -> Span {
+        Span {
+            text: text.to_string(),
+            style: Style::colored(color),
+        }
+    }
 
     fn rows(objective: bool) -> Vec<TabRow> {
         let names = [
@@ -609,9 +625,9 @@ mod visual {
             .map(|(i, &(name, color, latency))| {
                 let mut spans = Vec::new();
                 if i == 1 {
-                    spans.push(Span::colored("[Admin] ", 0xFF5555));
+                    spans.push(span("[Admin] ", 0xFF5555));
                 }
-                spans.push(Span::colored(name, color));
+                spans.push(span(name, color));
                 let spectator = name == "Watcher";
                 if spectator {
                     for s in &mut spans {
@@ -628,7 +644,7 @@ mod visual {
                     upside_down: name == "Dinnerbone" || name == "Grumm",
                     score: (20 - i as i32 * 3).max(1),
                     score_text: objective
-                        .then(|| vec![Span::colored(format!("{}", 1200 - i * 137), 0xFFFF55)])
+                        .then(|| vec![span(&format!("{}", 1200 - i * 137), 0xFFFF55)])
                         .unwrap_or_default(),
                     team: None,
                 }
@@ -657,7 +673,8 @@ mod visual {
             #[cfg(feature = "skins")]
             &mut Default::default(),
         );
-        save_upscaled(&p, vw as u32, vh as u32, name);
+        let img = rasterize(&p, vw as u32, vh as u32, [70, 110, 170, 255]);
+        upscale(&img, 2).save(output_dir().join(name)).unwrap();
     }
 
     #[test]
@@ -679,8 +696,8 @@ mod visual {
         dump(
             &atlas,
             &TabList {
-                header: vec![Span::colored("A Server", 0xFFAA00)],
-                footer: vec![Span::colored("play.example.com", 0xAAAAAA)],
+                header: vec![span("A Server", 0xFFAA00)],
+                footer: vec![span("play.example.com", 0xAAAAAA)],
                 rows: rows(true),
                 objective: Some(TabObjective { hearts: false }),
             },

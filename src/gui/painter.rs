@@ -1,5 +1,5 @@
 use crate::gui::atlas::{GuiAtlas, Region, Scaling};
-use crate::gui::draw::UNIHEX_UV_BIAS;
+use crate::gui::draw::{FIGURE_UV_BIAS, UNIHEX_UV_BIAS};
 use crate::text::{Glyph, Span, Style};
 use crate::util::mth::srgb_to_linear;
 
@@ -87,6 +87,10 @@ pub struct Painter<'a> {
     rng: u32,
     clip: Option<[f32; 4]>,
     xform: (f32, f32, f32),
+    /// The cosine and sine of the turn `rotated` applies about `xform`'s origin.
+    turn: (f32, f32),
+    /// The inventory's player figure, when this frame draws one.
+    pub figure: Option<crate::renderer::inventory_figure::Figure>,
 }
 
 #[derive(Clone, Copy)]
@@ -122,12 +126,9 @@ impl<'a> Painter<'a> {
             rng: frame.wrapping_mul(0x9E37_79B9) | 1,
             clip: None,
             xform: (1.0, 0.0, 0.0),
+            turn: (1.0, 0.0),
+            figure: None,
         }
-    }
-
-    #[cfg(feature = "tutorial")]
-    pub fn xform(&self) -> (f32, f32, f32) {
-        self.xform
     }
 
     pub fn into_buffers(self) -> PainterBuffers {
@@ -165,7 +166,29 @@ impl<'a> Painter<'a> {
 
     fn place(&self, x: f32, y: f32) -> [f32; 3] {
         let (s, ox, oy) = self.xform;
-        [x * s + ox, y * s + oy, 0.0]
+        let (cos, sin) = self.turn;
+        let (x, y) = (x * s, y * s);
+        [x * cos - y * sin + ox, x * sin + y * cos + oy, 0.0]
+    }
+
+    /// Draws `f` scaled by `scale` and turned by `radians` (clockwise on
+    /// screen), both about `(x, y)`, which becomes `f`'s origin. Clipping is
+    /// off inside: a turned rectangle has no axis-aligned clip.
+    pub fn rotated<R>(
+        &mut self,
+        scale: f32,
+        radians: f32,
+        x: f32,
+        y: f32,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let saved = (self.xform, self.turn, self.clip);
+        self.xform = (scale.max(0.0), x, y);
+        self.turn = (radians.cos(), radians.sin());
+        self.clip = None;
+        let out = f(self);
+        (self.xform, self.turn, self.clip) = saved;
+        out
     }
 
     pub fn scaled<R>(&mut self, scale: f32, x: f32, y: f32, f: impl FnOnce(&mut Self) -> R) -> R {
@@ -261,6 +284,7 @@ impl<'a> Painter<'a> {
             (u0, u1, v0, v1) = (nu0, nu1, nv0, nv1);
             (x, y, w, h) = (x0, y0, x1 - x0, y1 - y0);
         }
+        let base = self.positions.len() as u32;
         let bias = if unihex { UNIHEX_UV_BIAS } else { 0.0 };
         let ([mut au0, av0], [mut au1, av1]) = if unihex {
             (self.atlas.unihex_uv(u0, v0), self.atlas.unihex_uv(u1, v1))
@@ -275,20 +299,44 @@ impl<'a> Painter<'a> {
             self.place(x + w, y + h),
             self.place(x, y + h),
         ];
-        let uvs = [[au0, av0], [au1, av0], [au1, av1], [au0, av1]];
-        self.push_quad(corners, uvs, [color; 4]);
-    }
-
-    fn push_quad(&mut self, corners: [[f32; 3]; 4], uvs: [[f32; 2]; 4], colors: [[f32; 4]; 4]) {
-        let base = self.positions.len() as u32;
         self.positions.extend_from_slice(&corners);
-        self.uvs.extend_from_slice(&uvs);
-        self.colors.extend_from_slice(&colors);
-        self.push_tris(&[[base, base + 2, base + 1], [base, base + 3, base + 2]]);
+        self.uvs.push([au0, av0]);
+        self.uvs.push([au1, av0]);
+        self.uvs.push([au1, av1]);
+        self.uvs.push([au0, av1]);
+        for _ in 0..4 {
+            self.colors.push(color);
+        }
+        self.indices
+            .extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
     }
 
-    fn push_tris(&mut self, tris: &[[u32; 3]]) {
-        self.indices.extend(tris.iter().flatten());
+    /// The player figure in its box (`extractEntityInInventoryFollowsMouse`).
+    /// The renderer draws it into its own texture for the next frames; the
+    /// quad that shows it is drawn once that texture holds it.
+    pub fn figure(&mut self, figure: crate::renderer::inventory_figure::Figure) {
+        self.figure = Some(figure);
+        if !crate::renderer::inventory_figure::ready() {
+            return;
+        }
+        let (x, y) = (figure.x0, figure.y0);
+        let (w, h) = (figure.x1 - figure.x0, figure.y1 - figure.y0);
+        let base = self.positions.len() as u32;
+        let corners = [
+            self.place(x, y),
+            self.place(x + w, y),
+            self.place(x + w, y + h),
+            self.place(x, y + h),
+        ];
+        self.positions.extend_from_slice(&corners);
+        let (u0, u1) = (-FIGURE_UV_BIAS, 1.0 - FIGURE_UV_BIAS);
+        self.uvs
+            .extend_from_slice(&[[u0, 0.0], [u1, 0.0], [u1, 1.0], [u0, 1.0]]);
+        for _ in 0..4 {
+            self.colors.push([1.0; 4]);
+        }
+        self.indices
+            .extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
     }
 
     pub fn fill(&mut self, x: f32, y: f32, w: f32, h: f32, argb: u32) {
@@ -301,6 +349,7 @@ impl<'a> Painter<'a> {
     pub fn gradient_v(&mut self, x: f32, y: f32, w: f32, h: f32, top: u32, bottom: u32) {
         let r = self.atlas.white;
         let (u, v) = (r.x as f32 + 0.5, r.y as f32 + 0.5);
+        let base = self.positions.len() as u32;
         let uv = self.atlas.uv(u, v);
         let corners = [
             self.place(x, y),
@@ -308,34 +357,17 @@ impl<'a> Painter<'a> {
             self.place(x + w, y + h),
             self.place(x, y + h),
         ];
-        let (t, b) = (unpack(top), unpack(bottom));
-        self.push_quad(corners, [uv; 4], [t, t, b, b]);
-    }
-
-    pub fn sprite_quad(
-        &mut self,
-        name: &str,
-        corners: [[f32; 2]; 4],
-        uv: [[f32; 2]; 4],
-        argb: u32,
-        additive: bool,
-    ) {
-        let Some(sp) = self.atlas.sprite(name).copied() else {
-            return;
-        };
-        let mut color = unpack(argb);
-        if additive {
-            color[3] = -1.0;
-        } else if color[3] <= 0.0 {
-            return;
+        self.positions.extend_from_slice(&corners);
+        for _ in 0..4 {
+            self.uvs.push(uv);
         }
-        let r = sp.region;
-        let positions = corners.map(|[x, y]| self.place(x, y));
-        let uvs = uv.map(|[u, v]| {
-            self.atlas
-                .uv(r.x as f32 + u * r.w as f32, r.y as f32 + v * r.h as f32)
-        });
-        self.push_quad(positions, uvs, [color; 4]);
+        let (t, b) = (unpack(top), unpack(bottom));
+        self.colors.push(t);
+        self.colors.push(t);
+        self.colors.push(b);
+        self.colors.push(b);
+        self.indices
+            .extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
     }
 
     fn region_part(
@@ -585,16 +617,6 @@ impl<'a> Painter<'a> {
         self.text_plain(s, x, y, argb_rgb, shadow)
     }
 
-    pub fn text_centered(&mut self, s: &str, cx: f32, y: f32, argb_rgb: u32, shadow: bool) -> f32 {
-        let x = self.centered_x(s, cx);
-        self.text_plain(s, x, y, argb_rgb, shadow);
-        x
-    }
-
-    pub fn centered_x(&self, s: &str, cx: f32) -> f32 {
-        (cx - self.atlas.font.width_str(s) / 2.0).floor()
-    }
-
     fn draw_spans(&mut self, spans: &[Span], x: f32, y: f32, as_shadow: bool, alpha: f32) -> f32 {
         let a = (alpha.clamp(0.0, 1.0) * 255.0).round() as u32;
         let mut pen = x;
@@ -698,6 +720,44 @@ impl<'a> Painter<'a> {
         self.region_part(
             r, 0.0, 0.0, r.w as f32, r.h as f32, x, y, ITEM_SIZE, ITEM_SIZE, [1.0; 4],
         );
+    }
+
+    /// An icon with the enchantment shimmer over it: the icon again, flagged
+    /// for the shader, which keeps its alpha and paints the moving bands.
+    pub fn item_icon_glint(&mut self, id: &str, x: f32, y: f32) {
+        self.item_icon(id, x, y);
+        let Some(r) = self.atlas.item_for_size(id, ITEM_SIZE * self.scale) else {
+            return;
+        };
+        let (f, g) = glint_phase();
+        let first = self.uvs.len();
+        self.region_part(
+            r,
+            0.0,
+            0.0,
+            r.w as f32,
+            r.h as f32,
+            x,
+            y,
+            ITEM_SIZE,
+            ITEM_SIZE,
+            [f, g, 0.0, 1.0],
+        );
+        // Blue and alpha carry each corner's place in the icon, so the glint
+        // scales with the icon rather than with wherever the atlas packed it.
+        let span = |axis: usize| {
+            self.uvs[first..]
+                .iter()
+                .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), uv| {
+                    (lo.min(uv[axis]), hi.max(uv[axis]))
+                })
+        };
+        let (u, v) = (span(0), span(1));
+        for (uv, color) in self.uvs[first..].iter_mut().zip(&mut self.colors[first..]) {
+            color[2] = (uv[0] - u.0) / (u.1 - u.0).max(f32::EPSILON);
+            color[3] = (uv[1] - v.0) / (v.1 - v.0).max(f32::EPSILON);
+            uv[1] += crate::gui::draw::GLINT_UV_BIAS;
+        }
     }
 
     fn potion_layers(&mut self, item: &str, color: u32, x: f32, y: f32) {
@@ -970,10 +1030,15 @@ impl<'a> Painter<'a> {
         let inner = base + 1;
         let outer = inner + CORNER_SEGMENTS as u32 + 1;
         for i in 0..CORNER_SEGMENTS as u32 {
-            self.push_tris(&[
-                [base, inner + i, inner + i + 1],
-                [inner + i, outer + i, inner + i + 1],
-                [inner + i + 1, outer + i, outer + i + 1],
+            self.indices
+                .extend_from_slice(&[base, inner + i, inner + i + 1]);
+            self.indices.extend_from_slice(&[
+                inner + i,
+                outer + i,
+                inner + i + 1,
+                inner + i + 1,
+                outer + i,
+                outer + i + 1,
             ]);
         }
     }
@@ -1030,4 +1095,19 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) -> u32 {
         _ => (v, p, q),
     };
     ((r * 255.0) as u32) << 16 | ((g * 255.0) as u32) << 8 | (b * 255.0) as u32
+}
+
+/// Vanilla's two glint scroll phases: `millis * glintSpeed * 8` (glint speed
+/// 0.5) through 110 000 and 30 000, as fractions of each cycle.
+fn glint_phase() -> (f32, f32) {
+    static START: std::sync::OnceLock<crate::platform::time::Instant> = std::sync::OnceLock::new();
+    let ticks = START
+        .get_or_init(crate::platform::time::Instant::now)
+        .elapsed()
+        .as_millis() as u64
+        * 4;
+    (
+        (ticks % 110_000) as f32 / 110_000.0,
+        (ticks % 30_000) as f32 / 30_000.0,
+    )
 }

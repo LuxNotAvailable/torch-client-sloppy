@@ -14,8 +14,7 @@ pub enum Action {
     Declined = 1,
     FailedDownload = 2,
     Accepted = 3,
-    Downloaded = 4,
-    InvalidUrl = 5,
-    FailedReload = 6,
-    Discarded = 7,
+    InvalidUrl = 4,
+    FailedReload = 5,
+    Discarded = 6,
 }

@@ -54,7 +54,7 @@ impl Dimension {
         }
     }
 
-    fn registry_id(self) -> &'static str {
+    pub(crate) fn registry_id(self) -> &'static str {
         match self {
             Dimension::Overworld => "overworld",
             Dimension::Nether => "the_nether",
@@ -306,6 +306,18 @@ static SEA_LEVEL: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::n
 
 pub fn set_sea_level(level: i32) {
     SEA_LEVEL.store(level, Ordering::Relaxed);
+}
+
+static HORIZON: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(63);
+
+/// Below this eye height the dark lower sky disc is drawn: the world's floor on
+/// a superflat world, 63 everywhere else.
+pub fn set_horizon(flat_floor: Option<i32>) {
+    HORIZON.store(flat_floor.unwrap_or(63), Ordering::Relaxed);
+}
+
+pub fn horizon() -> f64 {
+    f64::from(HORIZON.load(Ordering::Relaxed))
 }
 
 #[cfg(feature = "shader_support")]

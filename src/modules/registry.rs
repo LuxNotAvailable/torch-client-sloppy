@@ -30,7 +30,6 @@ pub enum Kind {
         low: f32,
         high: f32,
         decimals: u8,
-        log: bool,
     },
     Enum {
         options: &'static [&'static str],
@@ -262,7 +261,7 @@ modules! {
             List { list: &super::entities::LIST };
         DELAY: "Delay",
             "Milliseconds between swings, rolled fresh inside this range every time",
-            Range { min: 0.0, max: 250.0, low: 45.0, high: 110.0, decimals: 0, log: false };
+            Range { min: 0.0, max: 250.0, low: 45.0, high: 110.0, decimals: 0 };
         WAIT_FOR_COOLDOWN: "Wait for cooldown",
             "Only swing once the attack indicator has fully recharged",
             Toggle { on: true };
@@ -293,7 +292,7 @@ modules! {
             Slider { min: 0.0, max: 5.0, value: 1.0, decimals: 1 };
         REACTION: "Reaction",
             "Milliseconds a newly acquired target is left alone for, rolled inside this range",
-            Range { min: 0.0, max: 400.0, low: 100.0, high: 220.0, decimals: 0, log: false };
+            Range { min: 0.0, max: 400.0, low: 100.0, high: 220.0, decimals: 0 };
         IGNORE_WALLS: "Ignore walls",
             "Keep pulling toward a target that has stepped behind blocks",
             Toggle { on: false };
@@ -321,7 +320,7 @@ modules! {
             Toggle { on: true };
         TURN: "Turn speed",
             "Degrees per second the aim may travel, rolled fresh inside this range for every target",
-            Range { min: 90.0, max: 1800.0, low: 600.0, high: 1000.0, decimals: 0, log: false };
+            Range { min: 90.0, max: 1800.0, low: 600.0, high: 1000.0, decimals: 0 };
         AIM: "Aim point",
             "Where on the hitbox the aim goes. Nearest turns the least",
             Enum<AimPoint> { default: AimPoint::Body };
@@ -358,7 +357,7 @@ modules! {
             Toggle { on: true };
         DELAY: "Delay",
             "Milliseconds after a move before the next one, rolled fresh inside this range",
-            Range { min: 0.0, max: 500.0, low: 0.0, high: 100.0, decimals: 0, log: false };
+            Range { min: 0.0, max: 500.0, low: 0.0, high: 100.0, decimals: 0 };
     }
 
     Xray / xray: Render, Legit,
@@ -451,10 +450,10 @@ modules! {
             Slider { min: 0.0, max: 256.0, value: 0.0, decimals: 0 };
         TURN: "Turn speed",
             "Degrees per second the aim may travel, rolled fresh inside this range for every block",
-            Range { min: 45.0, max: 900.0, low: 180.0, high: 400.0, decimals: 0, log: false };
+            Range { min: 45.0, max: 900.0, low: 180.0, high: 400.0, decimals: 0 };
         DELAY: "Delay",
             "Milliseconds between one block breaking and the next being dug, rolled fresh inside this range",
-            Range { min: 0.0, max: 600.0, low: 90.0, high: 260.0, decimals: 0, log: false };
+            Range { min: 0.0, max: 600.0, low: 90.0, high: 260.0, decimals: 0 };
         HAZARDS: "Stop on hazard",
             "Switch off rather than open a wall with lava or water behind it",
             Toggle { on: true };
@@ -489,13 +488,6 @@ modules! {
             Toggle { on: true };
     }
 
-    VClip / vclip: Movement, Rage,
-        "Moves you straight up or down by a set number of blocks, then switches itself off" {
-        DISTANCE: "Distance",
-            "Whole blocks to move, negative for down. Past 20 a vanilla server puts you back",
-            Slider { min: -50.0, max: 50.0, value: 5.0, decimals: 0 };
-    }
-
     AutoSell / auto_sell: Misc, Normal,
         "Types the sell command whenever a chosen item is in your inventory" {
         ITEMS: "Items",
@@ -511,28 +503,6 @@ modules! {
         PHRASE: "Phrase",
             "Cut out of every chat line, wherever it appears",
             Text { max_len: 64, default: "", expand: true, hint: "Type a phrase" };
-    }
-
-    Spam / spam: Misc, Rage,
-        "Sends a message over and over, a delay apart, with random text around it if you like" {
-        MESSAGE: "Message",
-            "Sent every time. A leading / runs it as a command",
-            Text { max_len: 256, default: "", expand: true, hint: "Type a message" };
-        DELAY: "Delay",
-            "Ticks between messages, 20 to a second, rolled fresh inside this range. Under 20 for long gets you kicked, and a lagging server needs more",
-            Range { min: 1.0, max: 1200.0, low: 40.0, high: 80.0, decimals: 0, log: true };
-        PREFIX: "Prefix",
-            "Put random letters and digits and a space before the message. Skipped for a command",
-            Toggle { on: false };
-        PREFIX_LENGTH: "Prefix length",
-            "How many random characters go in front, rolled inside this range",
-            Range { min: 1.0, max: 16.0, low: 4.0, high: 8.0, decimals: 0, log: false };
-        SUFFIX: "Suffix",
-            "Put a space and random letters and digits after the message",
-            Toggle { on: false };
-        SUFFIX_LENGTH: "Suffix length",
-            "How many random characters go after, rolled inside this range",
-            Range { min: 1.0, max: 16.0, low: 4.0, high: 8.0, decimals: 0, log: false };
     }
 
 }
@@ -554,8 +524,6 @@ mod tests {
         assert_eq!(name(flight::FOR.0), "Anti kick for");
         assert_eq!(name(special::PHRASE.0), "Phrase");
         assert_eq!(name(auto_sell::COMMAND.0), "Command");
-        assert_eq!(name(spam::SUFFIX_LENGTH.0), "Suffix length");
-        assert_eq!(name(vclip::DISTANCE.0), "Distance");
         for m in &MODULES {
             assert!(std::ptr::eq(module(m.id), m));
         }

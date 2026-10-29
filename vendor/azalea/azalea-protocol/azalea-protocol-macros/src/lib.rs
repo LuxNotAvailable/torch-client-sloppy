@@ -22,6 +22,15 @@ fn as_packet_derive(input: TokenStream, state: proc_macro2::TokenStream) -> Toke
 
     let variant_name = variant_name_from(&ident);
 
+    let read_tracing_span = if cfg!(debug_assertions) {
+        quote! {
+            let span = azalea_buf::tracing::span!(azalea_buf::tracing::Level::INFO, stringify!(#ident)).entered();
+        }
+    } else {
+        // don't bother inserting the code if debug mode is disabled
+        quote! {}
+    };
+
     let contents = quote! {
         impl #ident {
             pub fn write(&self, buf: &mut impl std::io::Write) -> std::io::Result<()> {
@@ -31,6 +40,7 @@ fn as_packet_derive(input: TokenStream, state: proc_macro2::TokenStream) -> Toke
             pub fn read(
                 buf: &mut std::io::Cursor<&[u8]>,
             ) -> Result<#state, azalea_buf::BufReadError> {
+                #read_tracing_span
                 use azalea_buf::AzBuf;
                 Ok(crate::packets::Packet::into_variant(Self::azalea_read(buf)?))
             }
@@ -250,7 +260,6 @@ pub fn declare_state_packets(input: TokenStream) -> TokenStream {
                 let data = #module_name::#struct_name::read(buf).map_err(|e| crate::read::ReadPacketError::Parse {
                     source: e,
                     packet_id: #id,
-                    backtrace: Box::new(std::backtrace::Backtrace::capture()),
                     packet_name: #packet_name_litstr.to_string(),
                 })?;
                 #[cfg(debug_assertions)]
@@ -302,7 +311,6 @@ pub fn declare_state_packets(input: TokenStream) -> TokenStream {
                 let data = #module_name::#struct_name::read(buf).map_err(|e| crate::read::ReadPacketError::Parse {
                     source: e,
                     packet_id: #id,
-                    backtrace: Box::new(std::backtrace::Backtrace::capture()),
                     packet_name: #packet_name_litstr.to_string(),
                 })?;
                 #[cfg(debug_assertions)]

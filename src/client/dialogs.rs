@@ -39,7 +39,6 @@ fn known_link_name(kind: KnownLinkKind) -> &'static str {
 }
 
 pub(crate) fn update_tags(tags: &TagMap) {
-    crate::client::recipes::set_item_tags(tags);
     let Some(entries) = tags.get(&azalea_registry::identifier::Identifier::new("dialog")) else {
         return;
     };

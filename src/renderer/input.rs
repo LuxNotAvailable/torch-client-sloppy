@@ -32,6 +32,8 @@ pub struct ThirdPersonState {
     pub active: bool,
 }
 
+pub(super) const THIRD_PERSON_DISTANCE: f32 = 4.0;
+
 pub(crate) fn run_exit_tasks() {
     save_on_session_end();
     crate::client::bot::shutdown_connection();
@@ -70,15 +72,11 @@ struct NavPoll {
     container_kind: crate::session::ContainerKind,
     sign_editor_open: Option<crate::session::SignEditRequest>,
     signing_prompt: bool,
-    server_pack_prompt: bool,
     book_open: Option<crate::session::InteractionHand>,
     book_edit_open: Option<crate::session::BookEditRequest>,
     command_block_open: Option<crate::session::CommandBlockOpen>,
     dialog_show: Option<std::sync::Arc<crate::play::dialog::Dialog>>,
     dialog_clear: bool,
-    win_game: bool,
-    code_of_conduct: Option<String>,
-    reconfiguring: bool,
     sleeping: bool,
     dead: bool,
     death_opening: Option<(Option<Vec<crate::text::Span>>, i32, bool)>,
@@ -94,12 +92,6 @@ pub(super) fn apply_gui_nav(
 ) {
     if std::mem::take(&mut state.quit) {
         shared.0.lock().unwrap().quit_requested = true;
-        #[cfg(target_os = "android")]
-        if let Some(app) = bevy::android::ANDROID_APP.get() {
-            run_exit_tasks();
-            crate::step("quit pressed, finishing the activity");
-            crate::finish_and_exit(app);
-        }
         exit.write(AppExit::Success);
         return;
     }
@@ -111,8 +103,6 @@ pub(super) fn apply_gui_nav(
             &mut faces,
         );
     }
-    #[cfg(feature = "online_mode")]
-    crate::gui::bannotice::poll(&mut state);
     use crate::gui::Screen;
     let poll = {
         let mut s = shared.0.lock().unwrap();
@@ -130,15 +120,11 @@ pub(super) fn apply_gui_nav(
             container_kind: s.session.container_kind,
             sign_editor_open: s.session.sign_editor_open.take(),
             signing_prompt: std::mem::take(&mut s.session.chat_signing_prompt),
-            server_pack_prompt: std::mem::take(&mut s.session.server_packs.open_prompt),
             book_open: s.session.book_open.take(),
             book_edit_open: s.session.book_edit_open.take(),
             command_block_open: s.session.command_block_open.take(),
             dialog_show: s.session.dialog_show.take(),
             dialog_clear: std::mem::take(&mut s.session.dialog_clear),
-            win_game: std::mem::take(&mut s.session.win_game),
-            code_of_conduct: s.session.code_of_conduct.take(),
-            reconfiguring: s.session.reconfiguring,
             sleeping: s.session.sleeping,
             dead,
             death_opening: death_opening.then(|| {
@@ -168,10 +154,10 @@ pub(super) fn apply_gui_nav(
     let (container_id, kind) = (poll.container_id, poll.container_kind);
     if container_id != *last_container_id && container_id != 0 {
         if kind.is_some() {
-            crate::renderer::systems::reset_menu_state(&mut state, &shared);
+            crate::renderer::systems::reset_menu_state(&mut state);
             state.nav = Some(Screen::Container(kind));
         } else if state.screen.is_container() {
-            crate::renderer::systems::reset_menu_state(&mut state, &shared);
+            crate::renderer::systems::reset_menu_state(&mut state);
             state.nav = Some(Screen::None);
         }
     } else if container_id == 0 && state.screen.is_container() {
@@ -237,43 +223,6 @@ pub(super) fn apply_gui_nav(
         state.nav = Some(Screen::SignedChatPrompt);
     }
 
-    if poll.server_pack_prompt
-        && state.screen != Screen::ServerPackPrompt
-        && state.nav != Some(Screen::Disconnected)
-    {
-        state.server_pack_parent = state.nav.unwrap_or(state.screen);
-        state.nav = Some(Screen::ServerPackPrompt);
-    }
-
-    if state.nav != Some(Screen::Disconnected) {
-        if poll.win_game {
-            state.win.open();
-            state.nav = Some(Screen::WinGame);
-        }
-        if let Some(text) = poll.code_of_conduct {
-            let parent = state.nav.unwrap_or(state.screen);
-            state.config_phase.open_code_of_conduct(&text, parent);
-            state.nav = Some(Screen::CodeOfConduct);
-        }
-    }
-    if state.nav.is_none() {
-        if poll.reconfiguring
-            && !state.screen.is_menu()
-            && !matches!(
-                state.screen,
-                Screen::Reconfiguring
-                    | Screen::CodeOfConduct
-                    | Screen::Dialog
-                    | Screen::ServerPackPrompt
-            )
-        {
-            state.config_phase.open_reconfig();
-            state.nav = Some(Screen::Reconfiguring);
-        } else if !poll.reconfiguring && state.screen == Screen::Reconfiguring {
-            state.nav = Some(Screen::None);
-        }
-    }
-
     if state.nav.is_none() {
         let (sleeping, dead) = (poll.sleeping, poll.dead);
         if let Some((cause, score, hardcore)) = poll.death_opening {
@@ -334,18 +283,34 @@ pub(super) fn mouse_look(
     >,
     state: Res<crate::gui::GuiState>,
     time: Res<Time>,
+    mut boat_turn: Local<BoatTurn>,
 ) {
     #[cfg(feature = "mobile_ui")]
     {
-        let _ = (motion, angles, shared, freecam, camera, state, time);
+        let _ = (motion, angles, shared, freecam, camera, state, time, boat_turn);
         return;
+    }
+    // The boat being steered turns the view with it. Minecraft's yaw runs
+    // the other way to the camera's.
+    let nudge = boat_turn.step(
+        std::mem::take(&mut shared.0.lock().unwrap().session.vehicle_yaw_nudge),
+        time.delta_secs(),
+    );
+    #[cfg(not(feature = "mobile_ui"))]
+    if nudge != 0.0 && !freecam.active {
+        angles.yaw -= nudge;
+        if let Ok(mut t) = camera.single_mut() {
+            t.rotation = angles.rotation();
+        }
+        let mut s = shared.0.lock().unwrap();
+        s.camera_yaw = angles.yaw;
     }
     #[cfg(not(feature = "mobile_ui"))]
     {
         let hand = if state.screen.is_open() || !crate::platform::pointer::is_locked() {
             Vec2::ZERO
         } else {
-            motion.delta * LOOK_SCALE
+            motion.delta * state.options.look_scale()
         };
         if hand == Vec2::ZERO && !crate::modules::hooks::drives_look() {
             return;
@@ -359,6 +324,40 @@ pub(super) fn mouse_look(
             freecam.active,
             time.delta_secs(),
         );
+    }
+}
+
+/// The steered boat's turn, handed to the view at the pace it arrives.
+/// `positionRider` turns only `yRot` once a tick, and the camera draws
+/// `lerp(partialTick, yRotO, yRot)`, so vanilla's view glides with the boat.
+/// Each tick's turn plays out over a tick's worth of frame time, faster when
+/// turns back up, so the view never steps.
+#[derive(Default)]
+pub(super) struct BoatTurn {
+    remaining: f32,
+    /// Degrees a second of the last tick's turn.
+    rate: f32,
+}
+
+const TICK_SECONDS: f32 = 0.05;
+
+impl BoatTurn {
+    fn step(&mut self, arrived: f32, dt: f32) -> f32 {
+        if arrived != 0.0 {
+            self.remaining += arrived;
+            self.rate = arrived.abs() / TICK_SECONDS;
+        }
+        if self.remaining == 0.0 {
+            return 0.0;
+        }
+        // At least the last tick's pace; a backlog drains within a tick.
+        let rate = self.rate.max(self.remaining.abs() / TICK_SECONDS);
+        let turn = (rate * dt).min(self.remaining.abs()).copysign(self.remaining);
+        self.remaining -= turn;
+        if self.remaining.abs() < 1e-4 {
+            self.remaining = 0.0;
+        }
+        turn
     }
 }
 
@@ -382,6 +381,14 @@ pub(crate) fn apply_look(
 
     angles.yaw -= dx;
     angles.pitch = (angles.pitch - dy).clamp(-89., 89.);
+    // `Entity.turn` then `onPassengerTurned`: a boat's driver looks no more
+    // than 105° off its bow. Minecraft's yaw is -camera yaw - 180.
+    if !freecam_active
+        && let Some(boat_yaw) = shared.0.lock().unwrap().session.steered_boat_yaw
+    {
+        let yaw = crate::play::boat::clamp_driver_yaw(-angles.yaw - 180.0, boat_yaw);
+        angles.yaw = -yaw - 180.0;
+    }
     if let Ok(mut t) = camera.single_mut() {
         t.rotation = angles.rotation();
     }
@@ -403,12 +410,20 @@ pub(crate) fn bot_movement_input(
     mut intent: ResMut<crate::renderer::intent::Intent>,
     mut last_forward_tap: Local<Option<f32>>,
     mut sprint_latch: Local<bool>,
+    mut toggled: Local<Toggled>,
 ) {
     if freecam.active || state.screen.is_open() || crate::gui::keyboard_elsewhere() {
         *last_forward_tap = None;
         *sprint_latch = false;
         return;
     }
+    let options = &state.options;
+    toggled.update(
+        options.toggle_crouch,
+        state.keybinds.just(Action::Sneak, &keys, &buttons),
+        options.toggle_sprint,
+        state.keybinds.just(Action::Sprint, &keys, &buttons),
+    );
     let binds = &state.keybinds;
     let down = |action| binds.down(action, &keys, &buttons);
     let fwd = down(Action::Forward);
@@ -416,8 +431,16 @@ pub(crate) fn bot_movement_input(
     let left = down(Action::Left);
     let right = down(Action::Right);
     let jump = down(Action::Jump);
-    let shift = down(Action::Sneak);
-    let sprint_key = down(Action::Sprint);
+    let shift = if options.toggle_crouch {
+        toggled.crouch
+    } else {
+        down(Action::Sneak)
+    };
+    let sprint_key = if options.toggle_sprint {
+        toggled.sprint
+    } else {
+        down(Action::Sprint)
+    };
 
     let flying = {
         let mut s = shared.0.lock().unwrap();
@@ -452,6 +475,21 @@ pub(crate) fn bot_movement_input(
     );
 }
 
+/// Latched sneak and sprint for the toggle options; a latch drops when its
+/// option is switched back to hold.
+#[derive(Default)]
+pub(super) struct Toggled {
+    crouch: bool,
+    sprint: bool,
+}
+
+impl Toggled {
+    fn update(&mut self, crouch_on: bool, crouch_tap: bool, sprint_on: bool, sprint_tap: bool) {
+        self.crouch = crouch_on && (self.crouch != crouch_tap);
+        self.sprint = sprint_on && (self.sprint != sprint_tap);
+    }
+}
+
 pub(super) const FLY_DOUBLE_TAP_SECS: f32 = 7.0 / 20.0;
 
 pub(super) fn flight_toggle_input(
@@ -483,15 +521,26 @@ pub(super) fn flight_toggle_input(
     }
 }
 
+/// Lets the cursor go when the window loses focus, and takes it back when
+/// the window regains focus with no screen open, so the game has the mouse
+/// again without a trip through the pause menu.
 pub(super) fn window_focus_cursor(
     mut events: bevy::ecs::message::MessageReader<WindowFocused>,
     mut cursor_opts: Query<&mut CursorOptions, With<PrimaryWindow>>,
+    state: Res<crate::gui::GuiState>,
 ) {
     for ev in events.read() {
+        let Ok(opts) = cursor_opts.single_mut() else {
+            continue;
+        };
         if !ev.focused {
-            if let Ok(opts) = cursor_opts.single_mut() {
-                super::systems::apply_cursor(opts, CursorGrabMode::None, true);
+            super::systems::apply_cursor(opts, CursorGrabMode::None, true);
+        } else if !state.screen.is_open() {
+            let (grab, visible) = super::systems::world_cursor();
+            if grab != CursorGrabMode::None {
+                crate::platform::pointer::lock();
             }
+            super::systems::apply_cursor(opts, grab, visible);
         }
     }
 }
@@ -554,56 +603,20 @@ pub(super) fn web_pointer_lock(
     }
 }
 
-pub(super) fn fullscreen_key(
+pub(super) fn web_fullscreen(
     keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
     state: Res<crate::gui::GuiState>,
-    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))] mut windows: Query<
-        &mut Window,
-        With<bevy::window::PrimaryWindow>,
-    >,
-    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))] time: Res<
-        Time<bevy::time::Real>,
-    >,
-    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))] mut last_toggle: Local<
-        Option<f64>,
-    >,
-    #[cfg(target_arch = "wasm32")] mut captured: Local<bool>,
+    mut captured: Local<bool>,
 ) {
-    let pressed = state.keybinds.just(Action::Fullscreen, &keys, &buttons);
-
-    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
-    {
-        const ECHO_SECS: f64 = 0.5;
-        let now = time.elapsed_secs_f64();
-        let echo = last_toggle.is_some_and(|at| now - at < ECHO_SECS);
-        if pressed
-            && !echo
-            && let Ok(mut window) = windows.single_mut()
-        {
-            use bevy::window::{MonitorSelection, WindowMode};
-            window.mode = match window.mode {
-                WindowMode::Windowed => WindowMode::BorderlessFullscreen(MonitorSelection::Current),
-                _ => WindowMode::Windowed,
-            };
-            *last_toggle = Some(now);
-        }
+    if state.keybinds.just(Action::Fullscreen, &keys, &buttons) {
+        crate::platform::fullscreen::toggle();
     }
-
-    #[cfg(target_arch = "wasm32")]
-    {
-        if pressed {
-            crate::platform::fullscreen::toggle();
-        }
-        let fullscreen = crate::platform::fullscreen::is_fullscreen();
-        if fullscreen != *captured {
-            *captured = fullscreen;
-            crate::platform::fullscreen::capture_escape(fullscreen);
-        }
+    let fullscreen = crate::platform::fullscreen::is_fullscreen();
+    if fullscreen != *captured {
+        *captured = fullscreen;
+        crate::platform::fullscreen::capture_escape(fullscreen);
     }
-
-    #[cfg(target_os = "android")]
-    let _ = pressed;
 }
 
 pub(super) fn poll_module_binds(
@@ -831,7 +844,10 @@ pub(super) fn handle_spectator_action_key(
     }
 }
 
-pub(crate) fn wheel_notches(wheel: &AccumulatedMouseScroll) -> Vec2 {
+pub(crate) fn wheel_notches(
+    wheel: &AccumulatedMouseScroll,
+    options: &crate::gui::GuiOptions,
+) -> Vec2 {
     const PIXELS_PER_NOTCH: f32 = 100.0;
     #[cfg(target_arch = "wasm32")]
     const LINES_PER_NOTCH: f32 = 3.0;
@@ -842,7 +858,7 @@ pub(crate) fn wheel_notches(wheel: &AccumulatedMouseScroll) -> Vec2 {
         MouseScrollUnit::Line => LINES_PER_NOTCH,
         MouseScrollUnit::Pixel => PIXELS_PER_NOTCH,
     };
-    wheel.delta / per
+    options.scroll(wheel.delta / per)
 }
 
 pub(crate) fn accumulate_scroll(acc: &mut (f64, f64), dx: f64, dy: f64) -> (i32, i32) {
@@ -890,7 +906,7 @@ pub(super) fn handle_hotbar_scroll(
     if state.screen.is_open() {
         return;
     }
-    let notches = wheel_notches(&wheel);
+    let notches = wheel_notches(&wheel, &state.options);
     let (dx, dy) = (notches.x as f64, notches.y as f64);
     if dx == 0.0 && dy == 0.0 {
         return;
@@ -924,7 +940,7 @@ pub(super) fn handle_spectator_fly_speed_scroll(
     if state.screen.is_open() {
         return;
     }
-    let dy = wheel_notches(&wheel).y;
+    let dy = wheel_notches(&wheel, &state.options).y;
     if dy == 0.0 {
         return;
     }
@@ -952,7 +968,6 @@ pub(super) fn toggle_screen(
     shared: Res<Shared>,
     mut state: ResMut<crate::gui::GuiState>,
     mut windows: Query<(&mut Window, &mut CursorOptions), With<PrimaryWindow>>,
-    gui_input: Res<crate::gui::GuiInput>,
 ) {
     use crate::gui::Screen;
 
@@ -1041,25 +1056,23 @@ pub(super) fn toggle_screen(
                 state.screen == Screen::ShaderOptions && state.shaderpacks.pop_screen();
             #[cfg(not(feature = "shader_support"))]
             let stepped_within = false;
-            #[cfg(resource_packs)]
-            let stepped_within = stepped_within
-                || (state.screen == Screen::ResourcePacks && state.resourcepacks.cancel_prompt());
-            #[cfg(resource_packs)]
-            if state.screen == Screen::ResourcePacks && !stepped_within {
-                state.resourcepacks.apply();
-            }
 
             if stepped_within {
                 None
             } else {
                 Some(match state.screen {
                     Screen::Options => state.options_parent,
+                    Screen::MouseSettings => Screen::Controls,
                     #[cfg(feature = "shader_support")]
                     Screen::ShaderPacks => Screen::VideoSettings,
                     #[cfg(feature = "shader_support")]
                     Screen::ShaderOptions => Screen::ShaderPacks,
                     #[cfg(explore_modrinth)]
                     Screen::ExplorePacks => Screen::ResourcePacks,
+                    #[cfg(voice)]
+                    Screen::VoiceChat => Screen::Options,
+                    #[cfg(voice)]
+                    Screen::VoicePlayers | Screen::VoiceGroups => Screen::VoiceChat,
                     s if s.is_options() => Screen::Options,
                     _ => Screen::None,
                 })
@@ -1111,11 +1124,6 @@ pub(super) fn toggle_screen(
             shared.0.lock().unwrap().leave_bed_requested = true;
         }
         None
-    } else if matches!(
-        state.screen,
-        Screen::WinGame | Screen::CodeOfConduct | Screen::Reconfiguring | Screen::ServerPackPrompt
-    ) {
-        None
     } else if state.screen == Screen::Death {
         None
     } else if state.screen == Screen::Advancements {
@@ -1127,24 +1135,11 @@ pub(super) fn toggle_screen(
             None
         }
     } else if state.screen.is_open() {
-        if (toggle_key || close_key)
-            && crate::gui::recipe_book_ghost::key_before_close(
-                &state,
-                &shared.0,
-                close_key,
-                gui_input.size.x,
-            )
-        {
-            None
-        } else if toggle_key || close_key {
+        if toggle_key || close_key {
             Some(Screen::None)
         } else {
             None
         }
-    } else if state.keybinds.down(Action::DebugModifier, &keys, &buttons)
-        && !(close_key || pause_key)
-    {
-        None
     } else if toggle_key {
         let creative = shared.0.lock().unwrap().session.gamemode == Gamemode::Creative;
         if creative {
@@ -1220,46 +1215,6 @@ pub(super) fn toggle_chunk_borders(
     }
 }
 
-#[cfg(resource_packs)]
-pub(super) fn reload_resource_packs(
-    keys: Res<ButtonInput<KeyCode>>,
-    buttons: Res<ButtonInput<MouseButton>>,
-    state: Res<crate::gui::GuiState>,
-    shared: Res<Shared>,
-) {
-    use crate::text::{Span, Style};
-    if !debug_combo(Action::ReloadResourcePacks, &keys, &buttons, &state) {
-        return;
-    }
-    crate::renderer::reload::request();
-    let prefix = Style {
-        bold: true,
-        ..Style::colored(0xFFFF55)
-    };
-    let spans = vec![
-        Span {
-            text: format!("{} ", crate::gui::tooltip::translate("debug.prefix", &[])),
-            style: prefix,
-        },
-        Span::colored(
-            crate::gui::tooltip::translate("debug.reload_resourcepacks.message", &[]),
-            0xFF_FFFF,
-        ),
-    ];
-    shared
-        .0
-        .lock()
-        .unwrap()
-        .session
-        .chat_incoming
-        .push(crate::session::ChatEntry {
-            spans,
-            events: None,
-            tag: crate::session::ChatTag::System,
-            original: None,
-        });
-}
-
 pub(super) fn reload_all_chunks(
     keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
@@ -1281,6 +1236,29 @@ pub(super) fn handle_keybinds(
     let held = state.keybinds.down(Action::PlayerList, &keys, &buttons) && !state.screen.is_open();
     if state.tab_list_held != held {
         state.tab_list_held = held;
+    }
+
+    #[cfg(voice)]
+    {
+        // Push-to-talk and whisper are held; a screen open lets them go,
+        // as the mod's key handling does.
+        let in_game = !state.screen.is_open();
+        crate::voice::set_push_to_talk(
+            in_game && state.keybinds.down(Action::VoicePushToTalk, &keys, &buttons),
+        );
+        crate::voice::set_whisper(
+            in_game && state.keybinds.down(Action::VoiceWhisper, &keys, &buttons),
+        );
+        if in_game && state.keybinds.just(Action::VoiceMute, &keys, &buttons) {
+            state.options.voice.muted = !state.options.voice.muted;
+            state.options.voice.apply();
+            crate::gui::save_options(&state.options);
+        }
+        if in_game && state.keybinds.just(Action::VoiceDisable, &keys, &buttons) {
+            state.options.voice.disabled = !state.options.voice.disabled;
+            state.options.voice.apply();
+            crate::gui::save_options(&state.options);
+        }
     }
 
     if state.screen.is_open() {
@@ -1311,7 +1289,53 @@ pub(super) fn handle_keybinds(
 
 #[cfg(test)]
 mod tests {
+    use super::BoatTurn;
+
+    #[test]
+    fn a_boat_turn_plays_out_over_a_tick() {
+        let mut t = BoatTurn::default();
+        assert!((t.step(4.0, 0.0125) - 1.0).abs() < 1e-4);
+        assert!((t.step(0.0, 0.025) - 2.0).abs() < 1e-4);
+        assert!((t.step(0.0, 0.05) - 1.0).abs() < 1e-4);
+        assert_eq!(t.step(0.0, 0.05), 0.0);
+        // Turns arriving faster than frames drain: never more than a tick behind.
+        t.step(4.0, 0.0);
+        t.step(4.0, 0.0);
+        assert!((t.step(0.0, 0.05) - 8.0).abs() < 1e-4);
+    }
+
+
     use super::{HOTBAR_SLOTS, accumulate_scroll, next_scroll_selection};
+
+    #[test]
+    fn a_toggle_latches_on_tap_and_drops_with_its_option() {
+        let mut t = super::Toggled::default();
+        t.update(true, true, false, true);
+        assert!(t.crouch && !t.sprint);
+        t.update(true, false, false, false);
+        assert!(t.crouch);
+        t.update(true, true, false, false);
+        assert!(!t.crouch);
+        t.update(true, true, false, false);
+        t.update(false, false, false, false);
+        assert!(!t.crouch);
+    }
+
+    #[test]
+    fn default_sensitivity_is_vanillas_look_scale() {
+        let mut o = crate::gui::GuiOptions::default();
+        o.mouse_sensitivity = crate::gui::MOUSE_SENSITIVITY_DEFAULT;
+        o.invert_x = false;
+        o.invert_y = true;
+        let k = o.look_scale();
+        assert!((k.x - super::LOOK_SCALE).abs() < 1e-6);
+        assert!((k.y + super::LOOK_SCALE).abs() < 1e-6);
+        o.discrete_scrolling = true;
+        assert_eq!(
+            o.scroll(bevy::math::Vec2::new(0.0, -2.5)),
+            bevy::math::Vec2::new(0.0, -1.0)
+        );
+    }
 
     #[test]
     fn scroll_direction_matches_vanilla() {
@@ -1372,3 +1396,4 @@ mod tests {
         assert_eq!(slot, 1);
     }
 }
+
