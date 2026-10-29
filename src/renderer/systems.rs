@@ -689,7 +689,7 @@ fn refresh_frame_view(
 
 fn env_budget(lock: &'static OnceLock<usize>, name: &str, default: usize) -> usize {
     *lock.get_or_init(|| {
-        std::env::var(name)
+        crate::platform::env::var(name)
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
             .filter(|n| *n > 0)
@@ -796,7 +796,7 @@ fn no_cutout() -> bool {
     static OFF: OnceLock<bool> = OnceLock::new();
     *OFF.get_or_init(|| {
         matches!(
-            std::env::var("MC_NO_CUTOUT").as_deref(),
+            crate::platform::env::var("MC_NO_CUTOUT").as_deref(),
             Ok("1") | Ok("true")
         )
     })
@@ -1924,7 +1924,7 @@ fn forward_lighting_options() {
 
 fn sync_lighting_enabled(
     state: Res<crate::gui::GuiState>,
-    shared: Res<Shared>,
+    _shared: Res<Shared>,
     mut last: Local<Option<bool>>,
 ) {
     let wanted = state.options.lighting_enabled;
@@ -1970,11 +1970,11 @@ fn auto_harness(
 ) {
     let (look, quit_at) = *cfg.get_or_insert_with(|| {
         (
-            std::env::var("MC_AUTO_LOOK")
+            crate::platform::env::var("MC_AUTO_LOOK")
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0.0),
-            std::env::var("MC_EXIT_AFTER_MS")
+            crate::platform::env::var("MC_EXIT_AFTER_MS")
                 .ok()
                 .and_then(|v| v.parse().ok()),
         )
@@ -2022,8 +2022,8 @@ fn dump_flamegraph(
         let mut path_owned = String::from("flamegraph.html");
         if !auto.inited {
             auto.inited = true;
-            auto.tag = std::env::var("MC_PROF_TAG").unwrap_or_else(|_| "cap".into());
-            if let Ok(v) = std::env::var("MC_PROF_AT") {
+            auto.tag = crate::platform::env::var("MC_PROF_TAG").unwrap_or_else(|_| "cap".into());
+            if let Ok(v) = crate::platform::env::var("MC_PROF_AT") {
                 auto.at = v
                     .split(',')
                     .filter_map(|x| x.trim().parse::<u64>().ok())
@@ -2612,7 +2612,7 @@ pub fn run(
     #[cfg(feature = "mobile_ui")]
     crate::mobile::register(&mut app);
 
-    if !matches!(std::env::var("MC_EXEC").as_deref(), Ok("mt")) {
+    if !matches!(crate::platform::env::var("MC_EXEC").as_deref(), Ok("mt")) {
         use bevy::ecs::schedule::ExecutorKind;
         let mut schedules = app
             .world_mut()

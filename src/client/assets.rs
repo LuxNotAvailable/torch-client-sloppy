@@ -36,7 +36,7 @@ pub(crate) const CAN_FETCH_OBJECTS: bool = true;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn root() -> PathBuf {
-    match std::env::var_os("MC_ASSET_DIR") {
+    match crate::platform::env::var_os("MC_ASSET_DIR") {
         Some(p) => PathBuf::from(p),
         None => default_root(),
     }
@@ -64,7 +64,7 @@ fn default_root() -> PathBuf {
 fn default_root() -> PathBuf {
     use crate::platform::storage::WINDOWS_FOLDER as FOLDER;
 
-    match std::env::var_os("LOCALAPPDATA").filter(|p| !p.is_empty()) {
+    match crate::platform::env::var_os("LOCALAPPDATA").filter(|p| !p.is_empty()) {
         Some(local) => PathBuf::from(local).join(FOLDER).join("assets"),
         None => std::env::temp_dir().join(FOLDER).join("assets"),
     }
@@ -190,7 +190,7 @@ pub(crate) fn take_installed() -> Option<Vec<u8>> {
 
 pub(crate) fn mount() -> bool {
     #[cfg(not(target_arch = "wasm32"))]
-    if std::env::var_os("MINECRAFT_ASSETS").is_some() {
+    if crate::platform::env::var_os("MINECRAFT_ASSETS").is_some() {
         return false;
     }
 

@@ -139,7 +139,7 @@ static TRACE: Mutex<Trace> = Mutex::new(Trace {
 
 pub fn trace_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| matches!(std::env::var("MC_TRACE").as_deref(), Ok("1") | Ok("true")))
+    *ON.get_or_init(|| matches!(crate::platform::env::var("MC_TRACE").as_deref(), Ok("1") | Ok("true")))
 }
 
 fn trace_packet(name: &'static str, sent: bool) {
@@ -272,7 +272,7 @@ const BOT_STALL_AFTER: Duration = Duration::from_secs(3);
 fn bot_kill_after() -> Option<Duration> {
     static SECS: OnceLock<Option<Duration>> = OnceLock::new();
     *SECS.get_or_init(|| {
-        let secs = std::env::var("MC_BOT_KILL_SECS")
+        let secs = crate::platform::env::var("MC_BOT_KILL_SECS")
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
             .unwrap_or(5);

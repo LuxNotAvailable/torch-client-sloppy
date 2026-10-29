@@ -800,8 +800,8 @@ pub(crate) fn handle_mouse_input(
     buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
     shared: Res<Shared>,
-    #[cfg_attr(feature = "mobile_ui", allow(unused_mut))] mut state: ResMut<crate::gui::GuiState>,
-    #[cfg_attr(feature = "mobile_ui", allow(unused_mut))] mut intent: ResMut<
+    #[cfg_attr(feature = "mobile_ui", allow(unused_mut))] state: ResMut<crate::gui::GuiState>,
+    #[cfg_attr(feature = "mobile_ui", allow(unused_mut))] intent: ResMut<
         crate::renderer::intent::Intent,
     >,
 ) {
@@ -1191,24 +1191,7 @@ pub(super) fn toggle_screen(
             } else {
                 Some(match state.screen {
                     Screen::Options => state.options_parent,
-                    Screen::MouseSettings => Screen::Controls,
-                    Screen::ZoomSettings
-                    | Screen::BlockInfoSettings
-                    | Screen::InventorySortSettings
-                    | Screen::AppleSkinSettings => Screen::Features,
-                    Screen::FontSettings => Screen::Language,
-                    #[cfg(feature = "shader_support")]
-                    Screen::ShaderPacks => Screen::VideoSettings,
-                    #[cfg(feature = "shader_support")]
-                    Screen::ShaderOptions => Screen::ShaderPacks,
-                    #[cfg(explore_modrinth)]
-                    Screen::ExplorePacks => Screen::ResourcePacks,
-                    #[cfg(voice)]
-                    Screen::VoiceChat => Screen::Options,
-                    #[cfg(voice)]
-                    Screen::VoicePlayers | Screen::VoiceGroups => Screen::VoiceChat,
-                    s if s.is_options() => Screen::Options,
-                    _ => Screen::None,
+                    s => s.settings_parent().unwrap_or(Screen::None),
                 })
             }
         } else {

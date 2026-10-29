@@ -32,7 +32,7 @@ const MAX_ATTACHMENTS: usize = 8;
 
 fn pass_limit() -> Option<usize> {
     static LIMIT: std::sync::OnceLock<Option<usize>> = std::sync::OnceLock::new();
-    *LIMIT.get_or_init(|| std::env::var("MC_SHADERPACK_PASSES").ok()?.parse().ok())
+    *LIMIT.get_or_init(|| crate::platform::env::var("MC_SHADERPACK_PASSES").ok()?.parse().ok())
 }
 
 pub(crate) fn prepare_plan(

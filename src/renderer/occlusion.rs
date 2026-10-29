@@ -339,7 +339,7 @@ fn disabled() -> bool {
     static OFF: OnceLock<bool> = OnceLock::new();
     *OFF.get_or_init(|| {
         matches!(
-            std::env::var("MC_NO_OCCLUSION").as_deref(),
+            crate::platform::env::var("MC_NO_OCCLUSION").as_deref(),
             Ok("1") | Ok("true")
         )
     })

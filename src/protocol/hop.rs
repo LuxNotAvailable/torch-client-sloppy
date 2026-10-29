@@ -674,10 +674,7 @@ pub(super) fn component_payload(
         DataComponentKind::UseRemainder => template(ids, r, out)?,
         _ => {
             let mut cursor = std::io::Cursor::new(r.rest());
-            let mut value =
-                azalea_inventory::components::DataComponentUnion::azalea_read_as(kind, &mut cursor)
-                    .ok()?;
-            unsafe { value.drop_as(kind) };
+            azalea_inventory::components::DataComponentUnion::skip_as(kind, &mut cursor).ok()?;
             let length = usize::try_from(cursor.position()).ok()?;
             out.extend_from_slice(r.take(length)?);
         }

@@ -1,9 +1,11 @@
 mod targets;
 
 pub(crate) use targets::{
-    MAX_COLOR_TARGETS, MAX_SHADOW_COLORS, SampleKind, TargetFormat, TargetSettings, Targets,
+    MAX_COLOR_TARGETS, MAX_SHADOW_COLORS, SampleKind, TargetFormat, Targets,
     read_sizes, shadow_index, target_index,
 };
+#[cfg(test)]
+use targets::TargetSettings;
 
 use super::literal::{self, broadcast, const_declaration, constructor_args};
 

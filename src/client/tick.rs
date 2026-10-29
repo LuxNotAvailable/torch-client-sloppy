@@ -664,7 +664,7 @@ fn trace_menu_change(
     applied_clicks: usize,
 ) {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if !*ON.get_or_init(|| std::env::var_os("MC_INV_TRACE").is_some()) {
+    if !*ON.get_or_init(|| crate::platform::env::var_os("MC_INV_TRACE").is_some()) {
         return;
     }
     let describe = |s: &SlotStack| {
@@ -749,7 +749,7 @@ fn apply_local_trades(session: &mut crate::session::SessionState, actions: &[Inv
 
 fn trace_trade(what: &str) {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if !*ON.get_or_init(|| std::env::var_os("MC_INV_TRACE").is_some()) {
+    if !*ON.get_or_init(|| crate::platform::env::var_os("MC_INV_TRACE").is_some()) {
         return;
     }
     eprintln!("[trade] {what}");
@@ -1245,7 +1245,7 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
     }
 
     if let Some(sign_pos) = sign_edit_open_pos {
-        use azalea::block::BlockTrait;
+        
         let still_sign = bot
             .world()
             .ok()

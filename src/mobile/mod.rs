@@ -379,30 +379,9 @@ fn swallow_click(input: &mut crate::gui::render::GuiInput) {
 fn close_target(gui: &mut GuiState) -> Screen {
     match gui.screen {
         Screen::Options => gui.options_parent,
-        Screen::MouseSettings => Screen::Controls,
-        Screen::ZoomSettings
-        | Screen::BlockInfoSettings
-        | Screen::InventorySortSettings
-        | Screen::AppleSkinSettings => {
-            Screen::Features
-        }
-        Screen::VideoSettings
-        | Screen::Controls
-        | Screen::ChatSettings
-        | Screen::SkinCustomisation
-        | Screen::ManageStorage => {
-            Screen::Options
-        }
-        #[cfg(resource_packs)]
-        Screen::ResourcePacks => Screen::Options,
-        #[cfg(explore_modrinth)]
-        Screen::ExplorePacks => Screen::ResourcePacks,
-        #[cfg(feature = "shader_support")]
-        Screen::ShaderPacks => Screen::VideoSettings,
         #[cfg(feature = "shader_support")]
         Screen::ShaderOptions if gui.shaderpacks.pop_screen() => Screen::ShaderOptions,
-        #[cfg(feature = "shader_support")]
-        Screen::ShaderOptions => Screen::ShaderPacks,
+        s if s.settings_parent().is_some() => s.settings_parent().unwrap_or(Screen::Options),
         Screen::Advancements => gui.advancements.parent,
         Screen::Chat => {
             gui.chat.close();

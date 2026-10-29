@@ -99,7 +99,7 @@ pub(crate) fn slot_stack(
         .get_component::<comp::Lore>()
         .map(|c| c.lines.iter().map(chat_text::to_spans).collect())
         .unwrap_or_default();
-    let name_for = |e: &azalea_registry::Enchantment| -> String {
+    let name_for = |e: &azalea_registry::data::Enchantment| -> String {
         use azalea_core::data_registry::DataRegistryWithKey;
         use azalea_registry::DataRegistry;
         registries
@@ -470,7 +470,7 @@ pub(crate) fn potion_contents(
 fn resolve_enchantments(
     registries: Option<&azalea_core::registry_holder::RegistryHolder>,
     enchantments: &[(String, i32)],
-) -> std::collections::HashMap<azalea_registry::Enchantment, i32> {
+) -> std::collections::HashMap<azalea_registry::data::Enchantment, i32> {
     use azalea_registry::DataRegistry;
     use azalea_registry::identifier::Identifier;
 

@@ -1123,7 +1123,7 @@ pub fn draw_nametags(p: &mut Painter, _ctx: &ScreenCtx, tags: &[NameTag]) {
     };
     let bg = if on { NAMETAG_BG_MODULE } else { NAMETAG_BG };
     let shadow = on;
-    let space = p.atlas.font.width_str(" ");
+    let _space = p.atlas.font.width_str(" ");
 
     for tag in tags {
         if tag.scale <= 0.0 {

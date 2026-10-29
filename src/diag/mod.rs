@@ -97,14 +97,14 @@ fn emit(level: Level, out: &str) {
 pub fn debug_on(tag: &str) -> bool {
     static TAGS: OnceLock<Vec<String>> = OnceLock::new();
     let tags = TAGS.get_or_init(|| {
-        let mut tags: Vec<String> = std::env::var("MC_DEBUG")
+        let mut tags: Vec<String> = crate::platform::env::var("MC_DEBUG")
             .unwrap_or_default()
             .split(',')
             .map(|t| t.trim().to_ascii_lowercase())
             .filter(|t| !t.is_empty())
             .collect();
         for (var, tag) in [("MC_DEBUG_CHUNKS", "chunks"), ("MC_DEBUG_LIGHT", "light")] {
-            if std::env::var_os(var).is_some() {
+            if crate::platform::env::var_os(var).is_some() {
                 tags.push(tag.to_string());
             }
         }

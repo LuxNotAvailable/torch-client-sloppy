@@ -112,7 +112,7 @@ pub fn upscale(img: &RgbaImage, factor: u32) -> RgbaImage {
 }
 
 pub fn output_dir() -> PathBuf {
-    let dir = match std::env::var_os("MC_GUI_PREVIEW_DIR") {
+    let dir = match crate::platform::env::var_os("MC_GUI_PREVIEW_DIR") {
         Some(d) => PathBuf::from(d),
         None => PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/scratch"),
     };

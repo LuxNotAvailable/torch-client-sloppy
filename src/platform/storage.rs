@@ -89,7 +89,7 @@ impl Slot {
 
 #[cfg(all(not(target_arch = "wasm32"), not(test)))]
 pub(crate) fn dir() -> std::path::PathBuf {
-    match std::env::var_os("MC_CLIENT_CONFIG_DIR") {
+    match crate::platform::env::var_os("MC_CLIENT_CONFIG_DIR") {
         Some(p) => std::path::PathBuf::from(p),
         None => default_dir(),
     }
@@ -112,7 +112,7 @@ fn default_dir() -> std::path::PathBuf {
 
 #[cfg(target_os = "windows")]
 fn default_dir() -> std::path::PathBuf {
-    match std::env::var_os("LOCALAPPDATA").filter(|p| !p.is_empty()) {
+    match crate::platform::env::var_os("LOCALAPPDATA").filter(|p| !p.is_empty()) {
         Some(local) => std::path::PathBuf::from(local)
             .join(WINDOWS_FOLDER)
             .join("config"),

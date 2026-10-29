@@ -1,6 +1,8 @@
 //! Opus, as Simple Voice Chat uses it: 48 kHz mono, 20 ms frames
 //! (`AudioUtils`). The codec is `unsafe-libopus`, a mechanical translation of
 //! libopus 1.3.1 to Rust, so no C toolchain is needed to build it.
+// The Opus codec's interface is C-shaped (raw encoder and decoder states).
+#![allow(unsafe_code)]
 
 use unsafe_libopus as opus;
 

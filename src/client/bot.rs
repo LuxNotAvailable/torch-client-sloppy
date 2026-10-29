@@ -108,30 +108,14 @@ pub(crate) fn shutdown_connection() {
 
 #[cfg(all(unix, not(target_arch = "wasm32")))]
 pub(crate) fn install_exit_signal_handlers() {
-    const SIGNALS: [i32; 2] = [2, 15];
-    const SIG_DFL: usize = 0;
-
-    unsafe extern "C" {
-        fn signal(sig: i32, handler: usize) -> usize;
-    }
-
-    unsafe extern "C" fn sever(sig: i32) {
-        unsafe extern "C" {
-            fn signal(sig: i32, handler: usize) -> usize;
-            fn raise(sig: i32) -> i32;
-        }
+    // Ctrl-C and SIGTERM: drop the server connection at once (so the server
+    // sees the player leave), then end as the signal would have.
+    let installed = ctrlc::set_handler(|| {
         azalea_protocol::connect::force_close_last_tcp();
-        unsafe {
-            signal(sig, SIG_DFL);
-            raise(sig);
-        }
-    }
-
-    let handler = sever as unsafe extern "C" fn(i32);
-    for sig in SIGNALS {
-        unsafe {
-            signal(sig, handler as usize);
-        }
+        std::process::exit(130);
+    });
+    if let Err(e) = installed {
+        log_warn!("net", "could not handle exit signals: {e}");
     }
 }
 

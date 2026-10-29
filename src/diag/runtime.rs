@@ -110,6 +110,7 @@ pub fn runtime() -> Runtime {
     prev.last
 }
 
+#[allow(unsafe_code, reason = "wasm-bindgen's import block")]
 #[cfg(target_arch = "wasm32")]
 fn wasm_linear_memory_bytes() -> u64 {
     #[wasm_bindgen::prelude::wasm_bindgen(inline_js = "
@@ -277,18 +278,9 @@ fn proc_thread_cpu() -> Vec<ThreadCpu> {
 #[cfg_attr(not(feature = "profiling"), allow(dead_code))]
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn clock_hz() -> u64 {
-    static HZ: OnceLock<u64> = OnceLock::new();
-    *HZ.get_or_init(|| {
-        let hz = unsafe { libc_sysconf(2) };
-        if hz > 0 { hz as u64 } else { 100 }
-    })
-}
-
-#[cfg_attr(not(feature = "profiling"), allow(dead_code))]
-#[cfg(any(target_os = "linux", target_os = "android"))]
-unsafe extern "C" {
-    #[link_name = "sysconf"]
-    fn libc_sysconf(name: i32) -> i64;
+    // `USER_HZ`: the clock-tick rate `/proc` reports in, fixed at 100 for
+    // user space on Linux and Android (asking `sysconf` needs a foreign call).
+    100
 }
 
 fn core_count() -> usize {

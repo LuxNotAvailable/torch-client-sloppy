@@ -677,7 +677,7 @@ const MAX_SHARED_MATERIALS: usize = 4096;
 fn max_rendered_entities() -> usize {
     static MAX: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     *MAX.get_or_init(|| {
-        std::env::var("MC_MAX_ENTITIES")
+        crate::platform::env::var("MC_MAX_ENTITIES")
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
             .filter(|n| *n > 0)
@@ -1897,7 +1897,7 @@ fn spawn_single_rig(
 ) -> LayerRig {
     let collapsed = copy_count == 1;
     if collapsed {
-        let mut node = commands.spawn((
+        let node = commands.spawn((
             Transform::default(),
             Visibility::Hidden,
             EntityRigNode,
@@ -1942,7 +1942,7 @@ fn spawn_single_rig(
 
     let copies: Vec<Entity> = (0..copy_count)
         .map(|_| {
-            let mut copy =
+            let copy =
                 commands.spawn((Transform::default(), Visibility::Hidden, EntityRigNode));
             #[cfg(feature = "builtin_shaders")]
             copy.insert(bevy::light::NotShadowCaster);

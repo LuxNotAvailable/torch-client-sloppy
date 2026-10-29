@@ -1,3 +1,5 @@
+// Android's log and pipe calls are foreign functions.
+#![allow(unsafe_code)]
 use std::ffi::CString;
 
 const INFO: i32 = 4;

@@ -32,7 +32,7 @@ use crate::shaderpack::transform::ImageAccess;
 
 fn checked_shaders() -> bool {
     static CHECKED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *CHECKED.get_or_init(|| std::env::var_os("MC_SHADERPACK_CHECKED").is_some_and(|v| v != "0"))
+    *CHECKED.get_or_init(|| crate::platform::env::var_os("MC_SHADERPACK_CHECKED").is_some_and(|v| v != "0"))
 }
 
 pub(super) struct Pipelines {
@@ -247,11 +247,10 @@ impl<'a> Builder<'a> {
                     label: Some(&module.label),
                     source: wgpu::ShaderSource::Wgsl(module.wgsl.as_str().into()),
                 };
-                if checked_shaders() {
-                    device.create_and_validate_shader_module(descriptor)
-                } else {
-                    unsafe { device.create_shader_module(descriptor) }
-                }
+                // Always validated: the unchecked path is `unsafe`, and the
+                // check only costs at compile time.
+                let _ = checked_shaders();
+                device.create_and_validate_shader_module(descriptor)
             })
             .clone()
     }

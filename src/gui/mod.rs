@@ -1,4 +1,3 @@
-use crate::renderer::clouds::CloudStatus;
 
 pub mod accountlist;
 pub mod advancements;
@@ -11,6 +10,8 @@ pub mod block_info;
 pub mod book;
 pub mod appleskin;
 pub mod chat;
+pub mod form;
+pub mod option_codec;
 pub mod more_options;
 pub mod op_blocks;
 pub mod social;
@@ -181,6 +182,45 @@ pub enum Screen {
     HudEditor,
 }
 
+/// Each settings screen's parent, as one table: where Escape and Done go
+/// back to. Options' own parent changes (the title screen or the pause
+/// menu) and is kept in `GuiState::options_parent`.
+macro_rules! settings_tree {
+    ($( $(#[$m:meta])* $($from:ident)|+ => $to:ident ),* $(,)?) => {
+        impl Screen {
+            /// The screen this settings screen backs out to.
+            pub fn settings_parent(self) -> Option<Screen> {
+                match self {
+                    $( $(#[$m])* $(Screen::$from)|+ => Some(Screen::$to), )*
+                    _ => None,
+                }
+            }
+        }
+    };
+}
+
+settings_tree! {
+    VideoSettings | Controls | ChatSettings | SkinCustomisation | ManageStorage | Features => Options,
+    Language | AccessibilitySettings | OnlineSettings | DebugOptions => Options,
+    MouseSettings => Controls,
+    ZoomSettings | BlockInfoSettings | InventorySortSettings | AppleSkinSettings => Features,
+    FontSettings => Language,
+    #[cfg(audio)]
+    AudioSettings => Options,
+    #[cfg(resource_packs)]
+    ResourcePacks => Options,
+    #[cfg(explore_modrinth)]
+    ExplorePacks => ResourcePacks,
+    #[cfg(feature = "shader_support")]
+    ShaderPacks => VideoSettings,
+    #[cfg(feature = "shader_support")]
+    ShaderOptions => ShaderPacks,
+    #[cfg(voice)]
+    VoiceChat => Options,
+    #[cfg(voice)]
+    VoicePlayers | VoiceGroups => VoiceChat,
+}
+
 impl Screen {
     pub fn is_open(self) -> bool {
         self != Screen::None
@@ -240,47 +280,9 @@ impl Screen {
         }
     }
 
+    /// An options screen: Options itself, or anything under it.
     pub fn is_options(self) -> bool {
-        #[cfg(feature = "shader_support")]
-        if matches!(self, Screen::ShaderPacks | Screen::ShaderOptions) {
-            return true;
-        }
-        #[cfg(audio)]
-        if self == Screen::AudioSettings {
-            return true;
-        }
-        #[cfg(voice)]
-        if matches!(self, Screen::VoicePlayers | Screen::VoiceChat | Screen::VoiceGroups) {
-            return true;
-        }
-        #[cfg(resource_packs)]
-        if self == Screen::ResourcePacks {
-            return true;
-        }
-        #[cfg(explore_modrinth)]
-        if self == Screen::ExplorePacks {
-            return true;
-        }
-        matches!(
-            self,
-            Screen::Options
-                | Screen::BlockInfoSettings
-                | Screen::VideoSettings
-                | Screen::Controls
-                | Screen::MouseSettings
-                | Screen::ZoomSettings
-                | Screen::Features
-                | Screen::InventorySortSettings
-                | Screen::AppleSkinSettings
-                | Screen::Language
-                | Screen::FontSettings
-                | Screen::AccessibilitySettings
-                | Screen::OnlineSettings
-                | Screen::DebugOptions
-                | Screen::ChatSettings
-                | Screen::SkinCustomisation
-                | Screen::ManageStorage
-        )
+        self == Screen::Options || self.settings_parent().is_some()
     }
 
     /// Whether the chat box is up: in chat, and in bed (vanilla's
@@ -423,70 +425,221 @@ impl TouchMovement {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct GuiOptions {
-    pub gui_scale: u32,
-    pub fov: u32,
-    pub fov_effects: u32,
-    pub clouds: crate::renderer::clouds::CloudStatus,
-    pub particles: crate::util::particles::ParticleStatus,
-    pub render_distance: u32,
-    pub gamma: u32,
-    pub antialiasing: crate::renderer::antialias::Antialiasing,
-    pub smooth_lighting: bool,
-    pub lighting_enabled: bool,
-    pub max_fps: u32,
-    pub vsync: bool,
-    pub render_backend: RenderBackend,
-    pub auto_jump: bool,
-    pub view_bobbing: bool,
-    pub zoom: ZoomOptions,
-    pub chat: ChatOptions,
-    pub appleskin: appleskin::AppleSkinOptions,
-    pub language: String,
-    pub accessibility: more_options::AccessibilityOptions,
-    pub force_unicode: bool,
-    pub allow_listing: bool,
-    pub pause_on_lost_focus: bool,
-    /// The sort and transfer buttons on inventories.
-    pub sort_buttons: bool,
-    /// Whether sorting and storing take in the hotbar.
-    pub sort_hotbar: bool,
-    /// Vanilla `mouseSensitivity` as a percent: 0..=200, 100 is the default.
-    pub mouse_sensitivity: u32,
-    pub invert_x: bool,
-    pub invert_y: bool,
-    /// Vanilla `mouseWheelSensitivity` in hundredths: 1..=1000.
-    pub scroll_sensitivity: u32,
-    pub discrete_scrolling: bool,
-    pub toggle_crouch: bool,
-    pub toggle_sprint: bool,
-    pub main_hand_left: bool,
-    #[cfg(feature = "skins")]
-    pub skin_parts: u8,
-    pub fps_counter: bool,
-    pub shader_quality: crate::renderer::terrain::ShaderQuality,
-    pub shaders_enabled: bool,
-    pub player_shadows: bool,
-    /// Round shadows under entities (`entityShadows`), and how dark they
-    /// are, in percent.
-    pub entity_shadows: bool,
-    pub shadow_opacity: u32,
-    pub touch_movement: TouchMovement,
-    pub allow_signed_chat: bool,
-    pub toast_advancement: bool,
-    pub toast_recipe: bool,
-    pub toast_system: bool,
-    pub toast_time: u32,
-    #[cfg(audio)]
-    pub volumes: [u32; crate::audio::category::SoundCategory::COUNT],
-    #[cfg(voice)]
-    pub voice: VoiceOptions,
-    /// The block information panel's settings.
-    pub block_info: block_info::BlockInfoOptions,
-    /// Vanilla's `soundDevice`: the speaker by name, `None` for the default.
-    #[cfg(audio)]
-    pub sound_device: Option<String>,
+crate::serialized_option!(
+    crate::renderer::clouds::CloudStatus,
+    crate::util::particles::ParticleStatus,
+    RenderBackend,
+    crate::renderer::terrain::ShaderQuality,
+    TouchMovement,
+);
+
+crate::options! {
+    #[derive(Clone, Debug)]
+    pub struct GuiOptions {
+        pub gui_scale: u32 = 0 => key("guiScale"),
+        pub fov: u32 = crate::renderer::systems::VANILLA_FOV_DEGREES as u32 => key("fov"),
+        pub fov_effects: u32 = FOV_EFFECTS_DEFAULT => key("fovEffectScale").clamp(0, FOV_EFFECTS_DEFAULT),
+        pub clouds: crate::renderer::clouds::CloudStatus = if cfg!(feature = "mobile_ui") {
+            crate::renderer::clouds::CloudStatus::Fast
+        } else {
+            crate::renderer::clouds::CloudStatus::default()
+        } => key("renderClouds"),
+        pub particles: crate::util::particles::ParticleStatus = if cfg!(feature = "mobile_ui") {
+            crate::util::particles::ParticleStatus::Decreased
+        } else {
+            crate::util::particles::ParticleStatus::All
+        } => key("particles"),
+        pub render_distance: u32 = RENDER_DISTANCE_DEFAULT => key("renderDistance"),
+        pub gamma: u32 = GAMMA_DEFAULT => key("gamma").clamp(0, GAMMA_MAX),
+        pub antialiasing: crate::renderer::antialias::Antialiasing = Default::default()
+            => custom(|v| crate::renderer::antialias::Antialiasing::read(v), |m, a| a.write(m)),
+        pub smooth_lighting: bool = SMOOTH_LIGHTING_DEFAULT => key("ao"),
+        pub lighting_enabled: bool = LIGHTING_ENABLED_DEFAULT => key("lightingEnabled"),
+        pub max_fps: u32 = MAX_FPS_DEFAULT => key("maxFps").clamp(MAX_FPS_MIN, MAX_FPS_UNLIMITED),
+        pub vsync: bool = VSYNC_DEFAULT => key("vsync"),
+        pub render_backend: RenderBackend = RenderBackend::default() => key("renderBackend"),
+        pub auto_jump: bool = AUTO_JUMP_DEFAULT => key("autoJump"),
+        pub view_bobbing: bool = true => key("bobView"),
+        pub zoom: ZoomOptions = ZoomOptions::defaults() => group(),
+        pub chat: ChatOptions = ChatOptions::defaults() => group(),
+        pub appleskin: appleskin::AppleSkinOptions = appleskin::AppleSkinOptions::defaults() => group(),
+        pub language: String = "en_us".to_owned() => key("lang"),
+        pub accessibility: more_options::AccessibilityOptions = more_options::AccessibilityOptions::defaults() => group(),
+        pub force_unicode: bool = false => key("forceUnicodeFont"),
+        pub allow_listing: bool = true => key("allowServerListing"),
+        pub pause_on_lost_focus: bool = true => key("pauseOnLostFocus"),
+        /// The sort and transfer buttons on inventories.
+        pub sort_buttons: bool = true => key("sortButtons"),
+        /// Whether sorting and storing take in the hotbar.
+        pub sort_hotbar: bool = false => key("sortHotbar"),
+        /// Vanilla `mouseSensitivity` as a percent: 0..=200, 100 is the default.
+        pub mouse_sensitivity: u32 = MOUSE_SENSITIVITY_DEFAULT
+            => key("mouseSensitivity").scaled(MOUSE_SENSITIVITY_MAX as f64).clamp(0, MOUSE_SENSITIVITY_MAX),
+        pub invert_x: bool = false => key("invertXMouse"),
+        pub invert_y: bool = false => key("invertYMouse"),
+        /// Vanilla `mouseWheelSensitivity` in hundredths: 1..=1000.
+        pub scroll_sensitivity: u32 = SCROLL_SENSITIVITY_DEFAULT
+            => key("mouseWheelSensitivity").scaled(100.0).clamp(SCROLL_SENSITIVITY_MIN, SCROLL_SENSITIVITY_MAX),
+        pub discrete_scrolling: bool = false => key("discrete_mouse_scroll"),
+        pub toggle_crouch: bool = false => key("toggleCrouch"),
+        pub toggle_sprint: bool = false => key("toggleSprint"),
+        pub main_hand_left: bool = false => custom(
+            |v| v("mainHand").and_then(|v| v.as_str().map(|s| s == "left")) == Some(true),
+            |m, left| {
+                m.insert("mainHand".into(), serde_json::Value::from(if *left { "left" } else { "right" }));
+            },
+        ),
+        #[cfg(feature = "skins")]
+        pub skin_parts: u8 = 0x7F => custom(read_skin_parts, write_skin_parts),
+        pub fps_counter: bool = FPS_COUNTER_DEFAULT => key("fpsCounter"),
+        pub shader_quality: crate::renderer::terrain::ShaderQuality = Default::default() => key("shaderQuality"),
+        pub shaders_enabled: bool = false => key("shaders"),
+        pub player_shadows: bool = false => key("playerShadows"),
+        /// Round shadows under entities (`entityShadows`), and how dark they
+        /// are, in percent.
+        pub entity_shadows: bool = true => key("entityShadows"),
+        pub shadow_opacity: u32 = 50 => key("shadowOpacity").clamp(0, 100),
+        pub touch_movement: TouchMovement = TouchMovement::default() => key("touchMovement"),
+        pub allow_signed_chat: bool = false => key("allowSignedChat"),
+        pub toast_advancement: bool = true => key("toastAdvancement"),
+        pub toast_recipe: bool = true => key("toastRecipe"),
+        pub toast_system: bool = true => key("toastSystem"),
+        pub toast_time: u32 = TOAST_TIME_DEFAULT
+            => key("toastDisplayTime").scaled(10.0).clamp(TOAST_TIME_MIN as u32, TOAST_TIME_MAX as u32),
+        #[cfg(audio)]
+        pub volumes: [u32; crate::audio::category::SoundCategory::COUNT] = [VOLUME_DEFAULT; crate::audio::category::SoundCategory::COUNT]
+            => custom(read_volumes, write_volumes),
+        #[cfg(voice)]
+        pub voice: VoiceOptions = VoiceOptions::read(&|_| None) => custom(|v| VoiceOptions::read(v), |m, voice| voice.write(m)),
+        /// The block information panel's settings.
+        pub block_info: block_info::BlockInfoOptions = block_info::BlockInfoOptions::load(None) => custom(
+            |v| block_info::BlockInfoOptions::load(v("blockInfo").as_ref()),
+            |m, b| {
+                m.insert("blockInfo".into(), b.save());
+            },
+        ),
+        /// Vanilla's `soundDevice`: the speaker by name, `None` for the default.
+        #[cfg(audio)]
+        pub sound_device: Option<String> = None => key("soundDevice"),
+    }
+}
+
+impl Default for GuiOptions {
+    /// The options as stored.
+    fn default() -> Self {
+        let stored = load_options();
+        let value = |key: &str| stored.as_ref().and_then(|json| json.get(key).cloned());
+        <GuiOptions as option_codec::OptionGroup>::read_from(&value)
+    }
+}
+
+#[cfg(feature = "skins")]
+fn read_skin_parts(value: option_codec::Lookup) -> u8 {
+    let mut parts = 0u8;
+    for (key, bit) in MODEL_PART_KEYS {
+        if value(key).and_then(|v| v.as_bool()).unwrap_or(true) {
+            parts |= 1 << bit;
+        }
+    }
+    parts
+}
+
+#[cfg(feature = "skins")]
+fn write_skin_parts(map: &mut serde_json::Map<String, serde_json::Value>, parts: &u8) {
+    for (key, bit) in MODEL_PART_KEYS {
+        map.insert(key.to_string(), serde_json::json!(parts & (1 << bit) != 0));
+    }
+}
+
+#[cfg(audio)]
+fn read_volumes(value: option_codec::Lookup) -> [u32; crate::audio::category::SoundCategory::COUNT] {
+    let mut volumes = [VOLUME_DEFAULT; crate::audio::category::SoundCategory::COUNT];
+    for category in crate::audio::category::SoundCategory::ALL {
+        volumes[category.index()] = value(&format!("soundCategory_{}", category.key()))
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32)
+            .unwrap_or(VOLUME_DEFAULT)
+            .min(100);
+    }
+    volumes
+}
+
+#[cfg(audio)]
+fn write_volumes(
+    map: &mut serde_json::Map<String, serde_json::Value>,
+    volumes: &[u32; crate::audio::category::SoundCategory::COUNT],
+) {
+    for category in crate::audio::category::SoundCategory::ALL {
+        map.insert(format!("soundCategory_{}", category.key()), serde_json::json!(volumes[category.index()]));
+    }
+}
+
+#[cfg(voice)]
+impl VoiceOptions {
+    fn read(value: option_codec::Lookup) -> VoiceOptions {
+        VoiceOptions {
+            disabled: value("voiceDisabled").and_then(|v| v.as_bool()).unwrap_or(false),
+            muted: value("voiceMuted").and_then(|v| v.as_bool()).unwrap_or(false),
+            voice_activation: value("voiceActivation")
+                .and_then(|v| v.as_str().map(|s| s == "voice"))
+                .unwrap_or(false),
+            threshold: value("voiceThreshold")
+                .and_then(|v| v.as_i64())
+                .map_or(-50, |v| v.clamp(-127, 0) as i32),
+            volume: value("voiceVolume")
+                .and_then(|v| v.as_u64())
+                .map_or(100, |v| v.min(300) as u32),
+            input_device: value("voiceInputDevice")
+                .and_then(|v| v.as_str().map(str::to_owned))
+                .filter(|s| !s.is_empty()),
+            status: VoiceStatusDisplay::from_key(
+                value("voiceStatus").and_then(|v| v.as_str().map(str::to_owned)).as_deref().unwrap_or("icon"),
+            ),
+            player_volumes: value("voicePlayerVolumes")
+                .and_then(|v| {
+                    let map = v.as_object()?;
+                    Some(
+                        map.iter()
+                            .filter_map(|(id, entry)| {
+                                let id = uuid::Uuid::parse_str(id).ok()?;
+                                let name = entry.get("name")?.as_str()?.to_owned();
+                                let volume = entry.get("volume")?.as_u64()?.min(400) as u32;
+                                Some((id, (name, volume)))
+                            })
+                            .collect(),
+                    )
+                })
+                .unwrap_or_default(),
+        }
+    }
+
+    fn write(&self, map: &mut serde_json::Map<String, serde_json::Value>) {
+        let voice = self;
+        map.insert("voiceDisabled".into(), serde_json::json!(voice.disabled));
+        map.insert("voiceMuted".into(), serde_json::json!(voice.muted));
+        map.insert(
+            "voiceActivation".into(),
+            serde_json::json!(if voice.voice_activation { "voice" } else { "ptt" }),
+        );
+        map.insert("voiceThreshold".into(), serde_json::json!(voice.threshold));
+        map.insert("voiceVolume".into(), serde_json::json!(voice.volume));
+        map.insert(
+            "voiceInputDevice".into(),
+            serde_json::json!(voice.input_device.as_deref().unwrap_or("")),
+        );
+        map.insert("voiceStatus".into(), serde_json::json!(voice.status.key()));
+        let volumes: serde_json::Map<String, serde_json::Value> = voice
+            .player_volumes
+            .iter()
+            .map(|(id, (name, volume))| {
+                (
+                    id.to_string(),
+                    serde_json::json!({ "name": name, "volume": volume }),
+                )
+            })
+            .collect();
+        map.insert("voicePlayerVolumes".into(), serde_json::Value::Object(volumes));
+    }
 }
 
 #[cfg(audio)]
@@ -681,130 +834,80 @@ impl ChatShown {
     }
 }
 
-/// Vanilla's chat options, as percentages and pixels where vanilla keeps
-/// fractions.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct ChatOptions {
-    pub shown: ChatShown,
-    pub colors: bool,
-    pub links: bool,
-    pub links_prompt: bool,
-    /// `chatOpacity` and `textBackgroundOpacity`, percent.
-    pub opacity: u32,
-    pub background: u32,
-    /// `chatScale` and `chatLineSpacing`, percent.
-    pub scale: u32,
-    pub line_spacing: u32,
-    /// `chatDelay`, in tenths of a second.
-    pub delay_tenths: u32,
-    /// Pixels: width 40 to 320, heights 20 to 180.
-    pub width: u32,
-    pub focused_height: u32,
-    pub unfocused_height: u32,
-    pub auto_suggestions: bool,
-    pub only_secure: bool,
+pub const CHAT_DELAY_MAX_TENTHS: u32 = 60;
+
+/// `chatVisibility` is stored by its id.
+impl option_codec::OptionValue for ChatShown {
+    fn from_json(value: &serde_json::Value) -> Option<Self> {
+        Some(match value.as_u64()? {
+            1 => ChatShown::CommandsOnly,
+            2 => ChatShown::Hidden,
+            _ => ChatShown::Shown,
+        })
+    }
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::Value::from(self.id())
+    }
 }
 
-pub const CHAT_DELAY_MAX_TENTHS: u32 = 60;
+crate::options! {
+    /// Vanilla's chat options, as percentages and pixels where vanilla keeps
+    /// fractions.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub struct ChatOptions {
+        pub shown: ChatShown = ChatShown::Shown => key("chatVisibility"),
+        pub colors: bool = true => key("chatColors"),
+        pub links: bool = true => key("chatLinks"),
+        pub links_prompt: bool = true => key("chatLinksPrompt"),
+        /// `chatOpacity` and `textBackgroundOpacity`, percent.
+        pub opacity: u32 = 100 => key("chatOpacity").clamp(0, 100),
+        pub background: u32 = 50 => key("textBackgroundOpacity").clamp(0, 100),
+        /// `chatScale` and `chatLineSpacing`, percent.
+        pub scale: u32 = 100 => key("chatScale").clamp(0, 100),
+        pub line_spacing: u32 = 0 => key("chatLineSpacing").clamp(0, 100),
+        /// `chatDelay`, in tenths of a second.
+        pub delay_tenths: u32 = 0 => key("chatDelay").clamp(0, CHAT_DELAY_MAX_TENTHS),
+        /// Pixels: width 40 to 320, heights 20 to 180.
+        pub width: u32 = 320 => key("chatWidth").clamp(40, 320),
+        pub focused_height: u32 = 180 => key("chatHeightFocused").clamp(20, 180),
+        pub unfocused_height: u32 = 90 => key("chatHeightUnfocused").clamp(20, 180),
+        pub auto_suggestions: bool = true => key("autoSuggestions"),
+        pub only_secure: bool = false => key("onlyShowSecureChat"),
+    }
+}
 
 impl Default for ChatOptions {
     fn default() -> Self {
-        ChatOptions {
-            shown: ChatShown::Shown,
-            colors: true,
-            links: true,
-            links_prompt: true,
-            opacity: 100,
-            background: 50,
-            scale: 100,
-            line_spacing: 0,
-            delay_tenths: 0,
-            width: 320,
-            focused_height: 180,
-            unfocused_height: 90,
-            auto_suggestions: true,
-            only_secure: false,
-        }
+        Self::defaults()
     }
-}
-
-impl ChatOptions {
-    fn read(value: &dyn Fn(&str) -> Option<serde_json::Value>) -> ChatOptions {
-        let d = ChatOptions::default();
-        let num = |key: &str, fallback: u32, lo: u32, hi: u32| {
-            value(key)
-                .and_then(|v| v.as_u64())
-                .map_or(fallback, |v| (v as u32).clamp(lo, hi))
-        };
-        let flag = |key: &str, fallback: bool| value(key).and_then(|v| v.as_bool()).unwrap_or(fallback);
-        ChatOptions {
-            shown: match value("chatVisibility").and_then(|v| v.as_u64()) {
-                Some(1) => ChatShown::CommandsOnly,
-                Some(2) => ChatShown::Hidden,
-                _ => ChatShown::Shown,
-            },
-            colors: flag("chatColors", d.colors),
-            links: flag("chatLinks", d.links),
-            links_prompt: flag("chatLinksPrompt", d.links_prompt),
-            opacity: num("chatOpacity", d.opacity, 0, 100),
-            background: num("textBackgroundOpacity", d.background, 0, 100),
-            scale: num("chatScale", d.scale, 0, 100),
-            line_spacing: num("chatLineSpacing", d.line_spacing, 0, 100),
-            delay_tenths: num("chatDelay", d.delay_tenths, 0, CHAT_DELAY_MAX_TENTHS),
-            width: num("chatWidth", d.width, 40, 320),
-            focused_height: num("chatHeightFocused", d.focused_height, 20, 180),
-            unfocused_height: num("chatHeightUnfocused", d.unfocused_height, 20, 180),
-            auto_suggestions: flag("autoSuggestions", d.auto_suggestions),
-            only_secure: flag("onlyShowSecureChat", d.only_secure),
-        }
-    }
-}
-
-/// The zoom key's settings. Zoom levels are how many times narrower than
-/// the FOV the view gets, in tenths.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct ZoomOptions {
-    pub default_tenths: u32,
-    pub max_tenths: u32,
-    /// How long the view takes to settle on a new zoom; 0 snaps.
-    pub smoothing_ms: u32,
-    /// How much the mouse slows with the zoom, in percent: 100 slows it as
-    /// much as the view narrows, 0 not at all.
-    pub sensitivity: u32,
 }
 
 pub const ZOOM_TENTHS_MIN: u32 = 15;
 pub const ZOOM_TENTHS_MAX: u32 = 1000;
 pub const ZOOM_SMOOTHING_MAX_MS: u32 = 500;
 
+crate::options! {
+    /// The zoom key's settings. Zoom levels are how many times narrower than
+    /// the FOV the view gets, in tenths.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub struct ZoomOptions {
+        pub default_tenths: u32 = 40 => key("zoomDefault").clamp(ZOOM_TENTHS_MIN, ZOOM_TENTHS_MAX),
+        pub max_tenths: u32 = 500 => key("zoomMax").clamp(ZOOM_TENTHS_MIN, ZOOM_TENTHS_MAX),
+        /// How long the view takes to settle on a new zoom; 0 snaps.
+        pub smoothing_ms: u32 = 100 => key("zoomSmoothingMs").clamp(0, ZOOM_SMOOTHING_MAX_MS),
+        /// How much the mouse slows with the zoom, in percent: 100 slows it as
+        /// much as the view narrows, 0 not at all.
+        pub sensitivity: u32 = 50 => key("zoomSensitivity").clamp(0, 100),
+    }
+}
+
 impl Default for ZoomOptions {
     fn default() -> Self {
-        ZoomOptions {
-            default_tenths: 40,
-            max_tenths: 500,
-            smoothing_ms: 100,
-            sensitivity: 50,
-        }
+        Self::defaults()
     }
 }
 
 impl ZoomOptions {
-    fn read(value: &dyn Fn(&str) -> Option<serde_json::Value>) -> ZoomOptions {
-        let d = ZoomOptions::default();
-        let num = |key: &str, fallback: u32, lo: u32, hi: u32| {
-            value(key)
-                .and_then(|v| v.as_u64())
-                .map_or(fallback, |v| (v as u32).clamp(lo, hi))
-        };
-        let max_tenths = num("zoomMax", d.max_tenths, ZOOM_TENTHS_MIN, ZOOM_TENTHS_MAX);
-        ZoomOptions {
-            default_tenths: num("zoomDefault", d.default_tenths, ZOOM_TENTHS_MIN, max_tenths),
-            max_tenths,
-            smoothing_ms: num("zoomSmoothingMs", d.smoothing_ms, 0, ZOOM_SMOOTHING_MAX_MS),
-            sensitivity: num("zoomSensitivity", d.sensitivity, 0, 100),
-        }
-    }
-
     pub fn default_zoom(&self) -> f32 {
         self.default_tenths.min(self.max_tenths) as f32 / 10.0
     }
@@ -814,229 +917,6 @@ impl ZoomOptions {
     }
 }
 
-impl Default for GuiOptions {
-    fn default() -> Self {
-        let stored = load_options();
-        let value = |key: &str| stored.as_ref().and_then(|json| json.get(key).cloned());
-        GuiOptions {
-            gui_scale: value("guiScale")
-                .and_then(|v| v.as_u64())
-                .map(|v| v as u32)
-                .unwrap_or(0),
-            fov: value("fov")
-                .and_then(|v| v.as_u64())
-                .map(|v| v as u32)
-                .unwrap_or(crate::renderer::systems::VANILLA_FOV_DEGREES as u32),
-            fov_effects: value("fovEffectScale")
-                .and_then(|v| v.as_u64())
-                .map(|v| v as u32)
-                .unwrap_or(FOV_EFFECTS_DEFAULT)
-                .min(FOV_EFFECTS_DEFAULT),
-            clouds: value("renderClouds")
-                .and_then(|v| v.as_str().and_then(CloudStatus::from_serialized_name))
-                .unwrap_or(if cfg!(feature = "mobile_ui") {
-                    CloudStatus::Fast
-                } else {
-                    CloudStatus::default()
-                }),
-            particles: value("particles")
-                .and_then(|v| {
-                    v.as_str()
-                        .and_then(crate::util::particles::ParticleStatus::from_serialized_name)
-                })
-                .unwrap_or(if cfg!(feature = "mobile_ui") {
-                    crate::util::particles::ParticleStatus::Decreased
-                } else {
-                    crate::util::particles::ParticleStatus::All
-                }),
-            render_distance: value("renderDistance")
-                .and_then(|v| v.as_u64())
-                .map(|v| v as u32)
-                .unwrap_or(RENDER_DISTANCE_DEFAULT),
-            gamma: value("gamma")
-                .and_then(|v| v.as_u64())
-                .map(|v| v as u32)
-                .unwrap_or(GAMMA_DEFAULT)
-                .min(GAMMA_MAX),
-            antialiasing: crate::renderer::antialias::Antialiasing::read(value),
-            smooth_lighting: value("ao")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(SMOOTH_LIGHTING_DEFAULT),
-            lighting_enabled: value("lightingEnabled")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(LIGHTING_ENABLED_DEFAULT),
-            max_fps: value("maxFps")
-                .and_then(|v| v.as_u64())
-                .map(|v| v as u32)
-                .unwrap_or(MAX_FPS_DEFAULT)
-                .clamp(MAX_FPS_MIN, MAX_FPS_UNLIMITED),
-            vsync: value("vsync")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(VSYNC_DEFAULT),
-            render_backend: value("renderBackend")
-                .and_then(|v| v.as_str().and_then(RenderBackend::from_serialized_name))
-                .unwrap_or_default(),
-            view_bobbing: value("bobView").and_then(|v| v.as_bool()).unwrap_or(true),
-            zoom: ZoomOptions::read(&value),
-            chat: ChatOptions::read(&value),
-            language: value("lang").and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_else(|| "en_us".to_owned()),
-            accessibility: {
-                let d = more_options::AccessibilityOptions::DEFAULT;
-                let num = |key: &str, fallback: u32| value(key).and_then(|v| v.as_u64()).map_or(fallback, |v| v.min(100) as u32);
-                let flag = |key: &str| value(key).and_then(|v| v.as_bool()).unwrap_or(false);
-                more_options::AccessibilityOptions {
-                    distortion: num("screenEffectScale", d.distortion),
-                    damage_tilt: num("damageTiltStrength", d.damage_tilt),
-                    hide_lightning: flag("hideLightningFlashes"),
-                    hide_splash: flag("hideSplashTexts"),
-                    panorama_speed: num("panoramaScrollSpeed", d.panorama_speed),
-                }
-            },
-            force_unicode: value("forceUnicodeFont").and_then(|v| v.as_bool()).unwrap_or(false),
-            allow_listing: value("allowServerListing").and_then(|v| v.as_bool()).unwrap_or(true),
-            pause_on_lost_focus: value("pauseOnLostFocus").and_then(|v| v.as_bool()).unwrap_or(true),
-            appleskin: {
-                let flag = |key: &str| value(key).and_then(|v| v.as_bool()).unwrap_or(true);
-                appleskin::AppleSkinOptions {
-                    saturation_overlay: flag("appleskinSaturationOverlay"),
-                    food_preview: flag("appleskinFoodPreview"),
-                    health_preview: flag("appleskinHealthPreview"),
-                    tooltip: flag("appleskinTooltip"),
-                }
-            },
-            sort_buttons: value("sortButtons").and_then(|v| v.as_bool()).unwrap_or(true),
-            sort_hotbar: value("sortHotbar").and_then(|v| v.as_bool()).unwrap_or(false),
-            auto_jump: value("autoJump")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(AUTO_JUMP_DEFAULT),
-            mouse_sensitivity: value("mouseSensitivity")
-                .and_then(|v| v.as_f64())
-                .map(|v| (v.clamp(0.0, 1.0) * MOUSE_SENSITIVITY_MAX as f64).round() as u32)
-                .unwrap_or(MOUSE_SENSITIVITY_DEFAULT),
-            invert_x: value("invertXMouse")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false),
-            invert_y: value("invertYMouse")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false),
-            scroll_sensitivity: value("mouseWheelSensitivity")
-                .and_then(|v| v.as_f64())
-                .map(|v| (v * 100.0).round() as u32)
-                .unwrap_or(SCROLL_SENSITIVITY_DEFAULT)
-                .clamp(SCROLL_SENSITIVITY_MIN, SCROLL_SENSITIVITY_MAX),
-            discrete_scrolling: value("discrete_mouse_scroll")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false),
-            toggle_crouch: value("toggleCrouch")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false),
-            toggle_sprint: value("toggleSprint")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false),
-            main_hand_left: value("mainHand").and_then(|v| v.as_str().map(|s| s == "left"))
-                == Some(true),
-            #[cfg(feature = "skins")]
-            skin_parts: {
-                let mut parts = 0u8;
-                for (key, bit) in MODEL_PART_KEYS {
-                    if value(key).and_then(|v| v.as_bool()).unwrap_or(true) {
-                        parts |= 1 << bit;
-                    }
-                }
-                parts
-            },
-            fps_counter: value("fpsCounter")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(FPS_COUNTER_DEFAULT),
-            shader_quality: value("shaderQuality")
-                .and_then(|v| {
-                    v.as_str()
-                        .and_then(crate::renderer::terrain::ShaderQuality::from_serialized_name)
-                })
-                .unwrap_or_default(),
-            shaders_enabled: value("shaders").and_then(|v| v.as_bool()).unwrap_or(false),
-            player_shadows: value("playerShadows")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false),
-            entity_shadows: value("entityShadows").and_then(|v| v.as_bool()).unwrap_or(true),
-            shadow_opacity: value("shadowOpacity")
-                .and_then(|v| v.as_u64())
-                .map_or(50, |v| v.min(100) as u32),
-            touch_movement: value("touchMovement")
-                .and_then(|v| v.as_str().and_then(TouchMovement::from_serialized_name))
-                .unwrap_or_default(),
-            allow_signed_chat: value("allowSignedChat")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false),
-            toast_advancement: value("toastAdvancement")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true),
-            toast_recipe: value("toastRecipe")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true),
-            toast_system: value("toastSystem")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true),
-            toast_time: value("toastDisplayTime")
-                .and_then(|v| v.as_f64())
-                .map(|v| (v * 10.0).round() as u32)
-                .unwrap_or(TOAST_TIME_DEFAULT)
-                .clamp(TOAST_TIME_MIN as u32, TOAST_TIME_MAX as u32),
-            #[cfg(voice)]
-            voice: VoiceOptions {
-                disabled: value("voiceDisabled").and_then(|v| v.as_bool()).unwrap_or(false),
-                muted: value("voiceMuted").and_then(|v| v.as_bool()).unwrap_or(false),
-                voice_activation: value("voiceActivation")
-                    .and_then(|v| v.as_str().map(|s| s == "voice"))
-                    .unwrap_or(false),
-                threshold: value("voiceThreshold")
-                    .and_then(|v| v.as_i64())
-                    .map_or(-50, |v| v.clamp(-127, 0) as i32),
-                volume: value("voiceVolume")
-                    .and_then(|v| v.as_u64())
-                    .map_or(100, |v| v.min(300) as u32),
-                input_device: value("voiceInputDevice")
-                    .and_then(|v| v.as_str().map(str::to_owned))
-                    .filter(|s| !s.is_empty()),
-                status: VoiceStatusDisplay::from_key(
-                    value("voiceStatus").and_then(|v| v.as_str().map(str::to_owned)).as_deref().unwrap_or("icon"),
-                ),
-                player_volumes: value("voicePlayerVolumes")
-                    .and_then(|v| {
-                        let map = v.as_object()?;
-                        Some(
-                            map.iter()
-                                .filter_map(|(id, entry)| {
-                                    let id = uuid::Uuid::parse_str(id).ok()?;
-                                    let name = entry.get("name")?.as_str()?.to_owned();
-                                    let volume = entry.get("volume")?.as_u64()?.min(400) as u32;
-                                    Some((id, (name, volume)))
-                                })
-                                .collect(),
-                        )
-                    })
-                    .unwrap_or_default(),
-            },
-            block_info: block_info::BlockInfoOptions::load(value("blockInfo").as_ref()),
-            #[cfg(audio)]
-            sound_device: value("soundDevice")
-                .and_then(|v| v.as_str().map(str::to_owned))
-                .filter(|s| !s.is_empty()),
-            #[cfg(audio)]
-            volumes: {
-                let mut volumes = [VOLUME_DEFAULT; crate::audio::category::SoundCategory::COUNT];
-                for category in crate::audio::category::SoundCategory::ALL {
-                    volumes[category.index()] = value(&format!("soundCategory_{}", category.key()))
-                        .and_then(|v| v.as_u64())
-                        .map(|v| v as u32)
-                        .unwrap_or(VOLUME_DEFAULT)
-                        .min(100);
-                }
-                volumes
-            },
-        }
-    }
-}
 
 /// Effects drawn over the game for a moment: the item activation
 /// (`ItemActivation`) and the elder guardian's face.
@@ -1103,144 +983,9 @@ fn load_options() -> Option<serde_json::Value> {
 
 pub fn save_options(options: &GuiOptions) {
     publish_options(&std::sync::Arc::new(options.clone()));
-    let mut json = serde_json::json!({
-        "guiScale": options.gui_scale,
-        "fov": options.fov,
-        "fovEffectScale": options.fov_effects,
-        "renderClouds": options.clouds.serialized_name(),
-        "particles": options.particles.serialized_name(),
-        "renderDistance": options.render_distance,
-        "gamma": options.gamma,
-        "ao": options.smooth_lighting,
-        "lightingEnabled": options.lighting_enabled,
-        "maxFps": options.max_fps,
-        "vsync": options.vsync,
-        "renderBackend": options.render_backend.serialized_name(),
-        "autoJump": options.auto_jump,
-        "bobView": options.view_bobbing,
-        "zoomDefault": options.zoom.default_tenths,
-        "zoomMax": options.zoom.max_tenths,
-        "zoomSmoothingMs": options.zoom.smoothing_ms,
-        "zoomSensitivity": options.zoom.sensitivity,
-        "sortButtons": options.sort_buttons,
-        "sortHotbar": options.sort_hotbar,
-        "mouseSensitivity": options.mouse_sensitivity as f64 / MOUSE_SENSITIVITY_MAX as f64,
-        "invertXMouse": options.invert_x,
-        "invertYMouse": options.invert_y,
-        "mouseWheelSensitivity": options.scroll_sensitivity as f64 / 100.0,
-        "discrete_mouse_scroll": options.discrete_scrolling,
-        "toggleCrouch": options.toggle_crouch,
-        "toggleSprint": options.toggle_sprint,
-        "mainHand": if options.main_hand_left { "left" } else { "right" },
-        "fpsCounter": options.fps_counter,
-        "shaders": options.shaders_enabled,
-        "shaderQuality": options.shader_quality.serialized_name(),
-        "playerShadows": options.player_shadows,
-        "entityShadows": options.entity_shadows,
-        "shadowOpacity": options.shadow_opacity,
-        "touchMovement": options.touch_movement.serialized_name(),
-        "allowSignedChat": options.allow_signed_chat,
-        "toastAdvancement": options.toast_advancement,
-        "toastRecipe": options.toast_recipe,
-        "toastSystem": options.toast_system,
-        "toastDisplayTime": options.toast_time as f64 / 10.0,
-    });
-    {
-        let map = json.as_object_mut().expect("json! object literal");
-        let chat = &options.chat;
-        let skin = &options.appleskin;
-        let a = &options.accessibility;
-        map.insert("lang".to_owned(), serde_json::json!(options.language));
-        map.insert("screenEffectScale".to_owned(), serde_json::json!(a.distortion));
-        map.insert("damageTiltStrength".to_owned(), serde_json::json!(a.damage_tilt));
-        map.insert("hideLightningFlashes".to_owned(), serde_json::json!(a.hide_lightning));
-        map.insert("hideSplashTexts".to_owned(), serde_json::json!(a.hide_splash));
-        map.insert("panoramaScrollSpeed".to_owned(), serde_json::json!(a.panorama_speed));
-        map.insert("forceUnicodeFont".to_owned(), serde_json::json!(options.force_unicode));
-        map.insert("allowServerListing".to_owned(), serde_json::json!(options.allow_listing));
-        map.insert("pauseOnLostFocus".to_owned(), serde_json::json!(options.pause_on_lost_focus));
-        map.insert("appleskinSaturationOverlay".to_owned(), serde_json::json!(skin.saturation_overlay));
-        map.insert("appleskinFoodPreview".to_owned(), serde_json::json!(skin.food_preview));
-        map.insert("appleskinHealthPreview".to_owned(), serde_json::json!(skin.health_preview));
-        map.insert("appleskinTooltip".to_owned(), serde_json::json!(skin.tooltip));
-        map.insert("chatVisibility".to_owned(), serde_json::json!(chat.shown.id()));
-        map.insert("chatColors".to_owned(), serde_json::json!(chat.colors));
-        map.insert("chatLinks".to_owned(), serde_json::json!(chat.links));
-        map.insert("chatLinksPrompt".to_owned(), serde_json::json!(chat.links_prompt));
-        map.insert("chatOpacity".to_owned(), serde_json::json!(chat.opacity));
-        map.insert("textBackgroundOpacity".to_owned(), serde_json::json!(chat.background));
-        map.insert("chatScale".to_owned(), serde_json::json!(chat.scale));
-        map.insert("chatLineSpacing".to_owned(), serde_json::json!(chat.line_spacing));
-        map.insert("chatDelay".to_owned(), serde_json::json!(chat.delay_tenths));
-        map.insert("chatWidth".to_owned(), serde_json::json!(chat.width));
-        map.insert("chatHeightFocused".to_owned(), serde_json::json!(chat.focused_height));
-        map.insert("chatHeightUnfocused".to_owned(), serde_json::json!(chat.unfocused_height));
-        map.insert("autoSuggestions".to_owned(), serde_json::json!(chat.auto_suggestions));
-        map.insert("onlyShowSecureChat".to_owned(), serde_json::json!(chat.only_secure));
-    }
-    #[cfg(feature = "skins")]
-    {
-        let map = json.as_object_mut().expect("json! object literal");
-        for (key, bit) in MODEL_PART_KEYS {
-            map.insert(
-                key.to_string(),
-                serde_json::json!(options.skin_parts & (1 << bit) != 0),
-            );
-        }
-    }
-    #[cfg(voice)]
-    {
-        let map = json.as_object_mut().expect("json! object literal");
-        let voice = &options.voice;
-        map.insert("voiceDisabled".into(), serde_json::json!(voice.disabled));
-        map.insert("voiceMuted".into(), serde_json::json!(voice.muted));
-        map.insert(
-            "voiceActivation".into(),
-            serde_json::json!(if voice.voice_activation { "voice" } else { "ptt" }),
-        );
-        map.insert("voiceThreshold".into(), serde_json::json!(voice.threshold));
-        map.insert("voiceVolume".into(), serde_json::json!(voice.volume));
-        map.insert(
-            "voiceInputDevice".into(),
-            serde_json::json!(voice.input_device.as_deref().unwrap_or("")),
-        );
-        map.insert("voiceStatus".into(), serde_json::json!(voice.status.key()));
-        let volumes: serde_json::Map<String, serde_json::Value> = voice
-            .player_volumes
-            .iter()
-            .map(|(id, (name, volume))| {
-                (
-                    id.to_string(),
-                    serde_json::json!({ "name": name, "volume": volume }),
-                )
-            })
-            .collect();
-        map.insert("voicePlayerVolumes".into(), serde_json::Value::Object(volumes));
-    }
-    options
-        .antialiasing
-        .write(json.as_object_mut().expect("json! object literal"));
-    json.as_object_mut()
-        .expect("json! object literal")
-        .insert("blockInfo".into(), options.block_info.save());
-    #[cfg(audio)]
-    {
-        let map = json.as_object_mut().expect("json! object literal");
-        map.insert(
-            "soundDevice".into(),
-            serde_json::json!(options.sound_device.as_deref().unwrap_or("")),
-        );
-    }
-    #[cfg(audio)]
-    {
-        let map = json.as_object_mut().expect("json! object literal");
-        for category in crate::audio::category::SoundCategory::ALL {
-            map.insert(
-                format!("soundCategory_{}", category.key()),
-                serde_json::json!(options.volumes[category.index()]),
-            );
-        }
-    }
+    let mut map = serde_json::Map::new();
+    option_codec::OptionGroup::write_to(options, &mut map);
+    let json = serde_json::Value::Object(map);
     crate::platform::storage::OPTIONS.store(&json.to_string());
 }
 

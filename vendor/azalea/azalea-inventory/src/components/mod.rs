@@ -99,6 +99,15 @@ macro_rules! define_data_components {
                     $( DataComponentKind::$x => { unsafe { &**(&self.$x as &ManuallyDrop<dyn EncodableDataComponent>) } }, )*
                 }
             }
+            /// Reads a component of `kind` and drops it: the bytes it
+            /// takes, without keeping it (and without the union's manual
+            /// drop).
+            pub fn skip_as(kind: DataComponentKind, buf: &mut Cursor<&[u8]>) -> Result<(), BufReadError> {
+                match kind {
+                    $( DataComponentKind::$x => { $x::azalea_read(buf)?; }, )*
+                }
+                Ok(())
+            }
             pub fn azalea_read_as(
                 kind: DataComponentKind,
                 buf: &mut Cursor<&[u8]>,

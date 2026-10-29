@@ -1,8 +1,9 @@
 //! Vanilla's remaining option screens: Language (with Font settings),
 //! Accessibility, Online and Debug Options.
 
+use crate::gui::form::Form;
 use crate::gui::painter::Painter;
-use crate::gui::widgets::{self, Button, HeaderFooter, Slider, WIDGET_HEIGHT, WIDGET_WIDTH_BIG};
+use crate::gui::widgets::{self, Button, HeaderFooter, WIDGET_HEIGHT, WIDGET_WIDTH_BIG};
 use crate::gui::{GuiState, Screen, ScreenCtx};
 
 const LAYOUT: HeaderFooter = HeaderFooter::default_heights();
@@ -10,32 +11,24 @@ const COLUMN_W: f32 = 150.0;
 const COLUMN_STEP: f32 = 160.0;
 const ROW: f32 = 24.0;
 
-/// Accessibility settings the renderer reads.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct AccessibilityOptions {
-    /// `screenEffectScale`, percent: nausea's and the portal's warp.
-    pub distortion: u32,
-    /// `damageTiltStrength`, percent.
-    pub damage_tilt: u32,
-    pub hide_lightning: bool,
-    pub hide_splash: bool,
-    /// `panoramaScrollSpeed`, percent.
-    pub panorama_speed: u32,
-}
-
-impl AccessibilityOptions {
-    pub const DEFAULT: AccessibilityOptions = AccessibilityOptions {
-        distortion: 100,
-        damage_tilt: 100,
-        hide_lightning: false,
-        hide_splash: false,
-        panorama_speed: 100,
-    };
+crate::options! {
+    /// Accessibility settings the renderer reads.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub struct AccessibilityOptions {
+        /// `screenEffectScale`, percent: nausea's and the portal's warp.
+        pub distortion: u32 = 100 => key("screenEffectScale").clamp(0, 100),
+        /// `damageTiltStrength`, percent.
+        pub damage_tilt: u32 = 100 => key("damageTiltStrength").clamp(0, 100),
+        pub hide_lightning: bool = false => key("hideLightningFlashes"),
+        pub hide_splash: bool = false => key("hideSplashTexts"),
+        /// `panoramaScrollSpeed`, percent.
+        pub panorama_speed: u32 = 100 => key("panoramaScrollSpeed").clamp(0, 100),
+    }
 }
 
 impl Default for AccessibilityOptions {
     fn default() -> Self {
-        Self::DEFAULT
+        Self::defaults()
     }
 }
 
@@ -50,56 +43,20 @@ pub fn apply(options: &crate::gui::GuiOptions) {
     crate::text::FORCE_UNICODE.store(options.force_unicode, std::sync::atomic::Ordering::Relaxed);
 }
 
-fn grid_left(ctx: &ScreenCtx) -> f32 {
-    (ctx.vw / 2.0 - 155.0).floor()
-}
-
-fn toggle(p: &mut Painter, ctx: &ScreenCtx, at: (f32, f32), label: &str, value: &mut bool) -> bool {
-    let caption = format!("{label}: {}", if *value { "ON" } else { "OFF" });
-    if Button::new(at.0, at.1, COLUMN_W, WIDGET_HEIGHT, &caption).draw(p, ctx) {
-        *value = !*value;
-        return true;
-    }
-    false
-}
-
-fn percent_slider(p: &mut Painter, ctx: &ScreenCtx, id: u32, at: (f32, f32), value: &mut u32, label: fn(i32) -> String) -> bool {
-    let new = Slider {
-        id,
-        x: at.0,
-        y: at.1,
-        w: COLUMN_W,
-        h: WIDGET_HEIGHT,
-        min: 0,
-        max: 100,
-        value: *value as i32,
-        label,
-    }
-    .draw(p, ctx)
-    .clamp(0, 100) as u32;
-    let changed = new != *value;
-    *value = new;
-    changed
-}
-
 fn done(p: &mut Painter, ctx: &ScreenCtx) -> bool {
     let x = widgets::centered_x(ctx.vw);
     Button::new(x, LAYOUT.footer_y(ctx.vh), WIDGET_WIDTH_BIG, WIDGET_HEIGHT, "Done").draw(p, ctx) || ctx.input.escape
 }
 
 pub fn draw_accessibility(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
-    widgets::draw_title(p, ctx.vw, LAYOUT.title_y(), "Accessibility Settings");
-    let left = grid_left(ctx);
-    let top = LAYOUT.content_y(ctx.vh, 3.0 * ROW);
-    let cell = |c: f32, r: f32| (left + c * COLUMN_STEP, top + r * ROW);
-    let before = state.options.accessibility;
+    let mut form = Form::new(p, ctx, "Accessibility Settings", 3, 70);
     let a = &mut state.options.accessibility;
-    percent_slider(p, ctx, 70, cell(0.0, 0.0), &mut a.distortion, |v| format!("Distortion Effects: {v}%"));
-    percent_slider(p, ctx, 71, cell(1.0, 0.0), &mut a.damage_tilt, |v| format!("Damage Tilt: {v}%"));
-    toggle(p, ctx, cell(0.0, 1.0), "Hide Lightning Flashes", &mut a.hide_lightning);
-    toggle(p, ctx, cell(1.0, 1.0), "Hide Splash Texts", &mut a.hide_splash);
-    percent_slider(p, ctx, 72, cell(0.0, 2.0), &mut a.panorama_speed, |v| format!("Panorama Speed: {v}%"));
-    if state.options.accessibility != before {
+    form.slider(&mut a.distortion, 0, 100, crate::percent_label!("Distortion Effects"));
+    form.slider(&mut a.damage_tilt, 0, 100, crate::percent_label!("Damage Tilt"));
+    form.toggle("Hide Lightning Flashes", &mut a.hide_lightning);
+    form.toggle("Hide Splash Texts", &mut a.hide_splash);
+    form.slider(&mut a.panorama_speed, 0, 100, crate::percent_label!("Panorama Speed"));
+    if form.finish() {
         crate::gui::save_options(&state.options);
     }
     if done(p, ctx) {
@@ -108,12 +65,10 @@ pub fn draw_accessibility(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx
 }
 
 pub fn draw_online(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
-    widgets::draw_title(p, ctx.vw, LAYOUT.title_y(), "Online Options");
-    let left = grid_left(ctx);
-    let top = LAYOUT.content_y(ctx.vh, ROW);
-    let mut changed = toggle(p, ctx, (left, top), "Allow Server Listings", &mut state.options.allow_listing);
-    changed |= toggle(p, ctx, (left + COLUMN_STEP, top), "Only Show Secure Chat", &mut state.options.chat.only_secure);
-    if changed {
+    let mut form = Form::new(p, ctx, "Online Options", 1, 0);
+    form.toggle("Allow Server Listings", &mut state.options.allow_listing);
+    form.toggle("Only Show Secure Chat", &mut state.options.chat.only_secure);
+    if form.finish() {
         crate::gui::save_options(&state.options);
     }
     if done(p, ctx) {
@@ -122,16 +77,15 @@ pub fn draw_online(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
 }
 
 pub fn draw_debug(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
-    widgets::draw_title(p, ctx.vw, LAYOUT.title_y(), "Debug Options");
-    let left = grid_left(ctx);
-    let top = LAYOUT.content_y(ctx.vh, 3.0 * ROW);
-    let cell = |c: f32, r: f32| (left + c * COLUMN_STEP, top + r * ROW);
-    let mut changed = toggle(p, ctx, cell(0.0, 0.0), "Pause on Lost Focus", &mut state.options.pause_on_lost_focus);
-    changed |= toggle(p, ctx, cell(1.0, 0.0), "FPS Counter", &mut state.options.fps_counter);
-    toggle(p, ctx, cell(0.0, 1.0), "Chunk Borders", &mut state.chunk_borders);
-    toggle(p, ctx, cell(1.0, 1.0), "Hitboxes", &mut state.hitboxes);
-    toggle(p, ctx, cell(0.0, 2.0), "Advanced Tooltips", &mut state.advanced_tooltips);
-    if changed {
+    let mut form = Form::new(p, ctx, "Debug Options", 3, 0);
+    let saved_before = (state.options.pause_on_lost_focus, state.options.fps_counter);
+    form.toggle("Pause on Lost Focus", &mut state.options.pause_on_lost_focus);
+    form.toggle("FPS Counter", &mut state.options.fps_counter);
+    form.toggle("Chunk Borders", &mut state.chunk_borders);
+    form.toggle("Hitboxes", &mut state.hitboxes);
+    form.toggle("Advanced Tooltips", &mut state.advanced_tooltips);
+    form.finish();
+    if (state.options.pause_on_lost_focus, state.options.fps_counter) != saved_before {
         crate::gui::save_options(&state.options);
     }
     if done(p, ctx) {
@@ -140,10 +94,9 @@ pub fn draw_debug(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
 }
 
 pub fn draw_font(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
-    widgets::draw_title(p, ctx.vw, LAYOUT.title_y(), "Font Settings");
-    let left = grid_left(ctx);
-    let top = LAYOUT.content_y(ctx.vh, ROW);
-    if toggle(p, ctx, (left, top), "Force Unicode Font", &mut state.options.force_unicode) {
+    let mut form = Form::new(p, ctx, "Font Settings", 1, 0);
+    form.toggle("Force Unicode Font", &mut state.options.force_unicode);
+    if form.finish() {
         apply(&state.options);
         crate::gui::save_options(&state.options);
     }

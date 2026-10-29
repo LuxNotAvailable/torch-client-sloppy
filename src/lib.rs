@@ -1,4 +1,7 @@
 #![cfg_attr(target_arch = "wasm32", feature(alloc_error_hook))]
+// No `unsafe` in this crate except where a platform needs a foreign call;
+// each such place says so with `#[allow(unsafe_code)]` and why.
+#![deny(unsafe_code)]
 
 #[cfg(audio)]
 mod audio;
@@ -83,7 +86,7 @@ pub(crate) const ASSET_VERSION: &str = "26.3";
 
 pub(crate) fn assets_root() -> &'static Path {
     static ROOT: OnceLock<PathBuf> = OnceLock::new();
-    ROOT.get_or_init(|| match std::env::var_os("MINECRAFT_ASSETS") {
+    ROOT.get_or_init(|| match crate::platform::env::var_os("MINECRAFT_ASSETS") {
         Some(p) => PathBuf::from(p),
         None => pack_root().join("assets").join("minecraft"),
     })
@@ -102,7 +105,7 @@ fn pack_root() -> PathBuf {
 
 pub(crate) fn datapack_root() -> &'static Path {
     static ROOT: OnceLock<PathBuf> = OnceLock::new();
-    ROOT.get_or_init(|| match std::env::var_os("MINECRAFT_DATA") {
+    ROOT.get_or_init(|| match crate::platform::env::var_os("MINECRAFT_DATA") {
         Some(p) => PathBuf::from(p),
         None => pack_root().join("data").join("minecraft"),
     })
@@ -120,7 +123,7 @@ fn assets_present() -> bool {
 }
 
 pub(crate) fn textures_dir() -> PathBuf {
-    match std::env::var_os("MINECRAFT_TEXTURES") {
+    match crate::platform::env::var_os("MINECRAFT_TEXTURES") {
         Some(p) => PathBuf::from(p),
         None => assets_root().join("textures"),
     }
@@ -278,6 +281,7 @@ pub fn load_assets(packed: Vec<u8>) -> Result<(), String> {
     platform::assets::archive::load(packed)
 }
 
+#[allow(unsafe_code, reason = "the Android entry point is called by name from native code")]
 #[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 fn android_main(app: bevy::android::android_activity::AndroidApp) {
@@ -401,7 +405,7 @@ fn run(args: platform::cli::Args) -> eyre::Result<()> {
     }
 
     {
-        let threads = std::env::var("MC_POOL_THREADS")
+        let threads = crate::platform::env::var("MC_POOL_THREADS")
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
             .filter(|n| *n > 0)

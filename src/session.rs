@@ -776,13 +776,6 @@ pub enum FurnaceKind {
 }
 
 impl FurnaceKind {
-    pub fn texture_key(self) -> &'static str {
-        match self {
-            FurnaceKind::Furnace => "furnace",
-            FurnaceKind::BlastFurnace => "blast_furnace",
-            FurnaceKind::Smoker => "smoker",
-        }
-    }
 }
 
 pub type ContainerData = [i16; CONTAINER_DATA_LEN];

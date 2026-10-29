@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::gui::hud_layout::{ElementId, Hud};
 use crate::gui::painter::Painter;
 use crate::gui::render::GuiInput;
-use crate::gui::slots::{self, CONTAINER_W, INV_H, INV_W, Layout, draw_stack};
+use crate::gui::slots::{self, INV_H, INV_W, Layout, draw_stack};
 use crate::gui::{
     GuiState, Screen, ScreenCtx, Snapshot, book, chat, container, creative, focus, health, hud,
     multiplayer, options, pause, profile, sign_edit, sleep, spectator_menu, tablist, title, toast,
@@ -400,45 +400,13 @@ pub fn draw(
             );
             None
         }
-        Screen::Options
-        | Screen::VideoSettings
-        | Screen::Controls
-        | Screen::MouseSettings
-        | Screen::ZoomSettings
-        | Screen::Features
-        | Screen::InventorySortSettings
-        | Screen::AppleSkinSettings
-        | Screen::Language
-        | Screen::FontSettings
-        | Screen::AccessibilitySettings
-        | Screen::OnlineSettings
-        | Screen::DebugOptions
-        | Screen::ChatSettings
-        | Screen::SkinCustomisation
-        | Screen::ManageStorage => {
+        s if settings_screen(s) => {
             if state.in_menu() {
                 crate::gui::menu::background(p, ctx.vw, ctx.vh);
             } else {
                 dim_background(p, ctx.vw, ctx.vh);
             }
-            match state.screen {
-                Screen::VideoSettings => options::draw_video(p, state, &ctx),
-                Screen::Controls => options::draw_controls(p, state, &ctx),
-                Screen::MouseSettings => options::draw_mouse(p, state, &ctx),
-                Screen::ZoomSettings => options::draw_zoom(p, state, &ctx),
-                Screen::Features => options::draw_features(p, state, &ctx),
-                Screen::InventorySortSettings => options::draw_inventory_sort(p, state, &ctx),
-                Screen::AppleSkinSettings => options::draw_appleskin(p, state, &ctx),
-                Screen::Language => crate::gui::more_options::draw_language(p, state, &ctx),
-                Screen::FontSettings => crate::gui::more_options::draw_font(p, state, &ctx),
-                Screen::AccessibilitySettings => crate::gui::more_options::draw_accessibility(p, state, &ctx),
-                Screen::OnlineSettings => crate::gui::more_options::draw_online(p, state, &ctx),
-                Screen::DebugOptions => crate::gui::more_options::draw_debug(p, state, &ctx),
-                Screen::ChatSettings => options::draw_chat(p, state, &ctx),
-                Screen::SkinCustomisation => options::draw_skin(p, state, &ctx),
-                Screen::ManageStorage => options::draw_manage_storage(p, state, &ctx),
-                _ => options::draw(p, state, &ctx),
-            }
+            draw_settings_screen(p, state, &ctx);
             None
         }
         #[cfg(audio)]
@@ -712,6 +680,8 @@ pub fn draw(
             }
             None
         }
+        // The settings screens, matched by the guard above.
+        _ => None,
     };
     #[cfg(feature = "mobile_ui")]
     if lift > 0.0 {
@@ -1624,4 +1594,41 @@ mod tests {
             ]
         );
     }
+}
+
+/// The settings screens drawn the same way (a background, then their own
+/// draw), each with its draw function: one list for both the check and the
+/// dispatch.
+macro_rules! settings_screens {
+    ($( $screen:ident => $draw:path ),* $(,)?) => {
+        fn settings_screen(screen: Screen) -> bool {
+            matches!(screen, $( Screen::$screen )|*)
+        }
+
+        fn draw_settings_screen(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
+            match state.screen {
+                $( Screen::$screen => $draw(p, state, ctx), )*
+                _ => {}
+            }
+        }
+    };
+}
+
+settings_screens! {
+    Options => options::draw,
+    VideoSettings => options::draw_video,
+    Controls => options::draw_controls,
+    MouseSettings => options::draw_mouse,
+    ZoomSettings => options::draw_zoom,
+    Features => options::draw_features,
+    InventorySortSettings => options::draw_inventory_sort,
+    AppleSkinSettings => options::draw_appleskin,
+    Language => crate::gui::more_options::draw_language,
+    FontSettings => crate::gui::more_options::draw_font,
+    AccessibilitySettings => crate::gui::more_options::draw_accessibility,
+    OnlineSettings => crate::gui::more_options::draw_online,
+    DebugOptions => crate::gui::more_options::draw_debug,
+    ChatSettings => options::draw_chat,
+    SkinCustomisation => options::draw_skin,
+    ManageStorage => options::draw_manage_storage,
 }

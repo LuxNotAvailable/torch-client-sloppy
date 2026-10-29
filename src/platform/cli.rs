@@ -377,7 +377,7 @@ fn print_dirs() {
     }
     println!("\nAssets are read from");
     println!("  {}", crate::assets_root().display());
-    if cfg!(feature = "asset_download") && std::env::var_os("MINECRAFT_ASSETS").is_none() {
+    if cfg!(feature = "asset_download") && crate::platform::env::var_os("MINECRAFT_ASSETS").is_none() {
         println!("  (a downloaded set, addressed by that path rather than stored at it)");
     }
     println!("  MINECRAFT_ASSETS moves it, and no reset ever deletes it");
@@ -724,7 +724,7 @@ fn removable(dir: &std::path::Path) -> Result<(), String> {
         ));
     }
     for var in ["HOME", "USERPROFILE"] {
-        if let Some(home) = std::env::var_os(var)
+        if let Some(home) = crate::platform::env::var_os(var)
             && std::path::Path::new(&home) == dir
         {
             return Err(format!(

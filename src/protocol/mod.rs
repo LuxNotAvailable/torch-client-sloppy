@@ -95,7 +95,7 @@ fn parse_env() -> Option<i32> {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn raw_override() -> Option<String> {
-    std::env::var("MC_PROTOCOL").ok()
+    crate::platform::env::var("MC_PROTOCOL").ok()
 }
 
 #[cfg(target_arch = "wasm32")]

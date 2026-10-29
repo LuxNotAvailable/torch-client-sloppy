@@ -34,4 +34,3 @@ pub mod zoom;
 
 pub use edge::{Edge, MS_PER_TICK, Phase, roll};
 pub use store::{Store, save, store};
-pub use value::Value;

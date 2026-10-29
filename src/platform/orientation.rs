@@ -1,3 +1,4 @@
+#[allow(unsafe_code, reason = "the JNI handles Android hands over are raw pointers")]
 #[cfg_attr(not(feature = "mobile_ui"), allow(dead_code))]
 pub(crate) const SUPPORTED: bool = cfg!(target_os = "android");
 

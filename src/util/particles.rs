@@ -233,8 +233,6 @@ pub(crate) struct Particle {
     grow: Grow,
     sprite: Sprite,
     flags: u8,
-    /// A firework spark's extras.
-    spark: Option<Box<Spark>>,
     /// Vanilla particle classes with their own `tick`.
     behavior: Behavior,
 }
@@ -373,6 +371,8 @@ struct Leaf {
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Behavior {
     None,
+    /// A firework spark: fades to its fade colour, trails, twinkles.
+    Spark(Spark),
     Drip(Drip),
     Leaf(Leaf),
     /// `FireflyParticle`: fades in and out, darts about, dies in blocks.
@@ -389,7 +389,7 @@ enum Behavior {
 }
 
 /// `FireworkParticles.SparkParticle`'s state beyond a plain particle.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 struct Spark {
     fade: Option<[f32; 3]>,
     trail: bool,
@@ -742,7 +742,6 @@ pub(crate) fn spawn_block_break(
             grow: Grow::Fixed,
             sprite: Sprite::Fixed(random_sub_uv(tile, &mut rng)),
             flags: PHYSICS | TERRAIN,
-            spark: None,
             behavior: Behavior::None,
         };
         if particle.lifetime > 0 {
@@ -821,7 +820,6 @@ fn spawn_crit_particles(
                     grow: Grow::In,
                     sprite: Sprite::Fixed(uv),
                     flags: CRIT_DECAY,
-                    spark: None,
                     behavior: Behavior::None,
                 };
                 if particle.lifetime > 0 {
@@ -944,35 +942,42 @@ fn add_level_particle(
     let Some(recipe) = recipe(particle_kind, atlas, arg, rng) else {
         return;
     };
-    let mut particle = Particle {
-        prev: pos,
-        pos,
-        velocity: recipe.velocity,
-        gravity: recipe.gravity,
-        friction: recipe.friction,
-        tick_acc: rng.next_f32() / 20.0,
-        age: 0,
-        lifetime: recipe.lifetime.max(1),
-        tint: recipe.tint,
-        size: recipe.size,
-        grow: recipe.grow,
-        sprite: recipe.sprite,
-        flags: recipe.flags,
-        spark: None,
-        behavior: match recipe.behavior {
-            // `FlyStraightTowardsParticle` starts its offset away and comes in.
-            Behavior::FlyStraight { offset, from, to, .. } => Behavior::FlyStraight {
-                start: pos.to_array(),
-                offset,
-                from,
-                to,
-            },
-            other => other,
-        },
-    };
+    let mut particle = Particle::from_recipe(recipe, pos, rng.next_f32() / 20.0);
     particle.age = 1;
     advance_one_tick(&mut particle, world);
     live.push(particle);
+}
+
+impl Particle {
+    /// A particle made from `recipe`, starting at `pos`.
+    fn from_recipe(recipe: Recipe, pos: Vec3, tick_acc: f32) -> Particle {
+        Particle {
+            prev: pos,
+            pos,
+            velocity: recipe.velocity,
+            gravity: recipe.gravity,
+            friction: recipe.friction,
+            tick_acc,
+            age: 0,
+            lifetime: recipe.lifetime.max(1),
+            tint: recipe.tint,
+            size: recipe.size,
+            grow: recipe.grow,
+            sprite: recipe.sprite,
+            flags: recipe.flags,
+            behavior: match recipe.behavior {
+                // `FlyStraightTowardsParticle` starts its offset away and
+                // comes in.
+                Behavior::FlyStraight { offset, from, to, .. } => Behavior::FlyStraight {
+                    start: pos.to_array(),
+                    offset,
+                    from,
+                    to,
+                },
+                other => other,
+            },
+        }
+    }
 }
 
 fn overrides_limiter(kind: &P) -> bool {
@@ -2809,7 +2814,7 @@ struct After {
 fn tick_behavior(p: &mut Particle, world: Option<&azalea_world::World>, on_ground: bool, rng: &mut JavaRandom) -> After {
     let mut after = After { remove: false, spawn: None, sound: None };
     match &mut p.behavior {
-        Behavior::None => {}
+        Behavior::None | Behavior::Spark(_) => {}
         Behavior::Drip(drip) => {
             let drip = *drip;
             if drip.hangs() {
@@ -3048,8 +3053,7 @@ fn tick_spark(p: &mut Particle, spark: Spark, trails: &mut Vec<Particle>) {
             grow: p.grow,
             sprite: p.sprite,
             flags: p.flags,
-            spark: Some(Box::new(Spark { trail: false, ..spark })),
-            behavior: Behavior::None,
+            behavior: Behavior::Spark(Spark { trail: false, ..spark }),
         };
         copy.age = copy.lifetime / 2;
         trails.push(copy);
@@ -3175,12 +3179,11 @@ fn spark(
         grow: Grow::Fixed,
         sprite: r.sprite,
         flags: TRANSLUCENT | FULLBRIGHT | FADE_OUT,
-        spark: Some(Box::new(Spark {
+        behavior: Behavior::Spark(Spark {
             fade,
             trail: explosion.trail,
             twinkle: explosion.twinkle,
-        })),
-        behavior: Behavior::None,
+        }),
     })
 }
 
@@ -3269,7 +3272,6 @@ fn explode(starter: &Starter, explosion: &FireworkExplosion, atlas: &Atlas, rng:
             grow: Grow::Flash,
             sprite: Sprite::Animated(index),
             flags: TRANSLUCENT | FULLBRIGHT,
-            spark: None,
             behavior: Behavior::None,
         });
     }
@@ -3366,10 +3368,9 @@ fn tick_particles(
             }
             particle.age += 1;
             let on_ground = advance_one_tick(particle, world);
-            if let Some(spark) = particle.spark.as_deref().copied() {
+            if let Behavior::Spark(spark) = particle.behavior {
                 tick_spark(particle, spark, &mut trails);
-            }
-            if particle.behavior != Behavior::None {
+            } else if particle.behavior != Behavior::None {
                 let after = tick_behavior(particle, world, on_ground, rng);
                 if let Some(next) = after.spawn {
                     chained.push(next);
@@ -3393,23 +3394,7 @@ fn tick_particles(
     if let Some(atlas) = atlas.0.as_ref() {
         for (kind, pos) in chained {
             let Some(recipe) = recipe(&kind, atlas, Vec3::ZERO, rng) else { continue };
-            live.0.push(Particle {
-                prev: pos,
-                pos,
-                velocity: recipe.velocity,
-                gravity: recipe.gravity,
-                friction: recipe.friction,
-                tick_acc: 0.0,
-                age: 0,
-                lifetime: recipe.lifetime.max(1),
-                tint: recipe.tint,
-                size: recipe.size,
-                grow: recipe.grow,
-                sprite: recipe.sprite,
-                flags: recipe.flags,
-                spark: None,
-                behavior: recipe.behavior,
-            });
+            live.0.push(Particle::from_recipe(recipe, pos, 0.0));
         }
     }
 }
@@ -3743,7 +3728,7 @@ fn write_batch_mesh(
             continue;
         }
         // A twinkling spark blinks through its last two thirds.
-        if p.spark.as_deref().is_some_and(|s| s.twinkle)
+        if matches!(p.behavior, Behavior::Spark(s) if s.twinkle)
             && p.age >= p.lifetime / 3
             && (p.age + p.lifetime) / 3 % 2 != 0
         {

@@ -29,27 +29,20 @@ pub fn outline_of(icon: &image::RgbaImage) -> image::RgbaImage {
     })
 }
 
-/// Which of AppleSkin's additions are on.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct AppleSkinOptions {
-    pub saturation_overlay: bool,
-    pub food_preview: bool,
-    pub health_preview: bool,
-    pub tooltip: bool,
-}
-
-impl AppleSkinOptions {
-    pub const DEFAULT: AppleSkinOptions = AppleSkinOptions {
-        saturation_overlay: true,
-        food_preview: true,
-        health_preview: true,
-        tooltip: true,
-    };
+crate::options! {
+    /// Which of AppleSkin's additions are on.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub struct AppleSkinOptions {
+        pub saturation_overlay: bool = true => key("appleskinSaturationOverlay"),
+        pub food_preview: bool = true => key("appleskinFoodPreview"),
+        pub health_preview: bool = true => key("appleskinHealthPreview"),
+        pub tooltip: bool = true => key("appleskinTooltip"),
+    }
 }
 
 impl Default for AppleSkinOptions {
     fn default() -> Self {
-        AppleSkinOptions::DEFAULT
+        Self::defaults()
     }
 }
 

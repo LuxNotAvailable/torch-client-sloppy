@@ -273,3 +273,7 @@ rustls = { version = "0.23", default-features = false, features = [
 path = "vendor/azalea/azalea-protocol"
 default-features = false
 features = ["dns"]
+
+[target.'cfg(all(unix, not(target_arch = "wasm32")))'.dependencies]
+# Exit signals without hand-written `signal()` calls.
+ctrlc = { version = "3.5", features = ["termination"] }

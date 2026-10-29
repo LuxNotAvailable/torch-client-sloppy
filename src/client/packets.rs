@@ -186,7 +186,7 @@ fn game_event(shared: &Arc<SharedMutex>, event: EventType, param: f32) {
             shared.lock().unwrap().session.chat.chat_incoming.push(system(text));
         }
         EventType::WinGame => {
-            let mut s = shared.lock().unwrap();
+            let s = shared.lock().unwrap();
             if param == 0.0 {
                 crate::client::bus::request(crate::client::bus::ClientRequest::Respawn);
             } else {
@@ -347,7 +347,7 @@ fn enchantment_id(world: &WorldHolder, clue: i16) -> Option<Box<str>> {
         return None;
     }
     let world = world.shared.read();
-    let enchantment = azalea_registry::Enchantment::new_raw(clue as u32);
+    let enchantment = azalea_registry::data::Enchantment::new_raw(clue as u32);
     let key = enchantment.key_owned(&world.registries)?;
     Some(Box::from(
         azalea_registry::DataRegistryKey::into_ident(key).path(),
@@ -879,14 +879,14 @@ fn session_state(world: &WorldHolder, shared: &Arc<SharedMutex>, packet: &Client
             use crate::blockentities::feed::{BlockEntityData, SignFace};
             use crate::session::SignEditKind;
             let world_block = {
-                use azalea::block::BlockTrait;
+                
                 world
                     .shared
                     .read()
                     .get_block_state(p.pos)
                     .map(|state| crate::util::block_model::block_id(state).to_string())
             };
-            let mut s = shared.lock().unwrap();
+            let s = shared.lock().unwrap();
             let key = [p.pos.x, p.pos.y, p.pos.z];
             let entry = s.session.world.block_entities.get(&key);
             let Some((kind, wood)) = entry

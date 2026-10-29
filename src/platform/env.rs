@@ -1,3 +1,30 @@
+/// Values laid over the process environment: what the Android launcher
+/// reads from its bundled env file. Setting the real environment is
+/// `unsafe` (other threads may read it); this table is read first instead.
+static OVERRIDES: std::sync::OnceLock<std::collections::HashMap<String, String>> = std::sync::OnceLock::new();
+
+/// Installs the overrides, once, before anything reads them.
+#[allow(dead_code, reason = "set by the Android launcher")]
+pub(crate) fn set_overrides(values: std::collections::HashMap<String, String>) {
+    let _ = OVERRIDES.set(values);
+}
+
+/// `std::env::var`, with the overrides first.
+pub(crate) fn var(key: &str) -> Result<String, std::env::VarError> {
+    match OVERRIDES.get().and_then(|o| o.get(key)) {
+        Some(value) => Ok(value.clone()),
+        None => std::env::var(key),
+    }
+}
+
+/// `std::env::var_os`, with the overrides first.
+pub(crate) fn var_os(key: &str) -> Option<std::ffi::OsString> {
+    match OVERRIDES.get().and_then(|o| o.get(key)) {
+        Some(value) => Some(value.into()),
+        None => std::env::var_os(key),
+    }
+}
+
 pub(crate) struct Var {
     pub name: &'static str,
     pub what: &'static str,

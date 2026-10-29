@@ -855,8 +855,6 @@ fn bake_wings(meshes: &mut Assets<Mesh>) -> [Handle<Mesh>; 2] {
     })
 }
 
-const LEGGINGS_SLOT: usize = 2;
-
 const CHEST_SLOT: usize = 1;
 
 const ARMOR_SLOT_NAMES: [&str; 4] = ["helmet", "chestplate", "leggings", "boots"];

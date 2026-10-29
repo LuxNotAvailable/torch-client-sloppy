@@ -1215,7 +1215,7 @@ fn spawn_layer(
                 .and_then(|rigged| Some((rigged, rig_parts.alloc(states.len() as u32)?)));
             if let Some((rigged, slot)) = slot {
                 let aabb = pose_slot(rig_parts, slot, &gpu.model, rigged, &states);
-                let mut spawned = commands.spawn((
+                let spawned = commands.spawn((
                     Mesh3d(rigged.mesh.clone()),
                     MeshMaterial3d(material.clone()),
                     bevy::mesh::MeshTag(slot.offset),
@@ -1256,7 +1256,7 @@ fn spawn_layer(
                     ))
                     .id();
                 let geom_node = gpu.meshes[i].as_ref().map(|mesh| {
-                    let mut spawned = commands.spawn((
+                    let spawned = commands.spawn((
                         Mesh3d(mesh.clone()),
                         MeshMaterial3d(material.clone()),
                         Transform::default(),

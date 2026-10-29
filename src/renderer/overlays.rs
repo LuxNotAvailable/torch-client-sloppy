@@ -541,7 +541,7 @@ pub(super) fn update_hitboxes(
     let blue = [0.0, 0.0, 1.0, 1.0];
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut colors: Vec<[f32; 4]> = Vec::new();
-    let mut boxed = |lo: [f32; 3], hi: [f32; 3], c: [f32; 4], positions: &mut Vec<[f32; 3]>, colors: &mut Vec<[f32; 4]>| {
+    let boxed = |lo: [f32; 3], hi: [f32; 3], c: [f32; 4], positions: &mut Vec<[f32; 3]>, colors: &mut Vec<[f32; 4]>| {
         let corners = box_corners(lo, hi);
         for (a, b) in BOX_EDGES {
             positions.push(corners[a]);
@@ -551,7 +551,7 @@ pub(super) fn update_hitboxes(
         }
     };
     let partial = view.partial;
-    let mut cast = |pos: [f32; 3], w: f32, h: f32, eye: f32, look: (f32, f32), positions: &mut Vec<[f32; 3]>, colors: &mut Vec<[f32; 4]>| {
+    let cast = |pos: [f32; 3], w: f32, h: f32, eye: f32, look: (f32, f32), positions: &mut Vec<[f32; 3]>, colors: &mut Vec<[f32; 4]>| {
         let half = w / 2.0;
         boxed([pos[0] - half, pos[1], pos[2] - half], [pos[0] + half, pos[1] + h, pos[2] + half], white, positions, colors);
         let ey = pos[1] + eye;

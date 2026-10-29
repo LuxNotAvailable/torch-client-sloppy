@@ -152,14 +152,6 @@ impl PackRender {
         }
     }
 
-    pub(crate) fn draws_hand(&self) -> bool {
-        self.install.as_ref().is_some_and(|i| {
-            EntityKind::ALL
-                .iter()
-                .any(|k| k.is_hand() && i.installed.entities[k.index()].is_some())
-        })
-    }
-
     pub(crate) fn generation(&self) -> u32 {
         self.install.as_ref().map_or(0, |i| i.installed.generation)
     }

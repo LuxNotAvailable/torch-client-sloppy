@@ -321,7 +321,7 @@ fn setup(
             see_through,
         });
 
-        let mut spawned = commands.spawn((
+        let _spawned = commands.spawn((
             Mesh3d(mesh),
             MeshMaterial3d(material),
             Transform::default(),

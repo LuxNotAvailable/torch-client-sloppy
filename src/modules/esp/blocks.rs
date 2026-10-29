@@ -5,7 +5,6 @@ use azalea::block::BlockState;
 
 use crate::modules::list::{BitList, Built, Entry, Preset};
 
-pub use crate::modules::list::NO_ROW;
 
 struct Tint {
     name: &'static str,

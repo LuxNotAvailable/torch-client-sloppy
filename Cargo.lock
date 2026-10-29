@@ -6462,6 +6462,7 @@ dependencies = [
  "bevy",
  "bytemuck",
  "console_error_panic_hook",
+ "ctrlc",
  "eyre",
  "flate2",
  "futures-util",

@@ -6,6 +6,7 @@ pub(crate) use std::time::{SystemTime, UNIX_EPOCH};
 #[cfg(target_arch = "wasm32")]
 pub(crate) use web_time::{SystemTime, UNIX_EPOCH};
 
+#[allow(unsafe_code, reason = "winmm's timer resolution is a foreign call")]
 /// Asks Windows for 1 ms timer resolution for the life of the process.
 ///
 /// The default 15.6 ms resolution rounds every tokio sleep up to a whole

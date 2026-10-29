@@ -129,7 +129,7 @@ fn draw_confirm(
     p: &mut Painter,
     state: &mut DeathState,
     ctx: &ScreenCtx,
-    shared: &Arc<SharedMutex>,
+    _shared: &Arc<SharedMutex>,
     opened: u32,
 ) -> Option<Screen> {
     let block_h = LINE_HEIGHT + CONFIRM_PAD + WIDGET_HEIGHT;

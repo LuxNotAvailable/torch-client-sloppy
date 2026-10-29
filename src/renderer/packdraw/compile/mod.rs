@@ -3,7 +3,9 @@ use crate::shaderpack::expressions::Customs;
 use crate::shaderpack::options::{self, Values};
 use crate::shaderpack::pipeline::Layout;
 use crate::shaderpack::programs::{self, Geometry};
-use crate::shaderpack::{backend, discover, features, include, pipeline, properties, transform};
+use crate::shaderpack::{discover, features, include, properties};
+#[cfg(test)]
+use crate::shaderpack::{backend, pipeline, transform};
 
 use super::images::{CustomTexture, CustomTextures};
 use super::sources::TextureSource;

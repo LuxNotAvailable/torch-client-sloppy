@@ -408,6 +408,7 @@ pub(crate) mod android {
         let Some(text) = entry(app, ENV).and_then(|b| String::from_utf8(b).ok()) else {
             return;
         };
+        let mut values = std::collections::HashMap::new();
         for line in text.lines() {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
@@ -421,7 +422,8 @@ pub(crate) mod android {
                 continue;
             }
             crate::step(&format!("env: {key}={value}"));
-            unsafe { std::env::set_var(key, value) };
+            values.insert(key.to_owned(), value.to_owned());
         }
+        crate::platform::env::set_overrides(values);
     }
 }

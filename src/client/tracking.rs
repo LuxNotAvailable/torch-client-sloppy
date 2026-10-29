@@ -7,7 +7,6 @@ use crate::{
     entities,
     renderer::{self, HumanoidAnim},
 };
-use azalea::prelude::*;
 
 static MESHED: OnceLock<SideMutex<HashSet<(i32, i32)>>> = OnceLock::new();
 

@@ -55,6 +55,7 @@ mod android {
         objects::{JObject, JString},
     };
 
+    #[allow(unsafe_code, reason = "the JNI handles Android hands over are raw pointers")]
     fn with<T>(f: impl FnOnce(&mut Env<'_>, &JObject<'_>) -> Result<T>) -> Option<T> {
         let app = bevy::android::ANDROID_APP.get()?;
         let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };

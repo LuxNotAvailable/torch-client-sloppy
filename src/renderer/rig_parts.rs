@@ -45,7 +45,7 @@ pub fn enabled() -> bool {
     }
     static FORCED_CPU: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     let forced = *FORCED_CPU.get_or_init(|| {
-        matches!(std::env::var("MC_CPU_RIGS").as_deref(), Ok("1") | Ok("true"))
+        matches!(crate::platform::env::var("MC_CPU_RIGS").as_deref(), Ok("1") | Ok("true"))
     });
     !forced && !PACK_TAKEOVER.load(Ordering::Relaxed)
 }

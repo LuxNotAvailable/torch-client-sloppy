@@ -214,7 +214,7 @@ fn decide_tier(world: &World) -> TerrainTier {
     let device = world.resource::<RenderDevice>();
     let features = device.features();
     let forced_direct = matches!(
-        std::env::var("MC_TERRAIN_DIRECT").as_deref(),
+        crate::platform::env::var("MC_TERRAIN_DIRECT").as_deref(),
         Ok("1") | Ok("true")
     );
     let storage_ok = device.limits().max_storage_buffers_per_shader_stage >= 4;

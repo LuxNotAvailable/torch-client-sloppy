@@ -28,9 +28,6 @@ const TOGGLE: &str = "Toggle";
 const MOUSE_SENSITIVITY_SLIDER_ID: u32 = 40;
 const SCROLL_SENSITIVITY_SLIDER_ID: u32 = 41;
 const ZOOM_DEFAULT_SLIDER_ID: u32 = 50;
-const ZOOM_MAX_SLIDER_ID: u32 = 51;
-const ZOOM_SMOOTHING_SLIDER_ID: u32 = 52;
-const ZOOM_SENSITIVITY_SLIDER_ID: u32 = 53;
 const SHADOW_OPACITY_SLIDER_ID: u32 = 54;
 const CHAT_SLIDER_ID_BASE: u32 = 60;
 const ENTITY_SHADOWS: &str = "Entity Shadows";
@@ -1239,47 +1236,20 @@ fn zoom_sensitivity_label(percent: i32) -> String {
 /// how the view eases, and how much the mouse slows with it.
 pub fn draw_zoom(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     use crate::gui::{ZOOM_SMOOTHING_MAX_MS, ZOOM_TENTHS_MAX, ZOOM_TENTHS_MIN, ZoomOptions};
-
-    draw_title(p, ctx, ZOOM_TITLE);
-    let left = (ctx.vw / 2.0 - GRID_LEFT_OFFSET).floor();
-    let top = LAYOUT.content_y(ctx.vh, 3.0 * ROW_H);
-    let cell = |column: f32, row: f32| (left + column * COLUMN_STEP, top + row * ROW_H + ROW_INSET);
-    let before = state.options.zoom;
+    let mut form = crate::gui::form::Form::new(p, ctx, ZOOM_TITLE, 3, ZOOM_DEFAULT_SLIDER_ID);
     let z = &mut state.options.zoom;
-
-    let slider = |id: u32, at: (f32, f32), min: u32, max: u32, value: u32, label: fn(i32) -> String| Slider {
-        id,
-        x: at.0,
-        y: at.1,
-        w: COLUMN_W,
-        h: WIDGET_HEIGHT,
-        min: min as i32,
-        max: max as i32,
-        value: value as i32,
-        label,
-    };
-
-    z.default_tenths = slider(ZOOM_DEFAULT_SLIDER_ID, cell(0.0, 0.0), ZOOM_TENTHS_MIN, z.max_tenths, z.default_tenths, zoom_default_label)
-        .draw(p, ctx)
-        .clamp(ZOOM_TENTHS_MIN as i32, z.max_tenths as i32) as u32;
-    z.max_tenths = slider(ZOOM_MAX_SLIDER_ID, cell(1.0, 0.0), ZOOM_TENTHS_MIN, ZOOM_TENTHS_MAX, z.max_tenths, zoom_max_label)
-        .draw(p, ctx)
-        .clamp(ZOOM_TENTHS_MIN as i32, ZOOM_TENTHS_MAX as i32) as u32;
+    let max = z.max_tenths;
+    form.slider(&mut z.default_tenths, ZOOM_TENTHS_MIN, max, zoom_default_label);
+    form.slider(&mut z.max_tenths, ZOOM_TENTHS_MIN, ZOOM_TENTHS_MAX, zoom_max_label);
     // The default can't sit past the maximum.
     z.default_tenths = z.default_tenths.min(z.max_tenths);
-    z.smoothing_ms = slider(ZOOM_SMOOTHING_SLIDER_ID, cell(0.0, 1.0), 0, ZOOM_SMOOTHING_MAX_MS, z.smoothing_ms, zoom_smoothing_label)
-        .draw(p, ctx)
-        .clamp(0, ZOOM_SMOOTHING_MAX_MS as i32) as u32;
-    z.sensitivity = slider(ZOOM_SENSITIVITY_SLIDER_ID, cell(1.0, 1.0), 0, 100, z.sensitivity, zoom_sensitivity_label)
-        .draw(p, ctx)
-        .clamp(0, 100) as u32;
-
-    let (x, y) = cell(0.0, 2.0);
-    if Button::new(x, y, BIG_W, WIDGET_HEIGHT, RESET_ZOOM).draw(p, ctx) {
+    form.slider(&mut z.smoothing_ms, 0, ZOOM_SMOOTHING_MAX_MS, zoom_smoothing_label);
+    form.slider(&mut z.sensitivity, 0, 100, zoom_sensitivity_label);
+    if form.wide_button(RESET_ZOOM) {
         *z = ZoomOptions::default();
+        form.mark_changed();
     }
-
-    if state.options.zoom != before {
+    if form.finish() {
         crate::gui::save_options(&state.options);
     }
     if draw_done(p, ctx) {
@@ -1322,19 +1292,10 @@ pub fn draw_features(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
 /// Inventory sorting: whether the buttons show, and whether the hotbar
 /// sorts and stores along with the rest of the inventory.
 pub fn draw_inventory_sort(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
-    draw_title(p, ctx, INVENTORY_SORT_TITLE);
-    let left = (ctx.vw / 2.0 - GRID_LEFT_OFFSET).floor();
-    let top = LAYOUT.content_y(ctx.vh, ROW_H);
-    let o = &mut state.options;
-    let mut changed = toggle(p, ctx, (left, top + ROW_INSET), SORT_BUTTONS, &mut o.sort_buttons);
-    changed |= toggle(
-        p,
-        ctx,
-        (left + COLUMN_STEP, top + ROW_INSET),
-        SORT_HOTBAR,
-        &mut o.sort_hotbar,
-    );
-    if changed {
+    let mut form = crate::gui::form::Form::new(p, ctx, INVENTORY_SORT_TITLE, 1, 0);
+    form.toggle(SORT_BUTTONS, &mut state.options.sort_buttons);
+    form.toggle(SORT_HOTBAR, &mut state.options.sort_hotbar);
+    if form.finish() {
         crate::gui::save_options(&state.options);
     }
     if draw_done(p, ctx) {
@@ -1344,21 +1305,17 @@ pub fn draw_inventory_sort(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCt
 
 /// AppleSkin's additions, each on or off.
 pub fn draw_appleskin(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
-    draw_title(p, ctx, "AppleSkin");
-    let left = (ctx.vw / 2.0 - GRID_LEFT_OFFSET).floor();
-    let top = LAYOUT.content_y(ctx.vh, 3.0 * ROW_H);
-    let cell = |column: f32, row: f32| (left + column * COLUMN_STEP, top + row * ROW_H + ROW_INSET);
-    let before = state.options.appleskin;
+    let mut form = crate::gui::form::Form::new(p, ctx, "AppleSkin", 3, 0);
     let o = &mut state.options.appleskin;
-    toggle(p, ctx, cell(0.0, 0.0), "Saturation Overlay", &mut o.saturation_overlay);
-    toggle(p, ctx, cell(1.0, 0.0), "Held Food Preview", &mut o.food_preview);
-    toggle(p, ctx, cell(0.0, 1.0), "Health Preview", &mut o.health_preview);
-    toggle(p, ctx, cell(1.0, 1.0), "Food Tooltips", &mut o.tooltip);
-    let (x, y) = cell(0.0, 2.0);
-    if Button::new(x, y, BIG_W, WIDGET_HEIGHT, "Reset AppleSkin Settings").draw(p, ctx) {
+    form.toggle("Saturation Overlay", &mut o.saturation_overlay);
+    form.toggle("Held Food Preview", &mut o.food_preview);
+    form.toggle("Health Preview", &mut o.health_preview);
+    form.toggle("Food Tooltips", &mut o.tooltip);
+    if form.wide_button("Reset AppleSkin Settings") {
         *o = crate::gui::appleskin::AppleSkinOptions::default();
+        form.mark_changed();
     }
-    if state.options.appleskin != before {
+    if form.finish() {
         crate::gui::save_options(&state.options);
     }
     if draw_done(p, ctx) {

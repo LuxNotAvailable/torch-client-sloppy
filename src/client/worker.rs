@@ -386,7 +386,7 @@ pub fn spawn_chunk_workers(shared: Arc<SharedMutex>) -> Arc<JobQueue> {
     let n_workers = if cfg!(target_arch = "wasm32") {
         0
     } else {
-        std::env::var("MC_MESH_THREADS")
+        crate::platform::env::var("MC_MESH_THREADS")
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
             .unwrap_or(DEFAULT_MESH_THREADS)
@@ -507,7 +507,7 @@ pub fn drain_on_caller(queue: &Arc<JobQueue>, scratch: &mut Scratch) {
 fn mesh_budget() -> Duration {
     static BUDGET: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
     *BUDGET.get_or_init(|| {
-        std::env::var("MC_MESH_BUDGET_MS")
+        crate::platform::env::var("MC_MESH_BUDGET_MS")
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
             .filter(|ms| *ms > 0)

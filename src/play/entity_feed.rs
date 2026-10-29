@@ -268,7 +268,7 @@ fn par_map<T: Sync, R: Send + 'static>(items: &[T], f: impl Fn(&T) -> R + Send +
 fn par_width() -> usize {
     static WIDTH: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     *WIDTH.get_or_init(|| {
-        std::env::var("MC_PAR")
+        crate::platform::env::var("MC_PAR")
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
             .unwrap_or(4)
@@ -308,7 +308,7 @@ fn par_for_each_mut<T: Send>(items: &mut [T], f: impl Fn(&mut T) + Send + Sync) 
 fn max_fed_entities() -> usize {
     static MAX: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     *MAX.get_or_init(|| {
-        std::env::var("MC_MAX_FED")
+        crate::platform::env::var("MC_MAX_FED")
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
             .filter(|n| *n > 0)
@@ -319,7 +319,7 @@ fn max_fed_entities() -> usize {
 fn max_simulated_entities() -> usize {
     static MAX: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     *MAX.get_or_init(|| {
-        std::env::var("MC_MAX_SIMULATED")
+        crate::platform::env::var("MC_MAX_SIMULATED")
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
             .filter(|n| *n > 0)
@@ -1370,7 +1370,7 @@ const MAX_FAST_CELLS: usize = 64;
 
 fn collide_check() -> bool {
     static CHECK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *CHECK.get_or_init(|| std::env::var("MC_COLLIDE_CHECK").as_deref() == Ok("1"))
+    *CHECK.get_or_init(|| crate::platform::env::var("MC_COLLIDE_CHECK").as_deref() == Ok("1"))
 }
 
 fn comp(v: AzVec3, axis: usize) -> f64 {

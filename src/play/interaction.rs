@@ -1085,7 +1085,7 @@ crate::client::bus::emit(crate::client::bus::ClientEvent::OpenCommandBlock(crate
     s.session.editors.command_block_pos = Some(hit.block_pos);
 }
 
-pub(crate) fn command_block_mode(state: azalea::blocks::BlockState) -> Option<CommandBlockMode> {
+pub(crate) fn command_block_mode(state: azalea::block::BlockState) -> Option<CommandBlockMode> {
     match crate::util::block_model::block_id(state) {
         "command_block" => Some(CommandBlockMode::Redstone),
         "repeating_command_block" => Some(CommandBlockMode::Auto),
@@ -1135,7 +1135,7 @@ fn predict_bucket_use(bot: &Client) -> bool {
     true
 }
 
-fn open_book_editor(bot: &Client, shared: &Arc<SharedMutex>, clicked: bool) {
+fn open_book_editor(bot: &Client, _shared: &Arc<SharedMutex>, clicked: bool) {
     if !clicked {
         return;
     }

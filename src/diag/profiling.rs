@@ -51,7 +51,7 @@ fn prof() -> &'static Mutex<Profiler> {
 fn max_records() -> usize {
     static MAX: OnceLock<usize> = OnceLock::new();
     *MAX.get_or_init(|| {
-        std::env::var("MC_PROF_MAX_RECORDS")
+        crate::platform::env::var("MC_PROF_MAX_RECORDS")
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
             .filter(|n| *n > 0)
@@ -143,7 +143,7 @@ pub fn capture_elapsed() -> bool {
 pub fn window() -> Duration {
     static MS: OnceLock<u64> = OnceLock::new();
     Duration::from_millis(*MS.get_or_init(|| {
-        std::env::var("MC_PROF_WINDOW_MS")
+        crate::platform::env::var("MC_PROF_WINDOW_MS")
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
             .filter(|n| *n > 0)
