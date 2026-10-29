@@ -1,4 +1,5 @@
 use crate::gui::focus;
+use crate::gui::scroll_list::ListArea;
 use crate::gui::painter::Painter;
 use crate::gui::render::{GuiInput, auto_gui_scale};
 use crate::gui::widgets::{
@@ -702,10 +703,8 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         }
         match entry {
             Entry::Screen(screen) => {
-                state.video_scroll = 0.0;
-                state.video_scroll_drag = None;
-                state.game_scroll = 0.0;
-                state.game_scroll_drag = None;
+                state.video_list.reset();
+                state.game_list.reset();
                 #[cfg(all(target_arch = "wasm32", feature = "asset_download"))]
                 {
                     state.confirm_clear_assets = false;
@@ -714,8 +713,7 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
                 {
                     state.storage_nothing_missing = false;
                 }
-                state.controls_scroll = 0.0;
-                state.controls_scroll_drag = None;
+                state.controls_list.reset();
                 state.keybinds.capturing = None;
                 state.nav = Some(*screen);
             }
@@ -808,20 +806,18 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
 
     let left = (ctx.vw / 2.0 - GRID_LEFT_OFFSET).floor();
     let (list_x, list_y, list_w, list_h) = LAYOUT.content_rect(ctx.vw, ctx.vh);
-    scroll_input(
-        &mut state.video_scroll,
-        &mut state.video_scroll_drag,
-        ctx,
-        left,
-        BIG_W,
-        list_y,
-        list_h,
-        VIDEO_LIST_H,
-    );
-    let top = (list_y - state.video_scroll).floor();
+    let area = ListArea {
+        clip: (list_x, list_y, list_w, list_h),
+        left: left,
+        width: BIG_W,
+        y: list_y,
+        h: list_h,
+    };
+    state.video_list.input(ctx, &area, VIDEO_LIST_H);
+    let top = state.video_list.top(&area).floor();
 
     let over_list = ctx.hovering(list_x, list_y, list_w, list_h);
-    let dragging_bar = state.video_scroll_drag.is_some();
+    let dragging_bar = state.video_list.drag.is_some();
     let mut list_input = ctx.input.clone();
     if dragging_bar || (!over_list && !widgets::slider_dragging()) {
         list_input.mouse = None;
@@ -1162,15 +1158,7 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     if let (Some(tip), Some(m)) = (renderer_tip, ctx.mouse()) {
         draw_bind_tooltip(p, &[tip], m.x, m.y, ctx.vw);
     }
-    draw_scrollbar(
-        p,
-        state.video_scroll,
-        left,
-        BIG_W,
-        list_y,
-        list_h,
-        VIDEO_LIST_H,
-    );
+    state.video_list.draw_bar(p, &area, VIDEO_LIST_H);
 
     if draw_done(p, screen_ctx) {
         state.nav = Some(Screen::Options);
@@ -1509,20 +1497,18 @@ pub fn draw_controls(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         (list_y + advance, (list_h - advance).max(0.0))
     };
 
-    scroll_input(
-        &mut state.controls_scroll,
-        &mut state.controls_scroll_drag,
-        screen_ctx,
+    let area = ListArea {
+        clip: (list_x, list_y, list_w, list_h),
         left,
-        BIND_ROW_W,
-        list_y,
-        list_h,
-        list_h_total,
-    );
-    let top = (list_y - state.controls_scroll).floor();
+        width: BIND_ROW_W,
+        y: list_y,
+        h: list_h,
+    };
+    state.controls_list.input(screen_ctx, &area, list_h_total);
+    let top = state.controls_list.top(&area).floor();
 
     let over_list = screen_ctx.hovering(list_x, list_y, list_w, list_h);
-    let dragging_bar = state.controls_scroll_drag.is_some();
+    let dragging_bar = state.controls_list.drag.is_some();
     let mut list_input = screen_input.clone();
     if dragging_bar || !over_list {
         list_input.mouse = None;
@@ -1619,15 +1605,7 @@ pub fn draw_controls(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
 
     p.pop_clip(clip);
     focus::resume();
-    draw_scrollbar(
-        p,
-        state.controls_scroll,
-        left,
-        BIND_ROW_W,
-        list_y,
-        list_h,
-        list_h_total,
-    );
+    state.controls_list.draw_bar(p, &area, list_h_total);
 
     if let (Some(lines), Some(m)) = (tooltip, list_ctx.mouse()) {
         draw_bind_tooltip(p, &lines, m.x, m.y, ctx.vw);
@@ -1762,20 +1740,18 @@ pub fn draw_chat(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
 
     let left = (ctx.vw / 2.0 - GRID_LEFT_OFFSET).floor();
     let (list_x, list_y, list_w, list_h) = LAYOUT.content_rect(ctx.vw, ctx.vh);
-    scroll_input(
-        &mut state.game_scroll,
-        &mut state.game_scroll_drag,
-        ctx,
-        left,
-        BIG_W,
-        list_y,
-        list_h,
-        GAME_LIST_H,
-    );
-    let top = (list_y - state.game_scroll).floor();
+    let area = ListArea {
+        clip: (list_x, list_y, list_w, list_h),
+        left: left,
+        width: BIG_W,
+        y: list_y,
+        h: list_h,
+    };
+    state.game_list.input(ctx, &area, GAME_LIST_H);
+    let top = state.game_list.top(&area).floor();
 
     let over_list = ctx.hovering(list_x, list_y, list_w, list_h);
-    let dragging_bar = state.game_scroll_drag.is_some();
+    let dragging_bar = state.game_list.drag.is_some();
     let mut list_input = ctx.input.clone();
     if dragging_bar || (!over_list && !widgets::slider_dragging()) {
         list_input.mouse = None;
@@ -1894,15 +1870,7 @@ pub fn draw_chat(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     }
 
     p.pop_clip(clip);
-    draw_scrollbar(
-        p,
-        state.game_scroll,
-        left,
-        BIG_W,
-        list_y,
-        list_h,
-        GAME_LIST_H,
-    );
+    state.game_list.draw_bar(p, &area, GAME_LIST_H);
 
     if draw_done(p, screen_ctx) {
         state.nav = Some(Screen::Options);
@@ -2125,17 +2093,15 @@ pub fn draw_voice_players(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx
     let left = (ctx.vw / 2.0 - GRID_LEFT_OFFSET).floor();
     let (list_x, list_y, list_w, list_h) = LAYOUT.content_rect(ctx.vw, ctx.vh);
     let content_h = rows.len() as f32 * ROW_H;
-    scroll_input(
-        &mut state.voice_scroll,
-        &mut state.voice_scroll_drag,
-        ctx,
-        left,
-        BIG_W,
-        list_y,
-        list_h,
-        content_h,
-    );
-    let top = (list_y - state.voice_scroll).floor();
+    let area = ListArea {
+        clip: (list_x, list_y, list_w, list_h),
+        left: left,
+        width: BIG_W,
+        y: list_y,
+        h: list_h,
+    };
+    state.voice_list.input(ctx, &area, content_h);
+    let top = state.voice_list.top(&area).floor();
 
     if rows.is_empty() {
         let text = "No other players have voice chat here";
@@ -2150,7 +2116,7 @@ pub fn draw_voice_players(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx
     }
 
     let over_list = ctx.hovering(list_x, list_y, list_w, list_h);
-    let dragging_bar = state.voice_scroll_drag.is_some();
+    let dragging_bar = state.voice_list.drag.is_some();
     let mut list_input = ctx.input.clone();
     if dragging_bar || (!over_list && !widgets::slider_dragging()) {
         list_input.mouse = None;
@@ -2200,15 +2166,7 @@ pub fn draw_voice_players(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx
         }
     }
     p.pop_clip(clip);
-    draw_scrollbar(
-        p,
-        state.voice_scroll,
-        left,
-        BIG_W,
-        list_y,
-        list_h,
-        content_h,
-    );
+    state.voice_list.draw_bar(p, &area, content_h);
 
     if changed {
         state.options.voice.apply();

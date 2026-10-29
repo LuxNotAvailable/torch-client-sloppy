@@ -39,6 +39,7 @@ pub mod multiplayer;
 pub mod op_blocks;
 pub mod option_codec;
 pub mod options;
+pub mod scroll_list;
 pub mod painter;
 pub mod pause;
 pub mod ping;
@@ -1031,7 +1032,7 @@ pub struct GuiState {
     pub stats: stats::StatsState,
     pub social: social::SocialState,
     pub op_block: op_blocks::OpBlockState,
-    pub language_list: more_options::LanguageState,
+    pub language_list: scroll_list::ScrollList,
     /// Screen effects the game set off.
     pub effects: ScreenEffects,
     pub switcher: gamemode_switcher::SwitcherState,
@@ -1048,8 +1049,7 @@ pub struct GuiState {
     pub hud_state: hud_layout::HudState,
     pub options: GuiOptions,
     pub keybinds: keybinds::KeyBinds,
-    pub controls_scroll: f32,
-    pub controls_scroll_drag: Option<f32>,
+    pub controls_list: scroll_list::ScrollList,
     pub nav: Option<Screen>,
     pub suppress_click: bool,
     pub death: death::DeathState,
@@ -1058,14 +1058,10 @@ pub struct GuiState {
     pub disconnect: bool,
     pub menu: multiplayer::MenuState,
     pub profile: profile::ProfileState,
-    pub video_scroll: f32,
-    pub video_scroll_drag: Option<f32>,
-    pub game_scroll: f32,
-    pub game_scroll_drag: Option<f32>,
+    pub video_list: scroll_list::ScrollList,
+    pub game_list: scroll_list::ScrollList,
     #[cfg(voice)]
-    pub voice_scroll: f32,
-    #[cfg(voice)]
-    pub voice_scroll_drag: Option<f32>,
+    pub voice_list: scroll_list::ScrollList,
     #[cfg(voice)]
     pub voice_groups: voice_chat::GroupsState,
     #[cfg(all(target_arch = "wasm32", feature = "asset_download"))]

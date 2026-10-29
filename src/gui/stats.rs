@@ -19,8 +19,7 @@ const TABS: [&str; 3] = ["General", "Items", "Mobs"];
 #[derive(Default)]
 pub struct StatsState {
     pub tab: usize,
-    pub scroll: f32,
-    pub drag: Option<f32>,
+    pub list: crate::gui::scroll_list::ScrollList,
     /// The statistics the server sent; `None` until they come.
     pub stats: Option<std::collections::HashMap<Stat, i32>>,
 }
@@ -106,7 +105,7 @@ pub fn draw(p: &mut Painter, state: &mut StatsState, ctx: &ScreenCtx) -> Option<
         && tab != state.tab
     {
         state.tab = tab;
-        state.scroll = 0.0;
+        state.list.reset();
     }
     let (list_x, list_y, list_w, list_h) = LAYOUT.content_rect(ctx.vw, ctx.vh);
     let Some(stats) = &state.stats else {
@@ -213,18 +212,15 @@ pub fn draw(p: &mut Painter, state: &mut StatsState, ctx: &ScreenCtx) -> Option<
 
     let header_h = if state.tab == 1 { ROW + 4.0 } else { 0.0 };
     let content_h = header_h + rows.len() as f32 * row_h;
-    crate::gui::options::scroll_input(
-        &mut state.scroll,
-        &mut state.drag,
-        ctx,
+    let area = crate::gui::scroll_list::ListArea {
+        clip: (list_x, list_y, list_w, list_h),
         left,
         width,
-        list_y,
-        list_h,
-        content_h,
-    );
-    let clip = p.push_clip(list_x, list_y, list_w, list_h);
-    let top = list_y - state.scroll;
+        y: list_y,
+        h: list_h,
+    };
+    let frame = state.list.begin(p, ctx, &area, content_h);
+    let top = frame.top;
     if rows.is_empty() {
         let text = "Nothing yet";
         let w = p.atlas.font.width_str(text);
@@ -249,7 +245,7 @@ pub fn draw(p: &mut Painter, state: &mut StatsState, ctx: &ScreenCtx) -> Option<
     }
     for (i, (icon, name, value, cells)) in rows.iter().enumerate() {
         let y = top + header_h + i as f32 * row_h;
-        if y + row_h < list_y || y > list_y + list_h {
+        if !area.shows(y, row_h) {
             continue;
         }
         if i % 2 == 0 {
@@ -286,8 +282,7 @@ pub fn draw(p: &mut Painter, state: &mut StatsState, ctx: &ScreenCtx) -> Option<
             }
         }
     }
-    p.pop_clip(clip);
-    crate::gui::options::draw_scrollbar(p, state.scroll, left, width, list_y, list_h, content_h);
+    state.list.end(p, frame, &area, content_h);
     done(p, ctx)
 }
 

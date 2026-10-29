@@ -2,6 +2,7 @@
 //! button to hide (or show again) their chat messages. Hidden players are
 //! kept for the session, as vanilla's `PlayerSocialManager` does.
 
+use crate::gui::scroll_list::ListArea;
 use std::collections::HashSet;
 use std::sync::Mutex;
 
@@ -43,8 +44,7 @@ fn set_hidden(uuid: u128, hidden: bool) {
 #[derive(Default)]
 pub struct SocialState {
     pub tab: usize,
-    pub scroll: f32,
-    pub drag: Option<f32>,
+    pub list: crate::gui::scroll_list::ScrollList,
 }
 
 pub fn draw(
@@ -59,27 +59,14 @@ pub fn draw(
     if let Some(tab) = widgets::tab_bar(p, ctx, &TABS, state.tab) {
         state.tab = tab;
     }
-    let (list_x, list_y, list_w, list_h) = LAYOUT.content_rect(ctx.vw, ctx.vh);
-    let width = 238.0f32.min(list_w - 20.0);
-    let left = ((ctx.vw - width) / 2.0).floor();
+    let area = ListArea::centered(ctx, LAYOUT.content_rect(ctx.vw, ctx.vh), 238.0);
+    let (left, width) = (area.left, area.width);
     let rows: Vec<_> = tab_list
         .rows
         .iter()
         .filter(|r| r.uuid != own)
         .filter(|r| state.tab == 0 || is_hidden(r.uuid))
         .collect();
-    let content_h = rows.len() as f32 * ROW;
-    crate::gui::options::scroll_input(
-        &mut state.scroll,
-        &mut state.drag,
-        ctx,
-        left,
-        width,
-        list_y,
-        list_h,
-        content_h,
-    );
-    let clip = p.push_clip(list_x, list_y, list_w, list_h);
     if rows.is_empty() {
         let text = if state.tab == 0 {
             "No other players online"
@@ -90,16 +77,13 @@ pub fn draw(
         p.text_str(
             text,
             ((ctx.vw - w) / 2.0).floor(),
-            list_y + 12.0,
+            area.y + 12.0,
             0xA0A0A0,
             true,
         );
     }
-    for (i, row) in rows.iter().enumerate() {
-        let y = list_y - state.scroll + i as f32 * ROW;
-        if y + ROW < list_y || y > list_y + list_h {
-            continue;
-        }
+    state.list.rows(p, ctx, &area, rows.len(), ROW, |p, i, y| {
+        let row = rows[i];
         p.fill(left, y + 1.0, width, ROW - 2.0, 0x4000_0000);
         p.text(&row.name, left + 6.0, y + 8.0, true);
         let hidden = is_hidden(row.uuid);
@@ -107,9 +91,7 @@ pub fn draw(
         if Button::new(left + width - 46.0, y + 2.0, 42.0, 20.0, label).draw(p, ctx) {
             set_hidden(row.uuid, !hidden);
         }
-    }
-    p.pop_clip(clip);
-    crate::gui::options::draw_scrollbar(p, state.scroll, left, width, list_y, list_h, content_h);
+    });
     let x = widgets::centered_x(ctx.vw);
     let pressed = Button::new(
         x,

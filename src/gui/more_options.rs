@@ -131,21 +131,17 @@ pub fn draw_font(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     }
 }
 
-/// The language list's scroll.
-#[derive(Default)]
-pub struct LanguageState {
-    pub scroll: f32,
-    pub drag: Option<f32>,
-}
-
 pub fn draw_language(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     use crate::client::languages::{self, ListState};
     widgets::draw_title(p, ctx.vw, LAYOUT.title_y(), "Language...");
     languages::refresh();
     let (list_x, list_y, list_w, list_h) = LAYOUT.content_rect(ctx.vw, ctx.vh);
-    let list_h = list_h - ROW;
-    let width = 220.0f32.min(list_w - 20.0);
-    let left = ((ctx.vw - width) / 2.0).floor();
+    let area = crate::gui::scroll_list::ListArea::centered(
+        ctx,
+        (list_x, list_y, list_w, list_h - ROW),
+        220.0,
+    );
+    let (left, width) = (area.left, area.width);
     let mut entries = vec![("en_us".to_owned(), "English (US)".to_owned())];
     let status = match languages::list() {
         ListState::Ready(list) => {
@@ -166,37 +162,15 @@ pub fn draw_language(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         _ => Some("Fetching the language list...".to_owned()),
     };
     let row_h = 18.0;
-    let content_h = entries.len() as f32 * row_h;
-    let lang = &mut state.language_list;
-    crate::gui::options::scroll_input(
-        &mut lang.scroll,
-        &mut lang.drag,
-        ctx,
-        left,
-        width,
-        list_y,
-        list_h,
-        content_h,
-    );
-    let clip = p.push_clip(list_x, list_y, list_w, list_h);
     let downloading = languages::downloading();
-    for (i, (code, label)) in entries.iter().enumerate() {
-        let y = list_y - lang.scroll + i as f32 * row_h;
-        if y + row_h < list_y || y > list_y + list_h {
-            continue;
-        }
-        let selected = *code == state.options.language;
+    let options = &mut state.options;
+    state.language_list.rows(p, ctx, &area, entries.len(), row_h, |p, i, y| {
+        let (code, label) = &entries[i];
+        let selected = *code == options.language;
         if selected {
             p.outline(left, y, width, row_h, 0xFFFF_FFFF);
         }
-        let hovered = ctx.mouse().is_some_and(|m| {
-            m.x >= left
-                && m.x < left + width
-                && m.y >= y
-                && m.y < y + row_h
-                && m.y >= list_y
-                && m.y < list_y + list_h
-        });
+        let hovered = area.hovered(ctx, y, row_h);
         let mut text = label.clone();
         if downloading.as_deref() == Some(code.as_str()) {
             text.push_str(" ...");
@@ -210,19 +184,17 @@ pub fn draw_language(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
             true,
         );
         if hovered && ctx.input.left_click && !selected {
-            state.options.language = code.clone();
-            crate::gui::save_options(&state.options);
+            options.language = code.clone();
+            crate::gui::save_options(options);
             languages::choose(code);
         }
-    }
-    p.pop_clip(clip);
-    crate::gui::options::draw_scrollbar(p, lang.scroll, left, width, list_y, list_h, content_h);
+    });
     if let Some(status) = status {
         let w = p.atlas.font.width_str(&status);
         p.text_str(
             &status,
             ((ctx.vw - w) / 2.0).floor(),
-            list_y + list_h + 6.0,
+            area.y + area.h + 6.0,
             0xA0A0A0,
             true,
         );

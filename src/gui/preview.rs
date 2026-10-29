@@ -384,6 +384,8 @@ mod tests {
             (Screen::Features, "gui_options_features.png"),
             (Screen::Sleep, "gui_sleep.png"),
             (Screen::InventorySortSettings, "gui_options_sorting.png"),
+            (Screen::Statistics, "gui_stats.png"),
+            (Screen::SocialInteractions, "gui_social.png"),
             (
                 Screen::Container(crate::session::ContainerKind::Chest(3)),
                 "gui_chest.png",
@@ -393,6 +395,18 @@ mod tests {
                 screen,
                 ..Default::default()
             };
+            // Enough rows to overflow, so the list scrolls and shows its bar.
+            {
+                use azalea_protocol::packets::game::c_award_stats::Stat;
+                use azalea_registry::Registry as _;
+                let stats = (0..40)
+                    .filter_map(azalea::registry::builtin::CustomStat::from_u32)
+                    .enumerate()
+                    .map(|(i, s)| (Stat::Custom(s), i as i32 * 37))
+                    .collect();
+                state.stats.stats = Some(stats);
+                state.stats.list.scroll = 30.0;
+            }
             let mut p = Painter::new(&atlas, 0);
             screens::draw(
                 &mut p,
