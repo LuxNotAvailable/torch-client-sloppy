@@ -8,7 +8,6 @@ use crate::gui::{GuiState, Screen, ScreenCtx};
 
 const LAYOUT: HeaderFooter = HeaderFooter::default_heights();
 const COLUMN_W: f32 = 150.0;
-const COLUMN_STEP: f32 = 160.0;
 const ROW: f32 = 24.0;
 
 crate::options! {
@@ -164,31 +163,33 @@ pub fn draw_language(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     let row_h = 18.0;
     let downloading = languages::downloading();
     let options = &mut state.options;
-    state.language_list.rows(p, ctx, &area, entries.len(), row_h, |p, i, y| {
-        let (code, label) = &entries[i];
-        let selected = *code == options.language;
-        if selected {
-            p.outline(left, y, width, row_h, 0xFFFF_FFFF);
-        }
-        let hovered = area.hovered(ctx, y, row_h);
-        let mut text = label.clone();
-        if downloading.as_deref() == Some(code.as_str()) {
-            text.push_str(" ...");
-        }
-        let w = p.atlas.font.width_str(&text);
-        p.text_str(
-            &text,
-            ((ctx.vw - w) / 2.0).floor(),
-            y + 5.0,
-            if hovered { 0xFFFF55 } else { 0xFFFFFF },
-            true,
-        );
-        if hovered && ctx.input.left_click && !selected {
-            options.language = code.clone();
-            crate::gui::save_options(options);
-            languages::choose(code);
-        }
-    });
+    state
+        .language_list
+        .rows(p, ctx, &area, entries.len(), row_h, |p, i, y| {
+            let (code, label) = &entries[i];
+            let selected = *code == options.language;
+            if selected {
+                p.outline(left, y, width, row_h, 0xFFFF_FFFF);
+            }
+            let hovered = area.hovered(ctx, y, row_h);
+            let mut text = label.clone();
+            if downloading.as_deref() == Some(code.as_str()) {
+                text.push_str(" ...");
+            }
+            let w = p.atlas.font.width_str(&text);
+            p.text_str(
+                &text,
+                ((ctx.vw - w) / 2.0).floor(),
+                y + 5.0,
+                if hovered { 0xFFFF55 } else { 0xFFFFFF },
+                true,
+            );
+            if hovered && ctx.input.left_click && !selected {
+                options.language = code.clone();
+                crate::gui::save_options(options);
+                languages::choose(code);
+            }
+        });
     if let Some(status) = status {
         let w = p.atlas.font.width_str(&status);
         p.text_str(

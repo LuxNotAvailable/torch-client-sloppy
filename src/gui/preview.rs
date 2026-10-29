@@ -406,6 +406,11 @@ mod tests {
                     .collect();
                 state.stats.stats = Some(stats);
                 state.stats.list.scroll = 30.0;
+                // Scrolled to the bottom, so the lower groups show.
+                for list in [&mut state.video_list, &mut state.game_list] {
+                    list.content_h = 300.0;
+                    list.scroll = 1000.0;
+                }
             }
             let mut p = Painter::new(&atlas, 0);
             screens::draw(

@@ -1,7 +1,8 @@
 use crate::gui::focus;
-use crate::gui::scroll_list::ListArea;
+use crate::gui::form::Form;
 use crate::gui::painter::Painter;
 use crate::gui::render::{GuiInput, auto_gui_scale};
+use crate::gui::scroll_list::{ListArea, ScrollList};
 use crate::gui::widgets::{
     self, Button, HeaderFooter, Slider, WIDGET_HEIGHT, WIDGET_WIDTH_BIG, centered_x,
 };
@@ -27,9 +28,8 @@ const SPRINT: &str = "Sprint";
 const HOLD: &str = "Hold";
 const TOGGLE: &str = "Toggle";
 const MOUSE_SENSITIVITY_SLIDER_ID: u32 = 40;
-const SCROLL_SENSITIVITY_SLIDER_ID: u32 = 41;
+const VIDEO_SLIDER_ID_BASE: u32 = 300;
 const ZOOM_DEFAULT_SLIDER_ID: u32 = 50;
-const SHADOW_OPACITY_SLIDER_ID: u32 = 54;
 const CHAT_SLIDER_ID_BASE: u32 = 60;
 const ENTITY_SHADOWS: &str = "Entity Shadows";
 const SHADOW_OPACITY: &str = "Shadow Opacity";
@@ -188,17 +188,12 @@ const GUI_SCALE_AUTO: &str = "Auto";
 
 pub(in crate::gui) const LAYOUT: HeaderFooter = HeaderFooter::default_heights();
 
-const GUI_SCALE_SLIDER_ID: u32 = 1;
 
 const FOV_SLIDER_ID: u32 = 2;
 
-const RENDER_DISTANCE_SLIDER_ID: u32 = 3;
 
-const BRIGHTNESS_SLIDER_ID: u32 = 4;
 
-const TOAST_TIME_SLIDER_ID: u32 = 5;
 
-const FOV_EFFECTS_SLIDER_ID: u32 = 6;
 
 #[cfg(audio)]
 const VOLUME_SLIDER_ID_BASE: u32 = 7;
@@ -222,43 +217,24 @@ pub(in crate::gui) const COLUMN_W: f32 = 150.0;
 
 pub(in crate::gui) const BIG_W: f32 = 310.0;
 
-const HEADER_PAD_TOP: f32 = 2.0 * LINE_HEIGHT;
+pub(in crate::gui) const HEADER_PAD_TOP: f32 = 2.0 * LINE_HEIGHT;
 
-const HEADER_H: f32 = LINE_HEIGHT + 4.0;
+pub(in crate::gui) const HEADER_H: f32 = LINE_HEIGHT + 4.0;
 
-const Y_DISPLAY_HEADER: f32 = 0.0;
-const Y_DISPLAY_ROW_0: f32 = Y_DISPLAY_HEADER + HEADER_H;
-const Y_DISPLAY_ROW_1: f32 = Y_DISPLAY_ROW_0 + ROW_H;
-const Y_DISPLAY_ROW_2: f32 = Y_DISPLAY_ROW_1 + ROW_H;
-const Y_DISPLAY_ROW_3: f32 = Y_DISPLAY_ROW_2 + ROW_H;
-const Y_QUALITY_HEADER: f32 = Y_DISPLAY_ROW_3 + ROW_H;
-const Y_QUALITY_ROW_0: f32 = Y_QUALITY_HEADER + HEADER_PAD_TOP + HEADER_H;
-const Y_QUALITY_ROW_1: f32 = Y_QUALITY_ROW_0 + ROW_H;
-const Y_QUALITY_ROW_2: f32 = Y_QUALITY_ROW_1 + ROW_H;
-const Y_QUALITY_ROW_3: f32 = Y_QUALITY_ROW_2 + ROW_H;
 #[cfg(feature = "builtin_shaders")]
 const Y_QUALITY_ROW_4: f32 = Y_QUALITY_ROW_3 + ROW_H;
 
 #[cfg(feature = "builtin_shaders")]
 const Y_QUALITY_LAST: f32 = Y_QUALITY_ROW_4;
-#[cfg(not(feature = "builtin_shaders"))]
-const Y_QUALITY_LAST: f32 = Y_QUALITY_ROW_3;
 
-const Y_SHADOW_ROW: f32 = Y_QUALITY_LAST + ROW_H;
 
-#[cfg(feature = "shader_support")]
-const Y_SHADERPACKS_ROW: f32 = Y_SHADOW_ROW + ROW_H;
 
-#[cfg(feature = "shader_support")]
-const Y_RESET_ROW: f32 = Y_SHADERPACKS_ROW + ROW_H;
 #[cfg(not(feature = "shader_support"))]
 const Y_RESET_ROW: f32 = Y_SHADOW_ROW + ROW_H;
 
-const VIDEO_CONTENT_H: f32 = Y_RESET_ROW + ROW_H;
 
 const LIST_PAD_BOTTOM: f32 = 4.0;
 
-const VIDEO_LIST_H: f32 = VIDEO_CONTENT_H + LIST_PAD_BOTTOM;
 
 pub(in crate::gui) const SCROLLBAR_W: f32 = 6.0;
 
@@ -449,14 +425,7 @@ pub(in crate::gui) fn draw_scrollbar(
     );
 }
 
-/// Vanilla's chat options, seven rows of two, above the signed chat row.
-const CHAT_OPTION_ROWS: f32 = 7.0;
-const Y_CHAT_ROW_0: f32 = CHAT_OPTION_ROWS * ROW_H;
-const Y_TOAST_HEADER: f32 = Y_CHAT_ROW_0 + ROW_H;
-const Y_TOAST_ROW_0: f32 = Y_TOAST_HEADER + HEADER_PAD_TOP + HEADER_H;
-const Y_TOAST_ROW_1: f32 = Y_TOAST_ROW_0 + ROW_H;
 
-const Y_GAME_LAST_GROUP_ROW: f32 = Y_TOAST_ROW_1;
 
 #[cfg(all(target_arch = "wasm32", feature = "asset_download"))]
 const Y_STORAGE_HEADER: f32 = Y_GAME_LAST_GROUP_ROW + ROW_H;
@@ -465,12 +434,8 @@ const Y_STORAGE_ROW_0: f32 = Y_STORAGE_HEADER + HEADER_PAD_TOP + HEADER_H;
 
 #[cfg(all(target_arch = "wasm32", feature = "asset_download"))]
 const Y_GAME_RESET_ROW: f32 = Y_STORAGE_ROW_0 + ROW_H;
-#[cfg(not(all(target_arch = "wasm32", feature = "asset_download")))]
-const Y_GAME_RESET_ROW: f32 = Y_GAME_LAST_GROUP_ROW + ROW_H;
 
-const GAME_CONTENT_H: f32 = Y_GAME_RESET_ROW + ROW_H;
 
-const GAME_LIST_H: f32 = GAME_CONTENT_H + LIST_PAD_BOTTOM;
 
 #[cfg(audio)]
 const Y_AUDIO_MASTER: f32 = 0.0;
@@ -799,243 +764,149 @@ pub fn draw_manage_storage(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCt
     }
 }
 
-pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
-    draw_title(p, ctx, VIDEO_TITLE);
-
-    let max = auto_gui_scale(ctx.vw * ctx.input.scale, ctx.vh * ctx.input.scale) as i32;
-
+/// A settings form inside a scrolling list filling the content area: `draw`
+/// lays out the controls, and the list learns its height from them. Whether
+/// anything changed.
+fn scrolling_form(
+    p: &mut Painter,
+    ctx: &ScreenCtx,
+    list: &mut ScrollList,
+    id_base: u32,
+    draw: impl FnOnce(&mut Form<'_, '_, '_>),
+) -> bool {
     let left = (ctx.vw / 2.0 - GRID_LEFT_OFFSET).floor();
-    let (list_x, list_y, list_w, list_h) = LAYOUT.content_rect(ctx.vw, ctx.vh);
+    let clip = LAYOUT.content_rect(ctx.vw, ctx.vh);
     let area = ListArea {
-        clip: (list_x, list_y, list_w, list_h),
-        left: left,
+        clip,
+        left,
         width: BIG_W,
-        y: list_y,
-        h: list_h,
+        y: clip.1,
+        h: clip.3,
     };
-    state.video_list.input(ctx, &area, VIDEO_LIST_H);
-    let top = state.video_list.top(&area).floor();
-
-    let over_list = ctx.hovering(list_x, list_y, list_w, list_h);
-    let dragging_bar = state.video_list.drag.is_some();
-    let mut list_input = ctx.input.clone();
-    if dragging_bar || (!over_list && !widgets::slider_dragging()) {
-        list_input.mouse = None;
-    }
-    if dragging_bar || !over_list {
-        list_input.left_click = false;
-    }
-    let list_ctx = &ScreenCtx {
-        input: &list_input,
+    let frame = list.begin(p, ctx, &area, list.content_h);
+    let input = list.masked_input(ctx, &area);
+    let list_ctx = ScreenCtx {
+        input: &input,
         vw: ctx.vw,
         vh: ctx.vh,
     };
-    let screen_ctx = ctx;
-    let ctx = list_ctx;
+    let mut form = Form::embedded(p, &list_ctx, left, frame.top.floor(), id_base);
+    draw(&mut form);
+    list.content_h = form.height() + LIST_PAD_BOTTOM;
+    let changed = form.finish();
+    list.end(p, frame, &area, list.content_h);
+    changed
+}
 
-    let clip = p.push_clip(list_x, list_y, list_w, list_h);
-
-    let cell = |column: f32, row_y: f32| (left + column * COLUMN_STEP, top + row_y + ROW_INSET);
-    let header = |p: &mut Painter, row_y: f32, pad_top: f32, text: &str| {
-        p.text_str(
-            text,
-            left,
-            top + row_y + ROW_INSET + pad_top,
-            0xFFFFFF,
-            true,
-        );
-    };
-
-    header(p, Y_DISPLAY_HEADER, 0.0, DISPLAY_HEADER);
-
-    let max_fps_label = format!(
-        "{MAX_FRAMERATE}: {}",
-        if state.options.max_fps >= crate::gui::MAX_FPS_UNLIMITED {
-            UNLIMITED.to_string()
-        } else {
-            format!("{} fps", state.options.max_fps)
-        }
-    );
-    let (x, y) = cell(0.0, Y_DISPLAY_ROW_0);
-    let max_fps = Button::new(x, y, COLUMN_W, WIDGET_HEIGHT, &max_fps_label);
-    if max_fps.draw(p, ctx) {
-        const STEPS: [u32; 6] = [30, 60, 75, 120, 144, crate::gui::MAX_FPS_UNLIMITED];
-        let next = STEPS
-            .iter()
-            .find(|s| **s > state.options.max_fps)
-            .copied()
-            .unwrap_or(crate::gui::MAX_FPS_MIN);
-        state.options.max_fps = next;
-        crate::gui::save_options(&state.options);
-    }
-
-    let (x, y) = cell(1.0, Y_DISPLAY_ROW_0);
-    let gui_scale = Slider {
-        id: GUI_SCALE_SLIDER_ID,
-        x,
-        y,
-        w: COLUMN_W,
-        h: WIDGET_HEIGHT,
-        min: 0,
-        max,
-        value: state.options.gui_scale as i32,
-        label: gui_scale_label,
-    };
-    let new_gui_scale = gui_scale.draw(p, ctx).max(0) as u32;
-    if new_gui_scale != state.options.gui_scale {
-        state.options.gui_scale = new_gui_scale;
-        crate::gui::save_options(&state.options);
-    }
-
-    let (x, y) = cell(0.0, Y_DISPLAY_ROW_1);
-    let brightness = Slider {
-        id: BRIGHTNESS_SLIDER_ID,
-        x,
-        y,
-        w: COLUMN_W,
-        h: WIDGET_HEIGHT,
-        min: 0,
-        max: GAMMA_MAX as i32,
-        value: state.options.gamma as i32,
-        label: brightness_label,
-    };
-    let new_gamma = brightness.draw(p, ctx).clamp(0, GAMMA_MAX as i32) as u32;
-    if new_gamma != state.options.gamma {
-        state.options.gamma = new_gamma;
-        crate::gui::save_options(&state.options);
-    }
-
-    let at = cell(1.0, Y_DISPLAY_ROW_1);
-    if toggle(p, ctx, at, VIEW_BOBBING, &mut state.options.view_bobbing) {
-        crate::gui::save_options(&state.options);
-    }
-
-    let at = cell(0.0, Y_DISPLAY_ROW_2);
-    if toggle(p, ctx, at, FPS_COUNTER, &mut state.options.fps_counter) {
-        crate::gui::save_options(&state.options);
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    let vsync_cell = Some(cell(1.0, Y_DISPLAY_ROW_2));
-    #[cfg(target_arch = "wasm32")]
-    let vsync_cell: Option<(f32, f32)> = None;
-    if let Some(at) = vsync_cell
-        && toggle(p, ctx, at, VSYNC, &mut state.options.vsync)
-    {
-        crate::gui::save_options(&state.options);
-    }
-
-    let (x, y) = cell(0.0, Y_DISPLAY_ROW_3);
-    let fov_effects = Slider {
-        id: FOV_EFFECTS_SLIDER_ID,
-        x,
-        y,
-        w: COLUMN_W,
-        h: WIDGET_HEIGHT,
-        min: 0,
-        max: FOV_EFFECTS_MAX,
-        value: state.options.fov_effects as i32,
-        label: fov_effects_label,
-    };
-    let new_fov_effects = fov_effects.draw(p, ctx).clamp(0, FOV_EFFECTS_MAX) as u32;
-    if new_fov_effects != state.options.fov_effects {
-        state.options.fov_effects = new_fov_effects;
-        crate::gui::save_options(&state.options);
-    }
-
+pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
+    draw_title(p, ctx, VIDEO_TITLE);
+    let max_gui_scale = auto_gui_scale(ctx.vw * ctx.input.scale, ctx.vh * ctx.input.scale);
+    let o = &mut state.options;
     #[cfg_attr(any(target_arch = "wasm32", target_os = "android"), allow(unused_mut))]
     let mut renderer_tip: Option<String> = None;
-    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
-    {
-        let backend = state.options.render_backend;
-        let pending = backend != crate::renderer::systems::started_backend();
-        let label = format!(
-            "{RENDERER}: {}{}",
-            backend.caption(),
-            if pending { "*" } else { "" }
+
+    let changed = scrolling_form(p, ctx, &mut state.video_list, VIDEO_SLIDER_ID_BASE, |f| {
+        f.header(DISPLAY_HEADER);
+        let max_fps_label = format!(
+            "{MAX_FRAMERATE}: {}",
+            if o.max_fps >= crate::gui::MAX_FPS_UNLIMITED {
+                UNLIMITED.to_string()
+            } else {
+                format!("{} fps", o.max_fps)
+            }
         );
-        let (x, y) = cell(1.0, Y_DISPLAY_ROW_3);
-        if Button::new(x, y, COLUMN_W, WIDGET_HEIGHT, &label).draw(p, ctx) {
-            state.options.render_backend = backend.next();
-            crate::gui::save_options(&state.options);
+        if f.button(&max_fps_label) {
+            const STEPS: [u32; 6] = [30, 60, 75, 120, 144, crate::gui::MAX_FPS_UNLIMITED];
+            o.max_fps = STEPS
+                .iter()
+                .find(|s| **s > o.max_fps)
+                .copied()
+                .unwrap_or(crate::gui::MAX_FPS_MIN);
+            f.mark_changed();
         }
-        if pending && ctx.hovering(x, y, COLUMN_W, WIDGET_HEIGHT) {
-            renderer_tip = Some(format!(
-                "Restart to start on {}",
-                state.options.render_backend.caption()
-            ));
+        f.slider(&mut o.gui_scale, 0, max_gui_scale as u32, gui_scale_label);
+        f.slider(&mut o.gamma, 0, GAMMA_MAX, brightness_label);
+        f.toggle(VIEW_BOBBING, &mut o.view_bobbing);
+        f.toggle(FPS_COUNTER, &mut o.fps_counter);
+        #[cfg(not(target_arch = "wasm32"))]
+        f.toggle(VSYNC, &mut o.vsync);
+        #[cfg(target_arch = "wasm32")]
+        f.skip();
+        f.slider(
+            &mut o.fov_effects,
+            0,
+            FOV_EFFECTS_MAX as u32,
+            fov_effects_label,
+        );
+        #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+        {
+            let backend = o.render_backend;
+            let pending = backend != crate::renderer::systems::started_backend();
+            let label = format!(
+                "{RENDERER}: {}{}",
+                backend.caption(),
+                if pending { "*" } else { "" }
+            );
+            let (x, y) = f.cell();
+            let hovered = f.ctx().hovering(x, y, COLUMN_W, WIDGET_HEIGHT);
+            if f.draw(Button::new(x, y, COLUMN_W, WIDGET_HEIGHT, &label)) {
+                o.render_backend = backend.next();
+                f.mark_changed();
+            }
+            if pending && hovered {
+                renderer_tip = Some(format!(
+                    "Restart to start on {}",
+                    o.render_backend.caption()
+                ));
+            }
         }
-    }
 
-    header(p, Y_QUALITY_HEADER, HEADER_PAD_TOP, QUALITY_HEADER);
-
-    let (x, y) = cell(0.0, Y_QUALITY_ROW_0);
-    let render_distance = Slider {
-        id: RENDER_DISTANCE_SLIDER_ID,
-        x,
-        y,
-        w: COLUMN_W,
-        h: WIDGET_HEIGHT,
-        min: RENDER_DISTANCE_MIN,
-        max: RENDER_DISTANCE_MAX,
-        value: state.options.render_distance as i32,
-        label: render_distance_label,
-    };
-    let new_render_distance = render_distance
-        .draw(p, ctx)
-        .clamp(RENDER_DISTANCE_MIN, RENDER_DISTANCE_MAX) as u32;
-    if new_render_distance != state.options.render_distance {
-        state.options.render_distance = new_render_distance;
-        crate::gui::save_options(&state.options);
-    }
-
-    let clouds_label = format!("{CLOUDS}: {}", state.options.clouds.caption());
-    let (x, y) = cell(1.0, Y_QUALITY_ROW_0);
-    let clouds = Button::new(x, y, COLUMN_W, WIDGET_HEIGHT, &clouds_label);
-    if clouds.draw(p, ctx) {
-        state.options.clouds = state.options.clouds.next();
-        crate::gui::save_options(&state.options);
-    }
-
-    let at = cell(0.0, Y_QUALITY_ROW_1);
-    if toggle(
-        p,
-        ctx,
-        at,
-        SMOOTH_LIGHTING,
-        &mut state.options.smooth_lighting,
-    ) {
-        crate::gui::save_options(&state.options);
-    }
-
-    // Antialiasing: the mode here, and its level in row 3's free right cell.
-    {
-        let aa = &mut state.options.antialiasing;
-        let (x, y) = cell(1.0, Y_QUALITY_ROW_1);
-        let label = format!("{ANTIALIASING}: {}", aa.mode.caption());
-        let mode_hovered = ctx.hovering(x, y, COLUMN_W, WIDGET_HEIGHT);
-        let mut changed = Button::new(x, y, COLUMN_W, WIDGET_HEIGHT, &label).draw(p, ctx);
-        if changed {
-            aa.mode = aa.mode.next();
+        f.header(QUALITY_HEADER);
+        f.slider(
+            &mut o.render_distance,
+            RENDER_DISTANCE_MIN as u32,
+            RENDER_DISTANCE_MAX as u32,
+            render_distance_label,
+        );
+        if f.button(&format!("{CLOUDS}: {}", o.clouds.caption())) {
+            o.clouds = o.clouds.next();
+            f.mark_changed();
         }
-        let (x, y) = cell(1.0, Y_QUALITY_ROW_3);
-        let level_hovered = ctx.hovering(x, y, COLUMN_W, WIDGET_HEIGHT);
-        let level = aa.level_caption();
+        f.toggle(SMOOTH_LIGHTING, &mut o.smooth_lighting);
+        // Antialiasing: the mode here, and its level in row 3's free right cell.
+        let (x, y) = f.cell();
+        let mode_hovered = f.ctx().hovering(x, y, COLUMN_W, WIDGET_HEIGHT);
+        let label = format!("{ANTIALIASING}: {}", o.antialiasing.mode.caption());
+        if f.draw(Button::new(x, y, COLUMN_W, WIDGET_HEIGHT, &label)) {
+            o.antialiasing.mode = o.antialiasing.mode.next();
+            f.mark_changed();
+        }
+        f.toggle(LIGHTING_ENGINE, &mut o.lighting_enabled);
+        #[cfg(feature = "builtin_shaders")]
+        f.toggle(SHADERS, &mut o.shaders_enabled);
+        #[cfg(not(feature = "builtin_shaders"))]
+        f.skip();
+        if f.button(&format!("{PARTICLES}: {}", o.particles.caption())) {
+            o.particles = o.particles.next();
+            f.mark_changed();
+        }
+        let (x, y) = f.cell();
+        let level_hovered = f.ctx().hovering(x, y, COLUMN_W, WIDGET_HEIGHT);
+        let level = o.antialiasing.level_caption();
         let label = format!("{AA_LEVEL}: {}", level.as_deref().unwrap_or("-"));
-        let mut button = Button::new(x, y, COLUMN_W, WIDGET_HEIGHT, &label);
-        button.active = level.is_some();
-        if button.draw(p, ctx) {
-            aa.next_level();
-            changed = true;
-        }
-        if changed {
-            crate::gui::save_options(&state.options);
+        let level_button = Button {
+            active: level.is_some(),
+            ..Button::new(x, y, COLUMN_W, WIDGET_HEIGHT, &label)
+        };
+        if f.draw(level_button) {
+            o.antialiasing.next_level();
+            f.mark_changed();
         }
         #[cfg(feature = "shader_support")]
         if (mode_hovered || level_hovered)
             && crate::renderer::packvertex::active()
             && matches!(
-                state.options.antialiasing.mode,
+                o.antialiasing.mode,
                 crate::renderer::antialias::AaMode::Msaa
                     | crate::renderer::antialias::AaMode::Supersample
             )
@@ -1044,123 +915,45 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         }
         #[cfg(not(feature = "shader_support"))]
         let _ = (mode_hovered, level_hovered);
-    }
 
-    let at = cell(0.0, Y_QUALITY_ROW_2);
-    if toggle(
-        p,
-        ctx,
-        at,
-        LIGHTING_ENGINE,
-        &mut state.options.lighting_enabled,
-    ) {
-        crate::gui::save_options(&state.options);
-    }
-
-    let particles_label = format!("{PARTICLES}: {}", state.options.particles.caption());
-    let (x, y) = cell(0.0, Y_QUALITY_ROW_3);
-    let particles = Button::new(x, y, COLUMN_W, WIDGET_HEIGHT, &particles_label);
-    if particles.draw(p, ctx) {
-        state.options.particles = state.options.particles.next();
-        crate::gui::save_options(&state.options);
-    }
-
-    #[cfg(feature = "builtin_shaders")]
-    {
-        let at = cell(1.0, Y_QUALITY_ROW_2);
-        if toggle(p, ctx, at, SHADERS, &mut state.options.shaders_enabled) {
-            crate::gui::save_options(&state.options);
-        }
-
-        let enabled = state.options.shaders_enabled;
-
-        let label = format!(
-            "{SHADER_QUALITY}: {}",
-            state.options.shader_quality.caption()
-        );
-        let (x, y) = cell(0.0, Y_QUALITY_ROW_4);
-        let mut quality = Button::new(x, y, COLUMN_W, WIDGET_HEIGHT, &label);
-        quality.active = enabled;
-        if quality.draw(p, ctx) {
-            state.options.shader_quality = state.options.shader_quality.next();
-            crate::gui::save_options(&state.options);
-        }
-
-        let label = format!(
-            "{PLAYER_SHADOWS}: {}",
-            if state.options.player_shadows {
-                ON
-            } else {
-                OFF
+        #[cfg(feature = "builtin_shaders")]
+        {
+            let enabled = o.shaders_enabled;
+            let label = format!("{SHADER_QUALITY}: {}", o.shader_quality.caption());
+            if f.button_active(&label, enabled) {
+                o.shader_quality = o.shader_quality.next();
+                f.mark_changed();
             }
-        );
-        let (x, y) = cell(1.0, Y_QUALITY_ROW_4);
-        let mut shadows = Button::new(x, y, COLUMN_W, WIDGET_HEIGHT, &label);
-        shadows.active = enabled;
-        if shadows.draw(p, ctx) {
-            state.options.player_shadows = !state.options.player_shadows;
-            crate::gui::save_options(&state.options);
+            let label = format!(
+                "{PLAYER_SHADOWS}: {}",
+                if o.player_shadows { ON } else { OFF }
+            );
+            if f.button_active(&label, enabled) {
+                o.player_shadows = !o.player_shadows;
+                f.mark_changed();
+            }
         }
-    }
 
-    let at = cell(0.0, Y_SHADOW_ROW);
-    if toggle(
-        p,
-        ctx,
-        at,
-        ENTITY_SHADOWS,
-        &mut state.options.entity_shadows,
-    ) {
-        crate::gui::save_options(&state.options);
-    }
-    let (x, y) = cell(1.0, Y_SHADOW_ROW);
-    let opacity = Slider {
-        id: SHADOW_OPACITY_SLIDER_ID,
-        x,
-        y,
-        w: COLUMN_W,
-        h: WIDGET_HEIGHT,
-        min: 0,
-        max: 100,
-        value: state.options.shadow_opacity as i32,
-        label: shadow_opacity_label,
-    };
-    let new_opacity = opacity.draw(p, ctx).clamp(0, 100) as u32;
-    if new_opacity != state.options.shadow_opacity {
-        state.options.shadow_opacity = new_opacity;
-        crate::gui::save_options(&state.options);
-    }
-
-    #[cfg(feature = "shader_support")]
-    {
-        let (x, y) = cell(0.0, Y_SHADERPACKS_ROW);
-        let packs = Button::new(
-            x,
-            y,
-            BIG_W,
-            WIDGET_HEIGHT,
-            crate::gui::shaderpacks::SHADER_PACKS,
-        );
-        if packs.draw(p, ctx) {
+        f.toggle(ENTITY_SHADOWS, &mut o.entity_shadows);
+        f.slider(&mut o.shadow_opacity, 0, 100, shadow_opacity_label);
+        #[cfg(feature = "shader_support")]
+        if f.wide_button(crate::gui::shaderpacks::SHADER_PACKS) {
             state.shaderpacks.refresh();
             state.nav = Some(Screen::ShaderPacks);
         }
-    }
+        if f.wide_button(RESET_VIDEO) {
+            reset_video_options(o);
+            f.mark_changed();
+        }
+    });
 
-    let (x, y) = cell(0.0, Y_RESET_ROW);
-    let reset_video = Button::new(x, y, BIG_W, WIDGET_HEIGHT, RESET_VIDEO);
-    if reset_video.draw(p, ctx) {
-        reset_video_options(&mut state.options);
+    if changed {
         crate::gui::save_options(&state.options);
     }
-
-    p.pop_clip(clip);
     if let (Some(tip), Some(m)) = (renderer_tip, ctx.mouse()) {
         draw_bind_tooltip(p, &[tip], m.x, m.y, ctx.vw);
     }
-    state.video_list.draw_bar(p, &area, VIDEO_LIST_H);
-
-    if draw_done(p, screen_ctx) {
+    if draw_done(p, ctx) {
         state.nav = Some(Screen::Options);
     }
 }
@@ -1349,61 +1142,25 @@ fn scroll_label(value: i32) -> String {
 }
 
 pub fn draw_mouse(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
-    draw_title(p, ctx, MOUSE_TITLE);
-    let left = (ctx.vw / 2.0 - GRID_LEFT_OFFSET).floor();
-    let top = LAYOUT.content_y(ctx.vh, 3.0 * ROW_H);
-    let cell = |column: f32, row: f32| (left + column * COLUMN_STEP, top + row * ROW_H + ROW_INSET);
+    use crate::gui::{MOUSE_SENSITIVITY_MAX, SCROLL_SENSITIVITY_MAX, SCROLL_SENSITIVITY_MIN};
+    let mut form = Form::new(p, ctx, MOUSE_TITLE, 3, MOUSE_SENSITIVITY_SLIDER_ID);
     let o = &mut state.options;
-    let mut changed = false;
-
-    let (x, y) = cell(0.0, 0.0);
-    let sensitivity = Slider {
-        id: MOUSE_SENSITIVITY_SLIDER_ID,
-        x,
-        y,
-        w: COLUMN_W,
-        h: WIDGET_HEIGHT,
-        min: 0,
-        max: crate::gui::MOUSE_SENSITIVITY_MAX as i32,
-        value: o.mouse_sensitivity as i32,
-        label: sensitivity_label,
-    }
-    .draw(p, ctx)
-    .clamp(0, crate::gui::MOUSE_SENSITIVITY_MAX as i32) as u32;
-    changed |= sensitivity != o.mouse_sensitivity;
-    o.mouse_sensitivity = sensitivity;
-
-    let (x, y) = cell(1.0, 0.0);
-    let scroll = Slider {
-        id: SCROLL_SENSITIVITY_SLIDER_ID,
-        x,
-        y,
-        w: COLUMN_W,
-        h: WIDGET_HEIGHT,
-        min: crate::gui::SCROLL_SENSITIVITY_MIN as i32,
-        max: crate::gui::SCROLL_SENSITIVITY_MAX as i32,
-        value: o.scroll_sensitivity as i32,
-        label: scroll_label,
-    }
-    .draw(p, ctx)
-    .clamp(
-        crate::gui::SCROLL_SENSITIVITY_MIN as i32,
-        crate::gui::SCROLL_SENSITIVITY_MAX as i32,
-    ) as u32;
-    changed |= scroll != o.scroll_sensitivity;
-    o.scroll_sensitivity = scroll;
-
-    changed |= toggle(p, ctx, cell(0.0, 1.0), INVERT_X, &mut o.invert_x);
-    changed |= toggle(p, ctx, cell(1.0, 1.0), INVERT_Y, &mut o.invert_y);
-    changed |= toggle(
-        p,
-        ctx,
-        cell(0.0, 2.0),
-        DISCRETE_SCROLLING,
-        &mut o.discrete_scrolling,
+    form.slider(
+        &mut o.mouse_sensitivity,
+        0,
+        MOUSE_SENSITIVITY_MAX,
+        sensitivity_label,
     );
-
-    if changed {
+    form.slider(
+        &mut o.scroll_sensitivity,
+        SCROLL_SENSITIVITY_MIN,
+        SCROLL_SENSITIVITY_MAX,
+        scroll_label,
+    );
+    form.toggle(INVERT_X, &mut o.invert_x);
+    form.toggle(INVERT_Y, &mut o.invert_y);
+    form.toggle(DISCRETE_SCROLLING, &mut o.discrete_scrolling);
+    if form.finish() {
         crate::gui::save_options(&state.options);
     }
     if draw_done(p, ctx) {
@@ -1737,219 +1494,94 @@ pub fn draw_chat(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     }
 
     draw_title(p, ctx, CHAT_TITLE);
-
-    let left = (ctx.vw / 2.0 - GRID_LEFT_OFFSET).floor();
-    let (list_x, list_y, list_w, list_h) = LAYOUT.content_rect(ctx.vw, ctx.vh);
-    let area = ListArea {
-        clip: (list_x, list_y, list_w, list_h),
-        left: left,
-        width: BIG_W,
-        y: list_y,
-        h: list_h,
-    };
-    state.game_list.input(ctx, &area, GAME_LIST_H);
-    let top = state.game_list.top(&area).floor();
-
-    let over_list = ctx.hovering(list_x, list_y, list_w, list_h);
-    let dragging_bar = state.game_list.drag.is_some();
-    let mut list_input = ctx.input.clone();
-    if dragging_bar || (!over_list && !widgets::slider_dragging()) {
-        list_input.mouse = None;
-    }
-    if dragging_bar || !over_list {
-        list_input.left_click = false;
-    }
-    let list_ctx = &ScreenCtx {
-        input: &list_input,
-        vw: ctx.vw,
-        vh: ctx.vh,
-    };
-    let screen_ctx = ctx;
-    let ctx = list_ctx;
-    let clip = p.push_clip(list_x, list_y, list_w, list_h);
-
-    let cell = |column: f32, row_y: f32| (left + column * COLUMN_STEP, top + row_y + ROW_INSET);
-
-    draw_chat_options(p, &mut state.options, ctx, &cell);
-
-    let (x, y) = cell(0.0, Y_CHAT_ROW_0);
     let can_sign = signing_available(state);
-    if can_sign {
-        if toggle(
-            p,
-            ctx,
-            (x, y),
-            SIGNED_CHAT,
-            &mut state.options.allow_signed_chat,
-        ) {
-            crate::gui::save_options(&state.options);
+    let o = &mut state.options;
+    let changed = scrolling_form(p, ctx, &mut state.game_list, CHAT_SLIDER_ID_BASE, |f| {
+        chat_options(f, &mut o.chat);
+
+        if can_sign {
+            f.toggle(SIGNED_CHAT, &mut o.allow_signed_chat);
+        } else {
+            f.button_active(&format!("{SIGNED_CHAT}: {OFF}"), false);
+            let (x, y) = f.cell();
+            f.painter().text_str(
+                SIGNED_CHAT_UNAVAILABLE,
+                x,
+                y + (WIDGET_HEIGHT - LINE_HEIGHT) / 2.0,
+                0xA0A0A0,
+                true,
+            );
         }
-    } else {
-        let caption = format!("{SIGNED_CHAT}: {OFF}");
-        Button {
-            active: false,
-            ..Button::new(x, y, COLUMN_W, WIDGET_HEIGHT, &caption)
-        }
-        .draw(p, ctx);
-        p.text_str(
-            SIGNED_CHAT_UNAVAILABLE,
-            x + COLUMN_STEP,
-            y + (WIDGET_HEIGHT - LINE_HEIGHT) / 2.0,
-            0xA0A0A0,
-            true,
+
+        f.header(TOAST_HEADER);
+        f.toggle(TOAST_ADVANCEMENT, &mut o.toast_advancement);
+        f.toggle(TOAST_RECIPE, &mut o.toast_recipe);
+        f.toggle(TOAST_SYSTEM, &mut o.toast_system);
+        f.slider(
+            &mut o.toast_time,
+            crate::gui::TOAST_TIME_MIN as u32,
+            crate::gui::TOAST_TIME_MAX as u32,
+            toast_time_label,
         );
-    }
 
-    p.text_str(
-        TOAST_HEADER,
-        left,
-        top + Y_TOAST_HEADER + ROW_INSET + HEADER_PAD_TOP,
-        0xFFFFFF,
-        true,
-    );
-
-    let at = cell(0.0, Y_TOAST_ROW_0);
-    if toggle(
-        p,
-        ctx,
-        at,
-        TOAST_ADVANCEMENT,
-        &mut state.options.toast_advancement,
-    ) {
-        crate::gui::save_options(&state.options);
-    }
-    let at = cell(1.0, Y_TOAST_ROW_0);
-    if toggle(p, ctx, at, TOAST_RECIPE, &mut state.options.toast_recipe) {
-        crate::gui::save_options(&state.options);
-    }
-    let at = cell(0.0, Y_TOAST_ROW_1);
-    if toggle(p, ctx, at, TOAST_SYSTEM, &mut state.options.toast_system) {
-        crate::gui::save_options(&state.options);
-    }
-
-    let (x, y) = cell(1.0, Y_TOAST_ROW_1);
-    let toast_time = Slider {
-        id: TOAST_TIME_SLIDER_ID,
-        x,
-        y,
-        w: COLUMN_W,
-        h: WIDGET_HEIGHT,
-        min: crate::gui::TOAST_TIME_MIN,
-        max: crate::gui::TOAST_TIME_MAX,
-        value: state.options.toast_time as i32,
-        label: toast_time_label,
-    };
-    let new_toast_time = toast_time
-        .draw(p, ctx)
-        .clamp(crate::gui::TOAST_TIME_MIN, crate::gui::TOAST_TIME_MAX)
-        as u32;
-    if new_toast_time != state.options.toast_time {
-        state.options.toast_time = new_toast_time;
-        crate::gui::save_options(&state.options);
-    }
-
-    #[cfg(all(target_arch = "wasm32", feature = "asset_download"))]
-    {
-        p.text_str(
-            STORAGE_HEADER,
-            left,
-            top + Y_STORAGE_HEADER + ROW_INSET + HEADER_PAD_TOP,
-            0xFFFFFF,
-            true,
-        );
-        let (x, y) = cell(0.0, Y_STORAGE_ROW_0);
-        if Button::new(x, y, BIG_W, WIDGET_HEIGHT, CLEAR_ASSETS).draw(p, ctx) {
-            state.confirm_clear_assets = true;
+        #[cfg(all(target_arch = "wasm32", feature = "asset_download"))]
+        {
+            f.header(STORAGE_HEADER);
+            if f.wide_button(CLEAR_ASSETS) {
+                state.confirm_clear_assets = true;
+            }
         }
-    }
 
-    let (x, y) = cell(0.0, Y_GAME_RESET_ROW);
-    if Button::new(x, y, BIG_W, WIDGET_HEIGHT, RESET_CHAT).draw(p, ctx) {
-        reset_chat_options(&mut state.options);
+        if f.wide_button(RESET_CHAT) {
+            reset_chat_options(o);
+            f.mark_changed();
+        }
+    });
+
+    if changed {
         crate::gui::save_options(&state.options);
     }
-
-    p.pop_clip(clip);
-    state.game_list.draw_bar(p, &area, GAME_LIST_H);
-
-    if draw_done(p, screen_ctx) {
+    if draw_done(p, ctx) {
         state.nav = Some(Screen::Options);
     }
 }
 
-/// `ChatOptionsScreen`'s options, two to a row from the top of the list.
-fn draw_chat_options(
-    p: &mut Painter,
-    options: &mut crate::gui::GuiOptions,
-    ctx: &ScreenCtx,
-    cell: &dyn Fn(f32, f32) -> (f32, f32),
-) {
+/// `ChatOptionsScreen`'s options, seven rows of two.
+fn chat_options(f: &mut Form, c: &mut crate::gui::ChatOptions) {
     use crate::gui::CHAT_DELAY_MAX_TENTHS;
-    let before = options.chat;
-    let c = &mut options.chat;
-    let at = |n: usize| cell((n % 2) as f32, (n / 2) as f32 * ROW_H);
-
-    let (x, y) = at(0);
-    let label = format!("Chat: {}", c.shown.caption());
-    if Button::new(x, y, COLUMN_W, WIDGET_HEIGHT, &label).draw(p, ctx) {
+    use crate::percent_label;
+    if f.button(&format!("Chat: {}", c.shown.caption())) {
         c.shown = c.shown.next();
+        f.mark_changed();
     }
-    toggle(p, ctx, at(1), "Colors", &mut c.colors);
-    toggle(p, ctx, at(2), "Web Links", &mut c.links);
-    toggle(p, ctx, at(3), "Prompt on Links", &mut c.links_prompt);
-
-    let mut slider = |n: usize, value: &mut u32, min: u32, max: u32, label: fn(i32) -> String| {
-        let (x, y) = at(n);
-        *value = Slider {
-            id: CHAT_SLIDER_ID_BASE + n as u32,
-            x,
-            y,
-            w: COLUMN_W,
-            h: WIDGET_HEIGHT,
-            min: min as i32,
-            max: max as i32,
-            value: *value as i32,
-            label,
-        }
-        .draw(p, ctx)
-        .clamp(min as i32, max as i32) as u32;
-    };
-    slider(4, &mut c.opacity, 0, 100, |v| {
-        format!("Chat Text Opacity: {v}%")
-    });
-    slider(5, &mut c.background, 0, 100, |v| {
-        format!("Text Background Opacity: {v}%")
-    });
-    slider(6, &mut c.scale, 0, 100, |v| format!("Chat Text Size: {v}%"));
-    slider(7, &mut c.line_spacing, 0, 100, |v| {
-        format!("Line Spacing: {v}%")
-    });
-    slider(8, &mut c.delay_tenths, 0, CHAT_DELAY_MAX_TENTHS, |v| {
+    f.toggle("Colors", &mut c.colors);
+    f.toggle("Web Links", &mut c.links);
+    f.toggle("Prompt on Links", &mut c.links_prompt);
+    f.slider(&mut c.opacity, 0, 100, percent_label!("Chat Text Opacity"));
+    f.slider(
+        &mut c.background,
+        0,
+        100,
+        percent_label!("Text Background Opacity"),
+    );
+    f.slider(&mut c.scale, 0, 100, percent_label!("Chat Text Size"));
+    f.slider(&mut c.line_spacing, 0, 100, percent_label!("Line Spacing"));
+    f.slider(&mut c.delay_tenths, 0, CHAT_DELAY_MAX_TENTHS, |v| {
         if v == 0 {
             "Chat Delay: None".to_owned()
         } else {
             format!("Chat Delay: {:.1} Seconds", v as f32 / 10.0)
         }
     });
-    slider(9, &mut c.width, 40, 320, |v| format!("Width: {v}px"));
-    slider(10, &mut c.focused_height, 20, 180, |v| {
+    f.slider(&mut c.width, 40, 320, |v| format!("Width: {v}px"));
+    f.slider(&mut c.focused_height, 20, 180, |v| {
         format!("Focused Height: {v}px")
     });
-    slider(11, &mut c.unfocused_height, 20, 180, |v| {
+    f.slider(&mut c.unfocused_height, 20, 180, |v| {
         format!("Unfocused Height: {v}px")
     });
-    toggle(
-        p,
-        ctx,
-        at(12),
-        "Command Suggestions",
-        &mut c.auto_suggestions,
-    );
-    toggle(p, ctx, at(13), "Only Show Secure Chat", &mut c.only_secure);
-
-    if options.chat != before {
-        crate::gui::save_options(options);
-    }
+    f.toggle("Command Suggestions", &mut c.auto_suggestions);
+    f.toggle("Only Show Secure Chat", &mut c.only_secure);
 }
 
 #[cfg(audio)]
@@ -2234,7 +1866,7 @@ mod tests {
     #[test]
     #[cfg(not(feature = "mobile_ui"))]
     fn a_scale_change_ends_the_drag() {
-        const ID: u32 = GUI_SCALE_SLIDER_ID;
+        const ID: u32 = VIDEO_SLIDER_ID_BASE;
         let mut option = 0u32;
         let mut values = Vec::new();
         let mut scales = Vec::new();
@@ -2283,17 +1915,28 @@ mod tests {
 
     #[test]
     fn video_grid_stacks_like_the_options_list() {
-        assert_eq!(Y_DISPLAY_ROW_0, 13.0);
-        assert_eq!(Y_DISPLAY_ROW_1, 38.0);
-        assert_eq!(Y_DISPLAY_ROW_2, 63.0);
-        assert_eq!(Y_DISPLAY_ROW_3, 88.0);
-        assert_eq!(Y_QUALITY_HEADER, 113.0);
-        assert_eq!(Y_QUALITY_ROW_0, 144.0);
+        // Display: header and four rows; Quality: header (spaced) and four
+        // rows, the shader row when built in; then entity shadows, the shader
+        // packs button when built in, and reset.
+        let atlas = crate::gui::atlas::build_gui_atlas(&crate::assets_root());
+        let mut p = Painter::new(&atlas, 0);
+        let mut state = GuiState::default();
+        let input = GuiInput::default();
+        let ctx = ScreenCtx {
+            input: &input,
+            vw: 427.0,
+            vh: 240.0,
+        };
+        draw_video(&mut p, &mut state, &ctx);
         const EXTRA_ROWS: f32 = cfg!(feature = "builtin_shaders") as u32 as f32
             + cfg!(feature = "shader_support") as u32 as f32;
-        // The entity shadows row is always there.
-        assert_eq!(Y_RESET_ROW, 244.0 + (EXTRA_ROWS + 1.0) * ROW_H);
-        assert_eq!(VIDEO_CONTENT_H, Y_RESET_ROW + ROW_H);
+        let reset_row = 244.0 + (EXTRA_ROWS + 1.0) * ROW_H;
+        assert_eq!(state.video_list.content_h, reset_row + ROW_H + LIST_PAD_BOTTOM);
+
+        // A tall window has nothing to scroll.
+        let (_, _, _, list_h) = LAYOUT.content_rect(854.0, 480.0);
+        assert_eq!(list_h, 414.0);
+        assert!(state.video_list.content_h < list_h);
     }
 
     #[test]
@@ -2314,13 +1957,6 @@ mod tests {
             scroller_y(max_scroll, max_scroll, list_y, list_h, h),
             list_y + list_h - h
         );
-    }
-
-    #[test]
-    fn a_tall_window_has_nothing_to_scroll() {
-        let (_, _, _, list_h) = LAYOUT.content_rect(854.0, 480.0);
-        assert_eq!(list_h, 414.0);
-        assert!(VIDEO_LIST_H < list_h);
     }
 
     #[test]

@@ -39,7 +39,6 @@ pub mod multiplayer;
 pub mod op_blocks;
 pub mod option_codec;
 pub mod options;
-pub mod scroll_list;
 pub mod painter;
 pub mod pause;
 pub mod ping;
@@ -53,6 +52,7 @@ pub mod render;
 #[cfg(resource_packs)]
 pub mod resourcepacks;
 pub mod screens;
+pub mod scroll_list;
 pub mod serverlist;
 #[cfg(feature = "shader_support")]
 pub mod shaderpacks;

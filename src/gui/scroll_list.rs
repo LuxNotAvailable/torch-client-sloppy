@@ -3,8 +3,9 @@
 //! screen otherwise repeats around its own rows.
 
 use super::options::{draw_scrollbar, scroll_input};
-use super::ScreenCtx;
 use super::painter::{ClipGuard, Painter};
+use super::widgets;
+use super::{GuiInput, ScreenCtx};
 
 /// Where a list sits: the clip rectangle, and the rows' column inside it
 /// (the scrollbar hangs off the column's right edge).
@@ -53,6 +54,9 @@ impl ListArea {
 pub struct ScrollList {
     pub scroll: f32,
     pub drag: Option<f32>,
+    /// The content's height as last drawn, for lists that measure
+    /// themselves while drawing (a [`Form`](super::form::Form)).
+    pub content_h: f32,
 }
 
 /// An open list frame: where its content starts, and the clip to pop.
@@ -64,7 +68,24 @@ pub struct ListFrame {
 impl ScrollList {
     /// Back to the top, dropping any drag.
     pub fn reset(&mut self) {
-        *self = ScrollList::default();
+        self.scroll = 0.0;
+        self.drag = None;
+    }
+
+    /// The input the rows see: none while the scrollbar is dragged, and no
+    /// pointer outside the list unless a slider in it is being dragged.
+    pub fn masked_input(&self, ctx: &ScreenCtx, area: &ListArea) -> GuiInput {
+        let (x, y, w, h) = area.clip;
+        let over = ctx.hovering(x, y, w, h);
+        let dragging_bar = self.drag.is_some();
+        let mut input = ctx.input.clone();
+        if dragging_bar || (!over && !widgets::slider_dragging()) {
+            input.mouse = None;
+        }
+        if dragging_bar || !over {
+            input.left_click = false;
+        }
+        input
     }
 
     /// Takes this frame's wheel, scrollbar and touch input.
@@ -83,7 +104,15 @@ impl ScrollList {
 
     /// Draws the scrollbar, when the content overflows.
     pub fn draw_bar(&self, p: &mut Painter, area: &ListArea, content_h: f32) {
-        draw_scrollbar(p, self.scroll, area.left, area.width, area.y, area.h, content_h);
+        draw_scrollbar(
+            p,
+            self.scroll,
+            area.left,
+            area.width,
+            area.y,
+            area.h,
+            content_h,
+        );
     }
 
     /// Where the content's top is drawn this frame.
