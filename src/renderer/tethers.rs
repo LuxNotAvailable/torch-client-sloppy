@@ -29,15 +29,28 @@ enum Kind {
     CrystalBeam,
     Lightning,
     Rays,
+    /// The two fire textures of burning entities' flames.
+    Fire0,
+    Fire1,
+    /// Round shadows under entities.
+    Shadow,
+    /// Falling rain and snow.
+    Rain,
+    Snow,
 }
 
-const KINDS: [Kind; 6] = [
+const KINDS: [Kind; 11] = [
+    Kind::Shadow,
+    Kind::Rain,
+    Kind::Snow,
     Kind::Leash,
     Kind::Line,
     Kind::GuardianBeam,
     Kind::CrystalBeam,
     Kind::Lightning,
     Kind::Rays,
+    Kind::Fire0,
+    Kind::Fire1,
 ];
 
 struct Layer {
@@ -144,6 +157,11 @@ fn tiled(path: &str, images: &mut Assets<Image>) -> Option<Handle<Image>> {
     Some(handle)
 }
 
+/// A layer a shader pack draws in its weather pass, keeping its vertex
+/// alpha: rain, snow and shadows.
+#[derive(Component)]
+pub struct WeatherLayer;
+
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -166,11 +184,38 @@ fn setup(
                 AlphaMode::Mask(0.1),
             ),
             Kind::Lightning | Kind::Rays => (None, LightMode::Emissive, AlphaMode::Add),
+            // Flames light themselves (`withBlock(light, 15)`).
+            Kind::Rain => (tiled("environment/rain", &mut images), LightMode::Text, AlphaMode::Blend),
+            Kind::Snow => (tiled("environment/snow", &mut images), LightMode::Text, AlphaMode::Blend),
+            Kind::Shadow => (
+                crate::entities::load_entity_image("misc/shadow", &mut images),
+                // Text mode keeps the vertex alpha the fade lives in.
+                LightMode::Text,
+                AlphaMode::Blend,
+            ),
+            Kind::Fire0 => (
+                crate::entities::load_entity_image("block/fire_0", &mut images),
+                LightMode::Emissive,
+                AlphaMode::Mask(0.1),
+            ),
+            Kind::Fire1 => (
+                crate::entities::load_entity_image("block/fire_1", &mut images),
+                LightMode::Emissive,
+                AlphaMode::Mask(0.1),
+            ),
         };
         let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
         Geo::default().into_mesh(&mut mesh);
         let mesh = meshes.add(mesh);
-        let material = materials.add(EntityMaterial::new(texture, mode, alpha, 0.1, lit, 0));
+        // Shadows lie on block tops; a nudge toward the camera keeps them
+        // above the ground (`entityShadow`'s layering offset).
+        // and faint edges must not be cut away.
+        let (bias, cutoff) = match kind {
+            Kind::Shadow => (2, 0.0),
+            Kind::Rain | Kind::Snow => (0, 0.0),
+            _ => (0, 0.1),
+        };
+        let material = materials.add(EntityMaterial::new(texture, mode, alpha, cutoff, lit, bias));
         let entity = commands
             .spawn((
                 Mesh3d(mesh.clone()),
@@ -181,6 +226,15 @@ fn setup(
                 Name::new(format!("tethers_{kind:?}")),
             ))
             .id();
+        if matches!(kind, Kind::Shadow | Kind::Rain | Kind::Snow) {
+            // Neither casts the sun's shadow: rain sheets would darken the
+            // world and streak the light shafts.
+            commands.entity(entity).insert((
+                WeatherLayer,
+                bevy::light::NotShadowCaster,
+                bevy::light::NotShadowReceiver,
+            ));
+        }
         layers.insert(kind, Layer { mesh, entity });
     }
     commands.insert_resource(Layers(layers));
@@ -304,9 +358,143 @@ fn draw(
 
         let mut seen_guardians = Vec::new();
         let mut seen_bolts = Vec::new();
+        let fire_frame = fire_frame(now);
+        let (mut fire0, mut fire1) = (Geo::default(), Geo::default());
+        let mut burn = |pos: Vec3, width: f32, height: f32| {
+            flames(&mut fire0, &mut fire1, pos, width, height, cam_rot, fire_frame);
+        };
+        // Shadows: the world's blocks under each caster.
+        let level = crate::client::tracking::current_world().lock().unwrap().clone();
+        if let Some(level) = level {
+            let level = level.read();
+            let solid_top = |p: azalea_core::position::BlockPos| {
+                use azalea::physics::collision::BlockWithShape;
+                level
+                    .get_block_state(p)
+                    .is_some_and(|s| !s.is_air() && s.is_collision_shape_full())
+            };
+            let light = |p: azalea_core::position::BlockPos| {
+                let (block, sky) = super::lightmap::levels_at([p.x as f32, p.y as f32, p.z as f32]);
+                block.max(sky)
+            };
+            // Rain and snow: a sheet on every open column about the camera.
+            let intensity = super::environment::rain_level();
+            let env = crate::client::envprobe::camera_biome().map(crate::util::biome_color::env);
+            if intensity > 0.0
+                && let Some(env) = env.filter(|e| e.has_precipitation)
+            {
+                use azalea_core::heightmap_kind::HeightmapKind;
+                use azalea_core::position::ChunkPos;
+                use super::weather::Fall;
+                let camera = [cam_pos.x.floor() as i32, cam_pos.y.floor() as i32, cam_pos.z.floor() as i32];
+                let min_y = level.chunks.min_y();
+                let terrain = |x: i32, z: i32| {
+                    let chunk = level.chunks.get(&ChunkPos::new(x.div_euclid(16), z.div_euclid(16)));
+                    chunk
+                        .and_then(|c| {
+                            c.read()
+                                .heightmaps
+                                .get(&HeightmapKind::MotionBlocking)
+                                .map(|m| m.get_first_available(x.rem_euclid(16) as u8, z.rem_euclid(16) as u8))
+                        })
+                        .unwrap_or(min_y)
+                };
+                // `coldEnoughToSnow` at the camera's height.
+                let temperature = env.temperature - (camera[1] - 80).max(0) as f32 * 0.00125;
+                let kind = if env.frozen || temperature < 0.15 { Fall::Snow } else { Fall::Rain };
+                let columns = super::weather::columns(
+                    camera,
+                    crate::client::tracking::game_time(),
+                    partial,
+                    terrain,
+                    |_, _| Some(kind),
+                );
+                for column in &columns {
+                    let sample_y = camera[1].max(terrain(column.x, column.z));
+                    let (block, sky) =
+                        super::lightmap::levels_at([column.x as f32, sample_y as f32, column.z as f32]);
+                    // Snow is lit a quarter of the way to full.
+                    let (block, sky) = match column.fall {
+                        Fall::Rain => (block, sky),
+                        Fall::Snow => ((block * 3 + 15) / 4, (sky * 3 + 15) / 4),
+                    };
+                    let shade = super::shadows::brightness(block.max(sky));
+                    let target = geo.get_mut(&match column.fall {
+                        Fall::Rain => Kind::Rain,
+                        Fall::Snow => Kind::Snow,
+                    });
+                    let target = target.unwrap();
+                    for corners in super::weather::sheet_pieces(column, cam_pos, intensity) {
+                        target.quad(corners.map(|(p, uv, a)| (cam_pos + p, uv, [shade, shade, shade, a])));
+                    }
+                }
+            }
+            let shadow_geo = geo.get_mut(&Kind::Shadow).unwrap();
+            let opacity = if state.options.entity_shadows {
+                state.options.shadow_opacity as f32 / 100.0
+            } else {
+                0.0
+            };
+            let mut cast = |pos: Vec3, radius: f32, strength: f32| {
+                if opacity <= 0.0 {
+                    return;
+                }
+                let dist_sq = (pos - cam_pos).length_squared();
+                for piece in super::shadows::pieces(pos, radius, strength, dist_sq, &solid_top, &light) {
+                    let uv = |x: f32, z: f32| {
+                        [-(x - pos.x) / 2.0 / radius + 0.5, -(z - pos.z) / 2.0 / radius + 0.5]
+                    };
+                    // Vanilla's alpha tops out at a half: 50% is vanilla, 100%
+                    // solid black.
+                    let c = [1.0, 1.0, 1.0, (piece.alpha * 2.0 * opacity).min(1.0)];
+                    // Lifted off the block top so it never fights the face.
+                    let y = piece.y + 0.005;
+                    shadow_geo.quad([
+                        (Vec3::new(piece.x0, y, piece.z0), uv(piece.x0, piece.z0), c),
+                        (Vec3::new(piece.x0, y, piece.z1), uv(piece.x0, piece.z1), c),
+                        (Vec3::new(piece.x1, y, piece.z1), uv(piece.x1, piece.z1), c),
+                        (Vec3::new(piece.x1, y, piece.z0), uv(piece.x1, piece.z0), c),
+                    ]);
+                }
+            };
+            if !first_person {
+                cast(Vec3::from(view.player_lerp), 0.5, 1.0);
+            }
+            for player in view.players.iter() {
+                cast(Vec3::from(player.anim.position(partial)), 0.5, 1.0);
+            }
+            for anim in view.entities.iter() {
+                let r = super::shadows::radius(anim.kind);
+                if r > 0.0 && !anim.is_invisible() {
+                    let st = anim.sample(partial);
+                    // `MobRenderer`: babies' shadows shrink with them.
+                    cast(
+                        Vec3::from(anim.position(partial)),
+                        r * st.age_scale * st.scale,
+                        super::shadows::strength(anim.kind),
+                    );
+                }
+            }
+        }
+
+        // You burning, seen from outside; other players burning.
+        if !first_person && view.local.on_fire {
+            let height = if view.local.crouching { 1.5 } else { 1.8 };
+            burn(Vec3::from(view.player_lerp), 0.6, height);
+        }
+        for player in view.players.iter() {
+            let sample = player.anim.sample(partial);
+            if sample.on_fire {
+                let height = if sample.crouching { 1.5 } else { 1.8 };
+                burn(Vec3::from(player.anim.position(partial)), 0.6, height);
+            }
+        }
         for anim in view.entities.iter() {
             let st = anim.sample(partial);
             let pos = Vec3::from(anim.position(partial));
+            if st.display_fire && !st.is_invisible {
+                burn(pos, st.bounding_box_width, st.bounding_box_height);
+            }
             if let Some(holder) = st.extras.leash_holder
                 && let Some(holder) = world.body(holder)
             {
@@ -361,6 +549,9 @@ fn draw(
                 _ => {}
             }
         }
+        drop(burn);
+        geo.insert(Kind::Fire0, fire0);
+        geo.insert(Kind::Fire1, fire1);
         guardians.retain(|id, _| seen_guardians.contains(id));
         bolts.retain(|id, _| seen_bolts.contains(id));
     } else {
@@ -387,6 +578,47 @@ fn draw(
         if !empty && let Some(mesh) = meshes.get_mut(&layer.mesh) {
             built.into_mesh(mesh);
         }
+    }
+}
+
+/// The fire textures' frame this instant: 32 frames a tick each, starting
+/// on frame 16 (their `.mcmeta`).
+fn fire_frame(seconds: f32) -> u32 {
+    ((seconds * 20.0) as u32 + 16) % 32
+}
+
+/// `FlameFeatureRenderer`: planes 1.4 tall stacked up the body, alternating
+/// the two fire textures, each 10% narrower and further back, turned to the
+/// camera about the vertical.
+fn flames(fire0: &mut Geo, fire1: &mut Geo, pos: Vec3, width: f32, height: f32, cam: Quat, frame: u32) {
+    let s = width * 1.4;
+    let (yaw, _, _) = cam.to_euler(EulerRot::YXZ);
+    let turn = Quat::from_rotation_y(yaw);
+    let mut h = height / s;
+    let mut r = 0.5;
+    let (mut yo, mut zo) = (0.0f32, 0.0f32);
+    let z0 = 0.3 - (h as i32) as f32 * 0.02;
+    let (v0, v1) = (frame as f32 / 32.0, (frame + 1) as f32 / 32.0);
+    let white = [1.0, 1.0, 1.0, 1.0];
+    let mut layer = 0;
+    while h > 0.0 {
+        let (mut u0, mut u1) = (0.0f32, 1.0f32);
+        if layer / 2 % 2 == 0 {
+            std::mem::swap(&mut u0, &mut u1);
+        }
+        let p = |x: f32, y: f32| pos + turn * (Vec3::new(x, y - yo, z0 + zo) * s);
+        let geo = if layer % 2 == 0 { &mut *fire0 } else { &mut *fire1 };
+        geo.quad([
+            (p(-r, 0.0), [u1, v1], white),
+            (p(r, 0.0), [u0, v1], white),
+            (p(r, 1.4), [u0, v0], white),
+            (p(-r, 1.4), [u1, v0], white),
+        ]);
+        h -= 0.45;
+        yo -= 0.45;
+        r *= 0.9;
+        zo -= 0.03;
+        layer += 1;
     }
 }
 
@@ -664,6 +896,16 @@ fn lightning(geo: &mut Geo, pos: Vec3, seed: i64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_burning_player_gets_five_alternating_flame_planes() {
+        let (mut a, mut b) = (Geo::default(), Geo::default());
+        flames(&mut a, &mut b, Vec3::ZERO, 0.6, 1.8, Quat::IDENTITY, 16);
+        // 1.8 / (0.6 * 1.4) = 2.14 units, a plane every 0.45: five planes.
+        assert_eq!((a.pos.len() / 4, b.pos.len() / 4), (3, 2));
+        assert_eq!(fire_frame(0.0), 16);
+        assert_eq!(fire_frame(0.8), 0);
+    }
 
     #[test]
     fn a_lead_sags_between_its_ends() {

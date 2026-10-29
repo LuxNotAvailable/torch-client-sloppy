@@ -320,8 +320,13 @@ impl TerrainPipeline {
         descriptor.layout.push(self.terrain_layout(key.direct));
 
         descriptor.primitive.cull_mode = Some(Face::Back);
+        // Translucent terrain is drawn a pool at a time, each pool's sections
+        // back to front, so a near section in an earlier pool can come before
+        // a far one in a later pool. Writing depth would then hide the far
+        // one (water behind a portal); without it the two only blend in a
+        // slightly wrong order.
         if let Some(depth) = descriptor.depth_stencil.as_mut() {
-            depth.depth_write_enabled = true;
+            depth.depth_write_enabled = key.stream != STREAM_WATER;
         }
 
         for def in Self::terrain_defs(key) {

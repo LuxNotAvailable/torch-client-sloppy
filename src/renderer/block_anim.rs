@@ -36,7 +36,7 @@ impl BlockAnimation {
     }
 
     /// `(frame tile, next frame tile, blend 0..=u16::MAX)` at `tick`.
-    fn at(&self, tick: u64) -> (u16, u16, u16) {
+    pub(crate) fn at(&self, tick: u64) -> (u16, u16, u16) {
         let mut into = tick % self.period();
         for (i, &(tile, time)) in self.frames.iter().enumerate() {
             let time = u64::from(time.max(1));
@@ -75,7 +75,20 @@ pub(crate) fn publish(tile_count: u32, animations: Vec<BlockAnimation>) {
     }
 }
 
-fn current() -> Option<Arc<AnimationSet>> {
+impl AnimationSet {
+    pub(crate) fn animations(&self) -> &[BlockAnimation] {
+        &self.animations
+    }
+}
+
+/// The game tick now, on the clock the block animations run by.
+pub(crate) fn tick_now() -> u64 {
+    static START: std::sync::OnceLock<crate::platform::time::Instant> = std::sync::OnceLock::new();
+    let start = START.get_or_init(crate::platform::time::Instant::now);
+    (start.elapsed().as_secs_f64() * TICKS_PER_SECOND) as u64
+}
+
+pub(crate) fn current() -> Option<Arc<AnimationSet>> {
     SET.read().ok()?.clone()
 }
 

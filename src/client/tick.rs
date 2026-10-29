@@ -127,6 +127,8 @@ fn read_tick_snapshot(bot: &Client, shared: &Arc<SharedMutex>) -> Option<TickSna
         crate::voice::tick(me, [pos.x as f32, (pos.y + own) as f32, pos.z as f32], eyes);
     }
 
+    crate::play::screen_warp::tick(bot);
+
     #[cfg(audio)]
     world_sounds(bot, pos, &entity_anims);
 
@@ -435,6 +437,14 @@ const BOW_FOV_PULL: f32 = 0.15;
 
 const SCOPING_FOV_MODIFIER: f32 = 0.1;
 
+/// Looking through a spyglass in first person (`isScoping`), for the scope
+/// overlay.
+static SCOPING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub(crate) fn scoping() -> bool {
+    SCOPING.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 const FOV_SMOOTHING: f32 = 0.5;
 const FOV_MODIFIER_MIN: f32 = 0.1;
 const FOV_MODIFIER_MAX: f32 = 1.5;
@@ -481,6 +491,13 @@ fn tick_fov(bot: &Client, reads: &TickReads, main_hand: &str, use_ticks: u32) ->
     let (previous, effect_scale, first_person) =
         (reads.fov_previous, reads.fov_effects, reads.first_person);
     let target = fov_target(bot, main_hand, use_ticks, first_person, effect_scale);
+    SCOPING.store(
+        first_person
+            && interaction::is_using_item()
+            && crate::renderer::anim::use_animation(main_hand)
+                == crate::renderer::anim::UseAnimation::Spyglass,
+        std::sync::atomic::Ordering::Relaxed,
+    );
     (previous + (target - previous) * FOV_SMOOTHING).clamp(FOV_MODIFIER_MIN, FOV_MODIFIER_MAX)
 }
 
@@ -1434,6 +1451,15 @@ fn collect_other_players(bot: &Client) -> (Vec<OtherPlayerInfo>, HashSet<i32>) {
                     .unwrap_or(false),
                 // Other players' uses follow the server's using flag.
                 use_generation: 0,
+                on_fire: eref
+                    .get_component::<metadata::OnFire>()
+                    .is_some_and(|c| c.0),
+                arrow_count: eref
+                    .get_component::<metadata::ArrowCount>()
+                    .map_or(0, |c| c.0.clamp(0, 255) as u8),
+                stinger_count: eref
+                    .get_component::<metadata::StingerCount>()
+                    .map_or(0, |c| c.0.clamp(0, 255) as u8),
                 passenger: pose == Pose::Sitting,
                 main_arm_left: avatar_metadata_trusted
                     && eref
@@ -1569,6 +1595,15 @@ fn tick_local_anim(
         bed_orientation: local_sleeping_pos.and_then(|pos| bed_orientation_at(bot, pos)),
         using_item: interaction::is_using_item(),
         use_generation: interaction::use_generation(),
+        on_fire: bot
+            .component::<azalea::entity::metadata::OnFire>()
+            .is_ok_and(|f| f.0),
+        arrow_count: bot
+            .component::<azalea::entity::metadata::ArrowCount>()
+            .map_or(0, |c| c.0.clamp(0, 255) as u8),
+        stinger_count: bot
+            .component::<azalea::entity::metadata::StingerCount>()
+            .map_or(0, |c| c.0.clamp(0, 255) as u8),
         passenger: false,
         #[cfg(feature = "skins")]
         on_ground: bot

@@ -588,6 +588,8 @@ fn reset_session_side_tables(blocking: bool) {
     crate::client::tracking::LOCAL_ENTITY_ID.store(i32::MIN, std::sync::atomic::Ordering::Relaxed);
     crate::play::riding::reset(blocking);
     crate::play::interaction::reset_session_state();
+    crate::play::screen_warp::reset();
+    crate::renderer::view_bob::reset_hurt();
     tick::reset_session_locals(blocking);
 
     tablist::reset();

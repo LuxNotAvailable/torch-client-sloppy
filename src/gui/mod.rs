@@ -431,6 +431,10 @@ pub struct GuiOptions {
     pub shader_quality: crate::renderer::terrain::ShaderQuality,
     pub shaders_enabled: bool,
     pub player_shadows: bool,
+    /// Round shadows under entities (`entityShadows`), and how dark they
+    /// are, in percent.
+    pub entity_shadows: bool,
+    pub shadow_opacity: u32,
     pub touch_movement: TouchMovement,
     pub allow_signed_chat: bool,
     pub toast_advancement: bool,
@@ -780,6 +784,10 @@ impl Default for GuiOptions {
             player_shadows: value("playerShadows")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false),
+            entity_shadows: value("entityShadows").and_then(|v| v.as_bool()).unwrap_or(true),
+            shadow_opacity: value("shadowOpacity")
+                .and_then(|v| v.as_u64())
+                .map_or(50, |v| v.min(100) as u32),
             touch_movement: value("touchMovement")
                 .and_then(|v| v.as_str().and_then(TouchMovement::from_serialized_name))
                 .unwrap_or_default(),
@@ -895,6 +903,8 @@ pub fn save_options(options: &GuiOptions) {
         "shaders": options.shaders_enabled,
         "shaderQuality": options.shader_quality.serialized_name(),
         "playerShadows": options.player_shadows,
+        "entityShadows": options.entity_shadows,
+        "shadowOpacity": options.shadow_opacity,
         "touchMovement": options.touch_movement.serialized_name(),
         "allowSignedChat": options.allow_signed_chat,
         "toastAdvancement": options.toast_advancement,

@@ -542,9 +542,15 @@ fn animations(packet: &ClientboundGamePacket) {
         }
         ClientboundGamePacket::HurtAnimation(p) => {
             on_living_anim(p.id.0, HumanoidAnim::hurt, EntityAnim::hurt);
+            if p.id.0 == crate::client::tracking::local_entity_id() {
+                crate::renderer::view_bob::note_local_hurt(Some(p.yaw));
+            }
         }
         ClientboundGamePacket::DamageEvent(p) => {
             on_living_anim(p.entity_id.0, HumanoidAnim::damage, EntityAnim::damage);
+            if p.entity_id.0 == crate::client::tracking::local_entity_id() {
+                crate::renderer::view_bob::note_local_hurt(None);
+            }
         }
         ClientboundGamePacket::EntityEvent(p) => {
             if let Some(anim) = entity_anims().lock().unwrap().get_mut(&p.entity_id.0) {
@@ -564,6 +570,9 @@ fn animations(packet: &ClientboundGamePacket) {
                     entity_event::TENDRILS_SHIVER => anim.tendril_shiver(),
                     _ => {}
                 }
+            }
+            if let Some(shared) = crate::SHARED.get() {
+                crate::play::event_particles::emit(shared, p.entity_id.0, p.event_id);
             }
         }
         _ => {}
@@ -1189,6 +1198,7 @@ fn level_lifecycle(world: &WorldHolder, shared: &Arc<SharedMutex>, packet: &Clie
             worldsync::forget_chunk(world, shared, p.pos.x, p.pos.z);
         }
         ClientboundGamePacket::Respawn(p) => {
+            crate::renderer::view_bob::reset_hurt();
             worldsync::set_dimension(world, &p.common);
             crate::renderer::post_effects::set([]);
             worldsync::reset_level(shared);

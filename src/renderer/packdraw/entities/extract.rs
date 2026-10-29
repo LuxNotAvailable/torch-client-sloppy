@@ -27,6 +27,7 @@ pub(crate) fn extract_entity_draws(
             Has<crate::blockentities::BeRigNode>,
             Has<crate::util::particles::ParticleBatch>,
             Has<crate::blockentities::BeamNode>,
+            Has<crate::renderer::tethers::WeatherLayer>,
         )>,
     >,
     materials: Extract<Res<Assets<crate::renderer::entity_material::EntityMaterial>>>,
@@ -100,7 +101,7 @@ pub(crate) fn extract_entity_draws(
             .unwrap_or(-1)
     };
     let world = bevy::camera::visibility::RenderLayers::default();
-    for (entity, mesh, material, transform, visible, inherited, layers, block, particle, beam) in
+    for (entity, mesh, material, transform, visible, inherited, layers, block, particle, beam, weather) in
         &meshes
     {
         if layers.is_some_and(|l| !l.intersects(&world)) {
@@ -113,6 +114,7 @@ pub(crate) fn extract_entity_draws(
         };
         let local = local_root.filter(|root| kind == EntityKind::Entity && under(entity, *root));
         let casts = caster_pass.is_some()
+            && !weather
             && match kind {
                 EntityKind::Block => casters.block_entities,
                 EntityKind::Particle => false,
@@ -129,7 +131,9 @@ pub(crate) fn extract_entity_draws(
         use crate::renderer::entity_material::LightMode;
         let blend = blended(material.alpha_mode);
         let glowing = material.params.mode == LightMode::Emissive as u32;
+        let weather = weather && pass_of(EntityKind::Weather).is_some();
         let drawn_as = match kind {
+            _ if weather => EntityKind::Weather,
             EntityKind::Entity if glowing && programs[EntityKind::SpiderEyes.index()].is_some() => {
                 EntityKind::SpiderEyes
             }
@@ -143,7 +147,10 @@ pub(crate) fn extract_entity_draws(
         if pass.is_none() && !casts {
             continue;
         }
-        let light = if glowing {
+        // Weather is shaded in its vertex colours; the sky lights the rest.
+        let light = if weather {
+            Vec2::new(0.0, 240.0)
+        } else if glowing {
             Vec2::splat(240.0)
         } else {
             Vec2::new(material.params.light_block.w, material.params.light_sky.w)
@@ -167,8 +174,9 @@ pub(crate) fn extract_entity_draws(
             // Layers over the same surface draw after what they cover.
             order: material.depth_bias.clamp(0, i32::from(u8::MAX)) as u8,
             relative: false,
-            flags: if [LightMode::Flat as u32, LightMode::Emissive as u32]
-                .contains(&material.params.mode)
+            flags: if !weather
+                && [LightMode::Flat as u32, LightMode::Emissive as u32]
+                    .contains(&material.params.mode)
             {
                 ENTITY_SHADE_IN_ALPHA
             } else {

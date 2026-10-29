@@ -396,6 +396,13 @@ const CULL_NBR: [(i32, i32, i32); 6] = [
     (1, 0, 0),
 ];
 
+/// Whether a block state is a nether portal, drawn blended.
+fn is_portal(state: u16) -> bool {
+    azalea::block::BlockState::try_from(u32::from(state)).is_ok_and(|s| {
+        azalea_registry::builtin::BlockKind::from(s) == azalea_registry::builtin::BlockKind::NetherPortal
+    })
+}
+
 pub fn build_section_mesh(
     blocks: &[(i32, i32, i32, &RenderedBlock)],
     x_base: i32,
@@ -450,13 +457,15 @@ pub fn build_section_mesh(
         match &rb.geom {
             BlockGeom::Model(baked) => {
                 #[cfg(feature = "shader_support")]
-                let target = if pack_ids.is_some() && rb.translucent {
+                let target = if (pack_ids.is_some() && rb.translucent) || is_portal(rb.state) {
                     &mut water
                 } else {
                     &mut buf
                 };
+                // The portal is see-through without a pack too (vanilla's
+                // translucent layer).
                 #[cfg(not(feature = "shader_support"))]
-                let target = &mut buf;
+                let target = if is_portal(rb.state) { &mut water } else { &mut buf };
                 emit_baked(wx, wy, wz, rb, baked, occ, *bx, *by, *bz, cardinal, target);
             }
             BlockGeom::Fluid {

@@ -28,6 +28,7 @@ pub(crate) const FILES: &[(&str, &str)] = files![
     "gbuffers_block.wgsl",
     "gbuffers_basic.wgsl",
     "gbuffers_damagedblock.wgsl",
+    "gbuffers_weather.wgsl",
     "gbuffers_skybasic.wgsl",
     "gbuffers_skytextured.wgsl",
     "prepare.wgsl",

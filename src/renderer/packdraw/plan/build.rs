@@ -60,6 +60,7 @@ pub(crate) fn prepare_plan(
     else {
         return;
     };
+    process.animate_pack_atlas(&device, &queue, atlas);
     let Install {
         installed,
         usage,

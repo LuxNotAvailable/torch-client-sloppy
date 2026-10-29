@@ -32,6 +32,8 @@ pub mod rig_parts;
 pub mod screen_effects;
 mod screenshot;
 pub mod skin;
+pub mod shadows;
+pub mod weather;
 pub mod sky;
 pub mod antialias;
 pub mod ssaa;

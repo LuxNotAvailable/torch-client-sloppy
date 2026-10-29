@@ -535,26 +535,53 @@ pub(super) fn flight_toggle_input(
 
 /// Lets the cursor go when the window loses focus, and takes it back when
 /// the window regains focus with no screen open, so the game has the mouse
-/// again without a trip through the pause menu.
+/// again without a trip through the pause menu. Coming back with the cursor
+/// outside the window, the OS can refuse the grab for a frame or two while
+/// the window comes to the front, so the grab is pressed again for a few
+/// frames, each time with the cursor put back in the window's centre.
 pub(super) fn window_focus_cursor(
     mut events: bevy::ecs::message::MessageReader<WindowFocused>,
-    mut cursor_opts: Query<&mut CursorOptions, With<PrimaryWindow>>,
+    mut windows: Query<(&mut Window, &mut CursorOptions), With<PrimaryWindow>>,
     state: Res<crate::gui::GuiState>,
+    mut regrab: Local<u8>,
 ) {
+    const REGRAB_FRAMES: u8 = 10;
     for ev in events.read() {
-        let Ok(opts) = cursor_opts.single_mut() else {
+        let Ok((_, opts)) = windows.single_mut() else {
             continue;
         };
         if !ev.focused {
+            *regrab = 0;
             super::systems::apply_cursor(opts, CursorGrabMode::None, true);
         } else if !state.screen.is_open() {
-            let (grab, visible) = super::systems::world_cursor();
-            if grab != CursorGrabMode::None {
-                crate::platform::pointer::lock();
-            }
-            super::systems::apply_cursor(opts, grab, visible);
+            *regrab = REGRAB_FRAMES;
         }
     }
+    if *regrab == 0 {
+        return;
+    }
+    *regrab -= 1;
+    let Ok((window, opts)) = windows.single_mut() else {
+        return;
+    };
+    if !window.focused || state.screen.is_open() {
+        *regrab = 0;
+        return;
+    }
+    let (grab, visible) = super::systems::world_cursor();
+    if grab != CursorGrabMode::None {
+        crate::platform::pointer::lock();
+    }
+    #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+    {
+        let mut window = window;
+        let center = Vec2::new(window.width() / 2.0, window.height() / 2.0);
+        window.set_cursor_position(Some(center));
+    }
+    #[cfg(any(target_os = "android", target_arch = "wasm32"))]
+    let _ = window;
+    // Written every time, so the window backend sends the grab again.
+    super::systems::apply_cursor(opts, grab, visible);
 }
 
 pub(super) fn track_lifecycle(

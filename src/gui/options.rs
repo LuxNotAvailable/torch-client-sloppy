@@ -31,6 +31,9 @@ const ZOOM_DEFAULT_SLIDER_ID: u32 = 50;
 const ZOOM_MAX_SLIDER_ID: u32 = 51;
 const ZOOM_SMOOTHING_SLIDER_ID: u32 = 52;
 const ZOOM_SENSITIVITY_SLIDER_ID: u32 = 53;
+const SHADOW_OPACITY_SLIDER_ID: u32 = 54;
+const ENTITY_SHADOWS: &str = "Entity Shadows";
+const SHADOW_OPACITY: &str = "Shadow Opacity";
 const ZOOM_TITLE: &str = "Zoom Settings";
 const ZOOM_SETTINGS: &str = "Zoom...";
 const FEATURES: &str = "Features...";
@@ -242,13 +245,15 @@ const Y_QUALITY_LAST: f32 = Y_QUALITY_ROW_4;
 #[cfg(not(feature = "builtin_shaders"))]
 const Y_QUALITY_LAST: f32 = Y_QUALITY_ROW_3;
 
+const Y_SHADOW_ROW: f32 = Y_QUALITY_LAST + ROW_H;
+
 #[cfg(feature = "shader_support")]
-const Y_SHADERPACKS_ROW: f32 = Y_QUALITY_LAST + ROW_H;
+const Y_SHADERPACKS_ROW: f32 = Y_SHADOW_ROW + ROW_H;
 
 #[cfg(feature = "shader_support")]
 const Y_RESET_ROW: f32 = Y_SHADERPACKS_ROW + ROW_H;
 #[cfg(not(feature = "shader_support"))]
-const Y_RESET_ROW: f32 = Y_QUALITY_LAST + ROW_H;
+const Y_RESET_ROW: f32 = Y_SHADOW_ROW + ROW_H;
 
 const VIDEO_CONTENT_H: f32 = Y_RESET_ROW + ROW_H;
 
@@ -503,6 +508,10 @@ fn fov_effects_label(value: i32) -> String {
     }
 }
 
+fn shadow_opacity_label(value: i32) -> String {
+    format!("{SHADOW_OPACITY}: {value}%")
+}
+
 fn render_distance_label(value: i32) -> String {
     format!("{RENDER_DISTANCE}: {value} {CHUNKS}")
 }
@@ -567,6 +576,8 @@ fn reset_video_options(o: &mut crate::gui::GuiOptions) {
     o.gui_scale = 0;
     o.fov_effects = crate::gui::FOV_EFFECTS_DEFAULT;
     o.view_bobbing = true;
+    o.entity_shadows = true;
+    o.shadow_opacity = 50;
     o.clouds = if cfg!(feature = "mobile_ui") {
         crate::renderer::clouds::CloudStatus::Fast
     } else {
@@ -1086,6 +1097,28 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
             state.options.player_shadows = !state.options.player_shadows;
             crate::gui::save_options(&state.options);
         }
+    }
+
+    let at = cell(0.0, Y_SHADOW_ROW);
+    if toggle(p, ctx, at, ENTITY_SHADOWS, &mut state.options.entity_shadows) {
+        crate::gui::save_options(&state.options);
+    }
+    let (x, y) = cell(1.0, Y_SHADOW_ROW);
+    let opacity = Slider {
+        id: SHADOW_OPACITY_SLIDER_ID,
+        x,
+        y,
+        w: COLUMN_W,
+        h: WIDGET_HEIGHT,
+        min: 0,
+        max: 100,
+        value: state.options.shadow_opacity as i32,
+        label: shadow_opacity_label,
+    };
+    let new_opacity = opacity.draw(p, ctx).clamp(0, 100) as u32;
+    if new_opacity != state.options.shadow_opacity {
+        state.options.shadow_opacity = new_opacity;
+        crate::gui::save_options(&state.options);
     }
 
     #[cfg(feature = "shader_support")]
@@ -2189,7 +2222,8 @@ mod tests {
         assert_eq!(Y_QUALITY_ROW_0, 144.0);
         const EXTRA_ROWS: f32 = cfg!(feature = "builtin_shaders") as u32 as f32
             + cfg!(feature = "shader_support") as u32 as f32;
-        assert_eq!(Y_RESET_ROW, 244.0 + EXTRA_ROWS * ROW_H);
+        // The entity shadows row is always there.
+        assert_eq!(Y_RESET_ROW, 244.0 + (EXTRA_ROWS + 1.0) * ROW_H);
         assert_eq!(VIDEO_CONTENT_H, Y_RESET_ROW + ROW_H);
     }
 

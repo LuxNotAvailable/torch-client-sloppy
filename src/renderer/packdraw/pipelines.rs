@@ -380,7 +380,8 @@ fn entity_pass_state(kind: EntityKind, second: bool) -> EntityPassState {
         EntityKind::HandWater
         | EntityKind::EntityTranslucent
         | EntityKind::BlockTranslucent
-        | EntityKind::ParticleTranslucent => blended,
+        | EntityKind::ParticleTranslucent
+        | EntityKind::Weather => blended,
         EntityKind::SkyBasic | EntityKind::SkyTextured => EntityPassState {
             blend: Some(if second {
                 BlendState {

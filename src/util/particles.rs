@@ -1880,6 +1880,19 @@ fn recipe(
             r.grow = Grow::In;
             Some(r)
         }
+        // `AttackSweepParticle`: still, full bright, four ticks through its
+        // eight frames, a grey of 0.4 to 1, and half the explosion's size.
+        P::SweepAttack => {
+            let mut r = base_recipe(Sprite::Animated(atlas.sheet_index(name)?), rng);
+            r.velocity = Vec3::ZERO;
+            r.gravity = 0.0;
+            r.lifetime = 4;
+            let grey = rng.next_f32() * 0.6 + 0.4;
+            r.tint = [grey, grey, grey, 1.0];
+            r.size = 1.0 - arg.x * 0.5;
+            r.flags = FULLBRIGHT;
+            Some(r)
+        }
         P::Explosion => {
             let mut r = base_recipe(Sprite::Animated(atlas.sheet_index(name)?), rng);
             r.velocity = Vec3::ZERO;

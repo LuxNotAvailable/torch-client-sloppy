@@ -745,6 +745,91 @@ const ARMOR_PARTS: [(&str, usize); 7] = [
     ("left_leg", 5),
 ];
 
+/// How many arrows, and how many stingers, a player shows stuck in them at
+/// most.
+const STUCK_POOL: usize = 12;
+
+const STUCK_TEXTURES: [&str; 2] = ["entity/projectiles/arrow", "entity/bee/bee_stinger"];
+
+/// `BeeStingerModel`: two crossed planes.
+fn stinger_layer() -> geom::LayerDef {
+    use crate::entities::geom::{CubeList, LayerDef, MeshDef, PartPose};
+    let mut mesh = MeshDef::new();
+    {
+        let root = mesh.root();
+        let cross = CubeList::new().tex_offs(0, 0).add_box(-1.0, -0.5, 0.0, 2.0, 1.0, 0.0);
+        root.child("cross_1", cross.clone(), PartPose::rotation(FRAC_PI_4, 0.0, 0.0));
+        root.child("cross_2", cross, PartPose::rotation(PI * 3.0 / 4.0, 0.0, 0.0));
+    }
+    LayerDef::create(mesh, 16, 16)
+}
+
+/// A whole model at rest as one mesh, in model units (sixteenths), to hang
+/// on a rig part.
+fn bake_whole(layer: geom::LayerDef, meshes: &mut Assets<Mesh>) -> Handle<Mesh> {
+    let baked = geom::bake(&layer);
+    let mut posed = Vec::new();
+    baked.pose_parts(&baked.rest_pose(), Mat4::IDENTITY, &mut posed);
+    let (mut positions, mut normals, mut uvs, mut indices) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    for (part, pose) in baked.parts.iter().zip(&posed) {
+        let Some(arrays) = part.arrays() else { continue };
+        let base = positions.len() as u32;
+        for (p, n) in arrays.positions.iter().zip(arrays.normals) {
+            positions.push((pose.mat.transform_point3(Vec3::from(*p)) * 16.0).to_array());
+            normals.push(pose.mat.transform_vector3(Vec3::from(*n)).normalize_or_zero().to_array());
+        }
+        uvs.extend_from_slice(arrays.uvs);
+        indices.extend(arrays.indices.iter().map(|i| i + base));
+    }
+    let colors = vec![[1.0f32; 4]; positions.len()];
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+    mesh.insert_indices(Indices::U32(indices));
+    meshes.add(mesh)
+}
+
+/// `PlayerModel.bodyParts` (head, body, left arm, right arm, left leg, right
+/// leg) as this rig's part indices.
+const STUCK_BODY_PARTS: [usize; 6] = [0, 1, 3, 2, 5, 4];
+
+/// `StuckInBodyLayer.submit`: where each of `count` arrows (or, `on_surface`,
+/// stingers) sits, seeded by the player's id: a body part, a point in its
+/// box (stingers snap to a face), and a turn pointing out from the middle.
+fn stuck_placements(seed: i32, count: usize, on_surface: bool) -> Vec<(usize, Transform)> {
+    let mut random = crate::util::javarandom::JavaRandom::new(seed as i64);
+    let snap = |v: f32| if v > 0.5 { 1.0 } else { 0.5 };
+    (0..count)
+        .map(|_| {
+            let part = STUCK_BODY_PARTS[random.next_int(6) as usize];
+            // `getRandomCube`: a player's parts have the one cube each.
+            random.next_int(1);
+            let (mut mx, mut my, mut mz) = (random.next_f32(), random.next_f32(), random.next_f32());
+            if on_surface {
+                match random.next_int(3) {
+                    0 => mx = snap(mx),
+                    1 => my = snap(my),
+                    _ => mz = snap(mz),
+                }
+            }
+            let def = &PARTS[part];
+            let at = Vec3::new(
+                def.origin[0] + mx * def.size[0],
+                def.origin[1] + my * def.size[1],
+                def.origin[2] + mz * def.size[2],
+            );
+            let (dx, dy, dz) = (-(mx * 2.0 - 1.0), -(my * 2.0 - 1.0), -(mz * 2.0 - 1.0));
+            let y_rot = dx.atan2(dz).to_degrees();
+            let x_rot = dy.atan2((dx * dx + dz * dz).sqrt()).to_degrees();
+            let rotation = Quat::from_rotation_y((y_rot - 90.0).to_radians())
+                * Quat::from_rotation_z(x_rot.to_radians());
+            (part, Transform::from_translation(at).with_rotation(rotation))
+        })
+        .collect()
+}
+
 fn bake_wings(meshes: &mut Assets<Mesh>) -> [Handle<Mesh>; 2] {
     let baked = geom::bake(&crate::entities::models::humanoid::elytra::layer());
     ["left_wing", "right_wing"].map(|name| {
@@ -837,6 +922,8 @@ struct PlayerModelAssets {
     #[cfg(feature = "skins")]
     cape: Handle<Mesh>,
     wings: [Handle<Mesh>; 2],
+    /// An arrow and a bee stinger, for those stuck in players.
+    stuck_meshes: [Handle<Mesh>; 2],
     skin: Handle<Image>,
     no_item: Handle<Mesh>,
     armor: [Vec<ArmorMesh>; 4],
@@ -913,6 +1000,10 @@ struct Rig {
     #[cfg(feature = "skins")]
     cape: CapeRig,
     wings: WingsRig,
+    /// Arrow nodes then stinger nodes, `STUCK_POOL` each, and their two
+    /// materials.
+    stuck: Vec<Entity>,
+    stuck_materials: [Handle<EntityMaterial>; 2],
     #[cfg(feature = "skins")]
     worn: crate::client::skins::SkinState,
     #[cfg(feature = "skins")]
@@ -1022,6 +1113,10 @@ fn setup_player_model(
         #[cfg(feature = "skins")]
         cape: meshes.add(box_mesh_on(super::skin::CAPE_SHEET, &CAPE)),
         wings: bake_wings(&mut meshes),
+        stuck_meshes: [
+            bake_whole(crate::entities::models::objects::projectile::arrow_layer(), &mut meshes),
+            bake_whole(stinger_layer(), &mut meshes),
+        ],
         meshes: wide,
         skin,
         no_item: meshes.add(empty),
@@ -1241,6 +1336,35 @@ fn spawn_rig(
         glint: false,
     });
 
+    let stuck_materials = [(); 2].map(|_| {
+        materials.add(EntityMaterial::new(
+            None,
+            LightMode::Cardinal,
+            AlphaMode::Mask(0.1),
+            0.1,
+            lit,
+            0,
+        ))
+    });
+    let stuck = (0..STUCK_POOL * 2)
+        .map(|i| {
+            let kind = i / STUCK_POOL;
+            let entity = commands
+                .spawn((
+                    Mesh3d(assets.stuck_meshes[kind].clone()),
+                    MeshMaterial3d(stuck_materials[kind].clone()),
+                    Transform::default(),
+                    Visibility::Hidden,
+                    RigPart,
+                    layers.clone(),
+                    Name::new(if kind == 0 { "stuck_arrow" } else { "stuck_stinger" }),
+                ))
+                .id();
+            commands.entity(flip).add_child(entity);
+            entity
+        })
+        .collect();
+
     Rig {
         id: None,
         root,
@@ -1274,6 +1398,8 @@ fn spawn_rig(
             material: wings_material,
             worn: None,
         },
+        stuck,
+        stuck_materials,
         #[cfg(feature = "skins")]
         worn: crate::client::skins::SkinState {
             parts: u8::MAX,
@@ -1896,6 +2022,40 @@ fn apply_rig(
         }
     }
 
+    // Arrows and stingers stuck in the body, on their parts as posed.
+    let parts = pose.parts();
+    let seed = rig.id.unwrap_or(items.local_id);
+    for (kind, count) in [sample.arrow_count, sample.stinger_count].into_iter().enumerate() {
+        let count = (count as usize).min(STUCK_POOL);
+        if count > 0
+            && let Some(material) = items.entity_materials.get(&rig.stuck_materials[kind])
+            && material.texture.is_none()
+        {
+            let texture = items.armor_textures.get(STUCK_TEXTURES[kind], items.images);
+            if let Some(material) = items.entity_materials.get_mut(&rig.stuck_materials[kind]) {
+                material.texture = texture;
+            }
+        }
+        let placed = stuck_placements(seed, count, kind == 1);
+        for i in 0..STUCK_POOL {
+            let entity = rig.stuck[kind * STUCK_POOL + i];
+            let wanted = match placed.get(i) {
+                Some((part, local)) => {
+                    if let Ok(mut transform) = queries.2.get_mut(entity) {
+                        *transform = parts[*part].transform().mul_transform(*local);
+                    }
+                    Visibility::Inherited
+                }
+                None => Visibility::Hidden,
+            };
+            if let Ok((mut vis, _)) = queries.5.get_mut(entity)
+                && *vis != wanted
+            {
+                *vis = wanted;
+            }
+        }
+    }
+
     for (entity, part) in rig.wings.nodes.iter().zip(pose.wings.iter()) {
         if let Ok(mut transform) = queries.2.get_mut(*entity) {
             *transform = part.transform();
@@ -1951,7 +2111,13 @@ fn apply_rig(
         .enumerate()
         .any(|(i, s)| s.glint != sample.armor.glints(i));
     if lit != rig.lit || glint_changed {
-        for handle in [&rig.base, &rig.overlay, &rig.wings.material]
+        for handle in [
+            &rig.base,
+            &rig.overlay,
+            &rig.wings.material,
+            &rig.stuck_materials[0],
+            &rig.stuck_materials[1],
+        ]
             .into_iter()
             .chain(rig.held.iter().map(|held| &held.material))
         {
@@ -2014,6 +2180,28 @@ fn update_armor(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stuck_arrows_land_inside_body_parts_and_repeat_for_the_same_player() {
+        let placed = stuck_placements(42, 8, false);
+        assert_eq!(placed, stuck_placements(42, 8, false));
+        for (part, local) in &placed {
+            let def = &PARTS[*part];
+            for axis in 0..3 {
+                let v = local.translation[axis];
+                assert!(v >= def.origin[axis] - 1e-4 && v <= def.origin[axis] + def.size[axis] + 1e-4);
+            }
+        }
+        // Stingers sit on a face: one axis at the box's middle or far side.
+        for (part, local) in stuck_placements(7, 8, true) {
+            let def = &PARTS[part];
+            let on_face = (0..3).any(|axis| {
+                let t = (local.translation[axis] - def.origin[axis]) / def.size[axis];
+                (t - 0.5).abs() < 1e-4 || (t - 1.0).abs() < 1e-4
+            });
+            assert!(on_face);
+        }
+    }
     use crate::renderer::skin::{SKIN_H, SKIN_W};
 
     #[test]

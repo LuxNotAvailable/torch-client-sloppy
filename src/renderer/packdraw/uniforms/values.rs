@@ -124,7 +124,7 @@ impl FrameValues {
         let focal = view.clip_from_view.y_axis.y.max(f32::EPSILON);
         let fov = 2.0 * (1.0 / focal).atan();
         let far_plane = (far * FAR_PLANE_PER_BLOCK).max(NEAR * 2.0);
-        let projection = Mat4::perspective_rh_gl(fov, size.x / size.y, NEAR, far_plane);
+        let projection = Mat4::perspective_rh_gl(fov, size.x / size.y, NEAR, far_plane) * inputs.warp;
         let camera = view.world_from_view.translation();
 
         let (previous_view_rotation, previous_projection) =

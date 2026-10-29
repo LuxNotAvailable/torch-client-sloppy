@@ -26,18 +26,66 @@ pub fn bob_pose(walk: f32, bob: f32) -> Transform {
     )
 }
 
-fn current_pose(view: &FrameView, state: &crate::gui::GuiState, freecam: &FreecamState) -> Transform {
-    // Zooming holds the view still.
-    if !state.options.view_bobbing
-        || state.zooming
-        || freecam.active
-        || view.sleeping
-        || !view.in_world
+/// When the local player was last hurt, and the direction the hit came from
+/// (`hurtTime`, `hurtDir`).
+static HURT: std::sync::Mutex<Option<(crate::platform::time::Instant, f32)>> =
+    std::sync::Mutex::new(None);
+
+const HURT_TICKS: f32 = 10.0;
+
+/// The local player was hurt (`animateHurt`); `dir` is the hit's yaw when the
+/// server sent one (`ClientboundHurtAnimationPacket`), which a plain damage
+/// event leaves as it was.
+pub fn note_local_hurt(dir: Option<f32>) {
+    let mut hurt = HURT.lock().unwrap();
+    let dir = dir.unwrap_or_else(|| hurt.map_or(0.0, |(_, d)| d));
+    *hurt = Some((crate::platform::time::Instant::now(), dir));
+}
+
+/// A new player entity (joining, respawning) starts with no hurt and a
+/// hurt direction of 0, as vanilla's new `LocalPlayer` does; fall, fire and
+/// other knockback-free damage reuse the last direction.
+pub fn reset_hurt() {
+    *HURT.lock().unwrap() = None;
+}
+
+/// `bobHurt`: the view rolls toward the hit and back over the hurt time, and
+/// leans over as the player dies.
+pub fn hurt_pose(hurt_ticks: Option<(f32, f32)>, death_ticks: f32) -> Quat {
+    let mut rotation = Quat::IDENTITY;
+    if death_ticks > 0.0 {
+        let duration = death_ticks.min(20.0);
+        rotation *= Quat::from_rotation_z((40.0 - 8000.0 / (duration + 200.0)).to_radians());
+    }
+    if let Some((left, dir)) = hurt_ticks
+        && left >= 0.0
     {
+        let t = left / HURT_TICKS;
+        let hurt = (t * t * t * t * std::f32::consts::PI).sin();
+        let turn = Quat::from_rotation_y((-dir).to_radians());
+        rotation *= turn * Quat::from_rotation_z((-hurt * 14.0).to_radians()) * turn.inverse();
+    }
+    rotation
+}
+
+/// Ticks of hurt left, with the hit's direction.
+fn hurt_now() -> Option<(f32, f32)> {
+    let (at, dir) = (*HURT.lock().unwrap())?;
+    Some((HURT_TICKS - at.elapsed().as_secs_f32() * 20.0, dir))
+}
+
+fn current_pose(view: &FrameView, state: &crate::gui::GuiState, freecam: &FreecamState) -> Transform {
+    if freecam.active || !view.in_world {
         return Transform::IDENTITY;
     }
+    // `renderLevel`: the hurt roll, then the bob.
+    let hurt = Transform::from_rotation(hurt_pose(hurt_now(), view.local.death_time));
+    // Zooming holds the view still.
+    if !state.options.view_bobbing || state.zooming || view.sleeping {
+        return hurt;
+    }
     let (walk, bob) = view.view_bob;
-    bob_pose(walk, bob)
+    hurt * bob_pose(walk, bob)
 }
 
 /// The world: the projection times the bob is the camera moved by the
@@ -74,6 +122,40 @@ fn bob_hand(
     }
 }
 
+/// This frame's portal and nausea warp, in view space: `renderLevel` puts it
+/// on the world's projection.
+pub(crate) fn current_warp(view: &FrameView) -> Mat4 {
+    view.in_world
+        .then(|| crate::play::screen_warp::view_warp(crate::play::screen_warp::sample(view.partial)))
+        .flatten()
+        .unwrap_or(Mat4::IDENTITY)
+}
+
+/// The warp, snapshotted for the render world.
+#[derive(Resource, Clone, Copy, Default)]
+struct ViewWarp(Mat4);
+
+fn snapshot_warp(view: Res<FrameView>, mut warp: ResMut<ViewWarp>) {
+    warp.0 = current_warp(&view);
+}
+
+/// Puts the warp on the world camera's extracted projection, so the camera
+/// itself stays rigid for everything that reads its transform.
+fn warp_projection(
+    warp: bevy::render::Extract<Res<ViewWarp>>,
+    camera: bevy::render::Extract<Query<&bevy::render::sync_world::RenderEntity, With<WorldCamera>>>,
+    mut views: Query<&mut bevy::render::view::ExtractedView>,
+) {
+    if warp.0 == Mat4::IDENTITY {
+        return;
+    }
+    for render in &camera {
+        if let Ok(mut view) = views.get_mut(render.id()) {
+            view.clip_from_view *= warp.0;
+        }
+    }
+}
+
 pub struct ViewBobPlugin;
 
 impl Plugin for ViewBobPlugin {
@@ -86,12 +168,30 @@ impl Plugin for ViewBobPlugin {
                 .before(TransformSystems::Propagate)
                 .run_if(in_state(AppState::InGame)),
         );
+        app.init_resource::<ViewWarp>().add_systems(PostUpdate, snapshot_warp);
+        if let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) {
+            render_app.add_systems(
+                bevy::render::ExtractSchedule,
+                warp_projection.after(bevy::render::camera::extract_cameras),
+            );
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_hurt_rolls_the_view_and_settles() {
+        assert_eq!(hurt_pose(None, 0.0), Quat::IDENTITY);
+        // The roll peaks part way through and is gone at the end.
+        let mid = hurt_pose(Some((8.5, 0.0)), 0.0);
+        assert!(mid.angle_between(Quat::IDENTITY) > 0.1, "{mid:?}");
+        let done = hurt_pose(Some((0.0, 0.0)), 0.0);
+        assert!(done.angle_between(Quat::IDENTITY) < 1e-4);
+        assert_eq!(hurt_pose(Some((-1.0, 0.0)), 0.0), Quat::IDENTITY);
+    }
 
     #[test]
     fn standing_still_does_not_bob() {

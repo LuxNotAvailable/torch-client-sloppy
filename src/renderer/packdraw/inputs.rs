@@ -96,6 +96,8 @@ pub(crate) struct Inputs {
     pub(crate) temperature: f32,
     pub(crate) precipitation: i32,
     pub(crate) rain: f32,
+    /// The portal and nausea warp on the projection.
+    pub(crate) warp: Mat4,
     pub(crate) thunder: f32,
     pub(crate) eye_in: EyeIn,
     pub(crate) eye_light: IVec2,
@@ -338,6 +340,7 @@ pub(crate) fn gather_inputs(
         temperature: climate.map_or(0.0, |(env, _)| env.temperature),
         precipitation,
         rain: environment.rain,
+        warp: crate::renderer::view_bob::current_warp(&view),
         thunder: environment.thunder,
         eye_in,
         eye_light: IVec2::new(i32::from(block), i32::from(sky)),

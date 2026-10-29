@@ -122,6 +122,8 @@ pub(crate) enum EntityKind {
     Line,
     SpiderEyes,
     BeaconBeam,
+    /// Rain, snow and entities' round shadows: soft layers over the world.
+    Weather,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -136,7 +138,7 @@ pub(crate) enum Segment {
 }
 
 impl EntityKind {
-    pub(crate) const COUNT: usize = 16;
+    pub(crate) const COUNT: usize = 17;
     pub(crate) const ALL: [EntityKind; EntityKind::COUNT] = [
         EntityKind::Entity,
         EntityKind::Block,
@@ -154,6 +156,7 @@ impl EntityKind {
         EntityKind::Line,
         EntityKind::SpiderEyes,
         EntityKind::BeaconBeam,
+        EntityKind::Weather,
     ];
 
     pub(crate) fn index(self) -> usize {
@@ -238,6 +241,12 @@ impl EntityKind {
             EntityKind::BeaconBeam => {
                 &["gbuffers_beaconbeam", "gbuffers_textured", "gbuffers_basic"]
             }
+            EntityKind::Weather => &[
+                "gbuffers_weather",
+                "gbuffers_textured_lit",
+                "gbuffers_textured",
+                "gbuffers_basic",
+            ],
         }
     }
 
@@ -260,6 +269,8 @@ impl EntityKind {
             // Iris draws beams with the block entities; their glow blends, so
             // they go after the translucent terrain they shine through.
             EntityKind::BeaconBeam => Segment::WorldTranslucent,
+            // Iris draws weather after the translucent terrain.
+            EntityKind::Weather => Segment::AfterTranslucent,
         }
     }
 
@@ -280,6 +291,7 @@ impl EntityKind {
             EntityKind::Clouds => "CLOUDS",
             EntityKind::Hand => "HAND_SOLID",
             EntityKind::HandWater => "HAND_TRANSLUCENT",
+            EntityKind::Weather => "RAIN_SNOW",
         })
     }
 
@@ -304,7 +316,9 @@ impl EntityKind {
 
     pub(crate) fn alpha_tests(self) -> [Option<AlphaTest>; 2] {
         match self {
-            EntityKind::SkyBasic | EntityKind::SpiderEyes => [Some(NON_ZERO_ALPHA); 2],
+            EntityKind::SkyBasic | EntityKind::SpiderEyes | EntityKind::Weather => {
+                [Some(NON_ZERO_ALPHA); 2]
+            }
             EntityKind::SkyTextured | EntityKind::Line => [None; 2],
             _ => [Some(ONE_TENTH_ALPHA); 2],
         }

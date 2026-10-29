@@ -835,6 +835,51 @@ fn draw_loading(p: &mut Painter, ctx: &ScreenCtx, status: Option<&str>) {
     p.text_str(text, ((ctx.vw - w) / 2.0).floor(), (ctx.vh / 2.0 - 4.0).floor(), 0xFFFFFF, true);
 }
 
+/// `extractPortalOverlay`: the portal's texture over the whole screen,
+/// fading in quartically as the player stands in one.
+fn draw_portal_overlay(p: &mut Painter, vw: f32, vh: f32) {
+    let mut alpha = crate::play::screen_warp::sample(1.0).portal;
+    if alpha <= 0.0 {
+        return;
+    }
+    if alpha < 1.0 {
+        alpha *= alpha;
+        alpha *= alpha;
+        alpha = alpha * 0.8 + 0.2;
+    }
+    let a = (alpha * 255.0).round() as u32;
+    p.sprite_tinted("nether_portal_overlay", 0.0, 0.0, vw, vh, a << 24 | 0x00FF_FFFF);
+}
+
+/// `extractSpyglassOverlay`: the scope, growing from half the screen to
+/// fill it (`scopeScale` easing to 1.125), black beyond it.
+fn draw_spyglass_scope(p: &mut Painter, vw: f32, vh: f32) {
+    use std::sync::Mutex;
+    static SCALE: Mutex<Option<(f32, crate::platform::time::Instant)>> = Mutex::new(None);
+    let mut scale = SCALE.lock().unwrap();
+    if !crate::client::tick::scoping() {
+        *scale = None;
+        return;
+    }
+    let now = crate::platform::time::Instant::now();
+    let (mut s, last) = scale.unwrap_or((0.5, now));
+    let ticks = (now - last).as_secs_f32() * 20.0;
+    s += (1.125 - s) * (0.5 * ticks).min(1.0);
+    *scale = Some((s, now));
+
+    let src = vw.min(vh);
+    let size = (src * (vw / src).min(vh / src) * s).floor();
+    let left = ((vw - size) / 2.0).floor();
+    let top = ((vh - size) / 2.0).floor();
+    let (right, bottom) = (left + size, top + size);
+    p.sprite("spyglass_scope", left, top, size, size);
+    const BLACK: u32 = 0xFF00_0000;
+    p.fill(0.0, bottom, vw, vh - bottom, BLACK);
+    p.fill(0.0, 0.0, vw, top, BLACK);
+    p.fill(0.0, top, left, bottom - top, BLACK);
+    p.fill(right, top, vw - right, bottom - top, BLACK);
+}
+
 fn draw_hud(
     p: &mut Painter,
     ctx: &ScreenCtx,
@@ -845,6 +890,8 @@ fn draw_hud(
 ) {
     let (vw, vh) = (ctx.vw, ctx.vh);
 
+    draw_spyglass_scope(p, vw, vh);
+    draw_portal_overlay(p, vw, vh);
     health::draw_freeze_overlay(p, snap, vw, vh);
 
     p.sprite(

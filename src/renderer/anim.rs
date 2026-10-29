@@ -242,6 +242,10 @@ pub struct AnimSample {
     pub age_ticks: f32,
     pub death_time: f32,
     pub has_red_overlay: bool,
+    /// Burning (`displayFireAnimation`), for the flames drawn on the body.
+    pub on_fire: bool,
+    pub arrow_count: u8,
+    pub stinger_count: u8,
     pub crouching: bool,
     #[allow(
         dead_code,
@@ -285,6 +289,11 @@ pub struct AnimInput {
     /// Counts each use started, so a use that follows straight on from the
     /// last (eating while the key is held) restarts the use animation.
     pub use_generation: u32,
+    pub on_fire: bool,
+    /// Arrows and bee stingers stuck in the player (`ArrowCount`,
+    /// `StingerCount`).
+    pub arrow_count: u8,
+    pub stinger_count: u8,
     pub using_offhand: bool,
     pub passenger: bool,
     pub health: f32,
@@ -722,6 +731,9 @@ impl HumanoidAnim {
                 0.0
             },
             has_red_overlay: self.hurt_time > 0 || self.death_time > 0,
+            on_fire: self.flags.on_fire,
+            arrow_count: self.flags.arrow_count,
+            stinger_count: self.flags.stinger_count,
             #[cfg(feature = "skins")]
             cape: self.cape(t),
             elytra: std::array::from_fn(|i| {
