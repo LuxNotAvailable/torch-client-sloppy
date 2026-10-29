@@ -105,8 +105,8 @@ pub(crate) fn apply_client_information_requests(bot: &Client, shared: &Arc<Share
         )
     };
     let chat_prefs = shared.lock().unwrap().session.chat_prefs_request.take();
-    if let Some((shown, colors)) = chat_prefs {
-        apply_chat_prefs(bot, shown, colors);
+    if let Some((shown, colors, listing)) = chat_prefs {
+        apply_chat_prefs(bot, shown, colors, listing);
     }
     if let Some(view_distance) = view_distance {
         apply_render_distance(bot, view_distance);
@@ -116,7 +116,7 @@ pub(crate) fn apply_client_information_requests(bot: &Client, shared: &Arc<Share
     }
 }
 
-fn apply_chat_prefs(bot: &Client, shown: u8, colors: bool) {
+fn apply_chat_prefs(bot: &Client, shown: u8, colors: bool, listing: bool) {
     use azalea_protocol::common::client_information::ChatVisibility;
     let mut info = bot
         .component::<ClientInformation>()
@@ -128,6 +128,7 @@ fn apply_chat_prefs(bot: &Client, shown: u8, colors: bool) {
         _ => ChatVisibility::Full,
     };
     info.chat_colors = colors;
+    info.allows_listing = listing;
     if let Err(e) = bot.set_client_information(info) {
         log_warn!("net", "could not apply the chat options: {e}");
     }

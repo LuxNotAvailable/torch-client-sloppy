@@ -151,6 +151,69 @@ fn trace(packet: &ClientboundGamePacket) {
         }
         ClientboundGamePacket::GameEvent(p) => {
             crate::diag::note_packet_detail(&format!("{:?}", p.event));
+            if let Some(shared) = crate::SHARED.get() {
+                game_event(shared, p.event, p.param);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// `ClientPacketListener.handleGameEvent`, beyond the weather.
+fn game_event(shared: &Arc<SharedMutex>, event: EventType, param: f32) {
+    let system = |text: String| crate::session::ChatEntry {
+        spans: vec![crate::text::Span { text, style: Default::default() }],
+        events: None,
+        tag: crate::session::ChatTag::System,
+        original: None,
+    };
+    let translate = |key: &str| crate::gui::tooltip::translate(key, &[]);
+    #[cfg(audio)]
+    let at = {
+        let pos = crate::items::dispatch::context().pos;
+        [pos[0] as f32, pos[1] as f32, pos[2] as f32]
+    };
+    match event {
+        EventType::NoRespawnBlockAvailable => {
+            let text = translate("block.minecraft.spawn.not_valid");
+            shared.lock().unwrap().session.chat_incoming.push(system(text));
+        }
+        EventType::WinGame => {
+            let mut s = shared.lock().unwrap();
+            if param == 0.0 {
+                s.respawn_requested = true;
+            } else {
+                s.session.show_credits = true;
+            }
+        }
+        EventType::DemoEvent => {
+            let key = match param as i32 {
+                0 => "demo.help.title",
+                101 => "demo.help.movement",
+                102 => "demo.help.jump",
+                103 => "demo.help.inventory",
+                104 => "demo.day.6",
+                _ => return,
+            };
+            shared.lock().unwrap().session.chat_incoming.push(system(translate(key)));
+        }
+        EventType::ArrowHitPlayer => {
+            #[cfg(audio)]
+            crate::audio::play_at("entity.arrow.hit_player", crate::audio::category::SoundCategory::Players, at, 0.18, 0.45);
+        }
+        EventType::PufferFishSting => {
+            #[cfg(audio)]
+            crate::audio::play_at("entity.puffer_fish.sting", crate::audio::category::SoundCategory::Neutral, at, 1.0, 1.0);
+        }
+        EventType::GuardianElderEffect => {
+            crate::play::event_particles::elder_guardian();
+            #[cfg(audio)]
+            if param == 1.0 {
+                crate::audio::play_at("entity.elder_guardian.curse", crate::audio::category::SoundCategory::Hostile, at, 1.0, 1.0);
+            }
+        }
+        EventType::ImmediateRespawn => {
+            shared.lock().unwrap().session.show_death_screen = param == 0.0;
         }
         _ => {}
     }
@@ -1218,6 +1281,15 @@ fn level_lifecycle(world: &WorldHolder, shared: &Arc<SharedMutex>, packet: &Clie
         }
         ClientboundGamePacket::SetChunkCacheRadius(p) => {
             crate::renderer::environment::set_server_chunk_radius(p.radius);
+        }
+        ClientboundGamePacket::AwardStats(p) => {
+            if let Some(shared) = crate::SHARED.get() {
+                let mut s = shared.lock().unwrap();
+                for (stat, value) in &p.stats {
+                    s.session.stats.insert(*stat, *value);
+                }
+                s.session.stats_version = s.session.stats_version.wrapping_add(1);
+            }
         }
         ClientboundGamePacket::SetDefaultSpawnPosition(p) => {
             crate::items::dispatch::set_spawn(global_pos(Some(&p.global_pos)));

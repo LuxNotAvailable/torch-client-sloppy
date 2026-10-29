@@ -667,6 +667,8 @@ fn help_items() -> Vec<Item<'static>> {
         Item::Divider,
         row("F3+H", "Advanced tooltips".to_string()).into(),
         row("F3+G", "Chunk borders".to_string()).into(),
+        row("F3+B", "Hitboxes".to_string()).into(),
+        row("F3+F4", "Game mode switcher".to_string()).into(),
         row("F3+A", "Reload chunks".to_string()).into(),
     ]
 }

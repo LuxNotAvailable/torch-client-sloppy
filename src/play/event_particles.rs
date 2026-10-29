@@ -107,12 +107,177 @@ pub(crate) fn particles(event: u8, b: &Body, rng: &mut JavaRandom) -> Vec<Spawn>
     }
 }
 
+/// `TrackingEmitter`: an entity's particles for a while, 16 a tick, from
+/// spots about it (the totem's 30 ticks of green).
+struct Emitter {
+    entity: i32,
+    particle: Particle,
+    ticks_left: u32,
+}
+
+static EMITTERS: Mutex<Vec<Emitter>> = Mutex::new(Vec::new());
+
+/// `ItemActivation`: the item flying at the screen, when it began and its
+/// sideways drift.
+static ACTIVATION: Mutex<Option<(std::time::Instant, f32, f32, &'static str)>> = Mutex::new(None);
+
+/// `MobAppearanceParticle`: when the elder guardian's face appeared.
+static ELDER: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+
+pub(crate) fn elder_guardian() {
+    *ELDER.lock().unwrap() = Some(std::time::Instant::now());
+}
+
+/// How far through the elder guardian's appearance (0 to 1), if showing.
+pub(crate) fn elder_guardian_progress() -> Option<f32> {
+    let mut guard = ELDER.lock().unwrap();
+    let t = guard.as_ref()?.elapsed().as_secs_f32() / 1.5;
+    if t >= 1.0 {
+        *guard = None;
+        return None;
+    }
+    Some(t)
+}
+
+/// The item activation now: how far through (0 to 1), its drift, and the
+/// item.
+pub(crate) fn activation() -> Option<(f32, f32, f32, &'static str)> {
+    let mut guard = ACTIVATION.lock().unwrap();
+    let (start, x, y, item) = (*guard)?;
+    let t = start.elapsed().as_secs_f32() / 2.0;
+    if t >= 1.0 {
+        *guard = None;
+        return None;
+    }
+    Some((t, x, y, item))
+}
+
+/// One game tick of the tracking emitters.
+pub(crate) fn tick(shared: &Arc<SharedMutex>) {
+    let mut emitters = EMITTERS.lock().unwrap();
+    if emitters.is_empty() {
+        return;
+    }
+    let bodies: Vec<Option<Body>> = {
+        let anims = crate::client::tracking::entity_anims().lock().unwrap();
+        emitters.iter().map(|e| body_of(&anims, e.entity)).collect()
+    };
+    let mut spawns = Vec::new();
+    {
+        let mut rng = random();
+        let rng = rng.as_mut().unwrap();
+        for (emitter, body) in emitters.iter_mut().zip(bodies) {
+            let Some(b) = body else {
+                emitter.ticks_left = 0;
+                continue;
+            };
+            for _ in 0..16 {
+                let (x, y, z) = (
+                    rng.next_f32() * 2.0 - 1.0,
+                    rng.next_f32() * 2.0 - 1.0,
+                    rng.next_f32() * 2.0 - 1.0,
+                );
+                if x * x + y * y + z * z > 1.0 {
+                    continue;
+                }
+                let at = [
+                    b.pos[0] + b.width * (x as f64 / 4.0),
+                    b.pos[1] + b.height * (0.5 + y as f64 / 4.0),
+                    b.pos[2] + b.width * (z as f64 / 4.0),
+                ];
+                spawns.push((emitter.particle.clone(), at, [x, y + 0.2, z]));
+            }
+            emitter.ticks_left = emitter.ticks_left.saturating_sub(1);
+        }
+    }
+    emitters.retain(|e| e.ticks_left > 0);
+    drop(emitters);
+    push(shared, spawns);
+}
+
+fn body_of(anims: &bevy::platform::collections::HashMap<i32, crate::entities::feed::EntityAnim>, id: i32) -> Option<Body> {
+    if id == crate::client::tracking::local_entity_id() {
+        let pos = crate::items::dispatch::context().pos;
+        return Some(Body { pos, old: pos, width: 0.6, height: 1.8, kind: EntityKind::Player });
+    }
+    let anim = anims.get(&id)?;
+    let st = anim.sample(1.0);
+    Some(Body {
+        pos: anim.position(1.0).map(f64::from),
+        old: anim.position(0.0).map(f64::from),
+        width: st.bounding_box_width as f64,
+        height: st.bounding_box_height as f64,
+        kind: anim.kind,
+    })
+}
+
+fn push(shared: &Arc<SharedMutex>, spawns: Vec<Spawn>) {
+    if spawns.is_empty() {
+        return;
+    }
+    let mut s = shared.lock().unwrap();
+    for (particle, pos, velocity) in spawns {
+        crate::session::push_particle_emit(
+            &mut s.session.particle_emits,
+            ParticleEmit::Level(LevelParticle {
+                particle,
+                pos,
+                dist: velocity,
+                max_speed: [1.0; 3],
+                count: 0,
+                randomization: Default::default(),
+                override_limiter: false,
+                always_show: false,
+            }),
+        );
+    }
+}
+
+/// `LivingEntity.handleEntityEvent(35)`: a Totem of Undying saves the
+/// entity: its green burst, its sound, and for this player the totem
+/// flying at the screen.
+fn totem(entity_id: i32) {
+    EMITTERS.lock().unwrap().push(Emitter {
+        entity: entity_id,
+        particle: Particle::TotemOfUndying,
+        ticks_left: 30,
+    });
+    let local = entity_id == crate::client::tracking::local_entity_id();
+    #[cfg(audio)]
+    {
+        let anims = crate::client::tracking::entity_anims().lock().unwrap();
+        if let Some(b) = body_of(&anims, entity_id) {
+            let at = [b.pos[0] as f32, b.pos[1] as f32, b.pos[2] as f32];
+            crate::audio::play_at("item.totem.use", crate::audio::category::SoundCategory::Players, at, 1.0, 1.0);
+        }
+    }
+    if local {
+        let mut rng = random();
+        let rng = rng.as_mut().unwrap();
+        let (x, y) = (rng.next_f32() * 2.0 - 1.0, rng.next_f32() * 2.0 - 1.0);
+        *ACTIVATION.lock().unwrap() = Some((std::time::Instant::now(), x, y, "totem_of_undying"));
+    }
+}
+
 /// Spawns what `event` sets off on the entity, if the client knows where it
 /// is.
 pub(crate) fn emit(shared: &Arc<SharedMutex>, entity_id: i32, event: u8) {
+    if event == 35 {
+        totem(entity_id);
+        return;
+    }
     let body = {
         let anims = crate::client::tracking::entity_anims().lock().unwrap();
         let Some(anim) = anims.get(&entity_id) else { return };
+        // `FireworkRocketEntity.handleEntityEvent`: the burst.
+        if event == 17 && anim.kind == EntityKind::FireworkRocket {
+            let pos = anim.position(1.0).map(f64::from);
+            let old = anim.position(0.0).map(f64::from);
+            let velocity = [pos[0] - old[0], pos[1] - old[1], pos[2] - old[2]];
+            let explosions = anim.shared().fireworks.as_deref().cloned().unwrap_or_default();
+            crate::util::particles::start_firework(pos, velocity, explosions);
+            return;
+        }
         let st = anim.sample(1.0);
         let pos = anim.position(1.0);
         let old = anim.position(0.0);

@@ -672,6 +672,10 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     entries.push((CHAT, Entry::Screen(Screen::ChatSettings)));
     #[cfg(resource_packs)]
     entries.push((crate::gui::resourcepacks::RESOURCE_PACKS, Entry::Packs));
+    entries.push(("Language...", Entry::Screen(Screen::Language)));
+    entries.push(("Accessibility Settings...", Entry::Screen(Screen::AccessibilitySettings)));
+    entries.push(("Online...", Entry::Screen(Screen::OnlineSettings)));
+    entries.push(("Debug Options...", Entry::Screen(Screen::DebugOptions)));
     entries.push((MANAGE_STORAGE, Entry::Screen(Screen::ManageStorage)));
 
     let rows = entries.len().div_ceil(2) as f32;

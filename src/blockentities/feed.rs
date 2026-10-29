@@ -255,6 +255,16 @@ impl Store {
     }
 
     fn insert(&mut self, pos: [i32; 3], kind: BlockEntityKind, tag: &NbtCompound) {
+        // The game-master blocks' editors read their raw data.
+        if matches!(
+            kind,
+            BlockEntityKind::StructureBlock
+                | BlockEntityKind::TestInstanceBlock
+                | BlockEntityKind::Jigsaw
+                | BlockEntityKind::TestBlock
+        ) {
+            crate::gui::op_blocks::store_tag(pos, tag);
+        }
         self.put(pos, kind, decode(kind, tag));
     }
 
@@ -303,6 +313,8 @@ pub(crate) fn kind_for_block(id: &str) -> Option<BlockEntityKind> {
         "beacon" => BlockEntityKind::Beacon,
         "structure_block" => BlockEntityKind::StructureBlock,
         "test_instance_block" => BlockEntityKind::TestInstanceBlock,
+        "jigsaw" => BlockEntityKind::Jigsaw,
+        "test_block" => BlockEntityKind::TestBlock,
         "conduit" => BlockEntityKind::Conduit,
         "bell" => BlockEntityKind::Bell,
         "decorated_pot" => BlockEntityKind::DecoratedPot,

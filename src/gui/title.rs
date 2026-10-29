@@ -172,6 +172,9 @@ fn draw_splash(p: &mut Painter, ctx: &ScreenCtx, splash: &str) {
 }
 
 fn session_splash() -> Option<&'static str> {
+    if crate::gui::more_options::accessibility().hide_splash {
+        return None;
+    }
     static SPLASH: OnceLock<Option<&'static str>> = OnceLock::new();
     *SPLASH.get_or_init(|| {
         let seed = SystemTime::now()

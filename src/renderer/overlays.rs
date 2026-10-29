@@ -509,6 +509,78 @@ pub(super) fn update_esp(
     overlay.shown = Some(frame);
 }
 
+#[derive(Resource)]
+pub(super) struct HitboxOverlay {
+    pub(super) entity: Entity,
+    pub(super) mesh: Handle<Mesh>,
+}
+
+#[derive(Component)]
+pub(super) struct HitboxMarker;
+
+/// `EntityHitboxDebugRenderer`: each entity's box in white, a thin red box
+/// at its eye height, and a blue line two blocks along its look.
+pub(super) fn update_hitboxes(
+    view: Res<FrameView>,
+    state: Res<crate::gui::GuiState>,
+    third_person: Res<super::input::ThirdPersonState>,
+    overlay: Option<Res<HitboxOverlay>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut targets: Query<&mut Visibility, With<HitboxMarker>>,
+) {
+    let Some(overlay) = overlay else { return };
+    let Ok(mut visibility) = targets.get_mut(overlay.entity) else { return };
+    if !state.hitboxes || !view.in_world {
+        *visibility = Visibility::Hidden;
+        return;
+    }
+    *visibility = Visibility::Visible;
+    let white = [1.0, 1.0, 1.0, 1.0];
+    let red = [1.0, 0.0, 0.0, 1.0];
+    let blue = [0.0, 0.0, 1.0, 1.0];
+    let mut positions: Vec<[f32; 3]> = Vec::new();
+    let mut colors: Vec<[f32; 4]> = Vec::new();
+    let mut boxed = |lo: [f32; 3], hi: [f32; 3], c: [f32; 4], positions: &mut Vec<[f32; 3]>, colors: &mut Vec<[f32; 4]>| {
+        let corners = box_corners(lo, hi);
+        for (a, b) in BOX_EDGES {
+            positions.push(corners[a]);
+            positions.push(corners[b]);
+            colors.push(c);
+            colors.push(c);
+        }
+    };
+    let partial = view.partial;
+    let mut cast = |pos: [f32; 3], w: f32, h: f32, eye: f32, look: (f32, f32), positions: &mut Vec<[f32; 3]>, colors: &mut Vec<[f32; 4]>| {
+        let half = w / 2.0;
+        boxed([pos[0] - half, pos[1], pos[2] - half], [pos[0] + half, pos[1] + h, pos[2] + half], white, positions, colors);
+        let ey = pos[1] + eye;
+        boxed([pos[0] - half, ey - 0.01, pos[2] - half], [pos[0] + half, ey + 0.01, pos[2] + half], red, positions, colors);
+        let (yaw, pitch) = (look.0.to_radians(), look.1.to_radians());
+        let dir = [-yaw.sin() * pitch.cos(), -pitch.sin(), yaw.cos() * pitch.cos()];
+        positions.push([pos[0], ey, pos[2]]);
+        positions.push([pos[0] + dir[0] * 2.0, ey + dir[1] * 2.0, pos[2] + dir[2] * 2.0]);
+        colors.push(blue);
+        colors.push(blue);
+    };
+    for anim in view.entities.iter() {
+        let st = anim.sample(partial);
+        let eye = azalea::entity::dimensions::EntityDimensions::from(anim.kind).eye_height * st.scale.max(0.01);
+        cast(anim.position(partial), st.bounding_box_width, st.bounding_box_height, eye, anim.look(partial), &mut positions, &mut colors);
+    }
+    for player in view.players.iter() {
+        let st = player.anim.sample(partial);
+        let (h, eye) = if st.crouching { (1.5, 1.27) } else { (1.8, 1.62) };
+        cast(player.anim.position(partial), 0.6, h, eye, (st.head_yaw, st.pitch), &mut positions, &mut colors);
+    }
+    if third_person.active {
+        let (h, eye) = if view.local.crouching { (1.5, 1.27) } else { (1.8, 1.62) };
+        cast(view.player_lerp, 0.6, h, eye, (view.camera_yaw, view.camera_pitch), &mut positions, &mut colors);
+    }
+    if let Some(mesh) = meshes.get_mut(&overlay.mesh) {
+        *mesh = line_mesh(positions, Some(colors));
+    }
+}
+
 pub(super) fn update_chunk_borders(
     view: Res<FrameView>,
     state: Res<crate::gui::GuiState>,

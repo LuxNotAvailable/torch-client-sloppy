@@ -160,7 +160,9 @@ pub(crate) fn tick(bot: &Client) {
 /// no effect.
 pub fn view_warp(sample: Sample) -> Option<bevy::math::Mat4> {
     use bevy::math::{Mat4, Vec3};
-    let intensity = sample.portal.max(sample.nausea);
+    // `screenEffectScale`, squared.
+    let scale = crate::gui::more_options::accessibility().distortion as f32 / 100.0;
+    let intensity = sample.portal.max(sample.nausea) * scale * scale;
     if intensity <= 0.0 {
         return None;
     }

@@ -32,7 +32,7 @@ pub struct SharedState {
     pub in_world: bool,
     pub session: SessionState,
     pub render_distance_sent: Option<u32>,
-    pub chat_prefs_sent: Option<(u8, bool)>,
+    pub chat_prefs_sent: Option<(u8, bool, bool)>,
     pub skin_prefs_sent: Option<SkinPrefs>,
     pub skin_prefs: SkinPrefs,
     pub chat_signing_allowed: bool,
@@ -154,6 +154,13 @@ pub struct SessionState {
     pub death_cause: Option<Vec<crate::text::Span>>,
     pub death_score: i32,
     pub show_death_screen: bool,
+    /// The server asked for the end poem (game event 4, value 1).
+    pub show_credits: bool,
+    /// The statistics the server last sent, merged, and how many times it
+    /// has; and a request for them.
+    pub stats: std::collections::HashMap<azalea_protocol::packets::game::c_award_stats::Stat, i32>,
+    pub stats_version: u32,
+    pub stats_request: bool,
     pub jump_charge: Option<f32>,
     pub food: u32,
     pub saturation: f32,
@@ -177,6 +184,8 @@ pub struct SessionState {
     pub fly_speed_scroll: f32,
     pub pending_drop: Option<DropRequest>,
     pub command_block_open: Option<CommandBlockOpen>,
+    /// A game-master block was used: which editor, at which block.
+    pub op_block_open: Option<(crate::gui::op_blocks::OpBlock, azalea_core::position::BlockPos)>,
     pub command_block_pos: Option<azalea_core::position::BlockPos>,
     pub command_block_data: Option<CommandBlockData>,
     pub command_block_update: Option<CommandBlockUpdate>,
@@ -251,7 +260,7 @@ pub struct SessionState {
     pub render_distance_request: Option<u32>,
     pub skin_prefs_request: Option<SkinPrefs>,
     /// `chatVisibility` (its id) and `chatColors` to send the server.
-    pub chat_prefs_request: Option<(u8, bool)>,
+    pub chat_prefs_request: Option<(u8, bool, bool)>,
     pub xp_progress: f32,
     pub xp_level: u32,
     pub xp_seen: bool,

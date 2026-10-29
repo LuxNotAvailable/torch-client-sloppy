@@ -422,12 +422,20 @@ fn setup(
         chunk_border_mat.clone(),
         ChunkBorderMarker,
     );
-    commands.insert_resource(LineMaterial(chunk_border_mat));
+    commands.insert_resource(LineMaterial(chunk_border_mat.clone()));
     commands.insert_resource(ChunkBorderOverlay {
         entity,
         mesh,
         shown: None,
     });
+    let (entity, mesh) = spawn_overlay(
+        &mut commands,
+        &mut meshes,
+        super::overlays::line_mesh(Vec::new(), Some(Vec::new())),
+        chunk_border_mat.clone(),
+        super::overlays::HitboxMarker,
+    );
+    commands.insert_resource(super::overlays::HitboxOverlay { entity, mesh });
 
     #[cfg(feature = "click_gui")]
     {
@@ -1861,7 +1869,7 @@ fn sync_bot_options(
         s.skin_prefs_sent = Some(skin_prefs);
         s.session.skin_prefs_request = Some(skin_prefs);
     }
-    let chat_prefs = (state.options.chat.shown.id(), state.options.chat.colors);
+    let chat_prefs = (state.options.chat.shown.id(), state.options.chat.colors, state.options.allow_listing);
     if s.chat_prefs_sent != Some(chat_prefs) {
         s.chat_prefs_sent = Some(chat_prefs);
         s.session.chat_prefs_request = Some(chat_prefs);
@@ -2423,6 +2431,7 @@ pub fn run(
         )
         .add_systems(Update, toggle_advanced_tooltips)
         .add_systems(Update, toggle_chunk_borders)
+        .add_systems(Update, (super::input::toggle_hitboxes, super::input::game_mode_switcher))
         .add_systems(Update, reload_all_chunks.run_if(in_state(AppState::InGame)))
         .add_systems(
             Update,
@@ -2536,6 +2545,7 @@ pub fn run(
             (
                 update_block_outline,
                 update_chunk_borders,
+                super::overlays::update_hitboxes,
                 update_break_overlay,
             )
                 .after(FrameViewSystems)

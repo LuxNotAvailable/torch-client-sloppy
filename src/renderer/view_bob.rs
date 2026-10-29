@@ -63,7 +63,9 @@ pub fn hurt_pose(hurt_ticks: Option<(f32, f32)>, death_ticks: f32) -> Quat {
         let t = left / HURT_TICKS;
         let hurt = (t * t * t * t * std::f32::consts::PI).sin();
         let turn = Quat::from_rotation_y((-dir).to_radians());
-        rotation *= turn * Quat::from_rotation_z((-hurt * 14.0).to_radians()) * turn.inverse();
+        // `damageTiltStrength`.
+        let strength = crate::gui::more_options::accessibility().damage_tilt as f32 / 100.0;
+        rotation *= turn * Quat::from_rotation_z((-hurt * 14.0 * strength).to_radians()) * turn.inverse();
     }
     rotation
 }

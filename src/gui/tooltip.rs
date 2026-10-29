@@ -22,7 +22,7 @@ const RED: u32 = 0xFF5555;
 const DARK_PURPLE: u32 = 0xAA00AA;
 const WHITE: u32 = 0xFFFFFF;
 
-static LANG: LazyLock<HashMap<String, String>> = LazyLock::new(|| {
+static ENGLISH: LazyLock<HashMap<String, String>> = LazyLock::new(|| {
     let mut out = HashMap::new();
     for text in crate::platform::assets::read_stack(crate::assets_root().join("lang/en_us.json")) {
         let Ok(serde_json::Value::Object(map)) = serde_json::from_str(&text) else {
@@ -35,6 +35,25 @@ static LANG: LazyLock<HashMap<String, String>> = LazyLock::new(|| {
     }
     out
 });
+
+/// The chosen language over English; leaked, as it changes rarely.
+static LANG_MAP: std::sync::RwLock<Option<&'static HashMap<String, String>>> = std::sync::RwLock::new(None);
+
+fn lang() -> &'static HashMap<String, String> {
+    if let Some(map) = *LANG_MAP.read().unwrap() {
+        return map;
+    }
+    &ENGLISH
+}
+
+/// Lays a language's strings over English, or goes back to English.
+pub(crate) fn set_language(strings: Option<HashMap<String, String>>) {
+    *LANG_MAP.write().unwrap() = strings.map(|over| {
+        let mut map = ENGLISH.clone();
+        map.extend(over);
+        &*Box::leak(Box::new(map))
+    });
+}
 
 fn tag_values(name: &str) -> Vec<String> {
     crate::util::datapack::entry("tags/enchantment", name)
@@ -90,11 +109,11 @@ pub(crate) use label;
 
 /// Whether the language has a string for `key`.
 pub(crate) fn has_translation(key: &str) -> bool {
-    LANG.contains_key(key)
+    lang().contains_key(key)
 }
 
 pub(crate) fn translate(key: &str, args: &[String]) -> String {
-    let template: &str = LANG.get(key).map_or(key, String::as_str);
+    let template: &str = lang().get(key).map_or(key, String::as_str);
     let mut out = String::with_capacity(template.len());
     let mut rest = template;
     let mut next = args.iter();
@@ -592,7 +611,7 @@ mod tests {
     fn roman_agrees_with_lang() {
         for n in 1..=10 {
             let key = format!("enchantment.level.{n}");
-            if let Some(v) = LANG.get(&key) {
+            if let Some(v) = lang().get(&key) {
                 assert_eq!(&roman(n), v, "level {n}");
             }
         }

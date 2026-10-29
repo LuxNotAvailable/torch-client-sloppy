@@ -97,6 +97,7 @@ azalea-core = { path = "vendor/azalea/azalea-core" }
 azalea-buf = { path = "vendor/azalea/azalea-buf" }
 azalea-chat = { path = "vendor/azalea/azalea-chat", features = ["simdnbt"] }
 azalea-registry = { path = "vendor/azalea/azalea-registry" }
+azalea-language = { path = "vendor/azalea/azalea-language" }
 simdnbt = "0.10"
 parking_lot = "0.12"
 offset-allocator = "0.2"

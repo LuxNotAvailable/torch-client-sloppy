@@ -910,6 +910,14 @@ impl<'a> Painter<'a> {
         self.quad(x, y, w, h, u0, v0, u1, v1, [1.0; 4], 0.0);
     }
 
+    /// An item's icon at any size, `w` and `h` apart.
+    pub fn item_icon_sized(&mut self, id: &str, x: f32, y: f32, w: f32, h: f32) {
+        let Some(r) = self.atlas.item_for_size(id, w.max(h) * self.scale) else {
+            return;
+        };
+        self.region_part(r, 0.0, 0.0, r.w as f32, r.h as f32, x, y, w, h, [1.0; 4]);
+    }
+
     pub fn region(&mut self, r: Region, x: f32, y: f32, w: f32, h: f32) {
         self.region_part(r, 0.0, 0.0, r.w as f32, r.h as f32, x, y, w, h, [1.0; 4]);
     }

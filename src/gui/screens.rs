@@ -274,6 +274,7 @@ pub fn draw(
         let visible = hud_visible && (focused || placed);
         chat::apply_options(&state.options.chat);
         crate::gui::appleskin::apply_options(&state.options.appleskin);
+        crate::gui::more_options::apply(&state.options);
         macro_rules! draw_chat {
             ($p:expr) => {
                 chat::draw(
@@ -406,6 +407,11 @@ pub fn draw(
         | Screen::Features
         | Screen::InventorySortSettings
         | Screen::AppleSkinSettings
+        | Screen::Language
+        | Screen::FontSettings
+        | Screen::AccessibilitySettings
+        | Screen::OnlineSettings
+        | Screen::DebugOptions
         | Screen::ChatSettings
         | Screen::SkinCustomisation
         | Screen::ManageStorage => {
@@ -422,6 +428,11 @@ pub fn draw(
                 Screen::Features => options::draw_features(p, state, &ctx),
                 Screen::InventorySortSettings => options::draw_inventory_sort(p, state, &ctx),
                 Screen::AppleSkinSettings => options::draw_appleskin(p, state, &ctx),
+                Screen::Language => crate::gui::more_options::draw_language(p, state, &ctx),
+                Screen::FontSettings => crate::gui::more_options::draw_font(p, state, &ctx),
+                Screen::AccessibilitySettings => crate::gui::more_options::draw_accessibility(p, state, &ctx),
+                Screen::OnlineSettings => crate::gui::more_options::draw_online(p, state, &ctx),
+                Screen::DebugOptions => crate::gui::more_options::draw_debug(p, state, &ctx),
                 Screen::ChatSettings => options::draw_chat(p, state, &ctx),
                 Screen::SkinCustomisation => options::draw_skin(p, state, &ctx),
                 Screen::ManageStorage => options::draw_manage_storage(p, state, &ctx),
@@ -542,6 +553,51 @@ pub fn draw(
         #[cfg(feature = "online_mode")]
         Screen::MicrosoftLogin => {
             profile::draw_microsoft(p, state, &ctx);
+            None
+        }
+        Screen::OpBlock => {
+            if let Some(next) = crate::gui::op_blocks::draw(p, &mut state.op_block, &ctx) {
+                state.nav = Some(next);
+            }
+            None
+        }
+        Screen::SocialInteractions => {
+            let me = crate::client::bot::username();
+            let own = snap
+                .tab_list
+                .rows
+                .iter()
+                .find(|r| r.name.iter().map(|s| s.text.as_str()).collect::<String>() == me)
+                .map_or(0, |r| r.uuid);
+            let tab_list = snap.tab_list.clone();
+            if let Some(next) = crate::gui::social::draw(p, &mut state.social, &ctx, &tab_list, own) {
+                state.nav = Some(next);
+            }
+            None
+        }
+        Screen::Statistics => {
+            {
+                let s = shared.lock().unwrap();
+                if s.session.stats_version != 0 {
+                    state.stats.stats = Some(s.session.stats.clone());
+                }
+            }
+            if let Some(next) = crate::gui::stats::draw(p, &mut state.stats, &ctx) {
+                state.nav = Some(next);
+            }
+            None
+        }
+        Screen::GameModeSwitcher => {
+            let current = snap.gamemode;
+            crate::gui::gamemode_switcher::draw(p, &mut state.switcher, &ctx, current);
+            None
+        }
+        Screen::EndPoem => {
+            if let Some(next) = crate::gui::win::draw(p, &mut state.win, &ctx) {
+                state.nav = Some(next);
+                // `WinScreen.respawn`: back to the Overworld.
+                shared.lock().unwrap().respawn_requested = true;
+            }
             None
         }
         Screen::Credits => {
@@ -841,6 +897,50 @@ fn draw_loading(p: &mut Painter, ctx: &ScreenCtx, status: Option<&str>) {
 
 /// `extractPortalOverlay`: the portal's texture over the whole screen,
 /// fading in quartically as the player stands in one.
+/// `ScreenEffectRenderer.renderItemActivationAnimation`: the item thrown at
+/// the camera and back, spinning, drawn as the 3D item would project with a
+/// 70 degree field of view; the spin about its upright shows as a squash.
+fn draw_item_activation(p: &mut Painter, vw: f32, vh: f32) {
+    use std::f32::consts::PI;
+    let Some((t, off_x, off_y, item)) = crate::play::event_particles::activation() else {
+        return;
+    };
+    let (ts, tc) = (t * t, t * t * t);
+    let smooth = 10.25 * tc * ts - 24.95 * ts * ts + 25.5 * tc - 13.8 * ts + 4.0 * t;
+    let pi_scale = smooth * PI;
+    let aspect = vw / vh.max(1.0);
+    let distance = (10.0 - 9.0 * pi_scale.sin()).max(0.5);
+    let half_tan = (35.0f32).to_radians().tan();
+    let view_h = 2.0 * half_tan * distance;
+    let drift = (pi_scale * 2.0).sin().abs();
+    let x = off_x * 0.3 * aspect * drift / (half_tan * distance * aspect) * vw / 2.0;
+    let y = off_y * 0.3 * drift / (half_tan * distance) * vh / 2.0;
+    let size = 0.8 / view_h * vh;
+    let spin = (900.0 * pi_scale.sin().abs()).to_radians().cos().abs().max(0.05);
+    let (w, h) = (size * spin, size);
+    p.item_icon_sized(item, vw / 2.0 + x - w / 2.0, vh / 2.0 - y - h / 2.0, w, h);
+}
+
+/// `MobAppearanceParticle`: the elder guardian's face looms in front of the
+/// camera and fades over 30 ticks (alpha `0.05 + 0.5 * sin(t * pi)`), drawn
+/// as its texture's face, swelling as it comes.
+fn draw_elder_guardian(p: &mut Painter, vw: f32, vh: f32) {
+    let Some(t) = crate::play::event_particles::elder_guardian_progress() else {
+        return;
+    };
+    let alpha = 0.05 + 0.5 * (t * std::f32::consts::PI).sin();
+    let size = vh * (0.9 + 0.3 * t);
+    let a = ((alpha.clamp(0.0, 1.0) * 255.0) as u32) << 24;
+    p.sprite_tinted(
+        "elder_guardian_face",
+        ((vw - size) / 2.0).floor(),
+        ((vh - size) / 2.0).floor(),
+        size,
+        size,
+        a | 0x00FF_FFFF,
+    );
+}
+
 fn draw_portal_overlay(p: &mut Painter, vw: f32, vh: f32) {
     let mut alpha = crate::play::screen_warp::sample(1.0).portal;
     if alpha <= 0.0 {
@@ -896,6 +996,8 @@ fn draw_hud(
 
     draw_spyglass_scope(p, vw, vh);
     draw_portal_overlay(p, vw, vh);
+    draw_item_activation(p, vw, vh);
+    draw_elder_guardian(p, vw, vh);
     health::draw_freeze_overlay(p, snap, vw, vh);
 
     p.sprite(

@@ -1,6 +1,7 @@
 #[cfg(feature = "asset_download")]
 pub(crate) mod advancements;
 pub(crate) mod assets;
+pub(crate) mod languages;
 #[cfg(feature = "online_mode")]
 pub(crate) mod auth;
 pub(crate) mod bossbar;

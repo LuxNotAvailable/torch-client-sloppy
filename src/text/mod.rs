@@ -123,6 +123,9 @@ pub fn named_color(name: &str) -> Option<u32> {
         .map(|i| FORMAT_COLORS[i])
 }
 
+/// `forceUnicodeFont`: draw everything with unifont.
+pub static FORCE_UNICODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 pub fn parse_formatted(s: &str) -> Vec<Span> {
     parse_formatted_from(s, Style::default())
 }
@@ -522,6 +525,11 @@ impl Font {
     }
 
     pub fn glyph(&self, c: char) -> Option<&Glyph> {
+        if FORCE_UNICODE.load(std::sync::atomic::Ordering::Relaxed)
+            && let Some(g) = self.unihex_glyphs.get(&c)
+        {
+            return Some(g);
+        }
         if let Some(Some(g)) = self.ascii.get(c as usize) {
             return Some(g);
         }
@@ -533,6 +541,9 @@ impl Font {
     }
 
     pub fn is_unihex(&self, c: char) -> bool {
+        if FORCE_UNICODE.load(std::sync::atomic::Ordering::Relaxed) && self.unihex_glyphs.contains_key(&c) {
+            return true;
+        }
         if let Some(Some(_)) = self.ascii.get(c as usize) {
             return false;
         }

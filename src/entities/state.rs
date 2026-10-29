@@ -168,6 +168,8 @@ pub struct Extras {
 
 #[derive(Clone, Debug)]
 pub struct ExtrasShared {
+    /// A firework rocket's explosions, for its burst.
+    pub fireworks: Option<std::sync::Arc<Vec<crate::util::particles::FireworkExplosion>>>,
     pub is_baby: bool,
     pub powered: bool,
     pub size: i32,
@@ -404,6 +406,7 @@ impl Default for Extras {
 impl Default for ExtrasShared {
     fn default() -> Self {
         ExtrasShared {
+            fireworks: None,
             xp_value: 0,
             beam_target: None,
             attack_target: 0,

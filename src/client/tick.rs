@@ -128,6 +128,7 @@ fn read_tick_snapshot(bot: &Client, shared: &Arc<SharedMutex>) -> Option<TickSna
     }
 
     crate::play::screen_warp::tick(bot);
+    crate::play::event_particles::tick(shared);
 
     #[cfg(audio)]
     world_sounds(bot, pos, &entity_anims);
@@ -1208,6 +1209,15 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
         }
     }
 
+    for send in crate::gui::op_blocks::take_sends() {
+        use crate::gui::op_blocks::OpBlockSend;
+        match send {
+            OpBlockSend::Structure(p) => bot.write_packet(p),
+            OpBlockSend::Jigsaw(p) => bot.write_packet(p),
+            OpBlockSend::JigsawGenerate(p) => bot.write_packet(p),
+            OpBlockSend::Test(p) => bot.write_packet(p),
+        }
+    }
     if let Some(update) = command_block_update {
         bot.write_packet(ServerboundSetCommandBlock {
             pos: update.pos,
@@ -1332,6 +1342,11 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
     if respawn {
         bot.write_packet(ServerboundClientCommand {
             action: ClientCommand::PerformRespawn,
+        });
+    }
+    if std::mem::take(&mut shared.lock().unwrap().session.stats_request) {
+        bot.write_packet(ServerboundClientCommand {
+            action: ClientCommand::RequestStats,
         });
     }
 }

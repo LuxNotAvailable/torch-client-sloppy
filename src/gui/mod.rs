@@ -11,6 +11,12 @@ pub mod block_info;
 pub mod book;
 pub mod appleskin;
 pub mod chat;
+pub mod more_options;
+pub mod op_blocks;
+pub mod social;
+pub mod stats;
+pub mod gamemode_switcher;
+pub mod win;
 pub mod clickevent;
 #[cfg(feature = "click_gui")]
 pub mod clickgui;
@@ -105,6 +111,21 @@ pub enum Screen {
     ZoomSettings,
     /// Inventory sorting's settings, under Features.
     InventorySortSettings,
+    /// The end poem and credits, after leaving the End.
+    EndPoem,
+    /// F3+F4's game mode switcher.
+    GameModeSwitcher,
+    /// The player's statistics.
+    Statistics,
+    /// Players on the server, to hide their chat.
+    SocialInteractions,
+    /// A structure, jigsaw, test or test instance block's editor.
+    OpBlock,
+    Language,
+    FontSettings,
+    AccessibilitySettings,
+    OnlineSettings,
+    DebugOptions,
     /// AppleSkin's settings, under Features.
     AppleSkinSettings,
     /// Signed chat and toasts.
@@ -251,6 +272,11 @@ impl Screen {
                 | Screen::Features
                 | Screen::InventorySortSettings
                 | Screen::AppleSkinSettings
+                | Screen::Language
+                | Screen::FontSettings
+                | Screen::AccessibilitySettings
+                | Screen::OnlineSettings
+                | Screen::DebugOptions
                 | Screen::ChatSettings
                 | Screen::SkinCustomisation
                 | Screen::ManageStorage
@@ -417,6 +443,11 @@ pub struct GuiOptions {
     pub zoom: ZoomOptions,
     pub chat: ChatOptions,
     pub appleskin: appleskin::AppleSkinOptions,
+    pub language: String,
+    pub accessibility: more_options::AccessibilityOptions,
+    pub force_unicode: bool,
+    pub allow_listing: bool,
+    pub pause_on_lost_focus: bool,
     /// The sort and transfer buttons on inventories.
     pub sort_buttons: bool,
     /// Whether sorting and storing take in the hotbar.
@@ -848,6 +879,22 @@ impl Default for GuiOptions {
             view_bobbing: value("bobView").and_then(|v| v.as_bool()).unwrap_or(true),
             zoom: ZoomOptions::read(&value),
             chat: ChatOptions::read(&value),
+            language: value("lang").and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_else(|| "en_us".to_owned()),
+            accessibility: {
+                let d = more_options::AccessibilityOptions::DEFAULT;
+                let num = |key: &str, fallback: u32| value(key).and_then(|v| v.as_u64()).map_or(fallback, |v| v.min(100) as u32);
+                let flag = |key: &str| value(key).and_then(|v| v.as_bool()).unwrap_or(false);
+                more_options::AccessibilityOptions {
+                    distortion: num("screenEffectScale", d.distortion),
+                    damage_tilt: num("damageTiltStrength", d.damage_tilt),
+                    hide_lightning: flag("hideLightningFlashes"),
+                    hide_splash: flag("hideSplashTexts"),
+                    panorama_speed: num("panoramaScrollSpeed", d.panorama_speed),
+                }
+            },
+            force_unicode: value("forceUnicodeFont").and_then(|v| v.as_bool()).unwrap_or(false),
+            allow_listing: value("allowServerListing").and_then(|v| v.as_bool()).unwrap_or(true),
+            pause_on_lost_focus: value("pauseOnLostFocus").and_then(|v| v.as_bool()).unwrap_or(true),
             appleskin: {
                 let flag = |key: &str| value(key).and_then(|v| v.as_bool()).unwrap_or(true);
                 appleskin::AppleSkinOptions {
@@ -1043,6 +1090,16 @@ pub fn save_options(options: &GuiOptions) {
         let map = json.as_object_mut().expect("json! object literal");
         let chat = &options.chat;
         let skin = &options.appleskin;
+        let a = &options.accessibility;
+        map.insert("lang".to_owned(), serde_json::json!(options.language));
+        map.insert("screenEffectScale".to_owned(), serde_json::json!(a.distortion));
+        map.insert("damageTiltStrength".to_owned(), serde_json::json!(a.damage_tilt));
+        map.insert("hideLightningFlashes".to_owned(), serde_json::json!(a.hide_lightning));
+        map.insert("hideSplashTexts".to_owned(), serde_json::json!(a.hide_splash));
+        map.insert("panoramaScrollSpeed".to_owned(), serde_json::json!(a.panorama_speed));
+        map.insert("forceUnicodeFont".to_owned(), serde_json::json!(options.force_unicode));
+        map.insert("allowServerListing".to_owned(), serde_json::json!(options.allow_listing));
+        map.insert("pauseOnLostFocus".to_owned(), serde_json::json!(options.pause_on_lost_focus));
         map.insert("appleskinSaturationOverlay".to_owned(), serde_json::json!(skin.saturation_overlay));
         map.insert("appleskinFoodPreview".to_owned(), serde_json::json!(skin.food_preview));
         map.insert("appleskinHealthPreview".to_owned(), serde_json::json!(skin.health_preview));
@@ -1142,9 +1199,17 @@ pub struct GuiState {
     pub tablist: tablist::TabListState,
     pub hearts: health::HeartAnim,
     pub chunk_borders: bool,
+    /// F3+B: entities' hitboxes.
+    pub hitboxes: bool,
+    pub stats: stats::StatsState,
+    pub social: social::SocialState,
+    pub op_block: op_blocks::OpBlockState,
+    pub language_list: more_options::LanguageState,
+    pub switcher: gamemode_switcher::SwitcherState,
     pub hide_gui: bool,
     /// The zoom key is held: the HUD hides, as with F1.
     pub zooming: bool,
+    pub win: win::WinState,
     pub slots: slots::SlotState,
     pub container: container::ContainerUi,
     #[cfg(feature = "click_gui")]

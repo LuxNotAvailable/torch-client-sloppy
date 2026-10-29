@@ -610,6 +610,28 @@ pub(crate) fn collect_entities(
                 .map(|stack| held_item(&stack))
                 .unwrap_or_default();
             shared.item_rotation = meta::<metadata::Rotation>(eref).unwrap_or(0);
+            shared.fireworks = meta::<metadata::FireworksItem>(eref).and_then(|stack| {
+                use azalea_inventory::components::{FireworkExplosionShape as Shape, Fireworks};
+                let fireworks = stack.as_present()?.get_component::<Fireworks>()?;
+                let explosions = fireworks
+                    .explosions
+                    .iter()
+                    .map(|e| crate::util::particles::FireworkExplosion {
+                        shape: match e.shape {
+                            Shape::SmallBall => 0,
+                            Shape::LargeBall => 1,
+                            Shape::Star => 2,
+                            Shape::Creeper => 3,
+                            Shape::Burst => 4,
+                        },
+                        colors: e.colors.clone(),
+                        fade_colors: e.fade_colors.clone(),
+                        trail: e.has_trail,
+                        twinkle: e.has_twinkle,
+                    })
+                    .collect();
+                Some(std::sync::Arc::new(explosions))
+            });
         }
 
         if matches!(kind, EntityKind::ItemFrame | EntityKind::GlowItemFrame) {

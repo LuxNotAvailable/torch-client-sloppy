@@ -522,6 +522,15 @@ const EXTRAS: &[Extra] = &[
         scaling: Scaling::Stretch,
     },
     Extra {
+        key: "gamemode_switcher_bg",
+        path: "gui/container/gamemode_switcher.png",
+        alt_path: None,
+        size: (128, 128),
+        crop_h: None,
+        nearest: true,
+        scaling: Scaling::Stretch,
+    },
+    Extra {
         key: "spyglass_scope",
         path: "misc/spyglass_scope.png",
         alt_path: None,
@@ -753,6 +762,23 @@ pub fn build_gui_atlas(assets: &Path) -> GuiAtlas {
             key: extra.key.to_string(),
             image: img,
             scaling: extra.scaling,
+        });
+    }
+
+    // The elder guardian's face, for its curse: the head's front (the box at
+    // texture offset 0,0, 12 by 12 by 16, faces -Z at 16,16) with its eye.
+    if let Ok(img) = crate::platform::assets::open_image(&textures.join("entity/guardian_elder.png")) {
+        let img = img.to_rgba8();
+        let scale = img.width() / 64;
+        let mut face = image::imageops::crop_imm(&img, 16 * scale, 16 * scale, 12 * scale, 12 * scale).to_image();
+        // The eye: a 2 by 2 box at offset 8,0, its front at 9,1.
+        let eye = image::imageops::crop_imm(&img, 9 * scale, scale, 2 * scale, 2 * scale).to_image();
+        image::imageops::overlay(&mut face, &eye, (5 * scale) as i64, (5 * scale) as i64);
+        entries.push(Entry {
+            kind: Kind::Sprite,
+            key: "elder_guardian_face".to_string(),
+            image: face,
+            scaling: Scaling::Stretch,
         });
     }
 

@@ -67,6 +67,7 @@ fn reset_session_gui(
 }
 
 struct NavPoll {
+    show_credits: bool,
     ended: Option<Option<Vec<crate::text::Span>>>,
     container_id: i32,
     container_kind: crate::session::ContainerKind,
@@ -75,6 +76,7 @@ struct NavPoll {
     book_open: Option<crate::session::InteractionHand>,
     book_edit_open: Option<crate::session::BookEditRequest>,
     command_block_open: Option<crate::session::CommandBlockOpen>,
+    op_block_open: Option<(crate::gui::op_blocks::OpBlock, azalea_core::position::BlockPos)>,
     dialog_show: Option<std::sync::Arc<crate::play::dialog::Dialog>>,
     dialog_clear: bool,
     sleeping: bool,
@@ -123,7 +125,9 @@ pub(super) fn apply_gui_nav(
             book_open: s.session.book_open.take(),
             book_edit_open: s.session.book_edit_open.take(),
             command_block_open: s.session.command_block_open.take(),
+            op_block_open: s.session.op_block_open.take(),
             dialog_show: s.session.dialog_show.take(),
+            show_credits: std::mem::take(&mut s.session.show_credits),
             dialog_clear: std::mem::take(&mut s.session.dialog_clear),
             sleeping: s.session.sleeping,
             dead,
@@ -171,6 +175,10 @@ pub(super) fn apply_gui_nav(
     let book_open = poll.book_open;
     let book_edit_open = poll.book_edit_open;
     let command_block_open = poll.command_block_open;
+    if let Some((kind, pos)) = poll.op_block_open {
+        state.op_block.open(kind, pos);
+        state.nav = Some(Screen::OpBlock);
+    }
     if let Some(req) = command_block_open {
         state.command_block.open(req.pos, req.mode, req.conditional);
         state.nav = Some(Screen::CommandBlock);
@@ -211,6 +219,10 @@ pub(super) fn apply_gui_nav(
         }
     }
 
+    if poll.show_credits {
+        state.win.pending = true;
+        state.nav = Some(Screen::EndPoem);
+    }
     if let Some(dialog) = poll.dialog_show {
         let current = state.screen;
         state.dialog.show(dialog, current);
@@ -543,7 +555,7 @@ pub(super) fn flight_toggle_input(
 pub(super) fn window_focus_cursor(
     mut events: bevy::ecs::message::MessageReader<WindowFocused>,
     mut windows: Query<(&mut Window, &mut CursorOptions), With<PrimaryWindow>>,
-    state: Res<crate::gui::GuiState>,
+    mut state: ResMut<crate::gui::GuiState>,
     mut regrab: Local<u8>,
 ) {
     const REGRAB_FRAMES: u8 = 10;
@@ -554,6 +566,10 @@ pub(super) fn window_focus_cursor(
         if !ev.focused {
             *regrab = 0;
             super::systems::apply_cursor(opts, CursorGrabMode::None, true);
+            // `pauseOnLostFocus`.
+            if state.options.pause_on_lost_focus && state.screen == crate::gui::Screen::None {
+                state.nav = Some(crate::gui::Screen::Pause);
+            }
         } else if !state.screen.is_open() {
             *regrab = REGRAB_FRAMES;
         }
@@ -1175,6 +1191,7 @@ pub(super) fn toggle_screen(
                     | Screen::BlockInfoSettings
                     | Screen::InventorySortSettings
                     | Screen::AppleSkinSettings => Screen::Features,
+                    Screen::FontSettings => Screen::Language,
                     #[cfg(feature = "shader_support")]
                     Screen::ShaderPacks => Screen::VideoSettings,
                     #[cfg(feature = "shader_support")]
@@ -1273,6 +1290,8 @@ pub(super) fn toggle_screen(
     } else if state.keybinds.just(Action::Advancements, &keys, &buttons) {
         state.advancements.parent = Screen::None;
         Some(Screen::Advancements)
+    } else if state.keybinds.just(Action::SocialInteractions, &keys, &buttons) {
+        Some(Screen::SocialInteractions)
     } else if state.keybinds.just(Action::Chat, &keys, &buttons) {
         state.chat.open("");
         Some(Screen::Chat)
@@ -1322,6 +1341,62 @@ pub(super) fn toggle_advanced_tooltips(
     if debug_combo(Action::AdvancedTooltips, &keys, &buttons, &state) {
         state.advanced_tooltips = !state.advanced_tooltips;
         shared.0.lock().unwrap().session.advanced_tooltips = state.advanced_tooltips;
+    }
+}
+
+pub(super) fn toggle_hitboxes(
+    keys: Res<ButtonInput<KeyCode>>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    mut state: ResMut<crate::gui::GuiState>,
+) {
+    if debug_combo(Action::Hitboxes, &keys, &buttons, &state) {
+        state.hitboxes = !state.hitboxes;
+    }
+}
+
+/// F3+F4 opens the switcher; F4 steps it while F3 is held; letting go of
+/// F3 switches (`GameModeSwitcherScreen.keyReleased`).
+pub(super) fn game_mode_switcher(
+    keys: Res<ButtonInput<KeyCode>>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    mut state: ResMut<crate::gui::GuiState>,
+    shared: Res<Shared>,
+) {
+    use crate::gui::Screen;
+    let (current, op_level) = {
+        let s = shared.0.lock().unwrap();
+        (s.session.gamemode, s.session.op_level)
+    };
+    state.switcher.note_mode(current);
+    if state.screen == Screen::GameModeSwitcher {
+        if state.keybinds.just(Action::GameModeSwitcher, &keys, &buttons) {
+            state.switcher.next();
+        }
+        if !state.keybinds.down(Action::DebugModifier, &keys, &buttons) {
+            let mut s = shared.0.lock().unwrap();
+            if let Some(command) = state.switcher.command(current) {
+                if op_level >= 2 {
+                    s.session.outgoing_chat.push(format!("/{command}"));
+                } else {
+                    s.session.chat_incoming.push(crate::session::ChatEntry {
+                        spans: vec![crate::text::Span {
+                            text: "Unable to switch game mode; no permission".into(),
+                            style: crate::text::Style::colored(0xFF5555),
+                        }],
+                        events: None,
+                        tag: crate::session::ChatTag::System,
+                        original: None,
+                    });
+                }
+            }
+            drop(s);
+            state.nav = Some(Screen::None);
+        }
+        return;
+    }
+    if debug_combo(Action::GameModeSwitcher, &keys, &buttons, &state) {
+        state.switcher.open(current);
+        state.nav = Some(Screen::GameModeSwitcher);
     }
 }
 

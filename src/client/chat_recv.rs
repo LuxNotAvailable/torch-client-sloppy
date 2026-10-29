@@ -118,6 +118,10 @@ pub(crate) fn handle_chat(bot: &Client, shared: &Arc<SharedMutex>, m: ChatPacket
         }
         ChatPacket::Disguised(_) => ChatTag::System,
         ChatPacket::Player(p) => {
+            // Hidden through Social Interactions.
+            if crate::gui::social::is_hidden(p.sender.as_u128()) {
+                return;
+            }
             match &p.filter_mask {
                 FilterMask::FullyFiltered => return,
                 FilterMask::PartiallyFiltered(bits) => {

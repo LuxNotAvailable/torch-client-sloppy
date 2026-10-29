@@ -705,7 +705,10 @@ impl Environment {
             (0.0, 0.0)
         };
         apply_weather(&mut sky, rain, thunder);
-        apply_sky_flash(&mut sky, dim.can_have_weather() && sky_flash() > 0.0);
+        apply_sky_flash(
+            &mut sky,
+            dim.can_have_weather() && sky_flash() > 0.0 && !crate::gui::more_options::accessibility().hide_lightning,
+        );
 
         self.rain_fog
             .advance(rain, delta_ticks, sky_light, has_precipitation);

@@ -8,6 +8,8 @@ const RETURN_TO_GAME: &str = "Back to Game";
 
 const ADVANCEMENTS: &str = "Advancements";
 
+const STATISTICS: &str = "Statistics";
+
 const OPTIONS: &str = "Options...";
 
 const DISCONNECT: &str = "Disconnect";
@@ -49,7 +51,7 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
 
     widgets::draw_title(p, ctx.vw, TITLE_Y, TITLE);
 
-    let mut button = |i: usize, label: &'static str| {
+    let button = |p: &mut Painter, i: usize, label: &'static str| {
         Button::new(
             x,
             gy + BUTTON_TOPS[i],
@@ -60,18 +62,25 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         .draw(p, ctx)
     };
 
-    if button(0, RETURN_TO_GAME) {
+    if button(p, 0, RETURN_TO_GAME) {
         state.nav = Some(Screen::None);
     }
-    if button(1, ADVANCEMENTS) {
+    // Advancements and Statistics share a row, as vanilla's.
+    let half = (BUTTON_WIDTH_FULL - BUTTON_PADDING) / 2.0;
+    if Button::new(x, gy + BUTTON_TOPS[1], half, WIDGET_HEIGHT, ADVANCEMENTS).draw(p, ctx) {
         state.advancements.parent = Screen::Pause;
         state.nav = Some(Screen::Advancements);
     }
-    if button(2, OPTIONS) {
+    if Button::new(x + half + BUTTON_PADDING, gy + BUTTON_TOPS[1], half, WIDGET_HEIGHT, STATISTICS).draw(p, ctx) {
+        state.stats = Default::default();
+        crate::SHARED.get().map(|s| s.lock().unwrap().session.stats_request = true);
+        state.nav = Some(Screen::Statistics);
+    }
+    if button(p, 2, OPTIONS) {
         state.options_parent = Screen::Pause;
         state.nav = Some(Screen::Options);
     }
-    if button(3, DISCONNECT) {
+    if button(p, 3, DISCONNECT) {
         state.disconnect = true;
         state.nav = Some(Screen::Title);
     }

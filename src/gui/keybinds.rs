@@ -264,6 +264,7 @@ pub static BINDS: LazyLock<Vec<BindDef>> = LazyLock::new(|| {
     BindDef { action: Action::Fullscreen, id: "key.fullscreen", name: "Toggle Fullscreen", category: MISC, default: Bound::Key(KeyCode::F11) },
     BindDef { action: Action::Screenshot, id: "key.screenshot", name: "Take Screenshot", category: MISC, default: Bound::Key(KeyCode::F2) },
     BindDef { action: Action::Advancements, id: "key.advancements", name: "Advancements", category: MISC, default: Bound::Key(KeyCode::KeyL) },
+    BindDef { action: Action::SocialInteractions, id: "key.socialInteractions", name: "Social Interactions Screen", category: MULTIPLAYER, default: Bound::Key(KeyCode::KeyP) },
 
     BindDef { action: Action::Chat, id: "key.chat", name: "Open Chat", category: MULTIPLAYER, default: Bound::Key(KeyCode::KeyT) },
     BindDef { action: Action::PlayerList, id: "key.playerlist", name: "List Players", category: MULTIPLAYER, default: Bound::Key(KeyCode::Tab) },
@@ -291,6 +292,8 @@ pub static BINDS: LazyLock<Vec<BindDef>> = LazyLock::new(|| {
     BindDef { action: Action::ReloadChunks, id: "key.debug.reloadChunk", name: "Reload Chunks", category: DEBUG, default: Bound::Key(KeyCode::KeyA) },
     BindDef { action: Action::ChunkBorders, id: "key.debug.showChunkBorders", name: "Show Chunk Boundaries", category: DEBUG, default: Bound::Key(KeyCode::KeyG) },
     BindDef { action: Action::AdvancedTooltips, id: "key.debug.showAdvancedTooltips", name: "Show Advanced Tooltips", category: DEBUG, default: Bound::Key(KeyCode::KeyH) },
+    BindDef { action: Action::Hitboxes, id: "key.debug.showHitboxes", name: "Show Hitboxes", category: DEBUG, default: Bound::Key(KeyCode::KeyB) },
+    BindDef { action: Action::GameModeSwitcher, id: "key.debug.switchGameMode", name: "Open Game Mode Switcher", category: DEBUG, default: Bound::Key(KeyCode::F4) },
 
     // Unbound by default, so a stray C no longer leaves the body behind. A new
     // id, since every saved bind file still holds the old C.
@@ -328,6 +331,7 @@ pub enum Action {
     Fullscreen,
     Screenshot,
     Advancements,
+    SocialInteractions,
     Chat,
     PlayerList,
     Command,
@@ -351,6 +355,8 @@ pub enum Action {
     ReloadChunks,
     ChunkBorders,
     AdvancedTooltips,
+    Hitboxes,
+    GameModeSwitcher,
     Freecam,
     Zoom,
     #[cfg(target_arch = "wasm32")]

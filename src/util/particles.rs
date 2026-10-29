@@ -33,6 +33,7 @@ impl Plugin for ParticlePlugin {
                     spawn_particles,
                     spawn_crit_particles,
                     animate_tick_particles,
+                    tick_fireworks,
                     tick_particles,
                     draw_particles,
                 )
@@ -232,6 +233,167 @@ pub(crate) struct Particle {
     grow: Grow,
     sprite: Sprite,
     flags: u8,
+    /// A firework spark's extras.
+    spark: Option<Box<Spark>>,
+    /// Vanilla particle classes with their own `tick`.
+    behavior: Behavior,
+}
+
+/// What kind of drip, and so its colour, fluid, timing and what follows.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Drip {
+    WaterHang,
+    LavaHang,
+    HoneyHang,
+    TearHang,
+    DripstoneWaterHang,
+    DripstoneLavaHang,
+    WaterFall,
+    LavaFall,
+    HoneyFall,
+    TearFall,
+    DripstoneWaterFall,
+    DripstoneLavaFall,
+    NectarFall,
+    SporeFall,
+    LavaLand,
+    HoneyLand,
+    TearLand,
+}
+
+impl Drip {
+    fn of(p: &P) -> Option<Drip> {
+        Some(match p {
+            P::DrippingWater => Drip::WaterHang,
+            P::DrippingLava => Drip::LavaHang,
+            P::DrippingHoney => Drip::HoneyHang,
+            P::DrippingObsidianTear => Drip::TearHang,
+            P::DrippingDripstoneWater => Drip::DripstoneWaterHang,
+            P::DrippingDripstoneLava => Drip::DripstoneLavaHang,
+            P::FallingWater => Drip::WaterFall,
+            P::FallingLava => Drip::LavaFall,
+            P::FallingHoney => Drip::HoneyFall,
+            P::FallingObsidianTear => Drip::TearFall,
+            P::FallingDripstoneWater => Drip::DripstoneWaterFall,
+            P::FallingDripstoneLava => Drip::DripstoneLavaFall,
+            P::FallingNectar => Drip::NectarFall,
+            P::FallingSporeBlossom => Drip::SporeFall,
+            P::LandingLava => Drip::LavaLand,
+            P::LandingHoney => Drip::HoneyLand,
+            P::LandingObsidianTear => Drip::TearLand,
+            _ => return None,
+        })
+    }
+
+    fn hangs(self) -> bool {
+        matches!(
+            self,
+            Drip::WaterHang | Drip::LavaHang | Drip::HoneyHang | Drip::TearHang | Drip::DripstoneWaterHang | Drip::DripstoneLavaHang
+        )
+    }
+
+    fn falls(self) -> bool {
+        matches!(
+            self,
+            Drip::WaterFall
+                | Drip::LavaFall
+                | Drip::HoneyFall
+                | Drip::TearFall
+                | Drip::DripstoneWaterFall
+                | Drip::DripstoneLavaFall
+                | Drip::NectarFall
+                | Drip::SporeFall
+        )
+    }
+
+    fn cools(self) -> bool {
+        matches!(self, Drip::LavaHang | Drip::DripstoneLavaHang)
+    }
+
+    fn glows(self) -> bool {
+        matches!(self, Drip::TearHang | Drip::TearFall | Drip::TearLand)
+    }
+
+    /// The fluid it vanishes into: 1 water, 2 lava, 0 none.
+    fn fluid(self) -> u8 {
+        match self {
+            Drip::WaterHang | Drip::DripstoneWaterHang | Drip::WaterFall | Drip::DripstoneWaterFall => 1,
+            Drip::LavaHang | Drip::DripstoneLavaHang | Drip::LavaFall | Drip::DripstoneLavaFall | Drip::LavaLand => 2,
+            _ => 0,
+        }
+    }
+
+    /// What a hanging drip turns into, or a falling one lands as.
+    fn next(self) -> Option<P> {
+        Some(match self {
+            Drip::WaterHang => P::FallingWater,
+            Drip::LavaHang => P::FallingLava,
+            Drip::HoneyHang => P::FallingHoney,
+            Drip::TearHang => P::FallingObsidianTear,
+            Drip::DripstoneWaterHang => P::FallingDripstoneWater,
+            Drip::DripstoneLavaHang => P::FallingDripstoneLava,
+            Drip::WaterFall | Drip::DripstoneWaterFall => P::Splash,
+            Drip::LavaFall | Drip::DripstoneLavaFall => P::LandingLava,
+            Drip::HoneyFall => P::LandingHoney,
+            Drip::TearFall => P::LandingObsidianTear,
+            _ => return None,
+        })
+    }
+
+    /// The sound a landing makes.
+    fn land_sound(self) -> Option<&'static str> {
+        match self {
+            Drip::HoneyFall => Some("block.beehive.drip"),
+            Drip::DripstoneWaterFall => Some("block.pointed_dripstone.drip_water"),
+            Drip::DripstoneLavaFall => Some("block.pointed_dripstone.drip_lava"),
+            _ => None,
+        }
+    }
+
+    const WATER: [f32; 3] = [0.2, 0.3, 1.0];
+    const LAVA: [f32; 3] = [1.0, 0.285_714_3, 0.083_333_336];
+    const TEAR: [f32; 3] = [0.511_718_75, 0.031_25, 0.890_625];
+}
+
+/// `FallingParticle`'s wind and spin.
+#[derive(Clone, Copy, PartialEq, Debug)]
+struct Leaf {
+    roll: f32,
+    old_roll: f32,
+    rot_speed: f32,
+    spin: f32,
+    wind: f32,
+    swirl: bool,
+    flow: bool,
+    x_flow: f32,
+    z_flow: f32,
+    swirl_period: f32,
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Behavior {
+    None,
+    Drip(Drip),
+    Leaf(Leaf),
+    /// `FireflyParticle`: fades in and out, darts about, dies in blocks.
+    Firefly,
+    /// `SquidInkParticle`: sinks slowly through air.
+    SquidInk,
+    /// `SnowflakeParticle`: slows down and settles.
+    Snowflake,
+    /// `FlyStraightTowardsParticle`: from the start toward the spot, the
+    /// colour sliding from one to the other.
+    FlyStraight { start: [f32; 3], offset: [f32; 3], from: u32, to: u32 },
+    /// `SulfurBubbleParticle`: rises through still water, swelling.
+    Bubble { y_start: f32, y_end: f32, y_prev: f32, size_start: f32 },
+}
+
+/// `FireworkParticles.SparkParticle`'s state beyond a plain particle.
+#[derive(Clone, Copy)]
+struct Spark {
+    fade: Option<[f32; 3]>,
+    trail: bool,
+    twinkle: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -247,6 +409,8 @@ enum Grow {
     Flame,
     Lava,
     Portal,
+    /// `FireworkParticles.OverlayParticle`: swells and fades over 4 ticks.
+    Flash,
 }
 
 const PHYSICS: u8 = 1 << 0;
@@ -578,6 +742,8 @@ pub(crate) fn spawn_block_break(
             grow: Grow::Fixed,
             sprite: Sprite::Fixed(random_sub_uv(tile, &mut rng)),
             flags: PHYSICS | TERRAIN,
+            spark: None,
+            behavior: Behavior::None,
         };
         if particle.lifetime > 0 {
             particle.age = 1;
@@ -655,6 +821,8 @@ fn spawn_crit_particles(
                     grow: Grow::In,
                     sprite: Sprite::Fixed(uv),
                     flags: CRIT_DECAY,
+                    spark: None,
+                    behavior: Behavior::None,
                 };
                 if particle.lifetime > 0 {
                     particle.age = 1;
@@ -790,6 +958,17 @@ fn add_level_particle(
         grow: recipe.grow,
         sprite: recipe.sprite,
         flags: recipe.flags,
+        spark: None,
+        behavior: match recipe.behavior {
+            // `FlyStraightTowardsParticle` starts its offset away and comes in.
+            Behavior::FlyStraight { offset, from, to, .. } => Behavior::FlyStraight {
+                start: pos.to_array(),
+                offset,
+                from,
+                to,
+            },
+            other => other,
+        },
     };
     particle.age = 1;
     advance_one_tick(&mut particle, world);
@@ -1673,6 +1852,7 @@ fn emit_fluid_ambient(fluid: &azalea::block::fluid_state::FluidState, ctx: &mut 
 }
 
 struct Recipe {
+    behavior: Behavior,
     velocity: Vec3,
     gravity: f32,
     friction: f32,
@@ -1686,6 +1866,7 @@ struct Recipe {
 
 fn base_recipe(sprite: Sprite, rng: &mut JavaRandom) -> Recipe {
     Recipe {
+        behavior: Behavior::None,
         velocity: Vec3::ZERO,
         gravity: 1.0,
         friction: 0.98,
@@ -1892,6 +2073,191 @@ fn recipe(
             r.size = 1.0 - arg.x * 0.5;
             r.flags = FULLBRIGHT;
             Some(r)
+        }
+        _ if Drip::of(particle).is_some() => drip_recipe(atlas, name, Drip::of(particle)?, rng),
+        P::CherryLeaves => leaf_recipe(atlas, name, rng, 0.25, 2.0, false, true, 1.0, 0.0),
+        P::PaleOakLeaves | P::RedPoplarLeaves | P::OrangePoplarLeaves | P::YellowPoplarLeaves => {
+            leaf_recipe(atlas, name, rng, 0.07, 10.0, true, false, 2.0, 0.021)
+        }
+        P::Snowflake => {
+            let mut r = base_recipe(Sprite::Animated(atlas.sheet_index(name)?), rng);
+            r.velocity = arg
+                + Vec3::new(
+                    (rng.next_f32() * 2.0 - 1.0) * 0.05,
+                    (rng.next_f32() * 2.0 - 1.0) * 0.05,
+                    (rng.next_f32() * 2.0 - 1.0) * 0.05,
+                );
+            r.gravity = 0.225;
+            r.friction = 1.0;
+            r.size = 0.1 * (rng.next_f32() * rng.next_f32() + 1.0);
+            r.lifetime = (16.0 / (rng.next_f32() * 0.8 + 0.2)) as u32 + 2;
+            r.tint = [0.923, 0.964, 0.999, 1.0];
+            r.behavior = Behavior::Snowflake;
+            Some(r)
+        }
+        // `EmissiveRisingParticle`: a soul, and the sculk's glowing one.
+        P::Soul | P::SculkSoul => {
+            let mut r = base_recipe(Sprite::Animated(atlas.sheet_index(name)?), rng);
+            r.velocity = base_velocity(arg, rng) * 0.01 + arg;
+            r.gravity = 0.0;
+            r.friction = 0.96;
+            r.size *= 1.5;
+            r.lifetime = (8.0 / (rng.next_f32() * 0.8 + 0.2)) as u32 + 4;
+            r.flags = PHYSICS | TRANSLUCENT | if matches!(particle, P::SculkSoul) { FULLBRIGHT } else { 0 };
+            Some(r)
+        }
+        P::Gust | P::SmallGust => {
+            let mut r = base_recipe(Sprite::Animated(atlas.sheet_index(name)?), rng);
+            r.gravity = 0.0;
+            r.lifetime = 12 + rng.next_int(4);
+            r.size = if matches!(particle, P::SmallGust) { 0.15 } else { 1.0 };
+            r.flags = FULLBRIGHT;
+            Some(r)
+        }
+        P::SonicBoom => {
+            let mut r = base_recipe(Sprite::Animated(atlas.sheet_index(name)?), rng);
+            r.gravity = 0.0;
+            r.lifetime = 16;
+            let grey = rng.next_f32() * 0.6 + 0.4;
+            r.tint = [grey, grey, grey, 1.0];
+            r.size = 1.5;
+            r.flags = FULLBRIGHT;
+            Some(r)
+        }
+        // `ExplodeParticle` with gravity: a llama's spit.
+        P::Spit => {
+            let mut r = base_recipe(Sprite::Animated(atlas.sheet_index(name)?), rng);
+            r.velocity = arg
+                + Vec3::new(
+                    (rng.next_f32() * 2.0 - 1.0) * 0.05,
+                    (rng.next_f32() * 2.0 - 1.0) * 0.05,
+                    (rng.next_f32() * 2.0 - 1.0) * 0.05,
+                );
+            r.gravity = 0.5;
+            r.friction = 0.9;
+            let grey = rng.next_f32() * 0.3 + 0.7;
+            r.tint = [grey, grey, grey, 1.0];
+            r.size = 0.1 * (rng.next_f32() * rng.next_f32() * 6.0 + 1.0);
+            r.lifetime = (16.0 / (rng.next_f32() * 0.8 + 0.2)) as u32 + 2;
+            Some(r)
+        }
+        P::SquidInk | P::GlowSquidInk if matches!(particle, P::SquidInk) => {
+            let mut r = base_recipe(Sprite::Animated(atlas.sheet_index(name)?), rng);
+            r.velocity = arg;
+            r.gravity = 0.0;
+            r.friction = 0.92;
+            r.size = 0.5;
+            r.tint = [0.0, 0.0, 0.0, 1.0];
+            r.lifetime = ((0.5 * 12.0 / (rng.next_f32() * 0.8 + 0.2)) as u32).max(1);
+            r.flags = TRANSLUCENT | FADE_OUT;
+            r.behavior = Behavior::SquidInk;
+            Some(r)
+        }
+        // `WakeParticle`: a fishing bobber's trail.
+        P::Fishing => {
+            let mut r = base_recipe(Sprite::Animated(atlas.sheet_index(name)?), rng);
+            r.velocity = arg;
+            r.gravity = 0.0;
+            r.friction = 0.98;
+            r.lifetime = (8.0 / (rng.next_f32() * 0.8 + 0.2)) as u32;
+            r.flags = PHYSICS;
+            Some(r)
+        }
+        P::SculkChargePop => {
+            let mut r = base_recipe(Sprite::Animated(atlas.sheet_index(name)?), rng);
+            r.velocity = arg;
+            r.gravity = 0.0;
+            r.friction = 0.96;
+            r.lifetime = rng.next_int(4) + 6;
+            r.flags = TRANSLUCENT | FULLBRIGHT;
+            Some(r)
+        }
+        P::PauseMobGrowth | P::ResetMobGrowth => {
+            let uv = random_frame(atlas, name, rng)?;
+            let mut r = base_recipe(Sprite::Fixed(uv), rng);
+            let up = if matches!(particle, P::ResetMobGrowth) { 0.03 } else { -0.03 };
+            r.velocity = arg + Vec3::new(0.0, up, 0.0);
+            r.gravity = 0.0;
+            r.size *= rng.next_f32() * 0.6 + 0.5;
+            r.lifetime = 8;
+            r.flags = PHYSICS;
+            Some(r)
+        }
+        P::TrialSpawnerDetection | P::TrialSpawnerDetectionOminous => {
+            let mut r = base_recipe(Sprite::Animated(atlas.sheet_index(name)?), rng);
+            let v = base_velocity(Vec3::ZERO, rng);
+            r.velocity = Vec3::new(0.0, v.y * 0.9, 0.0) + arg;
+            r.gravity = -0.1;
+            r.friction = 0.96;
+            r.size *= 0.75 * 1.5;
+            r.lifetime = ((8.0 / (0.5 + rng.next_f32() * 0.5) * 1.5) as u32).max(1);
+            r.grow = Grow::In;
+            r.flags = PHYSICS | FULLBRIGHT;
+            Some(r)
+        }
+        P::OminousSpawning => {
+            let uv = random_frame(atlas, name, rng)?;
+            let mut r = base_recipe(Sprite::Fixed(uv), rng);
+            r.gravity = 0.0;
+            r.friction = 1.0;
+            r.size = 0.1 * (rng.next_f32() * 0.5 + 0.2) * (3.0 + rng.next_f32() * 2.0);
+            r.lifetime = (rng.next_f32() * 5.0) as u32 + 25;
+            r.flags = FULLBRIGHT;
+            // The spot is set when spawned: see `FlyStraight`.
+            r.behavior = Behavior::FlyStraight {
+                start: [0.0; 3],
+                offset: arg.to_array(),
+                from: 0xFF45_5BFE,
+                to: 0xFFFF_FFFF,
+            };
+            Some(r)
+        }
+        P::Firefly => {
+            let uv = random_frame(atlas, name, rng)?;
+            let mut r = base_recipe(Sprite::Fixed(uv), rng);
+            let seed = Vec3::new(
+                0.5 - rng.next_f64() as f32,
+                if rng.next_int(2) == 0 { arg.y } else { -arg.y },
+                0.5 - rng.next_f64() as f32,
+            );
+            r.velocity = base_velocity(seed, rng) * 0.8;
+            r.gravity = 0.0;
+            r.friction = 0.96;
+            r.size *= 0.75 * 1.5;
+            r.lifetime = 200 + rng.next_int(101);
+            r.tint[3] = 0.0;
+            r.flags = PHYSICS | TRANSLUCENT | FULLBRIGHT;
+            r.behavior = Behavior::Firefly;
+            Some(r)
+        }
+        P::NoxiousGas => {
+            let mut r = ash_smoke_recipe(atlas, name, arg, rng, 3.0, 0.3)?;
+            r.tint = [1.0, 1.0, 1.0, 1.0];
+            r.gravity = -0.02;
+            r.lifetime = ((6.0 / (rng.next_f32() * 0.5 + 0.5) * 3.0) as u32).max(1);
+            r.flags |= TRANSLUCENT | FADE_OUT | PHYSICS;
+            Some(r)
+        }
+        P::SulfurBubbles => {
+            let uv = random_frame(atlas, name, rng)?;
+            let mut r = base_recipe(Sprite::Fixed(uv), rng);
+            r.velocity = Vec3::new(
+                arg.x * 0.2 + (rng.next_f32() * 2.0 - 1.0) * 0.02,
+                0.0,
+                arg.y * 0.2 + (rng.next_f32() * 2.0 - 1.0) * 0.02,
+            );
+            r.gravity = -0.04;
+            r.friction = 0.85;
+            let size_start = 0.02 + 0.02 * rng.next_f32();
+            r.size = size_start;
+            r.lifetime = 20 * 60;
+            r.behavior = Behavior::Bubble { y_start: 0.0, y_end: 0.0, y_prev: f32::MIN, size_start };
+            Some(r)
+        }
+        // `ElderGuardianParticle`: the face, drawn over the screen.
+        P::ElderGuardian => {
+            crate::play::event_particles::elder_guardian();
+            None
         }
         P::Explosion => {
             let mut r = base_recipe(Sprite::Animated(atlas.sheet_index(name)?), rng);
@@ -2316,6 +2682,241 @@ fn animated_recipe(
     Some(r)
 }
 
+/// `DripParticle` and its providers: colour, gravity (per tick, as vanilla
+/// subtracts it whole) and lifetime per kind.
+fn drip_recipe(atlas: &Atlas, name: &str, drip: Drip, rng: &mut JavaRandom) -> Option<Recipe> {
+    let mut r = base_recipe(Sprite::Animated(atlas.sheet_index(name)?), rng);
+    let ranged = |rng: &mut JavaRandom, n: f32| (n / (rng.next_f32() * 0.8 + 0.2)) as u32;
+    let mut gravity = 0.06;
+    let (color, lifetime) = match drip {
+        Drip::WaterHang | Drip::DripstoneWaterHang => {
+            gravity *= 0.02;
+            (Drip::WATER, 40)
+        }
+        Drip::LavaHang | Drip::DripstoneLavaHang => {
+            gravity *= 0.02;
+            ([1.0, 0.4, 0.5], 40)
+        }
+        Drip::HoneyHang => {
+            gravity *= 0.02 * 0.01;
+            ([0.622, 0.508, 0.082], 100)
+        }
+        Drip::TearHang => {
+            gravity *= 0.02 * 0.01;
+            (Drip::TEAR, 100)
+        }
+        Drip::WaterFall | Drip::DripstoneWaterFall => (Drip::WATER, ranged(rng, 64.0)),
+        Drip::LavaFall | Drip::DripstoneLavaFall => (Drip::LAVA, ranged(rng, 64.0)),
+        Drip::HoneyFall => {
+            gravity = 0.01;
+            ([0.582, 0.448, 0.082], ranged(rng, 64.0))
+        }
+        Drip::TearFall => {
+            gravity = 0.01;
+            (Drip::TEAR, ranged(rng, 64.0))
+        }
+        Drip::NectarFall => {
+            gravity = 0.007;
+            ([0.92, 0.782, 0.72], ranged(rng, 16.0))
+        }
+        Drip::SporeFall => {
+            gravity = 0.005;
+            ([0.32, 0.5, 0.22], (64.0 / (0.1 + rng.next_f32() * 0.8)) as u32)
+        }
+        Drip::LavaLand => (Drip::LAVA, ranged(rng, 16.0)),
+        Drip::HoneyLand => ([0.522, 0.408, 0.082], ranged(rng, 128.0)),
+        Drip::TearLand => (Drip::TEAR, ranged(rng, 28.0)),
+    };
+    r.tint = [color[0], color[1], color[2], 1.0];
+    // This engine subtracts 0.04 times its gravity a tick.
+    r.gravity = gravity / 0.04;
+    r.friction = 0.98;
+    r.lifetime = lifetime.max(1);
+    r.flags = PHYSICS | if drip.glows() { FULLBRIGHT } else { 0 };
+    r.behavior = Behavior::Drip(drip);
+    Some(r)
+}
+
+/// `FallingLeavesParticle`: its fall, wind and spin.
+#[allow(clippy::too_many_arguments)]
+fn leaf_recipe(
+    atlas: &Atlas,
+    name: &str,
+    rng: &mut JavaRandom,
+    fall: f32,
+    side: f32,
+    swirl: bool,
+    flow: bool,
+    scale: f32,
+    start: f32,
+) -> Option<Recipe> {
+    let uv = random_frame(atlas, name, rng)?;
+    let mut r = base_recipe(Sprite::Fixed(uv), rng);
+    let rot_speed = if rng.next_int(2) == 0 { -30.0f32 } else { 30.0 }.to_radians();
+    let spin = if rng.next_int(2) == 0 { -5.0f32 } else { 5.0 }.to_radians();
+    r.lifetime = 300;
+    r.gravity = fall * 1.2 * 0.0025 / 0.04;
+    r.size = scale * if rng.next_int(2) == 0 { 0.05 } else { 0.075 };
+    r.friction = 1.0;
+    r.velocity = Vec3::new(0.0, -start, 0.0);
+    let random = rng.next_f32();
+    r.flags = PHYSICS;
+    r.behavior = Behavior::Leaf(Leaf {
+        roll: 0.0,
+        old_roll: 0.0,
+        rot_speed,
+        spin,
+        wind: side,
+        swirl,
+        flow,
+        x_flow: (random * 60.0).to_radians().cos() * side,
+        z_flow: (random * 60.0).to_radians().sin() * side,
+        swirl_period: (1000.0 + random * 3000.0).to_radians(),
+    });
+    Some(r)
+}
+
+/// Whether `pos` sits in `fluid` (1 water, 2 lava) below its surface.
+fn in_fluid(world: Option<&azalea_world::World>, pos: Vec3, fluid: u8) -> bool {
+    use azalea::block::fluid_state::{FluidKind, FluidState};
+    let Some(world) = world else { return false };
+    let cell = azalea_core::position::BlockPos::new(pos.x.floor() as i32, pos.y.floor() as i32, pos.z.floor() as i32);
+    let Some(state) = world.get_block_state(cell) else { return false };
+    let f = FluidState::from(state);
+    let kind = match fluid {
+        1 => FluidKind::Water,
+        2 => FluidKind::Lava,
+        _ => return false,
+    };
+    f.kind == kind && pos.y < cell.y as f32 + f.height()
+}
+
+fn is_air_at(world: Option<&azalea_world::World>, pos: Vec3) -> bool {
+    let Some(world) = world else { return true };
+    let cell = azalea_core::position::BlockPos::new(pos.x.floor() as i32, pos.y.floor() as i32, pos.z.floor() as i32);
+    world.get_block_state(cell).is_none_or(|s| s.is_air())
+}
+
+/// What a behaviour asks for after a tick: to die, and what to set off.
+struct After {
+    remove: bool,
+    spawn: Option<(P, Vec3)>,
+    sound: Option<(&'static str, Vec3)>,
+}
+
+/// A behaviour's tick, after the plain motion; `on_ground` is that
+/// motion's landing.
+fn tick_behavior(p: &mut Particle, world: Option<&azalea_world::World>, on_ground: bool, rng: &mut JavaRandom) -> After {
+    let mut after = After { remove: false, spawn: None, sound: None };
+    match &mut p.behavior {
+        Behavior::None => {}
+        Behavior::Drip(drip) => {
+            let drip = *drip;
+            if drip.hangs() {
+                p.velocity *= 0.02;
+                if drip.cools() {
+                    let left = p.lifetime.saturating_sub(p.age) as f32;
+                    p.tint = [1.0, 16.0 / (40.0 - left + 16.0), 4.0 / (40.0 - left + 8.0), 1.0];
+                }
+                if p.age >= p.lifetime {
+                    after.spawn = drip.next().map(|n| (n, p.pos));
+                }
+            } else if drip.falls() && on_ground {
+                after.remove = true;
+                after.spawn = drip.next().map(|n| (n, p.pos));
+                after.sound = drip.land_sound().map(|s| (s, p.pos));
+            }
+            if drip.fluid() != 0 && in_fluid(world, p.pos, drip.fluid()) {
+                after.remove = true;
+                after.spawn = None;
+            }
+        }
+        Behavior::Leaf(leaf) => {
+            let alive = p.age as f32;
+            let relative = (alive / 300.0).min(1.0);
+            let (mut xa, mut za) = (0.0f32, 0.0f32);
+            if leaf.flow {
+                xa += leaf.x_flow * relative.powf(1.25);
+                za += leaf.z_flow * relative.powf(1.25);
+            }
+            if leaf.swirl {
+                xa += relative * (relative * leaf.swirl_period).cos() * leaf.wind;
+                za += relative * (relative * leaf.swirl_period).sin() * leaf.wind;
+            }
+            p.velocity.x += xa * 0.0025;
+            p.velocity.z += za * 0.0025;
+            leaf.rot_speed += leaf.spin / 20.0;
+            leaf.old_roll = leaf.roll;
+            leaf.roll += leaf.rot_speed / 20.0;
+            if on_ground || (p.age > 1 && (p.velocity.x == 0.0 || p.velocity.z == 0.0)) {
+                after.remove = true;
+            }
+        }
+        Behavior::Firefly => {
+            if !is_air_at(world, p.pos) {
+                after.remove = true;
+            }
+            let progress = (p.age as f32 / p.lifetime as f32).clamp(0.0, 1.0);
+            let fade = |in_time: f32, out_time: f32| {
+                if progress >= 1.0 - in_time {
+                    (1.0 - progress) / in_time
+                } else if progress <= out_time {
+                    progress / out_time
+                } else {
+                    1.0
+                }
+            };
+            p.tint[3] = fade(0.3, 0.5);
+            if rng.next_f32() > 0.95 || p.age == 1 {
+                p.velocity = Vec3::new(
+                    -0.05 + 0.1 * rng.next_f32(),
+                    -0.05 + 0.1 * rng.next_f32(),
+                    -0.05 + 0.1 * rng.next_f32(),
+                );
+            }
+        }
+        Behavior::SquidInk => {
+            if is_air_at(world, p.pos) {
+                p.velocity.y -= 0.0074;
+            }
+        }
+        Behavior::Snowflake => {
+            p.velocity.x *= 0.95;
+            p.velocity.y *= 0.9;
+            p.velocity.z *= 0.95;
+        }
+        Behavior::FlyStraight { start, offset, from, to } => {
+            let t = p.age as f32 / p.lifetime.max(1) as f32;
+            let left = 1.0 - t;
+            p.pos = Vec3::from(*start) + Vec3::from(*offset) * left;
+            let lerp = |shift: u32| {
+                let a = ((*from >> shift) & 0xFF) as f32 / 255.0;
+                let b = ((*to >> shift) & 0xFF) as f32 / 255.0;
+                a + (b - a) * t
+            };
+            p.tint = [lerp(16), lerp(8), lerp(0), lerp(24)];
+            p.velocity = Vec3::ZERO;
+        }
+        Behavior::Bubble { y_start, y_end, y_prev, size_start } => {
+            if *y_prev == f32::MIN {
+                *y_start = p.prev.y;
+                *y_end = p.prev.y + 3.0;
+                *y_prev = p.prev.y;
+            }
+            if !in_fluid(world, p.pos, 1) || p.pos.y >= *y_end || p.pos.y <= *y_prev {
+                after.remove = true;
+            }
+            let wiggle = |rng: &mut JavaRandom| rng.next_f32() * 0.003 * if rng.next_int(2) == 0 { 1.0 } else { -1.0 } * 0.5;
+            p.velocity.x += wiggle(rng);
+            p.velocity.z += wiggle(rng);
+            let progress = (p.pos.y - *y_start) / (*y_end - *y_start).max(1e-3);
+            p.size = *size_start + progress * (0.15 - *size_start);
+            *y_prev = p.pos.y;
+        }
+    }
+    after
+}
+
 fn generic_recipe(atlas: &Atlas, name: &str, arg: Vec3, rng: &mut JavaRandom) -> Option<Recipe> {
     let sheet = atlas.sheet_index(name)?;
     let animated = atlas.sheets[sheet as usize].len() > 1;
@@ -2377,7 +2978,7 @@ fn is_solid_at(world: Option<&azalea_world::World>, pos: Vec3) -> bool {
         .is_some_and(crate::util::block_model::is_solid)
 }
 
-fn advance_one_tick(p: &mut Particle, world: Option<&azalea_world::World>) {
+fn advance_one_tick(p: &mut Particle, world: Option<&azalea_world::World>) -> bool {
     p.prev = p.pos;
     p.velocity.y -= 0.04 * p.gravity;
 
@@ -2418,6 +3019,311 @@ fn advance_one_tick(p: &mut Particle, world: Option<&azalea_world::World>) {
         let half = p.lifetime / 2;
         p.tint[3] = 1.0 - (p.age.saturating_sub(half) as f32 / p.lifetime as f32);
     }
+    on_ground
+}
+
+/// `SparkParticle.tick` and `SimpleAnimatedParticle.tick`: past half its
+/// life the colour eases to the fade colour; through its first half a
+/// trailing spark leaves a still copy every other tick.
+fn tick_spark(p: &mut Particle, spark: Spark, trails: &mut Vec<Particle>) {
+    if p.age > p.lifetime / 2
+        && let Some(fade) = spark.fade
+    {
+        for (c, f) in p.tint.iter_mut().zip(fade) {
+            *c += (f - *c) * 0.2;
+        }
+    }
+    if spark.trail && p.age < p.lifetime / 2 && (p.age + p.lifetime) % 2 == 0 {
+        let mut copy = Particle {
+            prev: p.pos,
+            pos: p.pos,
+            velocity: Vec3::ZERO,
+            gravity: p.gravity,
+            friction: p.friction,
+            tick_acc: 0.0,
+            age: 0,
+            lifetime: p.lifetime,
+            tint: [p.tint[0], p.tint[1], p.tint[2], 0.99],
+            size: p.size,
+            grow: p.grow,
+            sprite: p.sprite,
+            flags: p.flags,
+            spark: Some(Box::new(Spark { trail: false, ..spark })),
+            behavior: Behavior::None,
+        };
+        copy.age = copy.lifetime / 2;
+        trails.push(copy);
+    }
+}
+
+/// A rocket's explosion: `FireworkExplosion`.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct FireworkExplosion {
+    /// 0 small ball, 1 large ball, 2 star, 3 creeper, 4 burst.
+    pub shape: u8,
+    pub colors: Vec<i32>,
+    pub fade_colors: Vec<i32>,
+    pub trail: bool,
+    pub twinkle: bool,
+}
+
+/// `FireworkParticles.Starter`: sets off a rocket's explosions one every
+/// other tick, with the blast and the twinkle.
+struct Starter {
+    pos: Vec3,
+    velocity: Vec3,
+    explosions: Vec<FireworkExplosion>,
+    life: u32,
+    lifetime: u32,
+    twinkle_delay: bool,
+    tick_acc: f32,
+}
+
+static STARTERS: std::sync::Mutex<Vec<Starter>> = std::sync::Mutex::new(Vec::new());
+
+/// A rocket exploded (entity event 17) at `pos` moving at `velocity`.
+pub(crate) fn start_firework(pos: [f64; 3], velocity: [f64; 3], explosions: Vec<FireworkExplosion>) {
+    let pos = Vec3::new(pos[0] as f32, pos[1] as f32, pos[2] as f32);
+    let velocity = Vec3::new(velocity[0] as f32, velocity[1] as f32, velocity[2] as f32);
+    if explosions.is_empty() {
+        // `ClientLevel.createFireworks`: a rocket with none puffs smoke.
+        if let Some(shared) = crate::SHARED.get() {
+            let mut s = shared.lock().unwrap();
+            for _ in 0..8 {
+                crate::session::push_particle_emit(
+                    &mut s.session.particle_emits,
+                    crate::session::ParticleEmit::Level(crate::session::LevelParticle {
+                        particle: azalea::entity::particle::Particle::Poof,
+                        pos: [pos.x as f64, pos.y as f64, pos.z as f64],
+                        dist: [0.0; 3],
+                        max_speed: [1.0; 3],
+                        count: 0,
+                        randomization: Default::default(),
+                        override_limiter: false,
+                        always_show: false,
+                    }),
+                );
+            }
+        }
+        return;
+    }
+    let twinkle_delay = explosions.iter().any(|e| e.twinkle);
+    let lifetime = explosions.len() as u32 * 2 - 1 + if twinkle_delay { 15 } else { 0 };
+    STARTERS.lock().unwrap().push(Starter {
+        pos,
+        velocity,
+        explosions,
+        life: 0,
+        lifetime,
+        twinkle_delay,
+        tick_acc: TICK,
+    });
+}
+
+const CREEPER_COORDS: [[f32; 2]; 12] = [
+    [0.0, 0.2], [0.2, 0.2], [0.2, 0.6], [0.6, 0.6], [0.6, 0.2], [0.2, 0.2],
+    [0.2, 0.0], [0.4, 0.0], [0.4, -0.6], [0.2, -0.6], [0.2, -0.4], [0.0, -0.4],
+];
+const STAR_COORDS: [[f32; 2]; 6] = [
+    [0.0, 1.0],
+    [0.3455, 0.309],
+    [0.9511, 0.309],
+    [0.379_591_84, -0.126_530_61],
+    [0.612_244_9, -0.804_081_6],
+    [0.0, -0.359_183_67],
+];
+
+fn rgb(color: i32) -> [f32; 3] {
+    [
+        ((color >> 16) & 0xFF) as f32 / 255.0,
+        ((color >> 8) & 0xFF) as f32 / 255.0,
+        (color & 0xFF) as f32 / 255.0,
+    ]
+}
+
+/// A spark: `SparkParticle`, gravity 0.1, three quarters the size.
+fn spark(
+    atlas: &Atlas,
+    rng: &mut JavaRandom,
+    pos: Vec3,
+    velocity: Vec3,
+    explosion: &FireworkExplosion,
+    colors: &[i32],
+) -> Option<Particle> {
+    let mut r = base_recipe(Sprite::Animated(atlas.sheet_index("firework")?), rng);
+    let color = colors[rng.next_int(colors.len() as u32) as usize];
+    let fade = (!explosion.fade_colors.is_empty())
+        .then(|| rgb(explosion.fade_colors[rng.next_int(explosion.fade_colors.len() as u32) as usize]));
+    r.size *= 0.75;
+    let [cr, cg, cb] = rgb(color);
+    Some(Particle {
+        prev: pos,
+        pos,
+        velocity,
+        gravity: 0.1,
+        friction: 0.91,
+        tick_acc: 0.0,
+        age: 0,
+        lifetime: 48 + rng.next_int(12),
+        tint: [cr, cg, cb, 0.99],
+        size: r.size,
+        grow: Grow::Fixed,
+        sprite: r.sprite,
+        flags: TRANSLUCENT | FULLBRIGHT | FADE_OUT,
+        spark: Some(Box::new(Spark {
+            fade,
+            trail: explosion.trail,
+            twinkle: explosion.twinkle,
+        })),
+        behavior: Behavior::None,
+    })
+}
+
+fn explode(starter: &Starter, explosion: &FireworkExplosion, atlas: &Atlas, rng: &mut JavaRandom, out: &mut Vec<Particle>) {
+    let black = [0x1E1B1B];
+    let colors: &[i32] = if explosion.colors.is_empty() { &black } else { &explosion.colors };
+    let at = starter.pos;
+    let add = |out: &mut Vec<Particle>, rng: &mut JavaRandom, v: Vec3| {
+        if let Some(p) = spark(atlas, rng, at, v, explosion, colors) {
+            out.push(p);
+        }
+    };
+    match explosion.shape {
+        0 | 1 => {
+            let (speed, steps) = if explosion.shape == 0 { (0.25f64, 2i32) } else { (0.5, 4) };
+            for y in -steps..=steps {
+                for x in -steps..=steps {
+                    let mut z = -steps;
+                    while z <= steps {
+                        let xa = x as f64 + (rng.next_f64() - rng.next_f64()) * 0.5;
+                        let ya = y as f64 + (rng.next_f64() - rng.next_f64()) * 0.5;
+                        let za = z as f64 + (rng.next_f64() - rng.next_f64()) * 0.5;
+                        let len = (xa * xa + ya * ya + za * za).sqrt() / speed + rng.next_gaussian() * 0.05;
+                        add(out, rng, Vec3::new((xa / len) as f32, (ya / len) as f32, (za / len) as f32));
+                        if y != -steps && y != steps && x != -steps && x != steps {
+                            z += steps * 2 - 1;
+                        }
+                        z += 1;
+                    }
+                }
+            }
+        }
+        2 | 3 => {
+            let coords: &[[f32; 2]] = if explosion.shape == 2 { &STAR_COORDS } else { &CREEPER_COORDS };
+            let flat = explosion.shape == 3;
+            let speed = 0.5f64;
+            let (sx, sy) = (coords[0][0] as f64, coords[0][1] as f64);
+            add(out, rng, Vec3::new((sx * speed) as f32, (sy * speed) as f32, 0.0));
+            let base = rng.next_f32() as f64 * std::f64::consts::PI;
+            let modifier = if flat { 0.034 } else { 0.34 };
+            for step in 0..3 {
+                let angle = base + step as f64 * std::f64::consts::PI * modifier;
+                let (mut ox, mut oy) = (sx, sy);
+                for c in &coords[1..] {
+                    let (tx, ty) = (c[0] as f64, c[1] as f64);
+                    let mut sub = 0.25;
+                    while sub <= 1.0 {
+                        let xa = (ox + (tx - ox) * sub) * speed;
+                        let ya = (oy + (ty - oy) * sub) * speed;
+                        let za = xa * angle.sin();
+                        let xa = xa * angle.cos();
+                        for flip in [-1.0, 1.0] {
+                            add(out, rng, Vec3::new((xa * flip) as f32, ya as f32, (za * flip) as f32));
+                        }
+                        sub += 0.25;
+                    }
+                    (ox, oy) = (tx, ty);
+                }
+            }
+        }
+        _ => {
+            let off_x = rng.next_gaussian() * 0.05;
+            let off_z = rng.next_gaussian() * 0.05;
+            for _ in 0..70 {
+                let xa = starter.velocity.x as f64 * 0.5 + rng.next_gaussian() * 0.15 + off_x;
+                let za = starter.velocity.z as f64 * 0.5 + rng.next_gaussian() * 0.15 + off_z;
+                let ya = starter.velocity.y as f64 * 0.5 + rng.next_f64() * 0.5;
+                add(out, rng, Vec3::new(xa as f32, ya as f32, za as f32));
+            }
+        }
+    }
+    // The flash, in the first colour.
+    if let Some(index) = atlas.sheet_index("flash") {
+        let [cr, cg, cb] = rgb(colors[0]);
+        out.push(Particle {
+            prev: at,
+            pos: at,
+            velocity: Vec3::ZERO,
+            gravity: 0.0,
+            friction: 1.0,
+            tick_acc: 0.0,
+            age: 0,
+            lifetime: 4,
+            tint: [cr, cg, cb, 0.6],
+            size: 1.0,
+            grow: Grow::Flash,
+            sprite: Sprite::Animated(index),
+            flags: TRANSLUCENT | FULLBRIGHT,
+            spark: None,
+            behavior: Behavior::None,
+        });
+    }
+}
+
+fn tick_fireworks(
+    time: Res<Time>,
+    atlas: Res<ParticleAtlas>,
+    camera: Query<&GlobalTransform, With<WorldCamera>>,
+    mut live: ResMut<LiveParticles>,
+    mut particle_rng: ResMut<ParticleRng>,
+) {
+    let mut starters = STARTERS.lock().unwrap();
+    if starters.is_empty() {
+        return;
+    }
+    let Some(atlas) = atlas.0.as_ref() else { return };
+    let eye = camera.iter().next().map(GlobalTransform::translation).unwrap_or(Vec3::ZERO);
+    let dt = time.delta_secs();
+    let rng = &mut particle_rng.0;
+    starters.retain_mut(|starter| {
+        starter.tick_acc += dt;
+        while starter.tick_acc >= TICK {
+            starter.tick_acc -= TICK;
+            let far = starter.pos.distance_squared(eye) >= 256.0;
+            let at = starter.pos.to_array();
+            if starter.life == 0 {
+                let large = starter.explosions.len() >= 3 || starter.explosions.iter().any(|e| e.shape == 1);
+                let sound = match (large, far) {
+                    (true, true) => "entity.firework_rocket.large_blast_far",
+                    (true, false) => "entity.firework_rocket.large_blast",
+                    (false, true) => "entity.firework_rocket.blast_far",
+                    (false, false) => "entity.firework_rocket.blast",
+                };
+                #[cfg(audio)]
+                crate::audio::play_at(sound, crate::audio::category::SoundCategory::Ambient, at, 20.0, 0.95 + rng.next_f32() * 0.1);
+                #[cfg(not(audio))]
+                let _ = (sound, at);
+            }
+            if starter.life % 2 == 0 && ((starter.life / 2) as usize) < starter.explosions.len() {
+                let explosion = starter.explosions[(starter.life / 2) as usize].clone();
+                if live.0.len() < MAX_LIVE_PARTICLES {
+                    explode(starter, &explosion, atlas, rng, &mut live.0);
+                }
+            }
+            starter.life += 1;
+            if starter.life > starter.lifetime {
+                if starter.twinkle_delay {
+                    let sound = if far { "entity.firework_rocket.twinkle_far" } else { "entity.firework_rocket.twinkle" };
+                    #[cfg(audio)]
+                    crate::audio::play_at(sound, crate::audio::category::SoundCategory::Ambient, at, 20.0, 0.9 + rng.next_f32() * 0.15);
+                    #[cfg(not(audio))]
+                    let _ = sound;
+                }
+                return false;
+            }
+        }
+        true
+    });
 }
 
 fn particle_world() -> Option<std::sync::Arc<parking_lot::RwLock<azalea_world::World>>> {
@@ -2429,7 +3335,12 @@ fn particle_world() -> Option<std::sync::Arc<parking_lot::RwLock<azalea_world::W
 
 const TICK: f32 = 1.0 / 20.0;
 
-fn tick_particles(time: Res<Time>, mut live: ResMut<LiveParticles>) {
+fn tick_particles(
+    time: Res<Time>,
+    atlas: Res<ParticleAtlas>,
+    mut particle_rng: ResMut<ParticleRng>,
+    mut live: ResMut<LiveParticles>,
+) {
     if live.0.is_empty() {
         return;
     }
@@ -2438,6 +3349,9 @@ fn tick_particles(time: Res<Time>, mut live: ResMut<LiveParticles>) {
     let world = world_arc.as_deref().map(|w| w.read());
     let world = world.as_deref();
 
+    let mut trails: Vec<Particle> = Vec::new();
+    let mut chained: Vec<(P, Vec3)> = Vec::new();
+    let rng = &mut particle_rng.0;
     live.0.retain_mut(|particle| {
         particle.tick_acc += dt;
         while particle.tick_acc >= TICK {
@@ -2446,10 +3360,53 @@ fn tick_particles(time: Res<Time>, mut live: ResMut<LiveParticles>) {
                 break;
             }
             particle.age += 1;
-            advance_one_tick(particle, world);
+            let on_ground = advance_one_tick(particle, world);
+            if let Some(spark) = particle.spark.as_deref().copied() {
+                tick_spark(particle, spark, &mut trails);
+            }
+            if particle.behavior != Behavior::None {
+                let after = tick_behavior(particle, world, on_ground, rng);
+                if let Some(next) = after.spawn {
+                    chained.push(next);
+                }
+                #[cfg(audio)]
+                if let Some((sound, at)) = after.sound {
+                    let volume = 0.3 + rng.next_f32() * 0.7;
+                    crate::audio::play_at(sound, crate::audio::category::SoundCategory::Blocks, at.to_array(), volume, 1.0);
+                }
+                #[cfg(not(audio))]
+                let _ = after.sound;
+                if after.remove {
+                    particle.age = particle.lifetime;
+                    break;
+                }
+            }
         }
         particle.age < particle.lifetime
     });
+    live.0.extend(trails);
+    if let Some(atlas) = atlas.0.as_ref() {
+        for (kind, pos) in chained {
+            let Some(recipe) = recipe(&kind, atlas, Vec3::ZERO, rng) else { continue };
+            live.0.push(Particle {
+                prev: pos,
+                pos,
+                velocity: recipe.velocity,
+                gravity: recipe.gravity,
+                friction: recipe.friction,
+                tick_acc: 0.0,
+                age: 0,
+                lifetime: recipe.lifetime.max(1),
+                tint: recipe.tint,
+                size: recipe.size,
+                grow: recipe.grow,
+                sprite: recipe.sprite,
+                flags: recipe.flags,
+                spark: None,
+                behavior: recipe.behavior,
+            });
+        }
+    }
 }
 
 #[derive(Component)]
@@ -2772,8 +3729,19 @@ fn write_batch_mesh(
                 Grow::Flame => 1.0 - t * t * 0.5,
                 Grow::Lava => 1.0 - t * t,
                 Grow::Portal => 1.0 - (1.0 - t) * (1.0 - t),
+                Grow::Flash => {
+                    let age = p.age as f32 + frac - 1.0;
+                    7.1 * (age * 0.25 * std::f32::consts::PI).sin() / p.size.max(1e-6)
+                }
             };
         if scale <= 0.0 {
+            continue;
+        }
+        // A twinkling spark blinks through its last two thirds.
+        if p.spark.as_deref().is_some_and(|s| s.twinkle)
+            && p.age >= p.lifetime / 3
+            && (p.age + p.lifetime) / 3 % 2 != 0
+        {
             continue;
         }
         let [u0, v0, u1, v1] = match p.sprite {
@@ -2786,8 +3754,12 @@ fn write_batch_mesh(
             }
         };
         let base = positions.len() as u32;
-        let dx = right * scale;
-        let dy = up * scale;
+        let (mut dx, mut dy) = (right * scale, up * scale);
+        if let Behavior::Leaf(leaf) = p.behavior {
+            let roll = leaf.old_roll + (leaf.roll - leaf.old_roll) * frac;
+            let (sin, cos) = roll.sin_cos();
+            (dx, dy) = (dx * cos + dy * sin, dy * cos - dx * sin);
+        }
         for (corner, uv) in [
             (centre - dx - dy, [u0, v1]),
             (centre + dx - dy, [u1, v1]),
@@ -2797,7 +3769,12 @@ fn write_batch_mesh(
             positions.push(corner.to_array());
             normals.push(normal);
             uvs.push(uv);
-            colors.push(p.tint);
+            colors.push(if p.grow == Grow::Flash {
+                let age = p.age as f32 + frac - 1.0;
+                [p.tint[0], p.tint[1], p.tint[2], (0.6 - age * 0.125).clamp(0.0, 1.0)]
+            } else {
+                p.tint
+            });
         }
         indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }

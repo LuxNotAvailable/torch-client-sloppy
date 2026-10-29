@@ -208,7 +208,8 @@ fn spin(
     if !state.in_menu() && *app_state.get() == AppState::InGame {
         return;
     }
-    spin.0 = (spin.0 + time.delta_secs() * SPIN_DEGREES_PER_SECOND).rem_euclid(360.0);
+    let speed = crate::gui::more_options::accessibility().panorama_speed as f32 / 100.0;
+    spin.0 = (spin.0 + time.delta_secs() * SPIN_DEGREES_PER_SECOND * speed).rem_euclid(360.0);
     if let Ok(mut t) = camera.single_mut() {
         t.rotation = Quat::from_rotation_y(-spin.0.to_radians())
             * Quat::from_rotation_x(PITCH_DEGREES.to_radians());

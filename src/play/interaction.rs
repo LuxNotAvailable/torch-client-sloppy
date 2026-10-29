@@ -479,6 +479,7 @@ fn start_use_item(bot: &Client, shared: &Arc<SharedMutex>) -> bool {
     let consumed = used_block_interaction(bot, shared, &hit);
     if consumed {
         open_command_block(bot, shared, &hit);
+        open_op_block(bot, shared, &hit);
     }
     send_use_item_on(bot, &hit, consumed);
     if consumed {
@@ -1038,6 +1039,25 @@ fn used_block_interaction(bot: &Client, shared: &Arc<SharedMutex>, hit: &BlockHi
     let Ok(world) = bot.world() else { return false };
     let state = world.read().get_block_state(hit.block_pos);
     state.is_some_and(crate::play::placement::has_use_interaction)
+}
+
+/// `GameMasterBlock`s: a structure, jigsaw, test or test instance block
+/// opens its editor for an operator in creative.
+fn open_op_block(bot: &Client, shared: &Arc<SharedMutex>, hit: &BlockHitResult) {
+    let creative = bot
+        .component::<GameMode>()
+        .is_ok_and(|gm| *gm == GameMode::Creative);
+    if !creative || shared.lock().unwrap().session.op_level < 2 {
+        return;
+    }
+    let Ok(world) = bot.world() else { return };
+    let Some(state) = world.read().get_block_state(hit.block_pos) else {
+        return;
+    };
+    let id = Box::<dyn azalea::block::BlockTrait>::from(state).id();
+    if let Some(kind) = crate::gui::op_blocks::OpBlock::of(id) {
+        shared.lock().unwrap().session.op_block_open = Some((kind, hit.block_pos));
+    }
 }
 
 fn open_command_block(bot: &Client, shared: &Arc<SharedMutex>, hit: &BlockHitResult) {
