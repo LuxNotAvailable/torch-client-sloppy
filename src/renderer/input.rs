@@ -283,11 +283,27 @@ pub(super) fn mouse_look(
     >,
     state: Res<crate::gui::GuiState>,
     time: Res<Time>,
+    mut boat_turn: Local<BoatTurn>,
 ) {
     #[cfg(feature = "mobile_ui")]
     {
-        let _ = (motion, angles, shared, freecam, camera, state, time);
+        let _ = (motion, angles, shared, freecam, camera, state, time, boat_turn);
         return;
+    }
+    // The boat being steered turns the view with it. Minecraft's yaw runs
+    // the other way to the camera's.
+    let nudge = boat_turn.step(
+        std::mem::take(&mut shared.0.lock().unwrap().session.vehicle_yaw_nudge),
+        time.delta_secs(),
+    );
+    #[cfg(not(feature = "mobile_ui"))]
+    if nudge != 0.0 && !freecam.active {
+        angles.yaw -= nudge;
+        if let Ok(mut t) = camera.single_mut() {
+            t.rotation = angles.rotation();
+        }
+        let mut s = shared.0.lock().unwrap();
+        s.camera_yaw = angles.yaw;
     }
     #[cfg(not(feature = "mobile_ui"))]
     {
@@ -311,6 +327,40 @@ pub(super) fn mouse_look(
     }
 }
 
+/// The steered boat's turn, handed to the view at the pace it arrives.
+/// `positionRider` turns only `yRot` once a tick, and the camera draws
+/// `lerp(partialTick, yRotO, yRot)`, so vanilla's view glides with the boat.
+/// Each tick's turn plays out over a tick's worth of frame time, faster when
+/// turns back up, so the view never steps.
+#[derive(Default)]
+pub(super) struct BoatTurn {
+    remaining: f32,
+    /// Degrees a second of the last tick's turn.
+    rate: f32,
+}
+
+const TICK_SECONDS: f32 = 0.05;
+
+impl BoatTurn {
+    fn step(&mut self, arrived: f32, dt: f32) -> f32 {
+        if arrived != 0.0 {
+            self.remaining += arrived;
+            self.rate = arrived.abs() / TICK_SECONDS;
+        }
+        if self.remaining == 0.0 {
+            return 0.0;
+        }
+        // At least the last tick's pace; a backlog drains within a tick.
+        let rate = self.rate.max(self.remaining.abs() / TICK_SECONDS);
+        let turn = (rate * dt).min(self.remaining.abs()).copysign(self.remaining);
+        self.remaining -= turn;
+        if self.remaining.abs() < 1e-4 {
+            self.remaining = 0.0;
+        }
+        turn
+    }
+}
+
 pub(crate) const LOOK_SCALE: f32 = 0.15;
 
 pub(crate) fn apply_look(
@@ -331,6 +381,14 @@ pub(crate) fn apply_look(
 
     angles.yaw -= dx;
     angles.pitch = (angles.pitch - dy).clamp(-89., 89.);
+    // `Entity.turn` then `onPassengerTurned`: a boat's driver looks no more
+    // than 105° off its bow. Minecraft's yaw is -camera yaw - 180.
+    if !freecam_active
+        && let Some(boat_yaw) = shared.0.lock().unwrap().session.steered_boat_yaw
+    {
+        let yaw = crate::play::boat::clamp_driver_yaw(-angles.yaw - 180.0, boat_yaw);
+        angles.yaw = -yaw - 180.0;
+    }
     if let Ok(mut t) = camera.single_mut() {
         t.rotation = angles.rotation();
     }
@@ -1231,6 +1289,22 @@ pub(super) fn handle_keybinds(
 
 #[cfg(test)]
 mod tests {
+    use super::BoatTurn;
+
+    #[test]
+    fn a_boat_turn_plays_out_over_a_tick() {
+        let mut t = BoatTurn::default();
+        assert!((t.step(4.0, 0.0125) - 1.0).abs() < 1e-4);
+        assert!((t.step(0.0, 0.025) - 2.0).abs() < 1e-4);
+        assert!((t.step(0.0, 0.05) - 1.0).abs() < 1e-4);
+        assert_eq!(t.step(0.0, 0.05), 0.0);
+        // Turns arriving faster than frames drain: never more than a tick behind.
+        t.step(4.0, 0.0);
+        t.step(4.0, 0.0);
+        assert!((t.step(0.0, 0.05) - 8.0).abs() < 1e-4);
+    }
+
+
     use super::{HOTBAR_SLOTS, accumulate_scroll, next_scroll_selection};
 
     #[test]
@@ -1322,3 +1396,4 @@ mod tests {
         assert_eq!(slot, 1);
     }
 }
+

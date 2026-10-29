@@ -669,13 +669,14 @@ fn entity_state(packet: &ClientboundGamePacket) {
                             .unwrap()
                             .insert(p.entity_id.0, attribute_total(value) as f32);
                     }
-                    Attr::MovementSpeed | Attr::JumpStrength | Attr::StepHeight => {
+                    Attr::MovementSpeed | Attr::JumpStrength | Attr::StepHeight | Attr::FlyingSpeed => {
                         let total = attribute_total(value);
                         let mut map = crate::client::tracking::mount_attributes().lock().unwrap();
                         let entry = map.entry(p.entity_id.0).or_default();
                         match value.attribute {
                             Attr::MovementSpeed => entry.movement_speed = Some(total),
                             Attr::JumpStrength => entry.jump_strength = Some(total),
+                            Attr::FlyingSpeed => entry.flying_speed = Some(total),
                             _ => entry.step_height = Some(total),
                         }
                     }
@@ -684,7 +685,7 @@ fn entity_state(packet: &ClientboundGamePacket) {
             }
         }
         ClientboundGamePacket::MoveVehicle(p) => {
-            crate::play::riding::note_vehicle_correction(p.pos);
+            crate::play::riding::note_vehicle_correction(p.pos, p.look_direction.y_rot());
         }
         ClientboundGamePacket::AddEntity(p) => {
             mark_meta_dirty(p.id.0);

@@ -57,6 +57,8 @@ async fn run_client(
         .add_plugins(flight::FlightPlugin)
         .add_plugins(no_fall::NoFallPlugin)
         .add_plugins(crate::play::riding::RidingPlugin)
+        .add_plugins(crate::play::boat::BoatPlugin)
+        .add_plugins(crate::play::gliding::GlidingPlugin)
         .add_plugins(PacketRelayPlugin)
         .add_plugins(ProtocolPlugin)
         .add_plugins(crate::client::dialogs::ConfigRelayPlugin)

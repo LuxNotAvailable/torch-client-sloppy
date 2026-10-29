@@ -105,6 +105,10 @@ pub struct TickInput {
     pub head_targets: [Option<[f64; 3]>; 2],
     pub shared: std::sync::Arc<ExtrasShared>,
     pub eating: bool,
+    /// This client moves the entity itself (`isLocalInstanceAuthoritative`):
+    /// the boat its player steers. Its pose is taken as is each tick, with no
+    /// interpolation toward it and no server updates.
+    pub local_authority: bool,
 }
 
 impl TickInput {
@@ -138,6 +142,7 @@ impl TickInput {
             bed_orientation: None,
             walk_factor: 0.4,
             walk_halted: false,
+            local_authority: false,
             is_passenger: false,
             swell_dir: -1,
             ignited: false,
@@ -762,7 +767,16 @@ impl EntityAnim {
 
     fn handle_movement_packets(&mut self, input: &TickInput) -> Option<([f64; 3], f32, f32)> {
         let mut deferred = None;
-        if input.pos != self.raw_pos
+        if input.local_authority {
+            // `handleMoveEntity` leaves a locally moved entity alone; its
+            // own tick moves it, after the old pose is kept (`tick_in`).
+            self.raw_pos = input.pos;
+            self.raw_y_rot = input.y_rot;
+            self.raw_x_rot = input.x_rot;
+            if let Some(interp) = self.interp.as_mut() {
+                interp.cancel();
+            }
+        } else if input.pos != self.raw_pos
             || input.y_rot != self.raw_y_rot
             || input.x_rot != self.raw_x_rot
         {
@@ -906,7 +920,11 @@ impl EntityAnim {
             k.paddle_old = k.paddle;
         }
 
-        if let Some(mut interp) = self.interp.take() {
+        if input.local_authority {
+            self.set_pos(input.pos, input.is_passenger);
+            self.y_rot = input.y_rot;
+            self.x_rot = input.x_rot;
+        } else if let Some(mut interp) = self.interp.take() {
             if interp.has_active_interpolation() {
                 interp.interpolate(Target {
                     pos: &mut self.pos,
@@ -925,7 +943,7 @@ impl EntityAnim {
             self.lerp_head_steps -= 1;
         }
 
-        if self.motion != Motion::Server && input.simulate {
+        if self.motion != Motion::Server && input.simulate && !input.local_authority {
             if input.shared.in_ground {
                 self.body.in_ground = true;
             } else if self.k().was_in_ground {

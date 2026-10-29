@@ -118,6 +118,12 @@ pub struct SessionState {
     pub current_address: Option<String>,
     pub advanced_tooltips: bool,
     pub fly_toggle: bool,
+    /// Degrees the player's view turns with the boat they steer, for the
+    /// camera to take (`AbstractBoat.positionRider`).
+    pub vehicle_yaw_nudge: f32,
+    /// The yaw of the boat this player steers, which the camera keeps the
+    /// look within 105° of (`AbstractBoat.clampRotation`).
+    pub steered_boat_yaw: Option<f32>,
     pub flying: bool,
     pub auto_jump: bool,
     pub fov: FovState,

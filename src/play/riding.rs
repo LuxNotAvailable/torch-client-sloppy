@@ -5,7 +5,7 @@ use azalea::app::{App, Plugin};
 use azalea::ecs::prelude::*;
 use azalea::entity::indexing::EntityIdIndex;
 use azalea::entity::inventory::Inventory;
-use azalea::entity::metadata::{AbstractHorseStanding, Sprinting};
+use azalea::entity::metadata::{AbstractHorseStanding, Sprinting, StaysStill};
 use azalea::entity::{
     Attributes, EntityKindComponent, Jumping, LocalEntity, LookDirection, OnClimbable, Physics,
     Position,
@@ -14,7 +14,7 @@ use azalea::packet::game::SendGamePacketEvent;
 use azalea::physics::PhysicsSystems;
 use azalea::physics::client_movement::ClientMovementState;
 use azalea::physics::collision::entity_collisions::{AabbQuery, CollidableEntityQuery};
-use azalea::physics::collision::{MoveCtx, MoverType};
+use azalea::physics::collision::{MoveCtx, MoverType, move_colliding};
 use azalea::physics::travel::{travel, travel_ctx};
 use azalea::world::{WorldName, Worlds};
 use azalea_core::entity_id::MinecraftEntityId;
@@ -88,10 +88,17 @@ static PENDING_JUMP: Mutex<f32> = Mutex::new(0.0);
 
 static DRIVEN: Mutex<Option<(i32, Vec3)>> = Mutex::new(None);
 
-pub(crate) fn note_vehicle_correction(pos: Vec3) {
+pub(crate) fn note_vehicle_correction(pos: Vec3, yaw: f32) {
     if let Some(id) = crate::client::tracking::local_vehicle_id() {
         *DRIVEN.lock().unwrap() = Some((id, pos));
     }
+    crate::play::boat::correct(pos, yaw);
+}
+
+/// Whether this player sits in the front seat of `vehicle_id`, the one that
+/// steers.
+pub(crate) fn drives(vehicle_id: i32) -> bool {
+    seat(vehicle_id).is_some_and(|(index, _)| index == 0)
 }
 
 pub(crate) fn reset(blocking: bool) {
@@ -110,6 +117,7 @@ pub(crate) fn reset(blocking: bool) {
             *driven = None;
         }
     }
+    crate::play::boat::reset();
     crate::client::tracking::LOCAL_VEHICLE_ID.store(-1, Ordering::Relaxed);
 }
 
@@ -176,19 +184,30 @@ fn boat_seat(index: usize, riders: usize, single: f64) -> f64 {
     }
 }
 
-fn controls(kind: EntityKind, vehicle_id: i32, held: ItemKind) -> bool {
+/// `getControllingPassenger`: whether the player in front steers. Saddled
+/// mounts do, and a happy ghast in a harness that is not holding still.
+fn controls(kind: EntityKind, vehicle_id: i32, held: ItemKind, stays_still: bool) -> bool {
     use EntityKind as K;
 
-    let saddled = crate::client::tracking::equipment()
+    let (saddled, harnessed) = crate::client::tracking::equipment()
         .lock()
         .unwrap()
         .get(&vehicle_id)
-        .is_some_and(|worn| worn.saddle.is_some());
+        .map_or((false, false), |worn| {
+            (
+                worn.saddle.is_some(),
+                worn.body_armor.is_some_and(|item| item.ends_with("_harness")),
+            )
+        });
+    if kind == K::HappyGhast {
+        return harnessed && !stays_still;
+    }
     if !saddled {
         return false;
     }
     match kind {
         K::Horse | K::Donkey | K::Mule | K::SkeletonHorse | K::ZombieHorse | K::Camel => true,
+        K::Nautilus | K::ZombieNautilus => true,
         K::Pig => held == ItemKind::CarrotOnAStick,
         K::Strider => held == ItemKind::WarpedFungusOnAStick,
         _ => false,
@@ -289,6 +308,7 @@ fn ride_pre_travel(
             &WorldName,
             &OnClimbable,
             Option<&AbstractHorseStanding>,
+            Option<&StaysStill>,
         ),
         Without<LocalEntity>,
     >,
@@ -317,6 +337,7 @@ fn ride_pre_travel(
         world_name,
         on_climbable,
         standing,
+        stays_still,
     )) = mounts.get_mut(mount)
     else {
         return;
@@ -324,7 +345,12 @@ fn ride_pre_travel(
 
     let kind = **kind;
     if seat(vehicle_id).is_none_or(|(index, _)| index != 0)
-        || !controls(kind, vehicle_id, inventory.held_item().kind())
+        || !controls(
+            kind,
+            vehicle_id,
+            inventory.held_item().kind(),
+            stays_still.is_some_and(|s| s.0),
+        )
     {
         return;
     }
@@ -334,7 +360,15 @@ fn ride_pre_travel(
         _ => {}
     }
 
-    *direction = LookDirection::new(rider_direction.y_rot(), rider_direction.x_rot() * 0.5);
+    *direction = match turn_rate(kind) {
+        // `tickRidden`: the mount turns part of the way to the rider's look.
+        Some(turn) => LookDirection::new(
+            direction.y_rot()
+                + crate::util::mth::wrap_degrees(rider_direction.y_rot() - direction.y_rot()) * turn,
+            rider_direction.x_rot() * 0.5,
+        ),
+        None => LookDirection::new(rider_direction.y_rot(), rider_direction.x_rot() * 0.5),
+    };
     let yaw = direction.y_rot();
 
     let attrs = crate::client::tracking::mount_attributes()
@@ -352,7 +386,31 @@ fn ride_pre_travel(
         rearing,
     );
 
+    let jump_held = crate::SHARED
+        .get()
+        .is_some_and(|s| s.lock().unwrap().move_flags & crate::session::MOVE_JUMP != 0);
+    let is_nautilus = matches!(kind, EntityKind::Nautilus | EntityKind::ZombieNautilus);
     {
+        let mut cooldown = DASH_COOLDOWN.lock().unwrap();
+        *cooldown = cooldown.saturating_sub(1);
+    }
+    if is_nautilus {
+        // `tickRidden`: a charged jump is a dash, whenever the cooldown allows.
+        let mut pending = PENDING_JUMP.lock().unwrap();
+        let mut cooldown = DASH_COOLDOWN.lock().unwrap();
+        if *pending > 0.0 && *cooldown == 0 {
+            let in_water = physics.is_in_water();
+            physics.velocity += nautilus_dash(
+                azalea::entity::view_vector(*rider_direction),
+                in_water,
+                *pending,
+                attrs.movement_speed.unwrap_or(1.0),
+            );
+            *cooldown = DASH_COOLDOWN_TICKS;
+        }
+        *pending = 0.0;
+    }
+    if !is_nautilus {
         let mut pending = PENDING_JUMP.lock().unwrap();
         if physics.on_ground() {
             if *pending > 0.0 {
@@ -381,6 +439,44 @@ fn ride_pre_travel(
     };
     let world = world_lock.read();
 
+    // The happy ghast flies, and a nautilus swims, by their own rules: push
+    // along the input at a speed, move, damp.
+    let own_travel = match kind {
+        EntityKind::HappyGhast => {
+            let flying_speed = attrs.flying_speed.unwrap_or(HAPPY_GHAST_FLYING_SPEED);
+            let input = look_input(
+                movement.move_vector.x,
+                movement.move_vector.y,
+                rider_direction.x_rot(),
+                jump_held,
+            )
+            .scale(3.9 * flying_speed);
+            let damping = if physics.is_in_water() {
+                0.8
+            } else if physics.is_in_lava() {
+                0.5
+            } else {
+                0.91
+            };
+            Some((input, (flying_speed * 5.0 / 3.0) as f32, damping))
+        }
+        EntityKind::Nautilus | EntityKind::ZombieNautilus if physics.is_in_water() => {
+            let input = look_input(
+                movement.move_vector.x,
+                movement.move_vector.y,
+                rider_direction.x_rot(),
+                false,
+            );
+            let speed = (0.0325 * attrs.movement_speed.unwrap_or(1.0)) as f32;
+            Some((input, speed, 0.9))
+        }
+        _ => None,
+    };
+    if is_nautilus && own_travel.is_none() {
+        // Out of water a ridden nautilus crawls (`getRiddenSpeed`).
+        attributes.movement_speed.base = 0.02 * attrs.movement_speed.unwrap_or(1.0);
+    }
+
     physics.x_acceleration = input.x as f32;
     physics.y_acceleration = input.y as f32;
     physics.z_acceleration = input.z as f32;
@@ -406,7 +502,16 @@ fn ride_pre_travel(
         jumping: Jumping(false),
         no_physics: false,
     };
-    travel_ctx(&mut ctx);
+    match own_travel {
+        // `travelFlying`, and the nautilus's `travelInWater`. Neither falls.
+        Some((input, speed, damping)) => {
+            azalea::entity::move_relative(ctx.physics, *direction, speed, input);
+            let velocity = ctx.physics.velocity;
+            move_colliding(&mut ctx, velocity);
+            ctx.physics.velocity = ctx.physics.velocity.scale(damping);
+        }
+        None => travel_ctx(&mut ctx),
+    }
     drop(ctx);
     *DRIVEN.lock().unwrap() = Some((vehicle_id, **position));
 
@@ -457,6 +562,48 @@ fn ride_post_travel(
 
 const DEFAULT_JUMP_STRENGTH: f64 = 0.7;
 
+const HAPPY_GHAST_FLYING_SPEED: f64 = 0.05;
+const DASH_COOLDOWN_TICKS: u32 = 40;
+
+/// Ticks until a ridden nautilus may dash again.
+static DASH_COOLDOWN: Mutex<u32> = Mutex::new(0);
+
+/// How far a ridden mount turns to the rider's look each tick, for those
+/// that turn rather than face it at once.
+fn turn_rate(kind: EntityKind) -> Option<f32> {
+    match kind {
+        EntityKind::HappyGhast => Some(0.08),
+        EntityKind::Nautilus | EntityKind::ZombieNautilus => Some(0.5),
+        _ => None,
+    }
+}
+
+/// `getRiddenInput` for the happy ghast and the nautilus: strafe, and
+/// forward along the rider's pitch (half as fast backwards); the ghast also
+/// rises while jump is held.
+fn look_input(strafe: f32, forward: f32, pitch: f32, rising: bool) -> Vec3 {
+    let (mut along, mut up) = (0.0f32, 0.0f32);
+    if forward != 0.0 {
+        let rad = pitch.to_radians();
+        along = rad.cos();
+        up = -rad.sin();
+        if forward < 0.0 {
+            along *= -0.5;
+            up *= -0.5;
+        }
+    }
+    if rising {
+        up += 0.5;
+    }
+    Vec3::new(strafe as f64, up as f64, along as f64)
+}
+
+/// `executeRidersJump` for a nautilus: a dash along the rider's look,
+/// stronger in water.
+fn nautilus_dash(look: Vec3, in_water: bool, amount: f32, movement_speed: f64) -> Vec3 {
+    look.scale(if in_water { 1.2 } else { 0.5 } * amount as f64 * movement_speed)
+}
+
 const DEFAULT_STEP_HEIGHT: f64 = 1.0;
 
 fn default_movement_speed(kind: EntityKind) -> f64 {
@@ -473,6 +620,24 @@ fn default_movement_speed(kind: EntityKind) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ridden_flyers_go_where_the_rider_looks() {
+        let level = look_input(0.0, 1.0, 0.0, false);
+        assert!((level.z - 1.0).abs() < 1e-6 && level.y.abs() < 1e-6);
+        let up = look_input(0.0, 1.0, -90.0, false);
+        assert!((up.y - 1.0).abs() < 1e-6, "{up:?}");
+        let back = look_input(0.0, -1.0, 0.0, false);
+        assert!((back.z + 0.5).abs() < 1e-6);
+        assert!((look_input(0.0, 0.0, 0.0, true).y - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_nautilus_dashes_harder_in_water() {
+        let look = Vec3::new(0.0, 0.0, 1.0);
+        assert!((nautilus_dash(look, true, 1.0, 1.0).z - 1.2).abs() < 1e-9);
+        assert!((nautilus_dash(look, false, 1.0, 1.0).z - 0.5).abs() < 1e-9);
+    }
 
     #[test]
     fn charge_ramps_then_tails() {

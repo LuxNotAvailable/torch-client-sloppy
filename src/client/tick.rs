@@ -1744,7 +1744,14 @@ fn is_rideable_jumping(kind: azalea_registry::builtin::EntityKind) -> bool {
     use azalea_registry::builtin::EntityKind as K;
     matches!(
         kind,
-        K::Horse | K::Donkey | K::Mule | K::SkeletonHorse | K::ZombieHorse | K::Camel
+        K::Horse
+            | K::Donkey
+            | K::Mule
+            | K::SkeletonHorse
+            | K::ZombieHorse
+            | K::Camel
+            | K::Nautilus
+            | K::ZombieNautilus
     )
 }
 

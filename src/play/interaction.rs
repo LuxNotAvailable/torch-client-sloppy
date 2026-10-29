@@ -26,6 +26,7 @@ static USE_ITEM: Mutex<UseItem> = Mutex::new(UseItem {
     started: false,
     item: None,
     remaining: 0,
+    held: 0,
     unconfirmed: None,
     fx: None,
 });
@@ -61,6 +62,8 @@ struct UseItem {
     started: bool,
     item: Option<ItemKind>,
     remaining: i32,
+    /// Ticks the use has lasted.
+    held: i32,
     fx: Option<ConsumeFx>,
     /// Ticks since this client started the use without the server reporting
     /// it; `None` once the server does.
@@ -435,6 +438,7 @@ fn apply_place(bot: &Client, shared: &Arc<SharedMutex>, held: bool, clicked: boo
 
     let was_using = is_using_item();
     if was_using && !held {
+        riptide(bot);
         release_using_item(bot);
     }
     let (swing, delay) = place_step(
@@ -539,6 +543,7 @@ fn start_using_item(kind: ItemKind, duration: i32) {
     use_item.started = true;
     use_item.item = Some(kind);
     use_item.remaining = duration;
+    use_item.held = 0;
 }
 
 fn stop_using_item() {
@@ -662,6 +667,118 @@ fn emit_consume_fx(bot: &Client, shared: &Arc<SharedMutex>, fx: &ConsumeFx, coun
     );
 }
 
+/// `TridentItem.releaseUsing` for a riptide trident: held for half a second
+/// and let go in water or rain, it throws the player along their look, and
+/// up out of a standing start. The client moves itself, so this happens here.
+fn riptide(bot: &Client) {
+    use azalea::entity::{LookDirection, Physics, Position};
+
+    let held_ticks = USE_ITEM.lock().unwrap().held;
+    if held_ticks < 10 || crate::client::tracking::local_vehicle_id().is_some() {
+        return;
+    }
+    let Ok(inventory) = bot.component::<azalea::entity::inventory::Inventory>() else {
+        return;
+    };
+    let held = inventory.held_item().clone();
+    drop(inventory);
+    if held.kind() != ItemKind::Trident {
+        return;
+    }
+    let level = {
+        let world = bot.world().ok();
+        let guard = world.as_ref().map(|w| w.read());
+        let registries = guard.as_ref().map(|g| &g.registries);
+        crate::play::inventory_bridge::slot_stack(&held, registries, false)
+            .enchantments
+            .iter()
+            .find(|(name, _)| crate::items::model::strip_namespace(name) == "riptide")
+            .map_or(0, |(_, level)| *level)
+    };
+    let strength = crate::play::gliding::riptide_strength(level);
+    if strength <= 0.0 || !in_water_or_rain(bot) {
+        return;
+    }
+    let Ok(look) = bot.component::<LookDirection>() else { return };
+    let push = crate::play::gliding::riptide_push(look.y_rot(), look.x_rot(), strength);
+    let mut ecs = bot.ecs.write();
+    let Some(mut physics) = ecs.get_mut::<Physics>(bot.entity) else { return };
+    physics.velocity = physics.velocity + push;
+    let on_ground = physics.on_ground();
+    let bb = physics.bounding_box;
+    drop(physics);
+    if on_ground {
+        let rise = free_rise(bot, &bb, 1.199_999_9);
+        if rise > 0.0
+            && let Some(mut position) = ecs.get_mut::<Position>(bot.entity)
+        {
+            position.y += rise;
+        }
+    }
+}
+
+/// How far the box can move straight up, up to `limit`, before it meets a
+/// block: `move(SELF, (0, limit, 0))` for a box with nothing above but blocks.
+fn free_rise(bot: &Client, bb: &azalea_core::aabb::Aabb, limit: f64) -> f64 {
+    use azalea::physics::collision::world_collisions::get_block_collisions_for;
+    let Ok(world) = bot.world() else { return 0.0 };
+    let world = world.read();
+    const STEP: f64 = 0.05;
+    let mut rise = 0.0;
+    while rise < limit {
+        let next = (rise + STEP).min(limit);
+        let probe = azalea_core::aabb::Aabb {
+            min: azalea_core::position::Vec3::new(bb.min.x, bb.max.y + rise, bb.min.z),
+            max: azalea_core::position::Vec3::new(bb.max.x, bb.max.y + next, bb.max.z),
+        };
+        if !get_block_collisions_for(&world, &probe, Default::default()).is_empty() {
+            break;
+        }
+        rise = next;
+    }
+    rise
+}
+
+/// `isInWaterOrRain`: in water, or where rain falls on the feet or the head
+/// (`isRainingAt`: raining, open to the sky, and a biome warm enough for rain).
+fn in_water_or_rain(bot: &Client) -> bool {
+    use azalea::entity::{Physics, Position};
+    use azalea_core::position::BlockPos;
+
+    if bot.component::<Physics>().is_ok_and(|p| p.is_in_water()) {
+        return true;
+    }
+    if crate::renderer::environment::rain_level() <= 0.2 {
+        return false;
+    }
+    let Some(biome) = crate::client::envprobe::camera_biome() else {
+        return false;
+    };
+    let env = crate::util::biome_color::env(biome);
+    let Ok(pos) = bot.component::<Position>() else { return false };
+    let Ok(world) = bot.world() else { return false };
+    let world = world.read();
+    let open_sky = |x: i32, y: i32, z: i32| {
+        (y + 1..y + 384).all(|above| {
+            // The `MOTION_BLOCKING` heightmap: blocks with collision, and fluids.
+            world
+                .get_block_state(BlockPos::new(x, above, z))
+                .is_none_or(|s| {
+                    use azalea::physics::collision::BlockWithShape;
+                    s.is_collision_shape_empty()
+                        && azalea::block::fluid_state::FluidState::from(s).is_empty()
+                })
+        })
+    };
+    let raining_at = |y: f64| {
+        let (x, y, z) = (pos.x.floor() as i32, y.floor() as i32, pos.z.floor() as i32);
+        // `coldEnoughToSnow`: biome temperature less 0.00125 a block above 80.
+        let temperature = env.temperature - (y - 80).max(0) as f32 * 0.00125;
+        env.has_precipitation && !env.frozen && temperature >= 0.15 && open_sky(x, y, z)
+    };
+    raining_at(pos.y) || raining_at(pos.y + 1.8)
+}
+
 fn release_using_item(bot: &Client) {
     bot.write_packet(ServerboundPlayerAction {
         action: Action::ReleaseUseItem,
@@ -698,6 +815,7 @@ fn tick_using_item(still_held: bool) -> Option<ConsumeFx> {
         .filter(|fx| fx.due(use_item.remaining))
         .cloned();
     use_item.remaining -= 1;
+    use_item.held += 1;
     if let Some(ticks) = use_item.unconfirmed.as_mut() {
         *ticks += 1;
         if *ticks > USE_CONFIRM_TICKS {

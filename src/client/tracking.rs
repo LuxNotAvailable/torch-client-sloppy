@@ -118,6 +118,7 @@ pub(crate) struct MountAttributes {
     pub movement_speed: Option<f64>,
     pub jump_strength: Option<f64>,
     pub step_height: Option<f64>,
+    pub flying_speed: Option<f64>,
 }
 
 static MOUNT_ATTRIBUTES: OnceLock<SideMutex<HashMap<i32, MountAttributes>>> = OnceLock::new();

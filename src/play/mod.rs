@@ -1,7 +1,9 @@
+pub(crate) mod boat;
 pub(crate) mod commands;
 pub(crate) mod dialog;
 pub(crate) mod entity_feed;
 pub(crate) mod flight;
+pub(crate) mod gliding;
 pub(crate) mod interaction;
 pub(crate) mod inventory_bridge;
 pub(crate) mod inventory_sort;
