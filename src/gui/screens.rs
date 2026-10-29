@@ -21,6 +21,139 @@ pub fn draw(
     #[cfg(feature = "skins")]
     faces.begin_frame();
 
+    let mut snap = snapshot(state, shared);
+
+    #[cfg(feature = "mobile_ui")]
+    let lift = {
+        let inset = if input.scale > 0.0 {
+            crate::platform::keyboard::inset_px() / input.scale
+        } else {
+            0.0
+        };
+        crate::gui::widgets::keyboard_lift::begin(
+            state.screen.is_menu(),
+            input.size.y,
+            inset,
+            input.left_down || input.left_release,
+        )
+    };
+    #[cfg(feature = "mobile_ui")]
+    let lifted_input;
+    #[cfg(feature = "mobile_ui")]
+    let input = if lift > 0.0 {
+        let mut shifted = input.clone();
+        shifted.mouse = shifted.mouse.map(|m| m + bevy::math::Vec2::new(0.0, lift));
+        lifted_input = shifted;
+        &lifted_input
+    } else {
+        input
+    };
+
+    let ctx = ScreenCtx {
+        input,
+        vw: input.size.x,
+        vh: input.size.y,
+    };
+
+    state.hud_overlays.update(&mut snap, input.time);
+
+    let toast_settings = toast::ToastSettings::from_state(state);
+    state.toasts.ingest(
+        std::mem::take(&mut snap.toast_incoming),
+        &p.atlas.font,
+        toast_settings,
+    );
+
+    draw_hud_layers(
+        p,
+        state,
+        &ctx,
+        &mut snap,
+        shared,
+        #[cfg(feature = "skins")]
+        faces,
+    );
+
+    focus::begin(
+        state.screen.tab_navigates(),
+        match (ctx.input.tab, ctx.input.shift) {
+            (true, false) => 1,
+            (true, true) => -1,
+            _ => 0,
+        },
+    );
+
+    #[cfg(feature = "mobile_ui")]
+    if lift > 0.0 {
+        p.set_lift(lift);
+    }
+    let mut actions: Vec<InvAction> = Vec::new();
+    let hovered = draw_screen(
+        p,
+        state,
+        &ctx,
+        &snap,
+        shared,
+        #[cfg(feature = "skins")]
+        faces,
+        &mut actions,
+    );
+    #[cfg(feature = "mobile_ui")]
+    if lift > 0.0 {
+        p.set_lift(0.0);
+    }
+
+    focus::end();
+
+    let carried = state.slots.cursor(&snap);
+    let shown = state.slots.display_cursor(&snap);
+    if state.screen.is_open()
+        && !shown.is_empty()
+        && let Some(m) = ctx.mouse()
+    {
+        draw_stack(p, &shown, m.x - 8.0, m.y - 8.0);
+    }
+
+    if let Some(stack) = hovered
+        && carried.is_empty()
+        && let Some(m) = ctx.mouse()
+    {
+        tooltip::draw(p, &stack, m.x, m.y, ctx.vw, ctx.vh, state.advanced_tooltips);
+    }
+
+    toast::draw(p, &ctx, &mut state.toasts, toast_settings);
+
+    #[cfg(feature = "mobile_ui")]
+    {
+        #[cfg(feature = "hud_editor")]
+        let editing = state.screen == Screen::HudEditor;
+        #[cfg(not(feature = "hud_editor"))]
+        let editing = false;
+        if !editing {
+            let view = crate::mobile::View {
+                ui: &state.mobile,
+                movement: state.options.touch_movement,
+                screen: state.screen,
+                hide_gui: state.gui_hidden(),
+                in_menu,
+                editing: false,
+            };
+            let mut controls = Hud::new(
+                &state.hud_state.layout,
+                &mut state.hud_state.frames,
+                false,
+                input.device_scale,
+            );
+            crate::mobile::draw(p, &ctx, view, &mut controls);
+        }
+    }
+
+    send_actions(shared, actions);
+}
+
+/// This frame's copy of what the GUI reads from the session, taken under
+/// one lock; the larger parts only for the screens that show them.
+fn snapshot(state: &GuiState, shared: &Arc<SharedMutex>) -> Snapshot {
     let eye_height;
     let eye_pos;
     let mut snap = {
@@ -137,50 +270,19 @@ pub fn draw(
         eye_pos[1] as f64 + eye_height,
         eye_pos[2] as f64,
     ) == Some(crate::util::block_model::EyeFluid::Water);
+    snap
+}
 
-    #[cfg(feature = "mobile_ui")]
-    let lift = {
-        let inset = if input.scale > 0.0 {
-            crate::platform::keyboard::inset_px() / input.scale
-        } else {
-            0.0
-        };
-        crate::gui::widgets::keyboard_lift::begin(
-            state.screen.is_menu(),
-            input.size.y,
-            inset,
-            input.left_down || input.left_release,
-        )
-    };
-    #[cfg(feature = "mobile_ui")]
-    let lifted_input;
-    #[cfg(feature = "mobile_ui")]
-    let input = if lift > 0.0 {
-        let mut shifted = input.clone();
-        shifted.mouse = shifted.mouse.map(|m| m + bevy::math::Vec2::new(0.0, lift));
-        lifted_input = shifted;
-        &lifted_input
-    } else {
-        input
-    };
-
-    let ctx = ScreenCtx {
-        input,
-        vw: input.size.x,
-        vh: input.size.y,
-    };
-
-    state.hud_overlays.update(&mut snap, input.time);
-
-    let toast_settings = toast::ToastSettings::from_state(state);
-    state.toasts.ingest(
-        std::mem::take(&mut snap.toast_incoming),
-        &p.atlas.font,
-        toast_settings,
-    );
-
-    let mut actions: Vec<InvAction> = Vec::new();
-
+/// The in-world layers under any screen: HUD, nametags, boss bars, block
+/// info, sidebar, overlays, chat, the tab list and the debug screen.
+fn draw_hud_layers(
+    p: &mut Painter,
+    state: &mut GuiState,
+    ctx: &ScreenCtx,
+    snap: &mut Snapshot,
+    shared: &Arc<SharedMutex>,
+    #[cfg(feature = "skins")] faces: &mut crate::gui::player_faces::PlayerFaces,
+) {
     let chat_incoming = std::mem::take(&mut snap.chat_incoming);
     let chat_error = snap.chat_error.take();
     let secure_chat = snap.enforces_secure_chat;
@@ -206,7 +308,7 @@ pub fn draw(
         &state.hud_state.layout,
         &mut state.hud_state.frames,
         editing,
-        input.device_scale,
+        ctx.input.device_scale,
     );
 
     if hud_visible {
@@ -365,32 +467,32 @@ pub fn draw(
             },
         );
     }
+}
 
-    focus::begin(
-        state.screen.tab_navigates(),
-        match (ctx.input.tab, ctx.input.shift) {
-            (true, false) => 1,
-            (true, true) => -1,
-            _ => 0,
-        },
-    );
-
-    #[cfg(feature = "mobile_ui")]
-    if lift > 0.0 {
-        p.set_lift(lift);
-    }
-    let hovered: Option<SlotStack> = match state.screen {
+/// The open screen; the stack under the pointer, for the tooltip.
+fn draw_screen(
+    p: &mut Painter,
+    state: &mut GuiState,
+    ctx: &ScreenCtx,
+    snap: &Snapshot,
+    shared: &Arc<SharedMutex>,
+    #[cfg(feature = "skins")]
+    #[cfg_attr(not(feature = "mobile_ui"), allow(unused_variables))]
+    faces: &mut crate::gui::player_faces::PlayerFaces,
+    actions: &mut Vec<InvAction>,
+) -> Option<SlotStack> {
+    match state.screen {
         Screen::None | Screen::Chat => None,
-        Screen::Inventory => draw_inventory(p, state, &ctx, &snap, &mut actions),
+        Screen::Inventory => draw_inventory(p, state, &ctx, &snap, actions),
         Screen::Creative => creative::draw(
             p,
             &mut state.creative,
             &mut state.slots,
             &ctx,
             &snap,
-            &mut actions,
+            actions,
         ),
-        Screen::Container(kind) => container::draw(p, state, &ctx, &snap, kind, &mut actions),
+        Screen::Container(kind) => container::draw(p, state, &ctx, &snap, kind, actions),
         Screen::Pause => {
             dim_background(p, ctx.vw, ctx.vh);
             pause::draw(p, state, &ctx);
@@ -416,81 +518,6 @@ pub fn draw(
             None
         }
         #[cfg(audio)]
-        Screen::AudioSettings => {
-            if state.in_menu() {
-                crate::gui::menu::background(p, ctx.vw, ctx.vh);
-            } else {
-                dim_background(p, ctx.vw, ctx.vh);
-            }
-            options::draw_audio(p, state, &ctx);
-            None
-        }
-        #[cfg(voice)]
-        Screen::VoiceChat | Screen::VoiceGroups => {
-            if state.in_menu() {
-                crate::gui::menu::background(p, ctx.vw, ctx.vh);
-            } else {
-                dim_background(p, ctx.vw, ctx.vh);
-            }
-            if state.screen == Screen::VoiceChat {
-                crate::gui::voice_chat::draw_settings(p, state, &ctx);
-            } else {
-                crate::gui::voice_chat::draw_groups(p, state, &ctx);
-            }
-            None
-        }
-        #[cfg(voice)]
-        Screen::VoicePlayers => {
-            if state.in_menu() {
-                crate::gui::menu::background(p, ctx.vw, ctx.vh);
-            } else {
-                dim_background(p, ctx.vw, ctx.vh);
-            }
-            options::draw_voice_players(p, state, &ctx);
-            None
-        }
-        Screen::BlockInfoSettings => {
-            if state.in_menu() {
-                crate::gui::menu::background(p, ctx.vw, ctx.vh);
-            } else {
-                dim_background(p, ctx.vw, ctx.vh);
-            }
-            crate::gui::block_info::draw_settings(p, state, &ctx);
-            None
-        }
-        #[cfg(resource_packs)]
-        Screen::ResourcePacks => {
-            if state.in_menu() {
-                crate::gui::menu::background(p, ctx.vw, ctx.vh);
-            } else {
-                dim_background(p, ctx.vw, ctx.vh);
-            }
-            crate::gui::resourcepacks::draw(p, state, &ctx);
-            None
-        }
-        #[cfg(explore_modrinth)]
-        Screen::ExplorePacks => {
-            if state.in_menu() {
-                crate::gui::menu::background(p, ctx.vw, ctx.vh);
-            } else {
-                dim_background(p, ctx.vw, ctx.vh);
-            }
-            crate::gui::explore_packs::draw(p, state, &ctx);
-            None
-        }
-        #[cfg(feature = "shader_support")]
-        Screen::ShaderPacks | Screen::ShaderOptions => {
-            if state.in_menu() {
-                crate::gui::menu::background(p, ctx.vw, ctx.vh);
-            } else {
-                dim_background(p, ctx.vw, ctx.vh);
-            }
-            match state.screen {
-                Screen::ShaderPacks => crate::gui::shaderpacks::draw_packs(p, state, &ctx),
-                _ => crate::gui::shaderpacks::draw_options(p, state, &ctx),
-            }
-            None
-        }
         Screen::Title => {
             title::draw(p, state, &ctx);
             None
@@ -686,72 +713,28 @@ pub fn draw(
                 apply_book_out(out, state, shared);
             }
             None
-        }
+        } // The settings screens, matched by the guard above.
         // The settings screens, matched by the guard above.
         _ => None,
-    };
-    #[cfg(feature = "mobile_ui")]
-    if lift > 0.0 {
-        p.set_lift(0.0);
     }
+}
 
-    focus::end();
-
-    let carried = state.slots.cursor(&snap);
-    let shown = state.slots.display_cursor(&snap);
-    if state.screen.is_open()
-        && !shown.is_empty()
-        && let Some(m) = ctx.mouse()
-    {
-        draw_stack(p, &shown, m.x - 8.0, m.y - 8.0);
+/// Hands the frame's inventory clicks to the tick, showing creative
+/// placements at once.
+fn send_actions(shared: &Arc<SharedMutex>, actions: Vec<InvAction>) {
+    if actions.is_empty() {
+        return;
     }
-
-    if let Some(stack) = hovered
-        && carried.is_empty()
-        && let Some(m) = ctx.mouse()
-    {
-        tooltip::draw(p, &stack, m.x, m.y, ctx.vw, ctx.vh, state.advanced_tooltips);
-    }
-
-    toast::draw(p, &ctx, &mut state.toasts, toast_settings);
-
-    #[cfg(feature = "mobile_ui")]
-    {
-        #[cfg(feature = "hud_editor")]
-        let editing = state.screen == Screen::HudEditor;
-        #[cfg(not(feature = "hud_editor"))]
-        let editing = false;
-        if !editing {
-            let view = crate::mobile::View {
-                ui: &state.mobile,
-                movement: state.options.touch_movement,
-                screen: state.screen,
-                hide_gui: state.gui_hidden(),
-                in_menu,
-                editing: false,
-            };
-            let mut controls = Hud::new(
-                &state.hud_state.layout,
-                &mut state.hud_state.frames,
-                false,
-                input.device_scale,
-            );
-            crate::mobile::draw(p, &ctx, view, &mut controls);
+    let mut s = shared.lock().unwrap();
+    for action in &actions {
+        if let InvAction::CreativeSet { slot, stack } = action
+            && let Some(dst) = std::sync::Arc::make_mut(&mut s.session.inventory.menu_slots)
+                .get_mut(*slot as usize)
+        {
+            *dst = local_stack(stack);
         }
     }
-
-    if !actions.is_empty() {
-        let mut s = shared.lock().unwrap();
-        for action in &actions {
-            if let InvAction::CreativeSet { slot, stack } = action
-                && let Some(dst) = std::sync::Arc::make_mut(&mut s.session.inventory.menu_slots)
-                    .get_mut(*slot as usize)
-            {
-                *dst = local_stack(stack);
-            }
-        }
-        s.session.inventory.inv_actions.extend(actions);
-    }
+    s.session.inventory.inv_actions.extend(actions);
 }
 
 fn local_stack(stack: &SlotStack) -> SlotStack {
@@ -1630,14 +1613,17 @@ mod tests {
 /// draw), each with its draw function: one list for both the check and the
 /// dispatch.
 macro_rules! settings_screens {
-    ($( $screen:ident => $draw:path ),* $(,)?) => {
+    ($( $(#[$m:meta])* $screen:ident => $draw:path ),* $(,)?) => {
         fn settings_screen(screen: Screen) -> bool {
-            matches!(screen, $( Screen::$screen )|*)
+            match screen {
+                $( $(#[$m])* Screen::$screen => true, )*
+                _ => false,
+            }
         }
 
         fn draw_settings_screen(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
             match state.screen {
-                $( Screen::$screen => $draw(p, state, ctx), )*
+                $( $(#[$m])* Screen::$screen => $draw(p, state, ctx), )*
                 _ => {}
             }
         }
@@ -1661,4 +1647,21 @@ settings_screens! {
     ChatSettings => options::draw_chat,
     SkinCustomisation => options::draw_skin,
     ManageStorage => options::draw_manage_storage,
+    #[cfg(audio)]
+    AudioSettings => options::draw_audio,
+    #[cfg(voice)]
+    VoiceChat => crate::gui::voice_chat::draw_settings,
+    #[cfg(voice)]
+    VoiceGroups => crate::gui::voice_chat::draw_groups,
+    #[cfg(voice)]
+    VoicePlayers => options::draw_voice_players,
+    BlockInfoSettings => crate::gui::block_info::draw_settings,
+    #[cfg(resource_packs)]
+    ResourcePacks => crate::gui::resourcepacks::draw,
+    #[cfg(explore_modrinth)]
+    ExplorePacks => crate::gui::explore_packs::draw,
+    #[cfg(feature = "shader_support")]
+    ShaderPacks => crate::gui::shaderpacks::draw_packs,
+    #[cfg(feature = "shader_support")]
+    ShaderOptions => crate::gui::shaderpacks::draw_options,
 }

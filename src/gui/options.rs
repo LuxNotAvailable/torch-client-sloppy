@@ -188,12 +188,7 @@ const GUI_SCALE_AUTO: &str = "Auto";
 
 pub(in crate::gui) const LAYOUT: HeaderFooter = HeaderFooter::default_heights();
 
-
 const FOV_SLIDER_ID: u32 = 2;
-
-
-
-
 
 #[cfg(audio)]
 const VOLUME_SLIDER_ID_BASE: u32 = 7;
@@ -221,20 +216,7 @@ pub(in crate::gui) const HEADER_PAD_TOP: f32 = 2.0 * LINE_HEIGHT;
 
 pub(in crate::gui) const HEADER_H: f32 = LINE_HEIGHT + 4.0;
 
-#[cfg(feature = "builtin_shaders")]
-const Y_QUALITY_ROW_4: f32 = Y_QUALITY_ROW_3 + ROW_H;
-
-#[cfg(feature = "builtin_shaders")]
-const Y_QUALITY_LAST: f32 = Y_QUALITY_ROW_4;
-
-
-
-#[cfg(not(feature = "shader_support"))]
-const Y_RESET_ROW: f32 = Y_SHADOW_ROW + ROW_H;
-
-
 const LIST_PAD_BOTTOM: f32 = 4.0;
-
 
 pub(in crate::gui) const SCROLLBAR_W: f32 = 6.0;
 
@@ -424,18 +406,6 @@ pub(in crate::gui) fn draw_scrollbar(
         scroller_h,
     );
 }
-
-
-
-#[cfg(all(target_arch = "wasm32", feature = "asset_download"))]
-const Y_STORAGE_HEADER: f32 = Y_GAME_LAST_GROUP_ROW + ROW_H;
-#[cfg(all(target_arch = "wasm32", feature = "asset_download"))]
-const Y_STORAGE_ROW_0: f32 = Y_STORAGE_HEADER + HEADER_PAD_TOP + HEADER_H;
-
-#[cfg(all(target_arch = "wasm32", feature = "asset_download"))]
-const Y_GAME_RESET_ROW: f32 = Y_STORAGE_ROW_0 + ROW_H;
-
-
 
 #[cfg(audio)]
 const Y_AUDIO_MASTER: f32 = 0.0;
@@ -1931,7 +1901,10 @@ mod tests {
         const EXTRA_ROWS: f32 = cfg!(feature = "builtin_shaders") as u32 as f32
             + cfg!(feature = "shader_support") as u32 as f32;
         let reset_row = 244.0 + (EXTRA_ROWS + 1.0) * ROW_H;
-        assert_eq!(state.video_list.content_h, reset_row + ROW_H + LIST_PAD_BOTTOM);
+        assert_eq!(
+            state.video_list.content_h,
+            reset_row + ROW_H + LIST_PAD_BOTTOM
+        );
 
         // A tall window has nothing to scroll.
         let (_, _, _, list_h) = LAYOUT.content_rect(854.0, 480.0);
