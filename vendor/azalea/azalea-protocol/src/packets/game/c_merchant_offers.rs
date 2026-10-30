@@ -62,6 +62,7 @@ impl ItemCost {
             kind: self.item,
             count: self.count,
             component_patch,
+            modded_kind: None,
         }
     }
 }

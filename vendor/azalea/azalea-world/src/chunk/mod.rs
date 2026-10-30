@@ -8,7 +8,7 @@ use std::{
     io::{Cursor, Write},
 };
 
-use azalea_block::block_state::{BlockState, BlockStateIntegerRepr};
+use azalea_block::block_state::BlockState;
 use azalea_buf::{AzBuf, BufReadError};
 use azalea_core::{
     heightmap_kind::HeightmapKind,
@@ -158,16 +158,9 @@ impl AzBuf for Section {
         let block_count = u16::azalea_read(buf)?;
         let fluid_count = u16::azalea_read(buf)?;
 
+        // States past vanilla's (modded blocks) are kept: the palette reads
+        // them with `BlockState::from_network`.
         let states = PalettedContainer::<BlockState>::read(buf)?;
-
-        for i in 0..states.storage.size() {
-            if !BlockState::is_valid_state(states.storage.get(i) as BlockStateIntegerRepr) {
-                return Err(BufReadError::custom(format!(
-                    "Invalid block state {} (index {i}) found in section.",
-                    states.storage.get(i)
-                )));
-            }
-        }
 
         let biomes = PalettedContainer::<Biome>::read(buf)?;
         Ok(Section {

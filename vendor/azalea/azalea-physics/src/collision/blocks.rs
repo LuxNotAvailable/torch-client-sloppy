@@ -6142,12 +6142,17 @@ impl BlockWithShape for BlockState {
             .unwrap_or(&&SHAPE1)
     }
 
+    // A modded state (past vanilla's) is a full cube, as its shapes are.
     fn is_collision_shape_empty(&self) -> bool {
-        BASIC_COLLISION_SHAPES_MAP[self.id() as usize] == 0
+        BASIC_COLLISION_SHAPES_MAP
+            .get(self.id() as usize)
+            .is_some_and(|&shape| shape == 0)
     }
 
     fn is_collision_shape_full(&self) -> bool {
-        BASIC_COLLISION_SHAPES_MAP[self.id() as usize] == 1
+        BASIC_COLLISION_SHAPES_MAP
+            .get(self.id() as usize)
+            .is_none_or(|&shape| shape == 1)
     }
 }
 

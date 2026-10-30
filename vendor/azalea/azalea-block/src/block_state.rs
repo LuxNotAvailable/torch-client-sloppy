@@ -1,10 +1,9 @@
 use std::{
     fmt::{self, Debug},
-    hint::assert_unchecked,
     io::{self, Cursor, Write},
 };
 
-use azalea_buf::{AzBuf, AzBufVar, BufReadError, BufReadErrorRepr};
+use azalea_buf::{AzBuf, AzBufVar, BufReadError};
 use azalea_registry::builtin::BlockKind;
 
 use crate::BlockTrait;
@@ -35,11 +34,31 @@ impl BlockState {
         *self == Self::AIR
     }
 
+    /// The state's network id. A state from a modded server can lie past
+    /// [`BlockState::MAX_STATE`]; see [`BlockState::is_vanilla`].
     #[inline]
     pub const fn id(&self) -> BlockStateIntegerRepr {
-        unsafe { assert_unchecked(Self::is_valid_state(self.id)) };
-
         self.id
+    }
+
+    /// A state as a server sent it, kept even when it's past vanilla's
+    /// states (a modded block); ids too large to store become the last one.
+    #[inline]
+    pub const fn from_network(id: u32) -> Self {
+        let id = if id > BlockStateIntegerRepr::MAX as u32 {
+            BlockStateIntegerRepr::MAX
+        } else {
+            id as BlockStateIntegerRepr
+        };
+        BlockState { id }
+    }
+
+    /// Whether this is one of vanilla's states. Others come from mods the
+    /// client doesn't have: it can't tell which block they are, so the
+    /// lookups treat them as a full solid cube.
+    #[inline]
+    pub const fn is_vanilla(&self) -> bool {
+        Self::is_valid_state(self.id)
     }
 }
 
@@ -82,13 +101,7 @@ impl From<BlockState> for u32 {
 
 impl AzBuf for BlockState {
     fn azalea_read(buf: &mut Cursor<&[u8]>) -> Result<Self, BufReadError> {
-        let state_id = u32::azalea_read_var(buf)?;
-        Self::try_from(state_id).map_err(|_| {
-            BufReadErrorRepr::UnexpectedEnumVariant {
-                id: state_id as i32,
-            }
-            .into()
-        })
+        Ok(Self::from_network(u32::azalea_read_var(buf)?))
     }
     fn azalea_write(&self, buf: &mut impl Write) -> io::Result<()> {
         u32::azalea_write_var(&(self.id as u32), buf)
@@ -97,6 +110,9 @@ impl AzBuf for BlockState {
 
 impl Debug for BlockState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if !self.is_vanilla() {
+            return write!(f, "BlockState(id: {}, modded)", self.id);
+        }
         write!(
             f,
             "BlockState(id: {}, {:?})",
@@ -125,6 +141,20 @@ mod tests {
 
         assert!(BlockState::try_from(BlockState::MAX_STATE).is_ok());
         assert!(BlockState::try_from(BlockState::MAX_STATE + 1).is_err());
+    }
+
+    #[test]
+    fn a_modded_state_keeps_its_id_and_reads_as_stone() {
+        let modded = BlockState::from_network(BlockState::MAX_STATE as u32 + 5);
+        assert!(!modded.is_vanilla());
+        assert_eq!(modded.id(), BlockState::MAX_STATE + 5);
+        assert_eq!(modded.as_block_kind(), BlockKind::Stone);
+        assert_eq!(Box::<dyn BlockTrait>::from(modded).id(), "stone");
+        assert_eq!(
+            BlockState::from_network(u32::MAX).id(),
+            BlockStateIntegerRepr::MAX
+        );
+        assert!(BlockState::from_network(1).is_vanilla());
     }
 
     #[test]

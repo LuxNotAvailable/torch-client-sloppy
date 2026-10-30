@@ -273,6 +273,8 @@ pub fn block_id(state: azalea::block::BlockState) -> &'static str {
 
 pub fn is_solid(state: azalea::block::BlockState) -> bool {
     use std::sync::atomic::{AtomicU8, Ordering::Relaxed};
+    // A modded state is solid, as stone (`blocks::info::stand_in`).
+    let state = crate::blocks::info::stand_in(state);
     const UNKNOWN: u8 = 0;
     const SOLID: u8 = 1;
     const OPEN: u8 = 2;

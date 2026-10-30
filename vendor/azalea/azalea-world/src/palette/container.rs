@@ -31,9 +31,20 @@ pub trait PalletedContainerKind:
     }
 
     fn bits_per_entry_to_palette_kind(bits_per_entry: u8) -> PaletteKind;
+
+    /// A value as the server sent it; ids this client doesn't know become
+    /// the default.
+    fn from_network(id: u32) -> Self {
+        Self::try_from(id).unwrap_or_default()
+    }
 }
 impl PalletedContainerKind for BlockState {
     type SectionPos = ChunkSectionBlockPos;
+
+    /// Keeps modded states (past vanilla's) rather than making them air.
+    fn from_network(id: u32) -> Self {
+        BlockState::from_network(id)
+    }
 
     fn size_bits() -> usize {
         4
@@ -181,7 +192,7 @@ impl<S: PalletedContainerKind> PalettedContainer<S> {
             }
             Palette::Global => self.storage.for_each_value(|i, id| {
                 if let Some(slot) = out.get_mut(i) {
-                    *slot = S::try_from(id as u32).unwrap_or_default();
+                    *slot = S::from_network(id as u32);
                 }
             }),
         }

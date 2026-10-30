@@ -101,7 +101,8 @@ pub enum EntityDataValue {
     DyeColor(DyeColor),
 }
 
-const _: () = assert!(size_of::<EntityDataValue>() == 24);
+// 32 since item stacks carry a modded item's raw id (`ItemStackData::modded_kind`).
+const _: () = assert!(size_of::<EntityDataValue>() == 32);
 
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct OptionalUnsignedInt(pub Option<u32>);

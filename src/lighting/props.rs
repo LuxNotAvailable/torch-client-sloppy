@@ -146,6 +146,8 @@ pub fn air() -> &'static LightProps {
 
 #[inline]
 pub fn of(state: BlockState) -> &'static LightProps {
+    // A modded state lights as stone does (`blocks::info::stand_in`).
+    let state = crate::blocks::info::stand_in(state);
     match by_state().get(state.id() as usize) {
         Some(slot) => slot.get_or_init(|| intern(build(state))),
         None => intern(build(state)),

@@ -4,6 +4,7 @@
 )]
 
 pub(crate) mod hop;
+mod modded;
 pub(crate) mod packets;
 pub(crate) mod remap;
 mod v775;

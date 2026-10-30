@@ -135,6 +135,37 @@ pub struct ItemStackData {
     pub count: i32,
     #[serde(rename = "components", skip_serializing_if = "is_default")]
     pub component_patch: DataComponentPatch,
+    /// The network id of an item from a mod this client doesn't have, when
+    /// `kind` is only its stand-in ([`ItemKind::Barrier`]). Never 0: that's
+    /// air, which every client knows. Kept small so stacks stay the size
+    /// entity data expects.
+    #[serde(skip)]
+    pub modded_kind: Option<std::num::NonZeroU32>,
+}
+
+/// Reads an item id, keeping one this client doesn't know (a modded item)
+/// as [`ItemKind::Barrier`] with its raw id, rather than failing the packet.
+pub fn read_item_kind(
+    buf: &mut Cursor<&[u8]>,
+) -> Result<(ItemKind, Option<std::num::NonZeroU32>), BufReadError> {
+    use azalea_registry::Registry;
+    let raw = u32::azalea_read_var(buf)?;
+    Ok(match ItemKind::from_u32(raw) {
+        Some(kind) => (kind, None),
+        None => (ItemKind::Barrier, std::num::NonZeroU32::new(raw)),
+    })
+}
+
+/// Writes an item id: a modded item's raw id goes back as it came.
+fn write_item_kind(
+    kind: ItemKind,
+    modded: Option<std::num::NonZeroU32>,
+    buf: &mut impl Write,
+) -> io::Result<()> {
+    match modded {
+        Some(raw) => raw.get().azalea_write_var(buf),
+        None => kind.azalea_write(buf),
+    }
 }
 
 impl ItemStackData {
@@ -143,6 +174,7 @@ impl ItemStackData {
             count,
             kind: item,
             component_patch: Default::default(),
+            modded_kind: None,
         }
     }
 
@@ -177,7 +209,7 @@ impl AzBuf for ItemStack {
         if count <= 0 {
             Ok(ItemStack::Empty)
         } else {
-            let kind = ItemKind::azalea_read(buf)?;
+            let (kind, modded_kind) = read_item_kind(buf)?;
             let component_patch = match DataComponentPatch::azalea_read(buf) {
                 Ok(patch) => patch,
                 Err(e) => {
@@ -191,6 +223,7 @@ impl AzBuf for ItemStack {
                 count,
                 kind,
                 component_patch,
+                modded_kind,
             }))
         }
     }
@@ -199,7 +232,7 @@ impl AzBuf for ItemStack {
             ItemStack::Empty => 0_i32.azalea_write_var(buf)?,
             ItemStack::Present(i) => {
                 i.count.azalea_write_var(buf)?;
-                i.kind.azalea_write(buf)?;
+                write_item_kind(i.kind, i.modded_kind, buf)?;
                 i.component_patch.azalea_write(buf)?;
             }
         };
@@ -212,13 +245,14 @@ impl AzBuf for ItemStack {
 /// recipe displays use this instead of the count-first slot layout.
 impl ItemStack {
     pub fn read_template(buf: &mut Cursor<&[u8]>) -> Result<Self, BufReadError> {
-        let kind = ItemKind::azalea_read(buf)?;
+        let (kind, modded_kind) = read_item_kind(buf)?;
         let count = i32::azalea_read_var(buf)?;
         let component_patch = DataComponentPatch::azalea_read(buf)?;
         Ok(ItemStackData {
             kind,
             count,
             component_patch,
+            modded_kind,
         }
         .into())
     }
@@ -231,7 +265,7 @@ impl ItemStack {
                 DataComponentPatch::default().azalea_write(buf)
             }
             ItemStack::Present(data) => {
-                data.kind.azalea_write(buf)?;
+                write_item_kind(data.kind, data.modded_kind, buf)?;
                 data.count.azalea_write_var(buf)?;
                 data.component_patch.azalea_write(buf)
             }
@@ -507,12 +541,13 @@ impl AzBuf for UntrustedItemStack {
         if count <= 0 {
             return Ok(UntrustedItemStack(ItemStack::Empty));
         }
-        let kind = ItemKind::azalea_read(buf)?;
+        let (kind, modded_kind) = read_item_kind(buf)?;
         let component_patch = DataComponentPatch::azalea_read_delimited(buf)?;
         Ok(UntrustedItemStack(ItemStack::from(ItemStackData {
             count,
             kind,
             component_patch,
+            modded_kind,
         })))
     }
     fn azalea_write(&self, buf: &mut impl Write) -> io::Result<()> {
@@ -600,5 +635,23 @@ mod tests {
         let item = ItemStack::from(ItemKind::Map).with_component(MapId { id: 1 });
         let map_id = item.get_component::<MapId>().unwrap();
         assert_eq!(map_id.id, 1);
+    }
+
+    #[test]
+    fn a_modded_item_reads_as_a_barrier_and_writes_back_its_id() {
+        let mut bytes = Vec::new();
+        3i32.azalea_write_var(&mut bytes).unwrap();
+        60_000u32.azalea_write_var(&mut bytes).unwrap();
+        DataComponentPatch::default().azalea_write(&mut bytes).unwrap();
+        let stack = ItemStack::azalea_read(&mut Cursor::new(&bytes[..])).unwrap();
+        let ItemStack::Present(data) = &stack else {
+            panic!("expected a stack");
+        };
+        assert_eq!(data.kind, ItemKind::Barrier);
+        assert_eq!(data.modded_kind.map(|id| id.get()), Some(60_000));
+        assert_eq!(data.count, 3);
+        let mut again = Vec::new();
+        stack.azalea_write(&mut again).unwrap();
+        assert_eq!(again, bytes);
     }
 }

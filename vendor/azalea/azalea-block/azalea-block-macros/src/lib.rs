@@ -524,13 +524,19 @@ pub fn make_block_states(input: TokenStream) -> TokenStream {
                 P::try_from_block_state(self)
             }
 
+            /// The state's block. A modded state (past vanilla's) is stone:
+            /// the client can't know its block, and a full solid cube is the
+            /// safest thing to walk on.
             pub fn as_block_kind(self) -> BlockKind {
                 static TABLE: &[u32] = &[
                     #from_state_to_kind_table
                 ];
                 const _: () = assert!(BlockKind::is_valid_id(#last_block_kind_id));
 
-                unsafe { BlockKind::from_u32(TABLE[self.id() as usize]).unwrap_unchecked() }
+                match TABLE.get(self.id() as usize) {
+                    Some(&kind) => unsafe { BlockKind::from_u32(kind).unwrap_unchecked() },
+                    None => BlockKind::Stone,
+                }
             }
         }
     };
@@ -556,7 +562,8 @@ pub fn make_block_states(input: TokenStream) -> TokenStream {
                     let b = block_state.id();
                     match b {
                         #from_state_to_block_match
-                        _ => panic!("Invalid block state: {}", b),
+                        // A modded state: stone, as `as_block_kind` says.
+                        _ => Box::<dyn BlockTrait>::from(BlockKind::Stone),
                     }
                 }
             }

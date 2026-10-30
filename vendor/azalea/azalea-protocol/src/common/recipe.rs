@@ -99,7 +99,7 @@ pub struct ItemStackSlotDisplay {
 }
 impl AzBuf for ItemStackSlotDisplay {
     fn azalea_read(buf: &mut Cursor<&[u8]>) -> Result<Self, BufReadError> {
-        let kind = ItemKind::azalea_read(buf)?;
+        let (kind, modded_kind) = azalea_inventory::read_item_kind(buf)?;
         let count = i32::azalea_read_var(buf)?;
         let component_patch = DataComponentPatch::azalea_read(buf)?;
         Ok(Self {
@@ -107,6 +107,7 @@ impl AzBuf for ItemStackSlotDisplay {
                 count,
                 kind,
                 component_patch,
+                modded_kind,
             }),
         })
     }

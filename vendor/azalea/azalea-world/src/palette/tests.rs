@@ -78,3 +78,4 @@ fn test_coords_from_index() {
         }
     }
 }
+

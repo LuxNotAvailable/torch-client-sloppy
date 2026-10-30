@@ -62,12 +62,36 @@ impl StateInfo {
     }
 }
 
-/// The facts about `state`.
+/// The facts about `state`. A modded state (past vanilla's: a block from a
+/// mod this client doesn't have) shares one row, [`MODDED_ID`], with stone's
+/// behaviour and no properties.
 pub fn info(state: BlockState) -> &'static StateInfo {
     const STATES: usize = BlockState::MAX_STATE as usize + 1;
     static TABLE: OnceLock<Box<[OnceLock<StateInfo>]>> = OnceLock::new();
+    static MODDED: OnceLock<StateInfo> = OnceLock::new();
     let table = TABLE.get_or_init(|| (0..STATES).map(|_| OnceLock::new()).collect());
-    table[state.id() as usize].get_or_init(|| StateInfo::of(state))
+    match table.get(state.id() as usize) {
+        Some(slot) => slot.get_or_init(|| StateInfo::of(state)),
+        None => MODDED.get_or_init(|| StateInfo {
+            id: MODDED_ID,
+            props: Box::new([]),
+            ..StateInfo::of(stand_in(state))
+        }),
+    }
+}
+
+/// The id [`info`] gives every modded state.
+pub const MODDED_ID: &str = "modded";
+
+/// `state` itself when it's vanilla's, else stone's default state: what a
+/// modded block stands in as wherever a vanilla block is needed (lighting,
+/// collision, caches indexed by state).
+pub fn stand_in(state: BlockState) -> BlockState {
+    if state.is_vanilla() {
+        state
+    } else {
+        BlockState::from(azalea_registry::builtin::BlockKind::Stone)
+    }
 }
 
 /// The value of property `name` on `state`.
@@ -93,6 +117,21 @@ mod tests {
             }
             assert_eq!(facts.friction, block.behavior().friction);
         }
+    }
+
+    #[test]
+    fn a_modded_state_gets_the_shared_row() {
+        let modded = BlockState::from_network(BlockState::MAX_STATE as u32 + 40);
+        let facts = info(modded);
+        assert_eq!(facts.id, MODDED_ID);
+        assert!(facts.props().is_empty());
+        assert_eq!(
+            facts.friction,
+            info(BlockState::from(BlockKind::Stone)).friction
+        );
+        assert_eq!(stand_in(modded), BlockState::from(BlockKind::Stone));
+        let oak = BlockState::from(BlockKind::OakStairs);
+        assert_eq!(stand_in(oak), oak);
     }
 
     #[test]
