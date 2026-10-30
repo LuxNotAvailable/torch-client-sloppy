@@ -1477,7 +1477,11 @@ pub(super) fn enter_screen(
     }
 }
 
-fn limit_framerate(gui: Res<crate::gui::GuiState>, mut next_frame: Local<Option<Instant>>) {
+fn limit_framerate(
+    gui: Res<crate::gui::GuiState>,
+    monitors: Query<&bevy::window::Monitor, With<bevy::window::PrimaryMonitor>>,
+    mut next_frame: Local<Option<Instant>>,
+) {
     if cfg!(target_arch = "wasm32") {
         return;
     }
@@ -1485,6 +1489,25 @@ fn limit_framerate(gui: Res<crate::gui::GuiState>, mut next_frame: Local<Option<
     let now = Instant::now();
     if target >= crate::gui::MAX_FPS_UNLIMITED {
         *next_frame = None;
+        return;
+    }
+    if gui.options.vsync {
+        // Vsync paces to the monitor's own clock; a cap kept on the CPU
+        // clock beats against it (see `vsync_pacing`). Sleep from this
+        // frame's start instead, so present lands on the refresh.
+        let refresh_hz = monitors
+            .single()
+            .ok()
+            .and_then(|m| m.refresh_rate_millihertz)
+            .map_or(DEFAULT_REFRESH_HZ, |mhz| mhz as f64 / 1000.0);
+        let start = now;
+        if let Some(previous) = next_frame.take()
+            && let Some(period) = vsync_pacing(target, refresh_hz)
+            && let Some(wait) = (previous + period).checked_duration_since(start)
+        {
+            std::thread::sleep(wait);
+        }
+        *next_frame = Some(Instant::now());
         return;
     }
     let period = Duration::from_secs_f64(1.0 / target as f64);
@@ -1498,6 +1521,34 @@ fn limit_framerate(gui: Res<crate::gui::GuiState>, mut next_frame: Local<Option<
         }
         None => *next_frame = Some(now + period),
     }
+}
+
+/// The refresh rate assumed when the monitor doesn't report one.
+const DEFAULT_REFRESH_HZ: f64 = 60.0;
+
+/// How far short of the refresh a vsync-paced sleep ends, so the frame's
+/// work and present still make that refresh.
+const VSYNC_MARGIN: Duration = Duration::from_micros(1500);
+
+/// With vsync on, how long a frame should take from its start, or `None`
+/// to leave pacing to vsync alone.
+///
+/// A cap at or above the refresh rate can't do better than vsync, and
+/// sleeping to it on the CPU clock beats against the monitor's: the two run
+/// at slightly different rates (60.000 against 59.94 Hz, say), drift in and
+/// out of phase over tens of seconds, and out of phase the sleep ends just
+/// after a refresh, so present waits nearly a whole one (about 38 fps on a
+/// 60 Hz monitor). A lower cap rounds to a whole number of refreshes and
+/// ends a little short of the last, so present lands on it.
+fn vsync_pacing(cap: u32, refresh_hz: f64) -> Option<Duration> {
+    if refresh_hz <= 0.0 || cap as f64 >= refresh_hz - 0.5 {
+        return None;
+    }
+    let refreshes = (refresh_hz / cap.max(1) as f64).round().max(1.0);
+    if refreshes <= 1.0 {
+        return None;
+    }
+    Duration::from_secs_f64(refreshes / refresh_hz).checked_sub(VSYNC_MARGIN)
 }
 
 #[derive(Resource)]
@@ -2647,6 +2698,26 @@ pub fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_cap_at_or_above_the_refresh_leaves_pacing_to_vsync() {
+        assert_eq!(vsync_pacing(60, 60.0), None);
+        assert_eq!(vsync_pacing(60, 59.94), None);
+        assert_eq!(vsync_pacing(75, 60.0), None);
+        assert_eq!(vsync_pacing(144, 144.0), None);
+        // A cap that rounds to one refresh is vsync too.
+        assert_eq!(vsync_pacing(50, 60.0), None);
+    }
+
+    #[test]
+    fn a_lower_cap_ends_just_short_of_a_whole_number_of_refreshes() {
+        let period = vsync_pacing(30, 60.0).unwrap();
+        assert_eq!(period, Duration::from_secs_f64(2.0 / 60.0) - VSYNC_MARGIN);
+        let period = vsync_pacing(60, 144.0).unwrap();
+        // 144 / 60 rounds to 2 refreshes: 72 fps, the nearest the monitor allows.
+        assert_eq!(period, Duration::from_secs_f64(2.0 / 144.0) - VSYNC_MARGIN);
+        assert_eq!(vsync_pacing(30, 0.0), None);
+    }
 
     const SIXTY_HZ: Duration = Duration::from_nanos(16_666_666);
 
