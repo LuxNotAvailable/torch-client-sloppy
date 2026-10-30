@@ -21,6 +21,11 @@ alloc_diag = []
 
 budget = []
 
+# A pause-menu button that records ten seconds of play and writes a
+# report: frame times, every timed stage and span, GPU passes, counters,
+# process use and the machine it ran on.
+perf_report = ["dep:sysinfo"]
+
 mobile_ui = ["bevy/touch"]
 
 click_gui = []
@@ -257,6 +262,9 @@ mimalloc = { version = "0.1", default-features = false }
 wgpu = { version = "27", default-features = false, features = ["vulkan"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+sysinfo = { version = "0.33", default-features = false, features = [
+    "system",
+], optional = true }
 reqwest = { version = "0.13", default-features = false, features = [
     "blocking",
     "rustls-no-provider",

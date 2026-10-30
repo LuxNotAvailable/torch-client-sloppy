@@ -92,6 +92,33 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         state.disconnect = true;
         state.nav = Some(Screen::Title);
     }
+    #[cfg(all(feature = "perf_report", not(target_arch = "wasm32")))]
+    profile_button(
+        p,
+        state,
+        ctx,
+        x,
+        gy + BUTTON_TOPS[3] + WIDGET_HEIGHT + 2.0 * BUTTON_PADDING,
+    );
+}
+
+/// Profiling builds' button under the menu: closes it and records a
+/// performance report of the play that follows.
+#[cfg(all(feature = "perf_report", not(target_arch = "wasm32")))]
+fn profile_button(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx, x: f32, y: f32) {
+    use crate::diag::perf_report;
+    let status = perf_report::status();
+    let label = status
+        .clone()
+        .unwrap_or_else(|| format!("Profile ({}s report)", perf_report::RECORD.as_secs()));
+    let button = Button {
+        active: status.is_none(),
+        ..Button::new(x, y, BUTTON_WIDTH_FULL, WIDGET_HEIGHT, &label)
+    };
+    if button.draw(p, ctx) {
+        perf_report::start();
+        state.nav = Some(Screen::None);
+    }
 }
 
 #[cfg(test)]

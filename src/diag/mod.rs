@@ -9,6 +9,19 @@ macro_rules! counted {
         $vis enum $name { $($(#[$vm])* $v,)* }
 
         const $count: usize = [$($name::$v),*].len();
+
+        #[allow(dead_code)]
+        impl $name {
+            /// Every variant, in order.
+            $vis const ALL: [$name; $count] = [$($name::$v),*];
+
+            /// The variant's name.
+            $vis fn name(self) -> &'static str {
+                match self {
+                    $($name::$v => stringify!($v),)*
+                }
+            }
+        }
     };
 }
 
@@ -19,6 +32,8 @@ mod layer;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod logfile;
 pub(crate) mod panic_report;
+#[cfg(all(feature = "perf_report", not(target_arch = "wasm32")))]
+pub(crate) mod perf_report;
 #[cfg(feature = "profiling")]
 pub(crate) mod profiling;
 mod runtime;

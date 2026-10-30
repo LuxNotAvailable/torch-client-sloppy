@@ -385,6 +385,7 @@ mod tests {
             (Screen::Sleep, "gui_sleep.png"),
             (Screen::InventorySortSettings, "gui_options_sorting.png"),
             (Screen::Statistics, "gui_stats.png"),
+            (Screen::Pause, "gui_pause.png"),
             (Screen::SocialInteractions, "gui_social.png"),
             (
                 Screen::Container(crate::session::ContainerKind::Chest(3)),

@@ -53,5 +53,6 @@ tools/build_web.sh --features webgpu
 | `deadlock-detection` | off | Names the threads involved when the client freezes on a lock. |
 | `alloc_diag` | off | Heap usage rows on the F3 screen. |
 | `budget` | off | Per-frame timing breakdown. |
+| `perf_report` | off | A Profile button in the pause menu: records 10 seconds of play and writes `profiles/profile-<time>.txt` and `.json` to the client's folder, with frame rate and lows, every timed stage and span, GPU passes, counters, process use and the machine's hardware and settings. Not in the browser build. |
 
 The default features are what ships. Each has an in-game toggle for players who don't want it, so building without them (`--no-default-features`) isn't supported. The off-by-default features above are for development and diagnostics; add them on top of the defaults.

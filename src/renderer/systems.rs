@@ -2628,6 +2628,8 @@ pub fn run(
     }
     #[cfg(feature = "shader_support")]
     app.add_plugins(crate::renderer::packdraw::ShaderPackPlugin);
+    #[cfg(all(feature = "perf_report", not(target_arch = "wasm32")))]
+    app.add_plugins(crate::diag::perf_report::PerfReportPlugin);
 
     #[cfg(target_arch = "wasm32")]
     app.add_systems(Last, super::input::run_exit_tasks_on_exit);

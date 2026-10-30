@@ -25,20 +25,38 @@ use crate::platform::time::{Instant, epoch};
 
 const WINDOW_NS: u64 = 500_000_000;
 
-static ENABLED: AtomicBool = AtomicBool::new(false);
+static PAGE: AtomicBool = AtomicBool::new(false);
+static CAPTURE: AtomicBool = AtomicBool::new(false);
 
+/// Whether anything is timing: the profiler page, or a performance report.
 pub fn enabled() -> bool {
-    ENABLED.load(Relaxed)
+    PAGE.load(Relaxed) || CAPTURE.load(Relaxed)
 }
 
-/// Turned on while the profiler page shows; turning it on starts a fresh
-/// window so stale probe stamps never count.
+/// Turned on while the profiler page shows.
 pub fn set_enabled(on: bool) {
-    if ENABLED.swap(on, Relaxed) != on {
+    switch(&PAGE, on);
+}
+
+/// Turned on while a performance report records, whatever the page does.
+#[cfg_attr(not(feature = "perf_report"), allow(dead_code))]
+pub fn set_capturing(on: bool) {
+    switch(&CAPTURE, on);
+}
+
+/// Flips one reason to time; when timing as a whole starts, a fresh window
+/// opens so stale probe stamps never count.
+fn switch(flag: &AtomicBool, on: bool) {
+    let before = enabled();
+    flag.store(on, Relaxed);
+    if !before && enabled() {
         MAIN_AT.store(0, Relaxed);
         RENDER_AT.store(0, Relaxed);
         if let Ok(mut window) = WINDOW.lock() {
             *window = Window::default();
+        }
+        if let Ok(mut frame) = FRAME.lock() {
+            frame.clear();
         }
     }
 }
@@ -94,6 +112,17 @@ pub struct Report {
 static WINDOW: LazyLock<Mutex<Window>> = LazyLock::new(Mutex::default);
 static REPORT: Mutex<Option<Arc<Report>>> = Mutex::new(None);
 
+/// This frame's time per row so far, and the last finished frame's.
+static FRAME: LazyLock<Mutex<HashMap<(Group, &'static str), u64>>> = LazyLock::new(Mutex::default);
+static LAST_FRAME: Mutex<Vec<(Group, &'static str, u64)>> = Mutex::new(Vec::new());
+
+/// The last finished frame's time per row, in nanoseconds (render stages
+/// for the render frame that ran alongside it).
+#[cfg_attr(not(feature = "perf_report"), allow(dead_code))]
+pub fn last_frame() -> Vec<(Group, &'static str, u64)> {
+    LAST_FRAME.lock().map(|f| f.clone()).unwrap_or_default()
+}
+
 pub fn report() -> Option<Arc<Report>> {
     REPORT.lock().ok()?.clone()
 }
@@ -115,10 +144,21 @@ pub fn record(group: Group, name: &'static str, ns: u64) {
     });
     accum.total_ns += ns;
     accum.max_ns = accum.max_ns.max(ns);
+    if CAPTURE.load(Relaxed)
+        && let Ok(mut frame) = FRAME.lock()
+    {
+        *frame.entry((group, name)).or_default() += ns;
+    }
 }
 
 /// Closes a frame; publishes and restarts the window once it is long enough.
 fn frame_done(now: u64) {
+    if CAPTURE.load(Relaxed)
+        && let (Ok(mut frame), Ok(mut last)) = (FRAME.lock(), LAST_FRAME.lock())
+    {
+        last.clear();
+        last.extend(frame.drain().map(|((group, name), ns)| (group, name, ns)));
+    }
     let Ok(mut window) = WINDOW.lock() else {
         return;
     };
