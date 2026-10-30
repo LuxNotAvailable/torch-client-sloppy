@@ -28,6 +28,10 @@ impl Intent {
         self.use_clicked |= use_item;
     }
 
+    #[cfg_attr(
+        feature = "mobile_ui",
+        allow(dead_code, reason = "desktop input; the touch controls replace it")
+    )]
     pub fn pick(&mut self, include_data: bool) {
         self.pick_clicked = true;
         self.pick_include_data |= include_data;

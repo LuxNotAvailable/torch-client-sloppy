@@ -28,6 +28,10 @@ pub struct List {
     original: String,
     tab_cycles: bool,
     last_mouse: Option<(f32, f32)>,
+    #[cfg_attr(
+        not(feature = "mobile_ui"),
+        allow(dead_code, reason = "the touch suggestion grid's columns")
+    )]
     cols: Vec<f32>,
 }
 

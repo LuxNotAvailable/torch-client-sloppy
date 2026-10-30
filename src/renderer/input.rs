@@ -303,6 +303,14 @@ pub(super) fn apply_gui_nav(
     enter_screen(next, &mut state, &shared, &mut windows);
 }
 
+#[cfg_attr(
+    feature = "mobile_ui",
+    allow(
+        unused_mut,
+        unreachable_code,
+        reason = "touch controls drive the camera instead"
+    )
+)]
 pub(super) fn mouse_look(
     motion: Res<AccumulatedMouseMotion>,
     #[cfg_attr(feature = "mobile_ui", allow(unused_mut))] mut angles: ResMut<CameraAngles>,
@@ -513,7 +521,7 @@ pub(crate) fn bot_movement_input(
 /// Latched sneak and sprint for the toggle options; a latch drops when its
 /// option is switched back to hold.
 #[derive(Default)]
-pub(super) struct Toggled {
+pub(crate) struct Toggled {
     crouch: bool,
     sprint: bool,
 }
@@ -623,6 +631,14 @@ pub(super) fn track_lifecycle(
     }
 }
 
+#[cfg_attr(
+    feature = "mobile_ui",
+    allow(
+        unused_mut,
+        unreachable_code,
+        reason = "touch controls drive the camera instead"
+    )
+)]
 pub(super) fn web_pointer_lock(
     buttons: Res<ButtonInput<MouseButton>>,
     shared: Res<Shared>,

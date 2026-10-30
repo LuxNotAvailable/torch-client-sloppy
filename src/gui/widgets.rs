@@ -23,6 +23,10 @@ pub struct TextBox {
     pending_focus: bool,
     #[cfg(any(target_arch = "wasm32", target_os = "android"))]
     keyboard_active: bool,
+    #[cfg_attr(
+        not(any(feature = "click_gui", target_arch = "wasm32")),
+        allow(dead_code, reason = "read by the click GUI and the browser keyboard")
+    )]
     pub browser_keyboard: bool,
     pub max_width: Option<f32>,
     pub strip_formatting: bool,
@@ -726,6 +730,7 @@ impl MultiLineTextBox {
         self.stale = false;
     }
 
+    #[cfg(feature = "click_gui")]
     pub fn line_count(&mut self, font: &crate::text::Font, width: f32) -> usize {
         self.relayout(font, width);
         self.lines.len()

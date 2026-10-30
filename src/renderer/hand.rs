@@ -850,7 +850,6 @@ struct HandGlint(usize);
 struct HandEntities {
     pose: Entity,
     item: Entity,
-    glint: Entity,
     arm: Entity,
     sleeve: Entity,
     map: Entity,
@@ -1279,7 +1278,6 @@ fn setup_hand(
         HandEntities {
             pose,
             item,
-            glint,
             arm,
             sleeve,
             map,
@@ -2227,7 +2225,6 @@ mod tests {
         let mut rig = HandRig::new(std::array::from_fn(|_| HandEntities {
             pose: Entity::PLACEHOLDER,
             item: Entity::PLACEHOLDER,
-            glint: Entity::PLACEHOLDER,
             arm: Entity::PLACEHOLDER,
             sleeve: Entity::PLACEHOLDER,
             map: Entity::PLACEHOLDER,

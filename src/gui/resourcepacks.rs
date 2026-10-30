@@ -31,6 +31,7 @@ pub(in crate::gui) const PADDING: f32 = 2.0;
 pub(in crate::gui) const ICON: f32 = 32.0;
 pub(in crate::gui) const TEXT_W: f32 = 157.0;
 pub(in crate::gui) const BAR_ROW_W: f32 = LIST_W - SCROLLBAR_W - SCROLLBAR_GAP;
+#[cfg(not(explore_modrinth))]
 const FOOTER_W: f32 = 150.0;
 const FOOTER_GAP: f32 = 8.0;
 #[cfg(explore_modrinth)]

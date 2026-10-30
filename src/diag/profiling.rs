@@ -155,11 +155,6 @@ pub struct Span {
     _private: (),
 }
 
-pub fn span(name: &'static str) -> Span {
-    open(intern(name));
-    Span { _private: () }
-}
-
 pub fn span_cached(id: &'static OnceLock<u32>, name: &'static str) -> Span {
     open(*id.get_or_init(|| intern(name)));
     Span { _private: () }
@@ -410,7 +405,6 @@ where
 }
 
 pub fn bridge_layer() -> Option<bevy::log::BoxedLayer> {
-    use bevy::log::tracing_subscriber::Layer;
     Some(Box::new(Bridge))
 }
 

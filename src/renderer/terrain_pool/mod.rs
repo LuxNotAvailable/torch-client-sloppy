@@ -146,7 +146,6 @@ pub fn stats() -> Option<&'static TerrainStats> {
 #[derive(Resource, Clone)]
 pub struct TerrainShaders {
     pub terrain: Handle<Shader>,
-    pub prepass: Handle<Shader>,
     pub cull: Handle<Shader>,
 }
 
@@ -185,7 +184,6 @@ impl Plugin for TerrainPoolPlugin {
             let assets = app.world().resource::<AssetServer>();
             TerrainShaders {
                 terrain: embedded_shader(assets, "terrain.wgsl"),
-                prepass: embedded_shader(assets, "terrain_prepass.wgsl"),
                 cull: embedded_shader(assets, "terrain_pool/cull.wgsl"),
             }
         };

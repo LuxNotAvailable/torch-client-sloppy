@@ -120,10 +120,6 @@ impl DialogState {
         self.parent
     }
 
-    pub fn is_open(&self) -> bool {
-        !matches!(self.phase, Phase::Closed)
-    }
-
     pub fn pauses(&self) -> bool {
         matches!(&self.phase, Phase::Showing(dialog) if dialog.pause)
     }

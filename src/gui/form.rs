@@ -88,6 +88,10 @@ impl<'p, 'a, 'c> Form<'p, 'a, 'c> {
     }
 
     /// Leaves the next cell empty.
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        allow(dead_code, reason = "the browser build has no VSync cell")
+    )]
     pub fn skip(&mut self) {
         self.cell();
     }
@@ -179,24 +183,6 @@ impl<'p, 'a, 'c> Form<'p, 'a, 'c> {
             self.changed = true;
         }
         changed
-    }
-
-    /// A button cycling through `options`, captioned `label: option`.
-    pub fn cycle<T: Copy + PartialEq>(
-        &mut self,
-        label: &str,
-        value: &mut T,
-        options: &[(T, &str)],
-    ) -> bool {
-        let (x, y) = self.cell();
-        let at = options.iter().position(|(v, _)| v == value).unwrap_or(0);
-        let caption = format!("{label}: {}", options[at].1);
-        let pressed = Button::new(x, y, COLUMN_W, WIDGET_HEIGHT, &caption).draw(self.p, self.ctx);
-        if pressed {
-            *value = options[(at + 1) % options.len()].0;
-            self.changed = true;
-        }
-        pressed
     }
 
     /// A plain button in the next cell.

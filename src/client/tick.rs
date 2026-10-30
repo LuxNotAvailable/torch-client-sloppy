@@ -1584,7 +1584,6 @@ fn collect_other_players(bot: &Client) -> (Vec<OtherPlayerInfo>, HashSet<i32>) {
             );
             out.push(OtherPlayerInfo {
                 id,
-                username,
                 name_tag: tag.name,
                 below_name: tag.below,
                 hidden_by_team: tag.hidden_by_team,

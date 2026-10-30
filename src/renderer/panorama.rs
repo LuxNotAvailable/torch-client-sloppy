@@ -156,7 +156,6 @@ fn setup(
         super::systems::scene_camera(
             PANORAMA_CAMERA_ORDER,
             ClearColorConfig::Custom(Color::BLACK),
-            super::systems::CameraStart::Inactive,
             PANORAMA_LAYER,
         ),
         Projection::Perspective(PerspectiveProjection {

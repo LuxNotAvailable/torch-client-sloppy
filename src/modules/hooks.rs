@@ -7,6 +7,10 @@ pub fn shapes_look() -> bool {
     aim_assist::enabled() || auto_mine::enabled() || auto_mace::drives_camera()
 }
 
+#[cfg_attr(
+    feature = "mobile_ui",
+    allow(dead_code, reason = "desktop input; the touch controls replace it")
+)]
 pub fn drives_look() -> bool {
     auto_mine::enabled() || auto_mace::drives_camera()
 }

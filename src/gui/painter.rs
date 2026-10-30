@@ -7,7 +7,9 @@ pub const ITEM_SIZE: f32 = 16.0;
 #[allow(dead_code, reason = "the slot geometry")]
 pub const SLOT_SIZE: f32 = 18.0;
 
+#[cfg(feature = "click_gui")]
 pub const CORNER_TL: u8 = 1;
+#[cfg(feature = "click_gui")]
 pub const CORNER_TR: u8 = 2;
 #[allow(
     dead_code,
@@ -19,18 +21,23 @@ pub const CORNER_BR: u8 = 4;
     reason = "the mask is the whole set; only two are named yet"
 )]
 pub const CORNER_BL: u8 = 8;
+#[cfg(feature = "click_gui")]
 pub const CORNERS_TOP: u8 = CORNER_TL | CORNER_TR;
 #[allow(
     dead_code,
     reason = "the mask is the whole set; only two are named yet"
 )]
 pub const CORNERS_BOTTOM: u8 = CORNER_BR | CORNER_BL;
+#[cfg(feature = "click_gui")]
 pub const CORNERS_ALL: u8 = 0xF;
 
+#[cfg(feature = "click_gui")]
 const CORNER_SEGMENTS: usize = 5;
 
+#[cfg(feature = "click_gui")]
 const CORNER_FEATHER: f32 = 0.5;
 
+#[cfg(feature = "click_gui")]
 const ARC: [[f32; 2]; CORNER_SEGMENTS + 1] = [
     [-1.0, 0.0],
     [-0.951_056_5, -0.309_017],
@@ -40,6 +47,7 @@ const ARC: [[f32; 2]; CORNER_SEGMENTS + 1] = [
     [0.0, -1.0],
 ];
 
+#[cfg(feature = "click_gui")]
 fn rotate_quadrant(p: [f32; 2], q: usize) -> [f32; 2] {
     let mut p = p;
     for _ in 0..q % 4 {
@@ -105,6 +113,7 @@ pub struct PainterBuffers {
 }
 
 impl<'a> Painter<'a> {
+    #[cfg(test)]
     pub fn new(atlas: &'a GuiAtlas, frame: u32) -> Self {
         Self::with_buffers(atlas, frame, PainterBuffers::default())
     }
@@ -952,10 +961,12 @@ impl<'a> Painter<'a> {
         self.slot_highlight_front(x, y);
     }
 
+    #[cfg(feature = "click_gui")]
     pub fn rounded_rect(&mut self, x: f32, y: f32, w: f32, h: f32, r: f32, argb: u32) {
         self.rounded_rect_corners(x, y, w, h, r, CORNERS_ALL, argb);
     }
 
+    #[cfg(feature = "click_gui")]
     pub fn rounded_rect_corners(
         &mut self,
         x: f32,
@@ -995,6 +1006,7 @@ impl<'a> Painter<'a> {
     }
 
     #[allow(clippy::too_many_arguments, reason = "one private geometry helper")]
+    #[cfg(feature = "click_gui")]
     fn corner_fan(
         &mut self,
         cx: f32,

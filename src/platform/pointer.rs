@@ -8,6 +8,10 @@ pub(crate) fn unlock() {
     web::unlock();
 }
 
+#[cfg_attr(
+    feature = "mobile_ui",
+    allow(dead_code, reason = "desktop input; the touch controls replace it")
+)]
 pub(crate) fn take_claimed() -> bool {
     #[cfg(target_arch = "wasm32")]
     return web::take_claimed();
@@ -15,6 +19,10 @@ pub(crate) fn take_claimed() -> bool {
     false
 }
 
+#[cfg_attr(
+    feature = "mobile_ui",
+    allow(dead_code, reason = "desktop input; the touch controls replace it")
+)]
 pub(crate) fn is_locked() -> bool {
     #[cfg(target_arch = "wasm32")]
     return web::is_locked();

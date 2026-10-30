@@ -53,4 +53,4 @@ tools/build_web.sh --features webgpu
 | `alloc_diag` | off | Heap usage rows on the F3 screen. |
 | `budget` | off | Per-frame timing breakdown. |
 
-To build without the default features, add `--no-default-features` and list the ones you want.
+The default features are what ships. Each has an in-game toggle for players who don't want it, so building without them (`--no-default-features`) isn't supported. The off-by-default features above are for development and diagnostics; add them on top of the defaults.

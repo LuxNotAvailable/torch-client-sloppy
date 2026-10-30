@@ -267,6 +267,7 @@ impl GuiAtlas {
             .take()
     }
 
+    #[cfg(test)]
     pub fn pixels(&self) -> std::sync::MutexGuard<'_, Option<AtlasPixels>> {
         self.pixels
             .lock()

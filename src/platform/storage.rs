@@ -105,12 +105,15 @@ pub(crate) fn dir() -> std::path::PathBuf {
 #[cfg(target_os = "windows")]
 pub(crate) const WINDOWS_FOLDER: &str = "torch-client";
 
-#[cfg(not(any(target_arch = "wasm32", target_os = "android", target_os = "windows")))]
+#[cfg(all(
+    not(any(target_arch = "wasm32", target_os = "android", target_os = "windows")),
+    not(test)
+))]
 fn default_dir() -> std::path::PathBuf {
     std::path::PathBuf::from("/tmp/torch-client")
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "windows", not(test)))]
 fn default_dir() -> std::path::PathBuf {
     match crate::platform::env::var_os("LOCALAPPDATA").filter(|p| !p.is_empty()) {
         Some(local) => std::path::PathBuf::from(local)

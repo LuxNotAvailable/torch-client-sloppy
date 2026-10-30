@@ -693,6 +693,7 @@ impl EntityState {
         self.pose == pose
     }
 
+    #[cfg(test)]
     pub fn new(id: i32, kind: EntityKind) -> EntityState {
         EntityState::with_extras(id, kind, Extras::default())
     }

@@ -492,7 +492,10 @@ fn resolve_enchantments(
                 .enchantment
                 .map
                 .get_index_of(&Identifier::new(name.clone()))?;
-            Some((azalea_registry::Enchantment::new_raw(id as u32), *level))
+            Some((
+                azalea_registry::data::Enchantment::new_raw(id as u32),
+                *level,
+            ))
         })
         .collect()
 }

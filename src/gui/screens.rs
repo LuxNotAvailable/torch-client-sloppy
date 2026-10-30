@@ -64,6 +64,9 @@ pub fn draw(
         toast_settings,
     );
 
+    // Taken before the screen draws, as the mobile controls read it after.
+    #[cfg(feature = "mobile_ui")]
+    let in_menu = state.in_menu();
     draw_hud_layers(
         p,
         state,

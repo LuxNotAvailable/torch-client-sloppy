@@ -11,7 +11,6 @@ pub struct TerrainMaterialPlugin;
 impl Plugin for TerrainMaterialPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "terrain.wgsl");
-        embedded_asset!(app, "terrain_prepass.wgsl");
 
         app.insert_resource(bevy::light::PointLightShadowMap {
             size: UNUSED_SHADOW_MAP_SIZE,

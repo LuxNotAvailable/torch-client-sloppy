@@ -228,13 +228,6 @@ impl Dimension {
         }
     }
 
-    pub fn has_sun(self) -> bool {
-        match self.sky_light_factor() {
-            Some(factor) => factor > 0.0,
-            None => true,
-        }
-    }
-
     pub fn cardinal(self) -> &'static [f32; 6] {
         self.attributes().cardinal
     }

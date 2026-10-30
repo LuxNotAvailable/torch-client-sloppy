@@ -224,6 +224,13 @@ impl Bound {
 }
 
 pub struct BindDef {
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "the tests check the table's order against the enum"
+        )
+    )]
     pub action: Action,
     pub id: &'static str,
     pub name: &'static str,

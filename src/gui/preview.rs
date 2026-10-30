@@ -499,6 +499,7 @@ mod tests {
         preview_appleskin();
     }
 
+    #[test]
     fn preview_screens() {
         let atlas = build_gui_atlas(&crate::assets_root());
         let (vw, vh) = (427.0_f32, 240.0_f32);

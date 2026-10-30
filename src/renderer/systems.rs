@@ -243,14 +243,6 @@ impl ChunkIndex {
         (self.y_lo - 16, self.y_hi + 16)
     }
 
-    pub fn visibility(&self, pos: (i32, i32, i32)) -> VisibilitySet {
-        self.columns
-            .get(&(pos.0, pos.2))
-            .and_then(|column| column.sections.get(&pos.1))
-            .map(|slot| slot.vis)
-            .unwrap_or_else(VisibilitySet::all)
-    }
-
     pub fn sections(&self) -> impl Iterator<Item = ((i32, i32, i32), VisibilitySet)> + '_ {
         self.columns.iter().flat_map(|(&(cx, cz), column)| {
             column
@@ -734,17 +726,7 @@ fn spawn_overlay<M: bevy::pbr::Material, K: Component>(
     (entity, mesh)
 }
 
-pub enum CameraStart {
-    Active,
-    Inactive,
-}
-
-pub fn scene_camera(
-    order: isize,
-    clear_color: ClearColorConfig,
-    start: CameraStart,
-    layer: usize,
-) -> impl Bundle {
+pub fn scene_camera(order: isize, clear_color: ClearColorConfig, layer: usize) -> impl Bundle {
     (
         Camera3d::default(),
         Msaa::Off,
@@ -752,7 +734,8 @@ pub fn scene_camera(
         Camera {
             order,
             clear_color,
-            is_active: matches!(start, CameraStart::Active),
+            // Each scene camera starts off; its screen turns it on.
+            is_active: false,
             ..default()
         },
         Tonemapping::None,

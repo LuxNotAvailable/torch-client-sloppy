@@ -123,10 +123,6 @@ pub fn note_visible_columns(n: usize) {
     VISIBLE_COLUMNS.store(n as u64, Relaxed);
 }
 
-pub fn note_visible_verts(n: usize) {
-    VISIBLE_VERTS.store(n as u64, Relaxed);
-}
-
 pub fn note_drawn_entities(n: usize) {
     DRAWN_ENTITIES.store(n as u64, Relaxed);
 }

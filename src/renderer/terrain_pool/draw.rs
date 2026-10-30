@@ -144,7 +144,6 @@ pub struct TerrainBindGroup {
 pub struct TerrainPipeline {
     mesh_pipeline: MeshPipeline,
     shader: Handle<Shader>,
-    shadow_shader: Handle<Shader>,
     vertex_layout_ref: MeshVertexBufferLayoutRef,
     layout_indirect: BindGroupLayoutDescriptor,
     layout_direct: BindGroupLayoutDescriptor,
@@ -225,7 +224,6 @@ impl FromWorld for TerrainPipeline {
         Self {
             mesh_pipeline: world.resource::<MeshPipeline>().clone(),
             shader: shaders.terrain,
-            shadow_shader: shaders.prepass,
             vertex_layout_ref,
             layout_indirect,
             layout_direct,

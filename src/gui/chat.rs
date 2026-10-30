@@ -562,7 +562,15 @@ fn caret_count(spans: &[Span]) -> usize {
 #[derive(Clone, Copy, Debug)]
 struct Look {
     width: f32,
+    #[cfg_attr(
+        feature = "mobile_ui",
+        allow(dead_code, reason = "desktop input; the touch controls replace it")
+    )]
     focused_height: f32,
+    #[cfg_attr(
+        feature = "mobile_ui",
+        allow(dead_code, reason = "desktop input; the touch controls replace it")
+    )]
     unfocused_height: f32,
     line_height: f32,
     /// From an entry's bottom up to its text's top.
@@ -1686,7 +1694,7 @@ pub(crate) mod tests {
     fn popup_fixture(
         atlas: &crate::gui::atlas::GuiAtlas,
     ) -> (ChatState, std::sync::Arc<crate::session::SharedMutex>) {
-        use std::sync::{Arc, Mutex};
+        use std::sync::Arc;
         let shared: Arc<SharedMutex> = Arc::new(SharedMutex::default());
         shared.lock().unwrap().session.chat.command_tree = Some(Arc::new(preview_tree()));
         let mut chat = ChatState::default();
@@ -1826,7 +1834,7 @@ pub(crate) mod tests {
     fn server_side_nodes_round_trip_through_shared_state() {
         use crate::gui::atlas::build_gui_atlas;
         use crate::play::commands::{Range, Suggestion, Suggestions};
-        use std::sync::{Arc, Mutex};
+        use std::sync::Arc;
 
         let atlas = build_gui_atlas(&crate::assets_root());
         let shared: Arc<SharedMutex> = Arc::new(SharedMutex::default());
@@ -1933,7 +1941,7 @@ pub(crate) mod tests {
 
 #[cfg(test)]
 mod visual {
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
 
     use super::*;
     use crate::gui::atlas::build_gui_atlas;

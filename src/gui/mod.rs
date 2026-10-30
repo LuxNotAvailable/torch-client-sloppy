@@ -390,6 +390,7 @@ impl TouchMovement {
         TouchMovement::PadStick,
     ];
 
+    #[cfg(feature = "mobile_ui")]
     pub fn caption(self) -> &'static str {
         match self {
             TouchMovement::Buttons => "Buttons",
@@ -412,6 +413,7 @@ impl TouchMovement {
             .find(|m| m.serialized_name() == name)
     }
 
+    #[cfg(feature = "mobile_ui")]
     pub fn next(self) -> TouchMovement {
         let i = TouchMovement::ALL
             .iter()
@@ -420,6 +422,7 @@ impl TouchMovement {
         TouchMovement::ALL[(i + 1) % TouchMovement::ALL.len()]
     }
 
+    #[cfg(feature = "mobile_ui")]
     pub fn has_stick(self) -> bool {
         !matches!(self, TouchMovement::Buttons)
     }
@@ -769,6 +772,10 @@ pub const SCROLL_SENSITIVITY_MAX: u32 = 1000;
 impl GuiOptions {
     /// Degrees of turn per pixel of mouse motion: vanilla's
     /// `(s * 0.6 + 0.2)^3 * 8 * 0.15`, signed by the invert options.
+    #[cfg_attr(
+        feature = "mobile_ui",
+        allow(dead_code, reason = "desktop input; the touch controls replace it")
+    )]
     pub fn look_scale(&self) -> Vec2 {
         let s = self.mouse_sensitivity as f32 / MOUSE_SENSITIVITY_MAX as f32;
         let f = s * 0.6 + 0.2;

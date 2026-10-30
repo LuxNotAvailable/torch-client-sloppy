@@ -15,6 +15,10 @@ mod seam {
         false
     }
 
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        allow(dead_code, reason = "the browser build starts the mesh worker")
+    )]
     pub(crate) fn spawn(_assets: &[u8]) -> bool {
         false
     }

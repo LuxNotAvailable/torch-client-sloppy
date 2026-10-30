@@ -29,6 +29,10 @@ pub enum ClientRequest {
     /// A packet built elsewhere (the game-master block editors).
     Packet(Box<azalea_protocol::packets::game::ServerboundGamePacket>),
     /// Bytes for a server-side mod on a named channel.
+    #[allow(
+        dead_code,
+        reason = "the channel for client mods; nothing sends one yet"
+    )]
     CustomPayload {
         channel: String,
         data: Vec<u8>,
@@ -57,6 +61,10 @@ pub enum ClientEvent {
     ElderGuardian,
     /// Bytes from a server-side mod on a named channel the client itself
     /// doesn't handle.
+    #[allow(
+        dead_code,
+        reason = "the channel for client mods; nothing sends one yet"
+    )]
     CustomPayload {
         channel: String,
         data: Vec<u8>,

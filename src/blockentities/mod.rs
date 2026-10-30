@@ -1524,10 +1524,7 @@ mod tests {
         let missing: Vec<&str> = VANILLA
             .iter()
             .filter(|kind| !drawn.contains(kind))
-            .map(|kind| {
-                use azalea_registry::Registry as _;
-                kind.to_str()
-            })
+            .map(|kind| kind.to_str())
             .collect();
         assert!(
             missing.is_empty(),

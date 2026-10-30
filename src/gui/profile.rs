@@ -29,6 +29,7 @@ const ROW_H: f32 = 36.0;
 const CONTENT_PAD: f32 = 2.0;
 const ICON_SIZE: f32 = 32.0;
 const TEXT_INSET: f32 = ICON_SIZE + 3.0;
+#[cfg(test)]
 const SCROLLBAR_W: f32 = 6.0;
 const BUTTON_GAP: f32 = 4.0;
 const LOWER_ROW_BUTTON_W: f32 = 74.0;
@@ -211,6 +212,7 @@ fn row_left(vw: f32) -> f32 {
     ((vw / 2.0).floor() - (ROW_W / 2.0).floor()).floor()
 }
 
+#[cfg(test)]
 fn scrollbar_x(vw: f32) -> f32 {
     row_left(vw) + ROW_W + SCROLLBAR_W + 2.0
 }

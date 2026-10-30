@@ -218,11 +218,7 @@ pub struct Transforms {
 }
 
 impl Transforms {
-    pub const IDENTITY: Transforms = Transforms {
-        xf: [None; COUNT],
-        drawn: u32::MAX,
-    };
-
+    #[cfg(feature = "mobile_ui")]
     pub fn to_local(&self, id: ElementId, p: Vec2) -> Vec2 {
         match self.xf[id.index()] {
             Some((s, ox, oy)) if s > 0.0 => (p - Vec2::new(ox, oy)) / s,
@@ -230,6 +226,7 @@ impl Transforms {
         }
     }
 
+    #[cfg(feature = "mobile_ui")]
     pub fn drawn(&self, id: ElementId) -> bool {
         self.drawn & (1 << id.index()) != 0
     }
@@ -377,6 +374,10 @@ impl Element {
 pub enum Home {
     Left,
     Right,
+    #[cfg_attr(
+        not(feature = "mobile_ui"),
+        allow(dead_code, reason = "only touch controls sit in a corner")
+    )]
     Corner,
 }
 

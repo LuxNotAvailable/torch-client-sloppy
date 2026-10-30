@@ -34,7 +34,7 @@ enum Claim {
     Pad(Cell),
     Stick { at: Vec2 },
     Use,
-    Hotbar(u8),
+    Hotbar,
     Chat,
     Look(LookTrack),
     LookOnly(LookTrack),
@@ -46,7 +46,7 @@ impl Claim {
             Control::Pad(cell) => Claim::Pad(cell),
             Control::Stick => Claim::Stick { at: stick_at() },
             Control::Use => Claim::Use,
-            Control::Hotbar(slot) => Claim::Hotbar(slot),
+            Control::Hotbar(_) => Claim::Hotbar,
             Control::Chat => Claim::Chat,
             Control::Look => Claim::Look(LookTrack::new(pos, now)),
             Control::LookOnly => Claim::LookOnly(LookTrack::new(pos, now)),
@@ -252,7 +252,7 @@ fn mobile_input(
             }
             Claim::Look(track) => (track, true),
             Claim::LookOnly(track) => (track, false),
-            Claim::Pad(_) | Claim::Use | Claim::Hotbar(_) | Claim::Chat => continue,
+            Claim::Pad(_) | Claim::Use | Claim::Hotbar | Claim::Chat => continue,
         };
         let moved = track.advance(p.pos);
         look_delta += moved;
@@ -319,7 +319,7 @@ fn mobile_input(
                 hold_hints.push((track.last, track.progress(now, &cfg)));
             }
             Claim::LookOnly(track) => hold_hints.push((track.last, 0.0)),
-            Claim::Hotbar(_) | Claim::Chat => {}
+            Claim::Hotbar | Claim::Chat => {}
         }
     }
     if pad.auto_walk {

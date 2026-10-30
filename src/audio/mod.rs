@@ -60,10 +60,6 @@ pub(crate) fn install_defs(parsed: defs::Defs) {
     let _ = DEFS.set(parsed);
 }
 
-pub fn ready() -> bool {
-    DEFS.get().is_some()
-}
-
 pub fn set_volumes(volumes: &[u32; SoundCategory::COUNT]) {
     for (slot, value) in volumes.iter().enumerate() {
         VOLUMES[slot].store((*value).min(100), Ordering::Relaxed);

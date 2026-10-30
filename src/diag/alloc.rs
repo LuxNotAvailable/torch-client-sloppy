@@ -3,6 +3,10 @@ pub const SITES: [&str; Site::COUNT] = [
 ];
 
 #[derive(Clone, Copy)]
+#[cfg_attr(
+    not(feature = "alloc_diag"),
+    allow(dead_code, reason = "the counting allocator labels its threads")
+)]
 pub enum Site {
     Render,
     Upload,

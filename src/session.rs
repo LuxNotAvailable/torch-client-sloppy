@@ -323,6 +323,10 @@ pub struct SessionState {
 }
 
 impl SessionState {
+    #[cfg_attr(
+        feature = "mobile_ui",
+        allow(dead_code, reason = "desktop input; the touch controls replace it")
+    )]
     pub fn clear_clicks(&mut self) {
         self.input.attack_held = false;
         self.input.use_held = false;
@@ -731,7 +735,6 @@ impl Default for SkinPrefs {
 #[derive(Clone, Default)]
 pub struct OtherPlayerInfo {
     pub id: i32,
-    pub username: String,
     pub name_tag: Vec<crate::text::Span>,
     pub hidden_by_team: bool,
     pub health: Option<f32>,

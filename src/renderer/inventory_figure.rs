@@ -15,7 +15,6 @@ use bevy::render::extract_resource::{ExtractResource, ExtractResourcePlugin};
 use bevy::render::render_resource::TextureFormat;
 
 use super::anim::AnimSample;
-use super::systems::CameraStart;
 
 pub const FIGURE_LAYER: usize = 4;
 const FIGURE_CAMERA_ORDER: isize = -2;
@@ -122,7 +121,6 @@ fn spawn_camera(mut commands: Commands) {
         super::systems::scene_camera(
             FIGURE_CAMERA_ORDER,
             ClearColorConfig::Custom(Color::NONE),
-            CameraStart::Inactive,
             FIGURE_LAYER,
         ),
         Projection::Orthographic(OrthographicProjection {

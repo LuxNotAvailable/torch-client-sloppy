@@ -1,3 +1,10 @@
+#[cfg_attr(
+    not(any(target_arch = "wasm32", target_os = "android")),
+    allow(
+        dead_code,
+        reason = "only the browser and Android show a soft keyboard"
+    )
+)]
 pub(crate) fn show(text: &str, anchor: usize, cursor: usize) {
     #[cfg(target_arch = "wasm32")]
     web::show(text, anchor, cursor);
@@ -81,6 +88,13 @@ pub(crate) fn resolve_taps() {
     }
 }
 
+#[cfg_attr(
+    not(any(target_arch = "wasm32", target_os = "android")),
+    allow(
+        dead_code,
+        reason = "only the browser and Android show a soft keyboard"
+    )
+)]
 pub(crate) fn has_focus() -> bool {
     #[cfg(target_arch = "wasm32")]
     return web::has_focus();
@@ -112,6 +126,10 @@ fn log_inset(px: f32) {
     }
 }
 
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    allow(dead_code, reason = "the browser keyboard's text")
+)]
 pub(crate) fn poll() -> Option<(String, usize, usize)> {
     #[cfg(target_arch = "wasm32")]
     return web::poll();
@@ -133,6 +151,10 @@ pub(crate) fn take_tab() -> Option<bool> {
     None
 }
 
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    allow(dead_code, reason = "the browser keyboard's text")
+)]
 pub(crate) fn take_backspace() -> bool {
     #[cfg(target_arch = "wasm32")]
     return web::take_backspace();
@@ -162,10 +184,18 @@ pub(crate) fn take_nav() -> Nav {
     Nav::default()
 }
 
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    allow(dead_code, reason = "the browser keyboard's text")
+)]
 pub(crate) fn sync(text: &str, cursor: usize) {
     sync_selection(text, cursor, cursor);
 }
 
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    allow(dead_code, reason = "the browser keyboard's text")
+)]
 pub(crate) fn sync_selection(text: &str, anchor: usize, cursor: usize) {
     #[cfg(target_arch = "wasm32")]
     web::sync_selection(text, anchor, cursor);
