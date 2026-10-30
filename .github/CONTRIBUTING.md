@@ -21,6 +21,7 @@ Optional features are listed under [Feature system](#feature-system). If your ch
 - Run `rustfmt` and match the style of the surrounding code.
 - Keep changes under `vendor/` small.
 - No including Mojang's assets in the source tree.
+- Code between `// @generated begin` and `// @generated end` is written by the `tools/gen_*.py` script the marker names, from the decompiled game in `reference/`. Change the script and rerun it rather than editing the region; `--check` reports a table that has fallen out of date.
 
 ## Feature system
 

@@ -61,6 +61,7 @@ fn options() -> AppleSkinOptions {
 pub fn food_values(item: &str) -> Option<(i32, f32)> {
     let item = item.strip_prefix("minecraft:").unwrap_or(item);
     let (nutrition, modifier): (i32, f32) = match item {
+        // @generated begin food values: tools/gen_food_table.py
         "apple" => (4, 0.3),
         "baked_potato" => (5, 0.6),
         "beef" => (3, 0.3),
@@ -101,6 +102,7 @@ pub fn food_values(item: &str) -> Option<(i32, f32)> {
         "suspicious_stew" => (6, 0.6),
         "sweet_berries" => (2, 0.1),
         "tropical_fish" => (1, 0.1),
+        // @generated end food values
         _ => return None,
     };
     Some((nutrition, nutrition as f32 * modifier * 2.0))

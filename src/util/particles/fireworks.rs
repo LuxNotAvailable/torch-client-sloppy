@@ -77,6 +77,8 @@ pub(crate) fn start_firework(
     });
 }
 
+// @generated begin firework shapes: tools/gen_firework_shapes.py
+/// The creeper face's outline (`FireworkParticles.Starter.CREEPER_PARTICLE_COORDS`).
 pub(super) const CREEPER_COORDS: [[f32; 2]; 12] = [
     [0.0, 0.2],
     [0.2, 0.2],
@@ -92,14 +94,16 @@ pub(super) const CREEPER_COORDS: [[f32; 2]; 12] = [
     [0.0, -0.4],
 ];
 
+/// The star's outline (`FireworkParticles.Starter.STAR_PARTICLE_COORDS`).
 pub(super) const STAR_COORDS: [[f32; 2]; 6] = [
     [0.0, 1.0],
     [0.3455, 0.309],
     [0.9511, 0.309],
-    [0.379_591_84, -0.126_530_61],
-    [0.612_244_9, -0.804_081_6],
-    [0.0, -0.359_183_67],
+    [0.37959182, -0.12653062],
+    [0.6122449, -0.8040816],
+    [0.0, -0.35918367],
 ];
+// @generated end firework shapes
 
 pub(super) fn rgb(color: i32) -> [f32; 3] {
     [

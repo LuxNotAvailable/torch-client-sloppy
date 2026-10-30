@@ -11,6 +11,7 @@ use bevy::math::Vec3;
 pub fn radius(kind: EntityKind) -> f32 {
     use EntityKind as K;
     match kind {
+        // @generated begin shadow radii: tools/gen_shadow_radii.py
         K::AcaciaBoat => 0.8,
         K::AcaciaChestBoat => 0.8,
         K::Allay => 0.4,
@@ -43,10 +44,11 @@ pub fn radius(kind: EntityKind) -> f32 {
         K::DarkOakChestBoat => 0.8,
         K::Dolphin => 0.7,
         K::Drowned => 0.5,
+        K::ElderGuardian => 1.2,
+        K::EndCrystal => 0.5,
+        K::EnderDragon => 0.5,
         K::Enderman => 0.5,
         K::Endermite => 0.3,
-        K::EnderDragon => 0.5,
-        K::EndCrystal => 0.5,
         K::Evoker => 0.5,
         K::ExperienceOrb => 0.15,
         K::FallingBlock => 0.5,
@@ -54,8 +56,10 @@ pub fn radius(kind: EntityKind) -> f32 {
         K::Frog => 0.3,
         K::FurnaceMinecart => 0.7,
         K::Ghast => 1.5,
-        K::HappyGhast => 2.0,
+        K::Giant => 3.0,
         K::Goat => 0.7,
+        K::Guardian => 0.5,
+        K::HappyGhast => 2.0,
         K::Hoglin => 0.7,
         K::HopperMinecart => 0.7,
         K::Horse => 0.75,
@@ -121,10 +125,8 @@ pub fn radius(kind: EntityKind) -> f32 {
         K::Zoglin => 0.7,
         K::Zombie => 0.5,
         K::ZombieNautilus => 0.7,
-        K::Guardian => 0.5,
-        K::ElderGuardian => 1.2,
         K::ZombieVillager => 0.5,
-        K::Giant => 3.0,
+        // @generated end shadow radii
         _ => 0.0,
     }
 }
