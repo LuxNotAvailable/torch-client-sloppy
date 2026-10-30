@@ -12,6 +12,7 @@ use super::item_assets::ItemAssets;
 use crate::entities::geom;
 use crate::entities::models::humanoid::armor as armor_mesh;
 use crate::entities::render::humanoid::armor as armor_tex;
+use crate::entities::{refresh_params, refresh_texture};
 use crate::items::mesh::Transform as ItemTransform;
 use crate::items::model::DisplayContext;
 
@@ -1787,9 +1788,7 @@ fn update_held_item(
         Some(gpu) => {
             *transform = held_item_transform(&display_transform(&gpu, left_hand), left_hand);
             mesh.0 = gpu.mesh;
-            if let Some(material) = items.entity_materials.get_mut(material) {
-                material.texture = Some(gpu.texture);
-            }
+            refresh_texture(&mut *items.entity_materials, material, Some(gpu.texture));
             *vis = Visibility::Inherited;
         }
         None => {
@@ -1845,9 +1844,11 @@ fn update_wings(
     });
     let texture = texture.flatten();
 
-    if let Some(material) = items.entity_materials.get_mut(&rig.wings.material) {
-        material.texture = texture.clone();
-    }
+    refresh_texture(
+        &mut *items.entity_materials,
+        &rig.wings.material,
+        texture.clone(),
+    );
     let shown = if texture.is_some() {
         Visibility::Inherited
     } else {
@@ -1911,9 +1912,7 @@ fn update_skin(
     }
     .unwrap_or_else(|| items.model.skin.clone());
     for handle in [&rig.base, &rig.overlay] {
-        if let Some(material) = items.entity_materials.get_mut(handle) {
-            material.texture = Some(body.clone());
-        }
+        refresh_texture(&mut *items.entity_materials, handle, Some(body.clone()));
     }
 
     let cape = skin
@@ -1921,9 +1920,11 @@ fn update_skin(
         .cape
         .as_ref()
         .and_then(|url| items.skins.get(url).cloned());
-    if let Some(material) = items.entity_materials.get_mut(&rig.cape.material) {
-        material.texture = cape.clone();
-    }
+    refresh_texture(
+        &mut *items.entity_materials,
+        &rig.cape.material,
+        cape.clone(),
+    );
     rig.cape.ready = cape.is_some() && skin.parts & (1 << CAPE_BIT) != 0;
     rig.wings.worn = None;
 
@@ -2040,9 +2041,11 @@ fn apply_rig(
             && material.texture.is_none()
         {
             let texture = items.armor_textures.get(STUCK_TEXTURES[kind], items.images);
-            if let Some(material) = items.entity_materials.get_mut(&rig.stuck_materials[kind]) {
-                material.texture = texture;
-            }
+            refresh_texture(
+                &mut *items.entity_materials,
+                &rig.stuck_materials[kind],
+                texture,
+            );
         }
         let placed = stuck_placements(seed, count, kind == 1);
         for i in 0..STUCK_POOL {
@@ -2129,18 +2132,18 @@ fn apply_rig(
         .into_iter()
         .chain(rig.held.iter().map(|held| &held.material))
         {
-            if let Some(material) = items.entity_materials.get_mut(handle) {
-                material.params.set(lit);
-            }
+            refresh_params(&mut *items.entity_materials, handle, lit);
         }
         for (i, slot) in rig.armor.iter_mut().enumerate() {
             slot.glint = sample.armor.glints(i);
-            if let Some(material) = items.entity_materials.get_mut(&slot.material) {
-                material.params.set(Lit {
+            refresh_params(
+                &mut *items.entity_materials,
+                &slot.material,
+                Lit {
                     glint: slot.glint,
                     ..lit
-                });
-            }
+                },
+            );
         }
         rig.lit = lit;
     }
@@ -2169,9 +2172,11 @@ fn update_armor(
             }
             None => None,
         };
-        if let Some(material) = items.entity_materials.get_mut(&slot.material) {
-            material.texture = texture.clone();
-        }
+        refresh_texture(
+            &mut *items.entity_materials,
+            &slot.material,
+            texture.clone(),
+        );
         let shown = if texture.is_some() {
             Visibility::Inherited
         } else {

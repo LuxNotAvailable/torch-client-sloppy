@@ -61,6 +61,8 @@ const KINDS: [Kind; 11] = [
 struct Layer {
     mesh: Handle<Mesh>,
     entity: Entity,
+    /// A hash of the geometry last written, to skip rewriting the same.
+    written: Option<u64>,
 }
 
 #[derive(Resource)]
@@ -104,6 +106,22 @@ impl Geo {
             self.idx
                 .extend_from_slice(&[first + i, first + i + 1, first + i + 2]);
         }
+    }
+
+    /// A hash of the geometry, by bit pattern.
+    fn fingerprint(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        let bits = |values: &[f32], h: &mut std::collections::hash_map::DefaultHasher| {
+            for v in values {
+                v.to_bits().hash(h);
+            }
+        };
+        bits(self.pos.as_flattened(), &mut h);
+        bits(self.uv.as_flattened(), &mut h);
+        bits(self.color.as_flattened(), &mut h);
+        self.idx.hash(&mut h);
+        h.finish()
     }
 
     fn into_mesh(self, mesh: &mut Mesh) {
@@ -286,7 +304,14 @@ fn setup(
                 bevy::light::NotShadowReceiver,
             ));
         }
-        layers.insert(kind, Layer { mesh, entity });
+        layers.insert(
+            kind,
+            Layer {
+                mesh,
+                entity,
+                written: None,
+            },
+        );
     }
     commands.insert_resource(Layers(layers));
 }
@@ -316,14 +341,14 @@ fn camera_pose(camera: &CameraQuery) -> (Vec3, Quat, f32) {
 /// shown only while it has triangles.
 #[derive(bevy::ecs::system::SystemParam)]
 struct LayerOut<'w, 's> {
-    layers: Res<'w, Layers>,
+    layers: ResMut<'w, Layers>,
     meshes: ResMut<'w, Assets<Mesh>>,
     visibility: Query<'w, 's, &'static mut Visibility>,
 }
 
 impl LayerOut<'_, '_> {
     fn put(&mut self, kind: Kind, geo: Geo) {
-        let Some(layer) = self.layers.0.get(&kind) else {
+        let Some(layer) = self.layers.0.get_mut(&kind) else {
             return;
         };
         let empty = geo.idx.is_empty();
@@ -337,8 +362,42 @@ impl LayerOut<'_, '_> {
                 *vis = wanted;
             }
         }
-        if !empty && let Some(mesh) = self.meshes.get_mut(&layer.mesh) {
-            geo.into_mesh(mesh);
+        if empty {
+            return;
         }
+        // The same geometry as last frame (still mobs' shadows, a resting
+        // lead) needn't be rewritten: every write re-uploads the mesh.
+        let fingerprint = geo.fingerprint();
+        if layer.written == Some(fingerprint) {
+            return;
+        }
+        if let Some(mesh) = self.meshes.get_mut(&layer.mesh) {
+            geo.into_mesh(mesh);
+            layer.written = Some(fingerprint);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn quad(at: f32) -> Geo {
+        let mut geo = Geo::default();
+        let c = [1.0, 1.0, 1.0, 0.5];
+        geo.quad([
+            (Vec3::new(at, 0.0, 0.0), [0.0, 0.0], c),
+            (Vec3::new(at, 0.0, 1.0), [0.0, 1.0], c),
+            (Vec3::new(at + 1.0, 0.0, 1.0), [1.0, 1.0], c),
+            (Vec3::new(at + 1.0, 0.0, 0.0), [1.0, 0.0], c),
+        ]);
+        geo
+    }
+
+    #[test]
+    fn the_same_geometry_has_the_same_fingerprint_and_a_moved_one_does_not() {
+        assert_eq!(quad(2.0).fingerprint(), quad(2.0).fingerprint());
+        assert_ne!(quad(2.0).fingerprint(), quad(2.001).fingerprint());
+        assert_ne!(quad(2.0).fingerprint(), Geo::default().fingerprint());
     }
 }

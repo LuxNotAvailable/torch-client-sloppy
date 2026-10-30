@@ -184,22 +184,25 @@ pub(super) fn draw_particles(
     }
     hide_from(&batches.pool, used, &mut drawn);
 
+    // Touches each material only when its light moved (day, night, a
+    // flicker): every touch would rebuild its bind group.
     for (key, handle) in material_cache.0.iter() {
-        let Some(material) = ent_materials.get_mut(handle) else {
-            continue;
-        };
-        material.params.set(Lit {
-            tint: [1.0; 4],
-            light: crate::renderer::lightmap::cell_light(
-                &lightmap.current,
-                key.block_light,
-                key.sky_light,
-            ),
-            dirs,
-            overlay_alpha: 1.0,
-            overlay_white: false,
-            glint: false,
-        });
+        crate::entities::refresh_params(
+            &mut ent_materials,
+            handle,
+            Lit {
+                tint: [1.0; 4],
+                light: crate::renderer::lightmap::cell_light(
+                    &lightmap.current,
+                    key.block_light,
+                    key.sky_light,
+                ),
+                dirs,
+                overlay_alpha: 1.0,
+                overlay_white: false,
+                glint: false,
+            },
+        );
     }
 }
 

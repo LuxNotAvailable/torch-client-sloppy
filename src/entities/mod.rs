@@ -843,6 +843,20 @@ pub(crate) fn refresh_params(
     }
 }
 
+/// Points a material at `texture`, touching the asset only when it changes,
+/// for the same reason as [`refresh_params`].
+pub(crate) fn refresh_texture(
+    materials: &mut Assets<EntityMaterial>,
+    handle: &Handle<EntityMaterial>,
+    texture: Option<Handle<Image>>,
+) {
+    if materials.get(handle).is_some_and(|m| m.texture != texture)
+        && let Some(material) = materials.get_mut(handle)
+    {
+        material.texture = texture;
+    }
+}
+
 pub(crate) fn repeating_nearest() -> bevy::image::ImageSampler {
     use bevy::image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor};
     ImageSampler::Descriptor(ImageSamplerDescriptor {
