@@ -74,15 +74,10 @@ pub(crate) fn install_block_change_hook() {
             {
                 let at = [pos.x as f32 + 0.5, pos.y as f32 + 0.5, pos.z as f32 + 0.5];
                 if crate::audio::audible_at(at) {
-                    use azalea::block::BlockTrait;
-                    let name = |state| {
-                        let block: Box<dyn BlockTrait> = Box::<dyn BlockTrait>::from(state);
-                        crate::util::block_model::sound_group(block.id())
-                    };
-                    let is_fluid = |state| {
-                        let block: Box<dyn BlockTrait> = Box::<dyn BlockTrait>::from(state);
-                        matches!(block.id(), "water" | "lava" | "bubble_column")
-                    };
+                    use crate::util::block_model::block_id;
+                    let name = |state| crate::util::block_model::sound_group(block_id(state));
+                    let is_fluid =
+                        |state| matches!(block_id(state), "water" | "lava" | "bubble_column");
                     let event =
                         if old.is_air() && !new.is_air() && !is_fluid(new) && placed_locally(pos) {
                             Some(name(new).place_event)

@@ -42,7 +42,7 @@ impl BlockIds {
         entries: &[crate::shaderpack::blockids::Entry],
         lighting: PackLighting,
     ) -> BlockIds {
-        use azalea::block::{BlockState, BlockTrait};
+        use azalea::block::BlockState;
         use std::collections::HashMap;
 
         let mut by_block: HashMap<&str, Vec<&crate::shaderpack::blockids::Entry>> = HashMap::new();
@@ -60,13 +60,13 @@ impl BlockIds {
             let Ok(state) = BlockState::try_from(raw as u32) else {
                 continue;
             };
-            let block: Box<dyn BlockTrait> = Box::<dyn BlockTrait>::from(state);
-            let name = block.id();
+            let block = crate::blocks::info::info(state);
+            let name = block.id;
             let Some(candidates) = by_block.get(name) else {
                 continue;
             };
             let found = if candidates.iter().any(|e| !e.properties.is_empty()) {
-                let properties = block.property_map();
+                let properties = block.map();
                 candidates
                     .iter()
                     .find(|e| !e.properties.is_empty() && e.matches(name, &properties))

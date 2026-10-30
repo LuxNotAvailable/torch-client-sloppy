@@ -53,12 +53,12 @@ impl Moving {
                 short: id(with(moved, &[("short", "true")])),
             }
         } else if source && !extending {
-            let base = Box::<dyn BlockTrait>::from(moved);
+            let base = crate::blocks::info::info(moved);
             let head = with(
                 BlockState::from(BlockKind::PistonHead),
                 &[
                     ("type", piston_type(kind == BlockKind::StickyPiston)),
-                    ("facing", base.get_property("facing").unwrap_or("north")),
+                    ("facing", base.get("facing").unwrap_or("north")),
                 ],
             );
             Look::Retracting {
@@ -147,9 +147,8 @@ pub fn block_event(
     if !is_piston(BlockKind::from(state)) {
         return Vec::new();
     }
-    let Some(direction) = Box::<dyn BlockTrait>::from(state)
-        .get_property("facing")
-        .and_then(facing::from_name)
+    let Some(direction) =
+        crate::blocks::info::property(state, "facing").and_then(facing::from_name)
     else {
         return Vec::new();
     };
@@ -325,23 +324,23 @@ impl<F: Fn([i32; 3]) -> BlockState> Level<F> {
         {
             return false;
         }
-        let block = Box::<dyn BlockTrait>::from(state);
+        let block = crate::blocks::info::info(state);
         if is_piston(kind) {
-            if block.get_property("extended") == Some("true") {
+            if block.get("extended") == Some("true") {
                 return false;
             }
         } else {
-            if block.behavior().destroy_time == -1.0 {
+            if block.destroy_time == -1.0 {
                 return false;
             }
-            match push_reaction(block.id()) {
+            match push_reaction(block.id) {
                 PushReaction::Block => return false,
                 PushReaction::Destroy => return allow_destroyable,
                 PushReaction::PushOnly => return direction == connection,
                 PushReaction::Normal => {}
             }
         }
-        !has_block_entity(block.id())
+        !has_block_entity(block.id)
     }
 }
 

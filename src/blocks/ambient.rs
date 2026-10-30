@@ -1,4 +1,4 @@
-use azalea::block::{BlockState, BlockTrait};
+use azalea::block::BlockState;
 use parking_lot::RwLock;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -124,8 +124,8 @@ fn build(state: BlockState) -> Option<Ambient> {
     const PREFIX: usize = "minecraft:".len();
     let name = &state.as_block_kind().to_str()[PREFIX..];
 
-    let block: Box<dyn BlockTrait> = Box::<dyn BlockTrait>::from(state);
-    let prop = |n: &str| block.get_property(n);
+    let block = crate::blocks::info::info(state);
+    let prop = |n: &str| block.get(n);
     let flag = |n: &str| prop(n) == Some("true");
     let int = |n: &str| prop(n).and_then(|v| v.parse::<u8>().ok()).unwrap_or(0);
 

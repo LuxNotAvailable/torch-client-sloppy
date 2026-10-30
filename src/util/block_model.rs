@@ -266,17 +266,9 @@ fn translucent_layer(name: &str) -> bool {
         || name.ends_with("_stained_glass_pane")
 }
 
-/// A block state's block id, `stone`, remembered per state: the trait
-/// object the plain lookup builds is a heap allocation each time.
+/// A block state's block id, `stone` (see [`crate::blocks::info`]).
 pub fn block_id(state: azalea::block::BlockState) -> &'static str {
-    use std::sync::OnceLock;
-    const STATES: usize = azalea::block::BlockState::MAX_STATE as usize + 1;
-    static IDS: OnceLock<Box<[OnceLock<&'static str>]>> = OnceLock::new();
-    let ids = IDS.get_or_init(|| (0..STATES).map(|_| OnceLock::new()).collect());
-    match ids.get(state.id() as usize) {
-        Some(slot) => slot.get_or_init(|| Box::<dyn azalea::block::BlockTrait>::from(state).id()),
-        None => Box::<dyn azalea::block::BlockTrait>::from(state).id(),
-    }
+    crate::blocks::info::info(state).id
 }
 
 pub fn is_solid(state: azalea::block::BlockState) -> bool {
@@ -307,13 +299,10 @@ pub enum EyeFluid {
     Lava,
 }
 
-fn fluid_at(block: &dyn BlockTrait) -> Option<(EyeFluid, u8)> {
-    let name = block.id();
+fn fluid_at(block: &crate::blocks::info::StateInfo) -> Option<(EyeFluid, u8)> {
+    let name = block.id;
     let level_amount = || {
-        let level: u32 = block
-            .get_property("level")
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0);
+        let level: u32 = block.get("level").and_then(|v| v.parse().ok()).unwrap_or(0);
         if level == 0 || level >= 8 {
             8
         } else {
@@ -331,7 +320,7 @@ fn fluid_at(block: &dyn BlockTrait) -> Option<(EyeFluid, u8)> {
         )),
         "lava" => Some((EyeFluid::Lava, level_amount())),
         "kelp" | "kelp_plant" | "seagrass" | "tall_seagrass" => Some((EyeFluid::Water, 8)),
-        _ if block.get_property("waterlogged") == Some("true") => Some((EyeFluid::Water, 8)),
+        _ if block.flag("waterlogged") => Some((EyeFluid::Water, 8)),
         _ => None,
     }
 }
@@ -348,10 +337,9 @@ pub fn powder_snow_at(x: f64, y: f64, z: f64) -> bool {
     let world = world.read();
     let pos =
         azalea_core::position::BlockPos::new(x.floor() as i32, y.floor() as i32, z.floor() as i32);
-    world.get_block_state(pos).is_some_and(|state| {
-        let block: Box<dyn BlockTrait> = Box::<dyn BlockTrait>::from(state);
-        block.id() == "powder_snow"
-    })
+    world
+        .get_block_state(pos)
+        .is_some_and(|state| block_id(state) == "powder_snow")
 }
 
 pub fn eye_fluid_at(x: f64, y: f64, z: f64) -> Option<EyeFluid> {
@@ -363,15 +351,11 @@ pub fn eye_fluid_at(x: f64, y: f64, z: f64) -> Option<EyeFluid> {
     let pos =
         azalea_core::position::BlockPos::new(x.floor() as i32, y.floor() as i32, z.floor() as i32);
     let state = world.get_block_state(pos)?;
-    let block: Box<dyn BlockTrait> = Box::<dyn BlockTrait>::from(state);
-    let (kind, amount) = fluid_at(block.as_ref())?;
+    let (kind, amount) = fluid_at(crate::blocks::info::info(state))?;
 
     let same_above = world
         .get_block_state(pos.up(1))
-        .and_then(|s| {
-            let above: Box<dyn BlockTrait> = Box::<dyn BlockTrait>::from(s);
-            fluid_at(above.as_ref())
-        })
+        .and_then(|s| fluid_at(crate::blocks::info::info(s)))
         .is_some_and(|(above_kind, _)| above_kind == kind);
 
     let height = if amount == 8 || same_above {
@@ -383,7 +367,7 @@ pub fn eye_fluid_at(x: f64, y: f64, z: f64) -> Option<EyeFluid> {
     crate::log_debug!(
         "fog",
         "eye {pos:?} frac_y={frac_y:.3} name={} amount={amount} height={height:.3} same_above={same_above}",
-        block.id()
+        block_id(state)
     );
     (frac_y < height).then_some(kind)
 }

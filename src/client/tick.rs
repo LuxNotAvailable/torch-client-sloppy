@@ -195,9 +195,9 @@ fn read_tick_snapshot(bot: &Client, shared: &Arc<SharedMutex>) -> Option<TickSna
                 if let Some(state) = state
                     && !state.is_air()
                 {
-                    use azalea::block::BlockTrait;
-                    let block: Box<dyn BlockTrait> = Box::<dyn BlockTrait>::from(state);
-                    let group = crate::util::block_model::sound_group(block.id());
+                    let group = crate::util::block_model::sound_group(
+                        crate::util::block_model::block_id(state),
+                    );
                     crate::audio::play_at(
                         group.step_event,
                         crate::audio::SoundCategory::Players,

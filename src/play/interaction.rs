@@ -1098,8 +1098,7 @@ fn open_command_block(bot: &Client, shared: &Arc<SharedMutex>, hit: &BlockHitRes
     let Some(mode) = command_block_mode(state) else {
         return;
     };
-    let conditional = Box::<dyn azalea::block::BlockTrait>::from(state).get_property("conditional")
-        == Some("true");
+    let conditional = crate::blocks::info::info(state).flag("conditional");
     let mut s = shared.lock().unwrap();
     crate::client::bus::emit(crate::client::bus::ClientEvent::OpenCommandBlock(
         crate::session::CommandBlockOpen {

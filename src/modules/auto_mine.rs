@@ -1,8 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use azalea::Client;
+use azalea::block::BlockState;
 use azalea::block::fluid_state::{FluidKind, FluidState};
-use azalea::block::{BlockState, BlockTrait};
 use azalea::mining::MineBlockPos;
 use azalea_core::hit_result::BlockHitResult;
 use azalea_core::position::BlockPos;
@@ -216,8 +216,8 @@ fn cell(bot: &Client, pos: BlockPos) -> Cell {
     if state.is_air() || is_fluid(state) {
         return Cell::Clear;
     }
-    let block: Box<dyn BlockTrait> = Box::<dyn BlockTrait>::from(state);
-    if block.behavior().destroy_time < 0.0 {
+    let block = crate::blocks::info::info(state);
+    if block.destroy_time < 0.0 {
         Cell::Unbreakable
     } else {
         Cell::Diggable

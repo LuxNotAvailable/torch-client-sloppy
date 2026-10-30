@@ -1171,12 +1171,11 @@ pub(crate) fn collect_entities(
                 .sleeping_pos
                 .and_then(|pos| level.and_then(|g| g.get_block_state(pos)))
                 .and_then(|state| {
-                    use azalea::block::BlockTrait;
-                    let block: Box<dyn BlockTrait> = state.into();
-                    if !block.id().ends_with("_bed") {
+                    let facts = crate::blocks::info::info(state);
+                    if !facts.id.ends_with("_bed") {
                         return None;
                     }
-                    bed_orientation(block.get_property("facing")?)
+                    bed_orientation(facts.get("facing")?)
                 });
             let feet = level
                 .and_then(|g| g.get_fluid_state(extra.block_pos))
@@ -1370,12 +1369,7 @@ struct ChunkLevel<'a> {
     world: &'a azalea_world::World,
 }
 
-impl ChunkLevel<'_> {
-    fn block(&self, pos: [i32; 3]) -> Option<Box<dyn azalea::block::BlockTrait>> {
-        let pos = AzBlockPos::new(pos[0], pos[1], pos[2]);
-        self.world.get_block_state(pos).map(|state| state.into())
-    }
-}
+impl ChunkLevel<'_> {}
 
 const MAX_FAST_CELLS: usize = 64;
 
@@ -1593,9 +1587,10 @@ impl entities::physics::Level for ChunkLevel<'_> {
     }
 
     fn friction(&self, pos: [i32; 3]) -> f32 {
-        self.block(pos)
-            .map(|block| block.behavior().friction)
-            .unwrap_or(0.6)
+        let pos = AzBlockPos::new(pos[0], pos[1], pos[2]);
+        self.world
+            .get_block_state(pos)
+            .map_or(0.6, |state| crate::blocks::info::info(state).friction)
     }
 
     fn speed_factor(&self, pos: [i32; 3]) -> (f32, bool) {
@@ -1613,15 +1608,13 @@ impl entities::physics::Level for ChunkLevel<'_> {
 }
 
 pub(crate) fn bed_orientation_at(bot: &Client, pos: AzBlockPos) -> Option<entities::Direction> {
-    use azalea::block::BlockTrait;
     let world = bot.world().ok()?;
     let guard = world.read();
-    let state = guard.get_block_state(pos)?;
-    let block: Box<dyn BlockTrait> = state.into();
-    if !block.id().ends_with("_bed") {
+    let facts = crate::blocks::info::info(guard.get_block_state(pos)?);
+    if !facts.id.ends_with("_bed") {
         return None;
     }
-    bed_orientation(block.get_property("facing")?)
+    bed_orientation(facts.get("facing")?)
 }
 
 fn bed_orientation(name: &str) -> Option<entities::Direction> {

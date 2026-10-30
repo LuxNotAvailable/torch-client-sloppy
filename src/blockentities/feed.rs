@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
-use azalea::block::{BlockState, BlockTrait};
+use azalea::block::BlockState;
 use azalea_core::direction::Direction;
 use azalea_core::position::BlockPos;
 use azalea_protocol::packets::game::c_block_entity_data::ClientboundBlockEntityData;
@@ -569,12 +569,12 @@ fn resolve(
     cache
         .entry(state.id())
         .or_insert_with(|| {
-            let block: Box<dyn BlockTrait> = Box::<dyn BlockTrait>::from(state);
+            let block = crate::blocks::info::info(state);
             Arc::new(BlockStateInfo::new(
                 state.id(),
-                block.id().to_string(),
+                block.id.to_string(),
                 block
-                    .property_map()
+                    .map()
                     .into_iter()
                     .map(|(k, v)| (k.to_string(), v.to_string()))
                     .collect(),

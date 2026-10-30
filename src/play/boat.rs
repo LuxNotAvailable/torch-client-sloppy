@@ -8,7 +8,7 @@
 use std::sync::Mutex;
 
 use azalea::app::{App, Plugin};
-use azalea::block::{BlockState, BlockTrait};
+use azalea::block::BlockState;
 use azalea::ecs::prelude::*;
 use azalea::entity::dimensions::EntityDimensions;
 use azalea::entity::indexing::EntityIdIndex;
@@ -256,7 +256,7 @@ fn ground_friction(world: &World, bb: &Aabb) -> f32 {
                     .iter()
                     .any(|b| b.move_relative(offset).intersects_aabb(&probe));
                 if touches {
-                    friction += Box::<dyn BlockTrait>::from(state).behavior().friction;
+                    friction += crate::blocks::info::info(state).friction;
                     count += 1;
                 }
             }

@@ -201,7 +201,6 @@ fn effects(event: &LevelEventEmit, ctx: &mut Emitter) {
         2020 => {
             #[cfg(audio)]
             {
-                use azalea::block::BlockTrait;
                 let pos = azalea_core::position::BlockPos::new(cell[0], cell[1], cell[2]);
                 let Some(state) = ctx.world.get_block_state(pos) else {
                     return;
@@ -209,8 +208,9 @@ fn effects(event: &LevelEventEmit, ctx: &mut Emitter) {
                 if state.is_air() {
                     return;
                 }
-                let block: Box<dyn BlockTrait> = Box::<dyn BlockTrait>::from(state);
-                let group = crate::util::block_model::sound_group(block.id());
+                let group = crate::util::block_model::sound_group(
+                    crate::util::block_model::block_id(state),
+                );
                 // A sound type's volume and pitch are 1: (1 + 1) / 8, 1 * 0.5.
                 sound(cell, group.hit_event, Bus::Blocks, 0.25, 0.5);
             }
@@ -697,9 +697,8 @@ fn break_block(ctx: &mut Emitter, cell: [i32; 3], state: azalea::block::BlockSta
 
     #[cfg(audio)]
     {
-        use azalea::block::BlockTrait;
-        let block: Box<dyn BlockTrait> = Box::<dyn BlockTrait>::from(state);
-        let group = crate::util::block_model::sound_group(block.id());
+        let group =
+            crate::util::block_model::sound_group(crate::util::block_model::block_id(state));
         sound(cell, group.break_event, Bus::Blocks, 1.0, 0.8);
     }
 }

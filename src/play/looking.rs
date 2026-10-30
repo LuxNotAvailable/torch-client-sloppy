@@ -75,10 +75,8 @@ fn block(bot: &Client, pos: azalea_core::position::BlockPos) -> Option<Looking> 
     if state.is_air() {
         return None;
     }
-    let block: Box<dyn BlockTrait> = Box::<dyn BlockTrait>::from(state);
-    let mut properties: Vec<(&'static str, &'static str)> =
-        block.property_map().into_iter().collect();
-    properties.sort_unstable();
+    let facts = crate::blocks::info::info(state);
+    let properties: Vec<(&'static str, &'static str)> = facts.props().to_vec();
     let progress = (bot.component::<MineBlockPos>().ok().and_then(|p| p.0) == Some(pos))
         .then(|| {
             bot.component::<MineProgress>()
@@ -86,7 +84,8 @@ fn block(bot: &Client, pos: azalea_core::position::BlockPos) -> Option<Looking> 
                 .map(|p| p.0.clamp(0.0, 1.0))
         })
         .flatten();
-    let harvestable = block.behavior().requires_correct_tool_for_drops.then(|| {
+    let harvestable = facts.needs_tool.then(|| {
+        let block = Box::<dyn BlockTrait>::from(state);
         bot.component::<azalea::entity::inventory::Inventory>()
             .is_ok_and(|inventory| {
                 azalea::entity::mining::has_correct_tool_for_drops(
@@ -96,7 +95,7 @@ fn block(bot: &Client, pos: azalea_core::position::BlockPos) -> Option<Looking> 
             })
     });
     Some(Looking::Block {
-        id: block.id(),
+        id: facts.id,
         pos: [pos.x, pos.y, pos.z],
         properties,
         progress,

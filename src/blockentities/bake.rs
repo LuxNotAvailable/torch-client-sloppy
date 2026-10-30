@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
-use azalea::block::{BlockState, BlockTrait};
+use azalea::block::BlockState;
 use azalea_registry::builtin::BlockEntityKind;
 use bevy::math::{Mat3, Mat4, Vec3};
 
@@ -71,8 +71,8 @@ pub fn bakes(state: u16) -> bool {
     let known = match slot.load(Ordering::Relaxed) {
         UNKNOWN => {
             let yes = BlockState::try_from(state as u32).ok().is_some_and(|s| {
-                let block: Box<dyn BlockTrait> = Box::<dyn BlockTrait>::from(s);
-                super::feed::kind_for_block(block.id()).is_some_and(|k| BAKED.contains(&k))
+                let block = crate::blocks::info::info(s);
+                super::feed::kind_for_block(block.id).is_some_and(|k| BAKED.contains(&k))
             });
             slot.store(if yes { YES } else { NO }, Ordering::Relaxed);
             yes
@@ -159,17 +159,17 @@ pub fn clear() {
 /// block quads with atlas UVs. `None` if any layer cannot be baked.
 fn build(state: u16, regions: &Regions) -> Option<Vec<BakedQuad>> {
     let block_state = BlockState::try_from(state as u32).ok()?;
-    let block: Box<dyn BlockTrait> = Box::<dyn BlockTrait>::from(block_state);
-    let kind = super::feed::kind_for_block(block.id())?;
+    let block = crate::blocks::info::info(block_state);
+    let kind = super::feed::kind_for_block(block.id)?;
     let props = block
-        .property_map()
+        .map()
         .into_iter()
         .map(|(k, v)| (k.to_owned(), v.to_owned()))
         .collect();
     let st = BeState {
         pos: [0; 3],
         kind,
-        state: Arc::new(BlockStateInfo::new(state, block.id().to_owned(), props)),
+        state: Arc::new(BlockStateInfo::new(state, block.id.to_owned(), props)),
         data: Arc::new(BlockEntityData::None),
         anim: super::sim::Anim::new(kind, &BlockEntityData::None),
         partial: 0.0,

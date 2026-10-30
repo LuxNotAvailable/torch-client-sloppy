@@ -1,4 +1,4 @@
-use azalea::block::{BlockState, BlockTrait};
+use azalea::block::BlockState;
 use azalea::physics::collision::BlockWithShape;
 use azalea_core::{direction::Direction, position::BlockPos};
 use azalea_registry::builtin::BlockKind;
@@ -56,8 +56,8 @@ fn direct_signal_to(pos: BlockPos, block_at: &dyn Fn(BlockPos) -> Option<BlockSt
 fn block_signal(state: BlockState, direction: Direction) -> u8 {
     let kind = state.as_block_kind();
     let id = kind.to_str();
-    let block = Box::<dyn BlockTrait>::from(state);
-    let powered = block.get_property("powered") == Some("true");
+    let block = crate::blocks::info::info(state);
+    let powered = block.get("powered") == Some("true");
 
     if kind == BlockKind::RedstoneBlock {
         return 15;
@@ -68,7 +68,7 @@ fn block_signal(state: BlockState, direction: Direction) -> u8 {
     }
 
     if kind == BlockKind::RedstoneTorch {
-        let lit = block.get_property("lit") == Some("true");
+        let lit = block.get("lit") == Some("true");
         return if lit && direction != Direction::Up {
             15
         } else {
@@ -76,8 +76,8 @@ fn block_signal(state: BlockState, direction: Direction) -> u8 {
         };
     }
     if kind == BlockKind::RedstoneWallTorch {
-        let lit = block.get_property("lit") == Some("true");
-        let facing = block.get_property("facing");
+        let lit = block.get("lit") == Some("true");
+        let facing = block.get("facing");
         return if lit && facing != Some(facing::name(direction)) {
             15
         } else {
@@ -86,7 +86,7 @@ fn block_signal(state: BlockState, direction: Direction) -> u8 {
     }
 
     if kind == BlockKind::Repeater || kind == BlockKind::Comparator || kind == BlockKind::Observer {
-        if !powered || block.get_property("facing") != Some(facing::name(direction)) {
+        if !powered || block.get("facing") != Some(facing::name(direction)) {
             return 0;
         }
         return if kind == BlockKind::Comparator { 1 } else { 15 };
@@ -96,17 +96,14 @@ fn block_signal(state: BlockState, direction: Direction) -> u8 {
         if direction == Direction::Down {
             return 0;
         }
-        let power = block
-            .get_property("power")
-            .and_then(|p| p.parse().ok())
-            .unwrap_or(0);
+        let power = block.get("power").and_then(|p| p.parse().ok()).unwrap_or(0);
         if power == 0 {
             return 0;
         }
         if direction == Direction::Up {
             return power;
         }
-        let side = block.get_property(facing::name(direction.opposite()));
+        let side = block.get(facing::name(direction.opposite()));
         return if matches!(side, Some("side") | Some("up")) {
             power
         } else {
@@ -115,7 +112,7 @@ fn block_signal(state: BlockState, direction: Direction) -> u8 {
     }
 
     if id.ends_with("_pressure_plate") {
-        if let Some(power) = block.get_property("power").and_then(|p| p.parse().ok()) {
+        if let Some(power) = block.get("power").and_then(|p| p.parse().ok()) {
             return power;
         }
         return if powered { 15 } else { 0 };
@@ -127,10 +124,7 @@ fn block_signal(state: BlockState, direction: Direction) -> u8 {
             | BlockKind::SculkSensor
             | BlockKind::CalibratedSculkSensor
     ) {
-        return block
-            .get_property("power")
-            .and_then(|p| p.parse().ok())
-            .unwrap_or(0);
+        return block.get("power").and_then(|p| p.parse().ok()).unwrap_or(0);
     }
 
     if matches!(
@@ -149,16 +143,16 @@ fn block_signal(state: BlockState, direction: Direction) -> u8 {
 fn block_direct_signal(state: BlockState, direction: Direction) -> u8 {
     let kind = state.as_block_kind();
     let id = kind.to_str();
-    let block = Box::<dyn BlockTrait>::from(state);
+    let block = crate::blocks::info::info(state);
 
     if kind == BlockKind::Lever || id.ends_with("_button") {
-        if block.get_property("powered") != Some("true") {
+        if block.get("powered") != Some("true") {
             return 0;
         }
-        let connected = match block.get_property("face") {
+        let connected = match block.get("face") {
             Some("ceiling") => Direction::Down,
             Some("floor") => Direction::Up,
-            _ => match block.get_property("facing") {
+            _ => match block.get("facing") {
                 Some(name) => match facing::from_name(name) {
                     Some(d) => d,
                     None => return 0,
@@ -198,6 +192,7 @@ fn block_direct_signal(state: BlockState, direction: Direction) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use azalea::block::BlockTrait;
 
     const ORIGIN: BlockPos = BlockPos { x: 0, y: 0, z: 0 };
 

@@ -1,4 +1,3 @@
-use azalea::block::BlockTrait;
 use azalea::block::fluid_state::{FluidKind, FluidState};
 use simdnbt::owned::NbtCompound;
 
@@ -71,8 +70,8 @@ fn frame_size(ctx: &TickCtx) -> Option<usize> {
         })
         .filter(|&(ox, oy, oz)| {
             ctx.block([x + ox, y + oy, z + oz]).is_some_and(|state| {
-                let block = Box::<dyn BlockTrait>::from(state);
-                VALID_BLOCKS.contains(&block.id())
+                let block = crate::blocks::info::info(state);
+                VALID_BLOCKS.contains(&block.id)
             })
         })
         .count();

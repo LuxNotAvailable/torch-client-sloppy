@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use azalea::block::{BlockState, BlockTrait};
+use azalea::block::BlockState;
 use parking_lot::RwLock;
 
 use super::Direction;
@@ -163,9 +163,9 @@ fn intern(built: LightProps) -> &'static LightProps {
 }
 
 fn build(state: BlockState) -> LightProps {
-    let block: Box<dyn BlockTrait> = Box::<dyn BlockTrait>::from(state);
-    let name = block.id();
-    let p = block.property_map();
+    let block = crate::blocks::info::info(state);
+    let name = block.id;
+    let p = block.map();
 
     let emission = emission(name, &p);
     let shape = occlusion_shape(name, &p);

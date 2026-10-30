@@ -200,8 +200,8 @@ pub fn predict_bucket_fill(
         BlockKind::Lava => true,
         _ => return None,
     };
-    let block = Box::<dyn BlockTrait>::from(clicked_state);
-    if block.get_property("level") != Some("0") {
+    let block = crate::blocks::info::info(clicked_state);
+    if block.get("level") != Some("0") {
         return None;
     }
     Some((hit.block_pos, is_lava))
@@ -237,15 +237,15 @@ static USE_INTERACTION: LazyLock<Box<[OnceLock<bool>]>> = LazyLock::new(|| {
 
 #[cold]
 fn block_has_use_interaction(state: BlockState) -> bool {
-    let block = Box::<dyn BlockTrait>::from(state);
-    if BLOCK_ENTITY_IDS.contains(&format!("minecraft:{}", block.id()).as_str())
-        || MENU_BLOCK_IDS.contains(&block.id())
+    let block = crate::blocks::info::info(state);
+    if BLOCK_ENTITY_IDS.contains(&format!("minecraft:{}", block.id).as_str())
+        || MENU_BLOCK_IDS.contains(&block.id)
     {
         return true;
     }
     INTERACTION_PROPERTIES
         .iter()
-        .any(|name| block.get_property(name).is_some())
+        .any(|name| block.get(name).is_some())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -578,13 +578,12 @@ fn dripstone_thickness(
 
 fn is_dripstone_facing(state: BlockState, tip: Direction) -> bool {
     state.as_block_kind() == BlockKind::PointedDripstone
-        && Box::<dyn BlockTrait>::from(state).get_property("vertical_direction")
-            == Some(direction_name(tip))
+        && crate::blocks::info::property(state, "vertical_direction") == Some(direction_name(tip))
 }
 
 fn dripstone_thickness_of(state: BlockState) -> Option<&'static str> {
     (state.as_block_kind() == BlockKind::PointedDripstone)
-        .then(|| Box::<dyn BlockTrait>::from(state).get_property("thickness"))
+        .then(|| crate::blocks::info::property(state, "thickness"))
         .flatten()
 }
 
@@ -605,9 +604,7 @@ fn huge_mushroom_placement(
 const DIGITS: [&str; 8] = ["0", "1", "2", "3", "4", "5", "6", "7"];
 
 fn property_digit(state: BlockState, name: &str) -> Option<u32> {
-    Box::<dyn BlockTrait>::from(state)
-        .get_property(name)
-        .and_then(|value| value.parse().ok())
+    crate::blocks::info::property(state, name).and_then(|value| value.parse().ok())
 }
 
 fn substituted_placement(
@@ -661,7 +658,7 @@ fn substituted_placement(
                     let _ = stalk.set_property("age", "0");
                 }
                 BlockKind::Bamboo => {
-                    let grown = Box::<dyn BlockTrait>::from(below).get_property("age") != Some("0");
+                    let grown = crate::blocks::info::property(below, "age") != Some("0");
                     let _ = stalk.set_property("age", if grown { "1" } else { "0" });
                 }
                 _ => {
@@ -669,9 +666,7 @@ fn substituted_placement(
                     if above.as_block_kind() != BlockKind::Bamboo {
                         return Some(Some(BlockState::from(BlockKind::BambooSapling)));
                     }
-                    let age = Box::<dyn BlockTrait>::from(above)
-                        .get_property("age")
-                        .unwrap_or("0");
+                    let age = crate::blocks::info::property(above, "age").unwrap_or("0");
                     let _ = stalk.set_property("age", age);
                 }
             }
@@ -764,7 +759,7 @@ fn exceptional_facing(
             let behind = pos + clicked.opposite().normal();
             let chains = block_at(behind).is_some_and(|state| {
                 state.as_block_kind() == BlockKind::EndRod
-                    && Box::<dyn BlockTrait>::from(state).get_property("facing")
+                    && crate::blocks::info::property(state, "facing")
                         == Some(direction_name(clicked))
             });
             Some(if chains { clicked.opposite() } else { clicked })
@@ -983,15 +978,15 @@ pub fn door_other_half(
     pos: BlockPos,
     block_at: impl Fn(BlockPos) -> Option<BlockState>,
 ) -> Option<(BlockPos, BlockState, BlockState)> {
-    let block = Box::<dyn BlockTrait>::from(old);
-    let (partner_pos, partner_half) = match block.property_map().get("half").copied()? {
+    let block = crate::blocks::info::info(old);
+    let (partner_pos, partner_half) = match block.get("half")? {
         "lower" => (pos.up(1), "upper"),
         "upper" => (pos.down(1), "lower"),
         _ => return None,
     };
     let old_partner = block_at(partner_pos)?;
-    let found = Box::<dyn BlockTrait>::from(old_partner);
-    if found.id() != block.id() || found.property_map().get("half").copied() != Some(partner_half) {
+    let found = crate::blocks::info::info(old_partner);
+    if found.id != block.id || found.get("half") != Some(partner_half) {
         return None;
     }
     let mut adopted = Box::<dyn BlockTrait>::from(new);
@@ -1089,7 +1084,7 @@ mod tests {
     }
 
     fn property(state: BlockState, name: &str) -> Option<&'static str> {
-        Box::<dyn BlockTrait>::from(state).get_property(name)
+        crate::blocks::info::property(state, name)
     }
 
     #[test]

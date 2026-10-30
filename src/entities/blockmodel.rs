@@ -35,14 +35,14 @@ pub fn mesh(block: BlockRef) -> Option<Mesh> {
 }
 
 fn state_model(id: u32) -> Option<std::sync::Arc<crate::blocks::BakedBlock>> {
-    use azalea::block::{BlockState, BlockTrait};
+    use azalea::block::BlockState;
 
     let state = BlockState::try_from(id).ok()?;
     if state.is_air() {
         return None;
     }
-    let block: Box<dyn BlockTrait> = Box::<dyn BlockTrait>::from(state);
-    let baked = crate::blocks::registry().baked(state.id(), block.id(), &block.property_map());
+    let block = crate::blocks::info::info(state);
+    let baked = crate::blocks::registry().baked(state.id(), block.id, &block.map());
     Some(baked)
 }
 

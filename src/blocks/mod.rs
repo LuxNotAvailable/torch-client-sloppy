@@ -8,6 +8,7 @@ use parking_lot::RwLock;
 pub mod ambient;
 pub mod bake;
 pub mod facing;
+pub mod info;
 pub mod rand;
 pub mod rotation;
 pub mod state;

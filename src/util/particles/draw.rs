@@ -412,9 +412,9 @@ pub(crate) fn particle_uv(state: azalea::block::BlockState) -> Option<[f32; 4]> 
     if state.is_air() {
         return None;
     }
-    let block: Box<dyn BlockTrait> = Box::<dyn BlockTrait>::from(state);
-    let name = block.id();
-    let props = block.property_map();
+    let block = crate::blocks::info::info(state);
+    let name = block.id;
+    let props = block.map();
     let baked = crate::blocks::registry().baked(state.id(), name, &props);
     let model = baked.parts.first()?.choices.first()?;
     if let Some(uv) = model.particle_uv {
@@ -440,8 +440,8 @@ pub(super) fn tint_ratio(
     use azalea::block::BlockTrait;
     use azalea_registry::DataRegistry;
 
-    let block: Box<dyn BlockTrait> = Box::<dyn BlockTrait>::from(state);
-    if block.id() == "grass_block" {
+    let block = crate::blocks::info::info(state);
+    if block.id == "grass_block" {
         return crate::util::biome_color::NEUTRAL;
     }
 
