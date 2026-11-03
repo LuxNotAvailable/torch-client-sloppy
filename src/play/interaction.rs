@@ -607,16 +607,27 @@ fn finish_completed_use(bot: &Client, shared: &Arc<SharedMutex>) {
 
 fn consume_fx(bot: &Client) -> Option<ConsumeFx> {
     use azalea_inventory::components::{Consumable, ItemUseAnimation};
-    use azalea_registry::Holder;
 
     let inventory = bot
         .component::<azalea::entity::inventory::Inventory>()
         .ok()?;
     let held = inventory.held_item();
     let consumable = held.get_component::<Consumable>()?;
-    let sound = match &consumable.sound {
-        Holder::Reference(event) => crate::audio::event_name(event.to_str()).to_owned(),
-        Holder::Direct(custom) => crate::audio::event_name(&custom.sound_id.to_string()).to_owned(),
+    let sound = {
+        #[cfg(audio)]
+        {
+            use azalea_registry::Holder;
+            match &consumable.sound {
+                Holder::Reference(event) => crate::audio::event_name(event.to_str()).to_owned(),
+                Holder::Direct(custom) => {
+                    crate::audio::event_name(&custom.sound_id.to_string()).to_owned()
+                }
+            }
+        }
+        #[cfg(not(audio))]
+        {
+            String::new()
+        }
     };
     Some(ConsumeFx {
         item: held.clone(),
@@ -692,6 +703,7 @@ fn emit_consume_fx(bot: &Client, shared: &Arc<SharedMutex>, fx: &ConsumeFx, coun
         }
     }
     drop(guard);
+    #[cfg(audio)]
     crate::audio::play_at(
         &fx.sound,
         crate::audio::category::SoundCategory::Players,
@@ -699,6 +711,8 @@ fn emit_consume_fx(bot: &Client, shared: &Arc<SharedMutex>, fx: &ConsumeFx, coun
         volume,
         sound_pitch,
     );
+    #[cfg(not(audio))]
+    let _ = (volume, sound_pitch);
 }
 
 /// `TridentItem.releaseUsing` for a riptide trident: held for half a second

@@ -133,4 +133,25 @@ SCALED_RESOLVE=1
             [1200, 600]
         );
     }
+
+    #[test]
+    fn on_android_the_pack_drops_the_shadow_cache_and_still_compiles() {
+        crate::shaderpack::features::OS_OVERRIDE.set(Some("MC_OS_ANDROID"));
+        let frame = compile_frame(super::NAME, false, None, Dimension::Overworld);
+        crate::shaderpack::features::OS_OVERRIDE.set(None);
+        let frame = frame.unwrap_or_else(|e| panic!("{e}"));
+        let names: Vec<&str> = frame.programs.iter().map(|p| p.name.as_str()).collect();
+        for cache_pass in ["prepare", "deferred_a", "deferred_b"] {
+            assert!(!names.contains(&cache_pass), "{cache_pass} in {names:?}");
+        }
+        for wanted in ["deferred", "composite1", "final", "shadow"] {
+            assert!(names.contains(&wanted), "{wanted} missing from {names:?}");
+        }
+        assert!(frame.buffers.iter().all(|b| b.index != 0));
+        assert!(
+            frame.notes.iter().all(|n| !n.contains("did not compile")),
+            "{:?}",
+            frame.notes
+        );
+    }
 }

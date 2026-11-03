@@ -104,6 +104,8 @@ const RENDERER: &str = "Renderer";
 
 #[cfg(feature = "mobile_ui")]
 const TOUCH_MOVEMENT: &str = "Movement";
+#[cfg(feature = "mobile_ui")]
+const INPUT_MODE: &str = "Input";
 
 const RESET_VIDEO: &str = "Reset Video Settings";
 
@@ -524,6 +526,7 @@ fn reset_video_options(o: &mut crate::gui::GuiOptions) {
     o.vsync = crate::gui::VSYNC_DEFAULT;
     o.fps_counter = crate::gui::FPS_COUNTER_DEFAULT;
     o.touch_movement = Default::default();
+    o.input_mode = Default::default();
 }
 
 fn reset_chat_options(o: &mut crate::gui::GuiOptions) {
@@ -1145,16 +1148,24 @@ pub fn draw_controls(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     #[cfg(feature = "mobile_ui")]
     let (list_y, list_h) = {
         let x = centered_x(ctx.vw) + (WIDGET_WIDTH_BIG - COLUMN_W) / 2.0;
+        let row = WIDGET_HEIGHT + ROW_SPACING;
+        let y1 = list_y;
+        let y2 = list_y + row;
+
+        let label = format!("{INPUT_MODE}: {}", state.options.input_mode.caption());
+        if Button::new(x, y1, COLUMN_W, WIDGET_HEIGHT, &label).draw(p, ctx) {
+            state.options.input_mode = state.options.input_mode.next();
+            crate::gui::save_options(&state.options);
+        }
         let label = format!(
             "{TOUCH_MOVEMENT}: {}",
             state.options.touch_movement.caption()
         );
-        if Button::new(x, list_y, COLUMN_W, WIDGET_HEIGHT, &label).draw(p, ctx) {
+        if Button::new(x, y2, COLUMN_W, WIDGET_HEIGHT, &label).draw(p, ctx) {
             state.options.touch_movement = state.options.touch_movement.next();
             crate::gui::save_options(&state.options);
         }
-        let advance = WIDGET_HEIGHT + ROW_SPACING;
-        (list_y + advance, (list_h - advance).max(0.0))
+        (y2 + row, (list_h - 2.0 * row).max(0.0))
     };
 
     // Vanilla's controls header: mouse settings beside auto-jump (where the

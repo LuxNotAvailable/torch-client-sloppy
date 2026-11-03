@@ -1,9 +1,10 @@
 //! `centerDepthSmooth`: the depth at the middle of the screen, as Iris reads
-//! it for depth of field. A one-thread compute pass loads that texel of the
-//! pack's depth into a small storage buffer (a depth texture can only be copied
-//! whole), which is copied into one of a few read-back buffers; once that copy
-//! is on the GPU queue the buffer is mapped, and the value lands a frame or two
-//! later, which the smoothing hides.
+//! it for depth of field. A fullscreen fragment pass — depth loads are plain
+//! fragment-stage work that every driver supports, unlike the compute path
+//! that a few mobile GPU compilers choke on — writes that one texel into a
+//! 1×1 float texture, which is copied into one of a few read-back buffers;
+//! once that copy is on the GPU queue the buffer is mapped, and the value
+//! lands a frame or two later, which the smoothing hides.
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
@@ -11,10 +12,13 @@ use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 use bevy::prelude::*;
 use bevy::render::render_resource::{
     BindGroup, BindGroupEntries, BindGroupLayout, BindGroupLayoutEntries, Buffer, BufferDescriptor,
-    BufferUsages, CommandEncoder, ComputePipeline, MapMode, ShaderStages, TextureView,
-    binding_types::{storage_buffer_sized, texture_depth_2d},
+    BufferUsages, CommandEncoder, MapMode, ShaderStages, Texture, TextureDescriptor,
+    TextureDimension, TextureFormat, TextureUsages, TextureView, TextureViewDescriptor,
+    binding_types::texture_depth_2d,
 };
 use bevy::render::renderer::RenderDevice;
+
+use super::fullscreen::{fullscreen_corner, fullscreen_pass, fullscreen_pipeline};
 
 /// The latest read-back depth, as `f32` bits; the far plane until one lands.
 static SAMPLE: AtomicU32 = AtomicU32::new(0x3F80_0000);
@@ -23,16 +27,23 @@ pub(crate) fn sample() -> f32 {
     f32::from_bits(SAMPLE.load(Ordering::Relaxed))
 }
 
-const SHADER: &str = "
+const SHADER: &str = concat!(
+    fullscreen_corner!(),
+    "
 @group(0) @binding(0) var depth: texture_depth_2d;
-@group(0) @binding(1) var<storage, read_write> centre: array<f32, 1>;
 
-@compute @workgroup_size(1)
-fn main() {
-    let size = textureDimensions(depth);
-    centre[0] = textureLoad(depth, vec2<i32>(size / 2u), 0);
+@vertex
+fn vertex(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
+    return vec4<f32>(corner(index) * 2.0 - 1.0, 0.0, 1.0);
 }
-";
+
+@fragment
+fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+    let size = textureDimensions(depth);
+    return vec4<f32>(textureLoad(depth, vec2<i32>(size / 2u), 0), 0.0, 0.0, 1.0);
+}
+"
+);
 
 const SLOTS: usize = 3;
 const IDLE: u8 = 0;
@@ -52,9 +63,10 @@ struct Bound {
 
 #[derive(Resource)]
 pub(super) struct CenterDepth {
-    pipeline: ComputePipeline,
+    pipeline: wgpu::RenderPipeline,
     layout: BindGroupLayout,
-    centre: Buffer,
+    scratch: Texture,
+    scratch_view: TextureView,
     slots: Vec<Slot>,
     bound: Mutex<Option<Bound>>,
 }
@@ -64,13 +76,7 @@ impl FromWorld for CenterDepth {
         let device = world.resource::<RenderDevice>();
         let layout = device.create_bind_group_layout(
             "shaderpack center depth",
-            &BindGroupLayoutEntries::sequential(
-                ShaderStages::COMPUTE,
-                (
-                    texture_depth_2d(),
-                    storage_buffer_sized(false, std::num::NonZeroU64::new(4)),
-                ),
-            ),
+            &BindGroupLayoutEntries::sequential(ShaderStages::FRAGMENT, (texture_depth_2d(),)),
         );
         let module = device.create_and_validate_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("shaderpack center depth"),
@@ -81,19 +87,32 @@ impl FromWorld for CenterDepth {
             bind_group_layouts: &[&layout],
             push_constant_ranges: &[],
         });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("shaderpack center depth"),
-            layout: Some(&pipeline_layout),
-            module: &module,
-            entry_point: Some("main"),
-            compilation_options: Default::default(),
-            cache: None,
+        let pipeline = fullscreen_pipeline(
+            device,
+            "shaderpack center depth",
+            &module,
+            &pipeline_layout,
+            TextureFormat::R32Float,
+        );
+        let scratch = device.create_texture(&TextureDescriptor {
+            label: Some("shaderpack center depth scratch"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::R32Float,
+            usage: TextureUsages::TEXTURE_BINDING
+                | TextureUsages::RENDER_ATTACHMENT
+                | TextureUsages::COPY_SRC,
+            view_formats: &[],
         });
-        let centre = device.create_buffer(&BufferDescriptor {
-            label: Some("shaderpack center depth"),
-            size: 4,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
+        let scratch_view = scratch.create_view(&TextureViewDescriptor {
+            format: Some(TextureFormat::R32Float),
+            ..Default::default()
         });
         let slots = (0..SLOTS)
             .map(|_| Slot {
@@ -109,7 +128,8 @@ impl FromWorld for CenterDepth {
         CenterDepth {
             pipeline,
             layout,
-            centre,
+            scratch,
+            scratch_view,
             slots,
             bound: Mutex::new(None),
         }
@@ -117,7 +137,7 @@ impl FromWorld for CenterDepth {
 }
 
 impl CenterDepth {
-    /// Loads the centre texel of `depth` and copies it into a free read-back
+    /// Writes the centre texel of `depth` and copies it into a free read-back
     /// buffer, if one is free.
     pub(super) fn record(
         &self,
@@ -141,23 +161,44 @@ impl CenterDepth {
                 group: device.create_bind_group(
                     "shaderpack center depth",
                     &self.layout,
-                    &BindGroupEntries::sequential((depth, self.centre.as_entire_binding())),
+                    &BindGroupEntries::sequential((depth,)),
                 ),
             });
         }
         let Some(bound) = bound.as_ref() else {
             return;
         };
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("shaderpack center depth"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &bound.group, &[]);
-            pass.dispatch_workgroups(1, 1, 1);
-        }
-        encoder.copy_buffer_to_buffer(&self.centre, 0, &slot.buffer, 0, 4);
+        fullscreen_pass(
+            encoder,
+            "shaderpack center depth",
+            &self.scratch_view,
+            wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+            &self.pipeline,
+            &bound.group,
+        );
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.scratch,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &slot.buffer,
+                // One texel, one row: a row pitch, if given, would have to
+                // be a multiple of 256.
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: None,
+                    rows_per_image: None,
+                },
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
         slot.state.store(COPIED, Ordering::Release);
     }
 }

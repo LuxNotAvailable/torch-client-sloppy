@@ -1,7 +1,3 @@
-#[allow(
-    unsafe_code,
-    reason = "the JNI handles Android hands over are raw pointers"
-)]
 #[cfg_attr(not(feature = "mobile_ui"), allow(dead_code))]
 pub(crate) const SUPPORTED: bool = cfg!(target_os = "android");
 
@@ -14,6 +10,10 @@ pub(crate) fn set_portrait(on: bool) {
 }
 
 #[cfg(target_os = "android")]
+#[allow(
+    unsafe_code,
+    reason = "the JNI handles Android hands over are raw pointers"
+)]
 mod android {
     use jni::{Env, JValue, JavaVM, errors::Result, jni_sig, jni_str, objects::JObject};
 

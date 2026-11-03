@@ -110,8 +110,12 @@ const GL_VERSION: u32 = super::transform::TARGET_VERSION;
 
 const MIPMAP_LEVEL: &str = "4";
 
+/// The platform define. `MC_OS_ANDROID` is the client's own (Iris has none),
+/// so the built-in pack can leave out what Android's drivers can't run.
 const OS_DEFINE: &str = if cfg!(target_os = "windows") {
     "MC_OS_WINDOWS"
+} else if cfg!(target_os = "android") {
+    "MC_OS_ANDROID"
 } else if cfg!(target_os = "macos") {
     "MC_OS_MAC"
 } else if cfg!(target_os = "linux") {
@@ -139,13 +143,28 @@ const DH_BLOCKS: &[&str] = &[
     "ILLUMINATED",
 ];
 
+#[cfg(test)]
+thread_local! {
+    /// A platform define a test compiles as, in place of this machine's.
+    pub(crate) static OS_OVERRIDE: std::cell::Cell<Option<&'static str>> =
+        const { std::cell::Cell::new(None) };
+}
+
+fn os_define() -> &'static str {
+    #[cfg(test)]
+    if let Some(os) = OS_OVERRIDE.get() {
+        return os;
+    }
+    OS_DEFINE
+}
+
 pub(crate) fn base_defines() -> Defines {
     let mut defines = Defines::new();
     defines.define("MC_VERSION", mc_version().to_string());
     defines.define("MC_MIPMAP_LEVEL", MIPMAP_LEVEL);
     defines.define("MC_GL_VERSION", GL_VERSION.to_string());
     defines.define("MC_GLSL_VERSION", GL_VERSION.to_string());
-    defines.define(OS_DEFINE, "");
+    defines.define(os_define(), "");
     defines.define("IS_IRIS", "");
     defines.define("MC_NORMAL_MAP", "");
     defines.define("MC_SPECULAR_MAP", "");

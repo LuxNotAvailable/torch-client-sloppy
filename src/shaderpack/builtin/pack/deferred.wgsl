@@ -2,12 +2,18 @@
 // passes through what was lit as it was drawn. Near the camera the shadow
 // comes from the texel cache; farther out (or if the cache is full) it is
 // looked up here, still at the texel's middle.
+//
+// On Android there is no cache: a driver there (PowerVR, on the Pixel 10
+// Pro) aborts when a depth texture appears in a compute pipeline, which the
+// cache's passes need, so every pixel takes an eight-tap lookup here, in the
+// fragment stage.
 
 /* RENDERTARGETS: 0 */
 
 #include "/lib/common.wgsl"
 #include "/lib/shadow.wgsl"
 
+#ifndef MC_OS_ANDROID
 struct CacheRead {
     count: u32,
     pad0: u32,
@@ -19,6 +25,7 @@ struct CacheRead {
 }
 
 @group(0) @binding(IRIS_BUFFER_0) var<storage, read> cache: CacheRead;
+#endif
 
 struct Varyings {
     @builtin(position) clip: vec4<f32>,
@@ -33,6 +40,7 @@ fn vertex(input: IrisVertexIn) -> Varyings {
     return out;
 }
 
+#ifndef MC_OS_ANDROID
 fn cached(key: u32) -> f32 {
     var slot = cache_hash(key);
     for (var probe = 0u; probe < CACHE_PROBES; probe++) {
@@ -47,6 +55,7 @@ fn cached(key: u32) -> f32 {
     }
     return -1.0;
 }
+#endif
 
 @fragment
 fn fragment(v: Varyings) -> @location(0) vec4<f32> {
@@ -65,6 +74,10 @@ fn fragment(v: Varyings) -> @location(0) vec4<f32> {
     let n = face_normal(surface.face);
     let material = surface.material;
 
+#ifdef MC_OS_ANDROID
+    let centre = texel_centre(texel.xyz, n) - frame.cameraPositionFract;
+    let vis = shadow_visibility(centre, n, 8u);
+#else
     var vis = -1.0;
     let key = cache_key(texel.xyz, f32(surface.face));
     if (key != CACHE_EMPTY) {
@@ -74,6 +87,7 @@ fn fragment(v: Varyings) -> @location(0) vec4<f32> {
         let centre = texel_centre(texel.xyz, n) - frame.cameraPositionFract;
         vis = shadow_visibility(centre, n, 2u);
     }
+#endif
 
     var lit = surface_light(base.rgb, n, surface.light, vis, material == MATERIAL_FOLIAGE);
     if (material == MATERIAL_EMISSIVE) {

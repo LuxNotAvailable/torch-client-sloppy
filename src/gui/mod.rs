@@ -428,11 +428,61 @@ impl TouchMovement {
     }
 }
 
+/// On mobile builds, whether gameplay is driven by the on-screen touch
+/// controls or by a physical keyboard and mouse (like desktop). The desktop
+/// input path always runs when `mobile_ui` is off, so this has no effect there.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum InputMode {
+    #[cfg_attr(not(feature = "mobile_ui"), default)]
+    Pointer,
+    #[cfg_attr(feature = "mobile_ui", default)]
+    Touch,
+}
+
+impl InputMode {
+    pub const ALL: [InputMode; 2] = [InputMode::Touch, InputMode::Pointer];
+
+    #[cfg(feature = "mobile_ui")]
+    pub fn caption(self) -> &'static str {
+        match self {
+            InputMode::Touch => "Touch",
+            InputMode::Pointer => "Keyboard and Mouse",
+        }
+    }
+
+    fn serialized_name(self) -> &'static str {
+        match self {
+            InputMode::Touch => "touch",
+            InputMode::Pointer => "pointer",
+        }
+    }
+
+    fn from_serialized_name(name: &str) -> Option<InputMode> {
+        InputMode::ALL
+            .into_iter()
+            .find(|m| m.serialized_name() == name)
+    }
+
+    #[cfg(feature = "mobile_ui")]
+    pub fn next(self) -> InputMode {
+        let i = InputMode::ALL.iter().position(|m| *m == self).unwrap_or(0);
+        InputMode::ALL[(i + 1) % InputMode::ALL.len()]
+    }
+}
+
+/// True when the on-screen touch controls should drive gameplay: only on
+/// mobile builds (`mobile_ui`) while the input mode is set to touch. This is
+/// what gates the mobile input system and hides its on-screen controls.
+pub fn touch_active(o: &GuiOptions) -> bool {
+    cfg!(feature = "mobile_ui") && o.input_mode == InputMode::Touch
+}
+
 crate::serialized_option!(
     crate::renderer::clouds::CloudStatus,
     crate::util::particles::ParticleStatus,
     RenderBackend,
     TouchMovement,
+    InputMode,
 );
 
 crate::options! {
@@ -499,6 +549,9 @@ crate::options! {
         pub entity_shadows: bool = true => key("entityShadows"),
         pub shadow_opacity: u32 = 50 => key("shadowOpacity").clamp(0, 100),
         pub touch_movement: TouchMovement = TouchMovement::default() => key("touchMovement"),
+        /// Whether the mobile build uses on-screen touch controls or a physical
+        /// keyboard and mouse. Desktop builds have no choice to make (pointer).
+        pub input_mode: InputMode = InputMode::default() => key("inputMode"),
         pub allow_signed_chat: bool = false => key("allowSignedChat"),
         pub toast_advancement: bool = true => key("toastAdvancement"),
         pub toast_recipe: bool = true => key("toastRecipe"),

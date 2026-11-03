@@ -140,6 +140,7 @@ pub fn draw(
                 hide_gui: state.gui_hidden(),
                 in_menu,
                 editing: false,
+                touch: crate::gui::touch_active(&state.options),
             };
             let mut controls = Hud::new(
                 &state.hud_state.layout,
@@ -453,6 +454,7 @@ fn draw_hud_layers(
             hide_gui,
             in_menu,
             editing: true,
+            touch: crate::gui::touch_active(&state.options),
         };
         crate::mobile::draw(p, &ctx, view, &mut elements);
     }
@@ -520,7 +522,6 @@ fn draw_screen(
             draw_settings_screen(p, state, &ctx);
             None
         }
-        #[cfg(audio)]
         Screen::Title => {
             title::draw(p, state, &ctx);
             None

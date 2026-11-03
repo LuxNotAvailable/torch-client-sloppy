@@ -82,6 +82,35 @@ strip = false
 inherits = "release"
 strip = true
 
+[package.metadata.android]
+package = "com.torch.client"
+build_targets = ["aarch64-linux-android"]
+features = ["+mobile_ui"]
+
+# cargo-apk 0.10 synthesizes the APK manifest from this metadata (it does NOT
+# read ./android/AndroidManifest.xml), so the app must declare its own
+# permissions/features here. INTERNET is required for reqwest/hyper sockets.
+[[package.metadata.android.uses_permission]]
+name = "android.permission.INTERNET"
+
+[[package.metadata.android.uses_feature]]
+name = "android.hardware.touchscreen"
+required = true
+
+[[package.metadata.android.uses_feature]]
+name = "android.hardware.touchscreen.multitouch"
+required = true
+
+# Signing comes from the environment, never this file: set
+# CARGO_APK_<PROFILE>_KEYSTORE and CARGO_APK_<PROFILE>_KEYSTORE_PASSWORD
+# (e.g. CARGO_APK_RELEASE_KEYSTORE). A dev build without them uses the
+# Android debug key. Keystores live in the git-ignored `keystore/` folder.
+
+# The same SDK levels as tools/build_android.sh.
+[package.metadata.android.sdk]
+min_sdk_version = 28
+target_sdk_version = 36
+
 [profile.linux]
 inherits = "release"
 strip = true
@@ -206,6 +235,11 @@ getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
 [patch.crates-io]
 bevy_camera = { path = "vendor/bevy_camera" }
 simdnbt = { path = "vendor/simdnbt" }
+# PowerVR (Pixel 10 Pro) aborts inside vkCreateComputePipelines on Bevy's
+# mip-generation downsample-depth compute shader (texture_depth_multisampled_2d
+# + 12 storage textures). This fork skips pipeline creation; see
+# create_downsample_depth_pipelines in the forked file.
+bevy_core_pipeline = { path = "vendor/bevy_core_pipeline" }
 
 [target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))'.dependencies.bevy]
 version = "0.18"

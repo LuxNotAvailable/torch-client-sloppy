@@ -102,13 +102,16 @@ pub(crate) fn tick(bot: &Client) {
     w.portal_old = w.portal;
     let step = if in_portal(bot) {
         if w.portal == 0.0 {
-            let pitch = 0.8 + crate::audio::random_below(1000) as f32 / 1000.0 * 0.4;
-            crate::audio::play(
-                "block.portal.trigger",
-                crate::audio::category::SoundCategory::Ambient,
-                0.25,
-                pitch,
-            );
+            #[cfg(audio)]
+            {
+                let pitch = 0.8 + crate::audio::random_below(1000) as f32 / 1000.0 * 0.4;
+                crate::audio::play(
+                    "block.portal.trigger",
+                    crate::audio::category::SoundCategory::Ambient,
+                    0.25,
+                    pitch,
+                );
+            }
         }
         0.0125
     } else if w.portal > 0.0 {

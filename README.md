@@ -56,6 +56,7 @@ See [CONTRIBUTING.md](.github/CONTRIBUTING.md).
 This project vendors modified source from:
 - azalea: [vendor/azalea/LICENSE.md](vendor/azalea/LICENSE.md)
 - bevy_camera: [vendor/bevy_camera/LICENSE-MIT](vendor/bevy_camera/LICENSE-MIT) or [vendor/bevy_camera/LICENSE-APACHE](vendor/bevy_camera/LICENSE-APACHE)
+- bevy_core_pipeline: [vendor/bevy_core_pipeline/LICENSE-MIT](vendor/bevy_core_pipeline/LICENSE-MIT) or [vendor/bevy_core_pipeline/LICENSE-APACHE](vendor/bevy_core_pipeline/LICENSE-APACHE)
 - simdnbt: [vendor/simdnbt/LICENSE](vendor/simdnbt/LICENSE)
 
 Torch is not affiliated with Mojang Studios or Microsoft.

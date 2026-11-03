@@ -4,10 +4,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(target_os = "android")]
 static BACKGROUNDED: AtomicBool = AtomicBool::new(false);
 
-#[allow(
-    unsafe_code,
-    reason = "the JNI handles Android hands over are raw pointers"
-)]
 pub(crate) fn connected(address: &str) {
     #[cfg(target_os = "android")]
     android::call(android::Call::Start(address));
@@ -38,6 +34,10 @@ pub(crate) fn resumed() {
 }
 
 #[cfg(target_os = "android")]
+#[allow(
+    unsafe_code,
+    reason = "the JNI handles Android hands over are raw pointers"
+)]
 mod android {
     use jni::{
         Env, JValue, JavaVM,

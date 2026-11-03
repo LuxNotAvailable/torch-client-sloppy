@@ -95,6 +95,9 @@ pub fn register(app: &mut App) {
 }
 
 fn pad_is_drawn(state: Res<GuiState>) -> bool {
+    if !crate::gui::touch_active(&state.options) {
+        return false;
+    }
     #[cfg(feature = "hud_editor")]
     if state.screen == Screen::HudEditor {
         return true;
@@ -416,9 +419,13 @@ pub struct View<'a> {
     pub hide_gui: bool,
     pub in_menu: bool,
     pub editing: bool,
+    pub touch: bool,
 }
 
 pub fn draw(p: &mut Painter, ctx: &ScreenCtx, view: View, hud: &mut Hud) {
+    if !view.touch {
+        return;
+    }
     if view.in_menu && !view.editing {
         return;
     }

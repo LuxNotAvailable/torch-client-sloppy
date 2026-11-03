@@ -303,33 +303,20 @@ pub(super) fn apply_gui_nav(
     enter_screen(next, &mut state, &shared, &mut windows);
 }
 
-#[cfg_attr(
-    feature = "mobile_ui",
-    allow(
-        unused_mut,
-        unreachable_code,
-        reason = "touch controls drive the camera instead"
-    )
-)]
 pub(super) fn mouse_look(
     motion: Res<AccumulatedMouseMotion>,
-    #[cfg_attr(feature = "mobile_ui", allow(unused_mut))] mut angles: ResMut<CameraAngles>,
+    mut angles: ResMut<CameraAngles>,
     shared: Res<Shared>,
     freecam: Res<FreecamState>,
-    #[cfg_attr(feature = "mobile_ui", allow(unused_mut))] mut camera: Query<
-        &mut Transform,
-        With<WorldCamera>,
-    >,
+    mut camera: Query<&mut Transform, With<WorldCamera>>,
     state: Res<crate::gui::GuiState>,
     time: Res<Time>,
     mut boat_turn: Local<BoatTurn>,
     zoom: Res<ZoomState>,
 ) {
-    #[cfg(feature = "mobile_ui")]
-    {
-        let _ = (
-            motion, angles, shared, freecam, camera, state, time, boat_turn, zoom,
-        );
+    // On mobile, the touch controls drive the camera unless the user picked a
+    // physical mouse.
+    if crate::gui::touch_active(&state.options) {
         return;
     }
     // The boat being steered turns the view with it. Minecraft's yaw runs
@@ -338,7 +325,6 @@ pub(super) fn mouse_look(
         std::mem::take(&mut shared.0.lock().unwrap().session.vehicle_yaw_nudge),
         time.delta_secs(),
     );
-    #[cfg(not(feature = "mobile_ui"))]
     if nudge != 0.0 && !freecam.active {
         angles.yaw -= nudge;
         if let Ok(mut t) = camera.single_mut() {
@@ -347,7 +333,6 @@ pub(super) fn mouse_look(
         let mut s = shared.0.lock().unwrap();
         s.camera_yaw = angles.yaw;
     }
-    #[cfg(not(feature = "mobile_ui"))]
     {
         let hand = if state.screen.is_open() || !crate::platform::pointer::is_locked() {
             Vec2::ZERO
@@ -821,21 +806,16 @@ pub(crate) fn handle_mouse_input(
     buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
     shared: Res<Shared>,
-    #[cfg_attr(feature = "mobile_ui", allow(unused_mut))] state: ResMut<crate::gui::GuiState>,
-    #[cfg_attr(feature = "mobile_ui", allow(unused_mut))] intent: ResMut<
-        crate::renderer::intent::Intent,
-    >,
+    state: ResMut<crate::gui::GuiState>,
+    intent: ResMut<crate::renderer::intent::Intent>,
 ) {
-    #[cfg(feature = "mobile_ui")]
-    {
-        let _ = (buttons, keys, shared, state, intent);
+    // Mouse attack/use are the touch controls' job on mobile.
+    if crate::gui::touch_active(&state.options) {
         return;
     }
-    #[cfg(not(feature = "mobile_ui"))]
     handle_mouse_input_desktop(buttons, keys, shared, state, intent);
 }
 
-#[cfg(not(feature = "mobile_ui"))]
 fn handle_mouse_input_desktop(
     buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,

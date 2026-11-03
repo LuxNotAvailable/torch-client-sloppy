@@ -10,7 +10,10 @@ Use the Bug, Crash or Suggestion form on the issues page. Search existing issues
 cargo build --release          # desktop
 tools/build_web.sh             # browser
 tools/build_android.sh         # Android APK
+cargo apk build --release      # Android APK, through cargo-apk
 ```
+
+`cargo apk` reads its Android settings from `[package.metadata.android]` in `Cargo.toml`, which uses the same SDK levels as `tools/build_android.sh`. Signing keys never go in `Cargo.toml`. Set `CARGO_APK_RELEASE_KEYSTORE` and `CARGO_APK_RELEASE_KEYSTORE_PASSWORD`, or the same with your profile's name in place of `RELEASE`. A dev build without them is signed with the Android debug key. Keep keystores in the git-ignored `keystore/` folder.
 
 Optional features are listed under [Feature system](#feature-system). If your change touches code behind a feature, build with that feature on (for example `--features click_gui`), since code behind a feature that is off is not compiled at all.
 

@@ -30,12 +30,18 @@ mod imp {
     }
 
     pub(super) async fn get_string(url: &str) -> Result<String, String> {
-        client()
+        match client()
             .get(url)
             .send()
             .and_then(|r| r.error_for_status())
             .and_then(|r| r.text())
-            .map_err(|e| e.to_string())
+        {
+            Ok(text) => Ok(text),
+            Err(e) => {
+                crate::log_warn!("net", "GET {url} failed: {e:?}");
+                Err(e.to_string())
+            }
+        }
     }
 
     pub(super) async fn get_bytes(

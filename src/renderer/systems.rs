@@ -1594,6 +1594,28 @@ fn web_frame_gate(
     gate.render = render;
 }
 
+/// Bevy's PBR plugin: its defaults, except on Android.
+///
+/// A PowerVR driver (Pixel 10 Pro) aborts inside `vkCreateComputePipelines`
+/// on a compute shader that binds a depth or image type. The client renders
+/// forward with its own terrain culling, so on Android Bevy's PBR compute
+/// paths go: the GPU mesh-uniform builder (`mesh_preprocess.wgsl` binds the
+/// depth pyramid), the deferred-lighting compute and the prepass. Elsewhere
+/// they stay, since building mesh uniforms on the CPU instead would cost the
+/// render thread every frame.
+fn pbr_plugin() -> bevy::pbr::PbrPlugin {
+    if cfg!(target_os = "android") {
+        bevy::pbr::PbrPlugin {
+            use_gpu_instance_buffer_builder: false,
+            add_default_deferred_lighting_plugin: false,
+            prepass_enabled: false,
+            ..Default::default()
+        }
+    } else {
+        bevy::pbr::PbrPlugin::default()
+    }
+}
+
 fn unfocused_update_mode() -> bevy::winit::UpdateMode {
     bevy::winit::UpdateMode::reactive_low_power(std::time::Duration::from_secs_f64(1. / 30.))
 }
@@ -2358,7 +2380,8 @@ pub fn run(
             .disable::<bevy::app::PanicHandlerPlugin>()
             // Only FXAA is used. The bundle's TAA needs bevy_post_process's
             // MotionBlur node, which the default build leaves out.
-            .disable::<bevy::anti_alias::AntiAliasPlugin>(),
+            .disable::<bevy::anti_alias::AntiAliasPlugin>()
+            .set::<bevy::pbr::PbrPlugin>(pbr_plugin()),
     )
     .add_plugins(bevy::anti_alias::fxaa::FxaaPlugin)
     .add_plugins(crate::diag::frame_profile::FrameProfilePlugin)
