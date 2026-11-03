@@ -92,6 +92,8 @@ pub(crate) struct Program {
     pub(crate) name: String,
     pub(crate) kind: ProgramKind,
     pub(crate) vertex: String,
+    /// An entity program's vertex stage for GPU-posed rigs' meshes.
+    pub(crate) vertex_skinned: Option<String>,
     pub(crate) fragment: String,
     pub(crate) fragment_tests: Vec<(AlphaTest, String)>,
     pub(crate) alpha_override: Option<Option<AlphaTest>>,
@@ -665,6 +667,7 @@ mod tests {
             name: name.to_owned(),
             kind,
             vertex: String::new(),
+            vertex_skinned: None,
             fragment: String::new(),
             fragment_tests: Vec::new(),
             alpha_override: None,

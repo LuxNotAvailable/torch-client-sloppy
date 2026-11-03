@@ -7,8 +7,6 @@
 //! re-baking and re-uploading its whole mesh, and every mob of a model shares
 //! one mesh that Bevy can batch.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-
 use bevy::asset::{RenderAssetUsages, uuid_handle};
 use bevy::math::Mat4;
 use bevy::mesh::{MeshVertexAttribute, VertexFormat};
@@ -34,11 +32,10 @@ pub type PartRows = [[f32; 4]; 3];
 
 const ZERO_ROWS: PartRows = [[0.0; 4]; 3];
 
-pub static PACK_TAKEOVER: AtomicBool = AtomicBool::new(false);
-
 /// Whether new model rigs pose on the GPU. Off on WebGL (no vertex-stage
-/// storage buffers), under `MC_CPU_RIGS=1`, and while a shader pack draws
-/// entities, since its programs read the mesh as already posed.
+/// storage buffers) and under `MC_CPU_RIGS=1`. Shader packs pose them too:
+/// their entity programs compile a skinned vertex stage
+/// (`packdraw::compile::preludes::entity_prelude`).
 pub fn enabled() -> bool {
     if cfg!(target_arch = "wasm32") {
         return false;
@@ -50,7 +47,7 @@ pub fn enabled() -> bool {
             Ok("1") | Ok("true")
         )
     });
-    !forced && !PACK_TAKEOVER.load(Ordering::Relaxed)
+    !forced
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

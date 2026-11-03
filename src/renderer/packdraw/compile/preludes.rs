@@ -83,38 +83,87 @@ pub(super) const TERRAIN_BEGIN: &str =
 
 const _: () = assert!(PACK_QUADS_SET == 2 && crate::renderer::packvertex::QUAD_ROW == 2048);
 
-pub(super) const ENTITY_PRELUDE: &str = "layout(location = 0) in vec3 iris_EntityPosition;\n\
-layout(location = 1) in vec3 iris_EntityNormal;\n\
-layout(location = 2) in vec2 iris_EntityUV;\n\
-layout(location = 3) in vec4 iris_EntityColor;\n\
-layout(location = 4) in vec4 iris_ModelRow0;\n\
-layout(location = 5) in vec4 iris_ModelRow1;\n\
-layout(location = 6) in vec4 iris_ModelRow2;\n\
-layout(location = 7) in vec4 iris_EntityTint;\n\
-layout(location = 8) in vec4 entityColor;\n\
-layout(location = 9) in vec2 iris_EntityLight;\n\
-layout(location = 10) in int entityId;\n\
-layout(location = 11) in int blockEntityId;\n\
-layout(location = 12) in int currentRenderedItemId;\n\
-layout(location = 13) in int renderStage;\n\
-layout(location = 14) in uint iris_EntityFlags;\n\
-vec3 iris_model(vec4 v) { return vec3(dot(iris_ModelRow0, v), dot(iris_ModelRow1, v), dot(iris_ModelRow2, v)); }\n\
-vec3 iris_position() { return iris_model(vec4(iris_EntityPosition, 1.0)); }\n\
-vec2 iris_uv0() { return iris_EntityUV; }\n\
-vec2 iris_light() { return iris_EntityLight; }\n\
-vec4 iris_color() {\n    \
-    vec4 color = iris_EntityColor;\n    \
-    if ((iris_EntityFlags & 1u) != 0u) { color.a = 1.0; }\n    \
-    return color * iris_EntityTint;\n\
-}\n\
-vec3 iris_normal() {\n    \
-    vec3 n = iris_model(vec4(iris_EntityNormal, 0.0));\n    \
-    return dot(n, n) > 1e-8 ? normalize(n) : vec3(0.0, 1.0, 0.0);\n\
-}\n\
-vec4 iris_entity() { return vec4(-1.0, 0.0, 0.0, 1.0); }\n\
-vec4 iris_tangent() { return vec4(1.0, 0.0, 0.0, 1.0); }\n\
-vec4 iris_mid_uv() { return vec4(iris_EntityUV, 0.0, 1.0); }\n\
-vec4 iris_mid_block() { return vec4(0.0); }\n";
+/// The vertex prelude of an entity program. `skinned` is the variant for a
+/// GPU-posed rig's mesh: each vertex carries its part index, and the part's
+/// matrix (three rows in the rig buffer, from the instance's part base) poses
+/// it before the model matrix, as the client's own entity shader does.
+pub(super) fn entity_prelude(skinned: bool) -> String {
+    let local = if skinned {
+        SKINNED_LOCAL
+    } else {
+        "vec3 iris_local_position() { return iris_EntityPosition; }
+         vec3 iris_local_normal() { return iris_EntityNormal; }
+"
+    };
+    format!("{ENTITY_INPUTS}{local}{ENTITY_FUNCTIONS}")
+}
+
+const ENTITY_INPUTS: &str = "layout(location = 0) in vec3 iris_EntityPosition;
+layout(location = 1) in vec3 iris_EntityNormal;
+layout(location = 2) in vec2 iris_EntityUV;
+layout(location = 3) in vec4 iris_EntityColor;
+layout(location = 4) in vec4 iris_ModelRow0;
+layout(location = 5) in vec4 iris_ModelRow1;
+layout(location = 6) in vec4 iris_ModelRow2;
+layout(location = 7) in vec4 iris_EntityTint;
+layout(location = 8) in vec4 entityColor;
+layout(location = 9) in vec2 iris_EntityLight;
+layout(location = 10) in int entityId;
+layout(location = 11) in int blockEntityId;
+layout(location = 12) in int currentRenderedItemId;
+layout(location = 13) in int renderStage;
+layout(location = 14) in uint iris_EntityFlags;
+layout(location = 15) in uint iris_PartBase;
+";
+
+const _: () = assert!(
+    crate::renderer::packdraw::entities::ENTITY_PART_BASE_LOCATION == 15
+        && crate::renderer::packdraw::entities::ENTITY_PART_LOCATION == 16
+        && crate::renderer::packdraw::entities::ENTITY_PARTS_SET == 1
+);
+
+/// The part's matrix, stored as its top three rows; the normal goes through
+/// the cofactor matrix, the inverse transpose up to the determinant.
+const SKINNED_LOCAL: &str = "layout(location = 16) in uint iris_EntityPart;
+layout(std430, set = 1, binding = 0) readonly buffer IrisRigParts { vec4 iris_rig_parts[]; };
+uint iris_part_row() { return (iris_PartBase + iris_EntityPart) * 3u; }
+vec3 iris_local_position() {
+        uint row = iris_part_row();
+        vec4 p = vec4(iris_EntityPosition, 1.0);
+        return vec3(dot(iris_rig_parts[row], p), dot(iris_rig_parts[row + 1u], p), dot(iris_rig_parts[row + 2u], p));
+}
+vec3 iris_local_normal() {
+        uint row = iris_part_row();
+        vec4 r0 = iris_rig_parts[row];
+        vec4 r1 = iris_rig_parts[row + 1u];
+        vec4 r2 = iris_rig_parts[row + 2u];
+        vec3 c0 = vec3(r0.x, r1.x, r2.x);
+        vec3 c1 = vec3(r0.y, r1.y, r2.y);
+        vec3 c2 = vec3(r0.z, r1.z, r2.z);
+        vec3 n = mat3(cross(c1, c2), cross(c2, c0), cross(c0, c1)) * iris_EntityNormal;
+        float det = dot(c0, cross(c1, c2));
+        return dot(n, n) > 1e-12 ? normalize(n) * sign(det) : iris_EntityNormal;
+}
+";
+
+const ENTITY_FUNCTIONS: &str = "vec3 iris_model(vec4 v) { return vec3(dot(iris_ModelRow0, v), dot(iris_ModelRow1, v), dot(iris_ModelRow2, v)); }
+vec3 iris_position() { return iris_model(vec4(iris_local_position(), 1.0)); }
+vec2 iris_uv0() { return iris_EntityUV; }
+vec2 iris_light() { return iris_EntityLight; }
+vec4 iris_color() {
+        vec4 color = iris_EntityColor;
+        if ((iris_EntityFlags & 1u) != 0u) { color.a = 1.0; }
+        return color * iris_EntityTint;
+}
+vec3 iris_normal() {
+        vec3 n = iris_model(vec4(iris_local_normal(), 0.0));
+        return dot(n, n) > 1e-8 ? normalize(n) : vec3(0.0, 1.0, 0.0);
+}
+vec4 iris_entity() { return vec4(-1.0, 0.0, 0.0, 1.0); }
+vec4 iris_tangent() { return vec4(1.0, 0.0, 0.0, 1.0); }
+vec4 iris_mid_uv() { return vec4(iris_EntityUV, 0.0, 1.0); }
+vec4 iris_mid_block() { return vec4(0.0); }
+";
 
 pub(super) const ENTITY_UNIFORMS: [(&str, &str); 5] = [
     ("entityColor", "vec4"),
@@ -179,25 +228,32 @@ mod tests {
             inputs.contains("layout(location = 2) flat in int entityId;"),
             "{inputs}"
         );
-        let prelude = format!("{ENTITY_PRELUDE}{outputs}");
-        let target = transform::Target {
-            set: PACK_SET,
-            vertex_prelude: &prelude,
-            fragment_prelude: &inputs,
-            vertex_end: &copies,
-            outputs: Some(1),
-            gl_clip: true,
-            attribute_defaults: true,
-            ..Default::default()
-        };
-        for (source, stage, naga_stage) in [
-            (vsh, Stage::Vertex, backend::ShaderStage::Vertex),
-            (fsh, Stage::Fragment, backend::ShaderStage::Fragment),
-        ] {
-            let out = transform::transform(source, stage, &shared, &target);
-            let wgsl = backend::to_wgsl(&out.source, naga_stage, &[])
-                .unwrap_or_else(|e| panic!("{e}\n\n{}", out.source));
-            assert!(wgsl.contains("@location(2) @interpolate(flat)"), "{wgsl}");
+        // Both variants: plain meshes, and GPU-posed rigs' (skinned).
+        for skinned in [false, true] {
+            let prelude = format!("{}{outputs}", entity_prelude(skinned));
+            let target = transform::Target {
+                set: PACK_SET,
+                vertex_prelude: &prelude,
+                fragment_prelude: &inputs,
+                vertex_end: &copies,
+                outputs: Some(1),
+                gl_clip: true,
+                attribute_defaults: true,
+                ..Default::default()
+            };
+            for (source, stage, naga_stage) in [
+                (vsh, Stage::Vertex, backend::ShaderStage::Vertex),
+                (fsh, Stage::Fragment, backend::ShaderStage::Fragment),
+            ] {
+                let out = transform::transform(source, stage, &shared, &target);
+                let wgsl = backend::to_wgsl(&out.source, naga_stage, &[])
+                    .unwrap_or_else(|e| panic!("skinned {skinned}: {e}\n\n{}", out.source));
+                assert!(wgsl.contains("@location(2) @interpolate(flat)"), "{wgsl}");
+                if skinned && stage == Stage::Vertex {
+                    assert!(wgsl.contains("@group(1) @binding(0)"), "{wgsl}");
+                    assert!(wgsl.contains("@location(16)"), "{wgsl}");
+                }
+            }
         }
     }
 

@@ -14,7 +14,7 @@ use bevy::render::view::ViewTarget;
 use bevy::tasks::Task;
 
 use super::compile::{EntityKind, ProgramKind};
-use super::entities::{entity_instance_layout, entity_vertex_layout};
+use super::entities::{entity_instance_layout, entity_skinned_vertex_layout, entity_vertex_layout};
 use super::formats::{image_format, wgpu_format};
 use super::frame::{PackRender, Stage};
 use super::fullscreen::{opaque_target, stores_display};
@@ -42,8 +42,19 @@ pub(super) struct Pipelines {
     pub(super) screen: Vec<Option<RenderPipeline>>,
     /// Per terrain layer, by [`Geometry`] slot.
     pub(super) shadow: Option<[Option<RenderPipeline>; 3]>,
-    pub(super) entities: [Option<(RenderPipeline, RenderPipeline)>; EntityKind::COUNT],
+    pub(super) entities: [Option<EntityPipelines>; EntityKind::COUNT],
+    /// The skinned entity pipelines' rig buffer group, at `ENTITY_PARTS_SET`.
+    pub(super) rig_parts_layout: BindGroupLayout,
     pub(super) compute: Vec<Option<[ComputePipeline; 2]>>,
+}
+
+/// One entity kind's pipelines: opaque and blended, each also for GPU-posed
+/// rigs' meshes when the program compiled a skinned vertex stage.
+#[derive(Clone)]
+pub(super) struct EntityPipelines {
+    pub(super) opaque: RenderPipeline,
+    pub(super) blend: RenderPipeline,
+    pub(super) skinned: Option<(RenderPipeline, RenderPipeline)>,
 }
 
 pub(super) enum Building<T> {
@@ -525,6 +536,7 @@ pub(crate) fn prepare_pipelines(
         let terrain_layout =
             make_layout(&device, &terrain.terrain_layout(install.installed.direct));
         let quads_layout = pools.quads_layout.clone();
+        let rig_parts_layout = make_layout(&device, &super::entities::rig_parts_layout());
         let device = device.clone();
         let installed = Arc::clone(&install.installed);
         let layouts = install.gpu.layouts.clone();
@@ -537,6 +549,7 @@ pub(crate) fn prepare_pipelines(
                     &layouts,
                     &terrain_layout,
                     &quads_layout,
+                    rig_parts_layout,
                     shadow,
                 )
             }),
@@ -554,6 +567,7 @@ fn build_pipelines(
     layouts: &[BindGroupLayout],
     terrain_layout: &BindGroupLayout,
     quads_layout: &BindGroupLayout,
+    rig_parts_layout: BindGroupLayout,
     shadow: bool,
 ) -> Pipelines {
     let generation = installed.generation;
@@ -628,16 +642,33 @@ fn build_pipelines(
         }
         let index = installed.entities[at]?;
         let program = &installed.programs[index];
-        let mut variant = |second: bool| {
+        let mut variant = |second: bool, skinned: Option<&super::install::Module>| {
             let state = entity_pass_state(kind, second);
+            let (layouts, vertex, buffers) = match skinned {
+                Some(vertex) => (
+                    vec![&layouts[index], &rig_parts_layout],
+                    vertex,
+                    vec![entity_skinned_vertex_layout(), entity_instance_layout()],
+                ),
+                None => (
+                    vec![&layouts[index]],
+                    &program.vertex,
+                    vec![entity_vertex_layout(), entity_instance_layout()],
+                ),
+            };
             builder.render(PackPipeline {
                 label: pipeline_label(
                     generation,
-                    format_args!("{} {kind:?} {}", program.name, u8::from(second)),
+                    format_args!(
+                        "{} {kind:?} {}{}",
+                        program.name,
+                        u8::from(second),
+                        if skinned.is_some() { " skinned" } else { "" }
+                    ),
                 ),
-                layouts: vec![&layouts[index]],
-                vertex: &program.vertex,
-                buffers: vec![entity_vertex_layout(), entity_instance_layout()],
+                layouts,
+                vertex,
+                buffers,
                 primitive: pack_triangles(entity_topology(kind), state.cull),
                 depth: state.depth,
                 fragment: program.fragment_for(kind.alpha_tests()[usize::from(second)]),
@@ -648,7 +679,14 @@ fn build_pipelines(
                 },
             })
         };
-        Some((variant(false), variant(true)))
+        Some(EntityPipelines {
+            opaque: variant(false, None),
+            blend: variant(true, None),
+            skinned: program
+                .vertex_skinned
+                .as_ref()
+                .map(|vertex| (variant(false, Some(vertex)), variant(true, Some(vertex)))),
+        })
     });
     let compute = installed
         .programs
@@ -676,6 +714,7 @@ fn build_pipelines(
         screen,
         shadow: shadow_pipelines,
         entities,
+        rig_parts_layout,
         compute,
     }
 }

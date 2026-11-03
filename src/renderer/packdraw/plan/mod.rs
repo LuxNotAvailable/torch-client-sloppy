@@ -96,6 +96,9 @@ impl BindTemplate {
 pub(super) struct EntityPass {
     pub(super) opaque: RenderPipeline,
     pub(super) blend: RenderPipeline,
+    /// Opaque and blended for GPU-posed rigs' meshes, when the program has a
+    /// skinned vertex stage.
+    pub(super) skinned: Option<(RenderPipeline, RenderPipeline)>,
     pub(super) attachments: Vec<Attachment>,
     pub(super) template: BindTemplate,
     pub(super) groups: std::collections::HashMap<Option<AssetId<Image>>, BindGroup>,

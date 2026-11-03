@@ -1,6 +1,6 @@
 use super::super::sources::TextureSource;
 use super::pack::Pack;
-use super::preludes::{ENTITY_PRELUDE, ENTITY_UNIFORMS, TERRAIN_BEGIN, entity_varyings};
+use super::preludes::{ENTITY_UNIFORMS, TERRAIN_BEGIN, entity_prelude, entity_varyings};
 use super::{AlphaTest, Dispatch, PACK_SET, Program, ProgramKind, SCREEN_PRELUDE, terrain_prelude};
 use crate::shaderpack::pipeline::{Binding, Layout};
 use crate::shaderpack::{backend, directives, pipeline, transform};
@@ -53,7 +53,7 @@ pub(super) fn compile_program(
     let prelude = match kind {
         ProgramKind::Geometry | ProgramKind::Shadow => terrain_prelude(direct),
         ProgramKind::Entity | ProgramKind::ShadowEntity => {
-            format!("{ENTITY_PRELUDE}{entity_outputs}")
+            format!("{}{entity_outputs}", entity_prelude(false))
         }
         ProgramKind::Screen => SCREEN_PRELUDE.to_owned(),
         ProgramKind::Compute => unreachable!("`compile_compute` compiles compute programs"),
@@ -96,6 +96,26 @@ pub(super) fn compile_program(
     let defines: Vec<(&str, &str)> = pack.environment.iter().collect();
     let vertex_wgsl = backend::to_wgsl(&vertex.source, backend::ShaderStage::Vertex, &defines)
         .map_err(|e| format!("{name}.vsh: {e}"))?;
+    // Entity programs also draw GPU-posed rigs: the same vertex stage over
+    // the skinned prelude.
+    let vertex_skinned = if kind.draws_entities() {
+        let prelude = format!("{}{entity_outputs}", entity_prelude(true));
+        let skinned = transform::transform(
+            &vertex_glsl,
+            transform::Stage::Vertex,
+            &shared,
+            &transform::Target {
+                vertex_prelude: &prelude,
+                ..target
+            },
+        );
+        Some(
+            backend::to_wgsl(&skinned.source, backend::ShaderStage::Vertex, &defines)
+                .map_err(|e| format!("{name}.vsh (skinned): {e}"))?,
+        )
+    } else {
+        None
+    };
     let fragment_wgsl =
         backend::to_wgsl(&fragment.source, backend::ShaderStage::Fragment, &defines)
             .map_err(|e| format!("{name}.fsh: {e}"))?;
@@ -135,6 +155,7 @@ pub(super) fn compile_program(
             name: name.to_owned(),
             kind,
             vertex: vertex_wgsl,
+            vertex_skinned,
             fragment: fragment_wgsl,
             fragment_tests,
             alpha_override: pack.alpha_tests.get(name).copied(),
@@ -210,6 +231,7 @@ pub(super) fn compile_compute(pack: &mut Pack, name: &str) -> Result<(Program, S
             name: name.to_owned(),
             kind: ProgramKind::Compute,
             vertex: String::new(),
+            vertex_skinned: None,
             fragment: String::new(),
             fragment_tests: Vec::new(),
             alpha_override: None,

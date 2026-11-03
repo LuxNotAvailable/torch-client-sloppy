@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use bevy::render::Extract;
 use bevy::render::render_phase::{ViewBinnedRenderPhases, ViewSortedRenderPhases};
 use bevy::render::render_resource::{
-    BindGroupLayout, Buffer, RenderPipeline, TextureFormat, TextureView, TextureViewId,
+    BindGroup, BindGroupLayout, Buffer, RenderPipeline, TextureFormat, TextureView, TextureViewId,
 };
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::view::{ExtractedView, ViewTarget};
@@ -124,6 +124,9 @@ pub(super) struct FrameState {
     pub(super) entity_instances: Vec<EntityInstance>,
     pub(super) entity_batches: Vec<EntityBatch>,
     pub(super) entity_buffer: Option<Buffer>,
+    /// The rig buffer's bind group for skinned entity draws, with the
+    /// buffer it was made for (it's remade when the buffer grows).
+    pub(super) rig_parts_group: Option<(bevy::render::render_resource::BufferId, BindGroup)>,
     pub(super) entity_frame: u32,
     pub(super) entity_texture_use: std::collections::HashMap<Option<AssetId<Image>>, u32>,
     /// The hand-layer meshes the pack was given this frame, with their mesh.
@@ -360,8 +363,6 @@ pub(crate) fn take_over_view(
     }
     if takeover.0 != taken_over {
         takeover.0 = taken_over;
-        crate::renderer::rig_parts::PACK_TAKEOVER
-            .store(taken_over, std::sync::atomic::Ordering::Relaxed);
     }
 }
 

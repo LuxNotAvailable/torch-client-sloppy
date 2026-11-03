@@ -38,6 +38,8 @@ pub(crate) struct InstalledProgram {
     pub(crate) name: String,
     pub(crate) kind: ProgramKind,
     pub(crate) vertex: Module,
+    /// An entity program's vertex stage for GPU-posed rigs' meshes.
+    pub(crate) vertex_skinned: Option<Module>,
     pub(crate) fragment: Module,
     pub(crate) fragment_tests: Vec<(compile::AlphaTest, Module)>,
     pub(crate) alpha_override: Option<Option<compile::AlphaTest>>,
@@ -109,6 +111,7 @@ fn install(pack: &str, generation: u32, direct: bool, frame: Frame) -> Installed
         .into_iter()
         .map(|p| InstalledProgram {
             vertex: add(&p.name, "vsh", p.vertex),
+            vertex_skinned: p.vertex_skinned.map(|v| add(&p.name, "skinned.vsh", v)),
             fragment: add(&p.name, "fsh", p.fragment),
             compute: p.compute.map(|c| add(&p.name, "csh", c)),
             compute_used: p.compute_used,

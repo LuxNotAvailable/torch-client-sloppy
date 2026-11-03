@@ -232,12 +232,15 @@ struct Variant {
     upright: bool,
     linear: bool,
     alpha: Option<AlphaTest>,
+    /// An entity program's vertex stage for GPU-posed rigs' meshes.
+    skinned: bool,
 }
 
 const PLAIN: Variant = Variant {
     upright: false,
     linear: false,
     alpha: None,
+    skinned: false,
 };
 
 fn common_prelude(variant: Variant) -> String {
@@ -352,6 +355,50 @@ fn terrain_prelude(direct: bool) -> String {
     )
 }
 
+/// A native entity program's vertex prelude. `skinned` is the variant for a
+/// GPU-posed rig's mesh, as `preludes::entity_prelude` explains.
+fn entity_prelude(skinned: bool) -> String {
+    if !skinned {
+        return ENTITY_PRELUDE
+            .replace("{part_input}", "")
+            .replace("{local}", ENTITY_LOCAL);
+    }
+    format!(
+        "{SKINNED_PARTS}{}",
+        ENTITY_PRELUDE
+            .replace(
+                "{part_input}",
+                "    @location(16) part: u32,
+"
+            )
+            .replace("{local}", SKINNED_LOCAL)
+    )
+}
+
+const ENTITY_LOCAL: &str = "    let local_position = input.position;
+    let local_normal = input.normal;
+";
+
+const SKINNED_PARTS: &str =
+    "@group(1) @binding(0) var<storage, read> iris_rig_parts: array<vec4<f32>>;
+";
+
+/// The part's matrix, stored as its top three rows; the normal goes through
+/// the cofactor matrix, the inverse transpose up to the determinant.
+const SKINNED_LOCAL: &str = "    let row = (input.part_base + input.part) * 3u;
+    let r0 = iris_rig_parts[row];
+    let r1 = iris_rig_parts[row + 1u];
+    let r2 = iris_rig_parts[row + 2u];
+    let p = vec4<f32>(input.position, 1.0);
+    let local_position = vec3<f32>(dot(r0, p), dot(r1, p), dot(r2, p));
+    let c0 = vec3<f32>(r0.x, r1.x, r2.x);
+    let c1 = vec3<f32>(r0.y, r1.y, r2.y);
+    let c2 = vec3<f32>(r0.z, r1.z, r2.z);
+    let skinned_n = mat3x3<f32>(cross(c1, c2), cross(c2, c0), cross(c0, c1)) * input.normal;
+    let det = dot(c0, cross(c1, c2));
+    let local_normal = select(input.normal, normalize(skinned_n) * sign(det), dot(skinned_n, skinned_n) > 1e-12);
+";
+
 const ENTITY_PRELUDE: &str = "struct IrisVertexIn {
     @builtin(vertex_index) vertex_index: u32,
     @builtin(instance_index) instance_index: u32,
@@ -370,19 +417,20 @@ const ENTITY_PRELUDE: &str = "struct IrisVertexIn {
     @location(12) item_id: i32,
     @location(13) render_stage: i32,
     @location(14) flags: u32,
-}
+    @location(15) part_base: u32,
+{part_input}}
 fn iris_model(input: IrisVertexIn, v: vec4<f32>) -> vec3<f32> {
     return vec3<f32>(dot(input.model0, v), dot(input.model1, v), dot(input.model2, v));
 }
 fn iris_attributes(input: IrisVertexIn) -> IrisAttributes {
-    var a: IrisAttributes;
-    a.position = iris_model(input, vec4<f32>(input.position, 1.0));
+{local}    var a: IrisAttributes;
+    a.position = iris_model(input, vec4<f32>(local_position, 1.0));
     a.uv = input.uv;
     a.light = input.light;
     var color = input.color;
     if ((input.flags & 1u) != 0u) { color.a = 1.0; }
     a.color = color * input.tint;
-    let n = iris_model(input, vec4<f32>(input.normal, 0.0));
+    let n = iris_model(input, vec4<f32>(local_normal, 0.0));
     a.normal = select(vec3<f32>(0.0, 1.0, 0.0), normalize(n), dot(n, n) > 1e-8);
     a.entity = vec4<f32>(-1.0, 0.0, 0.0, 1.0);
     a.mid_block = vec4<f32>(0.0);
@@ -422,10 +470,10 @@ fn iris_screen(input: IrisVertexIn) -> vec4<f32> {
 }
 ";
 
-fn kind_prelude(kind: ProgramKind, direct: bool) -> String {
+fn kind_prelude(kind: ProgramKind, direct: bool, skinned: bool) -> String {
     match kind {
         ProgramKind::Geometry | ProgramKind::Shadow => terrain_prelude(direct),
-        ProgramKind::Entity | ProgramKind::ShadowEntity => ENTITY_PRELUDE.to_owned(),
+        ProgramKind::Entity | ProgramKind::ShadowEntity => entity_prelude(skinned),
         ProgramKind::Screen => SCREEN_PRELUDE.to_owned(),
         ProgramKind::Compute => String::new(),
     }
@@ -466,7 +514,7 @@ impl Source<'_> {
             "{}{}{}\n{}",
             common_prelude(variant),
             self.header,
-            kind_prelude(self.kind, self.direct),
+            kind_prelude(self.kind, self.direct, variant.skinned),
             entry(self.body, stage).map_err(|e| format!("{}: {e}", self.name))?
         );
         validate(&format!("{}.wgsl ({stage})", self.name), &wgsl)?;
@@ -516,6 +564,17 @@ pub(super) fn compile_draw(
         ..PLAIN
     };
     let vertex = source.module("vertex", plain)?;
+    let vertex_skinned = if kind.draws_entities() {
+        Some(source.module(
+            "vertex",
+            Variant {
+                skinned: true,
+                ..plain
+            },
+        )?)
+    } else {
+        None
+    };
     let fragment = source.module("fragment", plain)?;
     let fragment_linear = if is_final {
         Some(source.module(
@@ -548,6 +607,7 @@ pub(super) fn compile_draw(
             name: name.to_owned(),
             kind,
             vertex,
+            vertex_skinned,
             fragment,
             fragment_tests,
             alpha_override: pack.alpha_tests.get(name).copied(),
@@ -618,6 +678,7 @@ pub(super) fn compile_compute(
             name: name.to_owned(),
             kind: ProgramKind::Compute,
             vertex: String::new(),
+            vertex_skinned: None,
             fragment: String::new(),
             fragment_tests: Vec::new(),
             alpha_override: None,
@@ -695,12 +756,15 @@ mod tests {
             ProgramKind::Screen,
         ] {
             for direct in [false, true] {
-                let wgsl = format!(
-                    "{}{header}{}{body}",
-                    common_prelude(PLAIN),
-                    kind_prelude(kind, direct)
-                );
-                validate(&format!("{kind:?}"), &wgsl).unwrap_or_else(|e| panic!("{e}"));
+                for skinned in [false, true] {
+                    let wgsl = format!(
+                        "{}{header}{}{body}",
+                        common_prelude(PLAIN),
+                        kind_prelude(kind, direct, skinned)
+                    );
+                    validate(&format!("{kind:?} skinned {skinned}"), &wgsl)
+                        .unwrap_or_else(|e| panic!("{e}"));
+                }
             }
         }
     }

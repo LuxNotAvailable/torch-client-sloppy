@@ -615,8 +615,7 @@ impl PlanResources<'_> {
         let full_clears = clear_passes(&kept);
 
         let entity_pass = |at: usize, flips: Flips| -> Option<EntityPass> {
-            let (index, (opaque, blend)) =
-                (installed.entities[at]?, pipelines.entities[at].clone()?);
+            let (index, entity) = (installed.entities[at]?, pipelines.entities[at].clone()?);
             let program = &installed.programs[index];
             let (attachments, drawing) = match EntityKind::ALL[at].segment() {
                 Segment::Shadow => (
@@ -632,8 +631,9 @@ impl PlanResources<'_> {
                 ),
             };
             Some(EntityPass {
-                opaque,
-                blend,
+                opaque: entity.opaque,
+                blend: entity.blend,
+                skinned: entity.skinned,
                 attachments,
                 template: self.bind_template(
                     index,

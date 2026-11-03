@@ -32,6 +32,8 @@ pub(crate) struct EntityDraw {
     order: u8,
     relative: bool,
     flags: u32,
+    /// A GPU-posed rig's first part matrix (its `MeshTag`); 0 otherwise.
+    part_base: u32,
 }
 
 impl EntityDraw {
@@ -49,12 +51,15 @@ pub(super) struct EntityInstance {
     light: [f32; 2],
     ids: [i32; 4],
     flags: u32,
+    /// Where a skinned mesh's part matrices start in the rig buffer, read
+    /// only by the skinned variant of the vertex stage.
+    part_base: u32,
 }
 
 const ENTITY_SHADE_IN_ALPHA: u32 = 1;
 
 pub(super) const ENTITY_INSTANCE_SIZE: u64 = std::mem::size_of::<EntityInstance>() as u64;
-const _: () = assert!(ENTITY_INSTANCE_SIZE == 96);
+const _: () = assert!(ENTITY_INSTANCE_SIZE == 100);
 
 pub(super) fn entity_instance_layout() -> bevy::mesh::VertexBufferLayout {
     use bevy::render::render_resource::{VertexAttribute, VertexFormat, VertexStepMode};
@@ -70,6 +75,7 @@ pub(super) fn entity_instance_layout() -> bevy::mesh::VertexBufferLayout {
         (VertexFormat::Sint32, 84),
         (VertexFormat::Sint32, 88),
         (VertexFormat::Uint32, 92),
+        (VertexFormat::Uint32, 96),
     ];
     bevy::mesh::VertexBufferLayout {
         array_stride: ENTITY_INSTANCE_SIZE,
@@ -132,7 +138,66 @@ pub(super) fn entity_layout_matches(layout: &bevy::mesh::VertexBufferLayout) -> 
             .all(|(a, (format, offset))| a.format == format && a.offset == offset)
 }
 
+/// A GPU-posed rig's mesh (`bake::rigged_mesh`): the entity attributes,
+/// then each vertex's part index (`rig_parts::ATTRIBUTE_PART`), which sorts
+/// after them.
+pub(super) fn entity_skinned_vertex_layout() -> bevy::mesh::VertexBufferLayout {
+    use bevy::render::render_resource::{VertexAttribute, VertexFormat};
+    let mut layout = entity_vertex_layout();
+    layout.array_stride = ENTITY_SKINNED_STRIDE;
+    layout.attributes.push(VertexAttribute {
+        format: VertexFormat::Uint32,
+        offset: ENTITY_STRIDE,
+        shader_location: ENTITY_PART_LOCATION,
+    });
+    layout
+}
+
+pub(super) fn entity_skinned_layout_matches(layout: &bevy::mesh::VertexBufferLayout) -> bool {
+    layout.array_stride == ENTITY_SKINNED_STRIDE
+        && layout.attributes.len() == ENTITY_ATTRIBUTES.len() + 1
+        && layout
+            .attributes
+            .iter()
+            .zip(ENTITY_ATTRIBUTES)
+            .all(|(a, (format, offset))| a.format == format && a.offset == offset)
+        && layout.attributes.last().is_some_and(|a| {
+            a.format == bevy::render::render_resource::VertexFormat::Uint32
+                && a.offset == ENTITY_STRIDE
+        })
+}
+
+/// The bind group a skinned entity draw adds, at [`ENTITY_PARTS_SET`]: the
+/// rig buffer of part matrices, three `vec4` rows each.
+pub(super) fn rig_parts_layout() -> bevy::render::render_resource::BindGroupLayoutDescriptor {
+    use bevy::render::render_resource::{
+        BindGroupLayoutEntry, BindingType, BufferBindingType, ShaderStages,
+    };
+    bevy::render::render_resource::BindGroupLayoutDescriptor::new(
+        format!("{GPU_LABEL} rig parts"),
+        &[BindGroupLayoutEntry {
+            binding: 0,
+            visibility: ShaderStages::VERTEX,
+            ty: BindingType::Buffer {
+                ty: BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    )
+}
+
+/// Where skinned entity programs find the rig buffer.
+pub(crate) const ENTITY_PARTS_SET: u32 = 1;
+/// The skinned vertex's part index.
+pub(crate) const ENTITY_PART_LOCATION: u32 = 16;
+/// The instance's first part matrix.
+pub(crate) const ENTITY_PART_BASE_LOCATION: u32 = 15;
+const _: () = assert!(4 + 11 == ENTITY_PART_BASE_LOCATION);
+
 const ENTITY_STRIDE: u64 = 48;
+const ENTITY_SKINNED_STRIDE: u64 = 52;
 const ENTITY_ATTRIBUTES: [(bevy::render::render_resource::VertexFormat, u64); 4] = [
     (bevy::render::render_resource::VertexFormat::Float32x3, 0),
     (bevy::render::render_resource::VertexFormat::Float32x3, 12),
@@ -144,6 +209,7 @@ pub(crate) fn prepare_entity_draws(
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
     images: Res<RenderAssets<GpuImage>>,
+    storage: Res<RenderAssets<bevy::render::storage::GpuShaderStorageBuffer>>,
     render: Option<ResMut<PackRender>>,
 ) {
     crate::prof_span!("render:pack_prepare_entity_draws");
@@ -154,7 +220,7 @@ pub(crate) fn prepare_entity_draws(
     let Install {
         stage:
             Stage::Started {
-                pipelines: Building::Ready(_),
+                pipelines: Building::Ready(pipelines),
                 sized: Some(sized),
             },
         frame,
@@ -164,6 +230,22 @@ pub(crate) fn prepare_entity_draws(
     else {
         return;
     };
+    if let Some(parts) = storage.get(&crate::renderer::rig_parts::PARTS)
+        && frame
+            .rig_parts_group
+            .as_ref()
+            .is_none_or(|(id, _)| *id != parts.buffer.id())
+    {
+        let group = device.create_bind_group(
+            Some(&*format!("{GPU_LABEL} rig parts")),
+            &pipelines.rig_parts_layout,
+            &[bevy::render::render_resource::BindGroupEntry {
+                binding: 0,
+                resource: parts.buffer.as_entire_binding(),
+            }],
+        );
+        frame.rig_parts_group = Some((parts.buffer.id(), group));
+    }
     frame.entity_instances.clear();
     frame.entity_batches.clear();
     if frame.entity_draws.is_empty()
@@ -199,6 +281,7 @@ pub(crate) fn prepare_entity_draws(
             light: draw.light.to_array(),
             ids: [draw.entity_id, -1, draw.item_id, draw.stage],
             flags: draw.flags,
+            part_base: draw.part_base,
         });
         let at = frame.entity_instances.len() as u32 - 1;
         match frame.entity_batches.last_mut() {

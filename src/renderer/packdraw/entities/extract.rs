@@ -28,6 +28,7 @@ pub(crate) fn extract_entity_draws(
             Has<crate::util::particles::ParticleBatch>,
             Has<crate::blockentities::BeamNode>,
             Has<crate::renderer::tethers::WeatherLayer>,
+            Option<&bevy::mesh::MeshTag>,
         )>,
     >,
     materials: Extract<Res<Assets<crate::renderer::entity_material::EntityMaterial>>>,
@@ -113,6 +114,7 @@ pub(crate) fn extract_entity_draws(
         particle,
         beam,
         weather,
+        tag,
     ) in &meshes
     {
         if layers.is_some_and(|l| !l.intersects(&world)) {
@@ -185,6 +187,8 @@ pub(crate) fn extract_entity_draws(
             // Layers over the same surface draw after what they cover.
             order: material.depth_bias.clamp(0, i32::from(u8::MAX)) as u8,
             relative: false,
+            // A GPU-posed rig's first part matrix (its `MeshTag`).
+            part_base: tag.map_or(0, |t| t.0),
             flags: if !weather
                 && [LightMode::Flat as u32, LightMode::Emissive as u32]
                     .contains(&material.params.mode)
@@ -303,6 +307,7 @@ pub(crate) fn extract_standard_draws(
             order,
             relative,
             flags: 0,
+            part_base: 0,
         });
     };
 

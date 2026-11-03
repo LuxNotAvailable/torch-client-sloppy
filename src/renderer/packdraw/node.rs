@@ -11,7 +11,9 @@ use bevy::render::renderer::{RenderContext, RenderDevice};
 use bevy::render::view::{ExtractedView, ViewTarget};
 
 use super::compile::{PACK_SET, ScreenStage, Segment, TERRAIN_SET};
-use super::entities::{ENTITY_INSTANCE_SIZE, entity_layout_matches};
+use super::entities::{
+    ENTITY_INSTANCE_SIZE, ENTITY_PARTS_SET, entity_layout_matches, entity_skinned_layout_matches,
+};
 use super::frame::{PackRender, Sized};
 use super::plan::{Attachment, ComputePass, GeometryPass, ScreenPass, StepPass};
 use super::targets::zero_layout;
@@ -272,10 +274,25 @@ impl PackFrameNode {
                     ) else {
                         continue;
                     };
-                    if !entity_layout_matches(mesh.layout.0.layout()) {
+                    let layout = mesh.layout.0.layout();
+                    // A GPU-posed rig's mesh draws through the skinned
+                    // pipelines, with the rig buffer of part matrices.
+                    let pipeline = if entity_layout_matches(layout) {
+                        if batch.blend { blend } else { opaque }
+                    } else if entity_skinned_layout_matches(layout)
+                        && let (Some((skinned_opaque, skinned_blend)), Some((_, parts))) =
+                            (&entities.skinned, &frame.rig_parts_group)
+                    {
+                        encoder.set_bind_group(ENTITY_PARTS_SET as usize, parts, &[]);
+                        if batch.blend {
+                            skinned_blend
+                        } else {
+                            skinned_opaque
+                        }
+                    } else {
                         continue;
-                    }
-                    encoder.set_render_pipeline(if batch.blend { blend } else { opaque });
+                    };
+                    encoder.set_render_pipeline(pipeline);
                     encoder.set_bind_group(PACK_SET as usize, textured, &[]);
                     encoder.set_vertex_buffer(0, vertices.buffer.slice(..));
                     let from = u64::from(batch.first) * ENTITY_INSTANCE_SIZE;
