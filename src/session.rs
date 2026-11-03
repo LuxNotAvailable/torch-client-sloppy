@@ -269,6 +269,12 @@ pub struct SessionClientInfo {
 #[derive(Default)]
 pub struct SessionState {
     pub player_pos: [f32; 3],
+    /// Network ID to name tables, vanilla until the server syncs its own.
+    #[allow(
+        dead_code,
+        reason = "read once unknown entries are named (15c) and written by registry sync (15e)"
+    )]
+    pub registries: crate::protocol::registries::Registries,
     pub status: Option<std::sync::Arc<str>>,
     pub current_address: Option<String>,
     pub advanced_tooltips: bool,

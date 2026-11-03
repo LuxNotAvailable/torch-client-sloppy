@@ -6,6 +6,7 @@
 pub(crate) mod hop;
 mod modded;
 pub(crate) mod packets;
+pub(crate) mod registries;
 pub(crate) mod remap;
 mod v775;
 pub(crate) mod version;
