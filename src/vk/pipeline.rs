@@ -209,3 +209,54 @@ pub fn push(ctx: &Context, commands: vk::CommandBuffer, layout: vk::PipelineLayo
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{PUSH_SIZE, Push};
+
+    /// Every shader's bindless bindings and push block, as slangc reflects
+    /// them, match `bindless.rs` and `Push`: a layout mismatch between the
+    /// Slang interface and Rust fails here, not on the GPU.
+    #[test]
+    fn every_shader_matches_the_rust_layouts() {
+        let fields = [
+            ("ids", std::mem::offset_of!(Push, ids)),
+            ("more", std::mem::offset_of!(Push, more)),
+            ("params", std::mem::offset_of!(Push, params)),
+            ("view_proj", std::mem::offset_of!(Push, view_proj)),
+        ];
+        assert!(!crate::vk::shaders::REFLECTIONS.is_empty());
+        for (name, json) in crate::vk::shaders::REFLECTIONS {
+            let reflection: serde_json::Value = serde_json::from_str(json).expect("valid JSON");
+            let parameters = reflection["parameters"].as_array().expect("parameters");
+            let find = |wanted: &str| {
+                parameters
+                    .iter()
+                    .find(|p| p["name"] == wanted)
+                    .unwrap_or_else(|| panic!("{name}: no {wanted}"))
+            };
+            for (variable, index) in [("g_textures", 0), ("g_samplers", 1), ("g_buffers", 2)] {
+                let binding = &find(variable)["binding"];
+                assert_eq!(binding["kind"], "descriptorTableSlot", "{name}: {variable}");
+                assert_eq!(binding["index"], index, "{name}: {variable}");
+            }
+            let push = find("pc");
+            assert_eq!(push["binding"]["kind"], "pushConstantBuffer", "{name}");
+            let reflected = push["type"]["elementType"]["fields"]
+                .as_array()
+                .expect("push fields");
+            assert_eq!(reflected.len(), fields.len(), "{name}: push field count");
+            let mut end = 0;
+            for (field, (rust_name, rust_offset)) in reflected.iter().zip(fields) {
+                assert_eq!(field["name"], rust_name, "{name}: push field order");
+                assert_eq!(
+                    field["binding"]["offset"].as_u64(),
+                    Some(rust_offset as u64),
+                    "{name}: {rust_name} offset"
+                );
+                end = rust_offset as u64 + field["binding"]["size"].as_u64().unwrap_or(0);
+            }
+            assert_eq!(end, PUSH_SIZE as u64, "{name}: push block size");
+        }
+    }
+}
