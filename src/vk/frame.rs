@@ -113,6 +113,55 @@ impl Frames {
         }
     }
 
+    /// Waits for this slot's last frame and starts recording, with no
+    /// swapchain: headless, the caller draws to its own image.
+    pub fn begin_offscreen(&mut self, ctx: &Context) -> Result<Recording, FrameError> {
+        let frame = &self.frames[self.index];
+        // SAFETY: as in `begin`, without the acquire.
+        unsafe {
+            ctx.device
+                .wait_for_fences(&[frame.done], true, u64::MAX)
+                .map_err(FrameError::Failed)?;
+            ctx.device
+                .reset_fences(&[frame.done])
+                .map_err(FrameError::Failed)?;
+            ctx.device
+                .reset_command_pool(frame.pool, vk::CommandPoolResetFlags::empty())
+                .map_err(FrameError::Failed)?;
+            ctx.device
+                .begin_command_buffer(
+                    frame.commands,
+                    &vk::CommandBufferBeginInfo::default()
+                        .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+                )
+                .map_err(FrameError::Failed)?;
+        }
+        Ok(Recording {
+            commands: frame.commands,
+            image_index: 0,
+        })
+    }
+
+    /// Ends recording and submits, with nothing to present.
+    pub fn end_offscreen(&mut self, ctx: &Context, recording: Recording) -> Result<(), FrameError> {
+        let frame = &self.frames[self.index];
+        // SAFETY: the command buffer was begun in `begin_offscreen` on this
+        // slot; the fence is this slot's.
+        unsafe {
+            ctx.device
+                .end_command_buffer(recording.commands)
+                .map_err(FrameError::Failed)?;
+            let commands =
+                [vk::CommandBufferSubmitInfo::default().command_buffer(recording.commands)];
+            let submit = vk::SubmitInfo2::default().command_buffer_infos(&commands);
+            ctx.device
+                .queue_submit2(ctx.queue, &[submit], frame.done)
+                .map_err(FrameError::Failed)?;
+        }
+        self.index = (self.index + 1) % FRAMES_IN_FLIGHT;
+        Ok(())
+    }
+
     /// Ends recording, submits, and presents the image.
     pub fn end(
         &mut self,

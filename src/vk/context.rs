@@ -38,12 +38,12 @@ pub struct Context {
 }
 
 impl Context {
-    /// Sets Vulkan up for a window. `prefer` picks a device whose name
-    /// contains it (case-insensitive), as an override; otherwise a discrete
-    /// GPU is preferred.
+    /// Sets Vulkan up for a window, or with `None` headless (no surface;
+    /// the viewer draws offscreen, as on Android over adb). `prefer` picks a
+    /// device whose name contains it (case-insensitive), as an override;
+    /// otherwise a discrete GPU is preferred.
     pub fn new(
-        display: RawDisplayHandle,
-        window: RawWindowHandle,
+        window: Option<(RawDisplayHandle, RawWindowHandle)>,
         prefer: Option<&str>,
     ) -> Result<Context, SetupError> {
         // SAFETY: loads the system's Vulkan loader; nothing else runs yet.
@@ -61,7 +61,10 @@ impl Context {
             eprintln!("vk: validation asked for, but the Khronos layer isn't installed");
         }
 
-        let mut extensions = ash_window::enumerate_required_extensions(display)?.to_vec();
+        let mut extensions = match window {
+            Some((display, _)) => ash_window::enumerate_required_extensions(display)?.to_vec(),
+            None => Vec::new(),
+        };
         if validation {
             extensions.push(ash::ext::debug_utils::NAME.as_ptr());
         }
@@ -104,8 +107,12 @@ impl Context {
 
         // SAFETY: the handles come from a live window that outlives the
         // context (the caller drops the context first).
-        let surface =
-            unsafe { ash_window::create_surface(&entry, &instance, display, window, None) }?;
+        let surface = match window {
+            Some((display, window)) => {
+                unsafe { ash_window::create_surface(&entry, &instance, display, window, None) }?
+            }
+            None => vk::SurfaceKHR::null(),
+        };
         let surface_fn = ash::khr::surface::Instance::new(&entry, &instance);
 
         let (physical, queue_family, info) =
@@ -119,8 +126,12 @@ impl Context {
         features.core = features
             .core
             .pipeline_statistics_query(info.pipeline_statistics);
-        let extension_names: Vec<*const i8> =
-            device_extensions().iter().map(|e| e.as_ptr()).collect();
+        // Headless, there is nothing to present to.
+        let extension_names: Vec<*const std::ffi::c_char> = if surface == vk::SurfaceKHR::null() {
+            Vec::new()
+        } else {
+            device_extensions().iter().map(|e| e.as_ptr()).collect()
+        };
         let mut features2 = vk::PhysicalDeviceFeatures2::default()
             .features(features.core)
             .push_next(&mut features.v11)
@@ -166,7 +177,9 @@ impl Drop for Context {
         unsafe {
             let _ = self.device.device_wait_idle();
             self.device.destroy_device(None);
-            self.surface_fn.destroy_surface(self.surface, None);
+            if self.surface != vk::SurfaceKHR::null() {
+                self.surface_fn.destroy_surface(self.surface, None);
+            }
             if let Some((loader, messenger)) = &self.debug {
                 loader.destroy_debug_utils_messenger(*messenger, None);
             }
@@ -203,10 +216,12 @@ fn choose_device(
         let family = families.iter().enumerate().find_map(|(i, f)| {
             let both = vk::QueueFlags::GRAPHICS | vk::QueueFlags::COMPUTE;
             // SAFETY: as above.
-            let presents = unsafe {
-                surface_fn.get_physical_device_surface_support(device, i as u32, surface)
-            }
-            .unwrap_or(false);
+            // Headless, nothing is presented.
+            let presents = surface == vk::SurfaceKHR::null()
+                || unsafe {
+                    surface_fn.get_physical_device_surface_support(device, i as u32, surface)
+                }
+                .unwrap_or(false);
             (f.queue_flags.contains(both) && presents).then_some(i as u32)
         });
         if family.is_none() {

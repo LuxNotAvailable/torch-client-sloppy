@@ -57,9 +57,16 @@ impl Swapchain {
         let format = formats
             .iter()
             .copied()
+            // Any 8-bit sRGB format: the shaders write linear colour and the
+            // image encodes it. Desktops offer BGRA, Android RGBA; falling
+            // back to a UNORM format drew everything too dark.
             .find(|f| {
-                f.format == vk::Format::B8G8R8A8_SRGB
-                    && f.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
+                matches!(
+                    f.format,
+                    vk::Format::B8G8R8A8_SRGB
+                        | vk::Format::R8G8B8A8_SRGB
+                        | vk::Format::A8B8G8R8_SRGB_PACK32
+                ) && f.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
             })
             .or_else(|| formats.first().copied())
             .ok_or_else(|| SetupError("the window offers no image format".to_owned()))?;

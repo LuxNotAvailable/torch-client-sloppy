@@ -48,6 +48,9 @@ shader_support = ["dep:flate2", "dep:naga", "dep:wgpu"]
 # (VULKAN_REWRITE_CHECKLIST.md). For now it only drives the `vkview`
 # development viewer; the game still renders through Bevy.
 vulkan = ["dep:ash", "dep:ash-window", "dep:gpu-allocator", "dep:winit", "dep:raw-window-handle"]
+# The Vulkan viewer as an Android app (tools/vkview-apk): the library's
+# android_main runs the viewer instead of the game.
+vkview_apk = ["vulkan"]
 
 resourcepacks = ["dep:flate2"]
 

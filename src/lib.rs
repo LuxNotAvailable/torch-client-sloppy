@@ -293,6 +293,38 @@ pub fn start_from_cli() -> eyre::Result<()> {
     run(platform::cli::parse())
 }
 
+/// The Vulkan viewer's APK entry point (`vkview_apk`, `tools/vkview-apk`):
+/// arguments from `args.txt` in the app's external files folder, run in
+/// that folder, output to logcat.
+#[allow(
+    unsafe_code,
+    reason = "the Android entry point is called by name from native code"
+)]
+#[cfg(all(target_os = "android", feature = "vkview_apk"))]
+#[unsafe(no_mangle)]
+fn android_main(app: bevy::android::android_activity::AndroidApp) {
+    platform::logcat::redirect_stdio();
+    let dir = app
+        .external_data_path()
+        .or_else(|| app.internal_data_path())
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let _ = std::env::set_current_dir(&dir);
+    // SAFETY: set before the viewer starts any thread.
+    unsafe { std::env::set_var("TMPDIR", &dir) };
+    let args: Vec<String> = std::fs::read_to_string(dir.join("args.txt"))
+        .unwrap_or_default()
+        .split_whitespace()
+        .map(str::to_owned)
+        .collect();
+    println!("vkview: in {} with {args:?}", dir.display());
+    let _ = vk::viewer::ANDROID_APP.set(app);
+    let code = vk::viewer::run(args);
+    println!("vkview: exit {code}");
+    // Let the logcat thread drain stdout before the process goes.
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    std::process::exit(code);
+}
+
 #[cfg(any(target_arch = "wasm32", target_os = "android"))]
 pub fn load_assets(packed: Vec<u8>) -> Result<(), String> {
     platform::assets::archive::load(packed)
@@ -302,7 +334,7 @@ pub fn load_assets(packed: Vec<u8>) -> Result<(), String> {
     unsafe_code,
     reason = "the Android entry point is called by name from native code"
 )]
-#[cfg(target_os = "android")]
+#[cfg(all(target_os = "android", not(feature = "vkview_apk")))]
 #[unsafe(no_mangle)]
 fn android_main(app: bevy::android::android_activity::AndroidApp) {
     platform::logcat::redirect_stdio();

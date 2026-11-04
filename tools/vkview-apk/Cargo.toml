@@ -1,0 +1,41 @@
+# The Vulkan renderer's viewer as its own Android app, so it installs beside
+# the game (com.torch.client) instead of over it. The viewer itself lives in
+# the main crate (`vk::viewer`); this crate only gives cargo-apk a package of
+# its own:
+#
+#   cd tools/vkview-apk && cargo apk run --release
+#
+# with the NDK's environment as tools/build_android.sh sets it. Arguments go
+# in args.txt in the app's external files folder; output goes to logcat.
+[package]
+name = "vkview-apk"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+torch-client = { path = "../..", features = ["vulkan", "mobile_ui", "vkview_apk"] }
+
+[package.metadata.android]
+package = "com.torch.vkview"
+build_targets = ["aarch64-linux-android"]
+
+[package.metadata.android.sdk]
+min_sdk_version = 28
+target_sdk_version = 36
+
+[package.metadata.android.application]
+label = "Torch vkview"
+
+# The main crate's patches, which a dependent crate doesn't inherit.
+[patch.crates-io]
+bevy_camera = { path = "../../vendor/bevy_camera" }
+simdnbt = { path = "../../vendor/simdnbt" }
+bevy_core_pipeline = { path = "../../vendor/bevy_core_pipeline" }
+
+[profile.release]
+strip = true
