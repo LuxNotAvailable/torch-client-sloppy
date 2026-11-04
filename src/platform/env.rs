@@ -189,6 +189,12 @@ const ALL: &[Var] = &[
         enabled: true,
     },
     Var {
+        name: "MC_NO_HIZ",
+        what: "turn off terrain occlusion culling against last frame's depth, when set to 1",
+        default: "on",
+        enabled: true,
+    },
+    Var {
         name: "MC_WORKER_PRIORITY",
         what: "\"normal\" keeps the mesh and light threads at normal priority instead of below it",
         default: "below normal",

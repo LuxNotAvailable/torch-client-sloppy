@@ -43,12 +43,20 @@ pub struct CullView {
     pub flags: u32,
     pub plane_count: u32,
     pub pad: [u32; 2],
+    /// The occlusion pyramid's clip matrix (last frame's camera), whether
+    /// its depth was reversed, and its level count (0: no pyramid).
+    pub hiz_clip: [[f32; 4]; 4],
+    pub hiz_reverse: u32,
+    pub hiz_levels: u32,
+    pub hiz_pad: [u32; 2],
 }
 
 pub const VIEW_WATER: u32 = 1;
 pub const VIEW_UNOCCLUDED: u32 = 2;
 pub const VIEW_WITHIN: u32 = 4;
 pub const VIEW_ALWAYS: u32 = 8;
+/// Test sections against the occlusion pyramid.
+pub const VIEW_HIZ: u32 = 16;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CullShape {
@@ -121,6 +129,10 @@ impl CullShape {
                 },
             plane_count: self.plane_count as u32,
             pad: [0; 2],
+            hiz_clip: [[0.0; 4]; 4],
+            hiz_reverse: 0,
+            hiz_levels: 0,
+            hiz_pad: [0; 2],
         }
     }
 }
@@ -289,6 +301,9 @@ pub struct AssignedView {
     shape: CullShape,
     flags: u32,
     eye: Vec3,
+    /// The occlusion pyramid's matrix and level count, when this view
+    /// tests against it this frame.
+    hiz: Option<(Mat4, u32)>,
 }
 
 #[cfg(feature = "shader_support")]
@@ -457,7 +472,7 @@ pub struct CullPipeline {
 #[derive(Resource, Default)]
 pub struct CullBindGroup {
     pub group: Option<BindGroup>,
-    key: Option<(u64, u64)>,
+    key: Option<(u64, u64, u64)>,
 }
 
 impl CullBindGroup {
@@ -504,6 +519,18 @@ pub fn build(app: &mut App) {
                 TerrainCullLabel,
                 bevy::core_pipeline::core_3d::graph::Node3d::StartMainPass,
             ),
+        )
+        .add_render_graph_node::<ViewNodeRunner<super::hiz::HiZNode>>(
+            bevy::core_pipeline::core_3d::graph::Core3d,
+            super::hiz::HiZLabel,
+        )
+        .add_render_graph_edges(
+            bevy::core_pipeline::core_3d::graph::Core3d,
+            (
+                bevy::core_pipeline::core_3d::graph::Node3d::EndMainPass,
+                super::hiz::HiZLabel,
+                bevy::core_pipeline::core_3d::graph::Node3d::StartMainPassPostProcessing,
+            ),
         );
 }
 
@@ -535,6 +562,9 @@ pub fn finish(app: &mut App) {
                 true,
                 NonZeroU64::new(std::mem::size_of::<CullView>() as u64),
             ),
+            bevy::render::render_resource::binding_types::texture_2d(
+                bevy::render::render_resource::TextureSampleType::Float { filterable: false },
+            ),
         ),
     );
     let layout = BindGroupLayoutDescriptor::new("terrain_cull", &layout_entries);
@@ -555,6 +585,8 @@ pub fn finish(app: &mut App) {
         zero_initialize_workgroup_memory: false,
     });
     render_app.insert_resource(CullPipeline { layout, id });
+    let queue = render_app.world().resource::<RenderQueue>().clone();
+    render_app.insert_resource(super::hiz::HiZ::new(&device, &queue));
 }
 
 /// Whether the camera's cull keeps a section: the same tests `cull.wgsl`
@@ -578,9 +610,17 @@ pub fn prepare_cull(
     mut lists: ResMut<DirectLists>,
     cameras: Query<(Entity, &ExtractedView, Has<TerrainView>)>,
     #[cfg(feature = "shader_support")] pack_view: Option<Res<PackCullView>>,
+    #[cfg(feature = "shader_support")] takeover: Option<Res<super::draw::PackTakeover>>,
+    mut hiz: Option<ResMut<super::hiz::HiZ>>,
     mut assigned: Local<Vec<AssignedView>>,
 ) {
     crate::prof_span!("render:terrain_prepare_cull");
+    // The pyramid comes from Bevy's depth, which a shader pack leaves empty.
+    #[cfg(feature = "shader_support")]
+    let hiz_enabled = !takeover.is_some_and(|t| t.0) && !super::hiz::disabled();
+    #[cfg(not(feature = "shader_support"))]
+    let hiz_enabled = !super::hiz::disabled();
+    let mut hiz_began = false;
     views.index.clear();
     views.count = 0;
 
@@ -595,12 +635,21 @@ pub fn prepare_cull(
         views.count += 1;
         views.index.insert(view.retained_view_entity, slot);
         let eye = view.world_from_view.translation();
+        let occlusion = match hiz.as_deref_mut() {
+            Some(hiz) if !hiz_began && tier.indirect => {
+                hiz_began = true;
+                hiz.begin(&device, view, hiz_enabled)
+                    .map(|u| (u.clip, u.levels))
+            }
+            _ => None,
+        };
         assigned.push(AssignedView {
             slot,
             key: view.retained_view_entity,
             shape: CullShape::frustum(frustum_planes(view)),
             flags: CAMERA_FLAGS,
             eye,
+            hiz: occlusion,
         });
 
         #[cfg(feature = "shader_support")]
@@ -617,6 +666,7 @@ pub fn prepare_cull(
                 shape,
                 flags: PACK_SHADOW_FLAGS,
                 eye,
+                hiz: None,
             });
         }
     }
@@ -660,13 +710,19 @@ pub fn prepare_cull(
             cull.generation = generation;
         }
         for view in assigned.iter() {
-            let cull_view = view.shape.view(
+            let mut cull_view = view.shape.view(
                 cull.slot_cap,
                 view.slot,
                 cull.pool_count,
                 tier.count as u32,
                 view.flags,
             );
+            if let Some((clip, levels)) = view.hiz {
+                cull_view.flags |= VIEW_HIZ;
+                cull_view.hiz_clip = clip.to_cols_array_2d();
+                cull_view.hiz_reverse = 1;
+                cull_view.hiz_levels = levels;
+            }
             let bytes = bytemuck::bytes_of(&cull_view);
             cull.view_scratch[..bytes.len()].copy_from_slice(bytes);
             queue.write_buffer(
@@ -761,13 +817,15 @@ pub fn prepare_cull_bind_group(
     pipeline: Option<Res<CullPipeline>>,
     pools: Res<TerrainPools>,
     cull: Res<CullBuffers>,
+    hiz: Option<Res<super::hiz::HiZ>>,
     mut bind_group: ResMut<CullBindGroup>,
 ) {
     let Some(pipeline) = pipeline else { return };
+    let Some(hiz) = hiz else { return };
     let SlotTable::Indirect { meta, vis } = &pools.table else {
         return;
     };
-    let key = (pools.tables_generation, cull.generation);
+    let key = (pools.tables_generation, cull.generation, hiz.generation);
     if bind_group.key == Some(key) && bind_group.group.is_some() {
         return;
     }
@@ -785,6 +843,7 @@ pub fn prepare_cull_bind_group(
                 offset: 0,
                 size: Some(NonZeroU64::new(CULL_VIEW_STRIDE).unwrap()),
             },
+            hiz.view(),
         )),
     );
     bind_group.group = Some(group);

@@ -1,5 +1,6 @@
 pub mod cull;
 pub mod draw;
+pub mod hiz;
 pub mod pools;
 
 use std::sync::atomic::{AtomicU64, AtomicUsize};

@@ -33,6 +33,13 @@ struct CullView {
     plane_count: u32,
     pad0: u32,
     pad1: u32,
+    // The occlusion pyramid's view: the clip matrix of the frame it was
+    // built from, whether that depth was reversed, and its level count.
+    hiz_clip: mat4x4<f32>,
+    hiz_reverse: u32,
+    hiz_levels: u32,
+    hiz_pad0: u32,
+    hiz_pad1: u32,
 }
 
 const STREAM_SOLID: u32 = 0u;
@@ -43,12 +50,62 @@ const META_WATER: u32 = 2u;
 const VIEW_UNOCCLUDED: u32 = 2u;
 const VIEW_WITHIN: u32 = 4u;
 const VIEW_ALWAYS: u32 = 8u;
+const VIEW_HIZ: u32 = 16u;
 
 @group(0) @binding(0) var<storage, read> metas: array<SlotMeta>;
 @group(0) @binding(1) var<storage, read> vis: array<u32>;
 @group(0) @binding(2) var<storage, read_write> commands: array<DrawIndexedIndirectArgs>;
 @group(0) @binding(3) var<storage, read_write> counts: array<atomic<u32>>;
 @group(0) @binding(4) var<uniform> cull: CullView;
+@group(0) @binding(5) var hiz: texture_2d<f32>;
+
+/// Whether last frame's depth hides a box entirely: its nearest point, seen
+/// from last frame's camera, lies behind the farthest depth over the area
+/// it covers. Conservative wherever unsure: a corner behind the camera, or
+/// a box off the pyramid, counts as visible.
+fn hiz_occluded(lo: vec3<f32>, hi: vec3<f32>) -> bool {
+    if (cull.flags & VIEW_HIZ) == 0u || cull.hiz_levels == 0u {
+        return false;
+    }
+    var mn = vec2<f32>(1e9);
+    var mx = vec2<f32>(-1e9);
+    var nearest = 1.0;
+    for (var i = 0u; i < 8u; i = i + 1u) {
+        let corner = vec3<f32>(
+            select(lo.x, hi.x, (i & 1u) != 0u),
+            select(lo.y, hi.y, (i & 2u) != 0u),
+            select(lo.z, hi.z, (i & 4u) != 0u),
+        );
+        let c = cull.hiz_clip * vec4<f32>(corner, 1.0);
+        if (c.w <= 0.05) {
+            return false;
+        }
+        let ndc = c.xyz / c.w;
+        let depth = select(ndc.z, 1.0 - ndc.z, cull.hiz_reverse != 0u);
+        nearest = min(nearest, depth);
+        mn = min(mn, ndc.xy);
+        mx = max(mx, ndc.xy);
+    }
+    // Screen space, y down.
+    let uv_min = clamp(vec2<f32>(mn.x * 0.5 + 0.5, 0.5 - mx.y * 0.5), vec2<f32>(0.0), vec2<f32>(1.0));
+    let uv_max = clamp(vec2<f32>(mx.x * 0.5 + 0.5, 0.5 - mn.y * 0.5), vec2<f32>(0.0), vec2<f32>(1.0));
+    if (any(uv_max <= uv_min)) {
+        return false;
+    }
+    let size0 = vec2<f32>(textureDimensions(hiz, 0));
+    let extent = (uv_max - uv_min) * size0;
+    let level = min(u32(ceil(log2(max(max(extent.x, extent.y), 1.0)))), cull.hiz_levels - 1u);
+    let dims = vec2<i32>(textureDimensions(hiz, level));
+    let p0 = clamp(vec2<i32>(uv_min * vec2<f32>(dims)), vec2<i32>(0), dims - 1);
+    let p1 = clamp(vec2<i32>(uv_max * vec2<f32>(dims)), vec2<i32>(0), dims - 1);
+    var far = 0.0;
+    for (var y = p0.y; y <= p1.y; y = y + 1) {
+        for (var x = p0.x; x <= p1.x; x = x + 1) {
+            far = max(far, textureLoad(hiz, vec2<i32>(x, y), i32(level)).r);
+        }
+    }
+    return nearest > far;
+}
 
 fn in_frustum(lo: vec3<f32>, hi: vec3<f32>) -> bool {
     if (cull.flags & VIEW_WITHIN) != 0u
@@ -106,7 +163,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if (live && visible) {
         let lo = vec3<f32>(m.origin) + m.min;
         let hi = vec3<f32>(m.origin) + m.max;
-        inside = in_frustum(lo, hi);
+        inside = in_frustum(lo, hi) && !hiz_occluded(lo, hi);
     }
 
     let draws = live && visible && inside;

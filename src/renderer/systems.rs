@@ -483,7 +483,13 @@ fn setup(
     commands.spawn((
         WorldCamera,
         super::terrain_pool::TerrainView,
-        Camera3d::default(),
+        // Readable, so the terrain cull can build its occlusion pyramid.
+        Camera3d {
+            depth_texture_usages: (bevy::render::render_resource::TextureUsages::RENDER_ATTACHMENT
+                | bevy::render::render_resource::TextureUsages::TEXTURE_BINDING)
+                .into(),
+            ..default()
+        },
         ClusterConfig::None,
         Camera {
             clear_color: ClearColorConfig::Custom(SKY_COLOR),
