@@ -516,6 +516,17 @@ impl Capture {
             "image bytes uploaded (KiB)",
             kib(image_bytes),
         );
+        if let Some(terrain) = crate::renderer::terrain_pool::stats() {
+            let bytes = terrain
+                .0
+                .uploaded
+                .load(std::sync::atomic::Ordering::Relaxed);
+            self.push(
+                Section::RenderWork,
+                "terrain bytes uploaded (KiB)",
+                bytes as f32 / 1024.0,
+            );
+        }
         self.push(
             Section::RenderWork,
             "GUI quads",

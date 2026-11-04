@@ -631,6 +631,10 @@ pub fn prepare_cull(
     stats
         .indirect
         .store(tier.indirect as usize, Ordering::Relaxed);
+    stats.uploaded.store(
+        stats.uploaded_pending.swap(0, Ordering::Relaxed),
+        Ordering::Relaxed,
+    );
 
     let pool_count = pools.pools.len().max(1) as u32;
     if tier.indirect {

@@ -759,6 +759,11 @@ fn sort_water(
 
         sort.back_to_front(sort.eye_from(eye), order, out);
         if let Some(pool) = pools.pools.get(sort.pool as usize) {
+            pools
+                .stats
+                .0
+                .uploaded_pending
+                .fetch_add(std::mem::size_of_val(out) as u64, Ordering::Relaxed);
             render_queue.write_buffer(
                 &pool.indices,
                 sort.first_index as u64 * 4,
@@ -893,6 +898,14 @@ pub fn apply_ops(
                     let quads = pools.pools[pool_index as usize].pack_quads(&device, layout);
                     write_quads(&render_queue, &quads.texture, vertex.offset, &mesh.pack);
                 }
+                let written = std::mem::size_of_val(&mesh.verts[..])
+                    + std::mem::size_of_val(&mesh.idx[..])
+                    + std::mem::size_of_val(&mesh.cutout_idx[..]);
+                pools
+                    .stats
+                    .0
+                    .uploaded_pending
+                    .fetch_add(written as u64, Ordering::Relaxed);
                 let pool = &pools.pools[pool_index as usize];
                 render_queue.write_buffer(
                     &pool.vertices,

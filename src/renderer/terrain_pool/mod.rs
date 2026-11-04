@@ -136,6 +136,10 @@ pub struct TerrainStatsInner {
     draws_pending: AtomicUsize,
     /// 1 while the GPU culls, so `drawn` is only known when counted.
     pub indirect: AtomicUsize,
+    /// Section bytes written to the GPU last frame (vertices, indices and
+    /// water re-sorts), each a staging copy the queue submit carries.
+    pub uploaded: AtomicU64,
+    pub(crate) uploaded_pending: AtomicU64,
     /// Asks the GPU-culled path to count `drawn` on the CPU too.
     pub count_sections: std::sync::atomic::AtomicBool,
 }

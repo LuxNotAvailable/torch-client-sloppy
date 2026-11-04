@@ -73,6 +73,9 @@ impl RenderSpans {
         match name {
             "submit_graph_commands" => Some("render:queue_submit"),
             "present_frames" => Some("render:present"),
+            // Bevy encodes most passes here, in parallel on the compute
+            // pool, after the graph's nodes have only queued them.
+            "command_buffer_generation_tasks" => Some("render:parallel_encode"),
             _ => None,
         }
     }
