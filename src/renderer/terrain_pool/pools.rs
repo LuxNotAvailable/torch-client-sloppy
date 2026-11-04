@@ -17,13 +17,17 @@ use super::{
 
 const ORIGIN_TEXEL: usize = 16;
 
+// A pool is about 43 MiB on desktop. The last pool is only part full, and
+// at render distance 32 that tail was about one 85 MiB pool's worth of the
+// 513 MiB allocated; at short render distances one pool was mostly empty.
+// Halving the pool halves that tail, for a few more (cheap) multi-draws.
 #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
-const POOL_VERTICES: u32 = 3_200_000;
+const POOL_VERTICES: u32 = 1_600_000;
 #[cfg(any(target_arch = "wasm32", target_os = "android"))]
 const POOL_VERTICES: u32 = 1_200_000;
 
 #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
-const POOL_INDICES: u32 = 6_400_000;
+const POOL_INDICES: u32 = 3_200_000;
 #[cfg(any(target_arch = "wasm32", target_os = "android"))]
 const POOL_INDICES: u32 = 2_400_000;
 
@@ -76,15 +80,20 @@ impl Pool {
         }
     }
 
+    /// The vertex and index buffers, the part `used_bytes` measures.
     fn byte_size(&self) -> u64 {
+        self.vertex_capacity as u64 * 20 + self.index_capacity as u64 * 4
+    }
+
+    /// The shader pack's quad texture beside the buffers, when a pack is on.
+    fn pack_bytes(&self) -> u64 {
         #[cfg(feature = "shader_support")]
-        let pack = self
+        return self
             .pack_quads
             .as_ref()
             .map_or(0, |_| self.pack_byte_size());
         #[cfg(not(feature = "shader_support"))]
-        let pack = 0;
-        self.vertex_capacity as u64 * 20 + self.index_capacity as u64 * 4 + pack
+        0
     }
 
     fn allocate_indices(&mut self, stream: u32, count: u32) -> Option<IndexRange> {
@@ -596,6 +605,8 @@ impl TerrainPools {
 
     fn publish_stats(&self) {
         let capacity: u64 = self.pools.iter().map(Pool::byte_size).sum();
+        let pack: u64 = self.pools.iter().map(Pool::pack_bytes).sum();
+        self.stats.0.pack_bytes.store(pack, Ordering::Relaxed);
         self.stats
             .0
             .live_slots

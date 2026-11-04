@@ -533,6 +533,11 @@ impl Capture {
                 "terrain buffers allocated",
                 mib(t.capacity_bytes.load(Relaxed)),
             );
+            self.push(
+                Section::Memory,
+                "terrain pack quads",
+                mib(t.pack_bytes.load(Relaxed)),
+            );
         }
         #[cfg(audio)]
         {

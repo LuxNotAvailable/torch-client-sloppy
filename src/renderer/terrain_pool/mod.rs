@@ -129,7 +129,10 @@ pub struct TerrainStats(pub Arc<TerrainStatsInner>);
 pub struct TerrainStatsInner {
     pub live_slots: AtomicUsize,
     pub used_bytes: AtomicU64,
+    /// The vertex and index buffers allocated, against `used_bytes`.
     pub capacity_bytes: AtomicU64,
+    /// The shader pack's per-pool quad textures, apart from the buffers.
+    pub pack_bytes: AtomicU64,
     pub pools: AtomicUsize,
     pub drawn: AtomicUsize,
     pub draws: AtomicUsize,
