@@ -79,6 +79,7 @@ const CULL_HIZ: u32 = 1;
 const CULL_VISIBILITY: u32 = 2;
 const CULL_BUCKETS: u32 = 4;
 const CULL_FRUSTUM: u32 = 8;
+const CULL_NO_WAVE: u32 = 16;
 
 /// The camera moved farther than this (blocks) since the pyramid was
 /// built: skip Hi-Z for a frame, as newly uncovered sections would pop in
@@ -162,6 +163,8 @@ pub struct Options {
     pub hiz: bool,
     pub visibility: bool,
     pub buckets: bool,
+    /// Reserve commands with one atomic per subgroup (off: per lane).
+    pub wave: bool,
     /// Bytes of section changes uploaded per frame.
     pub budget: u64,
     /// The pyramid level `--view hiz` shows.
@@ -174,6 +177,7 @@ impl Default for Options {
             hiz: true,
             visibility: true,
             buckets: true,
+            wave: true,
             budget: UPLOAD_BUDGET,
             hiz_level: 3,
         }
@@ -675,7 +679,7 @@ impl TerrainScene {
     }
 
     /// The camera when none is given: above the middle of the loaded
-    /// terrain, looking down at it, turning slowly.
+    /// terrain, looking down at it, circling and turning slowly.
     pub fn default_camera(&self, seconds: f32) -> Camera {
         let centre = if self.lo.x <= self.hi.x {
             Vec3::new(
@@ -686,8 +690,10 @@ impl TerrainScene {
         } else {
             Vec3::new(0.0, 100.0, 0.0)
         };
+        // Circling as it turns, so culling sees both moves.
+        let angle = (seconds * 10.0).to_radians();
         Camera {
-            eye: centre + Vec3::new(0.0, 40.0, 0.0),
+            eye: centre + Vec3::new(angle.sin() * 24.0, 40.0, angle.cos() * 24.0),
             yaw: seconds * 10.0,
             pitch: -30.0,
         }
@@ -1423,6 +1429,9 @@ impl TerrainScene {
         }
         if self.options.buckets {
             flags |= CULL_BUCKETS;
+        }
+        if !self.options.wave {
+            flags |= CULL_NO_WAVE;
         }
         let cull_view = CullView {
             view_proj: view_proj.to_cols_array_2d(),

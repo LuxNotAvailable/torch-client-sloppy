@@ -43,6 +43,8 @@ static const uint CULL_HIZ = 1;
 static const uint CULL_VISIBILITY = 2;
 static const uint CULL_BUCKETS = 4;
 static const uint CULL_FRUSTUM = 8;
+// One atomic per lane instead of per subgroup (`vkview --no-wave`).
+static const uint CULL_NO_WAVE = 16;
 
 // VkDrawIndexedIndirectCommand.
 struct DrawCommand {
@@ -159,23 +161,29 @@ bool hiz_occluded(RWByteAddressBuffer view, float3 lo, float3 hi) {
     return nearest < far;
 }
 
-// Reserves `n` commands in `list` and returns where this lane's start. The
-// lanes of a subgroup that name the same list share one atomic; the loop
-// takes one list at a time.
-uint reserve(uint counts, uint list, uint n) {
-    for (;;) {
-        uint leader = WaveReadLaneFirst(list);
-        if (list == leader) {
-            uint total = WaveActiveSum(n);
-            uint prefix = WavePrefixSum(n);
-            uint base = 0;
-            if (WaveIsFirstLane() && total > 0) {
-                buffer_at(counts).InterlockedAdd(list * 4, total, base);
-            }
-            return WaveReadLaneFirst(base) + prefix;
+// Reserves `n` commands in `list` and returns where this lane's start.
+// Called from uniform control flow. When the whole subgroup names one list
+// (the usual case: neighbouring slots share a pool), one lane adds for all;
+// otherwise each lane adds its own. Subgroup operations stay in uniform
+// control flow: Vulkan doesn't promise how lanes regroup inside divergent
+// loops without maximal reconvergence, and a loop over the distinct lists
+// gave two sections one command on the laptop's Pascal GPU (flickering
+// holes), while the desktop's Ampere happened to behave.
+uint reserve(uint counts, uint list, uint n, bool wave) {
+    if (wave && WaveActiveAllEqual(list)) {
+        uint total = WaveActiveSum(n);
+        uint prefix = WavePrefixSum(n);
+        uint base = 0;
+        if (WaveIsFirstLane() && total > 0) {
+            buffer_at(counts).InterlockedAdd(list * 4, total, base);
         }
+        return WaveReadLaneFirst(base) + prefix;
     }
-    return 0;
+    uint base = 0;
+    if (n > 0) {
+        buffer_at(counts).InterlockedAdd(list * 4, n, base);
+    }
+    return base;
 }
 
 void write_command(uint commands, uint at, uint count, uint first, int base, uint slot, uint instances) {
@@ -261,7 +269,7 @@ void cull(uint3 id: SV_DispatchThreadID) {
         at += counts[b];
     }
     uint pool = s.info.x;
-    uint start = reserve(pc.ids.w, pool * 2, runs);
+    uint start = reserve(pc.ids.w, pool * 2, runs, (flags & CULL_NO_WAVE) == 0);
     for (uint r = 0; r < runs; r++) {
         if (start + r < pc.more.y) {
             write_command(pc.ids.z, (pool * 2) * pc.more.y + start + r, run_count[r], run_first[r], base, index, 1);
@@ -270,7 +278,7 @@ void cull(uint3 id: SV_DispatchThreadID) {
 
     // Cutout, after the buckets.
     uint cutout = solid && s.ranges.y > 0 ? 1 : 0;
-    uint slot_at = reserve(pc.ids.w, pool * 2 + 1, cutout);
+    uint slot_at = reserve(pc.ids.w, pool * 2 + 1, cutout, (flags & CULL_NO_WAVE) == 0);
     if (cutout > 0 && slot_at < pc.more.y) {
         write_command(pc.ids.z, (pool * 2 + 1) * pc.more.y + slot_at, s.ranges.y, at, base, index, 1);
     }
