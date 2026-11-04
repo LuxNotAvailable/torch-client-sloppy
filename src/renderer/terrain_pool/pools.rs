@@ -789,6 +789,43 @@ pub fn finish(app: &mut App) {
     render_app.insert_resource(pools);
 }
 
+/// Section bytes one frame uploads at least, before the backlog raises it.
+const UPLOAD_BUDGET: usize = 512 << 10;
+/// Frames a backlog is spread over: the budget is at least the backlog
+/// divided by this, so a burst drains within about this many frames.
+const UPLOAD_DRAIN_FRAMES: usize = 8;
+
+fn upload_bytes(op: &TerrainOp) -> usize {
+    match op {
+        TerrainOp::Upload { mesh, .. } => {
+            std::mem::size_of_val(&mesh.verts[..])
+                + std::mem::size_of_val(&mesh.idx[..])
+                + std::mem::size_of_val(&mesh.cutout_idx[..])
+        }
+        _ => 0,
+    }
+}
+
+/// The ops to apply this frame, in order, up to a byte budget; the rest stay
+/// queued in order. Each upload is a staging copy the frame's queue submit
+/// carries, so a burst of chunks arriving together made single submits take
+/// several milliseconds. Spreading the burst evens that out.
+fn take_budgeted(queue: &mut Vec<TerrainOp>) -> Vec<TerrainOp> {
+    let backlog: usize = queue.iter().map(upload_bytes).sum();
+    let budget = UPLOAD_BUDGET.max(backlog / UPLOAD_DRAIN_FRAMES);
+    let mut spent = 0;
+    let split = queue
+        .iter()
+        .position(|op| {
+            let over = spent >= budget;
+            spent += upload_bytes(op);
+            over
+        })
+        .unwrap_or(queue.len());
+    let rest = queue.split_off(split);
+    std::mem::replace(queue, rest)
+}
+
 pub fn apply_ops(
     mut pools: ResMut<TerrainPools>,
     mut queue: ResMut<TerrainOpQueue>,
@@ -818,7 +855,7 @@ pub fn apply_ops(
         None
     };
 
-    let ops = std::mem::take(&mut queue.0);
+    let ops = take_budgeted(&mut queue.0);
     let changed = !ops.is_empty();
     let slots_changed = ops.iter().any(|op| !matches!(op, TerrainOp::Visibility(_)));
     for op in ops {
@@ -1085,5 +1122,69 @@ mod water_sort_tests {
         let sort = WaterSort::new(0, 0, [0, 0, 0], &mesh);
         assert_eq!(sort.centres[0], Vec3::new(0.5, 0.5, 0.0));
         assert_eq!(sort.centres[1], Vec3::new(5.5, 0.5, 0.0));
+    }
+}
+
+#[cfg(test)]
+mod upload_budget_tests {
+    use super::*;
+    use crate::renderer::mesh::MeshBuf;
+
+    fn upload(slot: u32, kib: usize) -> TerrainOp {
+        TerrainOp::Upload {
+            slot,
+            origin: [0; 3],
+            water: false,
+            mesh: MeshBuf {
+                idx: vec![0; kib * 256],
+                ..MeshBuf::default()
+            },
+        }
+    }
+
+    fn slots(ops: &[TerrainOp]) -> Vec<u32> {
+        ops.iter()
+            .map(|op| match op {
+                TerrainOp::Upload { slot, .. } | TerrainOp::Free { slot } => *slot,
+                _ => u32::MAX,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_burst_is_spread_over_frames_in_order() {
+        let mut queue: Vec<TerrainOp> = (0..12).map(|slot| upload(slot, 200)).collect();
+        let first = take_budgeted(&mut queue);
+        assert_eq!(slots(&first), [0, 1, 2]);
+        assert_eq!(slots(&queue), (3..12).collect::<Vec<_>>());
+        let second = take_budgeted(&mut queue);
+        assert_eq!(slots(&second), [3, 4, 5]);
+    }
+
+    #[test]
+    fn a_large_backlog_raises_the_budget() {
+        let mut queue: Vec<TerrainOp> = (0..80).map(|slot| upload(slot, 200)).collect();
+        let first = take_budgeted(&mut queue);
+        assert_eq!(
+            first.len(),
+            10,
+            "16000 KiB over 8 frames is 2000 KiB a frame"
+        );
+    }
+
+    #[test]
+    fn frees_and_small_queues_go_through_at_once() {
+        let mut queue = vec![upload(0, 100), TerrainOp::Free { slot: 1 }, upload(2, 100)];
+        let all = take_budgeted(&mut queue);
+        assert_eq!(slots(&all), [0, 1, 2]);
+        assert!(queue.is_empty());
+    }
+
+    #[test]
+    fn one_oversized_section_still_uploads() {
+        let mut queue = vec![upload(0, 4096), upload(1, 10)];
+        let first = take_budgeted(&mut queue);
+        assert_eq!(slots(&first), [0]);
+        assert_eq!(slots(&queue), [1]);
     }
 }
