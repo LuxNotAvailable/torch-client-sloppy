@@ -210,6 +210,16 @@ pub(crate) fn add_entity_data() -> &'static SideMutex<HashMap<i32, i32>> {
     ADD_ENTITY_DATA.get_or_init(Default::default)
 }
 
+static MODDED_ENTITY_TYPES: OnceLock<SideMutex<HashMap<i32, u32>>> = OnceLock::new();
+
+/// Entities of a type this client doesn't know (a modded server's), by
+/// entity ID, with the type's raw network ID. They arrive as markers; the
+/// renderer draws a placeholder box and the registry name for them
+/// (VULKAN_REWRITE_CHECKLIST.md 4.5).
+pub(crate) fn modded_entity_types() -> &'static SideMutex<HashMap<i32, u32>> {
+    MODDED_ENTITY_TYPES.get_or_init(Default::default)
+}
+
 static LEASH_LINKS: OnceLock<SideMutex<HashMap<i32, i32>>> = OnceLock::new();
 
 /// Leashed entity to the entity holding its lead.

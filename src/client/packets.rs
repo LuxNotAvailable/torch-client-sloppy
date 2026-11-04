@@ -819,6 +819,13 @@ fn entity_state(packet: &ClientboundGamePacket) {
         }
         ClientboundGamePacket::AddEntity(p) => {
             mark_meta_dirty(p.id.0);
+            {
+                let mut modded = super::tracking::modded_entity_types().lock().unwrap();
+                match p.modded_type {
+                    Some(raw) => modded.insert(p.id.0, raw),
+                    None => modded.remove(&p.id.0),
+                };
+            }
             use azalea_registry::builtin::EntityKind;
             match p.entity_type {
                 // A falling block's state, a fishing bobber's angler.
@@ -1409,4 +1416,38 @@ fn block_of_item(item: &str) -> Option<u32> {
     let kind: azalea_registry::builtin::BlockKind = item.parse().ok()?;
     let state = BlockState::from(kind);
     (!state.is_air()).then_some(state.id() as u32)
+}
+
+#[cfg(test)]
+mod modded_entity_tests {
+    use azalea_core::delta::LpVec3;
+    use azalea_core::entity_id::MinecraftEntityId;
+    use azalea_core::position::Vec3;
+    use azalea_protocol::packets::game::ClientboundAddEntity;
+    use azalea_protocol::packets::game::ClientboundGamePacket;
+    use azalea_registry::builtin::EntityKind;
+
+    fn add(id: i32, kind: EntityKind, modded_type: Option<u32>) -> ClientboundGamePacket {
+        ClientboundGamePacket::AddEntity(ClientboundAddEntity {
+            id: MinecraftEntityId(id),
+            uuid: uuid::Uuid::from_u128(id as u128),
+            entity_type: kind,
+            modded_type,
+            position: Vec3::ZERO,
+            movement: LpVec3::default(),
+            x_rot: 0,
+            y_rot: 0,
+            y_head_rot: 0,
+            data: 0,
+        })
+    }
+
+    #[test]
+    fn a_modded_entity_is_remembered_until_its_id_is_reused() {
+        let types = super::super::tracking::modded_entity_types;
+        super::entity_state(&add(90_001, EntityKind::Marker, Some(60_000)));
+        assert_eq!(types().lock().unwrap().get(&90_001), Some(&60_000));
+        super::entity_state(&add(90_001, EntityKind::Cow, None));
+        assert_eq!(types().lock().unwrap().get(&90_001), None);
+    }
 }

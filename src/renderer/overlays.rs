@@ -518,6 +518,32 @@ pub(super) struct HitboxOverlay {
 #[derive(Component)]
 pub(super) struct HitboxMarker;
 
+/// A modded entity's placeholder: the 0.6 × 1.8 box vanilla gives a
+/// player-sized mob, in magenta, since the server never says how big a type
+/// this client doesn't know is.
+fn boxed_placeholder(pos: [f32; 3], positions: &mut Vec<[f32; 3]>, colors: &mut Vec<[f32; 4]>) {
+    let magenta = [1.0, 0.0, 1.0, 1.0];
+    let corners = box_corners(
+        [pos[0] - 0.3, pos[1], pos[2] - 0.3],
+        [pos[0] + 0.3, pos[1] + 1.8, pos[2] + 0.3],
+    );
+    for (a, b) in BOX_EDGES {
+        positions.extend([corners[a], corners[b]]);
+        colors.extend([magenta, magenta]);
+    }
+}
+
+fn finish_hitboxes(
+    overlay: &HitboxOverlay,
+    meshes: &mut Assets<Mesh>,
+    positions: Vec<[f32; 3]>,
+    colors: Vec<[f32; 4]>,
+) {
+    if let Some(mesh) = meshes.get_mut(&overlay.mesh) {
+        *mesh = line_mesh(positions, Some(colors));
+    }
+}
+
 /// `EntityHitboxDebugRenderer`: each entity's box in white, a thin red box
 /// at its eye height, and a blue line two blocks along its look.
 pub(super) fn update_hitboxes(
@@ -533,7 +559,14 @@ pub(super) fn update_hitboxes(
     let Ok(mut visibility) = targets.get_mut(overlay.entity) else {
         return;
     };
-    if !state.hitboxes || !view.in_world {
+    // Modded entities (a type this client doesn't know) always show as a
+    // placeholder box; everything else only with the hitbox view on.
+    let modded = crate::client::tracking::modded_entity_types()
+        .lock()
+        .unwrap()
+        .clone();
+    let any_modded = view.entities.iter().any(|a| modded.contains_key(&a.id));
+    if (!state.hitboxes && !any_modded) || !view.in_world {
         *visibility = Visibility::Hidden;
         return;
     }
@@ -595,6 +628,12 @@ pub(super) fn update_hitboxes(
         colors.push(blue);
         colors.push(blue);
     };
+    for anim in view.entities.iter().filter(|a| modded.contains_key(&a.id)) {
+        boxed_placeholder(anim.position(partial), &mut positions, &mut colors);
+    }
+    if !state.hitboxes {
+        return finish_hitboxes(&overlay, &mut meshes, positions, colors);
+    }
     for (anim, st) in view.entities.iter().zip(&sampled.states) {
         let eye = azalea::entity::dimensions::EntityDimensions::from(anim.kind).eye_height
             * st.scale.max(0.01);
@@ -640,9 +679,7 @@ pub(super) fn update_hitboxes(
             &mut colors,
         );
     }
-    if let Some(mesh) = meshes.get_mut(&overlay.mesh) {
-        *mesh = line_mesh(positions, Some(colors));
-    }
+    finish_hitboxes(&overlay, &mut meshes, positions, colors);
 }
 
 pub(super) fn update_chunk_borders(

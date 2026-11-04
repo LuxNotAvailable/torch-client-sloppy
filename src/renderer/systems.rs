@@ -997,9 +997,22 @@ fn collect_nametags(
     crosshair_entity: Option<i32>,
     partial: f32,
     projector: &TagProjector,
+    modded: &std::collections::HashMap<i32, String>,
     tags: &mut Vec<crate::gui::hud::NameTag>,
 ) {
     for anim in entities {
+        // A modded entity: its registry name over the placeholder box
+        // (`overlays::boxed_placeholder`), always shown.
+        if let Some(name) = modded.get(&anim.id) {
+            let pos = anim.position(partial);
+            let world = Vec3::new(pos[0], pos[1] + 1.8 + 0.5, pos[2]);
+            let spans = [crate::text::Span {
+                text: name.clone(),
+                style: crate::text::Style::default(),
+            }];
+            tags.extend(projector.project(&spans, &[], world, NAME_TAG_RANGE));
+            continue;
+        }
         let extras = anim.shared();
         if extras.nametag.name_spans.is_empty() {
             continue;
@@ -1083,11 +1096,31 @@ fn collect_hud_info(
         (None, None, Vec::new())
     };
     if let Some(projector) = &projector {
+        // Modded entity types by name, from the registry the server synced.
+        let modded: std::collections::HashMap<i32, String> = {
+            let types = crate::client::tracking::modded_entity_types()
+                .lock()
+                .unwrap()
+                .clone();
+            let s = shared.0.lock().unwrap();
+            types
+                .into_iter()
+                .map(|(id, raw)| {
+                    let name = s
+                        .session
+                        .registries
+                        .name(crate::protocol::registries::RegistryId::EntityType, raw)
+                        .map_or_else(|| format!("modded entity #{raw}"), |n| n.to_string());
+                    (id, name)
+                })
+                .collect()
+        };
         collect_nametags(
             &view.entities,
             view.crosshair_entity,
             view.partial,
             projector,
+            &modded,
             &mut nametags,
         );
     }

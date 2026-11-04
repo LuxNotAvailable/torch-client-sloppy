@@ -98,7 +98,20 @@ pub(crate) fn slot_stack(
 
     let custom_name = data
         .get_component::<comp::CustomName>()
-        .map(|c| chat_text::to_spans(&c.name));
+        .map(|c| chat_text::to_spans(&c.name))
+        .or_else(|| {
+            // An item from a mod this client doesn't have shows as its
+            // stand-in (the barrier's no-entry icon, a placeholder), named
+            // for what it is rather than "Barrier" (VULKAN_REWRITE_CHECKLIST
+            // 4.5). The server's registry sync isn't read yet, so the raw id
+            // stands in for the registry name.
+            data.modded_kind.map(|raw| {
+                vec![crate::text::Span {
+                    text: format!("Modded item #{raw}"),
+                    style: crate::text::Style::colored(0xFF55FF),
+                }]
+            })
+        });
     let lore = data
         .get_component::<comp::Lore>()
         .map(|c| c.lines.iter().map(chat_text::to_spans).collect())
@@ -771,5 +784,29 @@ mod tests {
                 UntrustedItemStack::azalea_read(&mut std::io::Cursor::new(&bytes[..])).unwrap();
             assert_eq!(read, built, "{}", stack.item);
         }
+    }
+}
+
+#[cfg(test)]
+mod modded_item_tests {
+    use azalea_inventory::{ItemStack, ItemStackData};
+    use azalea_registry::builtin::ItemKind;
+
+    #[test]
+    fn a_modded_item_is_named_for_what_it_is() {
+        let stack = ItemStack::Present(ItemStackData {
+            kind: ItemKind::Barrier,
+            count: 1,
+            component_patch: Default::default(),
+            modded_kind: std::num::NonZeroU32::new(70_123),
+        });
+        let slot = super::slot_stack(&stack, None, false);
+        let name: String = slot
+            .custom_name
+            .expect("a name")
+            .iter()
+            .map(|s| s.text.as_str())
+            .collect();
+        assert_eq!(name, "Modded item #70123");
     }
 }
