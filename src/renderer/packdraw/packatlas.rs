@@ -15,6 +15,9 @@ pub(super) struct PackAtlas {
     texture: bevy::render::render_resource::Texture,
     /// The tick the animated tiles were last drawn for.
     animated_at: Option<u64>,
+    /// The frame each animation's tile holds, so a tick copies only the
+    /// tiles whose frame moved on.
+    frames: Vec<Option<u16>>,
 }
 
 impl ProcessGpu {
@@ -117,6 +120,7 @@ impl ProcessGpu {
             view: view.clone(),
             texture,
             animated_at: None,
+            frames: Vec::new(),
         };
         animate(&mut pack, device, queue, atlas);
         self.pack_atlas = Some(pack);
@@ -142,6 +146,23 @@ fn animate(pack: &mut PackAtlas, device: &RenderDevice, queue: &RenderQueue, atl
     if set.animations().is_empty() {
         return;
     }
+    // Most animations hold a frame for several ticks (some for hundreds), so
+    // copying every one each tick, every mip level, in a submit of its own,
+    // showed as `pack_prepare_plan` spikes. Only frames that changed are
+    // copied, and a tick with none submits nothing.
+    let animations = set.animations();
+    if pack.frames.len() != animations.len() {
+        pack.frames = vec![None; animations.len()];
+    }
+    let changed: Vec<(usize, u16)> = animations
+        .iter()
+        .enumerate()
+        .map(|(index, animation)| (index, animation.at(tick).0))
+        .filter(|&(index, frame)| pack.frames[index] != Some(frame))
+        .collect();
+    if changed.is_empty() {
+        return;
+    }
     let size = atlas.texture.size();
     let levels = atlas.texture.mip_level_count();
     let tile_px = size.width / crate::renderer::ATLAS_COLS;
@@ -156,8 +177,9 @@ fn animate(pack: &mut PackAtlas, device: &RenderDevice, queue: &RenderQueue, atl
         y: (u32::from(tile) / crate::renderer::ATLAS_COLS) * side,
         z: 0,
     };
-    for animation in set.animations() {
-        let (frame, _, _) = animation.at(tick);
+    for (index, frame) in changed {
+        pack.frames[index] = Some(frame);
+        let animation = &animations[index];
         for level in 0..levels {
             let side = tile_px >> level;
             if side == 0 {
