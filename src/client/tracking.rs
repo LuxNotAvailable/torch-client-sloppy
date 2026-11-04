@@ -273,6 +273,25 @@ pub(crate) fn current_world()
     WORLD.get_or_init(Default::default)
 }
 
+/// Read-locks the world from the main thread, charging any wait to the
+/// `world:wait_main` span: the network thread writes the world as chunks and
+/// block changes arrive, and the frame's systems read it one after another.
+pub(crate) fn read_world(
+    world: &parking_lot::RwLock<azalea_world::World>,
+) -> parking_lot::RwLockReadGuard<'_, azalea_world::World> {
+    if !crate::diag::frame_profile::enabled() {
+        return world.read();
+    }
+    let start = crate::platform::time::Instant::now();
+    let guard = world.read();
+    crate::diag::frame_profile::record(
+        crate::diag::frame_profile::Group::Span,
+        "world:wait_main",
+        start.elapsed().as_nanos() as u64,
+    );
+    guard
+}
+
 pub(crate) fn set_current_world(world: &Arc<parking_lot::RwLock<azalea_world::World>>) {
     let mut slot = current_world().lock().unwrap();
     if slot.as_ref().is_none_or(|w| !Arc::ptr_eq(w, world)) {

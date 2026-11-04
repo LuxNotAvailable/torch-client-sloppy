@@ -37,7 +37,10 @@ pub(super) fn animate_tick_particles(
         return;
     };
     let world_arc = particle_world();
-    let Some(world) = world_arc.as_deref().map(|w| w.read()) else {
+    let Some(world) = world_arc
+        .as_deref()
+        .map(crate::client::tracking::read_world)
+    else {
         return;
     };
 

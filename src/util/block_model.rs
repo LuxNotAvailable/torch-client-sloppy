@@ -336,7 +336,7 @@ pub fn powder_snow_at(x: f64, y: f64, z: f64) -> bool {
     else {
         return false;
     };
-    let world = world.read();
+    let world = crate::client::tracking::read_world(&world);
     let pos =
         azalea_core::position::BlockPos::new(x.floor() as i32, y.floor() as i32, z.floor() as i32);
     world
@@ -349,7 +349,7 @@ pub fn eye_fluid_at(x: f64, y: f64, z: f64) -> Option<EyeFluid> {
         .lock()
         .unwrap()
         .clone()?;
-    let world = world.read();
+    let world = crate::client::tracking::read_world(&world);
     let pos =
         azalea_core::position::BlockPos::new(x.floor() as i32, y.floor() as i32, z.floor() as i32);
     let state = world.get_block_state(pos)?;

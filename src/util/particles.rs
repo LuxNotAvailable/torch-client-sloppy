@@ -411,7 +411,9 @@ fn spawn_particles(
         .map(GlobalTransform::translation)
         .unwrap_or(Vec3::ZERO);
     let world_arc = particle_world();
-    let world = world_arc.as_deref().map(|w| w.read());
+    let world = world_arc
+        .as_deref()
+        .map(crate::client::tracking::read_world);
     let world = world.as_deref();
     let atlas = atlas.0.as_ref();
     let rng = &mut particle_rng.0;
@@ -1039,7 +1041,9 @@ fn tick_particles(
     }
     let dt = time.delta_secs();
     let world_arc = particle_world();
-    let world = world_arc.as_deref().map(|w| w.read());
+    let world = world_arc
+        .as_deref()
+        .map(crate::client::tracking::read_world);
     let world = world.as_deref();
 
     let mut trails: Vec<Particle> = Vec::new();

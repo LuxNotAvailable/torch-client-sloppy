@@ -19,7 +19,7 @@ pub(super) fn draw_precipitation(view: Res<FrameView>, camera: CameraQuery, mut 
         use crate::renderer::weather::Fall;
         use azalea_core::heightmap_kind::HeightmapKind;
         use azalea_core::position::ChunkPos;
-        let level = level.read();
+        let level = crate::client::tracking::read_world(&level);
         let (cam_pos, _, _) = camera_pose(&camera);
         let camera = [
             cam_pos.x.floor() as i32,

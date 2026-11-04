@@ -217,7 +217,7 @@ fn view_blocker(eye: [f64; 3]) -> Option<azalea::block::BlockState> {
         .lock()
         .unwrap()
         .clone()?;
-    let world = world.read();
+    let world = crate::client::tracking::read_world(&world);
     const WIDTH: f64 = 0.6 * 0.8;
     (0..8).find_map(|i| {
         let corner = |bit: i32, span: f64| (f64::from((i >> bit) & 1) - 0.5) * span;

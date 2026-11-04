@@ -26,7 +26,7 @@ pub(super) fn draw_shadows(
         && opacity > 0.0
         && let Some(level) = level
     {
-        let level = level.read();
+        let level = crate::client::tracking::read_world(&level);
         let (cam_pos, _, _) = camera_pose(&camera);
         let partial = view.partial;
         let solid_top = |p: azalea_core::position::BlockPos| {
