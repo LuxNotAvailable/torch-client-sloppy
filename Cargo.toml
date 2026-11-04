@@ -7,6 +7,16 @@ edition = "2024"
 name = "torch_client"
 crate-type = ["rlib", "cdylib"]
 
+[[bin]]
+name = "torch-client"
+path = "src/main.rs"
+
+# A development viewer for the Vulkan renderer, with debug views.
+[[bin]]
+name = "vkview"
+path = "src/bin/vkview.rs"
+required-features = ["vulkan"]
+
 [features]
 default = ["asset_download", "multiversion", "full_font", "skins", "online_mode", "shader_support", "audio", "voice", "hud_editor", "resourcepacks"]
 
@@ -33,6 +43,11 @@ click_gui = []
 hud_editor = []
 
 shader_support = ["dep:flate2", "dep:naga", "dep:wgpu"]
+
+# The native Vulkan renderer, being built alongside the current one
+# (VULKAN_REWRITE_CHECKLIST.md). For now it only drives the `vkview`
+# development viewer; the game still renders through Bevy.
+vulkan = ["dep:ash", "dep:ash-window", "dep:gpu-allocator", "dep:winit", "dep:raw-window-handle"]
 
 resourcepacks = ["dep:flate2"]
 
@@ -120,6 +135,12 @@ debug = 0
 opt-level = 3
 
 [dependencies]
+ash = { version = "0.38", optional = true }
+ash-window = { version = "0.13", optional = true }
+gpu-allocator = { version = "0.27", default-features = false, features = ["vulkan"], optional = true }
+# The viewer's own window; the game's comes from bevy_winit.
+winit = { version = "0.30", optional = true }
+raw-window-handle = { version = "0.6", optional = true }
 azalea = { path = "vendor/azalea/azalea", default-features = false, features = ["log", "serde", "packet-trace"] }
 azalea-inventory = { path = "vendor/azalea/azalea-inventory" }
 azalea-protocol = { path = "vendor/azalea/azalea-protocol", default-features = false }

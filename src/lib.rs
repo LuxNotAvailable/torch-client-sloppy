@@ -32,6 +32,12 @@ mod session;
 mod shaderpack;
 mod text;
 mod util;
+#[cfg(feature = "vulkan")]
+#[allow(
+    unsafe_code,
+    reason = "the native Vulkan renderer calls Vulkan through ash"
+)]
+pub mod vk;
 #[cfg(voice)]
 mod voice;
 
