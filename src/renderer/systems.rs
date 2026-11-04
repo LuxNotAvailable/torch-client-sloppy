@@ -345,7 +345,10 @@ fn setup(
     });
     commands.insert_resource(WaterMaterial(water_material));
 
-    let lightmap = images.add(super::terrain::new_lightmap_image());
+    let lightmap = super::terrain::LIGHTMAP;
+    images
+        .insert(&lightmap, super::terrain::new_lightmap_image())
+        .expect("a uuid handle has no generation to go stale");
     commands.insert_resource(super::terrain_pool::TerrainParams {
         cutoff: if no_cutout() { 0.0 } else { 0.1 },
         ..default()

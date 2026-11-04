@@ -41,7 +41,7 @@ struct Params {
     light: vec4<f32>,
     light0: vec4<f32>,
     light1: vec4<f32>,
-    light_floor: vec4<f32>,
+    switches: vec4<f32>,
     light_block: vec4<f32>,
     light_sky: vec4<f32>,
     mode: u32,
@@ -56,6 +56,17 @@ struct Params {
 #endif
 @group(#{MATERIAL_BIND_GROUP}) @binding(4) var glint_texture: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(5) var glint_sampler: sampler;
+@group(#{MATERIAL_BIND_GROUP}) @binding(6) var lightmap: texture_2d<f32>;
+
+// The light at this material's levels: the lightmap's texel (sRGB, so read
+// back linear), or full bright for entities drawn outside the world.
+fn cell_light() -> vec3<f32> {
+    if params.switches.x < 0.5 {
+        return vec3(1.0);
+    }
+    let levels = vec2<i32>(vec2(params.light_block.w, params.light_sky.w) / 16.0);
+    return textureLoad(lightmap, clamp(levels, vec2(0), vec2(15)), 0).rgb;
+}
 
 struct Vertex {
     @builtin(instance_index) instance_index: u32,
@@ -173,9 +184,9 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @locatio
         color = vec4(srgb_decode(mixed_srgb), color.a);
     }
     if params.mode != MODE_EMISSIVE {
-        color = vec4(color.rgb * params.light.rgb, color.a);
+        color = vec4(color.rgb * cell_light(), color.a);
     }
-    if params.light_floor.w > 0.0 {
+    if params.switches.w > 0.0 {
         // Vanilla blends the glint with (SRC_COLOR, ONE) onto an sRGB
         // framebuffer: it adds its own color squared to the encoded value.
         let g = glint(in.uv);

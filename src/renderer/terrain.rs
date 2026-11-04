@@ -77,6 +77,11 @@ fn upload_lightmap(
     );
 }
 
+/// The 16×16 lightmap (columns block light, rows sky light) that terrain
+/// and entity materials sample, rewritten in place every frame.
+pub const LIGHTMAP: Handle<Image> =
+    bevy::asset::uuid_handle!("5d3a9e71-0c48-4b2f-9a16-e84f27c3b590");
+
 pub fn new_lightmap_image() -> Image {
     use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
     let mut image = Image::new_fill(

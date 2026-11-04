@@ -34,8 +34,12 @@ pub struct EntityParams {
     pub light: Vec4,
     pub light0: Vec4,
     pub light1: Vec4,
-    pub light_floor: Vec4,
+    /// x: 1 to take the light from the lightmap at the levels below, 0 to
+    /// stay full bright; w: 1 for the enchantment glint.
+    pub switches: Vec4,
+    /// w: block light level × 16.
     pub light_block: Vec4,
+    /// w: sky light level × 16.
     pub light_sky: Vec4,
     pub mode: u32,
 }
@@ -47,18 +51,9 @@ impl Default for EntityParams {
             light: Vec4::new(1.0, 1.0, 1.0, 0.0),
             light0: DIFFUSE_LIGHT[0].normalize().extend(0.0),
             light1: DIFFUSE_LIGHT[1].normalize().extend(1.0),
-            light_floor: Vec4::ZERO,
+            switches: Vec4::ZERO,
             light_block: Vec4::ZERO,
-            light_sky: Vec4::new(
-                1.0,
-                1.0,
-                1.0,
-                if cfg!(feature = "shader_support") {
-                    240.0
-                } else {
-                    0.0
-                },
-            ),
+            light_sky: Vec4::new(0.0, 0.0, 0.0, 240.0),
             mode: LightMode::Cardinal as u32,
         }
     }
@@ -99,21 +94,24 @@ impl EntityParams {
         params
     }
 
+    /// Holds only what stays put while an entity keeps its light levels.
+    /// The light's colour changes every frame (torch flicker, the time of
+    /// day), so the shader reads it from the shared lightmap texture rather
+    /// than each material holding a copy that would need rewriting, and its
+    /// bind group rebuilding, every frame.
     pub fn set(&mut self, lit: Lit) {
         self.tint = Vec4::from(lit.tint);
-        self.light.x = lit.light.color[0];
-        self.light.y = lit.light.color[1];
-        self.light.z = lit.light.color[2];
         self.light0 = lit.dirs[0].extend(if lit.overlay_white { 1.0 } else { 0.0 });
         self.light1 = lit.dirs[1].extend(lit.overlay_alpha);
-        self.light_floor = Vec3::from(lit.light.floor).extend(if lit.glint { 1.0 } else { 0.0 });
-        self.light_block = Vec3::from(lit.light.block).extend(0.0);
-        self.light_sky = Vec3::from(lit.light.sky).extend(0.0);
-        #[cfg(feature = "shader_support")]
-        {
-            self.light_block.w = f32::from(lit.light.levels[0]) * 16.0;
-            self.light_sky.w = f32::from(lit.light.levels[1]) * 16.0;
-        }
+        let from_lightmap = lit.light != super::lightmap::CellLight::full_bright();
+        self.switches = Vec4::new(
+            if from_lightmap { 1.0 } else { 0.0 },
+            0.0,
+            0.0,
+            if lit.glint { 1.0 } else { 0.0 },
+        );
+        self.light_block.w = f32::from(lit.light.levels[0]) * 16.0;
+        self.light_sky.w = f32::from(lit.light.levels[1]) * 16.0;
     }
 }
 
@@ -135,6 +133,8 @@ pub struct EntityMaterial {
     #[texture(4)]
     #[sampler(5)]
     pub glint: Handle<Image>,
+    #[texture(6)]
+    pub lightmap: Handle<Image>,
     pub alpha_mode: AlphaMode,
     pub depth_bias: i32,
     pub see_through: bool,
@@ -170,6 +170,7 @@ impl EntityMaterial {
             #[cfg(not(target_arch = "wasm32"))]
             rig_parts: super::rig_parts::PARTS,
             glint: GLINT,
+            lightmap: super::terrain::LIGHTMAP,
             alpha_mode,
             depth_bias,
             see_through: false,
@@ -361,5 +362,40 @@ mod tests {
             diffuse_lights(Dimension::End),
             diffuse_lights(Dimension::Overworld)
         );
+    }
+
+    #[test]
+    fn a_new_light_colour_at_the_same_levels_leaves_the_material_alone() {
+        use crate::renderer::lightmap::{State, cell_light};
+        let noon = State {
+            sky_factor: 1.0,
+            block_factor: 1.5,
+            sky_light_color: [1.0; 3],
+            block_light_tint: [1.0, 0.85, 0.3],
+            ..State::default()
+        };
+        let flickered = State {
+            block_factor: 1.3,
+            sky_factor: 0.6,
+            ..noon
+        };
+        let lit = |state: &State| Lit {
+            light: cell_light(state, 9, 12),
+            ..Lit::full_bright()
+        };
+        assert_ne!(lit(&noon).light.color, lit(&flickered).light.color);
+        let params = EntityParams::new(LightMode::Cardinal, 0.1, lit(&noon));
+        let mut after = params;
+        after.set(lit(&flickered));
+        assert_eq!(after, params);
+        assert_eq!(params.light_block.w, 9.0 * 16.0);
+        assert_eq!(params.light_sky.w, 12.0 * 16.0);
+        assert_eq!(params.switches.x, 1.0);
+    }
+
+    #[test]
+    fn full_bright_skips_the_lightmap() {
+        let params = EntityParams::new(LightMode::Cardinal, 0.1, Lit::full_bright());
+        assert_eq!(params.switches.x, 0.0);
     }
 }

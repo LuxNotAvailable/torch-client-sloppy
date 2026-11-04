@@ -316,6 +316,7 @@ fn setup(
             #[cfg(not(target_arch = "wasm32"))]
             rig_parts: crate::renderer::rig_parts::PARTS,
             glint: crate::renderer::entity_material::GLINT,
+            lightmap: crate::renderer::terrain::LIGHTMAP,
             alpha_mode: AlphaMode::Blend,
             depth_bias: 0,
             see_through,

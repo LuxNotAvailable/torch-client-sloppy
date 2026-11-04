@@ -263,6 +263,7 @@ pub(super) fn batch_material(
         #[cfg(not(target_arch = "wasm32"))]
         rig_parts: crate::renderer::rig_parts::PARTS,
         glint: crate::renderer::entity_material::GLINT,
+        lightmap: crate::renderer::terrain::LIGHTMAP,
         alpha_mode: if key.translucent {
             AlphaMode::Blend
         } else {
