@@ -24,7 +24,7 @@ budget = []
 # A pause-menu button that records ten seconds of play and writes a
 # report: frame times, every timed stage and span, GPU passes, counters,
 # process use and the machine it ran on.
-perf_report = ["dep:sysinfo", "dep:wgpu", "wgpu/counters"]
+perf_report = ["dep:sysinfo", "dep:wgpu", "wgpu/counters", "dep:bevy_render_trace", "bevy_render_trace/trace"]
 
 mobile_ui = ["bevy/touch"]
 
@@ -180,6 +180,10 @@ naga = { version = "27", default-features = false, features = [
     "wgsl-out",
 ], optional = true }
 wgpu = { version = "27", default-features = false, optional = true }
+# Only for its `trace` feature (perf_report), which marks each render graph
+# node and the queue submit. Renamed so Bevy's derive macros, which look
+# for a `bevy_render` dependency, keep using `bevy::render`.
+bevy_render_trace = { package = "bevy_render", version = "0.18", default-features = false, optional = true }
 
 tokio-tungstenite = { version = "0.30", default-features = false, features = [
     "connect",

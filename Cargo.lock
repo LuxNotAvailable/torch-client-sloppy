@@ -6449,6 +6449,7 @@ dependencies = [
  "azalea-world",
  "base64",
  "bevy",
+ "bevy_render",
  "bytemuck",
  "console_error_panic_hook",
  "ctrlc",
