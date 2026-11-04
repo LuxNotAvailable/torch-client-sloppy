@@ -700,6 +700,7 @@ pub(crate) fn draw_gui(
 ) {
     #[cfg(feature = "budget")]
     let _t = crate::diag::budget::timed(crate::diag::budget::Slot::Gui);
+    crate::prof_span!("gui:draw");
     let Some(assets) = assets else { return };
     let Ok(window) = primary.single() else { return };
     let (vw, vh) = (input.size.x, input.size.y);

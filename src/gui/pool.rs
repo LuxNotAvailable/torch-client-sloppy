@@ -70,6 +70,9 @@ impl GuiFrames {
     }
 }
 
+/// Quads the GUI drew last frame, for the performance report.
+pub static QUADS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 #[derive(Resource, Clone, ExtractResource)]
 pub struct GuiTextures {
     pub atlas: Handle<Image>,
@@ -126,9 +129,14 @@ pub fn extract_gui(
     queue: Res<RenderQueue>,
     mut pool: ResMut<GuiPool>,
 ) {
+    crate::prof_span!("gui:upload");
     let mut frame = frames.0.lock();
     pool.ranges.clear();
     let render = gate.as_ref().is_none_or(|g| g.render);
+    QUADS.store(
+        frame.indices.len() / 6,
+        std::sync::atomic::Ordering::Relaxed,
+    );
 
     if render && !frame.indices.is_empty() {
         pool.ensure(&device, frame.vertices.len(), frame.indices.len());

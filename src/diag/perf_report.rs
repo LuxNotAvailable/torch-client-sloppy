@@ -51,6 +51,7 @@ enum Section {
     Diagnostics,
     World,
     RenderWork,
+    Assets,
     Memory,
     Process,
 }
@@ -64,6 +65,7 @@ impl Section {
             Section::Diagnostics => "Bevy diagnostics (render passes in ms)",
             Section::World => "What each frame drew",
             Section::RenderWork => "Render thread work (per frame)",
+            Section::Assets => "Assets alive",
             Section::Memory => "Memory (MiB)",
             Section::Process => "Process (sampled 4 times a second)",
         }
@@ -77,6 +79,7 @@ impl Section {
             Section::Diagnostics => "diagnostics",
             Section::World => "world",
             Section::RenderWork => "render_work",
+            Section::Assets => "assets",
             Section::Memory => "memory",
             Section::Process => "process",
         }
@@ -262,6 +265,8 @@ struct Uploads<'w, 's> {
     image_events: MessageReader<'w, 's, AssetEvent<Image>>,
     meshes: Res<'w, Assets<Mesh>>,
     images: Res<'w, Assets<Image>>,
+    entity_materials: Res<'w, Assets<crate::renderer::entity_material::EntityMaterial>>,
+    standard_materials: Res<'w, Assets<StandardMaterial>>,
     device: Option<Res<'w, bevy::render::renderer::RenderDevice>>,
 }
 
@@ -372,6 +377,7 @@ fn sample(
             capture.record_frame(diagnostics.as_deref(), &view);
             capture.record_render_work(upload, uploads.device.as_deref());
             capture.record_memory(uploads.cpu_bytes());
+            capture.record_assets(&uploads);
             if now >= until {
                 frame_profile::set_capturing(false);
                 count_terrain_sections(false);
@@ -449,6 +455,20 @@ impl Capture {
         }
     }
 
+    /// How many of each asset exist: each material is a bind group, each
+    /// image a texture and each mesh a slab allocation on the render side,
+    /// so these name the source when the live GPU counts grow.
+    fn record_assets(&mut self, uploads: &Uploads) {
+        for (name, count) in [
+            ("images", uploads.images.len()),
+            ("meshes", uploads.meshes.len()),
+            ("entity materials", uploads.entity_materials.len()),
+            ("standard materials", uploads.standard_materials.len()),
+        ] {
+            self.push(Section::Assets, name, count as f32);
+        }
+    }
+
     fn record_memory(&mut self, (image_bytes, mesh_bytes): (usize, usize)) {
         use std::sync::atomic::Ordering::Relaxed;
         let mib = |bytes: u64| bytes as f32 / 1048576.0;
@@ -495,6 +515,11 @@ impl Capture {
             Section::RenderWork,
             "image bytes uploaded (KiB)",
             kib(image_bytes),
+        );
+        self.push(
+            Section::RenderWork,
+            "GUI quads",
+            crate::gui::pool::QUADS.load(std::sync::atomic::Ordering::Relaxed) as f32,
         );
         self.push(
             Section::RenderWork,

@@ -1166,7 +1166,6 @@ struct SingleNode {
     key: GeomKey,
     display: Transform,
     bounds: Option<(Vec3, Vec3)>,
-    material: Option<Handle<EntityMaterial>>,
     collapsed: bool,
 }
 
@@ -1654,17 +1653,15 @@ fn sync_entities(
                             if texture.is_some() && image.is_none() {
                                 single.key = GeomKey::Unresolved;
                             }
-                            let material = single.material.clone().unwrap_or_else(|| {
-                                let handle =
-                                    materials.add(entity_material(image.clone(), spec, lit));
-                                single.material = Some(handle.clone());
-                                layer.material = Some(handle.clone());
-                                handle
-                            });
-                            if let Some(handle) = materials.get_mut(&material) {
-                                handle.texture = image;
-                            }
+                            // Shared by texture and light like every other
+                            // layer's, so a hundred item frames hold one
+                            // material (and one bind group), not a hundred.
+                            let material =
+                                assets.material(image.clone(), spec, lit, levels, &mut materials);
                             insert_copies(&mut commands, &single.copies, &mesh, &material);
+                            layer.material = Some(material);
+                            layer.tex = image;
+                            layer.lit = lit;
                             layer.texture = texture.unwrap_or_default();
                         }
                     }
@@ -1676,26 +1673,10 @@ fn sync_entities(
             }
 
             if lit != layer.lit {
-                match &spec.geom {
-                    Geom::Built(_) => {
-                        if let Some(material) =
-                            layer.material.as_ref().and_then(|h| materials.get_mut(h))
-                        {
-                            material.params.set(lit);
-                        }
-                    }
-                    _ => {
-                        if layer.material.is_some() {
-                            let material = assets.material(
-                                layer.tex.clone(),
-                                spec,
-                                lit,
-                                levels,
-                                &mut materials,
-                            );
-                            set_layer_material(layer, &material, &mut mats);
-                        }
-                    }
+                if layer.material.is_some() {
+                    let material =
+                        assets.material(layer.tex.clone(), spec, lit, levels, &mut materials);
+                    set_layer_material(layer, &material, &mut mats);
                 }
                 layer.lit = lit;
             }
@@ -1934,7 +1915,6 @@ fn spawn_single_rig(
                 key: GeomKey::Unresolved,
                 display: Transform::IDENTITY,
                 bounds: None,
-                material: None,
                 collapsed: true,
             }),
             texture: TexturePath::Borrowed(""),
@@ -1978,7 +1958,6 @@ fn spawn_single_rig(
             key: GeomKey::Unresolved,
             display: Transform::IDENTITY,
             bounds: None,
-            material: None,
         }),
         texture: TexturePath::Borrowed(""),
         material: None,
