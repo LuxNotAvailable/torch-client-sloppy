@@ -39,6 +39,8 @@ pub struct GraphicsDesc<'a> {
     pub depth_write: bool,
     pub cull: vk::CullModeFlags,
     pub topology: vk::PrimitiveTopology,
+    /// Straight alpha blending on every colour attachment.
+    pub blend: bool,
 }
 
 impl Pipelines {
@@ -146,6 +148,13 @@ impl Pipelines {
             .map(|_| {
                 vk::PipelineColorBlendAttachmentState::default()
                     .color_write_mask(vk::ColorComponentFlags::RGBA)
+                    .blend_enable(desc.blend)
+                    .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
+                    .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+                    .color_blend_op(vk::BlendOp::ADD)
+                    .src_alpha_blend_factor(vk::BlendFactor::ONE)
+                    .dst_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+                    .alpha_blend_op(vk::BlendOp::ADD)
             })
             .collect();
         let blend =

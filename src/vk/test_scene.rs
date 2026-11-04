@@ -9,6 +9,7 @@ use bevy::math::{Mat4, Vec3};
 use gpu_allocator::MemoryLocation;
 
 use super::bindless::Bindless;
+use super::depth_view::{DEPTH_FORMAT, DepthTarget, DepthView, set_viewport};
 use super::graph::{Graph, Use};
 use super::memory::{Buffer, Image, Memory};
 use super::pipeline::{GraphicsDesc, Pipelines, Push, push};
@@ -18,7 +19,6 @@ use super::{Context, SetupError};
 const GRID: u32 = 64;
 const TILES: u32 = GRID * GRID;
 const TEXTURE_SIZE: u32 = 64;
-pub const DEPTH_FORMAT: vk::Format = vk::Format::D32_SFLOAT;
 const NEAR: f32 = 0.1;
 
 /// What `vkview --view` shows.
@@ -41,7 +41,7 @@ impl View {
         })
     }
 
-    fn mode(self) -> u32 {
+    pub(crate) fn mode(self) -> u32 {
         match self {
             View::Shaded => 0,
             View::Normals => 1,
@@ -55,7 +55,7 @@ pub struct TestScene {
     module: vk::ShaderModule,
     cull: vk::Pipeline,
     draw: vk::Pipeline,
-    depth_view: vk::Pipeline,
+    depth_view: DepthView,
     tiles: Buffer,
     kept: Buffer,
     command: Buffer,
@@ -65,7 +65,7 @@ pub struct TestScene {
     kept_index: u32,
     command_index: u32,
     texture_index: u32,
-    depth: Option<(Image, u32)>,
+    depth: DepthTarget,
     uploaded: bool,
     color_format: vk::Format,
 }
@@ -92,22 +92,10 @@ impl TestScene {
                 depth_write: true,
                 cull: vk::CullModeFlags::NONE,
                 topology: vk::PrimitiveTopology::TRIANGLE_LIST,
+                blend: false,
             },
         )?;
-        let depth_view = pipelines.graphics(
-            ctx,
-            &GraphicsDesc {
-                module,
-                vertex: c"fullscreen_vertex",
-                fragment: c"depth_fragment",
-                color: &[color_format],
-                depth: None,
-                depth_test: None,
-                depth_write: false,
-                cull: vk::CullModeFlags::NONE,
-                topology: vk::PrimitiveTopology::TRIANGLE_LIST,
-            },
-        )?;
+        let depth_view = DepthView::new(ctx, pipelines, color_format)?;
         let storage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
         let tiles = memory.buffer(
             ctx,
@@ -158,42 +146,10 @@ impl TestScene {
             kept_index,
             command_index,
             texture_index,
-            depth: None,
+            depth: DepthTarget::default(),
             uploaded: false,
             color_format,
         })
-    }
-
-    /// The depth image for this size, remade when the size changes.
-    fn depth_for(
-        &mut self,
-        ctx: &Context,
-        memory: &Memory,
-        bindless: &mut Bindless,
-        extent: vk::Extent2D,
-        frame: u64,
-    ) -> Result<(), SetupError> {
-        if self.depth.as_ref().is_some_and(|(d, _)| d.extent == extent) {
-            return Ok(());
-        }
-        if let Some((old, index)) = self.depth.take() {
-            // Resizes idle the device first, so the old image is unused.
-            bindless.remove_texture(index, frame);
-            memory.free_image(ctx, old);
-        }
-        let image = memory.image(
-            ctx,
-            "depth",
-            extent,
-            DEPTH_FORMAT,
-            vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
-            vk::ImageAspectFlags::DEPTH,
-        )?;
-        let index = bindless
-            .add_texture(ctx, image.view, vk::ImageLayout::DEPTH_READ_ONLY_OPTIMAL)
-            .ok_or_else(|| SetupError("the bindless set is full".to_owned()))?;
-        self.depth = Some((image, index));
-        Ok(())
     }
 
     /// Records the scene into `graph`, drawing to `color`.
@@ -212,17 +168,10 @@ impl TestScene {
         seconds: f32,
         view: View,
     ) -> Result<(), SetupError> {
-        self.depth_for(ctx, memory, bindless, extent, frame)?;
-        let (depth, depth_index) = self
+        let (depth_image, depth_view, depth_index) = self
             .depth
-            .as_ref()
-            .map(|(d, i)| ((d.raw, d.view), *i))
-            .expect("made above");
-        graph.image(
-            depth.0,
-            vk::ImageAspectFlags::DEPTH,
-            vk::ImageLayout::UNDEFINED,
-        );
+            .get(ctx, memory, bindless, graph, extent, frame)?;
+        let depth = (depth_image, depth_view);
         graph.image(
             self.texture.raw,
             vk::ImageAspectFlags::COLOR,
@@ -301,31 +250,6 @@ impl TestScene {
             },
         );
 
-        let viewport = |cmd| unsafe {
-            // SAFETY: dynamic viewport and scissor; a negative height turns
-            // Vulkan's downward y into the usual upward one.
-            device.cmd_set_viewport(
-                cmd,
-                0,
-                &[vk::Viewport {
-                    x: 0.0,
-                    y: extent.height as f32,
-                    width: extent.width as f32,
-                    height: -(extent.height as f32),
-                    min_depth: 0.0,
-                    max_depth: 1.0,
-                }],
-            );
-            device.cmd_set_scissor(
-                cmd,
-                0,
-                &[vk::Rect2D {
-                    offset: vk::Offset2D::default(),
-                    extent,
-                }],
-            );
-        };
-
         graph.pass(
             "tiles",
             &[
@@ -372,7 +296,7 @@ impl TestScene {
                         .color_attachments(&colors)
                         .depth_attachment(&depth_attachment),
                 );
-                viewport(cmd);
+                set_viewport(ctx, cmd, extent);
                 device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, self.draw);
                 device.cmd_bind_descriptor_sets(
                     cmd,
@@ -399,55 +323,16 @@ impl TestScene {
         );
 
         if view == View::Depth {
-            graph.pass(
-                "depth view",
-                &[
-                    (depth.0, Use::SampledFragment),
-                    (color.0, Use::ColorAttachment),
-                ],
-                &[],
-                |cmd| unsafe {
-                    // SAFETY: as above; the depth image is in its read-only
-                    // layout, as registered.
-                    let colors = [vk::RenderingAttachmentInfo::default()
-                        .image_view(color.1)
-                        .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                        .load_op(vk::AttachmentLoadOp::DONT_CARE)
-                        .store_op(vk::AttachmentStoreOp::STORE)];
-                    device.cmd_begin_rendering(
-                        cmd,
-                        &vk::RenderingInfo::default()
-                            .render_area(vk::Rect2D {
-                                offset: vk::Offset2D::default(),
-                                extent,
-                            })
-                            .layer_count(1)
-                            .color_attachments(&colors),
-                    );
-                    viewport(cmd);
-                    device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, self.depth_view);
-                    device.cmd_bind_descriptor_sets(
-                        cmd,
-                        vk::PipelineBindPoint::GRAPHICS,
-                        pipelines.layout,
-                        0,
-                        &[bindless.set],
-                        &[],
-                    );
-                    push(
-                        ctx,
-                        cmd,
-                        pipelines.layout,
-                        &Push {
-                            ids: [0; 4],
-                            more: [depth_index, 0, 0, 0],
-                            params: [NEAR, 30.0, 0.0, 0.0],
-                            view_proj: [[0.0; 4]; 4],
-                        },
-                    );
-                    device.cmd_draw(cmd, 3, 1, 0, 0);
-                    device.cmd_end_rendering(cmd);
-                },
+            self.depth_view.record(
+                ctx,
+                bindless,
+                pipelines,
+                graph,
+                (depth.0, depth_index),
+                color,
+                extent,
+                NEAR,
+                30.0,
             );
         }
         Ok(())
@@ -542,17 +427,15 @@ impl TestScene {
         unsafe {
             ctx.device.destroy_pipeline(self.cull, None);
             ctx.device.destroy_pipeline(self.draw, None);
-            ctx.device.destroy_pipeline(self.depth_view, None);
             ctx.device.destroy_shader_module(self.module, None);
         }
+        self.depth_view.destroy(ctx);
         memory.free_buffer(ctx, self.tiles);
         memory.free_buffer(ctx, self.kept);
         memory.free_buffer(ctx, self.command);
         memory.free_buffer(ctx, self.count);
         memory.free_image(ctx, self.texture);
-        if let Some((depth, _)) = self.depth {
-            memory.free_image(ctx, depth);
-        }
+        self.depth.destroy(ctx, memory);
         let _ = self.color_format;
     }
 }

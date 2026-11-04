@@ -17,7 +17,7 @@ pub mod item_assets;
 pub mod lighter;
 pub mod lightmap;
 pub mod maps;
-mod mesh;
+pub(crate) mod mesh;
 pub mod occlusion;
 mod occupancy;
 pub mod overlays;

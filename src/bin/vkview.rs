@@ -3,7 +3,13 @@
 //! window of its own, so each piece can be checked before the game uses it.
 //!
 //! `vkview [--frames N] [--device NAME] [--vsync] [--size WxH] [--stress]
-//!         [--view shaded|normals|texture|depth] [--screenshot FILE.png]`
+//!         [--view shaded|normals|texture|depth] [--screenshot FILE.png]
+//!         [--terrain DIR [--camera X,Y,Z,YAW,PITCH]]`
+//!
+//! The scene is the test scene, or with `--terrain` a terrain dump the game
+//! wrote (`MC_DUMP_TERRAIN=DIR`), seen from `--camera` or, without one,
+//! from above, turning. In the terrain, `--view texture` colours each
+//! section apart.
 //!
 //! With `--frames`, it draws that many frames, prints a summary (device,
 //! frame times, GPU time per pass, barriers, memory, validation-layer errors
@@ -20,6 +26,7 @@ use torch_client::vk::bindless::Bindless;
 use torch_client::vk::graph::{Graph, Use};
 use torch_client::vk::memory::{Buffer, Memory};
 use torch_client::vk::pipeline::Pipelines;
+use torch_client::vk::terrain::{Camera, TerrainScene};
 use torch_client::vk::test_scene::{TestScene, View};
 use torch_client::vk::timestamps::Timestamps;
 use torch_client::vk::upload::Uploads;
@@ -38,6 +45,8 @@ struct Options {
     stress: bool,
     view: View,
     screenshot: Option<String>,
+    terrain: Option<std::path::PathBuf>,
+    camera: Option<Camera>,
 }
 
 fn options() -> Options {
@@ -49,6 +58,8 @@ fn options() -> Options {
         stress: false,
         view: View::Shaded,
         screenshot: None,
+        terrain: None,
+        camera: None,
     };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -58,6 +69,14 @@ fn options() -> Options {
             "--vsync" => options.vsync = true,
             "--stress" => options.stress = true,
             "--screenshot" => options.screenshot = args.next(),
+            "--terrain" => options.terrain = args.next().map(Into::into),
+            "--camera" => {
+                let text = args.next().unwrap_or_default();
+                options.camera = Camera::parse(&text);
+                if options.camera.is_none() {
+                    eprintln!("vkview: --camera wants X,Y,Z,YAW,PITCH, not {text}");
+                }
+            }
             "--view" => {
                 let name = args.next().unwrap_or_default();
                 options.view = View::parse(&name).unwrap_or_else(|| {
@@ -76,6 +95,12 @@ fn options() -> Options {
     options
 }
 
+/// What the viewer draws.
+enum Scene {
+    Test(TestScene),
+    Terrain(TerrainScene, Option<Camera>),
+}
+
 /// A frame's image copied back for `--screenshot`.
 struct Readback {
     buffer: Buffer,
@@ -86,7 +111,7 @@ struct Readback {
 struct Renderer {
     // Everything made from the device is destroyed in `Drop`, before the
     // context.
-    scene: Option<TestScene>,
+    scene: Option<Scene>,
     timestamps: Option<Timestamps>,
     uploads: Option<Uploads>,
     pipelines: Option<Pipelines>,
@@ -139,7 +164,29 @@ impl Renderer {
         let format = swapchain
             .as_ref()
             .map_or(v::Format::B8G8R8A8_SRGB, |s| s.format.format);
-        let scene = TestScene::new(&ctx, &memory, &mut bindless, &pipelines, format)?;
+        let scene = match &options.terrain {
+            Some(dir) => {
+                let load = Instant::now();
+                let terrain =
+                    TerrainScene::new(&ctx, &memory, &mut bindless, &pipelines, format, dir)?;
+                let stats = &terrain.stats;
+                println!(
+                    "vkview: terrain {} sections, {} vertices, {} indices, loaded in {:.1} s",
+                    stats.sections,
+                    stats.vertices,
+                    stats.indices,
+                    load.elapsed().as_secs_f32()
+                );
+                Scene::Terrain(terrain, options.camera)
+            }
+            None => Scene::Test(TestScene::new(
+                &ctx,
+                &memory,
+                &mut bindless,
+                &pipelines,
+                format,
+            )?),
+        };
         println!(
             "vkview: pipelines ready in {:.1} ms ({} cache)",
             compile.elapsed().as_secs_f32() * 1000.0,
@@ -229,19 +276,38 @@ impl Renderer {
         let extent = swapchain.extent;
         let mut graph = Graph::new(&self.ctx, recording.commands, Some(timestamps));
         graph.image(image, v::ImageAspectFlags::COLOR, v::ImageLayout::UNDEFINED);
-        if let Err(e) = scene.record(
-            &self.ctx,
-            memory,
-            bindless,
-            pipelines,
-            uploads,
-            &mut graph,
-            (image, image_view),
-            extent,
-            self.frame,
-            self.started.elapsed().as_secs_f32(),
-            view,
-        ) {
+        let seconds = self.started.elapsed().as_secs_f32();
+        let recorded = match scene {
+            Scene::Test(scene) => scene.record(
+                &self.ctx,
+                memory,
+                bindless,
+                pipelines,
+                uploads,
+                &mut graph,
+                (image, image_view),
+                extent,
+                self.frame,
+                seconds,
+                view,
+            ),
+            Scene::Terrain(scene, camera) => {
+                let camera = camera.unwrap_or_else(|| scene.default_camera(seconds));
+                scene.record(
+                    &self.ctx,
+                    memory,
+                    bindless,
+                    pipelines,
+                    &mut graph,
+                    (image, image_view),
+                    extent,
+                    self.frame,
+                    camera,
+                    view,
+                )
+            }
+        };
+        if let Err(e) = recorded {
             eprintln!("vkview: scene failed: {e}");
         }
         if capture && self.readback.is_none() {
@@ -364,8 +430,10 @@ impl Drop for Renderer {
     fn drop(&mut self) {
         self.ctx.idle();
         let memory = self.memory.take();
-        if let (Some(scene), Some(memory)) = (self.scene.take(), &memory) {
-            scene.destroy(&self.ctx, memory);
+        match (self.scene.take(), &memory) {
+            (Some(Scene::Test(scene)), Some(memory)) => scene.destroy(&self.ctx, memory),
+            (Some(Scene::Terrain(scene, _)), Some(memory)) => scene.destroy(&self.ctx, memory),
+            _ => {}
         }
         if let (Some(uploads), Some(memory)) = (self.uploads.take(), &memory) {
             uploads.destroy(&self.ctx, memory);

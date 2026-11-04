@@ -189,6 +189,12 @@ const ALL: &[Var] = &[
         enabled: true,
     },
     Var {
+        name: "MC_DUMP_TERRAIN",
+        what: "write every terrain section the game meshes, and the block atlas, to this folder, for the Vulkan renderer's viewer (vkview --terrain)",
+        default: "off",
+        enabled: cfg!(feature = "vulkan"),
+    },
+    Var {
         name: "MC_VK_VALIDATION",
         what: "turn on the Khronos validation layer in the Vulkan renderer's release builds, when set to 1",
         default: "on in debug builds only",

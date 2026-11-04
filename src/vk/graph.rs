@@ -25,6 +25,8 @@ pub enum Use {
     VertexRead,
     /// Read as indirect draw arguments or counts.
     IndirectRead,
+    /// Read as an index buffer.
+    IndexRead,
     TransferDst,
     TransferSrc,
     Present,
@@ -40,6 +42,7 @@ impl Use {
             Use::ComputeRead | Use::ComputeWrite => S::COMPUTE_SHADER,
             Use::VertexRead => S::VERTEX_SHADER,
             Use::IndirectRead => S::DRAW_INDIRECT,
+            Use::IndexRead => S::INDEX_INPUT,
             // Copies, but also fills and inline updates, which count as
             // clears.
             Use::TransferDst | Use::TransferSrc => S::ALL_TRANSFER,
@@ -58,6 +61,7 @@ impl Use {
             Use::ComputeRead | Use::VertexRead => A::SHADER_STORAGE_READ | A::SHADER_SAMPLED_READ,
             Use::ComputeWrite => A::SHADER_STORAGE_WRITE | A::SHADER_STORAGE_READ,
             Use::IndirectRead => A::INDIRECT_COMMAND_READ,
+            Use::IndexRead => A::INDEX_READ,
             Use::TransferDst => A::TRANSFER_WRITE,
             Use::TransferSrc => A::TRANSFER_READ,
             Use::Present => A::NONE,
@@ -87,7 +91,7 @@ impl Use {
             Use::TransferDst => L::TRANSFER_DST_OPTIMAL,
             Use::TransferSrc => L::TRANSFER_SRC_OPTIMAL,
             Use::Present => L::PRESENT_SRC_KHR,
-            Use::IndirectRead => L::GENERAL,
+            Use::IndirectRead | Use::IndexRead => L::GENERAL,
         }
     }
 }

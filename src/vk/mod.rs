@@ -7,12 +7,15 @@
 
 pub mod bindless;
 pub mod context;
+pub mod depth_view;
 pub mod frame;
 pub mod graph;
 pub mod memory;
 pub mod pipeline;
 pub mod requirements;
 pub mod swapchain;
+pub mod terrain;
+pub mod terrain_dump;
 pub mod test_scene;
 pub mod timestamps;
 pub mod upload;

@@ -172,6 +172,8 @@ impl ChunkIndex {
         ops: &TerrainOps,
     ) {
         let origin = [cx * 16, sec_y, cz * 16];
+        #[cfg(feature = "vulkan")]
+        crate::vk::terrain_dump::section(origin, &meshes);
         crate::blockentities::transient::section_rebuilt(origin);
         crate::blockentities::bake::section_rebuilt(origin);
         let Self {
@@ -286,6 +288,8 @@ impl ChunkIndex {
     }
 
     pub fn drop_column(&mut self, key: (i32, i32), ops: &TerrainOps) {
+        #[cfg(feature = "vulkan")]
+        crate::vk::terrain_dump::column_dropped(key.0, key.1);
         let Some(column) = self.columns.remove(&key) else {
             return;
         };
@@ -340,6 +344,11 @@ fn setup(
     mut pending_atlas: ResMut<PendingAtlas>,
     start_screen: Res<crate::gui::render::StartScreen>,
 ) {
+    #[cfg(feature = "vulkan")]
+    if let Some(data) = pending_atlas.0.data.as_deref() {
+        let size = pending_atlas.0.texture_descriptor.size;
+        crate::vk::terrain_dump::atlas(size.width, size.height, data);
+    }
     let atlas = images.add(std::mem::take(&mut pending_atlas.0));
     commands.remove_resource::<PendingAtlas>();
     commands.insert_resource(BlockAtlasHandle(atlas.clone()));
