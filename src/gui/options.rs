@@ -450,6 +450,41 @@ fn pack_render_scale_label(value: i32) -> String {
     format!("Shader Render Scale: {value}%")
 }
 
+/// Vanilla's framerate slider: steps of 10, the top step unlimited.
+fn max_fps_label(value: i32) -> String {
+    if value as u32 >= crate::gui::MAX_FPS_UNLIMITED {
+        format!("{MAX_FRAMERATE}: {UNLIMITED}")
+    } else {
+        format!("{MAX_FRAMERATE}: {value} fps")
+    }
+}
+
+/// Window sizes offered, in physical pixels.
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+const WINDOW_SIZES: [(u32, u32); 5] = [
+    (854, 480),
+    (1280, 720),
+    (1600, 900),
+    (1920, 1080),
+    (2560, 1440),
+];
+
+/// The window's size as asked for from Video Settings, for the window
+/// system to apply.
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+pub(crate) static WINDOW_REQUEST: std::sync::Mutex<Option<(u32, u32)>> =
+    std::sync::Mutex::new(None);
+
+/// The next size after the window's current one.
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+fn next_window_size(current: (u32, u32)) -> (u32, u32) {
+    WINDOW_SIZES
+        .iter()
+        .copied()
+        .find(|&(w, h)| (w, h) > current && w * h > current.0 * current.1)
+        .unwrap_or(WINDOW_SIZES[0])
+}
+
 fn brightness_label(value: i32) -> String {
     match value {
         0 => format!("{BRIGHTNESS}: {BRIGHTNESS_MOODY}"),
@@ -771,24 +806,30 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     #[cfg_attr(any(target_arch = "wasm32", target_os = "android"), allow(unused_mut))]
     let mut renderer_tip: Option<String> = None;
 
+    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+    let ctx_size = (ctx.vw * ctx.input.scale, ctx.vh * ctx.input.scale);
     let changed = scrolling_form(p, ctx, &mut state.video_list, VIDEO_SLIDER_ID_BASE, |f| {
         f.header(DISPLAY_HEADER);
-        let max_fps_label = format!(
-            "{MAX_FRAMERATE}: {}",
-            if o.max_fps >= crate::gui::MAX_FPS_UNLIMITED {
-                UNLIMITED.to_string()
-            } else {
-                format!("{} fps", o.max_fps)
+        if f.slider(
+            &mut o.max_fps,
+            crate::gui::MAX_FPS_MIN,
+            crate::gui::MAX_FPS_UNLIMITED,
+            max_fps_label,
+        ) {
+            o.max_fps = (o.max_fps + 5) / 10 * 10;
+        }
+        #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+        {
+            let current = (
+                (ctx_size.0 as f32).round() as u32,
+                (ctx_size.1 as f32).round() as u32,
+            );
+            let label = format!("Window Size: {}×{}", current.0, current.1);
+            if f.button(&label) {
+                if let Ok(mut request) = WINDOW_REQUEST.lock() {
+                    *request = Some(next_window_size(current));
+                }
             }
-        );
-        if f.button(&max_fps_label) {
-            const STEPS: [u32; 6] = [30, 60, 75, 120, 144, crate::gui::MAX_FPS_UNLIMITED];
-            o.max_fps = STEPS
-                .iter()
-                .find(|s| **s > o.max_fps)
-                .copied()
-                .unwrap_or(crate::gui::MAX_FPS_MIN);
-            f.mark_changed();
         }
         f.slider(&mut o.gui_scale, 0, max_gui_scale as u32, gui_scale_label);
         f.slider(&mut o.gamma, 0, GAMMA_MAX, brightness_label);
@@ -1874,9 +1915,9 @@ mod tests {
 
     #[test]
     fn video_grid_stacks_like_the_options_list() {
-        // Display: header and four rows; Quality: header (spaced) and four
-        // rows; then entity shadows, the shader packs button when built in,
-        // and reset.
+        // Display: header and four rows (five with the desktop's window
+        // size button); Quality: header (spaced) and four rows; then entity
+        // shadows, the shader packs button when built in, and reset.
         let atlas = crate::gui::atlas::build_gui_atlas(&crate::assets_root());
         let mut p = Painter::new(&atlas, 0);
         let mut state = GuiState::default();
@@ -1887,7 +1928,8 @@ mod tests {
             vh: 240.0,
         };
         draw_video(&mut p, &mut state, &ctx);
-        const EXTRA_ROWS: f32 = cfg!(feature = "shader_support") as u32 as f32;
+        const EXTRA_ROWS: f32 = cfg!(feature = "shader_support") as u32 as f32
+            + cfg!(all(not(target_arch = "wasm32"), not(target_os = "android"))) as u32 as f32;
         let reset_row = 244.0 + (EXTRA_ROWS + 1.0) * ROW_H;
         assert_eq!(
             state.video_list.content_h,

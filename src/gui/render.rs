@@ -164,6 +164,7 @@ impl Plugin for GuiPlugin {
             .init_resource::<crate::gui::atlas_writes::AtlasWrites>()
             .add_systems(Startup, setup_gui)
             .add_systems(Update, upload_server_icons)
+            .add_systems(Update, apply_window_request)
             .add_systems(
                 Update,
                 (collect_input, draw_gui, upload_banner_icons).chain(),
@@ -829,3 +830,22 @@ fn draw_keyboard_probe(p: &mut Painter, input: &GuiInput, vw: f32, vh: f32) {
         p.text_plain(line, PAD * 2.0, PAD * 2.0 + i as f32 * 10.0, 0xFFFFFF, true);
     }
 }
+
+/// Resizes the window to the size Video Settings asked for.
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+fn apply_window_request(mut windows: Query<&mut Window, With<PrimaryWindow>>) {
+    let Some((w, h)) = crate::gui::options::WINDOW_REQUEST
+        .lock()
+        .ok()
+        .and_then(|mut request| request.take())
+    else {
+        return;
+    };
+    if let Ok(mut window) = windows.single_mut() {
+        window.mode = bevy::window::WindowMode::Windowed;
+        window.resolution.set_physical_resolution(w, h);
+    }
+}
+
+#[cfg(any(target_arch = "wasm32", target_os = "android"))]
+fn apply_window_request() {}
