@@ -163,6 +163,28 @@ impl Context {
         })
     }
 
+    /// Replaces the window surface: `None` drops it (an Android app being
+    /// paused), `Some` makes one for a new window (resumed). The caller
+    /// destroys the swapchain first.
+    pub fn set_surface(
+        &mut self,
+        window: Option<(RawDisplayHandle, RawWindowHandle)>,
+    ) -> Result<(), SetupError> {
+        if self.surface != vk::SurfaceKHR::null() {
+            // SAFETY: the caller destroyed the swapchain made on it.
+            unsafe { self.surface_fn.destroy_surface(self.surface, None) };
+            self.surface = vk::SurfaceKHR::null();
+        }
+        if let Some((display, window)) = window {
+            // SAFETY: the handles come from a live window that outlives the
+            // surface (dropped on the next suspend or with the context).
+            self.surface = unsafe {
+                ash_window::create_surface(&self.entry, &self.instance, display, window, None)
+            }?;
+        }
+        Ok(())
+    }
+
     /// Waits for the device to finish everything submitted.
     pub fn idle(&self) {
         // SAFETY: no other thread submits to this device.

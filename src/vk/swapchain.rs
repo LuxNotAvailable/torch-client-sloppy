@@ -1,9 +1,31 @@
 //! The window's swapchain: its images, their views, and remaking it when
 //! the window changes size or the surface reports it out of date.
 
+use std::sync::atomic::{AtomicU8, Ordering};
+
 use ash::vk;
+use bevy::math::Mat4;
 
 use super::{Context, SetupError};
+
+/// How a frame is turned for the display (pre-rotation): `clip` goes after
+/// the projection, and `aspect` is the shape the player sees, which with a
+/// quarter turn is the image's turned on its side.
+#[derive(Clone, Copy, Debug)]
+pub struct PreRotation {
+    pub clip: Mat4,
+    pub aspect: f32,
+}
+
+impl PreRotation {
+    /// No turn, for an image of `extent`.
+    pub fn none(extent: vk::Extent2D) -> PreRotation {
+        PreRotation {
+            clip: Mat4::IDENTITY,
+            aspect: extent.width as f32 / extent.height.max(1) as f32,
+        }
+    }
+}
 
 pub struct Swapchain {
     pub handle: vk::SwapchainKHR,
@@ -12,6 +34,14 @@ pub struct Swapchain {
     pub format: vk::SurfaceFormatKHR,
     pub extent: vk::Extent2D,
     pub present_mode: vk::PresentModeKHR,
+    /// The rotation the display needs, which the renderer applies itself
+    /// (pre-rotation) instead of leaving it to the compositor.
+    pub transform: vk::SurfaceTransformFlagsKHR,
+    /// The surface's reported extent, before any swap for rotation.
+    pub surface_extent: vk::Extent2D,
+    /// Whether the display's native orientation is portrait (learnt once,
+    /// carried to the swapchains that replace this one).
+    pub native_portrait: bool,
     /// One per image: signalled when that image's frame finishes drawing,
     /// waited on by its present. Per image rather than per frame in flight,
     /// since an image can be re-acquired before its last present is done.
@@ -54,6 +84,52 @@ impl Swapchain {
         if extent.width == 0 || extent.height == 0 {
             return Ok(None);
         }
+        // With a quarter turn, the image takes the display's native shape
+        // (Android's pre-rotation: the renderer turns the picture, not the
+        // compositor). The surface's reported extent can't be trusted for
+        // that shape mid-turn: the Pixel reported landscape with ROTATE_90
+        // but portrait just after switching to ROTATE_270. So the native
+        // shape is learnt once and kept across rebuilds: from an unturned
+        // surface directly, or on a first quarter-turned one from the
+        // extent on its side.
+        let quarter = caps.current_transform.intersects(
+            vk::SurfaceTransformFlagsKHR::ROTATE_90 | vk::SurfaceTransformFlagsKHR::ROTATE_270,
+        );
+        let native_portrait = match (quarter, old, NATIVE.load(Ordering::Relaxed)) {
+            (false, _, _) => extent.height > extent.width,
+            (true, Some(old), _) => old.native_portrait,
+            // Remembered past a pause, which drops the swapchain.
+            (true, None, NATIVE_PORTRAIT) => true,
+            (true, None, NATIVE_LANDSCAPE) => false,
+            (true, None, _) => extent.width > extent.height,
+        };
+        NATIVE.store(
+            if native_portrait {
+                NATIVE_PORTRAIT
+            } else {
+                NATIVE_LANDSCAPE
+            },
+            Ordering::Relaxed,
+        );
+        let extent = if quarter {
+            let (short, long) = (
+                extent.width.min(extent.height),
+                extent.width.max(extent.height),
+            );
+            if native_portrait {
+                vk::Extent2D {
+                    width: short,
+                    height: long,
+                }
+            } else {
+                vk::Extent2D {
+                    width: long,
+                    height: short,
+                }
+            }
+        } else {
+            extent
+        };
         let format = formats
             .iter()
             .copied()
@@ -136,6 +212,9 @@ impl Swapchain {
             format,
             extent,
             present_mode,
+            transform: caps.current_transform,
+            surface_extent: caps.current_extent,
+            native_portrait,
             render_finished,
         }))
     }
@@ -154,6 +233,38 @@ impl Swapchain {
         }
     }
 }
+
+impl Swapchain {
+    /// The turn this swapchain's frames need. The image keeps the display's
+    /// native orientation, so the picture is turned the other way from the
+    /// transform the display will apply.
+    pub fn pre_rotation(&self) -> PreRotation {
+        use std::f32::consts::FRAC_PI_2;
+        let angle = match self.transform {
+            vk::SurfaceTransformFlagsKHR::ROTATE_90 => FRAC_PI_2,
+            vk::SurfaceTransformFlagsKHR::ROTATE_180 => 2.0 * FRAC_PI_2,
+            vk::SurfaceTransformFlagsKHR::ROTATE_270 => 3.0 * FRAC_PI_2,
+            _ => 0.0,
+        };
+        let quarter = self.transform.intersects(
+            vk::SurfaceTransformFlagsKHR::ROTATE_90 | vk::SurfaceTransformFlagsKHR::ROTATE_270,
+        );
+        let (w, h) = (self.extent.width as f32, self.extent.height.max(1) as f32);
+        PreRotation {
+            clip: Mat4::from_rotation_z(ROTATION_SIGN * angle),
+            aspect: if quarter { h / w.max(1.0) } else { w / h },
+        }
+    }
+}
+
+/// The display's native orientation once learnt (there is one display).
+static NATIVE: AtomicU8 = AtomicU8::new(0);
+const NATIVE_PORTRAIT: u8 = 1;
+const NATIVE_LANDSCAPE: u8 = 2;
+
+/// Which way `pre_rotation` turns, checked against the Pixel's screen
+/// (`adb exec-out screencap`).
+const ROTATION_SIGN: f32 = -1.0;
 
 pub fn color_range() -> vk::ImageSubresourceRange {
     vk::ImageSubresourceRange {

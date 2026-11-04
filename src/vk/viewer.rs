@@ -222,8 +222,11 @@ struct Renderer {
     swapchain: Option<Swapchain>,
     frames: Option<Frames>,
     ctx: Context,
-    /// The window, or `None` headless.
+    /// The window, or `None` headless (or while an Android app is paused).
     window: Option<Window>,
+    /// Whether frames are drawn a quarter turn round (Android
+    /// pre-rotation): screenshots are turned upright when saved.
+    quarter_turn: bool,
     /// Headless, the image frames are drawn to.
     offscreen: Option<crate::vk::memory::Image>,
     stale: bool,
@@ -271,8 +274,14 @@ impl Renderer {
         };
         if let Some(s) = &swapchain {
             println!(
-                "vkview: present mode {:?}, format {:?}",
-                s.present_mode, s.format.format
+                "vkview: present mode {:?}, format {:?}, transform {:?}, extent {}x{} (surface {}x{})",
+                s.present_mode,
+                s.format.format,
+                s.transform,
+                s.extent.width,
+                s.extent.height,
+                s.surface_extent.width,
+                s.surface_extent.height
             );
         }
         let frames = Frames::new(&ctx)?;
@@ -342,6 +351,7 @@ impl Renderer {
             frames: Some(frames),
             ctx,
             window,
+            quarter_turn: false,
             offscreen,
             stale: false,
             frame: 0,
@@ -349,6 +359,36 @@ impl Renderer {
             barriers: 0,
             step: options.step,
         })
+    }
+
+    /// Drops the swapchain, surface and window while the app is paused.
+    fn suspend(&mut self) {
+        self.ctx.idle();
+        if let Some(old) = self.swapchain.take() {
+            old.destroy(&self.ctx);
+        }
+        self.ctx.set_surface(None).ok();
+        self.window = None;
+        println!("vkview: suspended");
+    }
+
+    /// Makes a surface and swapchain for the window the app got back.
+    fn resume(&mut self, window: Window) -> Result<(), vk::SetupError> {
+        let handles = (
+            window
+                .display_handle()
+                .map_err(|e| vk::SetupError(format!("no display handle: {e}")))?
+                .as_raw(),
+            window
+                .window_handle()
+                .map_err(|e| vk::SetupError(format!("no window handle: {e}")))?
+                .as_raw(),
+        );
+        self.ctx.set_surface(Some(handles))?;
+        self.window = Some(window);
+        self.stale = true;
+        println!("vkview: resumed");
+        Ok(())
     }
 
     fn recreate(&mut self, vsync: bool) -> Result<(), vk::SetupError> {
@@ -363,6 +403,17 @@ impl Renderer {
             vsync,
             self.swapchain.as_ref(),
         )?;
+        if new.is_none() {
+            // A window with no area yet (minimised, or Android before its
+            // surface is laid out): try again next frame.
+            return Ok(());
+        }
+        if let Some(s) = &new {
+            println!(
+                "vkview: swapchain remade: transform {:?}, extent {}x{}",
+                s.transform, s.extent.width, s.extent.height
+            );
+        }
         if let Some(old) = std::mem::replace(&mut self.swapchain, new) {
             old.destroy(&self.ctx);
         }
@@ -374,7 +425,15 @@ impl Renderer {
     /// swapchain had to be remade). `capture` copies the frame back for a
     /// screenshot.
     fn draw(&mut self, vsync: bool, view: View, capture: bool, sample: bool) -> bool {
-        if self.stale && self.recreate(vsync).is_err() {
+        if self.stale
+            && let Err(e) = self.recreate(vsync)
+        {
+            eprintln!("vkview: swapchain not remade: {e}");
+            return false;
+        }
+        // Nothing to draw to (paused, or no area yet): don't begin a frame,
+        // whose fence would then never be signalled.
+        if self.swapchain.is_none() && self.offscreen.is_none() {
             return false;
         }
         let Some(frames) = &mut self.frames else {
@@ -418,16 +477,25 @@ impl Renderer {
         uploads.begin(slot);
         timestamps.begin_frame(&self.ctx, slot);
 
-        let (image, image_view, extent, target_format) = match (&self.swapchain, &self.offscreen) {
-            (Some(s), _) => (
-                s.images[recording.image_index as usize],
-                s.views[recording.image_index as usize],
-                s.extent,
-                s.format.format,
-            ),
-            (None, Some(o)) => (o.raw, o.view, o.extent, o.format),
-            (None, None) => return false,
-        };
+        let (image, image_view, extent, target_format, rotation) =
+            match (&self.swapchain, &self.offscreen) {
+                (Some(s), _) => (
+                    s.images[recording.image_index as usize],
+                    s.views[recording.image_index as usize],
+                    s.extent,
+                    s.format.format,
+                    s.pre_rotation(),
+                ),
+                (None, Some(o)) => (
+                    o.raw,
+                    o.view,
+                    o.extent,
+                    o.format,
+                    crate::vk::swapchain::PreRotation::none(o.extent),
+                ),
+                (None, None) => return false,
+            };
+        self.quarter_turn = (rotation.aspect > 1.0) != (extent.width > extent.height);
         let mut graph = Graph::new(&self.ctx, recording.commands, Some(timestamps));
         graph.image(image, v::ImageAspectFlags::COLOR, v::ImageLayout::UNDEFINED);
         let seconds = match self.step {
@@ -444,6 +512,7 @@ impl Renderer {
                 &mut graph,
                 (image, image_view),
                 extent,
+                rotation,
                 self.frame,
                 seconds,
                 view,
@@ -459,6 +528,7 @@ impl Renderer {
                     &mut graph,
                     (image, image_view),
                     extent,
+                    rotation,
                     self.frame,
                     slot,
                     camera,
@@ -780,6 +850,21 @@ impl Renderer {
                     px.swap(0, 2);
                 }
             }
+            // Pre-rotated frames are stored on their side; save them as seen.
+            let (rgba, w, h) = if self.quarter_turn {
+                let mut turned = vec![0u8; rgba.len()];
+                for y in 0..h {
+                    for x in 0..w {
+                        let from = ((y * w + x) * 4) as usize;
+                        let (tx, ty) = (y, w - 1 - x);
+                        let to = ((ty * h + tx) * 4) as usize;
+                        turned[to..to + 4].copy_from_slice(&rgba[from..from + 4]);
+                    }
+                }
+                (turned, h, w)
+            } else {
+                (rgba, w, h)
+            };
             match image::save_buffer(path, &rgba, w, h, image::ColorType::Rgba8) {
                 Ok(()) => println!("vkview: screenshot {path} ({w}x{h})"),
                 Err(e) => eprintln!("vkview: screenshot failed: {e}"),
@@ -819,6 +904,11 @@ impl Renderer {
                 "vkview: terrain buffers grew: translucent indices {} times, slots {} times",
                 s.grown[0], s.grown[1]
             );
+            if let Some((ms, frame)) = s.pipelines {
+                println!(
+                    "vkview: terrain pipelines built on a worker in {ms:.1} ms, ready on frame {frame}"
+                );
+            }
             if let (Some(v), Some(p)) = (s.vertex_invocations, s.primitives) {
                 println!("vkview: terrain {v} vertex invocations, {p} primitives clipped");
             }
@@ -905,7 +995,7 @@ impl App {
         let last_frame = self.options.frames.is_some_and(|n| self.drawn + 1 >= n);
         let capture = last_frame && self.options.screenshot.is_some();
         let ready = r.ready();
-        let sample = ready && self.drawn % self.options.sheet_every.max(1) == 0;
+        let sample = ready && self.drawn.is_multiple_of(self.options.sheet_every.max(1));
         if !r.draw(
             self.options.vsync,
             self.options.view,
@@ -944,7 +1034,21 @@ impl App {
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.renderer.is_some() {
+        if let Some(r) = &mut self.renderer {
+            // Back from a pause (Android): a new window, surface and
+            // swapchain.
+            match event_loop.create_window(Window::default_attributes()) {
+                Ok(window) => {
+                    if let Err(e) = r.resume(window) {
+                        self.failed = Some(format!("couldn't resume: {e}"));
+                        event_loop.exit();
+                    }
+                }
+                Err(e) => {
+                    self.failed = Some(format!("no window on resume: {e}"));
+                    event_loop.exit();
+                }
+            }
             return;
         }
         let attributes = Window::default_attributes()
@@ -973,6 +1077,14 @@ impl ApplicationHandler for App {
         }
     }
 
+    fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
+        // Android takes the window away while paused: the swapchain and the
+        // surface go before it does.
+        if let Some(r) = &mut self.renderer {
+            r.suspend();
+        }
+    }
+
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
@@ -981,11 +1093,7 @@ impl ApplicationHandler for App {
                     r.stale = true;
                 }
             }
-            WindowEvent::RedrawRequested => {
-                if self.step() {
-                    event_loop.exit();
-                }
-            }
+            WindowEvent::RedrawRequested if self.step() => event_loop.exit(),
             _ => {}
         }
     }

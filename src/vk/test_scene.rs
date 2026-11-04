@@ -167,6 +167,7 @@ impl TestScene {
         graph: &mut Graph,
         color: (vk::Image, vk::ImageView),
         extent: vk::Extent2D,
+        rotation: super::swapchain::PreRotation,
         frame: u64,
         seconds: f32,
         view: View,
@@ -214,8 +215,9 @@ impl TestScene {
             25.0,
             (seconds * 0.3).cos() * 40.0,
         );
-        let aspect = extent.width as f32 / extent.height.max(1) as f32;
-        let view_proj = Mat4::perspective_infinite_reverse_rh(70f32.to_radians(), aspect, NEAR)
+        let aspect = rotation.aspect;
+        let view_proj = rotation.clip
+            * Mat4::perspective_infinite_reverse_rh(70f32.to_radians(), aspect, NEAR)
             * Mat4::look_at_rh(eye, Vec3::new(0.0, 0.0, 0.0), Vec3::Y);
 
         graph.pass(

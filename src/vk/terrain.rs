@@ -34,7 +34,7 @@ use super::depth_view::{DEPTH_FORMAT, DepthTarget, DepthView, set_viewport};
 use super::frame::FRAMES_IN_FLIGHT;
 use super::graph::{Graph, Use};
 use super::memory::{Buffer, Image, Memory};
-use super::pipeline::{GraphicsDesc, Pipelines, Push, push};
+use super::pipeline::{GraphicsSpec, Pipelines, Push, Spec, push};
 use super::terrain_dump::{Record, Replay, Section};
 use super::test_scene::View;
 use super::upload::Uploads;
@@ -202,6 +202,9 @@ pub struct Stats {
     /// Slots the flood fill reached.
     pub reached: usize,
     pub hiz_frames: u64,
+    /// The worker's milliseconds for the pipelines, and the frame they were
+    /// ready on.
+    pub pipelines: Option<(f32, u64)>,
     /// Times the translucent index buffer and the slot buffer grew.
     pub grown: [u32; 2],
 }
@@ -333,6 +336,38 @@ fn bucket(verts: &[PackedVertex], idx: &[u32]) -> ([u32; 7], Vec<u32>) {
     (counts, lists.concat())
 }
 
+/// The terrain's pipelines, in the order `TerrainScene::new` asks for them.
+#[derive(Clone, Copy)]
+struct Pipes {
+    cull: vk::Pipeline,
+    hiz_reduce: vk::Pipeline,
+    solid: vk::Pipeline,
+    cutout: vk::Pipeline,
+    translucent: vk::Pipeline,
+}
+
+impl Pipes {
+    fn from(built: &[vk::Pipeline]) -> Pipes {
+        Pipes {
+            cull: built[0],
+            hiz_reduce: built[1],
+            solid: built[2],
+            cutout: built[3],
+            translucent: built[4],
+        }
+    }
+
+    fn all(self) -> [vk::Pipeline; 5] {
+        [
+            self.cull,
+            self.hiz_reduce,
+            self.solid,
+            self.cutout,
+            self.translucent,
+        ]
+    }
+}
+
 /// A buffer the terrain replaces when it outgrows it, with its bindless
 /// index.
 struct Grown {
@@ -359,11 +394,10 @@ struct GrowCopy {
 pub struct TerrainScene {
     options: Options,
     module: vk::ShaderModule,
-    cull: vk::Pipeline,
-    hiz_reduce: vk::Pipeline,
-    solid: vk::Pipeline,
-    cutout: vk::Pipeline,
-    translucent_pipeline: vk::Pipeline,
+    /// The pipelines, once the worker has built them; until then frames
+    /// only stream sections in and clear.
+    pipes: Option<Pipes>,
+    pending: Option<super::pipeline::Pending>,
     depth_view: DepthView,
 
     pools: Vec<Pool>,
@@ -456,31 +490,39 @@ impl TerrainScene {
         let atlas_size = atlas.dimensions();
 
         let module = pipelines.module(ctx, super::shaders::TERRAIN)?;
-        let cull = pipelines.compute(ctx, module, c"cull")?;
-        let hiz_reduce = pipelines.compute(ctx, module, c"hiz_reduce")?;
-        let stream = |fragment, cull, depth_write, blend| {
-            pipelines.graphics(
-                ctx,
-                &GraphicsDesc {
-                    module,
-                    vertex: c"terrain_vertex",
-                    fragment,
-                    color: &[color_format],
-                    depth: Some(DEPTH_FORMAT),
-                    depth_test: Some(vk::CompareOp::GREATER),
-                    depth_write,
-                    cull,
-                    topology: vk::PrimitiveTopology::TRIANGLE_LIST,
-                    blend,
-                },
-            )
+        // Built on a worker: the dump starts streaming in meanwhile (2.5).
+        let stream = |fragment: &std::ffi::CStr, cull, depth_write, blend| {
+            Spec::Graphics(GraphicsSpec {
+                module,
+                vertex: c"terrain_vertex".to_owned(),
+                fragment: fragment.to_owned(),
+                color: vec![color_format],
+                depth: Some(DEPTH_FORMAT),
+                depth_test: Some(vk::CompareOp::GREATER),
+                depth_write,
+                cull,
+                topology: vk::PrimitiveTopology::TRIANGLE_LIST,
+                blend,
+            })
         };
-        // Solid faces are one-sided, as vanilla's; cutout (plants, leaves)
-        // and translucent faces draw both sides.
-        let solid = stream(c"terrain_solid", vk::CullModeFlags::BACK, true, false)?;
-        let cutout = stream(c"terrain_cutout", vk::CullModeFlags::NONE, true, false)?;
-        let translucent_pipeline =
-            stream(c"terrain_translucent", vk::CullModeFlags::NONE, false, true)?;
+        let pending = pipelines.build_on_worker(
+            ctx,
+            vec![
+                Spec::Compute {
+                    module,
+                    entry: c"cull".to_owned(),
+                },
+                Spec::Compute {
+                    module,
+                    entry: c"hiz_reduce".to_owned(),
+                },
+                // Solid faces are one-sided, as vanilla's; cutout (plants,
+                // leaves) and translucent faces draw both sides.
+                stream(c"terrain_solid", vk::CullModeFlags::BACK, true, false),
+                stream(c"terrain_cutout", vk::CullModeFlags::NONE, true, false),
+                stream(c"terrain_translucent", vk::CullModeFlags::NONE, false, true),
+            ],
+        );
         let depth_view = DepthView::new(ctx, pipelines, color_format)?;
 
         let storage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
@@ -610,11 +652,8 @@ impl TerrainScene {
         Ok(TerrainScene {
             options,
             module,
-            cull,
-            hiz_reduce,
-            solid,
-            cutout,
-            translucent_pipeline,
+            pipes: None,
+            pending: Some(pending),
             depth_view,
             pools: Vec::new(),
             translucent,
@@ -1291,6 +1330,7 @@ impl TerrainScene {
         graph: &mut Graph,
         color: (vk::Image, vk::ImageView),
         extent: vk::Extent2D,
+        rotation: super::swapchain::PreRotation,
         frame: u64,
         slot: usize,
         camera: Camera,
@@ -1404,8 +1444,52 @@ impl TerrainScene {
         self.record_copies(ctx, graph, &copies, &grow, atlas_copy);
         let device = &ctx.device;
 
-        let aspect = extent.width as f32 / extent.height.max(1) as f32;
-        let view_proj = Mat4::perspective_infinite_reverse_rh(70f32.to_radians(), aspect, NEAR)
+        if self.pipes.is_none()
+            && let Some(result) = self.pending.as_mut().and_then(|p| p.take())
+        {
+            let (built, ms) = result?;
+            self.pipes = Some(Pipes::from(&built));
+            self.pending = None;
+            self.stats.pipelines = Some((ms, frame));
+        }
+        let Some(pipes) = self.pipes else {
+            // Still compiling: clear the frame; the uploads above went on.
+            graph.pass(
+                "terrain waiting",
+                &[(color.0, Use::ColorAttachment)],
+                &[],
+                |cmd| unsafe {
+                    // SAFETY: the colour image is an attachment, as the graph set.
+                    let colors = [vk::RenderingAttachmentInfo::default()
+                        .image_view(color.1)
+                        .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                        .load_op(vk::AttachmentLoadOp::CLEAR)
+                        .store_op(vk::AttachmentStoreOp::STORE)
+                        .clear_value(vk::ClearValue {
+                            color: vk::ClearColorValue {
+                                float32: [0.47, 0.65, 1.0, 1.0],
+                            },
+                        })];
+                    device.cmd_begin_rendering(
+                        cmd,
+                        &vk::RenderingInfo::default()
+                            .render_area(vk::Rect2D {
+                                offset: vk::Offset2D::default(),
+                                extent,
+                            })
+                            .layer_count(1)
+                            .color_attachments(&colors),
+                    );
+                    device.cmd_end_rendering(cmd);
+                },
+            );
+            let _ = (depth, depth_view, depth_index);
+            return Ok(());
+        };
+
+        let aspect = rotation.aspect;
+        let view_proj = rotation.clip
+            * Mat4::perspective_infinite_reverse_rh(70f32.to_radians(), aspect, NEAR)
             * Mat4::look_to_rh(camera.eye, camera.forward(), Vec3::Y);
 
         // Hi-Z only with a pyramid of this size, from a camera close by.
@@ -1469,7 +1553,7 @@ impl TerrainScene {
         graph.pass("terrain cull", &[], &cull_buffers, |cmd| unsafe {
             // SAFETY: recording with the shared layout and the bindless set;
             // the push names live buffers.
-            device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, self.cull);
+            device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipes.cull);
             device.cmd_bind_descriptor_sets(
                 cmd,
                 vk::PipelineBindPoint::COMPUTE,
@@ -1608,7 +1692,7 @@ impl TerrainScene {
                     },
                 );
                 let capacity = self.list_capacity;
-                for (kind, pipeline) in [self.solid, self.cutout].into_iter().enumerate() {
+                for (kind, pipeline) in [pipes.solid, pipes.cutout].into_iter().enumerate() {
                     device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
                     for (p, pool) in self.pools.iter().enumerate() {
                         let list = p as u64 * 2 + kind as u64;
@@ -1634,7 +1718,7 @@ impl TerrainScene {
                     device.cmd_bind_pipeline(
                         cmd,
                         vk::PipelineBindPoint::GRAPHICS,
-                        self.translucent_pipeline,
+                        pipes.translucent,
                     );
                     device.cmd_bind_index_buffer(
                         cmd,
@@ -1662,6 +1746,7 @@ impl TerrainScene {
             memory,
             bindless,
             pipelines,
+            pipes.hiz_reduce,
             graph,
             (depth, depth_index),
             extent,
@@ -1748,6 +1833,7 @@ impl TerrainScene {
         memory: &Memory,
         bindless: &mut Bindless,
         pipelines: &Pipelines,
+        hiz_reduce: vk::Pipeline,
         graph: &mut Graph,
         depth: (vk::Image, u32),
         extent: vk::Extent2D,
@@ -1803,7 +1889,7 @@ impl TerrainScene {
                 |cmd| unsafe {
                     // SAFETY: the depth is in its read-only layout and the
                     // pyramid is this pass's to write.
-                    device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, self.hiz_reduce);
+                    device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, hiz_reduce);
                     device.cmd_bind_descriptor_sets(
                         cmd,
                         vk::PipelineBindPoint::COMPUTE,
@@ -1989,16 +2075,16 @@ impl TerrainScene {
         self.stats_issued[slot] = false;
     }
 
-    pub fn destroy(self, ctx: &Context, memory: &Memory) {
+    pub fn destroy(mut self, ctx: &Context, memory: &Memory) {
+        // A batch still compiling finishes first, so its pipelines go too.
+        let mut pipelines: Vec<vk::Pipeline> =
+            self.pipes.map(Pipes::all).into_iter().flatten().collect();
+        if let Some(Ok((built, _))) = self.pending.as_mut().and_then(|p| p.wait()) {
+            pipelines.extend(built);
+        }
         // SAFETY: the caller idles the device first.
         unsafe {
-            for pipeline in [
-                self.cull,
-                self.hiz_reduce,
-                self.solid,
-                self.cutout,
-                self.translucent_pipeline,
-            ] {
+            for pipeline in pipelines {
                 ctx.device.destroy_pipeline(pipeline, None);
             }
             ctx.device.destroy_shader_module(self.module, None);

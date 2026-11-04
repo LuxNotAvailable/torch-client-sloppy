@@ -12,6 +12,8 @@
 # build.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
+# Windows-native tools (cargo-apk, apksigner, adb) want Windows paths.
+win() { if command -v cygpath > /dev/null; then cygpath -m "$1"; else echo "$1"; fi; }
 export MSYS_NO_PATHCONV=1
 D=/sdcard/Android/data/com.torch.vkview/files
 OUT=${OUT:-.}
@@ -19,8 +21,8 @@ if [ "${NO_BUILD:-0}" != 1 ]; then
     sdk=${ANDROID_HOME:-$LOCALAPPDATA/Android/Sdk}
     export ANDROID_HOME=$sdk
     export ANDROID_NDK_ROOT=${ANDROID_NDK_ROOT:-$(ls -d "$sdk"/ndk/*/ | sort -V | tail -1)}
-    export CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$here/../../target/vkview-apk}
-    export CARGO_APK_RELEASE_KEYSTORE=${CARGO_APK_RELEASE_KEYSTORE:-$HOME/.android/debug.keystore}
+    export CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$(win "$here/../../target/vkview-apk")}
+    export CARGO_APK_RELEASE_KEYSTORE=${CARGO_APK_RELEASE_KEYSTORE:-$(win "$HOME/.android/debug.keystore")}
     export CARGO_APK_RELEASE_KEYSTORE_PASSWORD=${CARGO_APK_RELEASE_KEYSTORE_PASSWORD:-android}
     (cd "$here" && cargo apk build --release)
     adb install -r "$CARGO_TARGET_DIR/release/apk/vkview-apk.apk" > /dev/null
