@@ -201,6 +201,20 @@ fn sync_render_scale(gui: Res<crate::gui::GuiState>) {
     RENDER_SCALE.store(gui.options.pack_render_scale, Ordering::Relaxed);
 }
 
+/// The pack's terrain projection and drawing size this frame, for the
+/// terrain cull's occlusion pyramid built from the pack's depth.
+static HIZ_VIEW: std::sync::Mutex<Option<(Mat4, UVec2)>> = std::sync::Mutex::new(None);
+
+pub(super) fn publish_hiz_view(projection: Mat4, size: UVec2) {
+    if let Ok(mut view) = HIZ_VIEW.lock() {
+        *view = Some((projection, size));
+    }
+}
+
+pub(crate) fn hiz_view() -> Option<(Mat4, UVec2)> {
+    HIZ_VIEW.lock().ok().and_then(|view| *view)
+}
+
 /// The size a shader pack draws at for a view of `size`.
 pub(super) fn scaled(size: UVec2) -> UVec2 {
     let percent = RENDER_SCALE.load(Ordering::Relaxed).clamp(

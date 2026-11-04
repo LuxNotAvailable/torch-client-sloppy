@@ -127,6 +127,7 @@ impl FrameValues {
         let far_plane = (far * FAR_PLANE_PER_BLOCK).max(NEAR * 2.0);
         let projection =
             Mat4::perspective_rh_gl(fov, size.x / size.y, NEAR, far_plane) * inputs.warp;
+        super::super::publish_hiz_view(projection, size.as_uvec2());
         let camera = view.world_from_view.translation();
 
         let (previous_view_rotation, previous_projection) =

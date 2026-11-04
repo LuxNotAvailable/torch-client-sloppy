@@ -303,7 +303,7 @@ pub struct AssignedView {
     eye: Vec3,
     /// The occlusion pyramid's matrix and level count, when this view
     /// tests against it this frame.
-    hiz: Option<(Mat4, u32)>,
+    hiz: Option<(Mat4, u32, bool)>,
 }
 
 #[cfg(feature = "shader_support")]
@@ -615,11 +615,20 @@ pub fn prepare_cull(
     mut assigned: Local<Vec<AssignedView>>,
 ) {
     crate::prof_span!("render:terrain_prepare_cull");
-    // The pyramid comes from Bevy's depth, which a shader pack leaves empty.
+    // The pyramid comes from Bevy's depth, or a shader pack's when one
+    // draws the terrain.
     #[cfg(feature = "shader_support")]
-    let hiz_enabled = !takeover.is_some_and(|t| t.0) && !super::hiz::disabled();
+    let pack_source = takeover
+        .is_some_and(|t| t.0)
+        .then(crate::renderer::packdraw::hiz_view);
     #[cfg(not(feature = "shader_support"))]
-    let hiz_enabled = !super::hiz::disabled();
+    let pack_source: Option<Option<(Mat4, UVec2)>> = None;
+    let hiz_source = match pack_source {
+        _ if super::hiz::disabled() => None,
+        None => Some(super::hiz::Source::Bevy),
+        Some(Some((projection, size))) => Some(super::hiz::Source::Pack { projection, size }),
+        Some(None) => None,
+    };
     let mut hiz_began = false;
     views.index.clear();
     views.count = 0;
@@ -638,8 +647,8 @@ pub fn prepare_cull(
         let occlusion = match hiz.as_deref_mut() {
             Some(hiz) if !hiz_began && tier.indirect => {
                 hiz_began = true;
-                hiz.begin(&device, view, hiz_enabled)
-                    .map(|u| (u.clip, u.levels))
+                hiz.begin(&device, view, hiz_source)
+                    .map(|u| (u.clip, u.levels, u.reverse))
             }
             _ => None,
         };
@@ -717,10 +726,10 @@ pub fn prepare_cull(
                 tier.count as u32,
                 view.flags,
             );
-            if let Some((clip, levels)) = view.hiz {
+            if let Some((clip, levels, reverse)) = view.hiz {
                 cull_view.flags |= VIEW_HIZ;
                 cull_view.hiz_clip = clip.to_cols_array_2d();
-                cull_view.hiz_reverse = 1;
+                cull_view.hiz_reverse = reverse as u32;
                 cull_view.hiz_levels = levels;
             }
             let bytes = bytemuck::bytes_of(&cull_view);

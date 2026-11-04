@@ -449,6 +449,17 @@ impl PackFrameNode {
         for pass in &plan.opaque {
             geometry(render_context, pass);
         }
+        // The terrain's depth, before entities: next frame's occlusion
+        // pyramid for the terrain cull.
+        if let Some(hiz) = world.get_resource::<crate::renderer::terrain_pool::hiz::HiZ>() {
+            let device = render_context.render_device().clone();
+            hiz.record(
+                &device,
+                render_context.command_encoder(),
+                &targets.depth.view,
+                true,
+            );
+        }
         if clear_depth.replace(false) {
             drop(
                 render_context.begin_tracked_render_pass(RenderPassDescriptor {

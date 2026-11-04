@@ -7,6 +7,11 @@
 //! `cull.wgsl`): a box whose nearest point lies behind everything over its
 //! area is skipped, so the terrain behind a hill isn't drawn.
 //!
+//! With a shader pack the pyramid comes from the pack's own depth, built in
+//! the pack's frame after its opaque terrain, and seen through the pack's
+//! projection: GL depth (remapped to 0..1 here) drawn upside down, both
+//! folded into the matrix the cull uses.
+//!
 //! The pyramid is a frame old. A section that comes into view from behind
 //! an occluder is drawn a frame late, which shows when the camera turns or
 //! moves quickly, so the test is off for any frame where the camera moved
@@ -41,8 +46,29 @@ pub struct HiZ {
     built: Option<Shot>,
     /// This frame's camera, which the pyramid built this frame will hold.
     pending: Option<Shot>,
-    /// Whether the node should build a pyramid this frame.
-    pub build: bool,
+    /// Which depth this frame's pyramid is built from, if any.
+    pub build: Option<Source>,
+    /// The source the current pyramid was built from.
+    built_source: Option<Source>,
+}
+
+/// Where the pyramid's depth comes from.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Source {
+    /// Bevy's main pass depth: reversed, 1 near, 0 far.
+    Bevy,
+    /// A shader pack's depth, through its projection (GL depth, drawn
+    /// upside down), at its own size.
+    Pack { projection: Mat4, size: UVec2 },
+}
+
+impl Source {
+    fn kind(self) -> u8 {
+        match self {
+            Source::Bevy => 0,
+            Source::Pack { .. } => 1,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -57,7 +83,9 @@ struct Pipelines {
     from_depth_layout: BindGroupLayout,
     reduce: ComputePipeline,
     reduce_layout: BindGroupLayout,
-    params: bevy::render::render_resource::Buffer,
+    /// The `reverse` parameter for each source: Bevy's (1) and a pack's (0).
+    params_reversed: bevy::render::render_resource::Buffer,
+    params_standard: bevy::render::render_resource::Buffer,
 }
 
 struct Pyramid {
@@ -74,6 +102,8 @@ struct Pyramid {
 pub struct Use {
     pub clip: Mat4,
     pub levels: u32,
+    /// Whether depth through `clip` is reversed (Bevy's).
+    pub reverse: bool,
 }
 
 impl HiZ {
@@ -113,7 +143,8 @@ impl HiZ {
             generation: 0,
             built: None,
             pending: None,
-            build: false,
+            build: None,
+            built_source: None,
         }
     }
 
@@ -129,31 +160,50 @@ impl HiZ {
         &mut self,
         device: &RenderDevice,
         view: &ExtractedView,
-        enabled: bool,
+        source: Option<Source>,
     ) -> Option<Use> {
-        let clip = view
-            .clip_from_world
-            .unwrap_or_else(|| view.clip_from_view * view.world_from_view.to_matrix().inverse());
+        let view_from_world = view.world_from_view.to_matrix().inverse();
+        let (clip, size) = match source {
+            Some(Source::Pack { projection, size }) => {
+                // GL depth to 0..1, and the pack's upside-down rows.
+                let remap = Mat4::from_cols_array(&[
+                    1.0, 0.0, 0.0, 0.0, //
+                    0.0, -1.0, 0.0, 0.0, //
+                    0.0, 0.0, 0.5, 0.0, //
+                    0.0, 0.0, 0.5, 1.0,
+                ]);
+                (remap * projection * view_from_world, size)
+            }
+            _ => (
+                view.clip_from_world
+                    .unwrap_or_else(|| view.clip_from_view * view_from_world),
+                UVec2::new(view.viewport.z, view.viewport.w),
+            ),
+        };
         let shot = Shot {
             clip,
             eye: view.world_from_view.translation(),
             forward: view.world_from_view.forward().as_vec3(),
         };
-        let previous = std::mem::replace(&mut self.pending, enabled.then_some(shot));
+        let previous = std::mem::replace(&mut self.pending, source.map(|_| shot));
+        let previous_source = std::mem::replace(&mut self.built_source, self.build);
         self.built = previous;
-        self.build = enabled;
-        if !enabled {
+        self.build = source;
+        let source = source?;
+        self.ensure(device, size.max(UVec2::ONE));
+        let built = self.built?;
+        // A pyramid from the other source (a pack turned on or off) is
+        // in the wrong depth convention and maybe the wrong size.
+        if previous_source.map(Source::kind) != Some(source.kind()) {
             return None;
         }
-        let size = UVec2::new(view.viewport.z, view.viewport.w).max(UVec2::ONE);
-        self.ensure(device, size);
-        let built = self.built?;
         let still = built.eye.distance(shot.eye) <= MAX_MOVE
             && built.forward.dot(shot.forward) >= MIN_TURN_COS;
         let levels = self.pyramid.as_ref()?.levels;
         still.then_some(Use {
             clip: built.clip,
             levels,
+            reverse: source == Source::Bevy,
         })
     }
 
@@ -220,14 +270,26 @@ impl HiZ {
         self.generation += 1;
     }
 
-    fn record(
+    /// Builds the pyramid from `depth`, if this frame's source is `kind`.
+    pub fn record(
         &self,
         device: &RenderDevice,
         encoder: &mut wgpu::CommandEncoder,
         depth: &TextureView,
+        pack: bool,
     ) {
-        let (Some(pipelines), Some(pyramid)) = (&self.pipelines, &self.pyramid) else {
+        let (Some(pipelines), Some(pyramid), Some(source)) =
+            (&self.pipelines, &self.pyramid, self.build)
+        else {
             return;
+        };
+        if matches!(source, Source::Pack { .. }) != pack {
+            return;
+        }
+        let params = if pack {
+            &pipelines.params_standard
+        } else {
+            &pipelines.params_reversed
         };
         let first = device.create_bind_group(
             "terrain_hiz_from_depth",
@@ -245,7 +307,7 @@ impl HiZ {
                 },
                 bevy::render::render_resource::BindGroupEntry {
                     binding: 2,
-                    resource: pipelines.params.as_entire_binding(),
+                    resource: params.as_entire_binding(),
                 },
             ],
         );
@@ -341,18 +403,20 @@ impl Pipelines {
                 },
             ))
         };
-        // Bevy's depth is reversed: 1 near, 0 far.
-        let params = device.create_buffer_with_data(&wgpu::util::BufferInitDescriptor {
-            label: Some("terrain_hiz_params"),
-            contents: bytemuck::cast_slice(&[1u32, 0, 0, 0]),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
+        let params = |reverse: u32| {
+            device.create_buffer_with_data(&wgpu::util::BufferInitDescriptor {
+                label: Some("terrain_hiz_params"),
+                contents: bytemuck::cast_slice(&[reverse, 0, 0, 0]),
+                usage: wgpu::BufferUsages::UNIFORM,
+            })
+        };
         Pipelines {
             from_depth: pipeline(&from_depth_layout, "from_depth"),
             reduce: pipeline(&reduce_layout, "reduce"),
             from_depth_layout,
             reduce_layout,
-            params,
+            params_reversed: params(1),
+            params_standard: params(0),
         }
     }
 }
@@ -386,12 +450,17 @@ impl ViewNode for HiZNode {
         let Some(hiz) = world.get_resource::<HiZ>() else {
             return Ok(());
         };
-        if !hiz.build {
+        if hiz.build != Some(Source::Bevy) {
             return Ok(());
         }
         crate::prof_span!("render:terrain_hiz");
         let device = render_context.render_device().clone();
-        hiz.record(&device, render_context.command_encoder(), depth.view());
+        hiz.record(
+            &device,
+            render_context.command_encoder(),
+            depth.view(),
+            false,
+        );
         Ok(())
     }
 }
