@@ -450,7 +450,7 @@ impl ViewNode for HiZNode {
         let Some(hiz) = world.get_resource::<HiZ>() else {
             return Ok(());
         };
-        if hiz.build != Some(Source::Bevy) {
+        if hiz.build != Some(Source::Bevy) || depth.texture.sample_count() > 1 {
             return Ok(());
         }
         crate::prof_span!("render:terrain_hiz");

@@ -608,7 +608,12 @@ pub fn prepare_cull(
     mut cull: ResMut<CullBuffers>,
     mut views: ResMut<TerrainViews>,
     mut lists: ResMut<DirectLists>,
-    cameras: Query<(Entity, &ExtractedView, Has<TerrainView>)>,
+    cameras: Query<(
+        Entity,
+        &ExtractedView,
+        Has<TerrainView>,
+        Option<&bevy::render::view::Msaa>,
+    )>,
     #[cfg(feature = "shader_support")] pack_view: Option<Res<PackCullView>>,
     #[cfg(feature = "shader_support")] takeover: Option<Res<super::draw::PackTakeover>>,
     mut hiz: Option<ResMut<super::hiz::HiZ>>,
@@ -635,7 +640,7 @@ pub fn prepare_cull(
 
     assigned.clear();
 
-    for (entity, view, is_terrain) in cameras.iter() {
+    for (entity, view, is_terrain, msaa) in cameras.iter() {
         let _ = entity;
         if !is_terrain || views.count >= MAX_VIEWS {
             continue;
@@ -644,10 +649,17 @@ pub fn prepare_cull(
         views.count += 1;
         views.index.insert(view.retained_view_entity, slot);
         let eye = view.world_from_view.translation();
+        // The pyramid reads the depth as a plain texture; a multisampled
+        // one (MSAA) can't be, so Bevy's depth gives no pyramid then.
+        let multisampled = msaa.is_some_and(|m| m.samples() > 1);
+        let source = match hiz_source {
+            Some(super::hiz::Source::Bevy) if multisampled => None,
+            other => other,
+        };
         let occlusion = match hiz.as_deref_mut() {
             Some(hiz) if !hiz_began && tier.indirect => {
                 hiz_began = true;
-                hiz.begin(&device, view, hiz_source)
+                hiz.begin(&device, view, source)
                     .map(|u| (u.clip, u.levels, u.reverse))
             }
             _ => None,
