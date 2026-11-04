@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use bevy::prelude::*;
 
-use super::systems::{ChunkIndex, WorldCamera};
+use super::systems::{ChunkIndex, SectionSlot, WorldCamera};
 use super::terrain_pool::{TerrainOp, TerrainOps};
 use super::visgraph::{Direction, VisibilitySet};
 
@@ -18,6 +18,9 @@ pub struct OcclusionState {
     spare: Grid,
     snapshot: VisSnapshot,
     task: Option<FillTask>,
+    /// The last accepted fill's visible slots, waiting to be pushed.
+    bits: Vec<u32>,
+    reached: usize,
     pub fills: u64,
 }
 
@@ -192,13 +195,26 @@ struct VisSnapshot {
     dim_y: usize,
     dim_z: usize,
     cells: Vec<VisibilitySet>,
+    /// Each cell's terrain slots (opaque, water), so the fill task can mark
+    /// the visible ones without the main thread's index.
+    slots: Vec<[Option<u32>; 2]>,
+    /// The index's slot count when the snapshot was taken.
+    slot_count: u32,
 }
 
 impl VisSnapshot {
-    fn reload<I>(&mut self, sections: I, here: (i32, i32, i32), radius: i32, y_lo: i32, y_hi: i32)
-    where
-        I: Iterator<Item = ((i32, i32, i32), VisibilitySet)>,
+    fn reload<I>(
+        &mut self,
+        sections: I,
+        slot_count: u32,
+        here: (i32, i32, i32),
+        radius: i32,
+        y_lo: i32,
+        y_hi: i32,
+    ) where
+        I: Iterator<Item = ((i32, i32, i32), SectionSlot)>,
     {
+        self.slot_count = slot_count;
         self.origin = (here.0 - radius, y_lo, here.2 - radius);
         self.dim_x = (2 * radius + 1) as usize;
         self.dim_z = (2 * radius + 1) as usize;
@@ -206,9 +222,12 @@ impl VisSnapshot {
         let cells = self.dim_x * self.dim_y * self.dim_z;
         self.cells.clear();
         self.cells.resize(cells, VisibilitySet::all());
-        for (pos, vis) in sections {
+        self.slots.clear();
+        self.slots.resize(cells, [None, None]);
+        for (pos, section) in sections {
             if let Some(i) = self.index(pos) {
-                self.cells[i] = vis;
+                self.cells[i] = section.vis;
+                self.slots[i] = section.slots;
             }
         }
     }
@@ -227,6 +246,26 @@ impl VisSnapshot {
         Some((y * self.dim_z + z) * self.dim_x + x)
     }
 
+    /// One bit per terrain slot, set for each slot in a section the fill
+    /// reached, and how many sections it reached.
+    fn visible_bits(&self, grid: &Grid) -> (Vec<u32>, usize) {
+        let words = (self.slot_count as usize).div_ceil(32).max(1);
+        let mut bits = vec![0u32; words];
+        let mut reached = 0;
+        for pos in grid.visible_sections() {
+            reached += 1;
+            let Some(i) = self.index(pos) else {
+                continue;
+            };
+            for slot in self.slots[i].into_iter().flatten() {
+                if let Some(word) = bits.get_mut(slot as usize / 32) {
+                    *word |= 1 << (slot % 32);
+                }
+            }
+        }
+        (bits, reached)
+    }
+
     fn at(&self, pos: (i32, i32, i32)) -> VisibilitySet {
         match self.index(pos) {
             Some(i) => self.cells[i],
@@ -238,6 +277,8 @@ impl VisSnapshot {
 struct FillResult {
     grid: Grid,
     snapshot: VisSnapshot,
+    bits: Vec<u32>,
+    reached: usize,
     section: (i32, i32, i32),
     generation: u64,
 }
@@ -257,9 +298,14 @@ fn run_fill(
     generation: u64,
 ) -> FillResult {
     grid.fill(here, radius, y_lo, y_hi, |pos| snapshot.at(pos));
+    // Built here rather than on the main thread: one index lookup per reached
+    // section took about 3 ms at RD 32 on a fast desktop, 9-11 on a laptop.
+    let (bits, reached) = snapshot.visible_bits(&grid);
     FillResult {
         grid,
         snapshot,
+        bits,
+        reached,
         section: here,
         generation,
     }
@@ -297,6 +343,8 @@ fn install(
         return false;
     }
     state.spare = std::mem::replace(&mut state.grid, result.grid);
+    state.bits = result.bits;
+    state.reached = result.reached;
     state.section = Some(result.section);
     state.generation = result.generation;
     state.filled_at = Some(now);
@@ -394,7 +442,14 @@ pub fn update_occlusion(
         let generation = index.generation();
         let grid = std::mem::take(&mut state.spare);
         let mut snapshot = std::mem::take(&mut state.snapshot);
-        snapshot.reload(index.sections(), here, radius, y_lo, y_hi);
+        snapshot.reload(
+            index.sections(),
+            index.next_slot(),
+            here,
+            radius,
+            y_lo,
+            y_hi,
+        );
         state.fills += 1;
         state.task = Some(spawn_fill(
             grid, snapshot, here, radius, y_lo, y_hi, generation,
@@ -410,18 +465,12 @@ pub fn update_occlusion(
         return;
     }
 
-    let next_slot = index.next_slot() as usize;
-    let words = next_slot.div_ceil(32).max(1);
-    let mut bits = vec![0u32; words];
-    let mut reached_sections = 0usize;
-    for (cx, sec_y, cz) in state.grid.visible_sections() {
-        reached_sections += 1;
-        let (opaque, water) = index.slots_of(cx, cz, sec_y);
-        for slot in [opaque, water].into_iter().flatten() {
-            bits[slot as usize / 32] |= 1 << (slot % 32);
-        }
-    }
-    ops.push(TerrainOp::Visibility(Arc::from(bits)));
+    // Slots made after the snapshot lie past the bits' end, which the cull
+    // treats as visible until the next fill.
+    let reached_sections = state.reached;
+    ops.push(TerrainOp::Visibility(Arc::from(std::mem::take(
+        &mut state.bits,
+    ))));
 
     crate::log_debug!(
         "render",
@@ -554,5 +603,62 @@ mod tests {
             state.reaches_box(far, far + 1.0),
             "outside the grid is unknown"
         );
+    }
+
+    #[test]
+    fn main_thread_cost_at_render_distance_32() {
+        let radius = 33;
+        let mut index = ChunkIndex::default();
+        let mut slot = 0;
+        for cx in -radius..=radius {
+            for cz in -radius..=radius {
+                for sec_y in (-64..320).step_by(16) {
+                    index.index_for_test(cx, cz, sec_y, [Some(slot), None]);
+                    slot += 1;
+                }
+            }
+        }
+        let (y_lo, y_hi) = index.y_range();
+        let here = (0, 80, 0);
+        let mut snapshot = VisSnapshot::default();
+        let runs = 10;
+        let start = Instant::now();
+        for _ in 0..runs {
+            snapshot.reload(
+                index.sections(),
+                index.next_slot(),
+                here,
+                radius,
+                y_lo,
+                y_hi,
+            );
+        }
+        let reload_ms = start.elapsed().as_secs_f64() * 1000.0 / runs as f64;
+
+        let mut grid = Grid::default();
+        grid.fill(here, radius, y_lo, y_hi, &|pos| snapshot.at(pos));
+        let start = Instant::now();
+        let mut reached = 0;
+        let mut bits = Vec::new();
+        for _ in 0..runs {
+            (bits, reached) = snapshot.visible_bits(&grid);
+        }
+        let bits_ms = start.elapsed().as_secs_f64() * 1000.0 / runs as f64;
+        println!(
+            "{} indexed: snapshot reload {reload_ms:.2} ms on the main thread, visibility bits {bits_ms:.2} ms in the fill task for {reached} reached",
+            index.len()
+        );
+        // The bits match the index's own lookups.
+        for (cx, sec_y, cz) in grid.visible_sections() {
+            if let (Some(slot), _) = index.slots_of(cx, cz, sec_y) {
+                assert_ne!(bits[slot as usize / 32] & (1 << (slot % 32)), 0);
+            }
+        }
+        let marked: u32 = bits.iter().map(|w| w.count_ones()).sum();
+        let expected = grid
+            .visible_sections()
+            .filter(|&(cx, sec_y, cz)| index.slots_of(cx, cz, sec_y).0.is_some())
+            .count();
+        assert_eq!(marked as usize, expected);
     }
 }

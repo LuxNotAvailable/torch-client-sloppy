@@ -220,6 +220,26 @@ impl ChunkIndex {
         *generation += 1;
     }
 
+    /// Indexes a section with the given slots, without meshes or ops.
+    #[cfg(test)]
+    pub fn index_for_test(&mut self, cx: i32, cz: i32, sec_y: i32, slots: [Option<u32>; 2]) {
+        self.y_lo = self.y_lo.min(sec_y);
+        self.y_hi = self.y_hi.max(sec_y + 16);
+        let entry = self
+            .columns
+            .entry((cx, cz))
+            .or_default()
+            .sections
+            .entry(sec_y)
+            .or_default();
+        entry.slots = slots;
+        self.next_slot = self
+            .next_slot
+            .max(slots.into_iter().flatten().max().map_or(0, |s| s + 1));
+        self.generation += 1;
+    }
+
+    #[cfg(test)]
     pub fn slots_of(&self, cx: i32, cz: i32, sec_y: i32) -> (Option<u32>, Option<u32>) {
         self.columns
             .get(&(cx, cz))
@@ -243,12 +263,12 @@ impl ChunkIndex {
         (self.y_lo - 16, self.y_hi + 16)
     }
 
-    pub fn sections(&self) -> impl Iterator<Item = ((i32, i32, i32), VisibilitySet)> + '_ {
+    pub fn sections(&self) -> impl Iterator<Item = ((i32, i32, i32), SectionSlot)> + '_ {
         self.columns.iter().flat_map(|(&(cx, cz), column)| {
             column
                 .sections
                 .iter()
-                .map(move |(&sec_y, slot)| ((cx, sec_y, cz), slot.vis))
+                .map(move |(&sec_y, slot)| ((cx, sec_y, cz), *slot))
         })
     }
 
