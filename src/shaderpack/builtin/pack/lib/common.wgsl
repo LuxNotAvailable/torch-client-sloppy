@@ -11,6 +11,13 @@
 #define REFLECTION_RES 2 // [1 2 3 4]
 #define VOLUMETRIC_RES 2 // [1 2 3 4]
 #define SCALED_RESOLVE 0 // [0 1]
+// Shading texels by distance: full detail (16 per block) out to
+// TEXEL_FULL_DISTANCE blocks, then each ring TEXEL_RING_WIDTH blocks wide
+// halves the texels per block, down to TEXEL_MIN_RES. Fewer texels mean
+// fewer texel-cache entries to shade.
+#define TEXEL_FULL_DISTANCE 24 // [8 16 24 32 48 64 96]
+#define TEXEL_RING_WIDTH 16 // [8 16 24 32 48 64]
+#define TEXEL_MIN_RES 2 // [1 2 4 8 16]
 
 const PI: f32 = 3.14159265;
 
@@ -99,6 +106,28 @@ fn unpack_surface(word: f32) -> Surface {
 /// the camera is in, given the cell inside the surface it covers.
 fn texel_centre(cell: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
     return (cell + 0.5) / 16.0 + n * (0.5 / 16.0);
+}
+
+/// Texels per block for a block `distance` blocks from the camera: 16 out to
+/// TEXEL_FULL_DISTANCE, then halved every TEXEL_RING_WIDTH blocks, never
+/// below TEXEL_MIN_RES.
+fn texel_res(distance: f32) -> f32 {
+    let past = max(distance - f32(TEXEL_FULL_DISTANCE), 0.0);
+    let level = select(0.0, floor(past / f32(TEXEL_RING_WIDTH)) + 1.0, past > 0.0);
+    return max(16.0 / exp2(min(level, 4.0)), f32(TEXEL_MIN_RES));
+}
+
+/// The 16-per-block cell a surface point shades as, at `res` texels per
+/// block: across the face the point falls into a texel `16 / res` cells
+/// wide, aligned to the block grid, and takes the cell at that texel's
+/// middle, so every pixel of the coarse texel keys the same cache entry.
+/// Along the normal it keeps the face's own cell.
+fn coarse_cell(local: vec3<f32>, n: vec3<f32>, res: f32) -> vec3<f32> {
+    let fine = floor(local * 16.0 - n * 0.5);
+    let k = 16.0 / res;
+    let coarse = floor(local * res) * k + floor(k * 0.5);
+    let along = abs(n);
+    return fine * along + coarse * (vec3<f32>(1.0) - along);
 }
 
 fn ign(p: vec2<f32>) -> f32 {
