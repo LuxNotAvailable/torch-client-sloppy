@@ -68,8 +68,8 @@ fn fragment(v: Varyings) -> Gbuffer {
     let local = v.player + frame.cameraPositionFract;
     // The ring by the block's distance, not the pixel's, so a whole face
     // changes resolution at once.
-    let block = floor(local - n * (0.5 / 16.0)) + 0.5 - frame.cameraPositionFract;
-    let cell = coarse_cell(local, n, texel_res(length(block)));
+    let fine = floor(local * 16.0 - n * 0.5);
+    let cell = coarse_cell(local, n, cell_res(fine));
     let centre = texel_centre(cell, n) - frame.cameraPositionFract;
 
     // Step from this pixel to the texel's middle along the surface, as a

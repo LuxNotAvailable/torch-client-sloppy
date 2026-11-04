@@ -22,6 +22,45 @@ const SHADOW_TAPS: array<vec2<f32>, 8> = array<vec2<f32>, 8>(
     vec2<f32>(0.185, -0.893),
 );
 
+/// Two directions across a face with normal `n` (axis-aligned).
+fn face_tangents(n: vec3<f32>) -> array<vec3<f32>, 2> {
+    let a = abs(n);
+    if (a.x > 0.5) {
+        return array<vec3<f32>, 2>(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(0.0, 0.0, 1.0));
+    }
+    if (a.y > 0.5) {
+        return array<vec3<f32>, 2>(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 0.0, 1.0));
+    }
+    return array<vec3<f32>, 2>(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0));
+}
+
+/// The direct light reaching a texel shaded at `res` texels per block, from
+/// `taps` comparisons. A full-detail texel is looked up at its middle, as
+/// always. A coarser one spreads the same comparisons over its area (four
+/// points at a quarter of its width from the middle, or two on a diagonal
+/// for two taps), so its shade is the share of the texel in light. A single
+/// point there falls in or out of a gap in the leaves above as the shadow
+/// map moves, and the whole texel flickers with it.
+fn texel_visibility(centre: vec3<f32>, n: vec3<f32>, res: f32, taps: u32) -> f32 {
+    if (res >= 16.0) {
+        return shadow_visibility(centre, n, taps);
+    }
+    let t = face_tangents(n);
+    let r = 0.25 / res;
+    if (taps < 4u) {
+        let a = shadow_visibility(centre + (t[0] + t[1]) * r, n, 1u);
+        let b = shadow_visibility(centre - (t[0] + t[1]) * r, n, 1u);
+        return (a + b) * 0.5;
+    }
+    let each = max(taps / 4u, 1u);
+    var lit = 0.0;
+    lit += shadow_visibility(centre + (t[0] + t[1]) * r, n, each);
+    lit += shadow_visibility(centre + (t[0] - t[1]) * r, n, each);
+    lit += shadow_visibility(centre - (t[0] - t[1]) * r, n, each);
+    lit += shadow_visibility(centre - (t[0] + t[1]) * r, n, each);
+    return lit * 0.25;
+}
+
 /// One hardware-filtered lookup at a point already in the shadow map's clip
 /// space (before the warp); 1 outside the map.
 fn shadow_at(clip: vec3<f32>) -> f32 {

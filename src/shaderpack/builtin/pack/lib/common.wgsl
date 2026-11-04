@@ -117,6 +117,14 @@ fn texel_res(distance: f32) -> f32 {
     return max(16.0 / exp2(min(level, 4.0)), f32(TEXEL_MIN_RES));
 }
 
+/// The texels per block a 16-per-block `cell` shades at: the ring of its
+/// block. The terrain pass picks the ring this way and the passes that light
+/// the cell find it again from the cell alone.
+fn cell_res(cell: vec3<f32>) -> f32 {
+    let block = floor(cell / 16.0) + 0.5 - frame.cameraPositionFract;
+    return texel_res(length(block));
+}
+
 /// The 16-per-block cell a surface point shades as, at `res` texels per
 /// block: across the face the point falls into a texel `16 / res` cells
 /// wide, aligned to the block grid, and takes the cell at that texel's

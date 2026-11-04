@@ -18,7 +18,8 @@ fn compute(@builtin(global_invocation_id) id: vec3<u32>) {
     let slot = cache.work[id.x];
     let key = atomicLoad(&cache.keys[slot]);
     let n = face_normal(cache_face(key));
-    let centre = texel_centre(cache_cell(key), n) - frame.cameraPositionFract;
-    let vis = shadow_visibility(centre, n, 8u);
+    let cell = cache_cell(key);
+    let centre = texel_centre(cell, n) - frame.cameraPositionFract;
+    let vis = texel_visibility(centre, n, cell_res(cell), 8u);
     cache.values[slot] = u32(clamp(vis, 0.0, 1.0) * 65535.0 + 0.5);
 }

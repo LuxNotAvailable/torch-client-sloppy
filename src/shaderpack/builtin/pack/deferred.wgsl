@@ -76,7 +76,7 @@ fn fragment(v: Varyings) -> @location(0) vec4<f32> {
 
 #ifdef MC_OS_ANDROID
     let centre = texel_centre(texel.xyz, n) - frame.cameraPositionFract;
-    let vis = shadow_visibility(centre, n, 8u);
+    let vis = texel_visibility(centre, n, cell_res(texel.xyz), 8u);
 #else
     var vis = -1.0;
     let key = cache_key(texel.xyz, f32(surface.face));
@@ -85,7 +85,7 @@ fn fragment(v: Varyings) -> @location(0) vec4<f32> {
     }
     if (vis < 0.0) {
         let centre = texel_centre(texel.xyz, n) - frame.cameraPositionFract;
-        vis = shadow_visibility(centre, n, 2u);
+        vis = texel_visibility(centre, n, cell_res(texel.xyz), 2u);
     }
 #endif
 
