@@ -189,6 +189,12 @@ const ALL: &[Var] = &[
         enabled: true,
     },
     Var {
+        name: "MC_VK_VALIDATION",
+        what: "turn on the Khronos validation layer in the Vulkan renderer's release builds, when set to 1",
+        default: "on in debug builds only",
+        enabled: cfg!(feature = "vulkan"),
+    },
+    Var {
         name: "MC_NO_HIZ",
         what: "turn off terrain occlusion culling against last frame's depth, when set to 1",
         default: "on",
