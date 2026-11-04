@@ -189,6 +189,18 @@ const ALL: &[Var] = &[
         enabled: true,
     },
     Var {
+        name: "MC_PERF_AUTOSTART",
+        what: "start a performance report this many seconds after entering a world, for unattended runs (perf_report builds)",
+        default: "off",
+        enabled: cfg!(feature = "perf_report"),
+    },
+    Var {
+        name: "MC_PERF_EXIT",
+        what: "quit once a performance report is written, when set to 1 (perf_report builds)",
+        default: "off",
+        enabled: cfg!(feature = "perf_report"),
+    },
+    Var {
         name: "MC_SHADERPACK_PASSES",
         what: "run only this many of a shader pack's full-screen passes (deferred, composite, final, in order) and show colortex0 as it stands, to find which pass misbehaves",
         default: "every pass",
