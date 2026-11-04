@@ -97,8 +97,9 @@ fn compile_slang() {
             .args(["-target", "spirv", "-profile", "spirv_1_5"])
             .args(["-fvk-use-entrypoint-name", "-matrix-layout-column-major"])
             // Slang widens the profile for texture types; only the capabilities
-            // a shader uses reach the module.
-            .args(["-warnings-disable", "41012"])
+            // a shader uses reach the module (41012). The read-only view of
+            // the bindless buffers shares their binding on purpose (39001).
+            .args(["-warnings-disable", "41012,39001"])
             .arg("-I")
             .arg(&dir)
             .arg("-o")

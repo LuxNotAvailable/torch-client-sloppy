@@ -815,3 +815,46 @@ fn every_blockstate_file_parses() {
     assert!(total > 1000);
     assert!(multipart > 50, "the multipart path has to be exercised");
 }
+
+#[test]
+fn a_modded_block_is_a_tinted_missing_texture_cube() {
+    use crate::renderer::{BlockGeom, TintKind};
+    use crate::util::block_model::{block_visual, modded_tint};
+    use azalea::block::BlockState;
+
+    atlas_once();
+    let a = block_visual(BlockState::from_network(BlockState::MAX_STATE as u32 + 40));
+    let b = block_visual(BlockState::from_network(BlockState::MAX_STATE as u32 + 41));
+    let BlockGeom::Model(cube) = &a.geom else {
+        panic!("a modded block is a model");
+    };
+    assert!(a.is_solid && a.full_cube);
+    assert_eq!(cube.parts[0].choices[0].quads.len(), 6);
+    assert!(cube.parts[0].choices[0].quads.iter().all(|q| q.tint >= 0));
+    let (TintKind::Modded(x), TintKind::Modded(y)) = (a.tint_kind, b.tint_kind) else {
+        panic!("modded blocks tint by id");
+    };
+    assert_ne!(modded_tint(x), modded_tint(y));
+}
+
+#[test]
+fn translucent_blocks_mesh_into_the_translucent_layer() {
+    use crate::renderer::{Occupancy, build_section_mesh};
+    use crate::util::block_model::block_visual;
+    use azalea::block::BlockState;
+    use azalea::registry::builtin::BlockKind;
+
+    atlas_once();
+    for kind in [
+        BlockKind::RedStainedGlass,
+        BlockKind::SlimeBlock,
+        BlockKind::Ice,
+    ] {
+        let block = block_visual(BlockState::from(kind));
+        let occ = Occupancy::new(0, 0, -1, 18);
+        let blocks = vec![(0, 0, 0, &block)];
+        let (opaque, translucent) = build_section_mesh(&blocks, 0, 0, 0, 16, &occ);
+        assert!(opaque.is_empty(), "{kind:?} left quads in the opaque layer");
+        assert!(!translucent.is_empty(), "{kind:?} drew nothing translucent");
+    }
+}

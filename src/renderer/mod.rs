@@ -1,6 +1,6 @@
 pub mod anim;
 pub mod antialias;
-mod atlas;
+pub(crate) mod atlas;
 mod block_anim;
 pub mod clouds;
 pub mod dimension;
@@ -119,6 +119,8 @@ pub enum TintKind {
     DryFoliage,
     Redstone(u8),
     Water,
+    /// A modded block, coloured by its raw state id so blocks tell apart.
+    Modded(u32),
 }
 
 #[derive(Clone)]
@@ -133,7 +135,6 @@ pub struct RenderedBlock {
     pub tint_kind: TintKind,
     pub offset: crate::blocks::rand::ShapeOffset,
     pub state: u16,
-    #[cfg(feature = "shader_support")]
     pub translucent: bool,
 }
 

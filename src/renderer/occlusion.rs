@@ -367,6 +367,32 @@ fn poll_fill(task: &mut Option<FillTask>) -> Option<FillResult> {
     }
 }
 
+/// The cave-visibility flood fill on its own, for the Vulkan renderer
+/// (VULKAN_REWRITE_CHECKLIST.md 3.2): the sections (chunk x, block y of the
+/// section, chunk z) reachable from `here` within `radius` columns, given
+/// each section's visibility set.
+#[cfg(feature = "vulkan")]
+pub fn flood_fill<F>(
+    here: (i32, i32, i32),
+    radius: i32,
+    y_lo: i32,
+    y_hi: i32,
+    vis_at: F,
+) -> Vec<(i32, i32, i32)>
+where
+    F: Fn((i32, i32, i32)) -> VisibilitySet,
+{
+    let mut grid = Grid::default();
+    grid.fill(here, radius, y_lo, y_hi, vis_at);
+    grid.list
+}
+
+/// The block y of the section holding block height `y`.
+#[cfg(feature = "vulkan")]
+pub fn section_y(y: f32) -> i32 {
+    section_of(y)
+}
+
 fn section_of(y: f32) -> i32 {
     (y / 16.0).floor() as i32 * 16
 }

@@ -18,6 +18,9 @@ pub struct DeviceInfo {
     pub driver: String,
     pub vendor_id: u32,
     pub subgroup_size: u32,
+    /// Whether pipeline statistics queries are on (optional; the viewer
+    /// counts vertex invocations with them).
+    pub pipeline_statistics: bool,
 }
 
 pub struct Context {
@@ -113,6 +116,9 @@ impl Context {
             .queue_family_index(queue_family)
             .queue_priorities(&priorities)];
         let mut features = Features::required();
+        features.core = features
+            .core
+            .pipeline_statistics_query(info.pipeline_statistics);
         let extension_names: Vec<*const i8> =
             device_extensions().iter().map(|e| e.as_ptr()).collect();
         let mut features2 = vk::PhysicalDeviceFeatures2::default()
@@ -269,6 +275,10 @@ fn device_info(instance: &ash::Instance, device: vk::PhysicalDevice) -> DeviceIn
         ),
         vendor_id: properties.vendor_id,
         subgroup_size: subgroup.subgroup_size,
+        // SAFETY: a plain query on a device the instance enumerated.
+        pipeline_statistics: unsafe { instance.get_physical_device_features(device) }
+            .pipeline_statistics_query
+            == vk::TRUE,
     }
 }
 

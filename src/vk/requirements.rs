@@ -33,7 +33,9 @@ impl Features {
                 .independent_blend(true)
                 // Vertex shaders read the bindless storage buffers, which
                 // are declared writable for compute.
-                .vertex_pipeline_stores_and_atomics(true),
+                .vertex_pipeline_stores_and_atomics(true)
+                // And so do fragment shaders (the debug views).
+                .fragment_stores_and_atomics(true),
             v11: vk::PhysicalDeviceVulkan11Features::default().shader_draw_parameters(true),
             v12: vk::PhysicalDeviceVulkan12Features::default()
                 .descriptor_indexing(true)

@@ -101,10 +101,11 @@ impl Use {
 /// waits for all of it, which covers hazards across frames in flight (a
 /// buffer the previous frame still reads, written again by this one).
 const FROM_EARLIER_FRAMES: State = State {
-    stage: vk::PipelineStageFlags2::ALL_COMMANDS,
-    access: vk::AccessFlags2::MEMORY_WRITE,
+    readers: vk::PipelineStageFlags2::NONE,
+    write_stage: vk::PipelineStageFlags2::ALL_COMMANDS,
+    write_access: vk::AccessFlags2::MEMORY_WRITE,
+    seen: vk::PipelineStageFlags2::NONE,
     layout: vk::ImageLayout::UNDEFINED,
-    written: true,
 };
 
 #[allow(non_snake_case, reason = "the image form of FROM_EARLIER_FRAMES")]
@@ -117,12 +118,57 @@ const fn FROM_EARLIER_FRAMES_IMAGE(layout: vk::ImageLayout) -> State {
 
 #[derive(Clone, Copy)]
 struct State {
-    stage: vk::PipelineStageFlags2,
-    access: vk::AccessFlags2,
+    /// Stages that read since the last write, which a write must wait for.
+    readers: vk::PipelineStageFlags2,
+    /// The last write (or layout change), which reads must wait for.
+    write_stage: vk::PipelineStageFlags2,
+    write_access: vk::AccessFlags2,
+    /// The stages the last write has been made visible to: a read in any
+    /// other stage needs its own barrier, even after other reads.
+    seen: vk::PipelineStageFlags2,
     layout: vk::ImageLayout,
-    /// Whether the last use wrote, so a following read must wait for it.
-    written: bool,
 }
+
+impl State {
+    /// The barrier's source scope, and the state after, for `usage` in
+    /// `layout`; `None` when no barrier is needed.
+    fn next(
+        &mut self,
+        usage: Use,
+        layout: vk::ImageLayout,
+    ) -> Option<(vk::PipelineStageFlags2, vk::AccessFlags2)> {
+        let stage = usage.stage();
+        if usage.writes() || layout != self.layout {
+            let src = (self.readers | self.write_stage, self.write_access);
+            *self = State {
+                readers: vk::PipelineStageFlags2::NONE,
+                write_stage: stage,
+                write_access: if usage.writes() {
+                    usage.access() & WRITE_ACCESS
+                } else {
+                    vk::AccessFlags2::NONE
+                },
+                seen: stage,
+                layout,
+            };
+            return Some(src);
+        }
+        self.readers |= stage;
+        if self.seen.contains(stage) || self.write_stage == vk::PipelineStageFlags2::NONE {
+            return None;
+        }
+        self.seen |= stage;
+        Some((self.write_stage, self.write_access))
+    }
+}
+
+/// The write accesses, so a write's state keeps only those to flush.
+const WRITE_ACCESS: vk::AccessFlags2 = vk::AccessFlags2::from_raw(
+    vk::AccessFlags2::COLOR_ATTACHMENT_WRITE.as_raw()
+        | vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE.as_raw()
+        | vk::AccessFlags2::SHADER_STORAGE_WRITE.as_raw()
+        | vk::AccessFlags2::TRANSFER_WRITE.as_raw(),
+);
 
 struct ImageEntry {
     aspect: vk::ImageAspectFlags,
@@ -190,72 +236,35 @@ impl<'a> Graph<'a> {
             };
             let depth = entry.aspect.contains(vk::ImageAspectFlags::DEPTH);
             let layout = usage.layout(depth);
-            let before = entry.state;
-            let needs = before.written || usage.writes() || before.layout != layout;
-            if needs {
+            let old_layout = entry.state.layout;
+            if let Some((stage, access)) = entry.state.next(usage, layout) {
                 image_barriers.push(
                     vk::ImageMemoryBarrier2::default()
-                        .src_stage_mask(before.stage)
-                        .src_access_mask(if before.written {
-                            before.access
-                        } else {
-                            vk::AccessFlags2::NONE
-                        })
+                        .src_stage_mask(stage)
+                        .src_access_mask(access)
                         .dst_stage_mask(usage.stage())
                         .dst_access_mask(usage.access())
-                        .old_layout(before.layout)
+                        .old_layout(old_layout)
                         .new_layout(layout)
                         .image(image)
                         .subresource_range(super::memory::range(entry.aspect)),
                 );
-                entry.state = State {
-                    stage: usage.stage(),
-                    access: usage.access(),
-                    layout,
-                    written: usage.writes(),
-                };
-            } else {
-                // A read after a read in the same layout: no barrier, but a
-                // later write must wait for both readers.
-                entry.state.stage |= usage.stage();
-                entry.state.access |= usage.access();
             }
         }
         let mut buffer_barriers = Vec::new();
         for &(buffer, usage) in buffers {
-            let before = self
-                .buffers
-                .get(&buffer)
-                .copied()
-                .unwrap_or(FROM_EARLIER_FRAMES);
-            if before.written || usage.writes() {
+            let state = self.buffers.entry(buffer).or_insert(FROM_EARLIER_FRAMES);
+            if let Some((stage, access)) = state.next(usage, vk::ImageLayout::UNDEFINED) {
                 buffer_barriers.push(
                     vk::BufferMemoryBarrier2::default()
-                        .src_stage_mask(before.stage)
-                        .src_access_mask(if before.written {
-                            before.access
-                        } else {
-                            vk::AccessFlags2::NONE
-                        })
+                        .src_stage_mask(stage)
+                        .src_access_mask(access)
                         .dst_stage_mask(usage.stage())
                         .dst_access_mask(usage.access())
                         .buffer(buffer)
                         .offset(0)
                         .size(vk::WHOLE_SIZE),
                 );
-                self.buffers.insert(
-                    buffer,
-                    State {
-                        stage: usage.stage(),
-                        access: usage.access(),
-                        layout: vk::ImageLayout::UNDEFINED,
-                        written: usage.writes(),
-                    },
-                );
-            } else {
-                let state = self.buffers.entry(buffer).or_insert(before);
-                state.stage |= usage.stage();
-                state.access |= usage.access();
             }
         }
         if !image_barriers.is_empty() || !buffer_barriers.is_empty() {
@@ -281,5 +290,30 @@ impl<'a> Graph<'a> {
 
     pub fn commands(&self) -> vk::CommandBuffer {
         self.commands
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_read_in_a_new_stage_waits_for_the_write_even_after_another_read() {
+        let mut state = FROM_EARLIER_FRAMES;
+        let none = vk::ImageLayout::UNDEFINED;
+        assert!(state.next(Use::ComputeWrite, none).is_some());
+        let (stage, access) = state.next(Use::TransferSrc, none).unwrap();
+        assert_eq!(stage, vk::PipelineStageFlags2::COMPUTE_SHADER);
+        assert_eq!(access, vk::AccessFlags2::SHADER_STORAGE_WRITE);
+        // The indirect read needs the compute write made visible too.
+        let (stage, _) = state.next(Use::IndirectRead, none).unwrap();
+        assert_eq!(stage, vk::PipelineStageFlags2::COMPUTE_SHADER);
+        // A second read in a stage already covered needs nothing.
+        assert!(state.next(Use::IndirectRead, none).is_none());
+        // A write waits for both readers.
+        let (stage, _) = state.next(Use::TransferDst, none).unwrap();
+        assert!(stage.contains(
+            vk::PipelineStageFlags2::ALL_TRANSFER | vk::PipelineStageFlags2::DRAW_INDIRECT
+        ));
     }
 }

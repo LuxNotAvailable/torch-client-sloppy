@@ -173,7 +173,7 @@ impl ChunkIndex {
     ) {
         let origin = [cx * 16, sec_y, cz * 16];
         #[cfg(feature = "vulkan")]
-        crate::vk::terrain_dump::section(origin, &meshes);
+        crate::vk::terrain_dump::section(origin, vis, &meshes);
         crate::blockentities::transient::section_rebuilt(origin);
         crate::blockentities::bake::section_rebuilt(origin);
         let Self {

@@ -1,6 +1,7 @@
-//! The depth debug view every scene shares (`vkview --view depth`,
-//! `shaders/debug_view.slang`): the depth buffer drawn over the frame as
-//! distance fog, so depth passes can be checked by eye.
+//! The depth debug views every scene shares (`vkview --view depth|hiz`,
+//! `shaders/debug_view.slang`): the depth buffer, or a level of the
+//! terrain's occlusion pyramid, drawn over the frame as distance fog, so
+//! depth passes can be checked by eye.
 
 use ash::vk;
 
@@ -12,7 +13,8 @@ use super::{Context, SetupError};
 
 pub struct DepthView {
     module: vk::ShaderModule,
-    pipeline: vk::Pipeline,
+    depth: vk::Pipeline,
+    hiz: vk::Pipeline,
 }
 
 impl DepthView {
@@ -22,22 +24,28 @@ impl DepthView {
         color_format: vk::Format,
     ) -> Result<DepthView, SetupError> {
         let module = pipelines.module(ctx, super::shaders::DEBUG_VIEW)?;
-        let pipeline = pipelines.graphics(
-            ctx,
-            &GraphicsDesc {
-                module,
-                vertex: c"fullscreen_vertex",
-                fragment: c"depth_fragment",
-                color: &[color_format],
-                depth: None,
-                depth_test: None,
-                depth_write: false,
-                cull: vk::CullModeFlags::NONE,
-                topology: vk::PrimitiveTopology::TRIANGLE_LIST,
-                blend: false,
-            },
-        )?;
-        Ok(DepthView { module, pipeline })
+        let pipeline = |fragment| {
+            pipelines.graphics(
+                ctx,
+                &GraphicsDesc {
+                    module,
+                    vertex: c"fullscreen_vertex",
+                    fragment,
+                    color: &[color_format],
+                    depth: None,
+                    depth_test: None,
+                    depth_write: false,
+                    cull: vk::CullModeFlags::NONE,
+                    topology: vk::PrimitiveTopology::TRIANGLE_LIST,
+                    blend: false,
+                },
+            )
+        };
+        Ok(DepthView {
+            module,
+            depth: pipeline(c"depth_fragment")?,
+            hiz: pipeline(c"hiz_fragment")?,
+        })
     }
 
     /// Draws `depth` (its image and bindless index, registered in its
@@ -56,63 +64,114 @@ impl DepthView {
         near: f32,
         fog: f32,
     ) {
-        let device = &ctx.device;
-        graph.pass(
-            "depth view",
-            &[
-                (depth.0, Use::SampledFragment),
-                (color.0, Use::ColorAttachment),
-            ],
+        let push = Push {
+            ids: [0; 4],
+            more: [depth.1, 0, 0, 0],
+            params: [near, fog, 0.0, 0.0],
+            view_proj: [[0.0; 4]; 4],
+        };
+        let images = [
+            (depth.0, Use::SampledFragment),
+            (color.0, Use::ColorAttachment),
+        ];
+        self.draw(
+            ctx,
+            bindless,
+            pipelines,
+            graph,
+            self.depth,
+            &images,
             &[],
-            |cmd| unsafe {
-                // SAFETY: the graph moved the depth image to its read-only
-                // layout and the colour image to an attachment.
-                let colors = [vk::RenderingAttachmentInfo::default()
-                    .image_view(color.1)
-                    .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                    .load_op(vk::AttachmentLoadOp::DONT_CARE)
-                    .store_op(vk::AttachmentStoreOp::STORE)];
-                device.cmd_begin_rendering(
-                    cmd,
-                    &vk::RenderingInfo::default()
-                        .render_area(vk::Rect2D {
-                            offset: vk::Offset2D::default(),
-                            extent,
-                        })
-                        .layer_count(1)
-                        .color_attachments(&colors),
-                );
-                set_viewport(ctx, cmd, extent);
-                device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
-                device.cmd_bind_descriptor_sets(
-                    cmd,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    pipelines.layout,
-                    0,
-                    &[bindless.set],
-                    &[],
-                );
-                push(
-                    ctx,
-                    cmd,
-                    pipelines.layout,
-                    &Push {
-                        ids: [0; 4],
-                        more: [depth.1, 0, 0, 0],
-                        params: [near, fog, 0.0, 0.0],
-                        view_proj: [[0.0; 4]; 4],
-                    },
-                );
-                device.cmd_draw(cmd, 3, 1, 0, 0);
-                device.cmd_end_rendering(cmd);
-            },
+            color,
+            extent,
+            &push,
         );
+    }
+
+    /// Draws level `level` of an occlusion pyramid (its buffer and bindless
+    /// index; `size0` the depth's size it was built from) over `color`.
+    #[allow(clippy::too_many_arguments, reason = "one pass's whole context")]
+    pub fn record_pyramid(
+        &self,
+        ctx: &Context,
+        bindless: &Bindless,
+        pipelines: &Pipelines,
+        graph: &mut Graph,
+        pyramid: (vk::Buffer, u32),
+        size0: (u32, u32),
+        level: u32,
+        color: (vk::Image, vk::ImageView),
+        extent: vk::Extent2D,
+        near: f32,
+        fog: f32,
+    ) {
+        let push = Push {
+            ids: [0; 4],
+            more: [pyramid.1, size0.0, size0.1, level],
+            params: [near, fog, 0.0, 0.0],
+            view_proj: [[0.0; 4]; 4],
+        };
+        let images = [(color.0, Use::ColorAttachment)];
+        let buffers = [(pyramid.0, Use::SampledFragment)];
+        self.draw(
+            ctx, bindless, pipelines, graph, self.hiz, &images, &buffers, color, extent, &push,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments, reason = "one pass's whole context")]
+    fn draw(
+        &self,
+        ctx: &Context,
+        bindless: &Bindless,
+        pipelines: &Pipelines,
+        graph: &mut Graph,
+        pipeline: vk::Pipeline,
+        images: &[(vk::Image, Use)],
+        buffers: &[(vk::Buffer, Use)],
+        color: (vk::Image, vk::ImageView),
+        extent: vk::Extent2D,
+        values: &Push,
+    ) {
+        let device = &ctx.device;
+        graph.pass("debug view", images, buffers, |cmd| unsafe {
+            // SAFETY: the graph moved the images to the layouts their uses
+            // name, the colour image to an attachment.
+            let colors = [vk::RenderingAttachmentInfo::default()
+                .image_view(color.1)
+                .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                .load_op(vk::AttachmentLoadOp::DONT_CARE)
+                .store_op(vk::AttachmentStoreOp::STORE)];
+            device.cmd_begin_rendering(
+                cmd,
+                &vk::RenderingInfo::default()
+                    .render_area(vk::Rect2D {
+                        offset: vk::Offset2D::default(),
+                        extent,
+                    })
+                    .layer_count(1)
+                    .color_attachments(&colors),
+            );
+            set_viewport(ctx, cmd, extent);
+            device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
+            device.cmd_bind_descriptor_sets(
+                cmd,
+                vk::PipelineBindPoint::GRAPHICS,
+                pipelines.layout,
+                0,
+                &[bindless.set],
+                &[],
+            );
+            push(ctx, cmd, pipelines.layout, values);
+            device.cmd_draw(cmd, 3, 1, 0, 0);
+            device.cmd_end_rendering(cmd);
+        });
     }
 
     pub fn destroy(self, ctx: &Context) {
         // SAFETY: the caller idles the device first.
         unsafe {
-            ctx.device.destroy_pipeline(self.pipeline, None);
+            ctx.device.destroy_pipeline(self.depth, None);
+            ctx.device.destroy_pipeline(self.hiz, None);
             ctx.device.destroy_shader_module(self.module, None);
         }
     }

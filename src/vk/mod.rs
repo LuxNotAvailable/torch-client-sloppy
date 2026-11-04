@@ -10,6 +10,7 @@ pub mod context;
 pub mod depth_view;
 pub mod frame;
 pub mod graph;
+pub mod greedy;
 pub mod memory;
 pub mod pipeline;
 pub mod requirements;

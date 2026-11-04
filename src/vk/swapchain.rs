@@ -66,7 +66,9 @@ impl Swapchain {
         let present_mode = if vsync {
             vk::PresentModeKHR::FIFO
         } else {
-            [vk::PresentModeKHR::MAILBOX, vk::PresentModeKHR::IMMEDIATE]
+            // Immediate first, as wgpu's no-vsync mode: mailbox on Windows
+            // laptops (Optimus, composited) is held to the display's rate.
+            [vk::PresentModeKHR::IMMEDIATE, vk::PresentModeKHR::MAILBOX]
                 .into_iter()
                 .find(|m| modes.contains(m))
                 .unwrap_or(vk::PresentModeKHR::FIFO)

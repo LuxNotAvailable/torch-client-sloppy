@@ -457,16 +457,9 @@ pub fn build_section_mesh(
 
         match &rb.geom {
             BlockGeom::Model(baked) => {
-                #[cfg(feature = "shader_support")]
-                let target = if (pack_ids.is_some() && rb.translucent) || is_portal(rb.state) {
-                    &mut water
-                } else {
-                    &mut buf
-                };
-                // The portal is see-through without a pack too (vanilla's
-                // translucent layer).
-                #[cfg(not(feature = "shader_support"))]
-                let target = if is_portal(rb.state) {
+                // Vanilla's translucent layer (glass, ice, slime, honey, the
+                // portal) blends with the water, pack or not.
+                let target = if rb.translucent || is_portal(rb.state) {
                     &mut water
                 } else {
                     &mut buf
@@ -570,6 +563,7 @@ fn emit_baked(
         }
         super::TintKind::Redstone(power) => crate::util::biome_color::redstone_ratio(power),
         super::TintKind::Water => crate::util::biome_color::water_ratio(occ.biome(bx, by, bz)),
+        super::TintKind::Modded(id) => crate::util::block_model::modded_tint(id),
     };
     #[cfg(feature = "shader_support")]
     if let Some(block) = buf.pack_block.as_mut() {
@@ -581,6 +575,7 @@ fn emit_baked(
             super::TintKind::DryFoliage => bc::pack_dry_foliage(occ.biome(bx, by, bz)),
             super::TintKind::Redstone(power) => bc::redstone_ratio(power),
             super::TintKind::Water => bc::pack_water(occ.biome(bx, by, bz)),
+            super::TintKind::Modded(id) => crate::util::block_model::modded_tint(id),
         };
     }
 

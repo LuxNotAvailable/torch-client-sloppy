@@ -4,12 +4,17 @@
 //!
 //! `vkview [--frames N] [--device NAME] [--vsync] [--size WxH] [--stress]
 //!         [--view shaded|normals|texture|depth] [--screenshot FILE.png]
-//!         [--terrain DIR [--camera X,Y,Z,YAW,PITCH]]`
+//!         [--terrain DIR [--camera X,Y,Z,YAW,PITCH] [--no-hiz] [--no-vis]
+//!          [--no-buckets] [--budget MB] [--hiz-level N] [--greedy]]`
 //!
 //! The scene is the test scene, or with `--terrain` a terrain dump the game
 //! wrote (`MC_DUMP_TERRAIN=DIR`), seen from `--camera` or, without one,
 //! from above, turning. In the terrain, `--view texture` colours each
-//! section apart.
+//! section apart and `--view hiz` shows a level of the occlusion pyramid;
+//! the `--no-*` flags turn a culling stage off, for comparing. The dump
+//! streams in under the upload budget, and `--frames` starts counting once
+//! it has. `--greedy` only measures how many of the dump's quads greedy
+//! meshing would merge (3.9), and exits.
 //!
 //! With `--frames`, it draws that many frames, prints a summary (device,
 //! frame times, GPU time per pass, barriers, memory, validation-layer errors
@@ -26,7 +31,7 @@ use torch_client::vk::bindless::Bindless;
 use torch_client::vk::graph::{Graph, Use};
 use torch_client::vk::memory::{Buffer, Memory};
 use torch_client::vk::pipeline::Pipelines;
-use torch_client::vk::terrain::{Camera, TerrainScene};
+use torch_client::vk::terrain::{self, Camera, TerrainScene};
 use torch_client::vk::test_scene::{TestScene, View};
 use torch_client::vk::timestamps::Timestamps;
 use torch_client::vk::upload::Uploads;
@@ -47,6 +52,8 @@ struct Options {
     screenshot: Option<String>,
     terrain: Option<std::path::PathBuf>,
     camera: Option<Camera>,
+    terrain_options: terrain::Options,
+    greedy: bool,
 }
 
 fn options() -> Options {
@@ -60,6 +67,8 @@ fn options() -> Options {
         screenshot: None,
         terrain: None,
         camera: None,
+        terrain_options: terrain::Options::default(),
+        greedy: false,
     };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -70,6 +79,20 @@ fn options() -> Options {
             "--stress" => options.stress = true,
             "--screenshot" => options.screenshot = args.next(),
             "--terrain" => options.terrain = args.next().map(Into::into),
+            "--greedy" => options.greedy = true,
+            "--no-hiz" => options.terrain_options.hiz = false,
+            "--no-vis" => options.terrain_options.visibility = false,
+            "--no-buckets" => options.terrain_options.buckets = false,
+            "--budget" => {
+                if let Some(mb) = args.next().and_then(|v| v.parse::<f64>().ok()) {
+                    options.terrain_options.budget = (mb * 1048576.0) as u64;
+                }
+            }
+            "--hiz-level" => {
+                if let Some(level) = args.next().and_then(|v| v.parse().ok()) {
+                    options.terrain_options.hiz_level = level;
+                }
+            }
             "--camera" => {
                 let text = args.next().unwrap_or_default();
                 options.camera = Camera::parse(&text);
@@ -152,6 +175,9 @@ impl Renderer {
         );
         let size = window.inner_size();
         let swapchain = Swapchain::new(&ctx, (size.width, size.height), options.vsync, None)?;
+        if let Some(s) = &swapchain {
+            println!("vkview: present mode {:?}", s.present_mode);
+        }
         let frames = Frames::new(&ctx)?;
         let memory = Memory::new(&ctx)?;
         let mut bindless = Bindless::new(&ctx)?;
@@ -159,26 +185,24 @@ impl Renderer {
         let cache_had = cache_path.exists();
         let compile = Instant::now();
         let pipelines = Pipelines::new(&ctx, bindless.layout, Some(cache_path))?;
-        let uploads = Uploads::new(&ctx, &memory, 8 << 20)?;
+        let uploads = Uploads::new(&ctx, &memory, 16 << 20)?;
         let timestamps = Timestamps::new(&ctx)?;
         let format = swapchain
             .as_ref()
             .map_or(v::Format::B8G8R8A8_SRGB, |s| s.format.format);
         let scene = match &options.terrain {
-            Some(dir) => {
-                let load = Instant::now();
-                let terrain =
-                    TerrainScene::new(&ctx, &memory, &mut bindless, &pipelines, format, dir)?;
-                let stats = &terrain.stats;
-                println!(
-                    "vkview: terrain {} sections, {} vertices, {} indices, loaded in {:.1} s",
-                    stats.sections,
-                    stats.vertices,
-                    stats.indices,
-                    load.elapsed().as_secs_f32()
-                );
-                Scene::Terrain(terrain, options.camera)
-            }
+            Some(dir) => Scene::Terrain(
+                TerrainScene::new(
+                    &ctx,
+                    &memory,
+                    &mut bindless,
+                    &pipelines,
+                    format,
+                    dir,
+                    options.terrain_options,
+                )?,
+                options.camera,
+            ),
             None => Scene::Test(TestScene::new(
                 &ctx,
                 &memory,
@@ -298,10 +322,12 @@ impl Renderer {
                     memory,
                     bindless,
                     pipelines,
+                    uploads,
                     &mut graph,
                     (image, image_view),
                     extent,
                     self.frame,
+                    slot,
                     camera,
                     view,
                 )
@@ -405,7 +431,39 @@ impl Renderer {
         }
     }
 
+    /// Whether the scene is ready to be measured: the terrain has streamed
+    /// in.
+    fn ready(&self) -> bool {
+        match &self.scene {
+            Some(Scene::Terrain(scene, _)) => scene.loaded(),
+            _ => true,
+        }
+    }
+
     fn summary(&self) {
+        if let Some(Scene::Terrain(scene, _)) = &self.scene {
+            let s = &scene.stats;
+            println!(
+                "vkview: terrain {} section layers in {} pools, {} vertices, {} indices; {} records, {:.1} MiB uploaded",
+                s.sections,
+                s.pools,
+                s.vertices,
+                s.indices,
+                s.records,
+                s.uploaded as f32 / 1048576.0
+            );
+            println!(
+                "vkview: terrain draws {} solid, {} cutout commands, {} translucent; flood fill reached {} layers; Hi-Z on {} frames",
+                s.commands[0], s.commands[1], s.commands[2], s.reached, s.hiz_frames
+            );
+            println!(
+                "vkview: terrain buffers grew: translucent indices {} times, slots {} times",
+                s.grown[0], s.grown[1]
+            );
+            if let (Some(v), Some(p)) = (s.vertex_invocations, s.primitives) {
+                println!("vkview: terrain {v} vertex invocations, {p} primitives clipped");
+            }
+        }
         if let Some(t) = &self.timestamps {
             let passes: Vec<String> = t
                 .last
@@ -469,6 +527,7 @@ struct App {
     failed: Option<String>,
     begun: Option<Instant>,
     stress_done: usize,
+    loaded_at: Option<f32>,
 }
 
 impl ApplicationHandler for App {
@@ -511,7 +570,16 @@ impl ApplicationHandler for App {
                 let Some(r) = &mut self.renderer else { return };
                 let last_frame = self.options.frames.is_some_and(|n| self.drawn + 1 >= n);
                 let capture = last_frame && self.options.screenshot.is_some();
-                if r.draw(self.options.vsync, self.options.view, capture) {
+                let ready = r.ready();
+                if r.draw(self.options.vsync, self.options.view, capture && ready) {
+                    if !ready {
+                        return;
+                    }
+                    if self.loaded_at.is_none() {
+                        let at = r.started.elapsed().as_secs_f32();
+                        self.loaded_at = Some(at);
+                        println!("vkview: scene ready after {at:.1} s");
+                    }
                     let now = Instant::now();
                     if let Some(last) = self.last {
                         self.frame_ms.push((now - last).as_secs_f32() * 1000.0);
@@ -565,6 +633,27 @@ fn main() {
         unsafe { std::env::set_var("VK_KHRONOS_VALIDATION_VALIDATE_SYNC", "true") };
     }
     let options = options();
+    if options.greedy {
+        let Some(dir) = &options.terrain else {
+            eprintln!("vkview: --greedy measures a --terrain dump");
+            std::process::exit(2);
+        };
+        let bytes = std::fs::read(dir.join("sections.bin")).unwrap_or_default();
+        match torch_client::vk::terrain_dump::read(&bytes) {
+            Ok(sections) => {
+                let e = torch_client::vk::greedy::estimate(&sections);
+                println!(
+                    "vkview: {} opaque quads, {} whole evenly lit faces; greedy meshing leaves {} ({:.1}% fewer)",
+                    e.quads,
+                    e.candidates,
+                    e.after,
+                    e.saving() * 100.0
+                );
+            }
+            Err(e) => eprintln!("vkview: {e}"),
+        }
+        return;
+    }
     let event_loop = EventLoop::new().expect("an event loop");
     event_loop.set_control_flow(ControlFlow::Poll);
     let mut app = App {
@@ -576,6 +665,7 @@ fn main() {
         failed: None,
         begun: None,
         stress_done: 0,
+        loaded_at: None,
     };
     let _ = event_loop.run_app(&mut app);
     if let Some(r) = &mut app.renderer {

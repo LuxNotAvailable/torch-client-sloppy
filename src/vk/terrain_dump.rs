@@ -4,22 +4,27 @@
 //! atlas (`atlas.png`), and `vkview --terrain <folder>` draws them, so the
 //! new terrain path is tested on exactly what the game draws.
 //!
-//! `sections.bin`: the magic `TVKD`, a version, then per section:
-//! origin (3 × i32), water (u8), vertex, index and cutout index counts
-//! (3 × u32), the 20-byte vertices, then the indices and cutout indices
-//! (u32 each). A section stored again (re-meshed) appears again; the
-//! reader keeps the last.
+//! `sections.bin`: the magic `TVKD`, a version, then records: origin
+//! (3 × i32), layer (u8: 0 opaque, 1 translucent, `DROPPED` for a column
+//! unloaded), the section's visibility set (u64, `renderer::visgraph`),
+//! vertex, index and cutout index counts (3 × u32), the 20-byte vertices,
+//! then the indices and cutout indices (u32 each). A section stored again
+//! (re-meshed) appears again, empty layers too, so replaying the records in
+//! order ends with what the game held at the end, and the replay itself
+//! is the game's stream of section loads, re-meshes and unloads.
 
 use std::io::Write;
 use std::sync::Mutex;
 
 use crate::renderer::mesh::{MeshBuf, PackedVertex};
+use crate::renderer::visgraph::VisibilitySet;
 
 pub const MAGIC: &[u8; 4] = b"TVKD";
-pub const VERSION: u32 = 2;
+pub const VERSION: u32 = 3;
 
 /// The layer byte of a record saying a column was unloaded.
 const DROPPED: u8 = 0xFF;
+const HEAD: usize = 33;
 
 static WRITER: Mutex<Option<std::io::BufWriter<std::fs::File>>> = Mutex::new(None);
 
@@ -51,18 +56,18 @@ pub fn atlas(width: u32, height: u32, rgba: &[u8]) {
 }
 
 /// Appends one stored section's opaque and translucent meshes.
-pub fn section(origin: [i32; 3], meshes: &[MeshBuf; 2]) {
+pub fn section(origin: [i32; 3], vis: VisibilitySet, meshes: &[MeshBuf; 2]) {
     for (layer, mesh) in meshes.iter().enumerate() {
-        record(origin, layer as u8, mesh);
+        record(origin, layer as u8, vis.bits(), mesh);
     }
 }
 
 /// Records that the column at chunk `(cx, cz)` was unloaded.
 pub fn column_dropped(cx: i32, cz: i32) {
-    record([cx * 16, 0, cz * 16], DROPPED, &MeshBuf::default());
+    record([cx * 16, 0, cz * 16], DROPPED, 0, &MeshBuf::default());
 }
 
-fn record(origin: [i32; 3], layer: u8, mesh: &MeshBuf) {
+fn record(origin: [i32; 3], layer: u8, vis: u64, mesh: &MeshBuf) {
     let Some(dir) = folder() else { return };
     let Ok(mut slot) = WRITER.lock() else { return };
     if slot.is_none() {
@@ -83,6 +88,7 @@ fn record(origin: [i32; 3], layer: u8, mesh: &MeshBuf) {
         write(&c.to_le_bytes());
     }
     write(&[layer]);
+    write(&vis.to_le_bytes());
     for n in [mesh.verts.len(), mesh.idx.len(), mesh.cutout_idx.len()] {
         write(&(n as u32).to_le_bytes());
     }
@@ -92,61 +98,121 @@ fn record(origin: [i32; 3], layer: u8, mesh: &MeshBuf) {
     let _ = writer.flush();
 }
 
-/// One section read back from a dump.
+/// One section layer from a dump.
 pub struct Section {
     pub origin: [i32; 3],
+    /// The translucent layer (water, glass, ice and the like).
     pub water: bool,
+    pub vis: VisibilitySet,
     pub verts: Vec<PackedVertex>,
     pub idx: Vec<u32>,
     pub cutout_idx: Vec<u32>,
 }
 
-/// Reads a dump: the sections the game held when it stopped writing.
-pub fn read(bytes: &[u8]) -> Result<Vec<Section>, String> {
+/// One record of a dump, in the order the game wrote them.
+pub enum Record {
+    /// A section layer stored; empty when the re-mesh left it empty.
+    Layer(Section),
+    /// The column at chunk `(cx, cz)` unloaded.
+    Dropped { cx: i32, cz: i32 },
+}
+
+/// Checks a dump's header; its records start after it.
+fn header(bytes: &[u8]) -> Result<usize, String> {
     if bytes.len() < 8 || &bytes[..4] != MAGIC {
         return Err("not a terrain dump".to_owned());
     }
     let version = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
     if version != VERSION {
-        return Err(format!("dump version {version}, expected {VERSION}"));
+        return Err(format!(
+            "dump version {version}, expected {VERSION}: record it again"
+        ));
     }
-    let mut at = 8;
-    let mut take = |n: usize| -> Result<&[u8], String> {
-        let slice = bytes.get(at..at + n).ok_or("the dump ends mid-section")?;
-        at += n;
-        Ok(slice)
+    Ok(8)
+}
+
+/// The record at `*at`, moving `*at` past it.
+fn next_record(bytes: &[u8], at: &mut usize) -> Option<Record> {
+    let mut take = |n: usize| {
+        let slice = bytes.get(*at..*at + n)?;
+        *at += n;
+        Some(slice)
     };
+    let head = take(HEAD)?;
+    let int = |i: usize| i32::from_le_bytes(head[i * 4..i * 4 + 4].try_into().unwrap());
+    let origin = [int(0), int(1), int(2)];
+    let layer = head[12];
+    let vis = u64::from_le_bytes(head[13..21].try_into().unwrap());
+    let count =
+        |i: usize| u32::from_le_bytes(head[21 + i * 4..25 + i * 4].try_into().unwrap()) as usize;
+    let (verts, idx, cutout) = (count(0), count(1), count(2));
+    let verts: Vec<PackedVertex> = bytemuck::pod_collect_to_vec(take(verts * 20)?);
+    let idx: Vec<u32> = bytemuck::pod_collect_to_vec(take(idx * 4)?);
+    let cutout_idx: Vec<u32> = bytemuck::pod_collect_to_vec(take(cutout * 4)?);
+    Some(if layer == DROPPED {
+        Record::Dropped {
+            cx: origin[0] >> 4,
+            cz: origin[2] >> 4,
+        }
+    } else {
+        Record::Layer(Section {
+            origin,
+            water: layer != 0,
+            vis: VisibilitySet::from_bits(vis),
+            verts,
+            idx,
+            cutout_idx,
+        })
+    })
+}
+
+/// The records of a dump, in order.
+pub fn records(bytes: &[u8]) -> Result<impl Iterator<Item = Record> + '_, String> {
+    let mut at = header(bytes)?;
+    Ok(std::iter::from_fn(move || next_record(bytes, &mut at)))
+}
+
+/// A dump's records, owning its bytes: the game's section stream, replayed.
+pub struct Replay {
+    bytes: Vec<u8>,
+    at: usize,
+}
+
+impl Replay {
+    pub fn new(bytes: Vec<u8>) -> Result<Replay, String> {
+        let at = header(&bytes)?;
+        Ok(Replay { bytes, at })
+    }
+
+    /// How far through the dump the replay is, from 0 to 1.
+    pub fn progress(&self) -> f32 {
+        self.at as f32 / self.bytes.len().max(1) as f32
+    }
+}
+
+impl Iterator for Replay {
+    type Item = Record;
+
+    fn next(&mut self) -> Option<Record> {
+        next_record(&self.bytes, &mut self.at)
+    }
+}
+
+/// Reads a dump: the section layers the game held when it stopped writing.
+pub fn read(bytes: &[u8]) -> Result<Vec<Section>, String> {
     let mut sections = std::collections::HashMap::new();
-    while let Ok(head) = take(25) {
-        let int = |i: usize| i32::from_le_bytes(head[i * 4..i * 4 + 4].try_into().unwrap());
-        let origin = [int(0), int(1), int(2)];
-        let layer = head[12];
-        let count = |i: usize| {
-            u32::from_le_bytes(head[13 + i * 4..17 + i * 4].try_into().unwrap()) as usize
-        };
-        let (verts, idx, cutout) = (count(0), count(1), count(2));
-        let verts: Vec<PackedVertex> = bytemuck::pod_collect_to_vec(take(verts * 20)?);
-        let idx: Vec<u32> = bytemuck::pod_collect_to_vec(take(idx * 4)?);
-        let cutout_idx: Vec<u32> = bytemuck::pod_collect_to_vec(take(cutout * 4)?);
-        if layer == DROPPED {
-            sections.retain(|&(o, _): &([i32; 3], bool), _| o[0] != origin[0] || o[2] != origin[2]);
-            continue;
+    for record in records(bytes)? {
+        match record {
+            Record::Dropped { cx, cz } => {
+                sections.retain(|&(o, _): &([i32; 3], bool), _| o[0] >> 4 != cx || o[2] >> 4 != cz);
+            }
+            Record::Layer(section) if section.verts.is_empty() => {
+                sections.remove(&(section.origin, section.water));
+            }
+            Record::Layer(section) => {
+                sections.insert((section.origin, section.water), section);
+            }
         }
-        let water = layer != 0;
-        if verts.is_empty() {
-            sections.remove(&(origin, water));
-            continue;
-        }
-        sections.insert(
-            (origin, water),
-            Section {
-                origin,
-                water,
-                verts,
-                idx,
-                cutout_idx,
-            },
-        );
     }
     Ok(sections.into_values().collect())
 }
@@ -160,6 +226,7 @@ mod tests {
             out.extend_from_slice(&c.to_le_bytes());
         }
         out.push(layer);
+        out.extend_from_slice(&u64::MAX.to_le_bytes());
         for n in [verts, verts, 0] {
             out.extend_from_slice(&n.to_le_bytes());
         }
@@ -185,5 +252,7 @@ mod tests {
         assert_eq!(sections[0].origin, [0, 0, 0]);
         assert!(!sections[0].water);
         assert_eq!(sections[0].verts.len(), 6);
+        assert_eq!(sections[0].vis, VisibilitySet::from_bits(u64::MAX));
+        assert_eq!(records(&bytes).unwrap().count(), 7);
     }
 }

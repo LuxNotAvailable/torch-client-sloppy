@@ -17,15 +17,34 @@ fn is_fully_opaque(rgba: &image::RgbaImage) -> bool {
     rgba.pixels().all(|p| p[3] == 255)
 }
 
+/// The block atlas's missing-texture tile, which modded blocks wear
+/// (`util::block_model::modded_visual`).
+pub const MISSING_TEXTURE: &str = "missingno";
+
+/// Vanilla's missing texture: magenta and black in 8-pixel squares.
+fn missing_texture() -> image::RgbaImage {
+    image::RgbaImage::from_fn(TILE_PX, TILE_PX, |x, y| {
+        if (x / 8 + y / 8) % 2 == 0 {
+            image::Rgba([248, 0, 248, 255])
+        } else {
+            image::Rgba([0, 0, 0, 255])
+        }
+    })
+}
+
 pub struct Textures {
     pub block: BTreeMap<String, image::RgbaImage>,
 }
 
 impl Textures {
     pub fn blocks(textures_dir: &str) -> Textures {
-        Textures {
-            block: decode_dir(&format!("{textures_dir}/block")),
+        let mut block = decode_dir(&format!("{textures_dir}/block"));
+        if !block.is_empty() {
+            block
+                .entry(MISSING_TEXTURE.to_owned())
+                .or_insert_with(missing_texture);
         }
+        Textures { block }
     }
 }
 

@@ -28,6 +28,8 @@ pub enum View {
     Normals,
     TextureIndex,
     Depth,
+    /// The terrain's occlusion pyramid, one level (`--hiz-level`).
+    Pyramid,
 }
 
 impl View {
@@ -37,6 +39,7 @@ impl View {
             "normals" => View::Normals,
             "texture" => View::TextureIndex,
             "depth" => View::Depth,
+            "hiz" => View::Pyramid,
             _ => return None,
         })
     }
@@ -46,7 +49,7 @@ impl View {
             View::Shaded => 0,
             View::Normals => 1,
             View::TextureIndex => 2,
-            View::Depth => 3,
+            View::Depth | View::Pyramid => 3,
         }
     }
 }

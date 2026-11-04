@@ -104,6 +104,10 @@ impl Blocks {
         built
     }
 
+    pub fn atlas_rows(&self) -> u32 {
+        self.atlas_rows
+    }
+
     fn build(&self, name: &str, props: &HashMap<&str, &str>) -> BakedBlock {
         let Some(def) = self.defs.get(name) else {
             self.missing_defs.fetch_add(1, Ordering::Relaxed);

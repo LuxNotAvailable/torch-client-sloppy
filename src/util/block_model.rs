@@ -187,6 +187,10 @@ pub fn block_visual(state: azalea::block::BlockState) -> RenderedBlock {
         TintKind::None
     };
 
+    if !state.is_vanilla() {
+        return modded_visual(state);
+    }
+
     if matches!(name, "air" | "cave_air" | "void_air") {
         return RenderedBlock {
             geom: BlockGeom::Model(Default::default()),
@@ -199,7 +203,6 @@ pub fn block_visual(state: azalea::block::BlockState) -> RenderedBlock {
             tint_kind,
             offset: ShapeOffset::None,
             state: state.id(),
-            #[cfg(feature = "shader_support")]
             translucent: false,
         };
     }
@@ -231,7 +234,6 @@ pub fn block_visual(state: azalea::block::BlockState) -> RenderedBlock {
             tint_kind: TintKind::None,
             offset: ShapeOffset::None,
             state: state.id(),
-            #[cfg(feature = "shader_support")]
             translucent: false,
         };
     }
@@ -252,18 +254,99 @@ pub fn block_visual(state: azalea::block::BlockState) -> RenderedBlock {
         tint_kind,
         offset: ShapeOffset::for_block(name),
         state: state.id(),
-        #[cfg(feature = "shader_support")]
         translucent: translucent_layer(name),
     }
 }
 
-#[cfg(feature = "shader_support")]
 fn translucent_layer(name: &str) -> bool {
     matches!(
         name,
         "ice" | "frosted_ice" | "slime_block" | "honey_block" | "tinted_glass" | "nether_portal"
     ) || name.ends_with("_stained_glass")
         || name.ends_with("_stained_glass_pane")
+}
+
+/// A modded block (VULKAN_REWRITE_CHECKLIST.md 3.8): a full cube in the
+/// missing texture, tinted by its raw id, solid as stone for collision and
+/// lighting (`blocks::info::stand_in`).
+fn modded_visual(state: azalea::block::BlockState) -> RenderedBlock {
+    static CUBE: std::sync::OnceLock<std::sync::Arc<crate::blocks::BakedBlock>> =
+        std::sync::OnceLock::new();
+    let cube = CUBE.get_or_init(|| {
+        let stone = block_visual(azalea::block::BlockState::from(
+            azalea_registry::builtin::BlockKind::Stone,
+        ));
+        let BlockGeom::Model(stone) = stone.geom else {
+            return std::sync::Arc::default();
+        };
+        let rows = crate::blocks::registry().atlas_rows();
+        let from = crate::blocks::bake::tile_uv_rect(tex("stone"), rows);
+        let to =
+            crate::blocks::bake::tile_uv_rect(tex(crate::renderer::atlas::MISSING_TEXTURE), rows);
+        let remap = |uv: [f32; 2]| {
+            let u = (uv[0] - from[0]) / (from[2] - from[0]);
+            let v = (uv[1] - from[1]) / (from[3] - from[1]);
+            [to[0] + u * (to[2] - to[0]), to[1] + v * (to[3] - to[1])]
+        };
+        let parts = stone
+            .parts
+            .iter()
+            .map(|slot| crate::blocks::bake::BakedSlot {
+                choices: slot
+                    .choices
+                    .iter()
+                    .map(|model| {
+                        let mut quads = model.quads.clone();
+                        for quad in &mut quads {
+                            quad.uv = quad.uv.map(remap);
+                            quad.tint = 0;
+                        }
+                        std::sync::Arc::new(crate::blocks::BakedModel {
+                            quads,
+                            had_elements: model.had_elements,
+                            occludes: model.occludes,
+                            full_cube: model.full_cube,
+                            ambient_occlusion: model.ambient_occlusion,
+                            missing_textures: 0,
+                            particle_uv: Some(to),
+                        })
+                    })
+                    .collect(),
+                weights: slot.weights.clone(),
+                total: slot.total,
+            })
+            .collect();
+        std::sync::Arc::new(crate::blocks::BakedBlock {
+            parts,
+            is_solid: stone.is_solid,
+            full_cube: stone.full_cube,
+            ambient_occlusion: stone.ambient_occlusion,
+            randomized: false,
+        })
+    });
+    RenderedBlock {
+        geom: BlockGeom::Model(cube.clone()),
+        is_solid: true,
+        waterlogged: false,
+        full_cube: true,
+        emission: 0,
+        emissive: false,
+        cull_group: 0,
+        tint_kind: TintKind::Modded(state.id() as u32),
+        offset: ShapeOffset::None,
+        state: state.id(),
+        translucent: false,
+    }
+}
+
+/// A modded block's tint: a bright colour picked by hashing its raw id.
+pub fn modded_tint(id: u32) -> [f32; 3] {
+    let h = id
+        .wrapping_mul(0x9E37_79B9)
+        .rotate_left(13)
+        .wrapping_mul(0x85EB_CA6B);
+    let channel = |shift: u32| 0.45 + ((h >> shift) & 0xFF) as f32 / 255.0 * 0.55;
+    [channel(0), channel(8), channel(16)]
 }
 
 /// A block state's block id, `stone` (see [`crate::blocks::info`]).

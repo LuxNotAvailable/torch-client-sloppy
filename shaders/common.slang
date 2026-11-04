@@ -9,6 +9,9 @@
 [[vk::binding(0, 0)]] Texture2D g_textures[];
 [[vk::binding(1, 0)]] SamplerState g_samplers[];
 [[vk::binding(2, 0)]] RWByteAddressBuffer g_buffers[];
+// The same buffers, read-only, for shaders that only read: the driver may
+// take a faster load path (vertex pulling, `buffer_ro`).
+[[vk::binding(2, 0)]] ByteAddressBuffer g_buffers_ro[];
 
 // Per-draw values. `ids` and `more` carry bindless indices and small
 // counts; what each slot means is up to the pass.
@@ -31,6 +34,10 @@ Texture2D texture_at(uint index) {
 
 RWByteAddressBuffer buffer_at(uint index) {
     return g_buffers[NonUniformResourceIndex(index)];
+}
+
+ByteAddressBuffer buffer_ro(uint index) {
+    return g_buffers_ro[NonUniformResourceIndex(index)];
 }
 
 // Debug view modes, as `vkview --view` names them.
