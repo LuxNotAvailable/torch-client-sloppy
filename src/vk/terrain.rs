@@ -128,6 +128,8 @@ pub struct Camera {
     pub eye: Vec3,
     pub yaw: f32,
     pub pitch: f32,
+    /// Vertical field of view, degrees.
+    pub fov: f32,
 }
 
 impl Camera {
@@ -144,6 +146,7 @@ impl Camera {
             eye: Vec3::new(x, y, z),
             yaw,
             pitch,
+            fov: 70.0,
         })
     }
 
@@ -462,6 +465,9 @@ pub struct TerrainScene {
     lo: Vec3,
     hi: Vec3,
     pub stats: Stats,
+    /// The entity snapshot beside the terrain dump, when there is one
+    /// (phase 4).
+    entities: Option<super::entities::EntityScene>,
 }
 
 fn full() -> SetupError {
@@ -649,6 +655,23 @@ impl TerrainScene {
             )
             .ok_or_else(full)?;
 
+        // The entity snapshot, when the game wrote one beside the terrain.
+        let entities = match std::fs::read(dir.join("entities.bin")) {
+            Ok(bytes) => {
+                let snapshot =
+                    super::entity_dump::read(&bytes).map_err(|e| failed("bad entities.bin", &e))?;
+                Some(super::entities::EntityScene::new(
+                    ctx,
+                    memory,
+                    bindless,
+                    pipelines,
+                    color_format,
+                    snapshot,
+                )?)
+            }
+            Err(_) => None,
+        };
+
         Ok(TerrainScene {
             options,
             module,
@@ -704,6 +727,7 @@ impl TerrainScene {
             lo: Vec3::splat(f32::MAX),
             hi: Vec3::splat(f32::MIN),
             stats: Stats::default(),
+            entities,
         })
     }
 
@@ -735,7 +759,27 @@ impl TerrainScene {
             eye: centre + Vec3::new(angle.sin() * 24.0, 40.0, angle.cos() * 24.0),
             yaw: seconds * 10.0,
             pitch: -30.0,
+            fov: 70.0,
         }
+    }
+
+    /// The camera the game drew from when it wrote the entity snapshot.
+    pub fn game_camera(&self) -> Option<Camera> {
+        let (world, fov) = self.entities.as_ref()?.camera;
+        let eye = world.w_axis.truncate();
+        // The camera looks down its -z.
+        let forward = -world.z_axis.truncate().normalize_or_zero();
+        Some(Camera {
+            eye,
+            yaw: (-forward.x).atan2(forward.z).to_degrees(),
+            pitch: forward.y.clamp(-1.0, 1.0).asin().to_degrees(),
+            fov: fov.to_degrees(),
+        })
+    }
+
+    /// The entity scene's numbers, when the dump has one.
+    pub fn entity_stats(&self) -> Option<super::entities::EntityStats> {
+        self.entities.as_ref().map(|e| e.stats)
     }
 
     fn new_slot(&mut self) -> u32 {
@@ -1351,6 +1395,9 @@ impl TerrainScene {
         let (depth, depth_view, depth_index) = self
             .depth
             .get(ctx, memory, bindless, graph, extent, frame)?;
+        if let Some(entities) = &mut self.entities {
+            entities.prepare(ctx, memory, graph, frame, slot);
+        }
 
         // Section changes, re-sorts and per-slot data, all copied in one
         // pass.
@@ -1489,7 +1536,7 @@ impl TerrainScene {
 
         let aspect = rotation.aspect;
         let view_proj = rotation.clip
-            * Mat4::perspective_infinite_reverse_rh(70f32.to_radians(), aspect, NEAR)
+            * Mat4::perspective_infinite_reverse_rh(camera.fov.to_radians(), aspect, NEAR)
             * Mat4::look_to_rh(camera.eye, camera.forward(), Vec3::Y);
 
         // Hi-Z only with a pyramid of this size, from a camera close by.
@@ -1549,6 +1596,20 @@ impl TerrainScene {
         ];
         if let Some((grown, ..)) = &self.pyramid {
             cull_buffers.push((grown.buffer.raw, Use::ComputeRead));
+        }
+        let pyramid_buffer = self.pyramid.as_ref().map(|(g, ..)| g.buffer.raw);
+        if let Some(entities) = &mut self.entities {
+            entities.record_cull(
+                ctx,
+                bindless,
+                pipelines,
+                uploads,
+                graph,
+                self.view_indices[slot],
+                pyramid_buffer,
+                camera.eye,
+                slot,
+            )?;
         }
         graph.pass("terrain cull", &[], &cull_buffers, |cmd| unsafe {
             // SAFETY: recording with the shared layout and the bindless set;
@@ -1625,61 +1686,96 @@ impl TerrainScene {
             *issued = true;
         }
         let view_proj_cols = view_proj.to_cols_array_2d();
-        graph.pass(
-            "terrain",
-            &[
-                (color.0, Use::ColorAttachment),
-                (depth, Use::DepthAttachment),
-                (self.atlas.raw, Use::SampledFragment),
-            ],
-            &buffers,
-            |cmd| unsafe {
-                // SAFETY: as above; the attachments are in the layouts the
-                // graph just moved them to, and the query was reset.
-                let colors = [vk::RenderingAttachmentInfo::default()
-                    .image_view(color.1)
-                    .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                    .load_op(vk::AttachmentLoadOp::CLEAR)
-                    .store_op(vk::AttachmentStoreOp::STORE)
-                    .clear_value(vk::ClearValue {
-                        color: vk::ClearColorValue {
-                            float32: [0.47, 0.65, 1.0, 1.0],
-                        },
-                    })];
-                let depth_attachment = vk::RenderingAttachmentInfo::default()
-                    .image_view(depth_view)
-                    .image_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
-                    .load_op(vk::AttachmentLoadOp::CLEAR)
-                    .store_op(vk::AttachmentStoreOp::STORE)
-                    .clear_value(vk::ClearValue {
-                        depth_stencil: vk::ClearDepthStencilValue {
-                            depth: 0.0,
-                            stencil: 0,
-                        },
-                    });
-                if let Some(pool) = stats_pool {
-                    device.cmd_begin_query(cmd, pool, 0, vk::QueryControlFlags::empty());
+        let mut images = vec![
+            (color.0, Use::ColorAttachment),
+            (depth, Use::DepthAttachment),
+            (self.atlas.raw, Use::SampledFragment),
+        ];
+        if let Some(entities) = &self.entities {
+            entities.uses(&mut images, &mut buffers);
+        }
+        let seconds = frame as f32 / 60.0;
+        graph.pass("terrain", &images, &buffers, |cmd| unsafe {
+            // SAFETY: as above; the attachments are in the layouts the
+            // graph just moved them to, and the query was reset.
+            let colors = [vk::RenderingAttachmentInfo::default()
+                .image_view(color.1)
+                .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                .load_op(vk::AttachmentLoadOp::CLEAR)
+                .store_op(vk::AttachmentStoreOp::STORE)
+                .clear_value(vk::ClearValue {
+                    color: vk::ClearColorValue {
+                        float32: [0.47, 0.65, 1.0, 1.0],
+                    },
+                })];
+            let depth_attachment = vk::RenderingAttachmentInfo::default()
+                .image_view(depth_view)
+                .image_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
+                .load_op(vk::AttachmentLoadOp::CLEAR)
+                .store_op(vk::AttachmentStoreOp::STORE)
+                .clear_value(vk::ClearValue {
+                    depth_stencil: vk::ClearDepthStencilValue {
+                        depth: 0.0,
+                        stencil: 0,
+                    },
+                });
+            if let Some(pool) = stats_pool {
+                device.cmd_begin_query(cmd, pool, 0, vk::QueryControlFlags::empty());
+            }
+            device.cmd_begin_rendering(
+                cmd,
+                &vk::RenderingInfo::default()
+                    .render_area(vk::Rect2D {
+                        offset: vk::Offset2D::default(),
+                        extent,
+                    })
+                    .layer_count(1)
+                    .color_attachments(&colors)
+                    .depth_attachment(&depth_attachment),
+            );
+            set_viewport(ctx, cmd, extent);
+            device.cmd_bind_descriptor_sets(
+                cmd,
+                vk::PipelineBindPoint::GRAPHICS,
+                pipelines.layout,
+                0,
+                &[bindless.set],
+                &[],
+            );
+            push(
+                ctx,
+                cmd,
+                pipelines.layout,
+                &Push {
+                    ids: [self.slots.index, 0, 0, 0],
+                    more: [self.atlas_index, view.mode(), 0, 0],
+                    params: [0.0; 4],
+                    view_proj: view_proj_cols,
+                },
+            );
+            let capacity = self.list_capacity;
+            for (kind, pipeline) in [pipes.solid, pipes.cutout].into_iter().enumerate() {
+                device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
+                for (p, pool) in self.pools.iter().enumerate() {
+                    let list = p as u64 * 2 + kind as u64;
+                    device.cmd_bind_index_buffer(cmd, pool.indices.raw, 0, vk::IndexType::UINT32);
+                    device.cmd_draw_indexed_indirect_count(
+                        cmd,
+                        self.commands.raw,
+                        list * capacity as u64 * COMMAND_SIZE,
+                        self.counts.raw,
+                        list * 4,
+                        capacity,
+                        COMMAND_SIZE as u32,
+                    );
                 }
-                device.cmd_begin_rendering(
-                    cmd,
-                    &vk::RenderingInfo::default()
-                        .render_area(vk::Rect2D {
-                            offset: vk::Offset2D::default(),
-                            extent,
-                        })
-                        .layer_count(1)
-                        .color_attachments(&colors)
-                        .depth_attachment(&depth_attachment),
-                );
-                set_viewport(ctx, cmd, extent);
-                device.cmd_bind_descriptor_sets(
-                    cmd,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    pipelines.layout,
-                    0,
-                    &[bindless.set],
-                    &[],
-                );
+            }
+            if let Some(entities) = &self.entities {
+                entities.draw_solid(ctx, cmd, pipelines, view_proj_cols, view.mode(), seconds);
+                // The entity draw pushed its own constants; the terrain's
+                // translucent draw needs its own back (its slot buffer
+                // index, or it reads past the entity buffer and the
+                // device is lost).
                 push(
                     ctx,
                     cmd,
@@ -1691,55 +1787,32 @@ impl TerrainScene {
                         view_proj: view_proj_cols,
                     },
                 );
-                let capacity = self.list_capacity;
-                for (kind, pipeline) in [pipes.solid, pipes.cutout].into_iter().enumerate() {
-                    device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
-                    for (p, pool) in self.pools.iter().enumerate() {
-                        let list = p as u64 * 2 + kind as u64;
-                        device.cmd_bind_index_buffer(
-                            cmd,
-                            pool.indices.raw,
-                            0,
-                            vk::IndexType::UINT32,
-                        );
-                        device.cmd_draw_indexed_indirect_count(
-                            cmd,
-                            self.commands.raw,
-                            list * capacity as u64 * COMMAND_SIZE,
-                            self.counts.raw,
-                            list * 4,
-                            capacity,
-                            COMMAND_SIZE as u32,
-                        );
-                    }
-                }
-                // Translucent last, far to near over everything opaque.
-                if self.translucent_count > 0 {
-                    device.cmd_bind_pipeline(
-                        cmd,
-                        vk::PipelineBindPoint::GRAPHICS,
-                        pipes.translucent,
-                    );
-                    device.cmd_bind_index_buffer(
-                        cmd,
-                        self.translucent.buffer.raw,
-                        0,
-                        vk::IndexType::UINT32,
-                    );
-                    device.cmd_draw_indexed_indirect(
-                        cmd,
-                        self.commands.raw,
-                        self.translucent_start as u64 * COMMAND_SIZE,
-                        self.translucent_count,
-                        COMMAND_SIZE as u32,
-                    );
-                }
-                device.cmd_end_rendering(cmd);
-                if let Some(pool) = stats_pool {
-                    device.cmd_end_query(cmd, pool, 0);
-                }
-            },
-        );
+            }
+            // Translucent last, far to near over everything opaque.
+            if self.translucent_count > 0 {
+                device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipes.translucent);
+                device.cmd_bind_index_buffer(
+                    cmd,
+                    self.translucent.buffer.raw,
+                    0,
+                    vk::IndexType::UINT32,
+                );
+                device.cmd_draw_indexed_indirect(
+                    cmd,
+                    self.commands.raw,
+                    self.translucent_start as u64 * COMMAND_SIZE,
+                    self.translucent_count,
+                    COMMAND_SIZE as u32,
+                );
+            }
+            if let Some(entities) = &self.entities {
+                entities.draw_blend(ctx, cmd, pipelines, view_proj_cols, view.mode(), seconds);
+            }
+            device.cmd_end_rendering(cmd);
+            if let Some(pool) = stats_pool {
+                device.cmd_end_query(cmd, pool, 0);
+            }
+        });
 
         self.build_pyramid(
             ctx,
@@ -2116,6 +2189,9 @@ impl TerrainScene {
         }
         for buffer in buffers {
             memory.free_buffer(ctx, buffer);
+        }
+        if let Some(entities) = self.entities.take() {
+            entities.destroy(ctx, memory);
         }
         memory.free_image(ctx, self.atlas);
         self.depth.destroy(ctx, memory);

@@ -8,6 +8,8 @@
 pub mod bindless;
 pub mod context;
 pub mod depth_view;
+pub mod entities;
+pub mod entity_dump;
 pub mod frame;
 pub mod graph;
 pub mod greedy;

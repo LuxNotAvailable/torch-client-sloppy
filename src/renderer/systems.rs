@@ -2067,6 +2067,7 @@ fn sync_vsync(
 fn auto_harness(
     mut commands: Commands,
     mut shots: Local<(Option<Option<(u64, std::path::PathBuf)>>, u64, u32)>,
+    mut joined: Local<bool>,
     time: Res<Time<bevy::time::Real>>,
     mut angles: ResMut<CameraAngles>,
     shared: Res<Shared>,
@@ -2089,6 +2090,17 @@ fn auto_harness(
         && time.elapsed().as_millis() as u64 >= q
     {
         exit.write(bevy::app::AppExit::Success);
+    }
+    // `MC_JOIN_COMMANDS`, sent once on entering the world (test runs switch
+    // to creative, so mobs can't spoil them).
+    if !*joined && shared.0.lock().unwrap().in_world {
+        *joined = true;
+        if let Ok(commands) = crate::platform::env::var("MC_JOIN_COMMANDS") {
+            let mut s = shared.0.lock().unwrap();
+            for command in commands.split(';').map(str::trim).filter(|c| !c.is_empty()) {
+                s.session.chat.outgoing_chat.push(command.to_owned());
+            }
+        }
     }
     // Frames saved every `MC_AUTO_SHOT_MS` once in the world.
     let every = shots.0.get_or_insert_with(|| {

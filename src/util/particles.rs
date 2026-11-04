@@ -32,7 +32,7 @@ use fireworks::*;
 mod ambient;
 #[allow(unused_imports)]
 use ambient::*;
-mod draw;
+pub(crate) mod draw;
 #[allow(unused_imports)]
 use draw::*;
 

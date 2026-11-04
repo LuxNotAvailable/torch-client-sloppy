@@ -255,6 +255,12 @@ const ALL: &[Var] = &[
         enabled: true,
     },
     Var {
+        name: "MC_JOIN_COMMANDS",
+        what: "chat commands sent once on entering the world, separated by ';' (test runs: /gamemode creative)",
+        default: "none",
+        enabled: true,
+    },
+    Var {
         name: "MC_HIZ_DUMP",
         what: "folder to save a level of the Hi-Z pyramid to about once a second, to check its alignment",
         default: "off",

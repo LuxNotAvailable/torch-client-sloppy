@@ -4,7 +4,7 @@
 //!
 //! `vkview [--frames N] [--device NAME] [--vsync] [--size WxH] [--stress]
 //!         [--view shaded|normals|texture|depth] [--screenshot FILE.png]
-//!         [--terrain DIR [--camera X,Y,Z,YAW,PITCH] [--no-hiz] [--no-vis]
+//!         [--terrain DIR [--camera X,Y,Z,YAW,PITCH|game] [--no-hiz] [--no-vis]
 //!          [--no-buckets] [--budget MB] [--hiz-level N] [--greedy]]`
 //!
 //! The scene is the test scene, or with `--terrain` a terrain dump the game
@@ -67,6 +67,8 @@ struct Options {
     terrain: Option<std::path::PathBuf>,
     camera: Option<Camera>,
     terrain_options: terrain::Options,
+    /// `--camera game`: the camera the game drew from (entity snapshot).
+    game_camera: bool,
     greedy: bool,
     sheet: Option<String>,
     sheet_tile: (u32, u32),
@@ -88,6 +90,7 @@ fn options(args: Vec<String>) -> Options {
         terrain: None,
         camera: None,
         terrain_options: terrain::Options::default(),
+        game_camera: false,
         greedy: false,
         sheet: None,
         sheet_tile: (160, 90),
@@ -137,7 +140,8 @@ fn options(args: Vec<String>) -> Options {
             "--camera" => {
                 let text = args.next().unwrap_or_default();
                 options.camera = Camera::parse(&text);
-                if options.camera.is_none() {
+                options.game_camera = text == "game";
+                if options.camera.is_none() && !options.game_camera {
                     eprintln!("vkview: --camera wants X,Y,Z,YAW,PITCH, not {text}");
                 }
             }
@@ -236,6 +240,7 @@ struct Renderer {
     /// `--step`: scene seconds per frame instead of the clock, so runs
     /// repeat frame for frame.
     step: Option<f32>,
+    game_camera: bool,
 }
 
 impl Renderer {
@@ -358,6 +363,7 @@ impl Renderer {
             started: Instant::now(),
             barriers: 0,
             step: options.step,
+            game_camera: options.game_camera,
         })
     }
 
@@ -452,6 +458,10 @@ impl Renderer {
             }
             Err(frame::FrameError::Failed(e)) => {
                 eprintln!("vkview: frame failed: {e:?}");
+                if e == v::Result::ERROR_DEVICE_LOST {
+                    // Nothing more can be drawn: stop rather than loop.
+                    std::process::exit(3);
+                }
                 return false;
             }
         };
@@ -518,7 +528,9 @@ impl Renderer {
                 view,
             ),
             Scene::Terrain(scene, camera) => {
-                let camera = camera.unwrap_or_else(|| scene.default_camera(seconds));
+                let camera = camera
+                    .or_else(|| self.game_camera.then(|| scene.game_camera()).flatten())
+                    .unwrap_or_else(|| scene.default_camera(seconds));
                 scene.record(
                     &self.ctx,
                     memory,
@@ -907,6 +919,12 @@ impl Renderer {
             if let Some((ms, frame)) = s.pipelines {
                 println!(
                     "vkview: terrain pipelines built on a worker in {ms:.1} ms, ready on frame {frame}"
+                );
+            }
+            if let Some(e) = scene.entity_stats() {
+                println!(
+                    "vkview: entities {} instances ({} rigged, {} blended), {} meshes, {} textures; {} solid drawn",
+                    e.instances, e.rigged, e.blended, e.meshes, e.textures, e.solid_drawn
                 );
             }
             if let (Some(v), Some(p)) = (s.vertex_invocations, s.primitives) {

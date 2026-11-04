@@ -28,7 +28,7 @@ const HEAD: usize = 33;
 
 static WRITER: Mutex<Option<std::io::BufWriter<std::fs::File>>> = Mutex::new(None);
 
-fn folder() -> Option<std::path::PathBuf> {
+pub(crate) fn folder() -> Option<std::path::PathBuf> {
     static FOLDER: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
     FOLDER
         .get_or_init(|| {

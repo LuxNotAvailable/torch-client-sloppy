@@ -391,7 +391,9 @@ impl HiZ {
         if let Some((buffer, w, h, row, info)) = dump.waiting.take() {
             let slice = buffer.slice(..);
             slice.map_async(wgpu::MapMode::Read, |_| {});
-            let _ = device.wgpu_device().poll(wgpu::PollType::wait_indefinitely());
+            let _ = device
+                .wgpu_device()
+                .poll(wgpu::PollType::wait_indefinitely());
             let data = slice.get_mapped_range();
             let mut pixels = vec![0u8; (w * h) as usize];
             let mut lo = f32::MAX;

@@ -84,6 +84,11 @@ impl RigParts {
         self.generation = self.generation.wrapping_add(1);
     }
 
+    /// Every part's rows, by offset (the entity dump copies them).
+    pub fn rows(&self) -> &[PartRows] {
+        &self.rows
+    }
+
     /// Writes one matrix per part; `None` hides that part.
     pub fn write(&mut self, slot: PartSlot, mats: impl IntoIterator<Item = Option<Mat4>>) {
         let start = slot.offset as usize;

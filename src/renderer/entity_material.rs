@@ -311,6 +311,8 @@ impl Plugin for EntityMaterialPlugin {
             Update,
             load_glint.run_if(resource_added::<super::systems::AssetsReady>),
         );
+        #[cfg(feature = "vulkan")]
+        crate::vk::entity_dump::plugin(app);
     }
 }
 
