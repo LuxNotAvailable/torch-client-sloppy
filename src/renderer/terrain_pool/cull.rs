@@ -642,16 +642,17 @@ pub fn prepare_cull(
         // repeating its tests, which a report asks for while it records.
         if stats.count_sections.load(Ordering::Relaxed) {
             crate::prof_span!("render:terrain_count_sections");
-            let drawn = assigned
-                .iter()
-                .filter(|view| view.flags == CAMERA_FLAGS)
-                .map(|view| {
-                    (0..pools.draw_end.min(pools.meta_cpu.len() as u32))
-                        .filter(|&index| camera_keeps(&pools, index, &view.shape))
-                        .count()
-                })
-                .sum();
+            let (mut drawn, mut indices) = (0usize, 0u64);
+            for view in assigned.iter().filter(|view| view.flags == CAMERA_FLAGS) {
+                for index in 0..pools.draw_end.min(pools.meta_cpu.len() as u32) {
+                    if camera_keeps(&pools, index, &view.shape) {
+                        drawn += 1;
+                        indices += u64::from(pools.meta_cpu[index as usize].index_count);
+                    }
+                }
+            }
             stats.drawn.store(drawn, Ordering::Relaxed);
+            stats.triangles.store(indices / 3, Ordering::Relaxed);
         }
         if !cull.fits(views.count, pool_count, pools.slot_cap) {
             let generation = cull.generation + 1;
@@ -688,6 +689,7 @@ pub fn prepare_cull(
     }
 
     let mut camera_drawn = 0usize;
+    let mut camera_indices = 0u64;
     for per_view in lists.0.values_mut() {
         for list in per_view.iter_mut() {
             list.clear();
@@ -710,6 +712,7 @@ pub fn prepare_cull(
             }
             if flags == CAMERA_FLAGS {
                 camera_drawn += 1;
+                camera_indices += u64::from(meta.index_count);
             }
             let water = meta.flags & super::META_WATER != 0;
             if water {
@@ -728,6 +731,7 @@ pub fn prepare_cull(
     }
 
     stats.drawn.store(camera_drawn, Ordering::Relaxed);
+    stats.triangles.store(camera_indices / 3, Ordering::Relaxed);
 
     for per_view in lists.0.values_mut() {
         for (stream, list) in (0u32..).zip(per_view.iter_mut()) {

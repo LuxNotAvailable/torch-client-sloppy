@@ -488,6 +488,11 @@ impl Capture {
             );
             self.push(
                 Section::World,
+                "terrain triangles drawn (thousands)",
+                t.triangles.load(Relaxed) as f32 / 1000.0,
+            );
+            self.push(
+                Section::World,
                 "terrain draw calls",
                 t.draws.load(Relaxed) as f32,
             );

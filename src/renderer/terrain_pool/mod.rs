@@ -135,6 +135,8 @@ pub struct TerrainStatsInner {
     pub pack_bytes: AtomicU64,
     pub pools: AtomicUsize,
     pub drawn: AtomicUsize,
+    /// Triangles in the sections the camera draws, counted where `drawn` is.
+    pub triangles: AtomicU64,
     pub draws: AtomicUsize,
     draws_pending: AtomicUsize,
     /// 1 while the GPU culls, so `drawn` is only known when counted.
