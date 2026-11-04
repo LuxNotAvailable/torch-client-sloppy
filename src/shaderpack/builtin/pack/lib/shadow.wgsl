@@ -2,6 +2,11 @@
 // do not draw to the shadow map.
 
 #define SHADOW_SOFTNESS 1.0 // [0.5 1.0 1.5 2.0]
+// Coarse texels' shadow denoising: how many points across the texel its
+// shade averages (1 is the middle only), for texels of TEXEL_DENOISE_RES
+// texels per block or fewer.
+#define TEXEL_DENOISE 8 // [1 2 4 8 16]
+#define TEXEL_DENOISE_RES 8 // [1 2 4 8]
 
 const SHADOW_DISTORTION: f32 = 0.85;
 
@@ -34,31 +39,34 @@ fn face_tangents(n: vec3<f32>) -> array<vec3<f32>, 2> {
     return array<vec3<f32>, 2>(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0));
 }
 
+/// The `i`th of a texel's denoising points, as a fraction of its width from
+/// its middle (each axis -0.5 to 0.5). The R2 sequence: any first N points
+/// cover the square evenly, so every TEXEL_DENOISE setting is balanced.
+fn denoise_point(i: u32) -> vec2<f32> {
+    return fract(vec2<f32>(0.5) + f32(i) * vec2<f32>(0.7548776662, 0.5698402910)) - 0.5;
+}
+
 /// The direct light reaching a texel shaded at `res` texels per block, from
-/// `taps` comparisons. A full-detail texel is looked up at its middle, as
-/// always. A coarser one spreads the same comparisons over its area (four
-/// points at a quarter of its width from the middle, or two on a diagonal
-/// for two taps), so its shade is the share of the texel in light. A single
-/// point there falls in or out of a gap in the leaves above as the shadow
-/// map moves, and the whole texel flickers with it.
+/// `taps` comparisons. A full-detail texel, or one above the denoise
+/// threshold, is looked up at its middle, as always. A coarser one averages
+/// TEXEL_DENOISE points spread over its area, so its shade is the share of
+/// the texel in light: a single point there falls in or out of a gap in the
+/// leaves as the shadow map moves, and the whole texel flickers with it.
+/// The comparisons are shared out among the points, at least one each.
 fn texel_visibility(centre: vec3<f32>, n: vec3<f32>, res: f32, taps: u32) -> f32 {
-    if (res >= 16.0) {
+    let points = u32(TEXEL_DENOISE);
+    if (res >= 16.0 || res > f32(TEXEL_DENOISE_RES) || points <= 1u) {
         return shadow_visibility(centre, n, taps);
     }
     let t = face_tangents(n);
-    let r = 0.25 / res;
-    if (taps < 4u) {
-        let a = shadow_visibility(centre + (t[0] + t[1]) * r, n, 1u);
-        let b = shadow_visibility(centre - (t[0] + t[1]) * r, n, 1u);
-        return (a + b) * 0.5;
-    }
-    let each = max(taps / 4u, 1u);
+    let width = 1.0 / res;
+    let each = max(taps / points, 1u);
     var lit = 0.0;
-    lit += shadow_visibility(centre + (t[0] + t[1]) * r, n, each);
-    lit += shadow_visibility(centre + (t[0] - t[1]) * r, n, each);
-    lit += shadow_visibility(centre - (t[0] - t[1]) * r, n, each);
-    lit += shadow_visibility(centre - (t[0] + t[1]) * r, n, each);
-    return lit * 0.25;
+    for (var i = 0u; i < points; i++) {
+        let p = denoise_point(i) * width;
+        lit += shadow_visibility(centre + t[0] * p.x + t[1] * p.y, n, each);
+    }
+    return lit / f32(points);
 }
 
 /// One hardware-filtered lookup at a point already in the shadow map's clip
