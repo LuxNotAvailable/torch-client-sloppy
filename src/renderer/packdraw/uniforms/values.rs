@@ -120,7 +120,8 @@ impl FrameValues {
     ) -> FrameValues {
         let mut view_rotation = view.world_from_view.to_matrix().inverse();
         view_rotation.w_axis = Vec4::W;
-        let size = Vec2::new(view.viewport.z as f32, view.viewport.w as f32).max(Vec2::ONE);
+        let size = super::super::scaled(bevy::math::UVec2::new(view.viewport.z, view.viewport.w))
+            .as_vec2();
         let focal = view.clip_from_view.y_axis.y.max(f32::EPSILON);
         let fov = 2.0 * (1.0 / focal).atan();
         let far_plane = (far * FAR_PLANE_PER_BLOCK).max(NEAR * 2.0);

@@ -192,6 +192,28 @@ fn drop_failed_pack(
     GPU_FAILED.store(false, Ordering::Release);
 }
 
+/// The shader pack's render scale in percent, from the options; the render
+/// world reads it when it sizes the pack's targets.
+static RENDER_SCALE: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(crate::gui::PACK_RENDER_SCALE_MAX);
+
+fn sync_render_scale(gui: Res<crate::gui::GuiState>) {
+    RENDER_SCALE.store(gui.options.pack_render_scale, Ordering::Relaxed);
+}
+
+/// The size a shader pack draws at for a view of `size`.
+pub(super) fn scaled(size: UVec2) -> UVec2 {
+    let percent = RENDER_SCALE.load(Ordering::Relaxed).clamp(
+        crate::gui::PACK_RENDER_SCALE_MIN,
+        crate::gui::PACK_RENDER_SCALE_MAX,
+    );
+    scaled_by(size, percent)
+}
+
+fn scaled_by(size: UVec2, percent: u32) -> UVec2 {
+    ((size.max(UVec2::ONE) * percent + 50) / 100).max(UVec2::ONE)
+}
+
 pub(crate) fn allow_display_view(image: &mut Image) {
     if image.texture_descriptor.format == TextureFormat::Rgba8UnormSrgb {
         image.texture_descriptor.view_formats = &[TextureFormat::Rgba8Unorm];
@@ -209,6 +231,7 @@ impl Plugin for ShaderPackPlugin {
                 inputs::gather_inputs
                     .after(crate::renderer::frame_view::FrameViewSystems)
                     .run_if(resource_exists::<install::CompiledPack>),
+                sync_render_scale,
             ),
         );
         if timing_requested() {
@@ -283,6 +306,17 @@ impl Plugin for ShaderPackPlugin {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_render_scale_rounds_and_never_reaches_zero() {
+        use bevy::math::UVec2;
+        let window = UVec2::new(1920, 974);
+        assert_eq!(super::scaled_by(window, 100), window);
+        assert_eq!(super::scaled_by(window, 50), UVec2::new(960, 487));
+        assert_eq!(super::scaled_by(window, 75), UVec2::new(1440, 731));
+        assert_eq!(super::scaled_by(UVec2::new(1, 1), 50), UVec2::ONE);
+        assert_eq!(super::scaled_by(UVec2::ZERO, 50), UVec2::ONE);
+    }
+
     use super::*;
 
     #[test]

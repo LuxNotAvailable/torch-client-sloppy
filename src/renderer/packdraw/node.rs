@@ -517,8 +517,19 @@ impl PackFrameNode {
             (None, Some(blit)) => (blit, gpu_label!("blit")),
             (None, None) => return Ok(()),
         };
+        // At a render scale below 100% the final pass draws at the pack's
+        // size into its own texture, which is then scaled up to the view.
+        let format = view_target.main_texture_format();
+        let scaled = process
+            .scaled_out
+            .as_ref()
+            .filter(|out| out.size == targets.size && out.format == format);
+        let full = UVec2::new(view.viewport.z, view.viewport.w).max(UVec2::ONE);
+        if scaled.is_none() && targets.size != full {
+            return Ok(());
+        }
         let attachment = [color_attachment(
-            view_target.main_texture_view(),
+            scaled.map_or(view_target.main_texture_view(), |out| &out.view),
             LoadOp::Clear(wgpu::Color::BLACK),
         )];
         let span = recorder.time_span(render_context.command_encoder(), "shaderpack/final");
@@ -533,6 +544,22 @@ impl PackFrameNode {
         encoder.set_bind_group(PACK_SET as usize, group, &[]);
         encoder.draw(0..3, 0..1);
         drop(encoder);
+        if let (Some(out), Some(pipeline)) = (scaled, process.upscale.pipeline(format)) {
+            let attachment = [color_attachment(
+                view_target.main_texture_view(),
+                LoadOp::Clear(wgpu::Color::BLACK),
+            )];
+            let mut encoder = render_context.begin_tracked_render_pass(RenderPassDescriptor {
+                label: Some(gpu_label!("upscale")),
+                color_attachments: &attachment,
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            encoder.set_render_pipeline(pipeline);
+            encoder.set_bind_group(0, &out.group, &[]);
+            encoder.draw(0..3, 0..1);
+        }
         span.end(render_context.command_encoder());
 
         Ok(())

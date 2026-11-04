@@ -445,6 +445,11 @@ fn render_distance_label(value: i32) -> String {
     format!("{RENDER_DISTANCE}: {value} {CHUNKS}")
 }
 
+#[cfg(feature = "shader_support")]
+fn pack_render_scale_label(value: i32) -> String {
+    format!("Shader Render Scale: {value}%")
+}
+
 fn brightness_label(value: i32) -> String {
     match value {
         0 => format!("{BRIGHTNESS}: {BRIGHTNESS_MOODY}"),
@@ -823,6 +828,13 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         }
 
         f.header(QUALITY_HEADER);
+        #[cfg(feature = "shader_support")]
+        f.slider(
+            &mut o.pack_render_scale,
+            crate::gui::PACK_RENDER_SCALE_MIN,
+            crate::gui::PACK_RENDER_SCALE_MAX,
+            pack_render_scale_label,
+        );
         f.slider(
             &mut o.render_distance,
             RENDER_DISTANCE_MIN as u32,

@@ -144,6 +144,7 @@ pub struct SectionSlot {
     pub vis: VisibilitySet,
 }
 
+#[cfg(test)]
 pub const LAYER_OPAQUE: usize = 0;
 pub const LAYER_WATER: usize = 1;
 

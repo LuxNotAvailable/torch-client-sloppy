@@ -502,6 +502,9 @@ crate::options! {
             crate::util::particles::ParticleStatus::All
         } => key("particles"),
         pub render_distance: u32 = RENDER_DISTANCE_DEFAULT => key("renderDistance"),
+        /// Percent of the window's size a shader pack draws at, scaled up at
+        /// the end: full-screen passes cost per pixel.
+        pub pack_render_scale: u32 = PACK_RENDER_SCALE_MAX => key("shaderRenderScale").clamp(PACK_RENDER_SCALE_MIN, PACK_RENDER_SCALE_MAX),
         pub gamma: u32 = GAMMA_DEFAULT => key("gamma").clamp(0, GAMMA_MAX),
         pub antialiasing: crate::renderer::antialias::Antialiasing = Default::default()
             => custom(|v| crate::renderer::antialias::Antialiasing::read(v), |m, a| a.write(m)),
@@ -863,6 +866,8 @@ pub const LIGHTING_ENABLED_DEFAULT: bool = !cfg!(feature = "mobile_ui");
 pub(crate) const GAMMA_DEFAULT: u32 = 50;
 
 pub const GAMMA_MAX: u32 = 150;
+pub const PACK_RENDER_SCALE_MIN: u32 = 50;
+pub const PACK_RENDER_SCALE_MAX: u32 = 100;
 
 pub const FOV_EFFECTS_DEFAULT: u32 = 100;
 

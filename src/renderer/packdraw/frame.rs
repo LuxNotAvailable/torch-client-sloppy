@@ -39,6 +39,8 @@ pub(crate) struct PackRender {
 pub(super) struct ProcessGpu {
     pub(super) statics: Statics,
     pub(super) blit: Blit,
+    pub(super) upscale: super::fullscreen::Upscale,
+    pub(super) scaled_out: Option<super::fullscreen::ScaledOut>,
     pub(super) mipgen: Option<super::mipmaps::MipGen>,
     pub(super) depth_copy: Option<super::depthcopy::DepthCopy>,
     pub(super) pack_atlas: Option<PackAtlas>,
@@ -49,6 +51,8 @@ impl ProcessGpu {
         ProcessGpu {
             statics: Statics::new(device, queue),
             blit: Blit::new(device),
+            upscale: super::fullscreen::Upscale::new(device),
+            scaled_out: None,
             pack_atlas: None,
             mipgen: None,
             depth_copy: None,

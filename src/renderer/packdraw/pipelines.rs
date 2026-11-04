@@ -748,7 +748,7 @@ fn final_pipeline(
 
 pub(crate) fn prepare_blit(
     device: Res<RenderDevice>,
-    views: Query<&ViewTarget, With<TerrainView>>,
+    views: Query<(&ViewTarget, &bevy::render::view::ExtractedView), With<TerrainView>>,
     render: Option<ResMut<PackRender>>,
 ) {
     let Some(mut render) = render else { return };
@@ -757,8 +757,17 @@ pub(crate) fn prepare_blit(
     else {
         return;
     };
-    for target in &views {
+    for (target, view) in &views {
         let format = target.main_texture_format();
+        let full =
+            bevy::math::UVec2::new(view.viewport.z, view.viewport.w).max(bevy::math::UVec2::ONE);
+        process.scaled_out = process.upscale.target(
+            &device,
+            process.scaled_out.take(),
+            super::scaled(full),
+            full,
+            format,
+        );
         if let Some(index) = install.installed.final_pass
             && !install.finals.iter().any(|(f, _)| *f == format)
         {
