@@ -5,10 +5,22 @@
 //! (`src/bin/vkview.rs`), which runs each piece on its own, with debug
 //! views, before the game uses it.
 
+pub mod bindless;
 pub mod context;
 pub mod frame;
+pub mod graph;
+pub mod memory;
+pub mod pipeline;
 pub mod requirements;
 pub mod swapchain;
+pub mod test_scene;
+pub mod timestamps;
+pub mod upload;
+
+/// The engine's shaders, compiled from `shaders/*.slang` by `build.rs`.
+pub mod shaders {
+    include!(concat!(env!("OUT_DIR"), "/shaders.rs"));
+}
 
 pub use context::Context;
 pub use frame::Frames;

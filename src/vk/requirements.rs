@@ -30,13 +30,17 @@ impl Features {
                 .draw_indirect_first_instance(true)
                 .sampler_anisotropy(true)
                 .fill_mode_non_solid(true)
-                .independent_blend(true),
+                .independent_blend(true)
+                // Vertex shaders read the bindless storage buffers, which
+                // are declared writable for compute.
+                .vertex_pipeline_stores_and_atomics(true),
             v11: vk::PhysicalDeviceVulkan11Features::default().shader_draw_parameters(true),
             v12: vk::PhysicalDeviceVulkan12Features::default()
                 .descriptor_indexing(true)
                 .runtime_descriptor_array(true)
                 .descriptor_binding_partially_bound(true)
                 .descriptor_binding_sampled_image_update_after_bind(true)
+                .descriptor_binding_storage_buffer_update_after_bind(true)
                 .descriptor_binding_variable_descriptor_count(true)
                 .shader_sampled_image_array_non_uniform_indexing(true)
                 .draw_indirect_count(true)
@@ -125,6 +129,11 @@ impl Offered {
         );
         need(r.independent_blend, o.independent_blend, "independentBlend");
         need(
+            r.vertex_pipeline_stores_and_atomics,
+            o.vertex_pipeline_stores_and_atomics,
+            "vertexPipelineStoresAndAtomics",
+        );
+        need(
             required.v11.shader_draw_parameters,
             self.v11.shader_draw_parameters,
             "shaderDrawParameters",
@@ -149,6 +158,11 @@ impl Offered {
             r.descriptor_binding_sampled_image_update_after_bind,
             o.descriptor_binding_sampled_image_update_after_bind,
             "descriptorBindingSampledImageUpdateAfterBind",
+        );
+        need(
+            r.descriptor_binding_storage_buffer_update_after_bind,
+            o.descriptor_binding_storage_buffer_update_after_bind,
+            "descriptorBindingStorageBufferUpdateAfterBind",
         );
         need(
             r.descriptor_binding_variable_descriptor_count,

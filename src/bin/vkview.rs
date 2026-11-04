@@ -2,18 +2,27 @@
 //! (VULKAN_REWRITE_CHECKLIST.md): it runs the new renderer on its own, in a
 //! window of its own, so each piece can be checked before the game uses it.
 //!
-//! `vkview [--frames N] [--device NAME] [--vsync] [--size WxH] [--stress]`
-//!
-//! `--stress` resizes, minimises and restores the window during the run, to
-//! exercise swapchain recreation under the validation layer.
+//! `vkview [--frames N] [--device NAME] [--vsync] [--size WxH] [--stress]
+//!         [--view shaded|normals|texture|depth] [--screenshot FILE.png]`
 //!
 //! With `--frames`, it draws that many frames, prints a summary (device,
-//! frame times, validation-layer errors and warnings) and exits, failing if
-//! the validation layer reported any error. Set `MC_VK_VALIDATION=1` for the
-//! layer in release builds.
+//! frame times, GPU time per pass, barriers, memory, validation-layer errors
+//! and warnings) and exits, failing if the validation layer reported any
+//! error. `--screenshot` saves the last frame. `--stress` resizes,
+//! minimises and restores the window during the run, to exercise swapchain
+//! recreation. Set `MC_VK_VALIDATION=1` for the layer in release builds.
 
 use std::time::Instant;
 
+use ash::vk as v;
+use gpu_allocator::MemoryLocation;
+use torch_client::vk::bindless::Bindless;
+use torch_client::vk::graph::{Graph, Use};
+use torch_client::vk::memory::{Buffer, Memory};
+use torch_client::vk::pipeline::Pipelines;
+use torch_client::vk::test_scene::{TestScene, View};
+use torch_client::vk::timestamps::Timestamps;
+use torch_client::vk::upload::Uploads;
 use torch_client::vk::{self, Context, Frames, Swapchain, frame};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
@@ -21,15 +30,14 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::window::{Window, WindowId};
 
-/// Vanilla's daytime sky colour, as the first thing to clear to.
-const SKY: [f32; 4] = [0.47, 0.65, 1.0, 1.0];
-
 struct Options {
     frames: Option<u64>,
     device: Option<String>,
     vsync: bool,
     size: (u32, u32),
     stress: bool,
+    view: View,
+    screenshot: Option<String>,
 }
 
 fn options() -> Options {
@@ -39,6 +47,8 @@ fn options() -> Options {
         vsync: false,
         size: (1280, 720),
         stress: false,
+        view: View::Shaded,
+        screenshot: None,
     };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -47,6 +57,14 @@ fn options() -> Options {
             "--device" => options.device = args.next(),
             "--vsync" => options.vsync = true,
             "--stress" => options.stress = true,
+            "--screenshot" => options.screenshot = args.next(),
+            "--view" => {
+                let name = args.next().unwrap_or_default();
+                options.view = View::parse(&name).unwrap_or_else(|| {
+                    eprintln!("vkview: unknown view {name}");
+                    View::Shaded
+                });
+            }
             "--size" => {
                 if let Some((w, h)) = args.next().as_deref().and_then(|v| v.split_once('x')) {
                     options.size = (w.parse().unwrap_or(1280), h.parse().unwrap_or(720));
@@ -58,13 +76,31 @@ fn options() -> Options {
     options
 }
 
+/// A frame's image copied back for `--screenshot`.
+struct Readback {
+    buffer: Buffer,
+    extent: v::Extent2D,
+    format: v::Format,
+}
+
 struct Renderer {
-    // Dropped in this order: the swapchain and frames before the context.
+    // Everything made from the device is destroyed in `Drop`, before the
+    // context.
+    scene: Option<TestScene>,
+    timestamps: Option<Timestamps>,
+    uploads: Option<Uploads>,
+    pipelines: Option<Pipelines>,
+    bindless: Option<Bindless>,
+    readback: Option<Readback>,
+    memory: Option<Memory>,
     swapchain: Option<Swapchain>,
     frames: Option<Frames>,
     ctx: Context,
     window: Window,
     stale: bool,
+    frame: u64,
+    started: Instant,
+    barriers: u32,
 }
 
 impl Renderer {
@@ -92,12 +128,39 @@ impl Renderer {
         let size = window.inner_size();
         let swapchain = Swapchain::new(&ctx, (size.width, size.height), options.vsync, None)?;
         let frames = Frames::new(&ctx)?;
+        let memory = Memory::new(&ctx)?;
+        let mut bindless = Bindless::new(&ctx)?;
+        let cache_path = std::env::temp_dir().join("torch-vkview-pipelines.bin");
+        let cache_had = cache_path.exists();
+        let compile = Instant::now();
+        let pipelines = Pipelines::new(&ctx, bindless.layout, Some(cache_path))?;
+        let uploads = Uploads::new(&ctx, &memory, 8 << 20)?;
+        let timestamps = Timestamps::new(&ctx)?;
+        let format = swapchain
+            .as_ref()
+            .map_or(v::Format::B8G8R8A8_SRGB, |s| s.format.format);
+        let scene = TestScene::new(&ctx, &memory, &mut bindless, &pipelines, format)?;
+        println!(
+            "vkview: pipelines ready in {:.1} ms ({} cache)",
+            compile.elapsed().as_secs_f32() * 1000.0,
+            if cache_had { "warm" } else { "cold" }
+        );
         Ok(Renderer {
+            scene: Some(scene),
+            timestamps: Some(timestamps),
+            uploads: Some(uploads),
+            pipelines: Some(pipelines),
+            bindless: Some(bindless),
+            readback: None,
+            memory: Some(memory),
             swapchain,
             frames: Some(frames),
             ctx,
             window,
             stale: false,
+            frame: 0,
+            started: Instant::now(),
+            barriers: 0,
         })
     }
 
@@ -118,14 +181,16 @@ impl Renderer {
     }
 
     /// Draws one frame; false when nothing was drawn (minimised, or the
-    /// swapchain had to be remade).
-    fn draw(&mut self, vsync: bool) -> bool {
+    /// swapchain had to be remade). `capture` copies the frame back for a
+    /// screenshot.
+    fn draw(&mut self, vsync: bool, view: View, capture: bool) -> bool {
         if self.stale && self.recreate(vsync).is_err() {
             return false;
         }
         let (Some(swapchain), Some(frames)) = (&self.swapchain, &mut self.frames) else {
             return false;
         };
+        let slot = frames.index;
         let recording = match frames.begin(&self.ctx, swapchain) {
             Ok(r) => r,
             Err(frame::FrameError::OutOfDate) => {
@@ -137,61 +202,101 @@ impl Renderer {
                 return false;
             }
         };
-        let device = &self.ctx.device;
+        let (
+            Some(memory),
+            Some(bindless),
+            Some(pipelines),
+            Some(uploads),
+            Some(timestamps),
+            Some(scene),
+        ) = (
+            &self.memory,
+            &mut self.bindless,
+            &self.pipelines,
+            &mut self.uploads,
+            &mut self.timestamps,
+            &mut self.scene,
+        )
+        else {
+            return false;
+        };
+        bindless.recycle(self.frame);
+        uploads.begin(slot);
+        timestamps.begin_frame(&self.ctx, slot);
+
         let image = swapchain.images[recording.image_index as usize];
-        let view = swapchain.views[recording.image_index as usize];
-        use ash::vk as v;
-        frame::transition(
-            device,
-            recording.commands,
-            image,
-            (
-                v::ImageLayout::UNDEFINED,
-                v::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
-                v::AccessFlags2::NONE,
-            ),
-            (
-                v::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                v::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
-                v::AccessFlags2::COLOR_ATTACHMENT_WRITE,
-            ),
-        );
-        let attachments = [v::RenderingAttachmentInfo::default()
-            .image_view(view)
-            .image_layout(v::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-            .load_op(v::AttachmentLoadOp::CLEAR)
-            .store_op(v::AttachmentStoreOp::STORE)
-            .clear_value(v::ClearValue {
-                color: v::ClearColorValue { float32: SKY },
-            })];
-        let rendering = v::RenderingInfo::default()
-            .render_area(v::Rect2D {
-                offset: v::Offset2D::default(),
-                extent: swapchain.extent,
-            })
-            .layer_count(1)
-            .color_attachments(&attachments);
-        // SAFETY: recording into this frame's command buffer, to an image
-        // just moved to the attachment layout.
-        unsafe {
-            device.cmd_begin_rendering(recording.commands, &rendering);
-            device.cmd_end_rendering(recording.commands);
+        let image_view = swapchain.views[recording.image_index as usize];
+        let extent = swapchain.extent;
+        let mut graph = Graph::new(&self.ctx, recording.commands, Some(timestamps));
+        graph.image(image, v::ImageAspectFlags::COLOR, v::ImageLayout::UNDEFINED);
+        if let Err(e) = scene.record(
+            &self.ctx,
+            memory,
+            bindless,
+            pipelines,
+            uploads,
+            &mut graph,
+            (image, image_view),
+            extent,
+            self.frame,
+            self.started.elapsed().as_secs_f32(),
+            view,
+        ) {
+            eprintln!("vkview: scene failed: {e}");
         }
-        frame::transition(
-            device,
-            recording.commands,
-            image,
-            (
-                v::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                v::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
-                v::AccessFlags2::COLOR_ATTACHMENT_WRITE,
-            ),
-            (
-                v::ImageLayout::PRESENT_SRC_KHR,
-                v::PipelineStageFlags2::BOTTOM_OF_PIPE,
-                v::AccessFlags2::NONE,
-            ),
-        );
+        if capture && self.readback.is_none() {
+            let bytes = extent.width as u64 * extent.height as u64 * 4;
+            if let Ok(buffer) = memory.buffer(
+                &self.ctx,
+                "screenshot",
+                bytes,
+                v::BufferUsageFlags::TRANSFER_DST,
+                MemoryLocation::GpuToCpu,
+            ) {
+                let device = &self.ctx.device;
+                let target = buffer.raw;
+                graph.pass(
+                    "screenshot",
+                    &[(image, Use::TransferSrc)],
+                    &[],
+                    |cmd| unsafe {
+                        // SAFETY: the image is in TRANSFER_SRC; the buffer is
+                        // sized for it.
+                        device.cmd_copy_image_to_buffer(
+                            cmd,
+                            image,
+                            v::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                            target,
+                            &[v::BufferImageCopy {
+                                buffer_offset: 0,
+                                buffer_row_length: 0,
+                                buffer_image_height: 0,
+                                image_subresource: v::ImageSubresourceLayers {
+                                    aspect_mask: v::ImageAspectFlags::COLOR,
+                                    mip_level: 0,
+                                    base_array_layer: 0,
+                                    layer_count: 1,
+                                },
+                                image_offset: v::Offset3D::default(),
+                                image_extent: v::Extent3D {
+                                    width: extent.width,
+                                    height: extent.height,
+                                    depth: 1,
+                                },
+                            }],
+                        );
+                    },
+                );
+                self.readback = Some(Readback {
+                    buffer,
+                    extent,
+                    format: swapchain.format.format,
+                });
+            }
+        }
+        graph.pass("present", &[(image, Use::Present)], &[], |_| {});
+        self.barriers = graph.barriers;
+        self.frame += 1;
         match frames.end(&self.ctx, swapchain, recording) {
             Ok(()) => true,
             Err(frame::FrameError::OutOfDate) => {
@@ -204,11 +309,80 @@ impl Renderer {
             }
         }
     }
+
+    /// Writes the captured frame to `path` as a PNG.
+    fn save_screenshot(&mut self, path: &str) {
+        let Some(mut readback) = self.readback.take() else {
+            eprintln!("vkview: no frame was captured");
+            return;
+        };
+        self.ctx.idle();
+        let (w, h) = (readback.extent.width, readback.extent.height);
+        if let Some(bytes) = readback.buffer.mapped() {
+            let bgra = matches!(
+                readback.format,
+                v::Format::B8G8R8A8_SRGB | v::Format::B8G8R8A8_UNORM
+            );
+            let mut rgba = bytes[..(w * h * 4) as usize].to_vec();
+            if bgra {
+                for px in rgba.chunks_exact_mut(4) {
+                    px.swap(0, 2);
+                }
+            }
+            match image::save_buffer(path, &rgba, w, h, image::ColorType::Rgba8) {
+                Ok(()) => println!("vkview: screenshot {path} ({w}x{h})"),
+                Err(e) => eprintln!("vkview: screenshot failed: {e}"),
+            }
+        }
+        if let Some(memory) = &self.memory {
+            memory.free_buffer(&self.ctx, readback.buffer);
+        }
+    }
+
+    fn summary(&self) {
+        if let Some(t) = &self.timestamps {
+            let passes: Vec<String> = t
+                .last
+                .iter()
+                .map(|(name, ms)| format!("{name} {ms:.3}"))
+                .collect();
+            println!("vkview: GPU ms per pass: {}", passes.join(", "));
+        }
+        if let Some(memory) = &self.memory {
+            let (used, reserved) = memory.usage();
+            println!(
+                "vkview: {} barriers a frame, GPU memory {:.1} MiB used of {:.1} MiB reserved",
+                self.barriers,
+                used as f32 / 1048576.0,
+                reserved as f32 / 1048576.0
+            );
+        }
+    }
 }
 
 impl Drop for Renderer {
     fn drop(&mut self) {
         self.ctx.idle();
+        let memory = self.memory.take();
+        if let (Some(scene), Some(memory)) = (self.scene.take(), &memory) {
+            scene.destroy(&self.ctx, memory);
+        }
+        if let (Some(uploads), Some(memory)) = (self.uploads.take(), &memory) {
+            uploads.destroy(&self.ctx, memory);
+        }
+        if let (Some(readback), Some(memory)) = (self.readback.take(), &memory) {
+            memory.free_buffer(&self.ctx, readback.buffer);
+        }
+        drop(memory);
+        if let Some(t) = self.timestamps.take() {
+            t.destroy(&self.ctx);
+        }
+        if let Some(p) = self.pipelines.take() {
+            p.destroy(&self.ctx);
+        }
+        if let Some(b) = self.bindless.take() {
+            b.destroy(&self.ctx);
+        }
         if let Some(swapchain) = self.swapchain.take() {
             swapchain.destroy(&self.ctx);
         }
@@ -222,7 +396,6 @@ struct App {
     options: Options,
     renderer: Option<Renderer>,
     drawn: u64,
-    started: Option<Instant>,
     frame_ms: Vec<f32>,
     last: Option<Instant>,
     failed: Option<String>,
@@ -268,13 +441,14 @@ impl ApplicationHandler for App {
             }
             WindowEvent::RedrawRequested => {
                 let Some(r) = &mut self.renderer else { return };
-                if r.draw(self.options.vsync) {
+                let last_frame = self.options.frames.is_some_and(|n| self.drawn + 1 >= n);
+                let capture = last_frame && self.options.screenshot.is_some();
+                if r.draw(self.options.vsync, self.options.view, capture) {
                     let now = Instant::now();
                     if let Some(last) = self.last {
                         self.frame_ms.push((now - last).as_secs_f32() * 1000.0);
                     }
                     self.last = Some(now);
-                    self.started.get_or_insert(now);
                     self.drawn += 1;
                     if self.options.frames.is_some_and(|n| self.drawn >= n) {
                         event_loop.exit();
@@ -329,7 +503,6 @@ fn main() {
         options,
         renderer: None,
         drawn: 0,
-        started: None,
         frame_ms: Vec::new(),
         last: None,
         failed: None,
@@ -337,6 +510,13 @@ fn main() {
         stress_done: 0,
     };
     let _ = event_loop.run_app(&mut app);
+    if let Some(r) = &mut app.renderer {
+        if let Some(path) = app.options.screenshot.clone() {
+            r.save_screenshot(&path);
+        }
+        r.ctx.idle();
+        r.summary();
+    }
     drop(app.renderer.take());
 
     if let Some(reason) = &app.failed {
