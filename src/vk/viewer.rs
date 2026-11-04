@@ -237,6 +237,9 @@ struct Renderer {
     frame: u64,
     started: Instant,
     barriers: u32,
+    /// CPU milliseconds spent recording each frame (after its fence, up to
+    /// the submit): what the game's render thread would spend.
+    cpu_ms: Vec<f32>,
     /// `--step`: scene seconds per frame instead of the clock, so runs
     /// repeat frame for frame.
     step: Option<f32>,
@@ -362,6 +365,7 @@ impl Renderer {
             frame: 0,
             started: Instant::now(),
             barriers: 0,
+            cpu_ms: Vec::new(),
             step: options.step,
             game_camera: options.game_camera,
         })
@@ -450,6 +454,7 @@ impl Renderer {
             Some(swapchain) => frames.begin(&self.ctx, swapchain),
             None => frames.begin_offscreen(&self.ctx),
         };
+        let recorded_from = Instant::now();
         let recording = match begun {
             Ok(r) => r,
             Err(frame::FrameError::OutOfDate) => {
@@ -690,6 +695,8 @@ impl Renderer {
         }
         self.barriers = graph.barriers;
         self.frame += 1;
+        self.cpu_ms
+            .push(recorded_from.elapsed().as_secs_f32() * 1000.0);
         let ended = match &self.swapchain {
             Some(swapchain) => frames.end(&self.ctx, swapchain, recording),
             None => frames.end_offscreen(&self.ctx, recording),
@@ -897,6 +904,16 @@ impl Renderer {
     }
 
     fn summary(&self) {
+        if !self.cpu_ms.is_empty() {
+            let mut sorted = self.cpu_ms.clone();
+            sorted.sort_by(f32::total_cmp);
+            let avg = sorted.iter().sum::<f32>() / sorted.len() as f32;
+            println!(
+                "vkview: CPU recording avg {:.3} ms, p99 {:.3} ms",
+                avg,
+                sorted[(sorted.len() - 1) * 99 / 100]
+            );
+        }
         if let Some(Scene::Terrain(scene, _)) = &self.scene {
             let s = &scene.stats;
             println!(
