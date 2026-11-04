@@ -53,6 +53,11 @@ pub(crate) struct Pack {
 
 const MAX_CACHED: usize = 512;
 
+/// Bytes of encoded sound files the pack holds in memory, for the
+/// performance report.
+pub(crate) static CACHED_BYTES: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
 impl Pack {
     pub(crate) fn open(index_id: &str) -> Result<Pack, String> {
         let path = pack_path(index_id);
@@ -92,6 +97,10 @@ impl Pack {
             self.cache.clear();
         }
         self.cache.insert(key.to_owned(), bytes.clone());
+        CACHED_BYTES.store(
+            self.cache.values().map(|b| b.len()).sum(),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         Some(bytes)
     }
 

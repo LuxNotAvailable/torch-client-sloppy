@@ -134,7 +134,10 @@ pub struct TerrainStatsInner {
     pub drawn: AtomicUsize,
     pub draws: AtomicUsize,
     draws_pending: AtomicUsize,
+    /// 1 while the GPU culls, so `drawn` is only known when counted.
     pub indirect: AtomicUsize,
+    /// Asks the GPU-culled path to count `drawn` on the CPU too.
+    pub count_sections: std::sync::atomic::AtomicBool,
 }
 
 static STATS: OnceLock<TerrainStats> = OnceLock::new();

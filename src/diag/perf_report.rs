@@ -9,9 +9,13 @@
 //!   ([`frame_profile`]), so anything timed anywhere shows up;
 //! - each value in Bevy's diagnostics store measured lately (GPU and CPU
 //!   time per render pass, among others);
-//! - what the frame drew: entities, players, terrain draws and memory.
+//! - what the frame drew: entities, players, terrain draws and memory;
+//! - what the render thread had to do: meshes and images uploaded, the
+//!   draws in Bevy's render phases, live GPU objects, and the time the
+//!   queue submit and present took.
 //!
-//! Four times a second it samples the process (CPU and memory), and over the
+//! Four times a second a thread of its own samples the process (CPU and
+//! memory), so the sampling's cost stays out of the frames it measures. Over the
 //! whole recording it takes the change in the pipeline counters (chunks
 //! received, sections meshed and so on). Each series is summarised as its
 //! average, low, high and percentiles. The report opens with the machine:
@@ -22,8 +26,10 @@ use std::fmt::Write as _;
 use std::sync::Mutex;
 use std::time::Duration;
 
+use bevy::core_pipeline::core_3d::{AlphaMask3d, Opaque3d, Transparent3d};
 use bevy::diagnostic::DiagnosticsStore;
 use bevy::prelude::*;
+use bevy::render::render_phase::{BinnedPhaseItem, ViewBinnedRenderPhases, ViewSortedRenderPhases};
 use bevy::window::PrimaryWindow;
 
 use super::frame_profile::{self, Group};
@@ -44,6 +50,8 @@ enum Section {
     Spans,
     Diagnostics,
     World,
+    RenderWork,
+    Memory,
     Process,
 }
 
@@ -55,6 +63,8 @@ impl Section {
             Section::Spans => "Timed spans (ms per frame, all threads)",
             Section::Diagnostics => "Bevy diagnostics (render passes in ms)",
             Section::World => "What each frame drew",
+            Section::RenderWork => "Render thread work (per frame)",
+            Section::Memory => "Memory (MiB)",
             Section::Process => "Process (sampled 4 times a second)",
         }
     }
@@ -66,6 +76,8 @@ impl Section {
             Section::Spans => "spans",
             Section::Diagnostics => "diagnostics",
             Section::World => "world",
+            Section::RenderWork => "render_work",
+            Section::Memory => "memory",
             Section::Process => "process",
         }
     }
@@ -82,9 +94,74 @@ struct Capture {
     series: BTreeMap<(Section, String), Vec<f32>>,
     counts_at_start: Counts,
     traffic_at_start: (u64, u64),
-    system: sysinfo::System,
-    pid: Option<sysinfo::Pid>,
-    last_process: Instant,
+    process: Option<ProcessSampler>,
+}
+
+/// One reading of the process, taken off the main thread.
+struct ProcessSample {
+    machine_cpu: f32,
+    /// The client's CPU and memory, when its process could be read.
+    client: Option<(f32, u64)>,
+}
+
+/// The thread that samples the process while a report records. Refreshing
+/// `sysinfo` takes about 11 ms, and the first refresh far longer, which on
+/// the main thread showed up as the very stutters the report measures.
+struct ProcessSampler {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread: std::thread::JoinHandle<(sysinfo::System, Vec<ProcessSample>)>,
+}
+
+impl ProcessSampler {
+    fn spawn() -> Option<ProcessSampler> {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let flag = stop.clone();
+        let thread = std::thread::Builder::new()
+            .name("perf-sampler".into())
+            .spawn(move || {
+                let mut system = sysinfo::System::new();
+                let pid = sysinfo::get_current_pid().ok();
+                let mut samples = Vec::with_capacity(64);
+                // CPU use is the change since the last refresh, so the first
+                // reading is always zero.
+                sample_process(&mut system, pid);
+                std::thread::park_timeout(PROCESS_EVERY);
+                while !flag.load(Ordering::Acquire) {
+                    samples.push(sample_process(&mut system, pid));
+                    std::thread::park_timeout(PROCESS_EVERY);
+                }
+                (system, samples)
+            })
+            .ok()?;
+        Some(ProcessSampler { stop, thread })
+    }
+
+    /// Stops the thread and hands back what it saw, with its `System` for
+    /// the machine description.
+    fn finish(self) -> Option<(sysinfo::System, Vec<ProcessSample>)> {
+        self.stop.store(true, std::sync::atomic::Ordering::Release);
+        self.thread.thread().unpark();
+        self.thread.join().ok()
+    }
+}
+
+fn sample_process(system: &mut sysinfo::System, pid: Option<sysinfo::Pid>) -> ProcessSample {
+    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate};
+    system.refresh_cpu_usage();
+    let machine_cpu = system.global_cpu_usage();
+    let client = pid.and_then(|pid| {
+        system.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&[pid]),
+            true,
+            ProcessRefreshKind::nothing().with_cpu().with_memory(),
+        );
+        system.process(pid).map(|p| (p.cpu_usage(), p.memory()))
+    });
+    ProcessSample {
+        machine_cpu,
+        client,
+    }
 }
 
 static CAPTURE: Mutex<Option<Capture>> = Mutex::new(None);
@@ -105,9 +182,7 @@ pub fn start() {
         series: BTreeMap::new(),
         counts_at_start: Counts::default(),
         traffic_at_start: (0, 0),
-        system: sysinfo::System::new(),
-        pid: sysinfo::get_current_pid().ok(),
-        last_process: Instant::now(),
+        process: None,
     });
 }
 
@@ -128,7 +203,123 @@ pub struct PerfReportPlugin;
 
 impl Plugin for PerfReportPlugin {
     fn build(&self, app: &mut App) {
+        use bevy::render::{Render, RenderApp, RenderSystems};
         app.add_systems(Last, sample);
+        if let Some(render) = app.get_sub_app_mut(RenderApp) {
+            render.add_systems(
+                Render,
+                count_phase_draws
+                    .in_set(RenderSystems::Render)
+                    .before(bevy::render::renderer::render_system),
+            );
+        }
+    }
+}
+
+/// The draws queued in Bevy's render phases for the frame the render
+/// thread last encoded. A multi-draw batch or an instanced bin counts once.
+static PHASE_DRAWS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+fn count_phase_draws(
+    opaque: Option<Res<ViewBinnedRenderPhases<Opaque3d>>>,
+    alpha: Option<Res<ViewBinnedRenderPhases<AlphaMask3d>>>,
+    shadow: Option<Res<ViewBinnedRenderPhases<bevy::pbr::Shadow>>>,
+    transparent: Option<Res<ViewSortedRenderPhases<Transparent3d>>>,
+) {
+    if !frame_profile::enabled() {
+        return;
+    }
+    let draws = binned_draws(opaque.as_deref())
+        + binned_draws(alpha.as_deref())
+        + binned_draws(shadow.as_deref())
+        + transparent.map_or(0, |phases| phases.values().map(|p| p.items.len()).sum());
+    PHASE_DRAWS.store(draws, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn binned_draws<T: BinnedPhaseItem>(phases: Option<&ViewBinnedRenderPhases<T>>) -> usize {
+    phases.map_or(0, |phases| {
+        phases
+            .values()
+            .map(|phase| {
+                phase.multidrawable_meshes.len()
+                    + phase.batchable_meshes.len()
+                    + phase
+                        .unbatchable_meshes
+                        .values()
+                        .map(|bin| bin.entities.len())
+                        .sum::<usize>()
+                    + phase.non_mesh_items.len()
+            })
+            .sum()
+    })
+}
+
+/// Meshes and images added or changed this frame, and their bytes: each is
+/// uploaded again in Prepare assets.
+#[derive(bevy::ecs::system::SystemParam)]
+struct Uploads<'w, 's> {
+    mesh_events: MessageReader<'w, 's, AssetEvent<Mesh>>,
+    image_events: MessageReader<'w, 's, AssetEvent<Image>>,
+    meshes: Res<'w, Assets<Mesh>>,
+    images: Res<'w, Assets<Image>>,
+    device: Option<Res<'w, bevy::render::renderer::RenderDevice>>,
+}
+
+fn changed<A: Asset>(event: &AssetEvent<A>) -> Option<AssetId<A>> {
+    match *event {
+        AssetEvent::Added { id } | AssetEvent::Modified { id } => Some(id),
+        _ => None,
+    }
+}
+
+impl Uploads<'_, '_> {
+    /// `(images, meshes)`: bytes of asset data the main world still holds
+    /// on the CPU. Assets used only for rendering drop theirs once uploaded.
+    fn cpu_bytes(&self) -> (usize, usize) {
+        let images = self
+            .images
+            .iter()
+            .map(|(_, image)| image.data.as_ref().map_or(0, Vec::len))
+            .sum();
+        let meshes = self
+            .meshes
+            .iter()
+            .filter(|(_, mesh)| {
+                mesh.asset_usage
+                    .contains(bevy::asset::RenderAssetUsages::MAIN_WORLD)
+            })
+            .map(|(_, mesh)| {
+                mesh.get_vertex_buffer_size()
+                    + mesh.indices().map_or(0, |indices| match indices {
+                        bevy::mesh::Indices::U16(v) => v.len() * 2,
+                        bevy::mesh::Indices::U32(v) => v.len() * 4,
+                    })
+            })
+            .sum();
+        (images, meshes)
+    }
+
+    /// `(meshes, mesh bytes, images, image bytes)` since the last call.
+    fn take(&mut self) -> (usize, usize, usize, usize) {
+        let (mut meshes, mut mesh_bytes) = (0, 0);
+        for id in self.mesh_events.read().filter_map(changed) {
+            meshes += 1;
+            if let Some(mesh) = self.meshes.get(id) {
+                mesh_bytes += mesh.get_vertex_buffer_size()
+                    + mesh.indices().map_or(0, |indices| match indices {
+                        bevy::mesh::Indices::U16(v) => v.len() * 2,
+                        bevy::mesh::Indices::U32(v) => v.len() * 4,
+                    });
+            }
+        }
+        let (mut images, mut image_bytes) = (0, 0);
+        for id in self.image_events.read().filter_map(changed) {
+            images += 1;
+            if let Some(image) = self.images.get(id) {
+                image_bytes += image.data.as_ref().map_or(0, Vec::len);
+            }
+        }
+        (meshes, mesh_bytes, images, image_bytes)
     }
 }
 
@@ -142,6 +333,7 @@ struct Context<'w, 's> {
 }
 
 fn sample(
+    mut uploads: Uploads,
     time: Res<Time<Real>>,
     diagnostics: Option<Res<DiagnosticsStore>>,
     view: Res<crate::renderer::frame_view::FrameView>,
@@ -154,12 +346,16 @@ fn sample(
         return;
     };
     let now = Instant::now();
+    // Read every frame, so a recording starts with only its own frames'.
+    let upload = uploads.take();
     match capture.phase {
         Phase::Settling { until } => {
             if now >= until {
                 frame_profile::set_capturing(true);
+                count_terrain_sections(true);
                 capture.counts_at_start = super::counts();
                 capture.traffic_at_start = traffic();
+                capture.process = ProcessSampler::spawn();
                 capture.phase = Phase::Recording {
                     started: now,
                     until: now + RECORD,
@@ -174,12 +370,11 @@ fn sample(
         Phase::Recording { started, until } => {
             capture.frame_ms.push(time.delta_secs() * 1000.0);
             capture.record_frame(diagnostics.as_deref(), &view);
-            if now.duration_since(capture.last_process) >= PROCESS_EVERY {
-                capture.last_process = now;
-                capture.record_process();
-            }
+            capture.record_render_work(upload, uploads.device.as_deref());
+            capture.record_memory(uploads.cpu_bytes());
             if now >= until {
                 frame_profile::set_capturing(false);
+                count_terrain_sections(false);
                 let capture = slot.take().expect("checked above");
                 let secs = now.duration_since(started).as_secs_f32();
                 finish(capture, secs, &context);
@@ -254,35 +449,107 @@ impl Capture {
         }
     }
 
-    fn record_process(&mut self) {
-        use sysinfo::{ProcessRefreshKind, ProcessesToUpdate};
-        self.system.refresh_cpu_usage();
-        self.push(
-            Section::Process,
-            "machine CPU (%)",
-            self.system.global_cpu_usage(),
-        );
-        let Some(pid) = self.pid else {
-            return;
-        };
-        self.system.refresh_processes_specifics(
-            ProcessesToUpdate::Some(&[pid]),
-            true,
-            ProcessRefreshKind::nothing().with_cpu().with_memory(),
-        );
-        if let Some((cpu, memory)) = self
-            .system
-            .process(pid)
-            .map(|p| (p.cpu_usage(), p.memory()))
-        {
-            // One core flat out is 100%.
-            self.push(Section::Process, "client CPU (% of one core)", cpu);
+    fn record_memory(&mut self, (image_bytes, mesh_bytes): (usize, usize)) {
+        use std::sync::atomic::Ordering::Relaxed;
+        let mib = |bytes: u64| bytes as f32 / 1048576.0;
+        if let Some(heap) = super::alloc::heap_live() {
+            self.push(Section::Memory, "heap live", mib(heap));
+        }
+        self.push(Section::Memory, "CPU image data", mib(image_bytes as u64));
+        self.push(Section::Memory, "CPU mesh data", mib(mesh_bytes as u64));
+        if let Some(terrain) = crate::renderer::terrain_pool::stats() {
+            let t = &terrain.0;
             self.push(
-                Section::Process,
-                "client memory (MiB)",
-                memory as f32 / 1048576.0,
+                Section::Memory,
+                "terrain buffers used",
+                mib(t.used_bytes.load(Relaxed)),
+            );
+            self.push(
+                Section::Memory,
+                "terrain buffers allocated",
+                mib(t.capacity_bytes.load(Relaxed)),
             );
         }
+        #[cfg(audio)]
+        {
+            let (decoded, encoded) = crate::audio::cache_bytes();
+            self.push(Section::Memory, "sounds decoded", mib(decoded as u64));
+            self.push(Section::Memory, "sound files cached", mib(encoded as u64));
+        }
+    }
+
+    fn record_render_work(
+        &mut self,
+        (meshes, mesh_bytes, images, image_bytes): (usize, usize, usize, usize),
+        device: Option<&bevy::render::renderer::RenderDevice>,
+    ) {
+        let kib = |bytes: usize| bytes as f32 / 1024.0;
+        self.push(Section::RenderWork, "meshes uploaded", meshes as f32);
+        self.push(
+            Section::RenderWork,
+            "mesh bytes uploaded (KiB)",
+            kib(mesh_bytes),
+        );
+        self.push(Section::RenderWork, "images uploaded", images as f32);
+        self.push(
+            Section::RenderWork,
+            "image bytes uploaded (KiB)",
+            kib(image_bytes),
+        );
+        self.push(
+            Section::RenderWork,
+            "Bevy phase draws",
+            PHASE_DRAWS.load(std::sync::atomic::Ordering::Relaxed) as f32,
+        );
+        // Live counts, not how many were made this frame: wgpu counts
+        // objects alive, so churn shows only as these moving.
+        let Some(device) = device else {
+            return;
+        };
+        let hal = device.wgpu_device().get_internal_counters().hal;
+        let mib = |bytes: isize| bytes as f32 / 1048576.0;
+        for (name, value) in [
+            ("GPU bind groups alive", hal.bind_groups.read() as f32),
+            ("GPU buffers alive", hal.buffers.read() as f32),
+            ("GPU textures alive", hal.textures.read() as f32),
+        ] {
+            self.push(Section::RenderWork, name, value);
+        }
+        self.push(
+            Section::Memory,
+            "GPU buffers",
+            mib(hal.buffer_memory.read()),
+        );
+        self.push(
+            Section::Memory,
+            "GPU textures",
+            mib(hal.texture_memory.read()),
+        );
+    }
+
+    fn record_process(&mut self, samples: &[ProcessSample]) {
+        for sample in samples {
+            self.push(Section::Process, "machine CPU (%)", sample.machine_cpu);
+            if let Some((cpu, memory)) = sample.client {
+                // One core flat out is 100%.
+                self.push(Section::Process, "client CPU (% of one core)", cpu);
+                self.push(
+                    Section::Process,
+                    "client memory (MiB)",
+                    memory as f32 / 1048576.0,
+                );
+            }
+        }
+    }
+}
+
+/// The GPU-culled terrain path counts the sections it draws only on request.
+fn count_terrain_sections(on: bool) {
+    if let Some(terrain) = crate::renderer::terrain_pool::stats() {
+        terrain
+            .0
+            .count_sections
+            .store(on, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -538,7 +805,14 @@ fn describe(
 }
 
 fn finish(mut capture: Capture, secs: f32, context: &Context) {
-    let about = describe(context, &mut capture.system);
+    let mut system = match capture.process.take().and_then(ProcessSampler::finish) {
+        Some((system, samples)) => {
+            capture.record_process(&samples);
+            system
+        }
+        None => sysinfo::System::new(),
+    };
+    let about = describe(context, &mut system);
     let counts_end = super::counts();
     let (rx, tx) = traffic();
     let counters: Vec<(String, u64)> = Stat::ALL

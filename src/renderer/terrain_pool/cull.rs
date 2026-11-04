@@ -557,6 +557,16 @@ pub fn finish(app: &mut App) {
     render_app.insert_resource(CullPipeline { layout, id });
 }
 
+/// Whether the camera's cull keeps a section: the same tests `cull.wgsl`
+/// runs for a camera view.
+fn camera_keeps(pools: &TerrainPools, index: u32, shape: &CullShape) -> bool {
+    if !pools.is_live(index) || !pools.is_visible(index) {
+        return false;
+    }
+    let (lo, hi) = pools.meta_cpu[index as usize].world_box();
+    shape.keeps(lo, hi)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn prepare_cull(
     device: Res<RenderDevice>,
@@ -611,8 +621,34 @@ pub fn prepare_cull(
         }
     }
 
+    // Last frame's draw calls, from whichever path issued them (the
+    // terrain pass or a shader pack's).
+    let stats = &pools.stats.0;
+    stats.draws.store(
+        stats.draws_pending.swap(0, Ordering::Relaxed),
+        Ordering::Relaxed,
+    );
+    stats
+        .indirect
+        .store(tier.indirect as usize, Ordering::Relaxed);
+
     let pool_count = pools.pools.len().max(1) as u32;
     if tier.indirect {
+        // The GPU culls here, so the CPU only knows what was drawn by
+        // repeating its tests, which a report asks for while it records.
+        if stats.count_sections.load(Ordering::Relaxed) {
+            crate::prof_span!("render:terrain_count_sections");
+            let drawn = assigned
+                .iter()
+                .filter(|view| view.flags == CAMERA_FLAGS)
+                .map(|view| {
+                    (0..pools.draw_end.min(pools.meta_cpu.len() as u32))
+                        .filter(|&index| camera_keeps(&pools, index, &view.shape))
+                        .count()
+                })
+                .sum();
+            stats.drawn.store(drawn, Ordering::Relaxed);
+        }
         if !cull.fits(views.count, pool_count, pools.slot_cap) {
             let generation = cull.generation + 1;
             *cull = CullBuffers::new(&device, views.count, pool_count, pools.slot_cap);
@@ -647,11 +683,6 @@ pub fn prepare_cull(
         return;
     }
 
-    let stats = &pools.stats.0;
-    stats.draws.store(
-        stats.draws_pending.swap(0, Ordering::Relaxed),
-        Ordering::Relaxed,
-    );
     let mut camera_drawn = 0usize;
     for per_view in lists.0.values_mut() {
         for list in per_view.iter_mut() {

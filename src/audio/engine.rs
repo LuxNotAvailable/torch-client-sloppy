@@ -144,6 +144,10 @@ struct Decoded {
     rate: u32,
 }
 
+/// Bytes of decoded sound the cache holds, for the performance report.
+pub(crate) static DECODED_BYTES: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
 struct Cache {
     sounds: HashMap<Arc<str>, Arc<Decoded>>,
     order: VecDeque<Arc<str>>,
@@ -181,6 +185,10 @@ impl Cache {
         }
         self.sounds.insert(key.clone(), decoded.clone());
         self.order.push_back(key.clone());
+        DECODED_BYTES.store(
+            self.held * size_of::<f32>(),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         Some(decoded)
     }
 }

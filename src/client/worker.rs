@@ -544,6 +544,57 @@ pub fn drain_for(
     ran
 }
 
+/// Time a mesh job spent waiting for each lock it takes, so the profiler can
+/// tell waiting from building (`mesh:process_job` holds both).
+#[derive(Default)]
+struct LockWaits {
+    timing: bool,
+    world: u64,
+    chunk: u64,
+    light: u64,
+    shared: u64,
+}
+
+impl LockWaits {
+    fn new() -> LockWaits {
+        LockWaits {
+            timing: crate::diag::frame_profile::enabled(),
+            ..LockWaits::default()
+        }
+    }
+
+    /// Takes a lock, adding the wait to `slot`.
+    fn take<T>(timing: bool, slot: &mut u64, lock: impl FnOnce() -> T) -> T {
+        if !timing {
+            return lock();
+        }
+        let start = Instant::now();
+        let guard = lock();
+        *slot += start.elapsed().as_nanos() as u64;
+        guard
+    }
+
+    /// Records the waits, and the rest of the job's time as building.
+    fn record(&self, job_ns: u64) {
+        use crate::diag::frame_profile::{Group, record};
+        if !self.timing {
+            return;
+        }
+        let waits = [
+            ("mesh:wait_world", self.world),
+            ("mesh:wait_chunk", self.chunk),
+            ("mesh:wait_light", self.light),
+            ("mesh:wait_shared", self.shared),
+        ];
+        let mut waited = 0;
+        for (name, ns) in waits {
+            record(Group::Span, name, ns);
+            waited += ns;
+        }
+        record(Group::Span, "mesh:build", job_ns.saturating_sub(waited));
+    }
+}
+
 fn process_job(
     job: Job,
     queue: &JobQueue,
@@ -554,6 +605,8 @@ fn process_job(
 ) -> Option<Job> {
     crate::prof_span!("mesh:process_job");
     let job_start = Instant::now();
+    let mut waits = LockWaits::new();
+    let timing = waits.timing;
 
     if let JobScope::Section(sy) = job.scope
         && !queue.is_current(job.chunk_x, job.chunk_z, sy * 16, job.seq)
@@ -563,7 +616,7 @@ fn process_job(
     }
 
     let (min_y, height, chunk_arc, neighbors, biomes) = {
-        let world = job.world.read();
+        let world = LockWaits::take(timing, &mut waits.world, || job.world.read());
         let min_y = world.chunks.min_y();
         let height = world.chunks.height();
         let biomes = biome_table(&world.registries);
@@ -623,7 +676,7 @@ fn process_job(
     occ.reset(x_base, z_base, win_y0, win_count);
 
     {
-        let chunk = chunk_arc.read();
+        let chunk = LockWaits::take(timing, &mut waits.chunk, || chunk_arc.read());
         fill_occupancy(
             occ,
             &chunk,
@@ -637,7 +690,11 @@ fn process_job(
         );
     }
     if crate::renderer::lighting_enabled() {
-        fill_light(occ, &crate::client::worldsync::light_map().read());
+        let light = LockWaits::take(timing, &mut waits.light, || {
+            crate::client::worldsync::light_map().read()
+        });
+        fill_light(occ, &light);
+        drop(light);
     } else {
         // Open sky and no block light: the lightmap still darkens it at night
         // and the brightness setting still lifts it, which full block light
@@ -657,7 +714,7 @@ fn process_job(
             (-1, 1) => ((15, 16), (0, 1)),
             _ => ((0, 1), (0, 1)),
         };
-        let chunk = arc.read();
+        let chunk = LockWaits::take(timing, &mut waits.chunk, || arc.read());
         fill_occupancy(
             occ,
             &chunk,
@@ -680,7 +737,7 @@ fn process_job(
     let mut stopped_at = sec_hi;
     let mut any_current = false;
     {
-        let chunk = chunk_arc.read();
+        let chunk = LockWaits::take(timing, &mut waits.chunk, || chunk_arc.read());
         for si in sec_lo..sec_hi {
             if let Some(deadline) = deadline
                 && si > sec_lo
@@ -723,7 +780,7 @@ fn process_job(
     let elapsed_ms = job_start.elapsed().as_secs_f32() * 1000.0;
 
     {
-        let mut s = shared.lock().unwrap();
+        let mut s = LockWaits::take(timing, &mut waits.shared, || shared.lock().unwrap());
         s.profiling.record_mesh(elapsed_ms);
         crate::diag::add(crate::diag::Stat::SectionsMeshed, results.len() as u64);
         match job.scope {
@@ -731,6 +788,7 @@ fn process_job(
             JobScope::Column => s.session.world.pending_chunks.extend(results),
         }
     }
+    waits.record(job_start.elapsed().as_nanos() as u64);
 
     (job.scope == JobScope::Column && stopped_at < sec_count && any_current).then(|| Job {
         world: job.world,

@@ -204,3 +204,77 @@ mod stub {
 
 #[cfg(not(feature = "alloc_diag"))]
 pub use stub::*;
+
+/// Bytes the heap holds now, where this build counts them: the counting
+/// allocator (`alloc_diag`), or the tracked mimalloc of `perf_report` builds.
+#[cfg(feature = "perf_report")]
+pub fn heap_live() -> Option<u64> {
+    #[cfg(feature = "alloc_diag")]
+    return Some(live().0);
+    #[cfg(all(
+        feature = "perf_report",
+        not(feature = "alloc_diag"),
+        not(target_arch = "wasm32"),
+        not(target_os = "android")
+    ))]
+    return Some(tracked::LIVE.load(std::sync::atomic::Ordering::Relaxed) as u64);
+    #[allow(unreachable_code, reason = "the builds above return first")]
+    None
+}
+
+/// mimalloc with a live-bytes counter, for performance reports. One relaxed
+/// atomic per call, so the report can show the heap without the counting
+/// allocator's per-site bookkeeping (and without leaving mimalloc).
+#[allow(
+    unsafe_code,
+    reason = "a global allocator wraps mimalloc to count live bytes (perf_report only)"
+)]
+#[cfg(all(
+    feature = "perf_report",
+    not(feature = "alloc_diag"),
+    not(target_arch = "wasm32"),
+    not(target_os = "android")
+))]
+pub mod tracked {
+    use std::alloc::{GlobalAlloc, Layout};
+    use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+
+    pub(super) static LIVE: AtomicUsize = AtomicUsize::new(0);
+
+    pub struct Tracked;
+
+    unsafe impl GlobalAlloc for Tracked {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            let p = unsafe { mimalloc::MiMalloc.alloc(layout) };
+            if !p.is_null() {
+                LIVE.fetch_add(layout.size(), Relaxed);
+            }
+            p
+        }
+
+        unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+            let p = unsafe { mimalloc::MiMalloc.alloc_zeroed(layout) };
+            if !p.is_null() {
+                LIVE.fetch_add(layout.size(), Relaxed);
+            }
+            p
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            LIVE.fetch_sub(layout.size(), Relaxed);
+            unsafe { mimalloc::MiMalloc.dealloc(ptr, layout) }
+        }
+
+        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+            let p = unsafe { mimalloc::MiMalloc.realloc(ptr, layout, new_size) };
+            if !p.is_null() {
+                if new_size >= layout.size() {
+                    LIVE.fetch_add(new_size - layout.size(), Relaxed);
+                } else {
+                    LIVE.fetch_sub(layout.size() - new_size, Relaxed);
+                }
+            }
+            p
+        }
+    }
+}

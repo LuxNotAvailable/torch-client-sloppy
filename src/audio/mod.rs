@@ -8,6 +8,19 @@ pub mod music;
 pub(crate) mod store;
 
 use std::collections::HashMap;
+
+/// Bytes the sound caches hold: decoded samples, and encoded files read
+/// from the sound pack.
+#[cfg_attr(
+    not(feature = "perf_report"),
+    allow(dead_code, reason = "read by the performance report")
+)]
+pub(crate) fn cache_bytes() -> (usize, usize) {
+    (
+        engine::DECODED_BYTES.load(Ordering::Relaxed),
+        store::CACHED_BYTES.load(Ordering::Relaxed),
+    )
+}
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 

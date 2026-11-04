@@ -42,11 +42,22 @@ static ALLOC: diag::alloc::Counting = diag::alloc::Counting;
 // Per-thread free lists: the mesher threads allocate every section's buffers.
 #[cfg(all(
     not(feature = "alloc_diag"),
+    not(feature = "perf_report"),
     not(target_arch = "wasm32"),
     not(target_os = "android")
 ))]
 #[global_allocator]
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+// The same, counting live bytes for the performance report.
+#[cfg(all(
+    feature = "perf_report",
+    not(feature = "alloc_diag"),
+    not(target_arch = "wasm32"),
+    not(target_os = "android")
+))]
+#[global_allocator]
+static ALLOC: diag::alloc::tracked::Tracked = diag::alloc::tracked::Tracked;
 
 #[macro_export]
 macro_rules! prof_span {

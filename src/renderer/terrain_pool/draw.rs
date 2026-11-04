@@ -420,10 +420,13 @@ pub fn draw_region<'w>(
         };
         let region = ((view_index * cull.pool_count) + pool_index) * STREAMS + stream;
         let commands_offset = region as u64 * cull.slot_cap as u64 * INDIRECT_ARGS_SIZE;
+        // Each multi-draw counts as one call, however many sections it draws.
+        let mut issued = false;
         if stream == STREAM_WATER {
             let count = cull.water_count(view_index, pool_index);
             if count > 0 {
                 pass.multi_draw_indexed_indirect(&cull.commands, commands_offset, count);
+                issued = true;
             }
         } else if tier.count {
             pass.multi_draw_indexed_indirect_count(
@@ -433,11 +436,16 @@ pub fn draw_region<'w>(
                 region as u64 * 4,
                 cull.slot_cap,
             );
+            issued = true;
         } else {
             let draw_end = pools.draw_end.min(cull.slot_cap);
             if draw_end > 0 {
                 pass.multi_draw_indexed_indirect(&cull.commands, commands_offset, draw_end);
+                issued = true;
             }
+        }
+        if issued {
+            pools.stats.0.draws_pending.fetch_add(1, Ordering::Relaxed);
         }
         return Ok(());
     }
