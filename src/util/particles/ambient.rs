@@ -46,6 +46,8 @@ pub(super) fn animate_tick_particles(
         eye.y.floor() as i32,
         eye.z.floor() as i32,
     ];
+    crate::prof_span!("particles:animate_tick");
+    let near = NearChunks::around(&world, center);
     let rng = &mut particle_rng.0;
     let before = live.0.len();
     'sampling: for _ in 0..ANIMATE_SAMPLES {
@@ -58,7 +60,10 @@ pub(super) fn animate_tick_particles(
                 center[1] + rng.next_int(radius) as i32 - rng.next_int(radius) as i32,
                 center[2] + rng.next_int(radius) as i32 - rng.next_int(radius) as i32,
             ];
-            do_animate_tick(cell, &world, atlas, status, eye, &mut live.0, rng);
+            let Some(state) = near.block(cell) else {
+                continue;
+            };
+            do_animate_tick(cell, state, &world, atlas, status, eye, &mut live.0, rng);
         }
     }
 
@@ -72,8 +77,66 @@ pub(super) fn animate_tick_particles(
     }
 }
 
+/// Chunk columns the samples can reach: up to 31 blocks from the camera's
+/// cell, which spans at most 5 columns along each axis.
+const NEAR_SPAN: i32 = 5;
+
+/// The columns around the camera, looked up once per tick so the 1,334
+/// samples each skip the storage's map lookup and `Weak` upgrade.
+pub(super) struct NearChunks {
+    origin: [i32; 2],
+    min_y: i32,
+    columns: Vec<Option<std::sync::Arc<parking_lot::RwLock<azalea_world::Chunk>>>>,
+}
+
+impl NearChunks {
+    pub(super) fn around(world: &azalea_world::World, center: [i32; 3]) -> NearChunks {
+        let origin = [
+            (center[0] >> 4) - NEAR_SPAN / 2,
+            (center[2] >> 4) - NEAR_SPAN / 2,
+        ];
+        let columns = (0..NEAR_SPAN * NEAR_SPAN)
+            .map(|i| {
+                world.chunks.get(&azalea_core::position::ChunkPos {
+                    x: origin[0] + i % NEAR_SPAN,
+                    z: origin[1] + i / NEAR_SPAN,
+                })
+            })
+            .collect();
+        NearChunks {
+            origin,
+            min_y: world.chunks.min_y(),
+            columns,
+        }
+    }
+
+    /// The block at `cell`, or `None` past the columns held (the caller falls
+    /// back to the world) or outside the world's height. Each call takes the
+    /// column's read lock only for the lookup: the emitters read neighbours
+    /// through the world, and holding a column across them could deadlock
+    /// against a waiting writer.
+    pub(super) fn block(&self, cell: [i32; 3]) -> Option<azalea::block::BlockState> {
+        let dx = (cell[0] >> 4) - self.origin[0];
+        let dz = (cell[2] >> 4) - self.origin[1];
+        if !(0..NEAR_SPAN).contains(&dx) || !(0..NEAR_SPAN).contains(&dz) {
+            return None;
+        }
+        let column = self.columns[(dz * NEAR_SPAN + dx) as usize].as_ref()?;
+        column.read().get_block_state(
+            &azalea_core::position::ChunkBlockPos::from(azalea_core::position::BlockPos {
+                x: cell[0],
+                y: cell[1],
+                z: cell[2],
+            }),
+            self.min_y,
+        )
+    }
+}
+
+#[allow(clippy::too_many_arguments, reason = "one sample's whole context")]
 pub(super) fn do_animate_tick(
     cell: [i32; 3],
+    state: azalea::block::BlockState,
     world: &azalea_world::World,
     atlas: &Atlas,
     status: ParticleStatus,
@@ -81,9 +144,6 @@ pub(super) fn do_animate_tick(
     live: &mut Vec<Particle>,
     rng: &mut JavaRandom,
 ) {
-    let Some(state) = block_at(world, cell) else {
-        return;
-    };
     let mut ctx = Emitter {
         cell,
         world,
@@ -908,5 +968,56 @@ pub(super) fn emit_fluid_ambient(
             ctx.emit(&P::Underwater, rel(cell, [x, y, z]), Vec3::ZERO, false);
         }
         FluidKind::Empty => {}
+    }
+}
+
+#[cfg(test)]
+mod near_chunk_tests {
+    use super::*;
+    use azalea_core::position::{BlockPos, ChunkPos};
+
+    #[test]
+    fn near_columns_read_what_the_world_reads() {
+        let mut world = azalea_world::World {
+            chunks: azalea_world::ChunkStorage::new(384, -64),
+            ..Default::default()
+        };
+        // The storage holds columns weakly; keep them alive. Leave one
+        // column out to check an unloaded one reads as nothing.
+        let mut held = Vec::new();
+        for x in -3..=3 {
+            for z in -3..=3 {
+                if (x, z) != (1, -1) {
+                    held.push(world.chunks.upsert(ChunkPos { x, z }, Default::default()));
+                }
+            }
+        }
+        let stone = azalea::block::BlockState::try_from(1u32).unwrap();
+        for (i, pos) in [[3, 70, -5], [-20, -64, 30], [31, 319, 0], [7, 64, 7]]
+            .into_iter()
+            .enumerate()
+        {
+            let pos = BlockPos {
+                x: pos[0] + i as i32,
+                y: pos[1],
+                z: pos[2],
+            };
+            world.set_block_state(pos, stone);
+        }
+        let center = [5, 64, 3];
+        let near = NearChunks::around(&world, center);
+        let mut rng = JavaRandom::new(7);
+        for _ in 0..4000 {
+            let cell = [
+                center[0] + rng.next_int(32) as i32 - rng.next_int(32) as i32,
+                center[1] - 400 + rng.next_int(800) as i32,
+                center[2] + rng.next_int(32) as i32 - rng.next_int(32) as i32,
+            ];
+            assert_eq!(near.block(cell), block_at(&world, cell), "{cell:?}");
+        }
+        for pos in [[3, 70, -5], [-19, -64, 30], [33, 319, 0], [10, 64, 7]] {
+            assert_eq!(near.block(pos), Some(stone), "{pos:?}");
+        }
+        drop(held);
     }
 }
