@@ -510,6 +510,10 @@ crate::options! {
             => custom(|v| crate::renderer::antialias::Antialiasing::read(v), |m, a| a.write(m)),
         pub smooth_lighting: bool = SMOOTH_LIGHTING_DEFAULT => key("ao"),
         pub lighting_enabled: bool = LIGHTING_ENABLED_DEFAULT => key("lightingEnabled"),
+        /// The window size chosen in Video Settings, in physical pixels; 0
+        /// for the default size.
+        pub window_width: u32 = 0 => key("windowWidth"),
+        pub window_height: u32 = 0 => key("windowHeight"),
         pub max_fps: u32 = MAX_FPS_DEFAULT => key("maxFps").clamp(MAX_FPS_MIN, MAX_FPS_UNLIMITED),
         pub vsync: bool = VSYNC_DEFAULT => key("vsync"),
         pub render_backend: RenderBackend = RenderBackend::default() => key("renderBackend"),

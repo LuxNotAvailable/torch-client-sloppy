@@ -134,6 +134,15 @@ pub struct AfterDownloadScreen(pub crate::gui::Screen);
 impl Plugin for GuiPlugin {
     fn build(&self, app: &mut App) {
         let options = crate::gui::GuiOptions::default();
+        // The window opens at its default size; the saved one follows on
+        // the first frame, once the window exists to resize.
+        #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+        if options.window_width > 0
+            && options.window_height > 0
+            && let Ok(mut request) = crate::gui::options::WINDOW_REQUEST.lock()
+        {
+            *request = Some((options.window_width, options.window_height));
+        }
         #[cfg(audio)]
         crate::audio::set_volumes(&options.volumes);
         #[cfg(audio)]

@@ -826,9 +826,13 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
             );
             let label = format!("Window Size: {}×{}", current.0, current.1);
             if f.button(&label) {
+                let (w, h) = next_window_size(current);
                 if let Ok(mut request) = WINDOW_REQUEST.lock() {
-                    *request = Some(next_window_size(current));
+                    *request = Some((w, h));
                 }
+                o.window_width = w;
+                o.window_height = h;
+                f.mark_changed();
             }
         }
         f.slider(&mut o.gui_scale, 0, max_gui_scale as u32, gui_scale_label);
