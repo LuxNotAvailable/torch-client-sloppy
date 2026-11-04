@@ -15,5 +15,6 @@ pub(crate) mod orientation;
 pub(crate) mod pointer;
 pub(crate) mod screenshot;
 pub(crate) mod storage;
+pub(crate) mod thread;
 pub(crate) mod time;
 pub(crate) mod url;

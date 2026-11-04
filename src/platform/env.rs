@@ -189,6 +189,12 @@ const ALL: &[Var] = &[
         enabled: true,
     },
     Var {
+        name: "MC_WORKER_PRIORITY",
+        what: "\"normal\" keeps the mesh and light threads at normal priority instead of below it",
+        default: "below normal",
+        enabled: !cfg!(target_arch = "wasm32"),
+    },
+    Var {
         name: "MC_PERF_AUTOSTART",
         what: "start a performance report this many seconds after entering a world, for unattended runs (perf_report builds)",
         default: "off",

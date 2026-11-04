@@ -408,6 +408,7 @@ pub fn spawn_chunk_workers(shared: Arc<SharedMutex>) -> Arc<JobQueue> {
         let spawn = thread::Builder::new().name(format!("mesh{i}"));
         let _ = spawn.spawn(move || {
             crate::diag::alloc::label_thread(crate::diag::alloc::Site::Mesh);
+            crate::platform::thread::lower_priority();
             let mut scratch = Scratch::new();
             loop {
                 let job = queue.pop();

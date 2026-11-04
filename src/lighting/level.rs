@@ -548,6 +548,7 @@ where
         .name("light".into())
         .spawn(move || {
             crate::diag::alloc::label_thread(crate::diag::alloc::Site::Light);
+            crate::platform::thread::lower_priority();
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 light_loop(rx, map, &mut on_dirty)
             }));
