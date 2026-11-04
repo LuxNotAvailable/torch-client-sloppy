@@ -14,8 +14,9 @@
 //!
 //! The pyramid is a frame old. A section that comes into view from behind
 //! an occluder is drawn a frame late, which shows when the camera turns or
-//! moves quickly, so the test is off for any frame where the camera moved
-//! more than a little since the pyramid was built.
+//! moves quickly, so the test is off for any frame where the camera moved,
+//! turned or zoomed (its field of view changed) more than a little since
+//! the pyramid was built.
 
 use bevy::ecs::query::{Has, QueryItem};
 use bevy::math::{Mat4, UVec2, Vec3};
@@ -32,6 +33,10 @@ use super::TerrainView;
 /// frame and the frame that uses it.
 const MAX_MOVE: f32 = 1.0;
 const MIN_TURN_COS: f32 = 0.9986; // about 3 degrees
+/// The field of view changed by more than this share (sprinting, flying
+/// and freecam speed animate it): last frame's pyramid no longer lines up
+/// with this frame's view, worst at the edges of a wide view.
+const MAX_ZOOM: f32 = 0.002;
 
 /// The pyramid and what the cull needs to use it.
 #[derive(Resource)]
@@ -50,6 +55,31 @@ pub struct HiZ {
     pub build: Option<Source>,
     /// The source the current pyramid was built from.
     built_source: Option<Source>,
+    /// `MC_HIZ_DUMP`: a readback of one pyramid level, now and then.
+    dump: std::sync::Mutex<Dump>,
+}
+
+/// The pyramid dump (`MC_HIZ_DUMP=<folder>`): about once a second, level 1
+/// is copied back and saved as a PNG beside the frame's sizes and camera,
+/// so its alignment with the picture can be checked by eye.
+#[derive(Default)]
+struct Dump {
+    frame: u64,
+    /// A copy waiting to be read: buffer, width, height, padded row bytes,
+    /// what to write beside it.
+    waiting: Option<(wgpu::Buffer, u32, u32, u32, String)>,
+    count: u32,
+}
+
+fn dump_folder() -> Option<std::path::PathBuf> {
+    static FOLDER: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+    FOLDER
+        .get_or_init(|| {
+            crate::platform::env::var("MC_HIZ_DUMP")
+                .ok()
+                .map(std::path::PathBuf::from)
+        })
+        .clone()
 }
 
 /// Where the pyramid's depth comes from.
@@ -76,6 +106,8 @@ struct Shot {
     clip: Mat4,
     eye: Vec3,
     forward: Vec3,
+    /// The projection's vertical focal length (1 / tan(fov / 2)).
+    focal: f32,
 }
 
 struct Pipelines {
@@ -91,6 +123,7 @@ struct Pipelines {
 struct Pyramid {
     /// The size of the depth it was made for.
     source: UVec2,
+    texture: bevy::render::render_resource::Texture,
     levels: u32,
     all: TextureView,
     reduce_groups: Vec<BindGroup>,
@@ -145,6 +178,7 @@ impl HiZ {
             pending: None,
             build: None,
             built_source: None,
+            dump: Default::default(),
         }
     }
 
@@ -180,10 +214,15 @@ impl HiZ {
                 UVec2::new(view.viewport.z, view.viewport.w),
             ),
         };
+        let focal = match source {
+            Some(Source::Pack { projection, .. }) => projection.y_axis.y,
+            _ => view.clip_from_view.y_axis.y,
+        };
         let shot = Shot {
             clip,
             eye: view.world_from_view.translation(),
             forward: view.world_from_view.forward().as_vec3(),
+            focal,
         };
         let previous = std::mem::replace(&mut self.pending, source.map(|_| shot));
         let previous_source = std::mem::replace(&mut self.built_source, self.build);
@@ -198,7 +237,8 @@ impl HiZ {
             return None;
         }
         let still = built.eye.distance(shot.eye) <= MAX_MOVE
-            && built.forward.dot(shot.forward) >= MIN_TURN_COS;
+            && built.forward.dot(shot.forward) >= MIN_TURN_COS
+            && (built.focal - shot.focal).abs() <= MAX_ZOOM * shot.focal.abs();
         let levels = self.pyramid.as_ref()?.levels;
         still.then_some(Use {
             clip: built.clip,
@@ -228,7 +268,10 @@ impl HiZ {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::R32Float,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::STORAGE_BINDING,
+            // Copied from by the dump (MC_HIZ_DUMP).
+            usage: wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::STORAGE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let mip = |level: u32| {
@@ -262,6 +305,7 @@ impl HiZ {
             .collect();
         self.pyramid = Some(Pyramid {
             source,
+            texture: texture.clone(),
             levels,
             all: TextureView::from(texture.create_view(&wgpu::TextureViewDescriptor::default())),
             reduce_groups,
@@ -325,6 +369,123 @@ impl HiZ {
             pass.set_bind_group(0, &**group, &[]);
             pass.dispatch_workgroups(size.x.div_ceil(8), size.y.div_ceil(8), 1);
         }
+        drop(pass);
+        if let Some(dir) = dump_folder() {
+            self.dump_level(device, encoder, pyramid, &dir, pack);
+        }
+    }
+
+    /// Saves last time's copy, and every 60 frames copies level 1 back.
+    fn dump_level(
+        &self,
+        device: &RenderDevice,
+        encoder: &mut wgpu::CommandEncoder,
+        pyramid: &Pyramid,
+        dir: &std::path::Path,
+        pack: bool,
+    ) {
+        let Ok(mut dump) = self.dump.lock() else {
+            return;
+        };
+        dump.frame += 1;
+        if let Some((buffer, w, h, row, info)) = dump.waiting.take() {
+            let slice = buffer.slice(..);
+            slice.map_async(wgpu::MapMode::Read, |_| {});
+            let _ = device.wgpu_device().poll(wgpu::PollType::wait_indefinitely());
+            let data = slice.get_mapped_range();
+            let mut pixels = vec![0u8; (w * h) as usize];
+            let mut lo = f32::MAX;
+            let mut hi = f32::MIN;
+            let read = |x: u32, y: u32| {
+                let at = (y * row + x * 4) as usize;
+                f32::from_le_bytes(data[at..at + 4].try_into().unwrap())
+            };
+            for y in 0..h {
+                for x in 0..w {
+                    let d = read(x, y);
+                    if d < 1.0 {
+                        lo = lo.min(d);
+                        hi = hi.max(d);
+                    }
+                }
+            }
+            for y in 0..h {
+                for x in 0..w {
+                    let d = read(x, y);
+                    // Near bright, far dark, sky black; stretched over the
+                    // range present.
+                    let t = if d >= 1.0 {
+                        0.0
+                    } else {
+                        1.0 - (d - lo) / (hi - lo).max(1e-6)
+                    };
+                    pixels[(y * w + x) as usize] = (40.0 + t * 215.0) as u8;
+                }
+            }
+            drop(data);
+            buffer.unmap();
+            let _ = std::fs::create_dir_all(dir);
+            let name = format!("hiz-{:03}", dump.count);
+            let _ = image::save_buffer(
+                dir.join(format!("{name}.png")),
+                &pixels,
+                w,
+                h,
+                image::ColorType::L8,
+            );
+            let _ = std::fs::write(
+                dir.join(format!("{name}.txt")),
+                format!("{info}\ndepth range {lo} .. {hi}\n"),
+            );
+            dump.count += 1;
+        }
+        if dump.frame % 60 != 0 {
+            return;
+        }
+        let level = 1.min(pyramid.levels - 1);
+        let mut w = (pyramid.source.x / 2).max(1);
+        let mut h = (pyramid.source.y / 2).max(1);
+        for _ in 0..level {
+            w = (w / 2).max(1);
+            h = (h / 2).max(1);
+        }
+        let row = (w * 4).next_multiple_of(256);
+        let buffer = device.wgpu_device().create_buffer(&wgpu::BufferDescriptor {
+            label: Some("terrain_hiz_dump"),
+            size: (row * h) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &pyramid.texture,
+                mip_level: level,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(row),
+                    rows_per_image: Some(h),
+                },
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+        let info = format!(
+            "frame {} pack {pack} source {}x{} level {level} ({w}x{h})\npending clip {:?}\nbuilt clip {:?}",
+            dump.frame,
+            pyramid.source.x,
+            pyramid.source.y,
+            self.pending.as_ref().map(|s| s.clip.to_cols_array()),
+            self.built.as_ref().map(|s| s.clip.to_cols_array()),
+        );
+        dump.waiting = Some((buffer, w, h, row, info));
     }
 }
 

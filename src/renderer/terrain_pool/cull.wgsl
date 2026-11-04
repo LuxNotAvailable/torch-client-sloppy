@@ -62,11 +62,20 @@ const VIEW_HIZ: u32 = 16u;
 /// Whether last frame's depth hides a box entirely: its nearest point, seen
 /// from last frame's camera, lies behind the farthest depth over the area
 /// it covers. Conservative wherever unsure: a corner behind the camera, or
-/// a box off the pyramid, counts as visible.
-fn hiz_occluded(lo: vec3<f32>, hi: vec3<f32>) -> bool {
+/// a box even partly off the pyramid, counts as visible.
+// How far past its meshed box a section may draw: shader packs sway crops,
+// leaves and plants in their vertex shaders. Swayed geometry nearer than
+// the box landed in the pyramid in front of it, so the section hid itself,
+// came back the next frame (with nothing in front any more), and popped in
+// and out (farms, trees, roofs at the hub).
+const HIZ_MARGIN: f32 = 1.0;
+
+fn hiz_occluded(box_lo: vec3<f32>, box_hi: vec3<f32>) -> bool {
     if (cull.flags & VIEW_HIZ) == 0u || cull.hiz_levels == 0u {
         return false;
     }
+    let lo = box_lo - vec3<f32>(HIZ_MARGIN);
+    let hi = box_hi + vec3<f32>(HIZ_MARGIN);
     var mn = vec2<f32>(1e9);
     var mx = vec2<f32>(-1e9);
     var nearest = 1.0;
@@ -81,14 +90,29 @@ fn hiz_occluded(lo: vec3<f32>, hi: vec3<f32>) -> bool {
             return false;
         }
         let ndc = c.xyz / c.w;
+        // Past a shader pack's far plane (Bevy's projection has none): the
+        // depth there is above even an empty sky's, so the box would be
+        // culled against nothing. Which sections cross that plane changes
+        // as the view turns, so distant terrain popped in and out.
+        if (cull.hiz_reverse == 0u && ndc.z > 1.0) {
+            return false;
+        }
         let depth = select(ndc.z, 1.0 - ndc.z, cull.hiz_reverse != 0u);
         nearest = min(nearest, depth);
         mn = min(mn, ndc.xy);
         mx = max(mx, ndc.xy);
     }
+    // Partly off last frame's screen: the pyramid knows nothing of the
+    // part outside, which turning may have brought into view. Testing only
+    // the part inside (clamping to the screen) culled sections whose
+    // hidden part was showing, so they popped in and out as the view
+    // turned (seen behind the hub's fountain).
+    if (any(mn < vec2<f32>(-1.0)) || any(mx > vec2<f32>(1.0))) {
+        return false;
+    }
     // Screen space, y down.
-    let uv_min = clamp(vec2<f32>(mn.x * 0.5 + 0.5, 0.5 - mx.y * 0.5), vec2<f32>(0.0), vec2<f32>(1.0));
-    let uv_max = clamp(vec2<f32>(mx.x * 0.5 + 0.5, 0.5 - mn.y * 0.5), vec2<f32>(0.0), vec2<f32>(1.0));
+    let uv_min = vec2<f32>(mn.x * 0.5 + 0.5, 0.5 - mx.y * 0.5);
+    let uv_max = vec2<f32>(mx.x * 0.5 + 0.5, 0.5 - mn.y * 0.5);
     if (any(uv_max <= uv_min)) {
         return false;
     }

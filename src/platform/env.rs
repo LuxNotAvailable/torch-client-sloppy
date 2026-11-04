@@ -255,6 +255,24 @@ const ALL: &[Var] = &[
         enabled: true,
     },
     Var {
+        name: "MC_HIZ_DUMP",
+        what: "folder to save a level of the Hi-Z pyramid to about once a second, to check its alignment",
+        default: "off",
+        enabled: true,
+    },
+    Var {
+        name: "MC_AUTO_SHOT_MS",
+        what: "save a frame every this many milliseconds once in the world, for capture runs",
+        default: "off",
+        enabled: true,
+    },
+    Var {
+        name: "MC_AUTO_SHOT_DIR",
+        what: "where MC_AUTO_SHOT_MS saves its numbered frames",
+        default: "auto-shots",
+        enabled: true,
+    },
+    Var {
         name: "MC_DEBUG",
         what: "comma-separated log tags to print, or `all`",
         default: "none",

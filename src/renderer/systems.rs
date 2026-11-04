@@ -2063,7 +2063,10 @@ fn sync_vsync(
     }
 }
 
+#[allow(clippy::too_many_arguments, reason = "the capture harness's inputs")]
 fn auto_harness(
+    mut commands: Commands,
+    mut shots: Local<(Option<Option<(u64, std::path::PathBuf)>>, u64, u32)>,
     time: Res<Time<bevy::time::Real>>,
     mut angles: ResMut<CameraAngles>,
     shared: Res<Shared>,
@@ -2086,6 +2089,26 @@ fn auto_harness(
         && time.elapsed().as_millis() as u64 >= q
     {
         exit.write(bevy::app::AppExit::Success);
+    }
+    // Frames saved every `MC_AUTO_SHOT_MS` once in the world.
+    let every = shots.0.get_or_insert_with(|| {
+        let ms = crate::platform::env::var("MC_AUTO_SHOT_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())?;
+        let dir = crate::platform::env::var("MC_AUTO_SHOT_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::path::PathBuf::from("auto-shots"));
+        Some((ms.max(1), dir))
+    });
+    if let Some((ms, dir)) = every.clone()
+        && shared.0.lock().unwrap().in_world
+    {
+        let now = time.elapsed().as_millis() as u64;
+        if now >= shots.1 {
+            shots.1 = now + ms;
+            super::screenshot::request_numbered(&mut commands, dir, shots.2);
+            shots.2 += 1;
+        }
     }
     if look == 0.0 {
         return;
