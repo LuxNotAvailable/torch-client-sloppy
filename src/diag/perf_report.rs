@@ -189,6 +189,46 @@ pub fn start() {
     });
 }
 
+/// For unattended runs (a machine profiled over SSH): `MC_PERF_AUTOSTART`
+/// starts a report that many seconds after the player first enters a
+/// world, and `MC_PERF_EXIT=1` quits once the report is written.
+fn autostart_after() -> Option<Duration> {
+    crate::platform::env::var("MC_PERF_AUTOSTART")
+        .ok()?
+        .parse::<f32>()
+        .ok()
+        .map(Duration::from_secs_f32)
+}
+
+fn exit_when_written() -> bool {
+    crate::platform::env::var("MC_PERF_EXIT").is_ok_and(|v| v == "1")
+}
+
+fn autostart(
+    shared: Res<crate::renderer::Shared>,
+    mut entered: Local<Option<Instant>>,
+    mut started: Local<bool>,
+) {
+    if *started {
+        return;
+    }
+    let Some(after) = autostart_after() else {
+        *started = true;
+        return;
+    };
+    let in_world = shared.0.lock().is_ok_and(|s| s.in_world);
+    if !in_world {
+        *entered = None;
+        return;
+    }
+    let at = *entered.get_or_insert_with(Instant::now);
+    if at.elapsed() >= after {
+        crate::log_info!("perf", "starting a report on MC_PERF_AUTOSTART");
+        start();
+        *started = true;
+    }
+}
+
 /// What a running report is doing, for the button's caption.
 pub fn status() -> Option<String> {
     let slot = CAPTURE.lock().ok()?;
@@ -207,7 +247,7 @@ pub struct PerfReportPlugin;
 impl Plugin for PerfReportPlugin {
     fn build(&self, app: &mut App) {
         use bevy::render::{Render, RenderApp, RenderSystems};
-        app.add_systems(Last, sample);
+        app.add_systems(Last, (autostart, sample).chain());
         if let Some(render) = app.get_sub_app_mut(RenderApp) {
             render.add_systems(
                 Render,
@@ -343,6 +383,7 @@ fn sample(
     diagnostics: Option<Res<DiagnosticsStore>>,
     view: Res<crate::renderer::frame_view::FrameView>,
     context: Context,
+    mut exit: MessageWriter<AppExit>,
 ) {
     let Ok(mut slot) = CAPTURE.lock() else {
         return;
@@ -384,6 +425,9 @@ fn sample(
                 let capture = slot.take().expect("checked above");
                 let secs = now.duration_since(started).as_secs_f32();
                 finish(capture, secs, &context);
+                if exit_when_written() {
+                    exit.write(AppExit::Success);
+                }
             }
         }
     }
