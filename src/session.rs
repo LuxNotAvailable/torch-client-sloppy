@@ -282,6 +282,10 @@ pub struct SessionState {
     /// Degrees the player's view turns with the boat they steer, for the
     /// camera to take (`AbstractBoat.positionRider`).
     pub vehicle_yaw_nudge: f32,
+    /// A teleport's look for the camera to take (`ClientboundPlayerPosition`
+    /// as `LocalPlayer.absSnapRotationTo`): Minecraft yaw and pitch, and
+    /// whether each adds to the current one.
+    pub teleport_look: Option<(f32, f32, bool, bool)>,
     /// The yaw of the boat this player steers, which the camera keeps the
     /// look within 105° of (`AbstractBoat.clampRotation`).
     pub steered_boat_yaw: Option<f32>,

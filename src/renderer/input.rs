@@ -314,6 +314,30 @@ pub(super) fn mouse_look(
     mut boat_turn: Local<BoatTurn>,
     zoom: Res<ZoomState>,
 ) {
+    // A teleport turns the view to the look it carries. Minecraft's yaw is
+    // -camera yaw - 180 and its pitch the camera's negated.
+    let teleport = shared.0.lock().unwrap().session.teleport_look.take();
+    if let Some((yaw, pitch, relative_yaw, relative_pitch)) = teleport
+        && !freecam.active
+    {
+        angles.yaw = if relative_yaw {
+            angles.yaw - yaw
+        } else {
+            -yaw - 180.0
+        };
+        angles.pitch = if relative_pitch {
+            angles.pitch - pitch
+        } else {
+            -pitch
+        }
+        .clamp(-89.0, 89.0);
+        if let Ok(mut t) = camera.single_mut() {
+            t.rotation = angles.rotation();
+        }
+        let mut s = shared.0.lock().unwrap();
+        s.camera_yaw = angles.yaw;
+        s.camera_pitch = angles.pitch;
+    }
     // On mobile, the touch controls drive the camera unless the user picked a
     // physical mouse.
     if crate::gui::touch_active(&state.options) {

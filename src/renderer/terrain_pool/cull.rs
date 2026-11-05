@@ -161,6 +161,9 @@ pub struct CullBuffers {
     water_counts: Vec<u32>,
     water_order: Vec<(u32, f32, u32)>,
     water_args: Vec<[u32; 5]>,
+    /// Each water run's (first command, count) in its pool's region, by
+    /// view slot then run (`draw::WaterRuns`).
+    water_runs: Vec<Vec<(u32, u32)>>,
 }
 
 impl CullBuffers {
@@ -200,6 +203,7 @@ impl CullBuffers {
             water_counts: Vec::new(),
             water_order: Vec::new(),
             water_args: Vec::new(),
+            water_runs: Vec::new(),
         }
     }
 
@@ -226,6 +230,7 @@ impl CullBuffers {
             water_counts: Vec::new(),
             water_order: Vec::new(),
             water_args: Vec::new(),
+            water_runs: Vec::new(),
         }
     }
 
@@ -233,6 +238,70 @@ impl CullBuffers {
         self.view_count >= view_count.max(1)
             && self.pool_count >= pool_count.max(1)
             && self.slot_cap >= slot_cap
+    }
+
+    /// Writes the view's water commands run by run (`draw::WaterRuns`), each
+    /// pool's runs back to back in its region.
+    fn write_water_runs(
+        &mut self,
+        queue: &RenderQueue,
+        pools: &TerrainPools,
+        view: &AssignedView,
+        runs: &[super::draw::WaterRun],
+    ) {
+        let mut cursor = vec![0u32; self.pool_count as usize];
+        let mut slot_runs = std::mem::take(&mut self.water_runs[view.slot as usize]);
+        slot_runs.clear();
+        for run in runs {
+            self.water_args.clear();
+            for &slot in &run.slots {
+                if view.flags & VIEW_UNOCCLUDED == 0 && !pools.is_visible(slot) {
+                    continue;
+                }
+                let meta = &pools.meta_cpu[slot as usize];
+                let (lo, hi) = meta.world_box();
+                if !view.shape.keeps(lo, hi) {
+                    continue;
+                }
+                self.water_args.push([
+                    meta.index_count,
+                    1,
+                    meta.first_index,
+                    meta.base_vertex,
+                    slot,
+                ]);
+            }
+            let Some(at) = cursor.get_mut(run.pool as usize) else {
+                slot_runs.push((0, 0));
+                continue;
+            };
+            let start = *at;
+            let count = self.water_args.len() as u32;
+            if count > 0 {
+                let region =
+                    (view.slot * self.pool_count + run.pool) * STREAMS + super::STREAM_WATER;
+                queue.write_buffer(
+                    &self.commands,
+                    (region as u64 * self.slot_cap as u64 + start as u64) * INDIRECT_ARGS_SIZE,
+                    bytemuck::cast_slice(&self.water_args),
+                );
+            }
+            *at += count;
+            slot_runs.push((start, count));
+        }
+        for (pool, count) in cursor.into_iter().enumerate() {
+            self.water_counts[(view.slot * self.pool_count + pool as u32) as usize] = count;
+        }
+        self.water_runs[view.slot as usize] = slot_runs;
+    }
+
+    /// Run `run`'s first command and count in its pool's region.
+    pub fn water_run(&self, view_index: u32, run: u32) -> (u32, u32) {
+        self.water_runs
+            .get(view_index as usize)
+            .and_then(|r| r.get(run as usize))
+            .copied()
+            .unwrap_or((0, 0))
     }
 
     fn write_water(&mut self, queue: &RenderQueue, pools: &TerrainPools, view: &AssignedView) {
@@ -497,6 +566,7 @@ pub fn build(app: &mut App) {
     render_app
         .init_resource::<TerrainViews>()
         .init_resource::<DirectLists>()
+        .init_resource::<super::draw::WaterRuns>()
         .insert_resource(CullBindGroup::new_none())
         .add_systems(
             Render,
@@ -608,6 +678,7 @@ pub fn prepare_cull(
     mut cull: ResMut<CullBuffers>,
     mut views: ResMut<TerrainViews>,
     mut lists: ResMut<DirectLists>,
+    water_runs: Res<super::draw::WaterRuns>,
     cameras: Query<(
         Entity,
         &ExtractedView,
@@ -759,8 +830,13 @@ pub fn prepare_cull(
         cull.water_counts.clear();
         cull.water_counts
             .resize((cull.view_count * cull.pool_count) as usize, 0);
+        cull.water_runs
+            .resize_with(cull.view_count as usize, Vec::new);
         for view in assigned.iter().filter(|view| view.flags & VIEW_WATER != 0) {
-            cull.write_water(&queue, &pools, view);
+            match water_runs.0.get(&view.key) {
+                Some(runs) => cull.write_water_runs(&queue, &pools, view, runs),
+                None => cull.write_water(&queue, &pools, view),
+            }
         }
         return;
     }

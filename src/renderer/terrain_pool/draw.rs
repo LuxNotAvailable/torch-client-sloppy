@@ -18,6 +18,7 @@ use bevy::pbr::{
     MeshPipeline, MeshPipelineKey, SetMeshViewBindGroup, SetMeshViewBindingArrayBindGroup,
     ViewKeyCache,
 };
+use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::render::mesh::allocator::SlabId;
 use bevy::render::render_asset::RenderAssets;
@@ -108,6 +109,10 @@ fn decode_asset_id(id: UntypedAssetId) -> (u32, u32) {
 
 pub trait TerrainItem: PhaseItem {
     fn pool_stream(&self) -> (u32, u32);
+    /// Whether this is a water run, whose `pool_stream` pool is the run.
+    fn water_run(&self) -> bool {
+        false
+    }
 }
 
 impl TerrainItem for Opaque3d {
@@ -123,11 +128,87 @@ impl TerrainItem for AlphaMask3d {
 }
 
 impl TerrainItem for Transparent3d {
+    fn water_run(&self) -> bool {
+        matches!(self.extra_index, PhaseItemExtraIndex::DynamicOffset(p) if p & WATER_RUN_TAG != 0)
+    }
+
     fn pool_stream(&self) -> (u32, u32) {
         match self.extra_index {
+            PhaseItemExtraIndex::DynamicOffset(packed) if packed & WATER_RUN_TAG != 0 => {
+                (packed & !WATER_RUN_TAG, STREAM_WATER)
+            }
             PhaseItemExtraIndex::DynamicOffset(packed) => (packed / STREAMS, packed % STREAMS),
             _ => (0, STREAM_WATER),
         }
+    }
+}
+
+/// Marks a translucent item as one water run (`WaterRuns`) rather than a
+/// whole pool; the low bits are the run's index.
+pub const WATER_RUN_TAG: u32 = 1 << 30;
+
+/// One stretch of water sections from the same pool, in the view's global
+/// back-to-front order. Each run is its own translucent item at its own
+/// depth, so water from different pools draws far to near across pools and
+/// sorts among the other translucent things (sky, entities, clouds) as
+/// vanilla's does. Within a pool's command region the runs sit back to
+/// back, so a whole-pool draw (shader packs) still covers them all.
+pub struct WaterRun {
+    pub pool: u32,
+    /// The view depth its sort uses (view-space z of its farthest section).
+    pub distance: f32,
+    pub slots: Vec<u32>,
+}
+
+#[derive(Resource, Default)]
+pub struct WaterRuns(pub HashMap<RetainedViewEntity, Vec<WaterRun>>);
+
+/// Water nearer than this (blocks, to the section's centre) draws in the
+/// view's global back-to-front order. Farther water, which seldom overlaps
+/// other water, draws a pool at a time before it: ordering the whole sea
+/// split it into thousands of runs and halved the frame rate.
+const WATER_ORDER_NEAR: f32 = 64.0;
+
+fn water_runs(pools: &TerrainPools, view: &ExtractedView, runs: &mut Vec<WaterRun>) {
+    let rangefinder = view.rangefinder3d();
+    let eye = view.world_from_view.translation();
+    let mut far: Vec<Option<WaterRun>> = Vec::new();
+    let mut near: Vec<(f32, u32, u32)> = Vec::new();
+    for &slot in &pools.water_slots {
+        let meta = &pools.meta_cpu[slot as usize];
+        let (lo, hi) = meta.world_box();
+        let centre = (Vec3::from(lo) + Vec3::from(hi)) * 0.5;
+        let depth = rangefinder.distance(&centre);
+        if centre.distance(eye) < WATER_ORDER_NEAR {
+            near.push((depth, meta.pool, slot));
+            continue;
+        }
+        let pool = meta.pool as usize;
+        if far.len() <= pool {
+            far.resize_with(pool + 1, || None);
+        }
+        let run = far[pool].get_or_insert_with(|| WaterRun {
+            pool: meta.pool,
+            distance: depth,
+            slots: Vec::new(),
+        });
+        run.distance = run.distance.min(depth);
+        run.slots.push(slot);
+    }
+    runs.clear();
+    runs.extend(far.into_iter().flatten());
+    // The far pools first, each at its farthest section, then the near
+    // runs; view z grows towards the camera, so ascending is far to near.
+    runs.sort_by(|a, b| a.distance.total_cmp(&b.distance));
+    let floor = runs.last().map_or(f32::MIN, |r| r.distance);
+    near.sort_unstable_by(|a, b| a.0.total_cmp(&b.0).then(a.2.cmp(&b.2)));
+    for run in near.chunk_by(|a, b| a.1 == b.1) {
+        runs.push(WaterRun {
+            pool: run[0].1,
+            // Never ahead of a far pool in Bevy's sort.
+            distance: run[0].0.max(floor),
+            slots: run.iter().map(|&(_, _, slot)| slot).collect(),
+        });
     }
 }
 
@@ -286,13 +367,12 @@ impl TerrainPipeline {
         descriptor.layout.push(self.terrain_layout(key.direct));
 
         descriptor.primitive.cull_mode = Some(Face::Back);
-        // Translucent terrain is drawn a pool at a time, each pool's sections
-        // back to front, so a near section in an earlier pool can come before
-        // a far one in a later pool. Writing depth would then hide the far
-        // one (water behind a portal); without it the two only blend in a
-        // slightly wrong order.
+        // Translucent terrain writes depth, as vanilla's does, so the clouds
+        // and every translucent thing drawn after it are hidden behind it.
+        // It draws in runs in the view's global back-to-front order
+        // (`WaterRun`), so a near section never comes before a far one.
         if let Some(depth) = descriptor.depth_stencil.as_mut() {
-            depth.depth_write_enabled = key.stream != STREAM_WATER;
+            depth.depth_write_enabled = true;
         }
 
         for def in Self::terrain_defs(key) {
@@ -345,6 +425,7 @@ impl<P: TerrainItem> RenderCommand<P> for DrawTerrain {
         SRes<CullBuffers>,
         SRes<TerrainViews>,
         SRes<DirectLists>,
+        SRes<WaterRuns>,
     );
     type ViewQuery = Read<ExtractedView>;
     type ItemQuery = ();
@@ -353,7 +434,7 @@ impl<P: TerrainItem> RenderCommand<P> for DrawTerrain {
         item: &P,
         view: &'w ExtractedView,
         _entity: Option<()>,
-        (tier, pools, cull, views, lists): SystemParamItem<'w, '_, Self::Param>,
+        (tier, pools, cull, views, lists, runs): SystemParamItem<'w, '_, Self::Param>,
         pass: &mut TrackedRenderPass<'w>,
     ) -> RenderCommandResult {
         let (pool_index, stream) = item.pool_stream();
@@ -364,13 +445,24 @@ impl<P: TerrainItem> RenderCommand<P> for DrawTerrain {
             views: views.into_inner(),
             lists: lists.into_inner(),
         };
-        match draw_region(
-            pass,
-            &sources,
-            view.retained_view_entity,
-            pool_index,
-            stream,
-        ) {
+        let drawn = if item.water_run() {
+            draw_water_run(
+                pass,
+                &sources,
+                runs.into_inner(),
+                view.retained_view_entity,
+                pool_index,
+            )
+        } else {
+            draw_region(
+                pass,
+                &sources,
+                view.retained_view_entity,
+                pool_index,
+                stream,
+            )
+        };
+        match drawn {
             Ok(()) => RenderCommandResult::Success,
             Err(DrawSkipped::NoPool) => RenderCommandResult::Skip,
             Err(DrawSkipped::NoCullSlot) => {
@@ -386,6 +478,63 @@ pub struct StreamSources<'w> {
     pub cull: &'w CullBuffers,
     pub views: &'w TerrainViews,
     pub lists: &'w DirectLists,
+}
+
+/// Draws water run `run` of `view` (a `WATER_RUN_TAG` item).
+fn draw_water_run<'w>(
+    pass: &mut TrackedRenderPass<'w>,
+    sources: &StreamSources<'w>,
+    runs: &'w WaterRuns,
+    view: RetainedViewEntity,
+    run: u32,
+) -> Result<(), DrawSkipped> {
+    let Some(water) = runs.0.get(&view).and_then(|r| r.get(run as usize)) else {
+        return Ok(());
+    };
+    let StreamSources {
+        tier,
+        pools,
+        cull,
+        views,
+        ..
+    } = *sources;
+    let Some(pool) = pools.pools.get(water.pool as usize) else {
+        return Err(DrawSkipped::NoPool);
+    };
+    pass.set_vertex_buffer(0, pool.vertices.slice(..));
+    pass.set_index_buffer(pool.indices.slice(..), IndexFormat::Uint32);
+    let mut draws = 0usize;
+    if tier.indirect {
+        let Some(&view_index) = views.index.get(&view) else {
+            return Err(DrawSkipped::NoCullSlot);
+        };
+        let (start, count) = cull.water_run(view_index, run);
+        if count > 0 {
+            let region = ((view_index * cull.pool_count) + water.pool) * STREAMS + STREAM_WATER;
+            let offset = (region as u64 * cull.slot_cap as u64 + start as u64) * INDIRECT_ARGS_SIZE;
+            pass.multi_draw_indexed_indirect(&cull.commands, offset, count);
+            draws = 1;
+        }
+    } else {
+        for &slot in &water.slots {
+            if !pools.is_visible(slot) {
+                continue;
+            }
+            let (first, count) = pools.meta_cpu[slot as usize].stream_range(STREAM_WATER);
+            if count > 0 {
+                pass.draw_indexed(first..first + count, 0, 0..1);
+                draws += 1;
+            }
+        }
+    }
+    if draws > 0 {
+        pools
+            .stats
+            .0
+            .draws_pending
+            .fetch_add(draws, Ordering::Relaxed);
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -526,10 +675,14 @@ pub fn queue_terrain(
     mut alpha_phases: ResMut<ViewBinnedRenderPhases<AlphaMask3d>>,
     mut transparent_phases: ResMut<ViewSortedRenderPhases<Transparent3d>>,
     views: Query<(&ExtractedView, Has<TerrainView>, ViewLights)>,
+    mut water_runs_res: ResMut<WaterRuns>,
     ticks: SystemChangeTick,
     #[cfg(feature = "shader_support")] takeover: Option<Res<PackTakeover>>,
 ) {
     crate::prof_span!("render:terrain_queue_terrain");
+    // Rebuilt for the views queued below; a view left out (a shader pack's)
+    // writes its water a pool at a time.
+    water_runs_res.0.clear();
     if pools.pools.is_empty() {
         return;
     }
@@ -605,15 +758,32 @@ pub fn queue_terrain(
                     change_tick,
                 );
             }
+        }
 
-            if let Some(phase) = transparent_phases.get_mut(&view.retained_view_entity) {
+        let runs = water_runs_res
+            .0
+            .entry(view.retained_view_entity)
+            .or_default();
+        water_runs(&pools, view, runs);
+        if let Some(phase) = transparent_phases.get_mut(&view.retained_view_entity) {
+            let pipeline = pipelines.specialize(
+                &pipeline_cache,
+                &terrain_pipeline,
+                TerrainPipelineKey {
+                    view: view_key,
+                    stream: STREAM_WATER,
+                    direct,
+                    shadow: false,
+                },
+            );
+            for (index, run) in runs.iter().enumerate() {
                 phase.add(Transparent3d {
-                    distance: f32::MIN,
-                    pipeline: specialize(STREAM_WATER, false, view_key),
-                    entity: item_entity(pool, STREAM_WATER),
+                    distance: run.distance,
+                    pipeline,
+                    entity: item_entity(run.pool, STREAM_WATER),
                     draw_function: transparent_draw,
                     batch_range: 0..1,
-                    extra_index: PhaseItemExtraIndex::DynamicOffset(pool * STREAMS + STREAM_WATER),
+                    extra_index: PhaseItemExtraIndex::DynamicOffset(WATER_RUN_TAG | index as u32),
                     indexed: true,
                 });
             }

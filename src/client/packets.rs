@@ -64,6 +64,15 @@ pub(crate) fn handle_packet(
         s.session.vitals.health_epoch = s.session.vitals.health_epoch.wrapping_add(1);
         s.session.vitals.death_cause = None;
     }
+    if let ClientboundGamePacket::PlayerPosition(p) = packet {
+        let look = &p.change.look_direction;
+        shared.lock().unwrap().session.teleport_look = Some((
+            look.y_rot(),
+            look.x_rot(),
+            p.relative.y_rot,
+            p.relative.x_rot,
+        ));
+    }
     if let ClientboundGamePacket::PlayerPosition(p) = packet
         && !p.relative.x
         && !p.relative.z

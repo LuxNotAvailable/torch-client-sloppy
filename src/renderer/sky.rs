@@ -89,9 +89,12 @@ impl bevy::pbr::Material for SkyPartMaterial {
         self.alpha_mode
     }
 
-    /// Orders the parts among themselves; it moves no depth.
+    /// Orders the parts among themselves, and all of them before every
+    /// other translucent thing: vanilla draws the sky first. (Sorted after
+    /// the water, a part pinned to the far plane painted over it wherever
+    /// the sky showed behind.) It moves no depth.
     fn depth_bias(&self) -> f32 {
-        self.depth_bias
+        self.depth_bias + SKY_SORTS_FIRST
     }
 
     fn enable_prepass() -> bool {
@@ -148,6 +151,9 @@ fn mirror_sky_materials(
         }
     }
 }
+
+/// Sorts the sky parts behind anything a view can hold.
+const SKY_SORTS_FIRST: f32 = -1.0e7;
 
 const BIAS_SKY_DISC: f32 = 0.0;
 const BIAS_END_SKY: f32 = 0.0;
