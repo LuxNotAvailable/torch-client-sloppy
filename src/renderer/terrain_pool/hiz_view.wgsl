@@ -7,7 +7,9 @@
 struct Params {
     // The frame's size in pixels.
     size: vec2<f32>,
-    pad: vec2<f32>,
+    // 1 when the pyramid's rows run bottom up (a shader pack's depth).
+    flip: f32,
+    pad: f32,
 };
 
 @group(0) @binding(0) var level: texture_2d<f32>;
@@ -22,7 +24,11 @@ fn vertex(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
 @fragment
 fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let dims = vec2<f32>(textureDimensions(level));
-    let texel = min(vec2<i32>(position.xy / params.size * dims), vec2<i32>(dims) - 1);
+    var uv = position.xy / params.size;
+    if params.flip > 0.5 {
+        uv.y = 1.0 - uv.y;
+    }
+    let texel = min(vec2<i32>(uv * dims), vec2<i32>(dims) - 1);
     let depth = textureLoad(level, texel, 0).r;
     if depth >= 1.0 {
         return vec4<f32>(0.05, 0.05, 0.2, 1.0);

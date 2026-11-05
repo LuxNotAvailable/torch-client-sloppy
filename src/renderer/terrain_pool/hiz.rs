@@ -747,7 +747,12 @@ impl ViewNode for HiZViewNode {
             contents: bytemuck::cast_slice(&[
                 target.main_texture().width() as f32,
                 target.main_texture().height() as f32,
-                0.0,
+                // A shader pack's depth (and so its pyramid) is upside down.
+                if matches!(hiz.built_source, Some(Source::Pack { .. })) {
+                    1.0
+                } else {
+                    0.0
+                },
                 0.0,
             ]),
             usage: wgpu::BufferUsages::UNIFORM,
