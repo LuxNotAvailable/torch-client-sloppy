@@ -55,6 +55,9 @@ pub struct HiZ {
     pub build: Option<Source>,
     /// The source the current pyramid was built from.
     built_source: Option<Source>,
+    /// The clip matrix this frame's cull tests through, when it tests, and
+    /// whether its y runs down the screen (a pack's), for Culled sections.
+    pub tested: Option<(Mat4, bool)>,
     /// `MC_HIZ_DUMP`: a readback of one pyramid level, now and then.
     dump: std::sync::Mutex<Dump>,
 }
@@ -121,6 +124,10 @@ struct Pipelines {
     view: std::sync::Mutex<Vec<(wgpu::TextureFormat, wgpu::RenderPipeline)>>,
     view_layout: wgpu::BindGroupLayout,
     view_module: wgpu::ShaderModule,
+    /// Culled sections: the same, drawing a rectangle per hidden section.
+    culled: std::sync::Mutex<Vec<(wgpu::TextureFormat, wgpu::RenderPipeline)>>,
+    culled_layout: wgpu::BindGroupLayout,
+    culled_module: wgpu::ShaderModule,
     reduce: ComputePipeline,
     reduce_layout: BindGroupLayout,
     /// The `reverse` parameter for each source: Bevy's (1) and a pack's (0).
@@ -186,6 +193,7 @@ impl HiZ {
             pending: None,
             build: None,
             built_source: None,
+            tested: None,
             dump: Default::default(),
         }
     }
@@ -232,6 +240,7 @@ impl HiZ {
             forward: view.world_from_view.forward().as_vec3(),
             focal,
         };
+        self.tested = None;
         let previous = std::mem::replace(&mut self.pending, source.map(|_| shot));
         let previous_source = std::mem::replace(&mut self.built_source, self.build);
         self.built = previous;
@@ -255,6 +264,9 @@ impl HiZ {
             && built.forward.dot(shot.forward) >= MIN_TURN_COS
             && (built.focal - shot.focal).abs() <= MAX_ZOOM * shot.focal.abs();
         let levels = self.pyramid.as_ref()?.levels;
+        if still {
+            self.tested = Some((built.clip, matches!(source, Source::Pack { .. })));
+        }
         still.then_some(Use {
             clip: built.clip,
             levels,
@@ -655,7 +667,57 @@ impl Pipelines {
                         },
                     ],
                 });
+        let culled_module =
+            device
+                .wgpu_device()
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("terrain_hiz_culled"),
+                    source: wgpu::ShaderSource::Wgsl(include_str!("hiz_culled.wgsl").into()),
+                });
+        let storage_read = |binding| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::VERTEX,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
+        let culled_layout =
+            device
+                .wgpu_device()
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("terrain_hiz_culled"),
+                    entries: &[
+                        storage_read(0),
+                        storage_read(1),
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 3,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                multisampled: false,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 2,
+                            visibility: wgpu::ShaderStages::VERTEX,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                    ],
+                });
         Pipelines {
+            culled: std::sync::Mutex::new(Vec::new()),
+            culled_layout,
+            culled_module,
             from_depth_ms: pipeline(&from_depth_ms_layout, "from_depth_ms"),
             from_depth_ms_layout,
             view: std::sync::Mutex::new(Vec::new()),
@@ -686,7 +748,11 @@ pub fn disabled() -> bool {
 /// `MC_HIZ=1` starts with it on, for test runs.
 pub static ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Debug Options > Culling View: 0 off, else 1 + the pyramid level shown.
+/// Culling View's Culled sections mode (in `VIEW_LEVEL`).
+pub const VIEW_CULLED: u32 = u32::MAX;
+
+/// Debug Options > Culling View: 0 off, `VIEW_CULLED`, else 1 + the
+/// pyramid level shown.
 pub static VIEW_LEVEL: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 /// The pyramid's level count, for the GUI's cycle (0 before one is built).
@@ -717,7 +783,10 @@ impl ViewNode for HiZViewNode {
         let from_env = *FROM_ENV.get_or_init(|| {
             crate::platform::env::var("MC_CULLING_VIEW")
                 .ok()
-                .and_then(|v| v.parse().ok())
+                .and_then(|v| match v.as_str() {
+                    "culled" => Some(VIEW_CULLED),
+                    v => v.parse().ok(),
+                })
                 .unwrap_or(0)
         });
         let shown = match VIEW_LEVEL.load(std::sync::atomic::Ordering::Relaxed) {
@@ -733,6 +802,9 @@ impl ViewNode for HiZViewNode {
         let (Some(pipelines), Some(pyramid)) = (&hiz.pipelines, &hiz.pyramid) else {
             return Ok(());
         };
+        if shown == VIEW_CULLED {
+            return draw_culled(render_context, world, hiz, pipelines, target);
+        }
         let level = (shown - 1).min(pyramid.levels - 1);
         let format = target.main_texture_format();
         let device = render_context.render_device().clone();
@@ -902,5 +974,146 @@ mod tests {
         )
         .validate(&module)
         .expect("validates");
+    }
+}
+
+/// Culled sections: a rectangle per section this frame's test hid, over the
+/// finished frame.
+fn draw_culled<'w>(
+    render_context: &mut RenderContext<'w>,
+    world: &'w World,
+    hiz: &HiZ,
+    pipelines: &Pipelines,
+    target: &bevy::render::view::ViewTarget,
+) -> Result<(), NodeRunError> {
+    let Some((clip, flip)) = hiz.tested else {
+        return Ok(());
+    };
+    let pools = world.resource::<super::pools::TerrainPools>();
+    let super::pools::SlotTable::Indirect { meta, .. } = &pools.table else {
+        return Ok(());
+    };
+    let cull = world.resource::<super::cull::CullBuffers>();
+    let (counts, bits, slots) = cull.culled_bits();
+    let sections = pools.draw_end.min(slots);
+    if sections == 0 {
+        return Ok(());
+    }
+    let format = target.main_texture_format();
+    let device = render_context.render_device().clone();
+    let pipeline = {
+        let mut cache = pipelines.culled.lock().unwrap();
+        match cache.iter().find(|(f, _)| *f == format) {
+            Some((_, p)) => p.clone(),
+            None => {
+                let p = pipelines.culled_pipeline(&device, format);
+                cache.push((format, p.clone()));
+                p
+            }
+        }
+    };
+    let mut values = clip.to_cols_array().to_vec();
+    values.extend([
+        f32::from_bits(bits),
+        f32::from_bits(u32::from(flip)),
+        f32::from_bits(u32::from(!flip)),
+        0.0,
+    ]);
+    let Some(pyramid) = &hiz.pyramid else {
+        return Ok(());
+    };
+    let params = device.create_buffer_with_data(&wgpu::util::BufferInitDescriptor {
+        label: Some("terrain_hiz_culled_params"),
+        contents: bytemuck::cast_slice(&values),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+    let group = device
+        .wgpu_device()
+        .create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("terrain_hiz_culled"),
+            layout: &pipelines.culled_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: meta.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: counts.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: params.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&pyramid.level0),
+                },
+            ],
+        });
+    let mut pass =
+        render_context
+            .command_encoder()
+            .begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("terrain_hiz_culled"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target.main_texture_view(),
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+    pass.set_pipeline(&pipeline);
+    pass.set_bind_group(0, &group, &[]);
+    pass.draw(0..6, 0..sections);
+    Ok(())
+}
+
+impl Pipelines {
+    fn culled_pipeline(
+        &self,
+        device: &RenderDevice,
+        format: wgpu::TextureFormat,
+    ) -> wgpu::RenderPipeline {
+        let layout = device
+            .wgpu_device()
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("terrain_hiz_culled"),
+                bind_group_layouts: &[&self.culled_layout],
+                push_constant_ranges: &[],
+            });
+        device
+            .wgpu_device()
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("terrain_hiz_culled"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &self.culled_module,
+                    entry_point: Some("vertex"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &self.culled_module,
+                    entry_point: Some("fragment"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: Default::default(),
+                depth_stencil: None,
+                multisample: Default::default(),
+                multiview: None,
+                cache: None,
+            })
     }
 }

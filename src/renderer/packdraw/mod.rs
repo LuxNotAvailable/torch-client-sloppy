@@ -308,6 +308,13 @@ impl Plugin for ShaderPackPlugin {
             return;
         };
         install_error_handler(render_app.world().resource::<RenderDevice>());
+        // Debug Options > Culling View draws over the pack's finished frame
+        // (both nodes exist by now, whichever plugin added them first).
+        render_app.add_render_graph_edge(
+            Core3d,
+            node::PackFrameLabel,
+            crate::renderer::terrain_pool::hiz::HiZViewLabel,
+        );
         render_app.init_resource::<center_depth::CenterDepth>();
         formats::init_formats(
             render_app

@@ -274,7 +274,7 @@ const ALL: &[Var] = &[
     },
     Var {
         name: "MC_CULLING_VIEW",
-        what: "N shows level N - 1 of the terrain's occlusion pyramid over the frame (Debug Options > Culling View)",
+        what: "N shows level N - 1 of the terrain's occlusion pyramid over the frame, \"culled\" the sections it hides (Debug Options > Culling View)",
         default: "0 (off)",
         enabled: true,
     },

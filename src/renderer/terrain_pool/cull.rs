@@ -183,7 +183,7 @@ impl CullBuffers {
         });
         let counts = device.create_buffer(&BufferDescriptor {
             label: Some("terrain_cull_counts"),
-            size: (regions as u64) * 4 + HIZ_STATS_BYTES,
+            size: (regions as u64) * 4 + HIZ_STATS_BYTES + culled_bits_bytes(slot_cap),
             usage: BufferUsages::INDIRECT
                 | BufferUsages::STORAGE
                 | BufferUsages::COPY_DST
@@ -216,7 +216,11 @@ impl CullBuffers {
             pool_count,
             view_count,
             generation: 0,
-            zero_counts: vec![0u8; (regions as usize) * 4 + HIZ_STATS_BYTES as usize],
+            zero_counts: vec![
+                0u8;
+                (regions as usize) * 4
+                    + (HIZ_STATS_BYTES + culled_bits_bytes(slot_cap)) as usize
+            ],
             hiz_readback,
             view_scratch: [0u8; CULL_VIEW_STRIDE as usize],
             water_counts: Vec::new(),
@@ -856,12 +860,9 @@ pub fn prepare_cull(
         }
         let live_regions = (cull.regions as usize) * 4;
         queue.write_buffer(&cull.counts, 0, &cull.zero_counts[..live_regions]);
-        let tail = cull.counts.size() - HIZ_STATS_BYTES;
-        queue.write_buffer(
-            &cull.counts,
-            tail,
-            &cull.zero_counts[..HIZ_STATS_BYTES as usize],
-        );
+        let tail = cull.regions as u64 * 4;
+        let tail_bytes = (HIZ_STATS_BYTES + culled_bits_bytes(cull.slot_cap)) as usize;
+        queue.write_buffer(&cull.counts, tail, &cull.zero_counts[..tail_bytes]);
         read_hiz_stats(&cull, stats);
 
         let cull = &mut *cull;
@@ -1059,7 +1060,7 @@ impl TerrainCullNode {
         {
             render_context.command_encoder().copy_buffer_to_buffer(
                 &cull.counts,
-                cull.counts.size() - HIZ_STATS_BYTES,
+                cull.regions as u64 * 4,
                 &free.buffer,
                 0,
                 HIZ_STATS_BYTES,
@@ -1169,7 +1170,24 @@ mod tests {
 
 /// Bytes after the regions' counts holding the Hi-Z counters (`cull.wgsl`
 /// `HIZ_STATS`): sections tested against the pyramid, and those it hid.
+/// A bit per section the test hid follows them.
 const HIZ_STATS_BYTES: u64 = 16;
+
+fn culled_bits_bytes(slot_cap: u32) -> u64 {
+    u64::from(slot_cap.div_ceil(32)) * 4
+}
+
+impl CullBuffers {
+    /// The buffer holding the bits of the sections Hi-Z hid this frame,
+    /// the word they start at, and how many sections they cover.
+    pub fn culled_bits(&self) -> (&Buffer, u32, u32) {
+        (
+            &self.counts,
+            self.regions + (HIZ_STATS_BYTES / 4) as u32,
+            self.slot_cap,
+        )
+    }
+}
 
 const READBACK_FREE: u8 = 0;
 const READBACK_COPIED: u8 = 1;

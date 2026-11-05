@@ -113,12 +113,20 @@ pub fn draw_debug(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     // with it off and seeing what it holds.
     form.toggle("Occlusion Culling", &mut state.occlusion_culling_on);
     let levels = hiz_levels();
+    let culled = crate::renderer::terrain_pool::hiz::VIEW_CULLED;
     let label = match state.culling_view {
         0 => "Culling View: Off".to_owned(),
+        v if v == culled => "Culling View: Culled".to_owned(),
         level => format!("Culling View: Level {}", level - 1),
     };
+    // Off, Culled sections, then each pyramid level.
     if form.button(&label) {
-        state.culling_view = (state.culling_view + 1) % (levels + 1).max(2);
+        state.culling_view = match state.culling_view {
+            0 => culled,
+            v if v == culled => 1,
+            level if level >= levels => 0,
+            level => level + 1,
+        };
     }
     // Records a performance report of the play that follows (closes the
     // menus so the recording is of play, not of this screen).

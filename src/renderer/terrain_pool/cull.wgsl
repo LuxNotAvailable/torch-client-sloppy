@@ -193,10 +193,14 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         if (inside && (cull.flags & VIEW_HIZ) != 0u) {
             // The report's Hi-Z counters, after the regions' counts:
             // sections tested against the pyramid, and those it hid.
-            let stats = arrayLength(&counts) - HIZ_STATS;
+            // After the counters, a bit per section the test hid, for
+            // the Culled sections view.
+            let bit_words = (cull.slot_cap + 31u) / 32u;
+            let stats = arrayLength(&counts) - bit_words - HIZ_STATS;
             atomicAdd(&counts[stats], 1u);
             if (hiz_occluded(lo, hi)) {
                 atomicAdd(&counts[stats + 1u], 1u);
+                atomicOr(&counts[stats + HIZ_STATS + slot / 32u], 1u << (slot % 32u));
                 inside = false;
             }
         }

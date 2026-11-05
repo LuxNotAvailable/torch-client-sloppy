@@ -455,6 +455,10 @@ impl Capture {
             self.push(section, name, ns as f32 / 1e6);
         }
         if let Some(store) = diagnostics {
+            // A shader pack's own span brackets nothing on the GPU (its
+            // passes go to command buffers encoded in parallel), so its
+            // total is the sum of its passes'.
+            let mut pack_gpu = None::<f32>;
             for diagnostic in store.iter() {
                 // A value nothing measured lately (a pass that stopped
                 // running) would only repeat its last reading.
@@ -468,7 +472,23 @@ impl Capture {
                     "" => diagnostic.path().as_str().to_owned(),
                     unit => format!("{} ({unit})", diagnostic.path().as_str()),
                 };
+                let path = diagnostic.path().as_str();
+                if path == "render/shaderpack/elapsed_gpu" {
+                    continue;
+                }
+                if path.starts_with("render/shaderpack/shaderpack/")
+                    && path.ends_with("/elapsed_gpu")
+                {
+                    *pack_gpu.get_or_insert(0.0) += m.value as f32;
+                }
                 self.push(Section::Diagnostics, name, m.value as f32);
+            }
+            if let Some(total) = pack_gpu {
+                self.push(
+                    Section::Diagnostics,
+                    "render/shaderpack/elapsed_gpu, all passes (ms)".to_owned(),
+                    total,
+                );
             }
         }
         self.push(Section::World, "entities", view.entities.len() as f32);
