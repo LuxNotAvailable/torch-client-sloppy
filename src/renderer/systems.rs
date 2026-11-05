@@ -526,6 +526,10 @@ fn setup(
         Tonemapping::None,
         Projection::Perspective(PerspectiveProjection {
             fov: VANILLA_FOV_DEGREES.to_radians(),
+            // Vanilla's near plane (`Camera.PROJECTION_Z_NEAR`).
+            // Bevy's 0.1 let blocks beside the eye cut into view at wide
+            // FOVs, since the plane's corners reach past the hitbox.
+            near: 0.05,
             ..default()
         }),
         DistanceFog {
