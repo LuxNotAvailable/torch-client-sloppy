@@ -601,6 +601,7 @@ fn emit_baked(
             crate::util::biome_color::dry_foliage_ratio,
         ),
         super::TintKind::Redstone(power) => crate::util::biome_color::redstone_ratio(power),
+        super::TintKind::Stem(age) => crate::util::biome_color::stem_ratio(age),
         super::TintKind::Water => occ.blend(
             bx,
             by,
@@ -615,11 +616,15 @@ fn emit_baked(
         use crate::util::biome_color as bc;
         block.tint = match rb.tint_kind {
             super::TintKind::None => [1.0; 3],
-            super::TintKind::Grass => bc::pack_grass(occ.biome(bx, by, bz)),
-            super::TintKind::Foliage => bc::pack_foliage(occ.biome(bx, by, bz)),
-            super::TintKind::DryFoliage => bc::pack_dry_foliage(occ.biome(bx, by, bz)),
+            // Blended as the built-in path's (item 40).
+            super::TintKind::Grass => occ.blend(bx, by, bz, biome_blend(), bc::pack_grass),
+            super::TintKind::Foliage => occ.blend(bx, by, bz, biome_blend(), bc::pack_foliage),
+            super::TintKind::DryFoliage => {
+                occ.blend(bx, by, bz, biome_blend(), bc::pack_dry_foliage)
+            }
             super::TintKind::Redstone(power) => bc::redstone_ratio(power),
-            super::TintKind::Water => bc::pack_water(occ.biome(bx, by, bz)),
+            super::TintKind::Stem(age) => bc::stem_ratio(age),
+            super::TintKind::Water => occ.blend(bx, by, bz, biome_blend(), bc::pack_water),
             super::TintKind::Modded(id) => crate::util::block_model::modded_tint(id),
         };
     }

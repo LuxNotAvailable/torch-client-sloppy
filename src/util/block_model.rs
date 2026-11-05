@@ -164,6 +164,11 @@ pub fn block_visual(state: azalea::block::BlockState) -> RenderedBlock {
         TintKind::DryFoliage
     } else if name == "water_cauldron" {
         TintKind::Water
+    } else if name == "melon_stem" || name == "pumpkin_stem" {
+        let age: u8 = props.get("age").and_then(|v| v.parse().ok()).unwrap_or(0);
+        TintKind::Stem(age)
+    } else if name == "attached_melon_stem" || name == "attached_pumpkin_stem" {
+        TintKind::Stem(crate::util::biome_color::STEM_ATTACHED)
     } else if name == "redstone_wire" {
         let power: u8 = props.get("power").and_then(|v| v.parse().ok()).unwrap_or(0);
         TintKind::Redstone(power)

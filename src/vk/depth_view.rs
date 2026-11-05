@@ -38,7 +38,7 @@ impl DepthView {
                     cull: vk::CullModeFlags::NONE,
                     topology: vk::PrimitiveTopology::TRIANGLE_LIST,
                     blend: false,
-                additive: false,
+                    additive: false,
                 },
             )
         };

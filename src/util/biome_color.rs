@@ -1140,6 +1140,22 @@ pub fn dry_foliage_ratio(idx: u8) -> [f32; 3] {
     lookup(idx, |r| r.dry_foliage)
 }
 
+/// `TintKind::Stem`'s age for an attached stem.
+pub const STEM_ATTACHED: u8 = u8::MAX;
+
+/// A stem's colour: vanilla's `BlockTintSources.stem`, `(age × 32,
+/// 255 − age × 8, age × 4)`, green to yellow-brown as it grows; attached
+/// stems are the constant 0xE0C71C.
+pub fn stem_ratio(age: u8) -> [f32; 3] {
+    let rgb = if age == STEM_ATTACHED {
+        [0xE0, 0xC7, 0x1C]
+    } else {
+        let a = u32::from(age.min(7));
+        [a * 32, 255 - a * 8, a * 4]
+    };
+    rgb.map(|c| c as f32 / 255.0)
+}
+
 pub fn redstone_ratio(power: u8) -> [f32; 3] {
     let p = power as f32 / 15.0;
     let red = p * 0.6 + if power > 0 { 0.4 } else { 0.3 };
