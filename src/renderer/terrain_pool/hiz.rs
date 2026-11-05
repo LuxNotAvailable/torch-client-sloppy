@@ -668,12 +668,16 @@ impl Pipelines {
 /// Occlusion Culling.
 pub fn disabled() -> bool {
     static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *OFF.get_or_init(|| crate::platform::env::var("MC_NO_HIZ").is_ok_and(|v| v == "1"))
-        || !ENABLED.load(std::sync::atomic::Ordering::Relaxed)
+        || !(ENABLED.load(std::sync::atomic::Ordering::Relaxed)
+            || *ON.get_or_init(|| crate::platform::env::var("MC_HIZ").is_ok_and(|v| v == "1")))
 }
 
-/// Debug Options > Occlusion Culling, copied from the GUI each frame.
-pub static ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+/// Debug Options > Occlusion Culling, copied from the GUI. Off by default
+/// while it still drops visible sections (CLEANUP_CHECKLIST item 31);
+/// `MC_HIZ=1` starts with it on, for test runs.
+pub static ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Debug Options > Culling View: 0 off, else 1 + the pyramid level shown.
 pub static VIEW_LEVEL: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);

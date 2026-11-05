@@ -111,10 +111,7 @@ pub fn draw_debug(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     form.toggle("Advanced Tooltips", &mut state.advanced_tooltips);
     // The terrain's occlusion pyramid (`terrain_pool::hiz`), for comparing
     // with it off and seeing what it holds.
-    let mut culling = !state.occlusion_culling_off;
-    if form.toggle("Occlusion Culling", &mut culling) {
-        state.occlusion_culling_off = !culling;
-    }
+    form.toggle("Occlusion Culling", &mut state.occlusion_culling_on);
     let levels = hiz_levels();
     let label = match state.culling_view {
         0 => "Culling View: Off".to_owned(),
@@ -124,7 +121,7 @@ pub fn draw_debug(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         state.culling_view = (state.culling_view + 1) % (levels + 1).max(2);
     }
     form.finish();
-    set_hiz_debug(!state.occlusion_culling_off, state.culling_view);
+    set_hiz_debug(state.occlusion_culling_on, state.culling_view);
     if (state.options.pause_on_lost_focus, state.options.fps_counter) != saved_before {
         crate::gui::save_options(&state.options);
     }

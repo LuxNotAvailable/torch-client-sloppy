@@ -202,8 +202,14 @@ const ALL: &[Var] = &[
     },
     Var {
         name: "MC_NO_HIZ",
-        what: "turn off terrain occlusion culling against last frame's depth, when set to 1",
-        default: "on",
+        what: "turn off terrain occlusion culling against last frame's depth, when set to 1 (overrides MC_HIZ and the debug toggle)",
+        default: "off",
+        enabled: true,
+    },
+    Var {
+        name: "MC_HIZ",
+        what: "1 starts with terrain occlusion culling on (Debug Options > Occlusion Culling), for test runs",
+        default: "off",
         enabled: true,
     },
     Var {
