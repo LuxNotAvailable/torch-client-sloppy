@@ -65,7 +65,6 @@ pub struct SoundGroup {
     pub step_event: &'static str,
     /// Each fourth tick of mining it (`ClientLevel.playBreakingSound`).
     pub hit_event: &'static str,
-    #[allow(dead_code, reason = "for landing from a fall, not played yet")]
     pub fall_event: &'static str,
 }
 

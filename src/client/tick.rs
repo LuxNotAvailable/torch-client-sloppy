@@ -166,50 +166,65 @@ fn read_tick_snapshot(bot: &Client, shared: &Arc<SharedMutex>) -> Option<TickSna
 
     #[cfg(audio)]
     {
-        use std::sync::atomic::Ordering;
-
-        let mut last = LAST_XZ.lock().unwrap();
-        let (dx, dz) = match *last {
-            Some((lx, lz)) => (pos.x - lx, pos.z - lz),
-            None => (0.0, 0.0),
-        };
-        *last = Some((pos.x, pos.z));
-        drop(last);
-
-        let on_ground = bot
+        let (on_ground, fall_distance) = bot
             .component::<azalea::entity::Physics>()
-            .is_ok_and(|p| p.on_ground());
-        if on_ground {
-            const STEP_DISTANCE: f32 = 2.0;
-            let travelled = f32::from_bits(TRAVELLED.load(Ordering::Relaxed))
-                + (dx * dx + dz * dz).sqrt() as f32;
-            if travelled >= STEP_DISTANCE {
-                TRAVELLED.store((travelled - STEP_DISTANCE).to_bits(), Ordering::Relaxed);
-                let feet = AzBlockPos::new(
+            .map_or((false, 0.0), |p| (p.on_ground(), p.fall_distance));
+        let fell = std::mem::replace(&mut *LAST_FALL.lock().unwrap(), fall_distance);
+        if on_ground
+            && fell > 0.0
+            && let Some(on) = world.as_ref().and_then(|w| {
+                w.read().get_block_state(AzBlockPos::new(
                     pos.x.floor() as i32,
-                    pos.y.floor() as i32 - 1,
+                    (pos.y - 0.2).floor() as i32,
                     pos.z.floor() as i32,
-                );
-                let state = world.as_ref().and_then(|w| w.read().get_block_state(feet));
-                if let Some(state) = state
-                    && !state.is_air()
-                {
-                    let group = crate::util::block_model::sound_group(
-                        crate::util::block_model::block_id(state),
-                    );
-                    // `Entity.playStepSound`.
-                    crate::audio::play_at(
-                        group.step_event,
-                        crate::audio::SoundCategory::Players,
-                        [pos.x as f32, pos.y as f32, pos.z as f32],
-                        group.volume * 0.15,
-                        group.pitch,
-                    );
-                }
-            } else {
-                TRAVELLED.store(travelled.to_bits(), Ordering::Relaxed);
-            }
+                ))
+            })
+        {
+            crate::play::landing::landed(&crate::play::landing::Landing {
+                at: [pos.x as f32, pos.y as f32, pos.z as f32],
+                fall_distance: fell,
+                on,
+                may_fly: bot
+                    .component::<azalea::entity::PlayerAbilities>()
+                    .is_ok_and(|a| a.can_fly),
+                jump_boost: bot
+                    .component::<azalea::entity::ActiveEffects>()
+                    .ok()
+                    .and_then(|e| e.get_level(azalea_registry::builtin::MobEffect::JumpBoost)),
+                sneaking: bot
+                    .component::<azalea::entity::Pose>()
+                    .is_ok_and(|p| *p == azalea::entity::Pose::Crouching),
+            });
         }
+        let physics = bot.component::<azalea::entity::Physics>().ok();
+        let pose = bot.component::<azalea::entity::Pose>().ok().map(|p| *p);
+        let abilities = bot.component::<azalea::entity::PlayerAbilities>().ok();
+        let mut last = LAST_POS.lock().unwrap();
+        let from = last.unwrap_or([pos.x, pos.y, pos.z]);
+        *last = Some([pos.x, pos.y, pos.z]);
+        drop(last);
+        let world_read = world.as_ref().map(|w| w.read());
+        let block_at = |p: AzBlockPos| world_read.as_ref().and_then(|w| w.get_block_state(p));
+        STEPS
+            .lock()
+            .unwrap()
+            .tick(&crate::play::movement_sounds::Moved {
+                pos: [pos.x, pos.y, pos.z],
+                from,
+                velocity: physics
+                    .as_ref()
+                    .map_or([0.0; 3], |p| [p.velocity.x, p.velocity.y, p.velocity.z]),
+                on_ground,
+                in_water: physics.as_ref().is_some_and(|p| p.was_touching_water),
+                swimming: pose == Some(azalea::entity::Pose::Swimming),
+                crouching: pose == Some(azalea::entity::Pose::Crouching),
+                flying: abilities.is_some_and(|a| a.flying),
+                passenger: crate::client::tracking::local_vehicle_id().is_some(),
+                climbing: bot
+                    .component::<azalea::entity::OnClimbable>()
+                    .is_ok_and(|c| **c),
+                block_at: &block_at,
+            });
     }
     let advanced_tooltips = reads.advanced_tooltips;
     let (
@@ -576,10 +591,18 @@ struct Ticker {
 }
 static TICKER: std::sync::OnceLock<std::sync::Mutex<Ticker>> = std::sync::OnceLock::new();
 
+/// The local player's fall distance last tick: on landing it's already reset.
 #[cfg(audio)]
-static TRAVELLED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static LAST_FALL: std::sync::Mutex<f64> = std::sync::Mutex::new(0.0);
+
+/// Footstep, swim and splash state (`play::movement_sounds`).
 #[cfg(audio)]
-static LAST_XZ: std::sync::Mutex<Option<(f64, f64)>> = std::sync::Mutex::new(None);
+static STEPS: std::sync::LazyLock<std::sync::Mutex<crate::play::movement_sounds::Steps>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// Where the player was last tick, for the distance moved.
+#[cfg(audio)]
+static LAST_POS: std::sync::Mutex<Option<[f64; 3]>> = std::sync::Mutex::new(None);
 
 pub(crate) fn reset_session_locals(blocking: bool) {
     let ticker = TICKER.get_or_init(Default::default);
@@ -593,14 +616,16 @@ pub(crate) fn reset_session_locals(blocking: bool) {
     }
     #[cfg(audio)]
     {
-        TRAVELLED.store(0, std::sync::atomic::Ordering::Relaxed);
-        let last = if blocking {
-            LAST_XZ.lock().ok()
+        let (last, steps) = if blocking {
+            (LAST_POS.lock().ok(), STEPS.lock().ok())
         } else {
-            LAST_XZ.try_lock().ok()
+            (LAST_POS.try_lock().ok(), STEPS.try_lock().ok())
         };
         if let Some(mut last) = last {
             *last = None;
+        }
+        if let Some(mut steps) = steps {
+            *steps = Default::default();
         }
     }
 }

@@ -8,8 +8,12 @@ pub(crate) mod gliding;
 pub(crate) mod interaction;
 pub(crate) mod inventory_bridge;
 pub(crate) mod inventory_sort;
+#[cfg(audio)]
+pub(crate) mod landing;
 pub(crate) mod looking;
 pub(crate) mod mob_effects;
+#[cfg(audio)]
+pub(crate) mod movement_sounds;
 pub(crate) mod no_fall;
 pub(crate) mod placement;
 pub(crate) mod redstone;
