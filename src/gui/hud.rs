@@ -1664,6 +1664,56 @@ pub fn sidebar_top(ctx: &ScreenCtx, sidebar: &crate::client::tablist::Sidebar) -
     bottom - height - LINE_HEIGHT - 1.0
 }
 
+/// Vanilla's `SubtitleOverlay` rows: right-aligned above the hotbar, a
+/// shared width, `<` or `>` towards a sound out of view.
+#[cfg(audio)]
+pub fn draw_subtitles(p: &mut Painter, ctx: &ScreenCtx, lines: &[crate::audio::subtitles::Line]) {
+    use crate::audio::subtitles::Side;
+    if lines.is_empty() {
+        return;
+    }
+    let texts: Vec<String> = lines
+        .iter()
+        .map(|l| crate::gui::tooltip::translate(&l.key, &[]))
+        .collect();
+    let font = &p.atlas.font;
+    let arrows =
+        font.width_str("<") + font.width_str(" ") + font.width_str(">") + font.width_str(" ");
+    let widest = texts
+        .iter()
+        .map(|t| font.width_str(t))
+        .fold(0.0f32, f32::max);
+    let half = ((widest + arrows).ceil() / 2.0).floor();
+    let half_height = 4.0;
+    let (vw, vh) = (gui_width(ctx), gui_height(ctx));
+    for (row, (line, text)) in lines.iter().zip(&texts).enumerate() {
+        let cx = vw - half - 2.0;
+        let cy = vh - 35.0 - row as f32 * 10.0;
+        p.fill(
+            cx - half - 1.0,
+            cy - half_height - 1.0,
+            2.0 * half + 2.0,
+            2.0 * half_height + 2.0,
+            0xCC00_0000,
+        );
+        let b = u32::from(line.brightness);
+        let color = 0xFF00_0000 | b << 16 | b << 8 | b;
+        let y = cy - half_height;
+        match line.side {
+            Side::Right => {
+                let w = p.atlas.font.width_str(">");
+                p.text_str(">", cx + half - w, y, color, true);
+            }
+            Side::Left => {
+                p.text_str("<", cx - half, y, color, true);
+            }
+            Side::None => {}
+        }
+        let w = p.atlas.font.width_str(text);
+        p.text_str(text, cx - (w / 2.0).floor(), y, color, true);
+    }
+}
+
 pub fn draw_sidebar(p: &mut Painter, ctx: &ScreenCtx, sidebar: &crate::client::tablist::Sidebar) {
     if !sidebar.active {
         return;

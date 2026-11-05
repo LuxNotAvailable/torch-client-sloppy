@@ -22,6 +22,7 @@ crate::options! {
         pub hide_splash: bool = false => key("hideSplashTexts"),
         /// `panoramaScrollSpeed`, percent.
         pub panorama_speed: u32 = 100 => key("panoramaScrollSpeed").clamp(0, 100),
+        pub show_subtitles: bool = false => key("showSubtitles"),
     }
 }
 
@@ -70,6 +71,7 @@ pub fn draw_accessibility(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx
         100,
         crate::percent_label!("Damage Tilt"),
     );
+    form.toggle("Show Subtitles", &mut a.show_subtitles);
     form.toggle("Hide Lightning Flashes", &mut a.hide_lightning);
     form.toggle("Hide Splash Texts", &mut a.hide_splash);
     form.slider(

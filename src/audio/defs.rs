@@ -44,8 +44,8 @@ pub const DEFAULT_ATTENUATION: f32 = 16.0;
 struct Event {
     entries: Vec<Entry>,
     total_weight: u32,
-    #[allow(dead_code, reason = "no subtitle renderer yet; see the field doc")]
-    subtitle: Option<String>,
+    /// The subtitle's translation key (`audio::subtitles`).
+    subtitle: Option<Arc<str>>,
 }
 
 pub struct Defs {
@@ -77,10 +77,7 @@ impl Defs {
                 Event {
                     entries,
                     total_weight,
-                    subtitle: body
-                        .get("subtitle")
-                        .and_then(Value::as_str)
-                        .map(str::to_owned),
+                    subtitle: body.get("subtitle").and_then(Value::as_str).map(Arc::from),
                 },
             );
         }
@@ -131,6 +128,11 @@ impl Defs {
             }
             event.total_weight = weights.iter().sum();
         }
+    }
+
+    /// The event's subtitle key, if it has one.
+    pub fn subtitle(&self, event: &str) -> Option<&Arc<str>> {
+        self.events.get(event)?.subtitle.as_ref()
     }
 
     pub fn len(&self) -> usize {

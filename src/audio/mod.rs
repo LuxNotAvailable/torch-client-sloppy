@@ -6,6 +6,7 @@ mod engine;
 pub mod environment;
 pub mod music;
 pub(crate) mod store;
+pub mod subtitles;
 
 use std::collections::HashMap;
 
@@ -42,12 +43,15 @@ struct Listener {
     position: [f32; 3],
     /// The ear-to-ear axis, which is all panning needs.
     right: [f32; 3],
+    /// Where the listener looks, for the subtitles' arrows.
+    forward: [f32; 3],
 }
 
 impl Listener {
     const ORIGIN: Listener = Listener {
         position: [0.0, 0.0, 0.0],
         right: [1.0, 0.0, 0.0],
+        forward: [0.0, 0.0, -1.0],
     };
 }
 
@@ -79,10 +83,20 @@ pub fn set_volumes(volumes: &[u32; SoundCategory::COUNT]) {
     }
 }
 
-pub fn set_listener(position: [f32; 3], right: [f32; 3]) {
+pub fn set_listener(position: [f32; 3], right: [f32; 3], forward: [f32; 3]) {
     if let Ok(mut listener) = LISTENER.lock() {
-        *listener = Listener { position, right };
+        *listener = Listener {
+            position,
+            right,
+            forward,
+        };
     }
+}
+
+/// The subtitles heard at the listener now.
+pub fn subtitle_lines() -> Vec<subtitles::Line> {
+    let l = listener();
+    subtitles::lines(l.position, l.forward, l.right)
 }
 
 /// The speaker chosen by name (`soundDevice`), `None` for the default.
@@ -199,6 +213,12 @@ fn submit_looping(
     // chosen sound's.
     let volume = volume * picked.volume;
     let pitch = pitch * picked.pitch;
+    // `SoundEngine.play` tells its listeners before any culling.
+    let subtitle = defs.subtitle(event).filter(|_| subtitles::shown());
+    let heard_range = at.map_or(f32::INFINITY, |_| volume.max(1.0) * picked.attenuation);
+    if let Some(key) = subtitle {
+        subtitles::notify(key, at, heard_range, looping);
+    }
     let place = match at {
         None => Place::Listener,
         Some(at) => {
@@ -212,6 +232,9 @@ fn submit_looping(
         }
     };
     let id = NEXT_VOICE.fetch_add(1, Ordering::Relaxed);
+    if looping && let Some(key) = subtitle {
+        subtitles::track_loop(id, key.clone(), at, heard_range);
+    }
     engine::expect(id);
     engine::send(Command::Play(engine::Play {
         id,
@@ -260,6 +283,7 @@ pub fn stop_voice(id: u64) {
 }
 
 pub fn move_voice(id: u64, at: [f32; 3]) {
+    subtitles::move_loop(id, at);
     engine::send(Command::Move { id, at });
 }
 

@@ -2108,7 +2108,11 @@ fn sync_audio_listener(camera_q: Query<&GlobalTransform, With<WorldCamera>>) {
     let Ok(transform) = camera_q.single() else {
         return;
     };
-    crate::audio::set_listener(transform.translation().into(), (*transform.right()).into());
+    crate::audio::set_listener(
+        transform.translation().into(),
+        (*transform.right()).into(),
+        (*transform.forward()).into(),
+    );
 }
 
 fn sync_smooth_lighting(state: Res<crate::gui::GuiState>, mut last: Local<Option<bool>>) {

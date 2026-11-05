@@ -395,6 +395,11 @@ fn draw_hud_layers(
             hud::draw_sidebar(p, &ctx, &snap.sidebar);
         });
         hud::draw_overlays(p, &ctx, &state.hud_overlays, snap.gamemode, &mut elements);
+        #[cfg(audio)]
+        {
+            crate::audio::subtitles::set_shown(state.options.accessibility.show_subtitles);
+            hud::draw_subtitles(p, &ctx, &crate::audio::subtitle_lines());
+        }
         #[cfg(voice)]
         if !state.screen.chat_open() {
             let status = state.options.voice.status;
