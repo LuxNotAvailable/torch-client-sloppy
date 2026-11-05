@@ -48,8 +48,15 @@ fn split_position(position: bevy::math::DVec3) -> (IVec3, Vec3) {
     (floor.as_ivec3(), (position - floor).as_vec3())
 }
 
+/// The hand's projection: its depth squeezed to an eighth, as Iris's
+/// `MC_HAND_DEPTH` does, and moved to the front of the range (NDC -1 to
+/// -0.75) rather than around the middle. Around the middle, a wall within
+/// about 0.12 blocks, as the screen's edge meets one at a wide FOV, came out
+/// nearer than the hand and cut into it; at the front only geometry inside
+/// about 0.057 blocks could.
 fn hand_projection(aspect: f32, far_plane: f32) -> Mat4 {
-    Mat4::from_scale(Vec3::new(1.0, 1.0, 0.125))
+    Mat4::from_translation(Vec3::new(0.0, 0.0, -0.875))
+        * Mat4::from_scale(Vec3::new(1.0, 1.0, 0.125))
         * Mat4::perspective_rh_gl(HAND_FOV_DEGREES.to_radians(), aspect, NEAR, far_plane)
 }
 
@@ -475,13 +482,15 @@ mod tests {
             let clip = projection * Vec4::new(0.0, 0.0, -distance, 1.0);
             (clip.z / clip.w + 1.0) * 0.5
         };
-        assert!(
-            window(0.6) > 0.4375 && window(0.6) < 0.56,
-            "{}",
-            window(0.6)
-        );
-        assert!(window(500.0) <= 0.5625 + 1e-5);
-        assert!(window(NEAR) >= 0.4375 - 1e-5);
+        // The hand fills the front eighth of the depth range.
+        assert!(window(0.6) > 0.0 && window(0.6) < 0.125, "{}", window(0.6));
+        assert!(window(500.0) <= 0.125 + 1e-5);
+        assert!(window(NEAR) >= -1e-5);
+        // The world, in the same depth convention, from 0.1 blocks out sits
+        // behind all of it.
+        let world = Mat4::perspective_rh_gl(1.2, 16.0 / 9.0, NEAR, 512.0);
+        let clip = world * Vec4::new(0.0, 0.0, -0.1, 1.0);
+        assert!((clip.z / clip.w + 1.0) * 0.5 > window(500.0));
     }
 
     #[test]
