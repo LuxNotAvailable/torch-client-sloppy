@@ -197,12 +197,13 @@ fn read_tick_snapshot(bot: &Client, shared: &Arc<SharedMutex>) -> Option<TickSna
                     let group = crate::util::block_model::sound_group(
                         crate::util::block_model::block_id(state),
                     );
+                    // `Entity.playStepSound`.
                     crate::audio::play_at(
                         group.step_event,
                         crate::audio::SoundCategory::Players,
                         [pos.x as f32, pos.y as f32, pos.z as f32],
-                        0.15,
-                        1.0,
+                        group.volume * 0.15,
+                        group.pitch,
                     );
                 }
             } else {

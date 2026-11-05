@@ -55,8 +55,11 @@ pub fn emissive_rendering(name: &str, props: &HashMap<&str, &str>) -> bool {
     }
 }
 
+/// A block's `SoundType`: its events, and the volume and pitch they scale.
 #[cfg(audio)]
 pub struct SoundGroup {
+    pub volume: f32,
+    pub pitch: f32,
     pub break_event: &'static str,
     pub place_event: &'static str,
     pub step_event: &'static str,
@@ -67,71 +70,7 @@ pub struct SoundGroup {
 }
 
 #[cfg(audio)]
-macro_rules! sound_group {
-    ($name:literal) => {
-        SoundGroup {
-            break_event: concat!("block.", $name, ".break"),
-            place_event: concat!("block.", $name, ".place"),
-            step_event: concat!("block.", $name, ".step"),
-            hit_event: concat!("block.", $name, ".hit"),
-            fall_event: concat!("block.", $name, ".fall"),
-        }
-    };
-}
-
-#[cfg(audio)]
-static WOOD: SoundGroup = sound_group!("wood");
-#[cfg(audio)]
-static SAND: SoundGroup = sound_group!("sand");
-#[cfg(audio)]
-static GRAVEL: SoundGroup = sound_group!("gravel");
-#[cfg(audio)]
-static GRASS: SoundGroup = sound_group!("grass");
-#[cfg(audio)]
-static GLASS: SoundGroup = sound_group!("glass");
-#[cfg(audio)]
-static METAL: SoundGroup = sound_group!("metal");
-#[cfg(audio)]
-static WOOL: SoundGroup = sound_group!("wool");
-#[cfg(audio)]
-static STONE: SoundGroup = sound_group!("stone");
-
-#[cfg(audio)]
-pub fn sound_group(name: &str) -> &'static SoundGroup {
-    if name.ends_with("_planks")
-        || name.contains("_log")
-        || name.contains("_wood")
-        || name.ends_with("_fence")
-        || name.ends_with("_fence_gate")
-        || name.ends_with("_door")
-        || name.ends_with("_trapdoor")
-        || name.ends_with("_button")
-        || name.ends_with("_pressure_plate")
-        || name.contains("bamboo")
-        || name.contains("chest")
-    {
-        &WOOD
-    } else if name == "sand" || name == "red_sand" || name.contains("sandstone") {
-        &SAND
-    } else if name == "gravel" {
-        &GRAVEL
-    } else if name.contains("grass") || name.contains("dirt") || name.contains("farmland") {
-        &GRASS
-    } else if name.contains("glass") {
-        &GLASS
-    } else if name.contains("iron")
-        || name.contains("copper")
-        || name.contains("gold")
-        || name.contains("anvil")
-        || name.contains("chain")
-    {
-        &METAL
-    } else if name.ends_with("_wool") || name.ends_with("_carpet") {
-        &WOOL
-    } else {
-        &STONE
-    }
-}
+pub use crate::generated_block_sounds::sound_group;
 
 #[cfg(all(test, audio))]
 mod sound_group_tests {
@@ -148,6 +87,19 @@ mod sound_group_tests {
     fn an_unrecognised_block_falls_back_to_stone() {
         assert_eq!(sound_group("obsidian").break_event, "block.stone.break");
         assert_eq!(sound_group("").break_event, "block.stone.break");
+    }
+
+    #[test]
+    fn blocks_take_the_game_s_own_sound_types() {
+        assert_eq!(
+            sound_group("deepslate").break_event,
+            "block.deepslate.break"
+        );
+        assert_eq!(sound_group("melon_stem").place_event, "item.crop.plant");
+        assert_eq!(
+            sound_group("scaffolding").step_event,
+            "block.scaffolding.step"
+        );
     }
 }
 

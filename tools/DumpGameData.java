@@ -31,6 +31,7 @@ import net.minecraft.world.level.block.state.BlockState;
  *   block <id> <PushReaction> <hasBlockEntity>
  *   item  <id> <rarity> <maxStackSize> <maxDamage>
  *   tab   <id> <TOP|BOTTOM> <column> <title key> <icon id> <item id>...
+ *   sound <id> <volume> <pitch> <break> <step> <place> <hit> <fall>
  *
  * Run it with the server jar and its libraries on the classpath.
  */
@@ -46,6 +47,17 @@ public class DumpGameData {
             out.append("block ").append(BuiltInRegistries.BLOCK.getKey(block).getPath())
                 .append(' ').append(state.getPistonPushReaction())
                 .append(' ').append(state.hasBlockEntity()).append('\n');
+        }
+
+        for (Block block : BuiltInRegistries.BLOCK) {
+            var sound = block.defaultBlockState().getSoundType();
+            out.append("sound ").append(BuiltInRegistries.BLOCK.getKey(block).getPath())
+                .append(' ').append(sound.getVolume())
+                .append(' ').append(sound.getPitch());
+            for (var event : List.of(sound.getBreakSound(), sound.getStepSound(), sound.getPlaceSound(), sound.getHitSound(), sound.getFallSound())) {
+                out.append(' ').append(event.location().getPath());
+            }
+            out.append('\n');
         }
 
         for (Item item : BuiltInRegistries.ITEM) {

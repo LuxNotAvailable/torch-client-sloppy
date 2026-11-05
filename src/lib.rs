@@ -13,6 +13,8 @@ mod direction;
 #[cfg(any(feature = "eagler", target_arch = "wasm32"))]
 mod eagler;
 mod entities;
+#[cfg(audio)]
+mod generated_block_sounds;
 mod generated_items;
 mod gui;
 mod items;

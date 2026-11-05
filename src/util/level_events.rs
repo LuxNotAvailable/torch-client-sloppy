@@ -211,8 +211,14 @@ fn effects(event: &LevelEventEmit, ctx: &mut Emitter) {
                 let group = crate::util::block_model::sound_group(
                     crate::util::block_model::block_id(state),
                 );
-                // A sound type's volume and pitch are 1: (1 + 1) / 8, 1 * 0.5.
-                sound(cell, group.hit_event, Bus::Blocks, 0.25, 0.5);
+                // `ClientLevel.playBreakingSound`: (volume + 1) / 8, pitch × 0.5.
+                sound(
+                    cell,
+                    group.hit_event,
+                    Bus::Blocks,
+                    (group.volume + 1.0) / 8.0,
+                    group.pitch * 0.5,
+                );
             }
         }
         2001 | 3008 => {
@@ -699,7 +705,14 @@ fn break_block(ctx: &mut Emitter, cell: [i32; 3], state: azalea::block::BlockSta
     {
         let group =
             crate::util::block_model::sound_group(crate::util::block_model::block_id(state));
-        sound(cell, group.break_event, Bus::Blocks, 1.0, 0.8);
+        // `LevelEventHandler` 2001: (volume + 1) / 2, pitch × 0.8.
+        sound(
+            cell,
+            group.break_event,
+            Bus::Blocks,
+            (group.volume + 1.0) / 2.0,
+            group.pitch * 0.8,
+        );
     }
 }
 

@@ -78,19 +78,20 @@ pub(crate) fn install_block_change_hook() {
                     let name = |state| crate::util::block_model::sound_group(block_id(state));
                     let is_fluid =
                         |state| matches!(block_id(state), "water" | "lava" | "bubble_column");
-                    let event =
+                    let group =
                         if old.is_air() && !new.is_air() && !is_fluid(new) && placed_locally(pos) {
-                            Some(name(new).place_event)
+                            Some(name(new))
                         } else {
                             None
                         };
-                    if let Some(event) = event {
+                    // `BlockItem.place`: (volume + 1) / 2, pitch × 0.8.
+                    if let Some(group) = group {
                         crate::audio::play_at(
-                            event,
+                            group.place_event,
                             crate::audio::SoundCategory::Blocks,
                             at,
-                            1.0,
-                            0.8,
+                            (group.volume + 1.0) / 2.0,
+                            group.pitch * 0.8,
                         );
                     }
                 }
