@@ -1141,7 +1141,13 @@ fn collect_hud_info(
         (view.player_lerp, view.gamemode, view.flying, view.in_world);
     let projector = match (camera, hud_visible) {
         (Some((camera, cam_tf, projection)), true) => {
-            Some(TagProjector::new(camera, cam_tf, projection, input.size))
+            // The camera as it renders this frame: the view bob goes on
+            // after this system, so it's put on here.
+            let pose = super::view_bob::current_pose(&view, &state, &freecam);
+            let bobbed = Transform::from_matrix(
+                (cam_tf.compute_affine() * pose.compute_affine().inverse()).into(),
+            );
+            Some(TagProjector::new(camera, &bobbed, projection, input.size))
         }
         _ => None,
     };
@@ -2706,6 +2712,8 @@ pub fn run(
         Update,
         collect_hud_info
             .after(FrameViewSystems)
+            .after(poll_shared_state)
+            .after(mouse_look)
             .before(crate::gui::render::draw_gui),
     )
     .add_systems(Update, apply_gui_nav)

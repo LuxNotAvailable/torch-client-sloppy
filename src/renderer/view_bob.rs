@@ -77,7 +77,7 @@ fn hurt_now() -> Option<(f32, f32)> {
     Some((HURT_TICKS - at.elapsed().as_secs_f32() * 20.0, dir))
 }
 
-fn current_pose(
+pub(crate) fn current_pose(
     view: &FrameView,
     state: &crate::gui::GuiState,
     freecam: &FreecamState,
