@@ -743,10 +743,8 @@ pub fn disabled() -> bool {
             || *ON.get_or_init(|| crate::platform::env::var("MC_HIZ").is_ok_and(|v| v == "1")))
 }
 
-/// Debug Options > Occlusion Culling, copied from the GUI. Off by default
-/// while it still drops visible sections (CLEANUP_CHECKLIST item 31);
-/// `MC_HIZ=1` starts with it on, for test runs.
-pub static ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Debug Options > Occlusion Culling, copied from the GUI; on by default.
+pub static ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 /// Culling View's Culled sections mode (in `VIEW_LEVEL`).
 pub const VIEW_CULLED: u32 = u32::MAX;
