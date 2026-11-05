@@ -18,7 +18,7 @@ path = "src/bin/vkview.rs"
 required-features = ["vulkan"]
 
 [features]
-default = ["asset_download", "multiversion", "full_font", "skins", "online_mode", "shader_support", "audio", "voice", "hud_editor", "resourcepacks"]
+default = ["asset_download", "multiversion", "full_font", "skins", "online_mode", "shader_support", "audio", "voice", "hud_editor", "resourcepacks", "vulkan", "perf_report"]
 
 skins = ["dep:reqwest", "dep:rustls"]
 
@@ -31,7 +31,7 @@ alloc_diag = []
 
 budget = []
 
-# A pause-menu button that records ten seconds of play and writes a
+# A Debug Options button that records ten seconds of play and writes a
 # report: frame times, every timed stage and span, GPU passes, counters,
 # process use and the machine it ran on.
 perf_report = ["dep:sysinfo", "dep:wgpu", "wgpu/counters", "dep:bevy_render_trace", "bevy_render_trace/trace"]

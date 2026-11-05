@@ -99,7 +99,7 @@ pub fn draw_online(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
 }
 
 pub fn draw_debug(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
-    let mut form = Form::new(p, ctx, "Debug Options", 3, 0);
+    let mut form = Form::new(p, ctx, "Debug Options", 4, 0);
     let saved_before = (state.options.pause_on_lost_focus, state.options.fps_counter);
     form.toggle(
         "Pause on Lost Focus",
@@ -119,6 +119,20 @@ pub fn draw_debug(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     };
     if form.button(&label) {
         state.culling_view = (state.culling_view + 1) % (levels + 1).max(2);
+    }
+    // Records a performance report of the play that follows (closes the
+    // menus so the recording is of play, not of this screen).
+    #[cfg(feature = "perf_report")]
+    {
+        use crate::diag::perf_report;
+        let status = perf_report::status();
+        let label = status
+            .clone()
+            .unwrap_or_else(|| format!("Profile ({}s report)", perf_report::RECORD.as_secs()));
+        if form.button_active(&label, status.is_none()) {
+            perf_report::start();
+            state.nav = Some(Screen::None);
+        }
     }
     form.finish();
     set_hiz_debug(state.occlusion_culling_on, state.culling_view);
