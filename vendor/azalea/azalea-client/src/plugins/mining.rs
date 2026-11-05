@@ -610,8 +610,7 @@ pub fn continue_mining_block(
                 position: mining.pos,
             });
             commands.trigger(SwingArmEvent { entity });
-        } else if mining.force
-            || is_same_mining_target(
+        } else if is_same_mining_target(
                 mining.pos,
                 inventory,
                 current_mining_pos,
@@ -684,11 +683,14 @@ pub fn continue_mining_block(
             });
             commands.trigger(SwingArmEvent { entity });
         } else {
+            // A new block, or the held item changed: vanilla's
+            // `sameDestroyTarget` fails either way and the break restarts
+            // with the new item's speed. A forced break stays forced.
             trace!("switching mining target to {:?}", mining.pos);
             commands.entity(entity).insert(MiningQueued {
                 position: mining.pos,
                 direction: mining.dir,
-                force: false,
+                force: mining.force,
             });
         }
     }
