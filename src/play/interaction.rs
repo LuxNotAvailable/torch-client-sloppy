@@ -965,14 +965,20 @@ fn release_using_item(bot: &Client) {
 }
 
 fn updating_using_item(bot: &Client, shared: &Arc<SharedMutex>) {
-    let (started, item) = {
+    let (started, item, offhand) = {
         let use_item = USE_ITEM.lock().unwrap();
-        (use_item.started, use_item.item)
+        (use_item.started, use_item.item, use_item.offhand)
     };
     if !started {
         return;
     }
-    if let Some(fx) = tick_using_item(held_item_kind(bot) == item) {
+    // The item has to stay in the hand that's using it.
+    let in_hand = if offhand {
+        offhand_item_kind(bot)
+    } else {
+        held_item_kind(bot)
+    };
+    if let Some(fx) = tick_using_item(in_hand == item) {
         emit_consume_fx(bot, shared, &fx, 5);
     }
 }
@@ -1015,13 +1021,39 @@ fn sync_server_using_item(bot: &Client) {
     }
     match (server_using, is_using_item()) {
         (true, false) => {
-            if let Some(kind) = held_item_kind(bot) {
+            let offhand = bot
+                .component::<azalea::entity::metadata::AbstractLivingUsingOffhand>()
+                .is_ok_and(|o| o.0);
+            if offhand {
+                if let Some(kind) = offhand_item_kind(bot) {
+                    let duration = bot
+                        .component::<azalea::entity::inventory::Inventory>()
+                        .ok()
+                        .and_then(|i| {
+                            i.get_equipment(azalea_inventory::components::EquipmentSlot::Offhand)
+                                .map(use_duration)
+                        })
+                        .unwrap_or(0);
+                    start_using_item(kind, duration);
+                    USE_ITEM.lock().unwrap().offhand = true;
+                }
+            } else if let Some(kind) = held_item_kind(bot) {
                 start_using_item(kind, held_use_duration(bot));
                 USE_ITEM.lock().unwrap().fx = consume_fx(bot);
             }
         }
         (false, true) => stop_using_item(),
         _ => {}
+    }
+}
+
+fn offhand_item_kind(bot: &Client) -> Option<ItemKind> {
+    let inventory = bot
+        .component::<azalea::entity::inventory::Inventory>()
+        .ok()?;
+    match inventory.get_equipment(azalea_inventory::components::EquipmentSlot::Offhand)? {
+        ItemStack::Present(data) => Some(data.kind),
+        ItemStack::Empty => None,
     }
 }
 
