@@ -17,7 +17,7 @@ use azalea_core::{
 };
 use azalea_entity::{
     ActiveEffects, Attributes, EntityKindComponent, HasClientLoaded, Jumping, LocalEntity,
-    LookDirection, OnClimbable, Physics, PlayerAbilities, Pose, Position,
+    LookDirection, OnClimbable, Physics, PlayerAbilities, Position,
     dimensions::EntityDimensions, metadata::Sprinting, move_relative,
 };
 use azalea_registry::builtin::{BlockKind, EntityKind, MobEffect};
@@ -370,7 +370,7 @@ fn handle_relative_friction_and_calculate_movement(ctx: &mut MoveCtx, block_fric
         ctx.on_climbable,
         *ctx.position,
         ctx.world,
-        ctx.pose,
+        ctx.physics_state.is_some_and(|s| s.trying_to_crouch),
     );
 
     move_colliding(ctx, ctx.physics.velocity);
@@ -396,7 +396,10 @@ fn handle_on_climbable(
     on_climbable: OnClimbable,
     position: Position,
     world: &World,
-    pose: Option<Pose>,
+    // Vanilla's `isSuppressingSlidingDownLadder`: the shift key, not the
+    // pose, so a crouch forced by a low ceiling doesn't hold the player on a
+    // ladder.
+    shift_key_down: bool,
 ) -> Vec3 {
     if !*on_climbable {
         return velocity;
@@ -409,7 +412,7 @@ fn handle_on_climbable(
     let mut y = f64::max(velocity.y, -CLIMBING_SPEED);
 
     if y < 0.0
-        && pose == Some(Pose::Crouching)
+        && shift_key_down
         && BlockKind::from(
             world
                 .chunks

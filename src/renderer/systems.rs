@@ -852,6 +852,15 @@ fn no_cutout() -> bool {
     })
 }
 
+/// A player's eye height standing, crouching or crawling.
+pub fn crawl_eye_height(crouching: bool, crawling: bool) -> f32 {
+    if crawling {
+        EYE_HEIGHT_CRAWLING
+    } else {
+        eye_height(crouching)
+    }
+}
+
 pub fn eye_height(crouching: bool) -> f32 {
     if crouching {
         EYE_HEIGHT_CROUCHING
@@ -860,14 +869,27 @@ pub fn eye_height(crouching: bool) -> f32 {
     }
 }
 
+/// A player's eye height in a pose, crawling and swimming included.
+pub fn pose_eye_height(pose: Option<azalea::entity::Pose>) -> f32 {
+    use azalea::entity::Pose;
+    match pose {
+        Some(Pose::Crouching) => EYE_HEIGHT_CROUCHING,
+        Some(Pose::Swimming | Pose::FallFlying | Pose::SpinAttack) => EYE_HEIGHT_CRAWLING,
+        _ => EYE_HEIGHT,
+    }
+}
+
 const EYE_HEIGHT: f32 = 1.62;
 const EYE_HEIGHT_CROUCHING: f32 = 1.27;
+const EYE_HEIGHT_CRAWLING: f32 = 0.4;
 pub const SLEEPING_EYE_HEIGHT: f32 = 0.2;
 const SLEEPING_CAMERA_NUDGE: f32 = 0.3;
 
 pub fn session_eye_height(session: &crate::session::SessionState) -> f32 {
     if session.sleeping {
         SLEEPING_EYE_HEIGHT
+    } else if session.crawling {
+        EYE_HEIGHT_CRAWLING
     } else {
         eye_height(session.crouching)
     }

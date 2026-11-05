@@ -300,6 +300,11 @@ pub struct SessionState {
     pub other_players: std::sync::Arc<Vec<OtherPlayerInfo>>,
     pub gamemode: Gamemode,
     pub crouching: bool,
+    /// In the 0.6 tall pose: crawling, swimming, gliding or spinning.
+    pub crawling: bool,
+    /// The camera's eye height last tick and this one, eased towards the
+    /// pose's (`client::tick`).
+    pub camera_eye: [f32; 2],
     pub fall_flying: bool,
     pub swimming: bool,
     pub sleeping: bool,

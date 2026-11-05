@@ -65,6 +65,7 @@ struct TickInputs {
     seq: u64,
     player_prev: [f32; 3],
     player_pos: [f32; 3],
+    camera_eye: [f32; 2],
     day_clock: crate::session::WorldClock,
     env_prev: Option<BiomeLayer>,
     env: Option<BiomeLayer>,
@@ -81,6 +82,7 @@ impl TickInputs {
             seq: session.tick_seq,
             player_prev: session.player_pos_prev,
             player_pos: session.player_pos,
+            camera_eye: session.camera_eye,
             day_clock: session.world.day_clock,
             env_prev: session.world.env_prev,
             env: session.world.env,
@@ -246,7 +248,8 @@ impl FrameView {
         let (prev, cur) = (tick.player_prev, tick.player_pos);
         self.player_pos = cur;
         self.player_lerp = std::array::from_fn(|i| prev[i] + (cur[i] - prev[i]) * partial);
-        self.eye_height = super::systems::session_eye_height(session);
+        let [eye_prev, eye] = tick.camera_eye;
+        self.eye_height = eye_prev + (eye - eye_prev) * partial;
         self.sleeping = session.sleeping;
         self.bed_orientation = session.bed_orientation;
         self.day_ticks = tick.day_clock.at(partial);

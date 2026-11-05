@@ -58,6 +58,7 @@ struct TickSnapshot {
     active_effects: Vec<crate::play::mob_effects::MobEffectInstance>,
     gamemode: Gamemode,
     crouching: bool,
+    crawling: bool,
     fall_flying: bool,
     swimming: bool,
     sleeping: bool,
@@ -108,9 +109,7 @@ fn read_tick_snapshot(bot: &Client, shared: &Arc<SharedMutex>) -> Option<TickSna
     #[cfg(voice)]
     {
         use azalea::entity::{EntityUuid, Pose, Position};
-        let eye = |pose: Option<Pose>| {
-            crate::renderer::systems::eye_height(pose == Some(Pose::Crouching)) as f64
-        };
+        let eye = |pose: Option<Pose>| crate::renderer::systems::pose_eye_height(pose) as f64;
         let mut eyes = std::collections::HashMap::new();
         for player in bot.nearby_players().unwrap_or_default() {
             let (Some(id), Some(at)) = (
@@ -366,10 +365,18 @@ fn read_tick_snapshot(bot: &Client, shared: &Arc<SharedMutex>) -> Option<TickSna
         .map(|gm| Gamemode::from_azalea(*gm))
         .unwrap_or(Gamemode::Survival);
     let (health_display, jumpable_mount) = health_display(bot, &active_effects, armor_value);
-    let crouching = bot
-        .component::<azalea::entity::Pose>()
-        .map(|p| *p == azalea::entity::Pose::Crouching)
-        .unwrap_or(false);
+    let pose = bot.component::<azalea::entity::Pose>().ok().map(|p| *p);
+    let crouching = pose == Some(azalea::entity::Pose::Crouching);
+    // Crawling, swimming, gliding and the riptide spin share the 0.6 tall
+    // box and its 0.4 eye.
+    let crawling = matches!(
+        pose,
+        Some(
+            azalea::entity::Pose::Swimming
+                | azalea::entity::Pose::FallFlying
+                | azalea::entity::Pose::SpinAttack
+        )
+    );
     let (fall_flying, swimming) = {
         use azalea::entity::metadata;
         (
@@ -434,6 +441,7 @@ fn read_tick_snapshot(bot: &Client, shared: &Arc<SharedMutex>) -> Option<TickSna
         active_effects,
         gamemode,
         crouching,
+        crawling,
         fall_flying,
         swimming,
         sleeping,
@@ -849,7 +857,7 @@ fn world_sounds(
     use azalea::entity::{Physics, PlayerAbilities, Pose};
     use azalea_registry::builtin::EntityKind;
     let pose = bot.component::<Pose>().ok().map(|p| *p);
-    let eye_y = pos.y + crate::renderer::systems::eye_height(pose == Some(Pose::Crouching)) as f64;
+    let eye_y = pos.y + crate::renderer::systems::pose_eye_height(pose) as f64;
     let feet = [pos.x, pos.y, pos.z];
     let eye = [pos.x, eye_y, pos.z];
     let underwater = eye_fluid_at(eye[0], eye[1], eye[2]) == Some(EyeFluid::Water);
@@ -969,6 +977,7 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
         active_effects,
         gamemode,
         crouching,
+        crawling,
         fall_flying,
         swimming,
         sleeping,
@@ -984,7 +993,7 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
         bot,
         [
             pos.x,
-            pos.y + crate::renderer::systems::eye_height(crouching) as f64,
+            pos.y + crate::renderer::systems::crawl_eye_height(crouching, crawling) as f64,
             pos.z,
         ],
     );
@@ -1157,6 +1166,15 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
         s.session.vitals.active_effects = active_effects;
         s.session.gamemode = gamemode;
         s.session.crouching = crouching;
+        s.session.crawling = crawling;
+        // Vanilla's `Camera.tick`: the camera's eye closes half the gap to
+        // the pose's eye height each tick, so crouching and crawling glide.
+        let target = crate::renderer::systems::session_eye_height(&s.session);
+        s.session.camera_eye = match s.session.camera_eye {
+            // Unset, as on joining: start at the pose.
+            [_, 0.0] => [target, target],
+            [_, eye] => [eye, eye + (target - eye) * 0.5],
+        };
         s.session.fall_flying = fall_flying;
         s.session.swimming = swimming;
         s.session.sleeping = sleeping;
@@ -1294,7 +1312,7 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
             + 4.0;
         let eye = [
             pos.x,
-            pos.y + crate::renderer::systems::eye_height(crouching) as f64,
+            pos.y + crate::renderer::systems::crawl_eye_height(crouching, crawling) as f64,
             pos.z,
         ];
         if !still_sign || block_distance_sqr(sign_pos, eye) >= range * range {
