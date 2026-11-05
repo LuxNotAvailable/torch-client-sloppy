@@ -7,7 +7,7 @@ macro_rules! gpu_label {
 pub(crate) mod center_depth;
 pub(crate) mod compile;
 mod depthcopy;
-mod endflash;
+pub(crate) mod endflash;
 mod entities;
 mod formats;
 mod frame;

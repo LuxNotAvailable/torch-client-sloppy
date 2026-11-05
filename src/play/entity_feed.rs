@@ -473,32 +473,25 @@ pub(crate) fn collect_entities(
 
     // What `play::entity_sounds` reads beyond the tick input.
     #[cfg(audio)]
-    let sound_meta: HashMap<i32, (bool, i32, bool, bool, bool)> = accepted
+    let sound_meta: HashMap<i32, crate::play::entity_sounds::Meta> = accepted
         .iter()
-        .filter(|(_, _, kind, _)| {
-            matches!(
-                kind,
-                EntityKind::LightningBolt
-                    | EntityKind::Blaze
-                    | EntityKind::Phantom
-                    | EntityKind::Warden
-                    | EntityKind::Breeze
-                    | EntityKind::Sniffer
-                    | EntityKind::Enderman
-            )
-        })
+        .filter(|(_, _, kind, _)| crate::play::entity_sounds::wants(*kind))
         .map(|&(entity_ref, id, _, _)| {
             let eref = &EntityView(entity_ref);
+            let sniffer = meta::<metadata::SnifferState>(eref);
             (
                 id,
-                (
-                    meta::<metadata::Silent>(eref).unwrap_or(false),
-                    meta::<metadata::ClientAngerLevel>(eref).unwrap_or(0),
-                    meta::<metadata::Creepy>(eref).unwrap_or(false),
-                    meta::<metadata::StaredAt>(eref).unwrap_or(false),
-                    meta::<metadata::SnifferState>(eref)
-                        == Some(azalea::entity::SnifferStateKind::Searching),
-                ),
+                crate::play::entity_sounds::Meta {
+                    silent: meta::<metadata::Silent>(eref).unwrap_or(false),
+                    baby: meta::<metadata::AbstractAgeableBaby>(eref).unwrap_or(false),
+                    anger: meta::<metadata::ClientAngerLevel>(eref).unwrap_or(0),
+                    creepy: meta::<metadata::Creepy>(eref).unwrap_or(false),
+                    stared_at: meta::<metadata::StaredAt>(eref).unwrap_or(false),
+                    searching: sniffer == Some(azalea::entity::SnifferStateKind::Searching),
+                    digging: sniffer == Some(azalea::entity::SnifferStateKind::Digging),
+                    anger_end: meta::<metadata::BeeAngerEndTime>(eref).unwrap_or(-1),
+                    attack_target: meta::<metadata::AttackTarget>(eref).unwrap_or(0),
+                },
             )
         })
         .collect();
@@ -1327,18 +1320,16 @@ pub(crate) fn collect_entities(
         let ticked: Vec<crate::play::entity_sounds::Ticked> = pending
             .iter()
             .filter_map(|p| {
-                let &(silent, anger, creepy, stared_at, searching) = sound_meta.get(&p.id)?;
                 Some(crate::play::entity_sounds::Ticked {
                     id: p.id,
                     kind: p.kind,
                     pos: p.input.pos,
                     eye_height: p.input.eye_height,
                     ticks: anims.get(&p.id)?.ticks(),
-                    silent,
-                    anger,
-                    creepy,
-                    stared_at,
-                    searching,
+                    meta: *sound_meta.get(&p.id)?,
+                    invisible: p.input.is_invisible,
+                    hurt_time: anims.get(&p.id)?.hurt_time(),
+                    flap: anims.get(&p.id)?.flap_times(),
                 })
             })
             .collect();

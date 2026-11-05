@@ -54,6 +54,23 @@ PLAYER_CODE = ("net/minecraft/world/item/", "net/minecraft/world/level/block/",
                "net/minecraft/world/entity/projectile/", "net/minecraft/world/inventory/")
 
 
+# Sites checked by hand: they run only on the server (an isClientSide
+# guard, a ServerLevel cast, or entity.playSound on an entity that's never the
+# local player), so the server's packet covers them. Recheck on each port.
+SERVER_ONLY = {
+    "world/entity/Entity.java": "leash tying runs in the server's interact",
+    "world/entity/projectile/arrow/ThrownTrident.java": "Entity.playSound on a trident plays nothing client-side",
+    "world/entity/projectile/EyeOfEnder.java": "behind !isClientSide",
+    "world/entity/projectile/FishingHook.java": "server fishing tick (sendParticles)",
+    "world/entity/projectile/ShulkerBullet.java": "ServerLevel cast",
+    "world/level/block/entity/BarrelBlockEntity.java": "the openers counter runs on the server",
+    "world/level/block/entity/BeaconBlockEntity.java": "behind !isClientSide",
+    "world/level/block/ShelfBlock.java": "neighbour updates and slot swaps run on the server",
+    "client/sounds/SoundEngine.java": "intentionally_empty is a placeholder",
+    "client/sounds/SoundPreviewHandler.java": "the options screen's sound preview",
+}
+
+
 def looks_like_other_key(s: str) -> bool:
     """Translation keys, block id numbers and file names share the prefixes."""
     parts = s.split(".")
@@ -173,8 +190,11 @@ def main() -> int:
     print("\n## Client-heard sounds nothing in src/ mentions\n")
     print("Kinds: client = client code, local = playLocalSound, actor = playSound for the")
     print("acting player, entity = Entity.playSound run by the local player.\n")
-    total = 0
+    total = skipped = 0
     for rel, line, why, gaps in missing:
+        if rel.removeprefix("net/minecraft/") in SERVER_ONLY and "covered" not in why:
+            skipped += 1
+            continue
         total += len(gaps)
         where = f"{rel.removeprefix('net/minecraft/')}" + (f":{line}" if line else "")
         print(f"- {where} ({why}): " + ", ".join(f"`{g}`" for g in gaps))
@@ -183,7 +203,8 @@ def main() -> int:
     for rel, line, why, call_text in dynamic:
         print(f"- {rel.removeprefix('net/minecraft/')}:{line} ({why}): `{call_text}`")
 
-    print(f"\n{total} missing events at {len(missing)} sites; {covered} covered sites; "
+    print(f"\n{total} missing events at {len(missing) - skipped} sites "
+          f"({skipped} server-only skipped); {covered} covered sites; "
           f"{len(dynamic)} dynamic sites; {len(unknown)} unknown ids")
     return 0
 

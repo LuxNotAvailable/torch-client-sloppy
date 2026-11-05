@@ -23,6 +23,7 @@ pub(crate) struct Moved<'a> {
     pub flying: bool,
     pub passenger: bool,
     pub climbing: bool,
+    pub spectator: bool,
     pub block_at: &'a dyn Fn(BlockPos) -> Option<BlockState>,
 }
 
@@ -33,6 +34,8 @@ pub(crate) struct Steps {
     next_step: f32,
     was_in_water: Option<bool>,
     tick: u32,
+    /// `BubbleColumnAmbientSoundHandler`'s state.
+    was_in_bubble_column: Option<bool>,
     crystal_intensity: f32,
     last_crystal_tick: u32,
 }
@@ -69,6 +72,7 @@ impl Steps {
             play(event, s, 1.0 + random_spread() * 0.4);
         }
         self.was_in_water = Some(m.in_water);
+        self.bubble_column(m, &play);
 
         // `Player.getMovementEmission`.
         if m.flying || (m.on_ground && m.crouching) || m.passenger {
@@ -113,6 +117,33 @@ impl Steps {
                 speed(0.35),
                 1.0 + random_spread() * 0.4,
             );
+        }
+    }
+
+    /// `BubbleColumnAmbientSoundHandler.tick`: entering a column, inside
+    /// the player's box less 0.4 top and bottom.
+    fn bubble_column(&mut self, m: &Moved, play: &dyn Fn(&str, f32, f32)) {
+        let (bottom, top) = (m.pos[1] + 0.4, m.pos[1] + 1.8 - 0.4);
+        let column = (bottom.floor() as i32..=top.floor() as i32).find_map(|y| {
+            let cell = BlockPos::new(m.pos[0].floor() as i32, y, m.pos[2].floor() as i32);
+            (m.block_at)(cell).filter(|s| id(*s) == "bubble_column")
+        });
+        if let Some(state) = column {
+            if self.was_in_bubble_column == Some(false) && !m.spectator {
+                let drag = crate::blocks::info::info(state).flag("drag");
+                play(
+                    if drag {
+                        "block.bubble_column.whirlpool_inside"
+                    } else {
+                        "block.bubble_column.upwards_inside"
+                    },
+                    1.0,
+                    1.0,
+                );
+            }
+            self.was_in_bubble_column = Some(true);
+        } else {
+            self.was_in_bubble_column = Some(false);
         }
     }
 

@@ -73,6 +73,14 @@ pub fn draw_stonecutter(
         );
         p.item_icon(recipe.result.item, bx, by + 2.0);
         if clicked {
+            // `StonecutterScreen.mouseClicked`.
+            #[cfg(audio)]
+            crate::audio::play(
+                "ui.stonecutter.select_recipe",
+                crate::audio::SoundCategory::Ambient,
+                0.25,
+                1.0,
+            );
             out.push(InvAction::ButtonClick(cell.min(255) as u8));
         }
     }
@@ -164,6 +172,14 @@ pub fn draw_loom(
         );
         banner::swatch(p, pattern, bx + 4.0, by + 2.0);
         if clicked {
+            // `LoomScreen.mouseClicked`.
+            #[cfg(audio)]
+            crate::audio::play(
+                "ui.loom.select_pattern",
+                crate::audio::SoundCategory::Ambient,
+                0.25,
+                1.0,
+            );
             out.push(InvAction::ButtonClick(cell.min(255) as u8));
         }
     }

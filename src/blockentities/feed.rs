@@ -504,6 +504,8 @@ pub fn publish(
             return false;
         }
         let resolved_state = resolve(states, state);
+        #[cfg(audio)]
+        crate::play::entity_sounds::block_entity_tick(state, *pos);
         entry.anim.tick(
             &TickCtx {
                 world,

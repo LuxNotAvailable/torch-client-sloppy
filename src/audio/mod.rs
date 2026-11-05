@@ -93,6 +93,11 @@ pub fn set_listener(position: [f32; 3], right: [f32; 3], forward: [f32; 3]) {
     }
 }
 
+/// Where the listener is: the camera.
+pub fn listener_position() -> [f32; 3] {
+    listener().position
+}
+
 /// The subtitles heard at the listener now.
 pub fn subtitle_lines() -> Vec<subtitles::Line> {
     let l = listener();

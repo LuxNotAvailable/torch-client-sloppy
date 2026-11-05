@@ -54,6 +54,17 @@ fn intensity(clock_time: i64) -> f32 {
     }
 }
 
+/// `EndFlashState.flashStartedThisTick` at this clock tick: the flash's
+/// angles if it began brightening this tick.
+pub(crate) fn started(tick: i64) -> Option<(f32, f32)> {
+    if intensity(tick) > 0.0 && intensity(tick - 1) <= 0.0 {
+        let flash = flash(tick);
+        Some((flash.x_angle, flash.y_angle))
+    } else {
+        None
+    }
+}
+
 pub(crate) fn at(clock_ticks: f64) -> EndFlash {
     let tick = clock_ticks.floor() as i64;
     let partial = (clock_ticks - clock_ticks.floor()) as f32;

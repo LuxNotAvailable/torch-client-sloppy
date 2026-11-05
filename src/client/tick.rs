@@ -223,8 +223,24 @@ fn read_tick_snapshot(bot: &Client, shared: &Arc<SharedMutex>) -> Option<TickSna
                 climbing: bot
                     .component::<azalea::entity::OnClimbable>()
                     .is_ok_and(|c| **c),
+                spectator: bot
+                    .component::<azalea_core::game_type::GameMode>()
+                    .is_ok_and(|gm| *gm == azalea_core::game_type::GameMode::Spectator),
                 block_at: &block_at,
             });
+        let vehicle = crate::client::tracking::local_vehicle_id().and_then(|id| {
+            crate::client::tracking::entity_anims()
+                .lock()
+                .unwrap()
+                .get(&id)
+                .map(|a| (id, a.kind, a.pos))
+        });
+        let under_water = crate::util::block_model::eye_fluid_at(
+            pos.x,
+            pos.y + f64::from(crate::renderer::systems::pose_eye_height(pose)),
+            pos.z,
+        ) == Some(crate::util::block_model::EyeFluid::Water);
+        RIDING.lock().unwrap().tick(vehicle, under_water, false);
     }
     let advanced_tooltips = reads.advanced_tooltips;
     let (
@@ -598,6 +614,18 @@ static LAST_FALL: std::sync::Mutex<f64> = std::sync::Mutex::new(0.0);
 /// Footstep, swim and splash state (`play::movement_sounds`).
 #[cfg(audio)]
 static STEPS: std::sync::LazyLock<std::sync::Mutex<crate::play::movement_sounds::Steps>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// The End flash's delayed thunder (`play::entity_sounds::EndFlashes`).
+#[cfg(audio)]
+static END_FLASHES: std::sync::Mutex<crate::play::entity_sounds::EndFlashes> =
+    std::sync::Mutex::new(crate::play::entity_sounds::EndFlashes {
+        pending: Vec::new(),
+    });
+
+/// The riding loops (`play::entity_sounds::Riding`).
+#[cfg(audio)]
+static RIDING: std::sync::LazyLock<std::sync::Mutex<crate::play::entity_sounds::Riding>> =
     std::sync::LazyLock::new(Default::default);
 
 /// Where the player was last tick, for the distance moved.
@@ -1067,6 +1095,12 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
         s.session.world.game_time = s.session.world.game_time.wrapping_add(1);
         s.session.world.day_clock.advance();
         crate::util::particles::set_day_tick(s.session.world.day_clock.ticks);
+        #[cfg(audio)]
+        END_FLASHES.lock().unwrap().tick(
+            crate::renderer::dimension::current().registry_id() == "minecraft:the_end",
+            s.session.world.day_clock.ticks.floor() as i64,
+            crate::audio::listener_position(),
+        );
         if let Some(env) = env {
             s.session.world.env_prev = s.session.world.env.or(Some(env));
             s.session.world.env = Some(env);

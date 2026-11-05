@@ -244,7 +244,7 @@ fn model_data(
             _ => "arrow",
         });
     }
-    if let Some(bundle) = data.get_component::<comp::BundleContents>() {
+    if let Some(bundle) = data.get_component::<azalea_inventory::components::BundleContents>() {
         // `BundleContents.weight`: each item takes 1/64 of the bundle, or
         // 1/16 when it stacks to 16, or the whole of it when it can't stack.
         let weight: f32 = bundle
@@ -253,7 +253,10 @@ fn model_data(
             .map(|stack| {
                 let max = stack
                     .as_present()
-                    .and_then(|d| d.get_component::<comp::MaxStackSize>().map(|m| m.count))
+                    .and_then(|d| {
+                        d.get_component::<azalea_inventory::components::MaxStackSize>()
+                            .map(|m| m.count)
+                    })
                     .unwrap_or(64)
                     .max(1);
                 stack.count() as f32 / max as f32
@@ -574,6 +577,98 @@ fn creative_stack(
     out
 }
 
+/// `BundleContents.weight`: a stack takes count / max stack of the bundle.
+#[cfg(audio)]
+fn bundle_weight(stack: &ItemStack) -> f32 {
+    stack
+        .get_component::<azalea_inventory::components::BundleContents>()
+        .map_or(0.0, |bundle| bundle.items.iter().map(stack_weight).sum())
+}
+
+#[cfg(audio)]
+fn stack_weight(stack: &ItemStack) -> f32 {
+    let max = stack
+        .as_present()
+        .and_then(|d| {
+            d.get_component::<azalea_inventory::components::MaxStackSize>()
+                .map(|m| m.count)
+        })
+        .unwrap_or(64)
+        .max(1);
+    // A bundle inside a bundle weighs 1/16 plus what it holds.
+    let own = if stack
+        .get_component::<azalea_inventory::components::BundleContents>()
+        .is_some()
+    {
+        1.0 / 16.0 + bundle_weight(stack)
+    } else {
+        1.0 / max as f32
+    };
+    own * stack.count() as f32
+}
+
+/// `BundleItem.overrideStackedOnOther` and `overrideOtherStackedOnMe`: the
+/// clicking player hears the bundle take, refuse or give up an item. The
+/// server plays it to everyone else.
+#[cfg(audio)]
+fn bundle_click_sound(bot: &Client, operation: &azalea_inventory::operations::ClickOperation) {
+    use azalea_inventory::operations::{ClickOperation, PickupClick};
+    let (slot, primary) = match operation {
+        ClickOperation::Pickup(PickupClick::Left { slot: Some(slot) }) => (*slot, true),
+        ClickOperation::Pickup(PickupClick::Right { slot: Some(slot) }) => (*slot, false),
+        _ => return,
+    };
+    let Ok(inventory) = bot.component::<azalea::entity::inventory::Inventory>() else {
+        return;
+    };
+    let carried = inventory.carried.clone();
+    let Some(in_slot) = inventory.menu().slot(slot as usize).cloned() else {
+        return;
+    };
+    drop(inventory);
+    let is_bundle = |s: &ItemStack| {
+        s.get_component::<azalea_inventory::components::BundleContents>()
+            .is_some()
+    };
+    let (bundle, other) = if is_bundle(&carried) {
+        (&carried, &in_slot)
+    } else if is_bundle(&in_slot) {
+        (&in_slot, &carried)
+    } else {
+        return;
+    };
+    // A left click on an empty slot with the bundle in the slot only picks
+    // the bundle's selected item.
+    if primary && other.is_empty() {
+        return;
+    }
+    let pitch = || 0.8 + crate::audio::random_unit() * 0.4;
+    let event = if primary {
+        let fits = !is_bundle(other) || bundle_weight(other) == 0.0;
+        let room = 1.0 - bundle_weight(bundle);
+        // `tryInsert`: at least one item has to fit.
+        let one = stack_weight(other) / other.count().max(1) as f32;
+        if fits && one <= room + 1e-6 {
+            Some(("item.bundle.insert", 0.8, pitch()))
+        } else {
+            Some(("item.bundle.insert_fail", 1.0, 1.0))
+        }
+    } else if other.is_empty() && bundle_weight(bundle) > 0.0 {
+        Some(("item.bundle.remove_one", 0.8, pitch()))
+    } else {
+        None
+    };
+    if let (Some((event, volume, pitch)), Ok(pos)) = (event, bot.position()) {
+        crate::audio::play_at(
+            event,
+            crate::audio::SoundCategory::Players,
+            [pos.x as f32, pos.y as f32, pos.z as f32],
+            volume,
+            pitch,
+        );
+    }
+}
+
 pub(crate) fn apply_inv_actions(bot: &Client, actions: Vec<InvAction>, horse: Option<HorseMenu>) {
     use azalea_protocol::packets::game::s_container_button_click::ServerboundContainerButtonClick;
     use azalea_protocol::packets::game::s_container_close::ServerboundContainerClose;
@@ -589,6 +684,8 @@ pub(crate) fn apply_inv_actions(bot: &Client, actions: Vec<InvAction>, horse: Op
     for action in actions {
         match action {
             InvAction::Click(operation) => {
+                #[cfg(audio)]
+                bundle_click_sound(bot, &operation);
                 if let Some(horse) = horse.as_ref() {
                     send_horse_click(bot, horse, &operation, registries);
                     continue;

@@ -1334,6 +1334,12 @@ fn draw_air_bubbles(
         return;
     }
     let states = air_bubble_states(current, max, snap.eye_in_water);
+    #[cfg(audio)]
+    pop_air_bubble(
+        &states,
+        empty_bubbles(current, max, snap.eye_in_water),
+        snap.eye_in_water,
+    );
     let wobbles = p.frame % 2 == 0 && empty_bubbles(current, max, snap.eye_in_water) == 10;
     for (i, state) in states.into_iter().enumerate() {
         let x = x_right - i as f32 * 8.0 - 9.0;
@@ -1349,6 +1355,32 @@ fn draw_air_bubbles(
             y
         };
         p.sprite(sprite, x, y, 9.0, 9.0);
+    }
+}
+
+/// `Hud.playAirBubblePoppedSound`: once per bubble as it bursts, louder and
+/// higher as the bubbles run out.
+#[cfg(audio)]
+fn pop_air_bubble(states: &[AirBubble; 10], empty: i32, eye_in_water: bool) {
+    use std::sync::atomic::{AtomicI32, Ordering};
+    static LAST_POPPED: AtomicI32 = AtomicI32::new(0);
+    if !eye_in_water {
+        LAST_POPPED.store(0, Ordering::Relaxed);
+        return;
+    }
+    let Some(bubble) = states.iter().position(|s| *s == AirBubble::Popping) else {
+        return;
+    };
+    let bubble = bubble as i32 + 1;
+    if LAST_POPPED.swap(bubble, Ordering::Relaxed) != bubble {
+        let volume = 0.5 + 0.1 * (empty - 3 + 1).max(0) as f32;
+        let pitch = 1.0 + 0.1 * (empty - 5 + 1).max(0) as f32;
+        crate::audio::play(
+            "ui.hud.bubble_pop",
+            crate::audio::SoundCategory::Players,
+            volume,
+            pitch,
+        );
     }
 }
 

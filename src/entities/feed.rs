@@ -600,6 +600,18 @@ impl EntityAnim {
         self.ticks
     }
 
+    /// The hurt animation's remaining ticks (`hurtTime`).
+    pub(crate) fn hurt_time(&self) -> u32 {
+        self.hurt_time
+    }
+
+    /// The dragon's wing beat, last tick's and this tick's (`flapTime`).
+    pub(crate) fn flap_times(&self) -> Option<(f32, f32)> {
+        self.kind_state
+            .as_deref()
+            .map(|k| (k.flap_time_old, k.flap_time))
+    }
+
     pub fn new(id: i32, kind: EntityKind) -> EntityAnim {
         let mut rng = JavaRandom::new(id as i64);
         let tentacle_speed = 1.0 / (rng.next_f32() + 1.0) * 0.2;

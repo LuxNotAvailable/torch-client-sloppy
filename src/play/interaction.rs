@@ -468,10 +468,52 @@ fn apply_place(bot: &Client, shared: &Arc<SharedMutex>, held: bool, clicked: boo
     }
 }
 
+/// `DyeItem.interactLivingEntity`: dyeing a living, unsheared sheep another
+/// colour, heard by the dyer at the sheep.
+#[cfg(audio)]
+fn dye_sheep_sound(bot: &Client, sheep: azalea::ecs::entity::Entity) {
+    use azalea::entity::metadata::{Health, Sheep, SheepColor, SheepSheared};
+    let Ok(inventory) = bot.component::<azalea::entity::inventory::Inventory>() else {
+        return;
+    };
+    let Some(dye) = inventory
+        .held_item()
+        .get_component::<azalea_inventory::components::Dye>()
+        .map(|d| d.color as u8)
+    else {
+        return;
+    };
+    drop(inventory);
+    let is_sheep = bot.entity_component::<Sheep>(sheep).is_ok();
+    let alive = bot
+        .entity_component::<Health>(sheep)
+        .is_ok_and(|h| h.0 > 0.0);
+    let sheared = bot
+        .entity_component::<SheepSheared>(sheep)
+        .is_ok_and(|s| s.0);
+    let color = bot.entity_component::<SheepColor>(sheep).map(|c| c.0).ok();
+    if is_sheep
+        && alive
+        && !sheared
+        && color != Some(dye)
+        && let Ok(at) = bot.entity_component::<azalea::entity::Position>(sheep)
+    {
+        crate::audio::play_at(
+            "item.dye.use",
+            crate::audio::SoundCategory::Players,
+            [at.x as f32, at.y as f32, at.z as f32],
+            1.0,
+            1.0,
+        );
+    }
+}
+
 fn start_use_item(bot: &Client, shared: &Arc<SharedMutex>) -> bool {
     let hit = match bot.hit_result() {
         Ok(HitResult::Block(hit)) if !hit.miss => hit,
-        Ok(HitResult::Entity(_)) => {
+        Ok(HitResult::Entity(hit)) => {
+            #[cfg(audio)]
+            dye_sheep_sound(bot, hit.entity);
             bot.start_use_item();
             return false;
         }

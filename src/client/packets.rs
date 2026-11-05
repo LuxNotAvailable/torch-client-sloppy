@@ -691,7 +691,7 @@ fn animations(packet: &ClientboundGamePacket) {
                 .map(|a| (a.kind, a.pos))
             {
                 let eye = azalea::entity::dimensions::EntityDimensions::from(kind).eye_height;
-                crate::play::entity_sounds::entity_event(kind, pos, eye, p.event_id);
+                crate::play::entity_sounds::entity_event(p.entity_id.0, kind, pos, eye, p.event_id);
             }
             if let Some(anim) = entity_anims().lock().unwrap().get_mut(&p.entity_id.0) {
                 match p.event_id {

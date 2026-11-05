@@ -127,6 +127,10 @@ fn effects(event: &LevelEventEmit, ctx: &mut Emitter) {
             let pitch = 0.4 / (ctx.f32() * 0.4 + 0.8);
             sound(cell, "entity.wind_charge.throw", Bus::Blocks, 0.5, pitch);
         }
+        1052 => {
+            let pitch = ctx.f32() * 0.1 + 0.9;
+            sound(cell, "block.sulfur_spike.land", Bus::Blocks, 2.0, pitch);
+        }
 
         1500 => {
             let name = if data > 0 {

@@ -340,6 +340,55 @@ fn block_sounds(state: azalea::block::BlockState, ctx: &mut Emitter) {
                 }
             }
         }
+        // `PotentSulfurBlock.animateTick`: gas through a water source above.
+        // The bubbles it also spawns aren't drawn yet.
+        "potent_sulfur" => {
+            let above = ctx.block([cell[0], cell[1] + 1, cell[2]]);
+            let water_source = above.is_some_and(|a| {
+                let fluid = azalea::block::fluid_state::FluidState::from(a);
+                fluid.kind == azalea::block::fluid_state::FluidKind::Water
+                    && fluid.amount >= 8
+                    && !fluid.falling
+            });
+            if crate::blocks::info::property(state, "potent_sulfur_state") != Some("dry")
+                && water_source
+                && ctx.one_in(10)
+            {
+                ctx.sound(
+                    "block.potent_sulfur.noxious_gas",
+                    at,
+                    SoundBus::Ambient,
+                    1.0,
+                    1.0,
+                );
+            }
+        }
+        // `AmbientLeavesBlockSoundPlayer`: one tagged neighbour and three
+        // of the same leaves around, counted side by side.
+        "red_poplar_leaves" | "orange_poplar_leaves" | "yellow_poplar_leaves" => {
+            if ctx.one_in(300) {
+                let (mut logs, mut leaves) = (0, 0);
+                for [dx, dz] in [[0, -1], [1, 0], [0, 1], [-1, 0]] {
+                    let n = ctx.block([cell[0] + dx, cell[1], cell[2] + dz]);
+                    if tagged(n, "required_for_poplar_leaf_ambience") {
+                        logs += 1;
+                    }
+                    if n.is_some_and(|n| crate::util::block_model::block_id(n) == id) {
+                        leaves += 1;
+                    }
+                    if logs == 1 && leaves == 3 {
+                        ctx.sound(
+                            "block.poplar_leaves.ambient",
+                            at,
+                            SoundBus::Ambient,
+                            1.0,
+                            1.0,
+                        );
+                        break;
+                    }
+                }
+            }
+        }
         // `AmbientDesertBlockSoundsPlayer`.
         "sand" | "red_sand" | "suspicious_sand" => {
             if ctx

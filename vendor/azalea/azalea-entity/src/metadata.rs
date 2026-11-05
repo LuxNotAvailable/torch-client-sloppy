@@ -3390,6 +3390,9 @@ impl Default for RabbitMetadataBundle {
 
 #[derive(Component, Deref, DerefMut, Clone, Copy, PartialEq)]
 pub struct SheepSheared(pub bool);
+/// The wool colour's dye id, the low four bits of the sheep's flags.
+#[derive(Component, Deref, DerefMut, Clone, Copy, PartialEq)]
+pub struct SheepColor(pub u8);
 #[derive(Component)]
 pub struct Sheep;
 impl Sheep {
@@ -3402,6 +3405,7 @@ impl Sheep {
             18 => {
                 let bitfield = d.value.into_byte()?;
                 entity.insert(SheepSheared(bitfield & 0x10 != 0));
+                entity.insert(SheepColor((bitfield & 0x0F) as u8));
             }
             _ => {}
         }
@@ -3414,6 +3418,7 @@ pub struct SheepMetadataBundle {
     _marker: Sheep,
     parent: AbstractAnimalMetadataBundle,
     sheep_sheared: SheepSheared,
+    sheep_color: SheepColor,
 }
 impl Default for SheepMetadataBundle {
     fn default() -> Self {
@@ -3421,6 +3426,7 @@ impl Default for SheepMetadataBundle {
             _marker: Sheep,
             parent: Default::default(),
             sheep_sheared: SheepSheared(false),
+            sheep_color: SheepColor(0),
         }
     }
 }
