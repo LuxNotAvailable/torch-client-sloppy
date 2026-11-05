@@ -109,7 +109,22 @@ pub fn draw_debug(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     form.toggle("Chunk Borders", &mut state.chunk_borders);
     form.toggle("Hitboxes", &mut state.hitboxes);
     form.toggle("Advanced Tooltips", &mut state.advanced_tooltips);
+    // The terrain's occlusion pyramid (`terrain_pool::hiz`), for comparing
+    // with it off and seeing what it holds.
+    let mut culling = !state.occlusion_culling_off;
+    if form.toggle("Occlusion Culling", &mut culling) {
+        state.occlusion_culling_off = !culling;
+    }
+    let levels = hiz_levels();
+    let label = match state.culling_view {
+        0 => "Culling View: Off".to_owned(),
+        level => format!("Culling View: Level {}", level - 1),
+    };
+    if form.button(&label) {
+        state.culling_view = (state.culling_view + 1) % (levels + 1).max(2);
+    }
     form.finish();
+    set_hiz_debug(!state.occlusion_culling_off, state.culling_view);
     if (state.options.pause_on_lost_focus, state.options.fps_counter) != saved_before {
         crate::gui::save_options(&state.options);
     }
@@ -218,4 +233,16 @@ pub fn draw_language(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     {
         state.nav = Some(Screen::Options);
     }
+}
+
+/// The pyramid's level count, or 0 without one (builds without the
+/// terrain's culling).
+fn hiz_levels() -> u32 {
+    crate::renderer::terrain_pool::hiz::LEVELS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+fn set_hiz_debug(enabled: bool, view: u32) {
+    use std::sync::atomic::Ordering;
+    crate::renderer::terrain_pool::hiz::ENABLED.store(enabled, Ordering::Relaxed);
+    crate::renderer::terrain_pool::hiz::VIEW_LEVEL.store(view, Ordering::Relaxed);
 }

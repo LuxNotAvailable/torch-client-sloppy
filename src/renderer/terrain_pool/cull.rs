@@ -594,11 +594,16 @@ pub fn build(app: &mut App) {
             bevy::core_pipeline::core_3d::graph::Core3d,
             super::hiz::HiZLabel,
         )
+        .add_render_graph_node::<ViewNodeRunner<super::hiz::HiZViewNode>>(
+            bevy::core_pipeline::core_3d::graph::Core3d,
+            super::hiz::HiZViewLabel,
+        )
         .add_render_graph_edges(
             bevy::core_pipeline::core_3d::graph::Core3d,
             (
                 bevy::core_pipeline::core_3d::graph::Node3d::EndMainPass,
                 super::hiz::HiZLabel,
+                super::hiz::HiZViewLabel,
                 bevy::core_pipeline::core_3d::graph::Node3d::StartMainPassPostProcessing,
             ),
         );
@@ -720,13 +725,9 @@ pub fn prepare_cull(
         views.count += 1;
         views.index.insert(view.retained_view_entity, slot);
         let eye = view.world_from_view.translation();
-        // The pyramid reads the depth as a plain texture; a multisampled
-        // one (MSAA) can't be, so Bevy's depth gives no pyramid then.
-        let multisampled = msaa.is_some_and(|m| m.samples() > 1);
-        let source = match hiz_source {
-            Some(super::hiz::Source::Bevy) if multisampled => None,
-            other => other,
-        };
+        // A multisampled depth (MSAA) builds level 0 over every sample.
+        let _ = msaa;
+        let source = hiz_source;
         let occlusion = match hiz.as_deref_mut() {
             Some(hiz) if !hiz_began && tier.indirect => {
                 hiz_began = true;

@@ -267,6 +267,12 @@ const ALL: &[Var] = &[
         enabled: true,
     },
     Var {
+        name: "MC_CULLING_VIEW",
+        what: "N shows level N - 1 of the terrain's occlusion pyramid over the frame (Debug Options > Culling View)",
+        default: "0 (off)",
+        enabled: true,
+    },
+    Var {
         name: "MC_HIZ_DUMP",
         what: "folder to save a level of the Hi-Z pyramid to about once a second, to check its alignment",
         default: "off",

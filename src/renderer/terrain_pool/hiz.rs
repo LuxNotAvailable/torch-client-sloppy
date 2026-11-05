@@ -113,6 +113,14 @@ struct Shot {
 struct Pipelines {
     from_depth: ComputePipeline,
     from_depth_layout: BindGroupLayout,
+    /// Level 0 from a multisampled depth (MSAA).
+    from_depth_ms: ComputePipeline,
+    from_depth_ms_layout: BindGroupLayout,
+    /// The debug view (`CullView`): a pyramid level drawn over the frame,
+    /// by target format.
+    view: std::sync::Mutex<Vec<(wgpu::TextureFormat, wgpu::RenderPipeline)>>,
+    view_layout: wgpu::BindGroupLayout,
+    view_module: wgpu::ShaderModule,
     reduce: ComputePipeline,
     reduce_layout: BindGroupLayout,
     /// The `reverse` parameter for each source: Bevy's (1) and a pack's (0).
@@ -311,6 +319,7 @@ impl HiZ {
             reduce_groups,
             level0: mip(0),
         });
+        LEVELS.store(levels, std::sync::atomic::Ordering::Relaxed);
         self.generation += 1;
     }
 
@@ -335,12 +344,18 @@ impl HiZ {
         } else {
             &pipelines.params_reversed
         };
+        let multisampled = depth.texture().sample_count() > 1;
+        let (first_layout, first_pipeline, depth_binding) = if multisampled {
+            (&pipelines.from_depth_ms_layout, &pipelines.from_depth_ms, 5)
+        } else {
+            (&pipelines.from_depth_layout, &pipelines.from_depth, 0)
+        };
         let first = device.create_bind_group(
             "terrain_hiz_from_depth",
-            &pipelines.from_depth_layout,
+            first_layout,
             &[
                 bevy::render::render_resource::BindGroupEntry {
-                    binding: 0,
+                    binding: depth_binding,
                     resource: bevy::render::render_resource::BindingResource::TextureView(depth),
                 },
                 bevy::render::render_resource::BindGroupEntry {
@@ -360,7 +375,7 @@ impl HiZ {
             timestamp_writes: None,
         });
         let mut size = (pyramid.source / 2).max(UVec2::ONE);
-        pass.set_pipeline(&pipelines.from_depth);
+        pass.set_pipeline(first_pipeline);
         pass.set_bind_group(0, &*first, &[]);
         pass.dispatch_workgroups(size.x.div_ceil(8), size.y.div_ceil(8), 1);
         pass.set_pipeline(&pipelines.reduce);
@@ -533,6 +548,32 @@ impl Pipelines {
                 },
             ],
         );
+        let from_depth_ms_layout = device.create_bind_group_layout(
+            "terrain_hiz_from_depth_ms",
+            &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: true,
+                    },
+                    count: None,
+                },
+                storage(1),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        );
         let reduce_layout = device.create_bind_group_layout(
             "terrain_hiz_reduce",
             &[
@@ -573,7 +614,46 @@ impl Pipelines {
                 usage: wgpu::BufferUsages::UNIFORM,
             })
         };
+        let view_module = device
+            .wgpu_device()
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("terrain_hiz_view"),
+                source: wgpu::ShaderSource::Wgsl(include_str!("hiz_view.wgsl").into()),
+            });
+        let view_layout =
+            device
+                .wgpu_device()
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("terrain_hiz_view"),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                multisampled: false,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                    ],
+                });
         Pipelines {
+            from_depth_ms: pipeline(&from_depth_ms_layout, "from_depth_ms"),
+            from_depth_ms_layout,
+            view: std::sync::Mutex::new(Vec::new()),
+            view_layout,
+            view_module,
             from_depth: pipeline(&from_depth_layout, "from_depth"),
             reduce: pipeline(&reduce_layout, "reduce"),
             from_depth_layout,
@@ -584,10 +664,176 @@ impl Pipelines {
     }
 }
 
-/// `MC_NO_HIZ=1` turns occlusion culling off, to compare.
+/// Occlusion culling switched off: `MC_NO_HIZ=1`, or Debug Options >
+/// Occlusion Culling.
 pub fn disabled() -> bool {
     static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *OFF.get_or_init(|| crate::platform::env::var("MC_NO_HIZ").is_ok_and(|v| v == "1"))
+        || !ENABLED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Debug Options > Occlusion Culling, copied from the GUI each frame.
+pub static ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Debug Options > Culling View: 0 off, else 1 + the pyramid level shown.
+pub static VIEW_LEVEL: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// The pyramid's level count, for the GUI's cycle (0 before one is built).
+pub static LEVELS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+#[derive(RenderLabel, Debug, Hash, PartialEq, Eq, Clone)]
+pub struct HiZViewLabel;
+
+/// Debug Options > Culling View: draws a level of the pyramid over the
+/// frame, near light and far dark; texels the pyramid has nothing behind
+/// (the sky) show dark blue. A section is culled when its nearest depth is
+/// behind the texel covering it.
+#[derive(Default)]
+pub struct HiZViewNode;
+
+impl ViewNode for HiZViewNode {
+    type ViewQuery = (&'static bevy::render::view::ViewTarget, Has<TerrainView>);
+
+    fn run<'w>(
+        &self,
+        _graph: &mut RenderGraphContext,
+        render_context: &mut RenderContext<'w>,
+        (target, is_terrain): QueryItem<'w, '_, Self::ViewQuery>,
+        world: &'w World,
+    ) -> Result<(), NodeRunError> {
+        // `MC_CULLING_VIEW=N` starts with level N - 1 shown (test runs).
+        static FROM_ENV: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+        let from_env = *FROM_ENV.get_or_init(|| {
+            crate::platform::env::var("MC_CULLING_VIEW")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0)
+        });
+        let shown = match VIEW_LEVEL.load(std::sync::atomic::Ordering::Relaxed) {
+            0 => from_env,
+            level => level,
+        };
+        if !is_terrain || shown == 0 {
+            return Ok(());
+        }
+        let Some(hiz) = world.get_resource::<HiZ>() else {
+            return Ok(());
+        };
+        let (Some(pipelines), Some(pyramid)) = (&hiz.pipelines, &hiz.pyramid) else {
+            return Ok(());
+        };
+        let level = (shown - 1).min(pyramid.levels - 1);
+        let format = target.main_texture_format();
+        let device = render_context.render_device().clone();
+        let pipeline = {
+            let mut cache = pipelines.view.lock().unwrap();
+            match cache.iter().find(|(f, _)| *f == format) {
+                Some((_, p)) => p.clone(),
+                None => {
+                    let p = pipelines.view_pipeline(&device, format);
+                    cache.push((format, p.clone()));
+                    p
+                }
+            }
+        };
+        let level_view = pyramid.texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("terrain_hiz_view_level"),
+            base_mip_level: level,
+            mip_level_count: Some(1),
+            ..Default::default()
+        });
+        let params = device.create_buffer_with_data(&wgpu::util::BufferInitDescriptor {
+            label: Some("terrain_hiz_view_params"),
+            contents: bytemuck::cast_slice(&[
+                target.main_texture().width() as f32,
+                target.main_texture().height() as f32,
+                0.0,
+                0.0,
+            ]),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let group = device
+            .wgpu_device()
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("terrain_hiz_view"),
+                layout: &pipelines.view_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&level_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: params.as_entire_binding(),
+                    },
+                ],
+            });
+        let mut pass =
+            render_context
+                .command_encoder()
+                .begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("terrain_hiz_view"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: target.main_texture_view(),
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &group, &[]);
+        pass.draw(0..3, 0..1);
+        Ok(())
+    }
+}
+
+impl Pipelines {
+    fn view_pipeline(
+        &self,
+        device: &RenderDevice,
+        format: wgpu::TextureFormat,
+    ) -> wgpu::RenderPipeline {
+        let layout = device
+            .wgpu_device()
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("terrain_hiz_view"),
+                bind_group_layouts: &[&self.view_layout],
+                push_constant_ranges: &[],
+            });
+        device
+            .wgpu_device()
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("terrain_hiz_view"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &self.view_module,
+                    entry_point: Some("vertex"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &self.view_module,
+                    entry_point: Some("fragment"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: Default::default(),
+                depth_stencil: None,
+                multisample: Default::default(),
+                multiview: None,
+                cache: None,
+            })
+    }
 }
 
 #[derive(RenderLabel, Debug, Hash, PartialEq, Eq, Clone)]
@@ -613,7 +859,7 @@ impl ViewNode for HiZNode {
         let Some(hiz) = world.get_resource::<HiZ>() else {
             return Ok(());
         };
-        if hiz.build != Some(Source::Bevy) || depth.texture.sample_count() > 1 {
+        if hiz.build != Some(Source::Bevy) {
             return Ok(());
         }
         crate::prof_span!("render:terrain_hiz");

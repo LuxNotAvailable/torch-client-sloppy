@@ -1100,6 +1100,10 @@ pub struct GuiState {
     pub chunk_borders: bool,
     /// F3+B: entities' hitboxes.
     pub hitboxes: bool,
+    /// Debug Options: the terrain's occlusion culling off, and the culling
+    /// view (0 off, else 1 + the pyramid level shown).
+    pub occlusion_culling_off: bool,
+    pub culling_view: u32,
     pub stats: stats::StatsState,
     pub social: social::SocialState,
     pub op_block: op_blocks::OpBlockState,
