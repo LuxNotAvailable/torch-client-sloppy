@@ -6532,7 +6532,7 @@ dependencies = [
  "sysinfo",
  "tokio",
  "tokio-tungstenite",
- "unsafe-libopus",
+ "torch-opus",
  "uuid",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -6541,6 +6541,13 @@ dependencies = [
  "webpki-roots 1.0.9",
  "wgpu",
  "winit",
+]
+
+[[package]]
+name = "torch-opus"
+version = "0.1.0"
+dependencies = [
+ "unsafe-libopus",
 ]
 
 [[package]]
