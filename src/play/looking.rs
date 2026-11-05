@@ -128,8 +128,102 @@ fn entity(bot: &Client, entity: azalea::ecs::entity::Entity) -> Option<Looking> 
                         .get(&id.0)
                         .copied()
                 })
-                .unwrap_or(20.0);
+                .unwrap_or_else(|| default_max_health(id));
             (health, max.max(health))
         });
     Some(Looking::Entity { id, name, health })
+}
+
+/// A mob's maximum health when the server hasn't sent its `max_health`
+/// attribute: vanilla's `createAttributes` value for the type (generated
+/// from 26.3's `DefaultAttributes`), 20 (the attribute's default) for any
+/// other. Horses, llamas and their kin give the top of their random range;
+/// slimes and magma cubes, whose health follows their size, give 20.
+pub(crate) fn default_max_health(id: &str) -> f32 {
+    match id {
+        "armadillo" => 12.0,
+        "axolotl" => 14.0,
+        "bat" => 6.0,
+        "bee" => 10.0,
+        "bogged" => 16.0,
+        "cat" => 10.0,
+        "camel" => 32.0,
+        "camel_husk" => 32.0,
+        "cave_spider" => 12.0,
+        "chicken" => 4.0,
+        "cod" => 3.0,
+        "copper_golem" => 12.0,
+        "cow" => 10.0,
+        "creaking" => 1.0,
+        "dolphin" => 10.0,
+        "donkey" => 53.0,
+        "elder_guardian" => 80.0,
+        "enderman" => 40.0,
+        "endermite" => 8.0,
+        "ender_dragon" => 200.0,
+        "evoker" => 24.0,
+        "breeze" => 30.0,
+        "fox" => 10.0,
+        "frog" => 10.0,
+        "ghast" => 10.0,
+        "giant" => 100.0,
+        "glow_squid" => 10.0,
+        "goat" => 10.0,
+        "guardian" => 30.0,
+        "hoglin" => 40.0,
+        "horse" => 53.0,
+        "illusioner" => 32.0,
+        "iron_golem" => 100.0,
+        "llama" => 53.0,
+        "mooshroom" => 10.0,
+        "mule" => 53.0,
+        "nautilus" => 15.0,
+        "ocelot" => 10.0,
+        "parched" => 16.0,
+        "parrot" => 6.0,
+        "pig" => 10.0,
+        "piglin" => 16.0,
+        "piglin_brute" => 50.0,
+        "pillager" => 24.0,
+        "polar_bear" => 30.0,
+        "pufferfish" => 3.0,
+        "rabbit" => 3.0,
+        "ravager" => 100.0,
+        "salmon" => 3.0,
+        "sheep" => 8.0,
+        "shulker" => 30.0,
+        "silverfish" => 8.0,
+        "skeleton_horse" => 15.0,
+        "sniffer" => 14.0,
+        "snow_golem" => 4.0,
+        "spider" => 16.0,
+        "squid" => 10.0,
+        "tadpole" => 6.0,
+        "trader_llama" => 53.0,
+        "tropical_fish" => 3.0,
+        "turtle" => 30.0,
+        "vex" => 14.0,
+        "vindicator" => 24.0,
+        "warden" => 500.0,
+        "witch" => 26.0,
+        "wither" => 300.0,
+        "wolf" => 8.0,
+        "zoglin" => 40.0,
+        "zombie_horse" => 25.0,
+        "zombie_nautilus" => 15.0,
+        _ => 20.0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mobs_without_a_sent_maximum_use_vanillas() {
+        assert_eq!(default_max_health("cow"), 10.0);
+        assert_eq!(default_max_health("iron_golem"), 100.0);
+        assert_eq!(default_max_health("warden"), 500.0);
+        assert_eq!(default_max_health("zombie"), 20.0);
+    }
 }

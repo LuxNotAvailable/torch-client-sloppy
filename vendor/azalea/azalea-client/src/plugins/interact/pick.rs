@@ -9,7 +9,7 @@ use azalea_entity::{
     dimensions::EntityDimensions,
     metadata::{
         AbstractArrow, AbstractBoat, AbstractLiving, AbstractMinecart, ArmorStand,
-        ArmorStandMarker, EndCrystal, FallingBlock, InGround, Interaction, ItemFrame,
+        ArmorStandMarker, Cushion, EndCrystal, LeashKnot, Painting, FallingBlock, InGround, Interaction, ItemFrame,
         ShulkerBullet, Tnt,
     },
     view_vector,
@@ -105,6 +105,11 @@ pub type MaybePickableEntityQuery<'world, 'state, 'a> = Query<
             (With<AbstractLiving>, Without<Dead>),
             With<AbstractArrow>,
             With<ItemFrame>,
+            // BlockAttachedEntity.isPickable: cushions, paintings and leash
+            // knots, as item frames.
+            With<Cushion>,
+            With<Painting>,
+            With<LeashKnot>,
         )>,
     ),
 >;

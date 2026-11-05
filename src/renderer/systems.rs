@@ -1010,6 +1010,31 @@ fn collect_player_tags(
     }
 }
 
+/// Where vanilla's `NAME_TAG` attachment sits above an entity's feet: its
+/// type's `nameTagOffset` if it has one (only the sniffer), else its height,
+/// both scaled by `getAgeScale` (a baby is drawn and sized smaller, by how
+/// much depends on the type). `height` is the type's adult height.
+fn name_tag_height(kind: azalea_registry::builtin::EntityKind, height: f32, baby: bool) -> f32 {
+    use azalea_registry::builtin::EntityKind as K;
+    let adult = match kind {
+        K::Sniffer => 2.05,
+        _ => height,
+    };
+    let age_scale = if !baby {
+        1.0
+    } else {
+        match kind {
+            K::Armadillo | K::Camel | K::CamelHusk => 0.6,
+            K::Dolphin => 0.65,
+            K::Goat => 0.55,
+            K::HappyGhast => 0.2375,
+            K::Turtle => 0.3,
+            _ => 0.5,
+        }
+    };
+    adult * age_scale
+}
+
 fn collect_nametags(
     entities: &[crate::entities::feed::EntityAnim],
     crosshair_entity: Option<i32>,
@@ -1042,7 +1067,8 @@ fn collect_nametags(
             continue;
         }
         let pos = anim.position(partial);
-        let world = Vec3::new(pos[0], pos[1] + anim.bounding_box_height() + 0.5, pos[2]);
+        let height = name_tag_height(anim.kind, anim.bounding_box_height(), extras.is_baby);
+        let world = Vec3::new(pos[0], pos[1] + height + 0.5, pos[2]);
         tags.extend(projector.project(&extras.nametag.name_spans, &[], world, NAME_TAG_RANGE));
     }
 

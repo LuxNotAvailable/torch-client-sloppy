@@ -983,7 +983,8 @@ pub fn draw(
             Place::Fixed => id != ElementId::Gamemode,
             Place::Stacked { .. } => false,
         };
-        let ghost = id == ElementId::Debug && st.frames.placeholder[id.index()];
+        let ghost = matches!(id, ElementId::Debug | ElementId::BlockInfo)
+            && st.frames.placeholder[id.index()];
         if loose && e.visibility == Visibility::Shown && !ghost {
             boxes.push(r);
         }

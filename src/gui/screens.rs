@@ -339,6 +339,7 @@ fn draw_hud_layers(
         elements.draw(p, ctx.vw, ctx.vh, ElementId::BossBars, |p| {
             hud::draw_boss_bars(p, &ctx, &snap.boss_bars);
         });
+        let mut block_info_drawn = false;
         if snap.boss_bars.is_empty()
             && let Some(looking) = crate::play::looking::current()
         {
@@ -349,8 +350,28 @@ fn draw_hud_layers(
                 elements.draw(p, ctx.vw, ctx.vh, ElementId::BlockInfo, |p| {
                     crate::gui::block_info::draw(p, centre, 3.0, &looking, sneaking, settings);
                 });
+                block_info_drawn = true;
             }
         }
+        // In the HUD editor the panel is usually absent (it shows only while
+        // looking at something, with no boss bar), so it gets a ghost to
+        // move and scale, as Debug does.
+        #[cfg(feature = "hud_editor")]
+        if !block_info_drawn && state.options.block_info.enabled && elements.editing() {
+            let sample = crate::play::looking::Looking::Block {
+                id: "grass_block",
+                pos: [0, 64, 0],
+                properties: vec![("snowy", "false")],
+                progress: None,
+                harvestable: Some(true),
+            };
+            let centre = (crate::gui::hud::gui_width(&ctx) / 2.0).floor();
+            let settings = &state.options.block_info;
+            elements.ghost(p, ctx.vw, ctx.vh, ElementId::BlockInfo, "Block Info", |p| {
+                crate::gui::block_info::draw(p, centre, 3.0, &sample, false, settings);
+            });
+        }
+        let _ = block_info_drawn;
         if snap.gamemode == crate::session::Gamemode::Spectator {
             elements.follow(p, ctx.vw, ctx.vh, ElementId::Hotbar, |p| {
                 spectator_menu::draw(
