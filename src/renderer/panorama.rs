@@ -161,6 +161,8 @@ fn setup(
         Projection::Perspective(PerspectiveProjection {
             fov: FOV_DEGREES.to_radians(),
             near: NEAR,
+            // Bevy clips at `near_clip_plane`, which defaults to 0.1.
+            near_clip_plane: bevy::math::vec4(0.0, 0.0, -1.0, -NEAR),
             far: FAR,
             ..default()
         }),

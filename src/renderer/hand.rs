@@ -1144,6 +1144,7 @@ fn setup_hand(
             Projection::Perspective(PerspectiveProjection {
                 fov: HAND_FOV_DEGREES.to_radians(),
                 near: HAND_NEAR,
+                near_clip_plane: bevy::math::vec4(0.0, 0.0, -1.0, -HAND_NEAR),
                 far: HAND_FAR,
                 ..default()
             }),
@@ -1314,6 +1315,7 @@ pub(crate) fn follow_world_camera(
     if let Projection::Perspective(hand_perspective) = &mut *projection {
         hand_perspective.fov = HAND_FOV_DEGREES.to_radians();
         hand_perspective.near = HAND_NEAR;
+        hand_perspective.near_clip_plane = bevy::math::vec4(0.0, 0.0, -1.0, -HAND_NEAR);
         hand_perspective.far = HAND_FAR;
     }
 }

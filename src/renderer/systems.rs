@@ -528,8 +528,10 @@ fn setup(
             fov: VANILLA_FOV_DEGREES.to_radians(),
             // Vanilla's near plane (`Camera.PROJECTION_Z_NEAR`).
             // Bevy's 0.1 let blocks beside the eye cut into view at wide
-            // FOVs, since the plane's corners reach past the hitbox.
+            // FOVs, since the plane's corners reach past the hitbox. Bevy
+            // clips at `near_clip_plane`, not `near`, so both move.
             near: 0.05,
+            near_clip_plane: bevy::math::vec4(0.0, 0.0, -1.0, -0.05),
             ..default()
         }),
         DistanceFog {
