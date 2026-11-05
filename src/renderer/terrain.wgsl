@@ -111,7 +111,10 @@ struct Vertex {
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) world_position: vec4<f32>,
-    @location(1) uv: vec2<f32>,
+    // Centroid: under MSAA an edge sample's uv would otherwise be
+    // extrapolated past the face, into the neighbouring atlas tile that
+    // `sample_atlas` then picks (a grid of lines along block edges).
+    @location(1) @interpolate(perspective, centroid) uv: vec2<f32>,
     @location(2) color: vec4<f32>,
 };
 
