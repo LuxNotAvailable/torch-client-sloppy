@@ -57,6 +57,10 @@ pub struct WaterMaterial(pub Handle<StandardMaterial>);
 #[derive(Resource, Default)]
 pub struct LightmapState {
     flicker: f32,
+    /// Ticks owed to the flicker (vanilla steps it in `LightTexture.tick`,
+    /// 20 a second, whatever the framerate), and the ticks run so far.
+    tick_debt: f32,
+    ticks: u64,
     pub current: super::lightmap::State,
 }
 
@@ -87,6 +91,26 @@ fn update_environment(
     );
 }
 
+impl LightmapState {
+    /// Runs the flicker's ticks for `seconds` of frame time. Stepped once
+    /// per frame instead, its random walk ran faster the higher the
+    /// framerate, and the light pulsed with it.
+    fn advance_flicker(&mut self, seconds: f32) {
+        self.tick_debt = (self.tick_debt + seconds * 20.0).min(10.0);
+        while self.tick_debt >= 1.0 {
+            self.tick_debt -= 1.0;
+            self.ticks += 1;
+            let t = self.ticks as f32 * 0.05;
+            let noise = [
+                (t * 12.9898).sin().abs(),
+                (t * 78.233).sin().abs(),
+                (t * 37.719).sin().abs(),
+            ];
+            self.flicker = super::lightmap::tick_flicker(self.flicker, noise);
+        }
+    }
+}
+
 fn update_lightmap(
     env: Res<super::environment::Environment>,
     mut pixels: ResMut<super::terrain::LightmapPixels>,
@@ -95,13 +119,7 @@ fn update_lightmap(
     gui: Res<crate::gui::GuiState>,
 ) {
     crate::prof_span!("render:update_lightmap");
-    let t = time.elapsed_secs();
-    let noise = [
-        (t * 12.9898).sin().abs(),
-        (t * 78.233).sin().abs(),
-        (t * 37.719).sin().abs(),
-    ];
-    state.flicker = super::lightmap::tick_flicker(state.flicker, noise);
+    state.advance_flicker(time.delta_secs());
 
     let gamma = gui.options.gamma as f32 / 100.0;
     let lm =
@@ -2859,6 +2877,22 @@ pub fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_flicker_ticks_at_20_hz_whatever_the_framerate() {
+        let run = |fps: f32| {
+            let mut state = LightmapState::default();
+            for _ in 0..(fps as usize) {
+                // A hair over, so rounding in the sum never drops a tick.
+                state.advance_flicker(1.0 / fps + 1e-6);
+            }
+            (state.ticks, state.flicker)
+        };
+        let slow = run(30.0);
+        assert_eq!(slow.0, 20);
+        assert_eq!(run(240.0).0, 20);
+        assert_eq!(run(240.0).1, slow.1);
+    }
 
     #[test]
     fn a_cap_at_or_above_the_refresh_leaves_pacing_to_vsync() {
