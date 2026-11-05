@@ -486,6 +486,22 @@ impl Capture {
                 "terrain sections drawn",
                 t.drawn.load(Relaxed) as f32,
             );
+            // The GPU's occlusion test: sections it tested (in the frustum,
+            // past the cave visibility) and those it hid. "drawn" above is
+            // counted before this test.
+            let tested = t.hiz_tested.load(Relaxed) as f32;
+            let culled = t.hiz_culled.load(Relaxed) as f32;
+            self.push(Section::World, "Hi-Z sections tested", tested);
+            self.push(Section::World, "Hi-Z sections culled", culled);
+            self.push(
+                Section::World,
+                "Hi-Z culled (% of tested)",
+                if tested > 0.0 {
+                    culled * 100.0 / tested
+                } else {
+                    0.0
+                },
+            );
             self.push(
                 Section::World,
                 "terrain triangles drawn (thousands)",
@@ -837,6 +853,12 @@ fn describe(
         ("mobile_ui", cfg!(feature = "mobile_ui")),
         ("profiling", cfg!(feature = "profiling")),
         ("alloc_diag", cfg!(feature = "alloc_diag")),
+        ("vulkan", cfg!(feature = "vulkan")),
+        ("perf_report", cfg!(feature = "perf_report")),
+        ("multiversion", cfg!(feature = "multiversion")),
+        ("online_mode", cfg!(feature = "online_mode")),
+        ("asset_download", cfg!(feature = "asset_download")),
+        ("full_font", cfg!(feature = "full_font")),
     ]
     .into_iter()
     .filter_map(|(name, on)| on.then_some(name))

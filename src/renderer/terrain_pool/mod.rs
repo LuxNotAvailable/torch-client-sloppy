@@ -149,8 +149,14 @@ pub struct TerrainStatsInner {
     /// water re-sorts), each a staging copy the queue submit carries.
     pub uploaded: AtomicU64,
     pub(crate) uploaded_pending: AtomicU64,
-    /// Asks the GPU-culled path to count `drawn` on the CPU too.
+    /// Asks the GPU-culled path to count `drawn` on the CPU too, and to
+    /// read back the Hi-Z counters.
     pub count_sections: std::sync::atomic::AtomicBool,
+    /// Sections in the camera's frustum the GPU tested against the
+    /// occlusion pyramid, and those it hid, a frame or two ago (while a
+    /// report records).
+    pub hiz_tested: AtomicUsize,
+    pub hiz_culled: AtomicUsize,
 }
 
 static STATS: OnceLock<TerrainStats> = OnceLock::new();

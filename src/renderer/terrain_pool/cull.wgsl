@@ -51,6 +51,8 @@ const VIEW_UNOCCLUDED: u32 = 2u;
 const VIEW_WITHIN: u32 = 4u;
 const VIEW_ALWAYS: u32 = 8u;
 const VIEW_HIZ: u32 = 16u;
+// u32s after the regions' counts holding the Hi-Z counters.
+const HIZ_STATS: u32 = 4u;
 
 @group(0) @binding(0) var<storage, read> metas: array<SlotMeta>;
 @group(0) @binding(1) var<storage, read> vis: array<u32>;
@@ -187,7 +189,17 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if (live && visible) {
         let lo = vec3<f32>(m.origin) + m.min;
         let hi = vec3<f32>(m.origin) + m.max;
-        inside = in_frustum(lo, hi) && !hiz_occluded(lo, hi);
+        inside = in_frustum(lo, hi);
+        if (inside && (cull.flags & VIEW_HIZ) != 0u) {
+            // The report's Hi-Z counters, after the regions' counts:
+            // sections tested against the pyramid, and those it hid.
+            let stats = arrayLength(&counts) - HIZ_STATS;
+            atomicAdd(&counts[stats], 1u);
+            if (hiz_occluded(lo, hi)) {
+                atomicAdd(&counts[stats + 1u], 1u);
+                inside = false;
+            }
+        }
     }
 
     let draws = live && visible && inside;

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::num::NonZeroU64;
-use std::sync::atomic::Ordering;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use bevy::app::App;
 use bevy::asset::embedded_asset;
@@ -150,6 +151,9 @@ const INDIRECT_ARGS_SIZE: u64 = 20;
 pub struct CullBuffers {
     pub commands: Buffer,
     pub counts: Buffer,
+    /// Copies of the Hi-Z counters at the end of `counts`, read back while
+    /// a performance report records.
+    hiz_readback: Vec<HizReadback>,
     pub views: Buffer,
     pub regions: u32,
     pub slot_cap: u32,
@@ -179,10 +183,24 @@ impl CullBuffers {
         });
         let counts = device.create_buffer(&BufferDescriptor {
             label: Some("terrain_cull_counts"),
-            size: (regions as u64) * 4,
-            usage: BufferUsages::INDIRECT | BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            size: (regions as u64) * 4 + HIZ_STATS_BYTES,
+            usage: BufferUsages::INDIRECT
+                | BufferUsages::STORAGE
+                | BufferUsages::COPY_DST
+                | BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
+        let hiz_readback = (0..3)
+            .map(|_| HizReadback {
+                buffer: device.create_buffer(&BufferDescriptor {
+                    label: Some("terrain_cull_hiz_stats"),
+                    size: HIZ_STATS_BYTES,
+                    usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+                    mapped_at_creation: false,
+                }),
+                state: Arc::new(AtomicU8::new(READBACK_FREE)),
+            })
+            .collect();
         let views = device.create_buffer(&BufferDescriptor {
             label: Some("terrain_cull_views"),
             size: (MAX_VIEWS as u64) * CULL_VIEW_STRIDE,
@@ -198,7 +216,8 @@ impl CullBuffers {
             pool_count,
             view_count,
             generation: 0,
-            zero_counts: vec![0u8; (regions as usize) * 4],
+            zero_counts: vec![0u8; (regions as usize) * 4 + HIZ_STATS_BYTES as usize],
+            hiz_readback,
             view_scratch: [0u8; CULL_VIEW_STRIDE as usize],
             water_counts: Vec::new(),
             water_order: Vec::new(),
@@ -226,6 +245,7 @@ impl CullBuffers {
             view_count: 0,
             generation: 0,
             zero_counts: Vec::new(),
+            hiz_readback: Vec::new(),
             view_scratch: [0u8; CULL_VIEW_STRIDE as usize],
             water_counts: Vec::new(),
             water_order: Vec::new(),
@@ -836,6 +856,13 @@ pub fn prepare_cull(
         }
         let live_regions = (cull.regions as usize) * 4;
         queue.write_buffer(&cull.counts, 0, &cull.zero_counts[..live_regions]);
+        let tail = cull.counts.size() - HIZ_STATS_BYTES;
+        queue.write_buffer(
+            &cull.counts,
+            tail,
+            &cull.zero_counts[..HIZ_STATS_BYTES as usize],
+        );
+        read_hiz_stats(&cull, stats);
 
         let cull = &mut *cull;
         cull.water_counts.clear();
@@ -1021,6 +1048,24 @@ impl TerrainCullNode {
             pass.set_bind_group(0, bind_group, &[view_index * (CULL_VIEW_STRIDE as u32)]);
             pass.dispatch_workgroups(workgroups, 1, 1);
         }
+        drop(pass);
+        // While a report records, a copy of the Hi-Z counters to read back.
+        let stats = &world.resource::<TerrainPools>().stats.0;
+        if stats.count_sections.load(Ordering::Relaxed)
+            && let Some(free) = cull
+                .hiz_readback
+                .iter()
+                .find(|r| r.state.load(Ordering::Acquire) == READBACK_FREE)
+        {
+            render_context.command_encoder().copy_buffer_to_buffer(
+                &cull.counts,
+                cull.counts.size() - HIZ_STATS_BYTES,
+                &free.buffer,
+                0,
+                HIZ_STATS_BYTES,
+            );
+            free.state.store(READBACK_COPIED, Ordering::Release);
+        }
         Ok(())
     }
 }
@@ -1119,5 +1164,59 @@ mod tests {
             bevy::render::view::RetainedViewEntity::new(Entity::PLACEHOLDER.into(), None, 0);
         assert_ne!(pack_shadow_view(camera), camera);
         assert_eq!(pack_shadow_view(camera), pack_shadow_view(camera));
+    }
+}
+
+/// Bytes after the regions' counts holding the Hi-Z counters (`cull.wgsl`
+/// `HIZ_STATS`): sections tested against the pyramid, and those it hid.
+const HIZ_STATS_BYTES: u64 = 16;
+
+const READBACK_FREE: u8 = 0;
+const READBACK_COPIED: u8 = 1;
+const READBACK_MAPPING: u8 = 2;
+const READBACK_READY: u8 = 3;
+
+/// One copy of the Hi-Z counters on its way back to the CPU: copied in a
+/// frame's cull, mapped once that frame is submitted, read when mapped.
+struct HizReadback {
+    buffer: Buffer,
+    state: Arc<AtomicU8>,
+}
+
+/// Moves each readback along and stores the counters that arrived.
+fn read_hiz_stats(cull: &CullBuffers, stats: &super::TerrainStatsInner) {
+    for readback in &cull.hiz_readback {
+        match readback.state.load(Ordering::Acquire) {
+            READBACK_COPIED => {
+                readback.state.store(READBACK_MAPPING, Ordering::Release);
+                let state = readback.state.clone();
+                readback.buffer.slice(..).map_async(
+                    bevy::render::render_resource::MapMode::Read,
+                    move |result| {
+                        let next = if result.is_ok() {
+                            READBACK_READY
+                        } else {
+                            READBACK_FREE
+                        };
+                        state.store(next, Ordering::Release);
+                    },
+                );
+            }
+            READBACK_READY => {
+                let values: [u32; 4] = {
+                    let view = readback.buffer.slice(..).get_mapped_range();
+                    bytemuck::pod_read_unaligned(&view[..16])
+                };
+                readback.buffer.unmap();
+                stats
+                    .hiz_tested
+                    .store(values[0] as usize, Ordering::Relaxed);
+                stats
+                    .hiz_culled
+                    .store(values[1] as usize, Ordering::Relaxed);
+                readback.state.store(READBACK_FREE, Ordering::Release);
+            }
+            _ => {}
+        }
     }
 }
