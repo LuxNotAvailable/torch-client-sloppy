@@ -392,8 +392,13 @@ fn entity_pass_state(kind: EntityKind, second: bool) -> EntityPassState {
         EntityKind::HandWater
         | EntityKind::EntityTranslucent
         | EntityKind::BlockTranslucent
-        | EntityKind::ParticleTranslucent
         | EntityKind::Weather => blended,
+        // `RenderPipelines.TRANSLUCENT_PARTICLE` keeps the default depth
+        // state, writing depth, so clouds drawn after don't cover them.
+        EntityKind::ParticleTranslucent => EntityPassState {
+            depth: Some((true, CompareFunction::LessEqual)),
+            ..blended
+        },
         EntityKind::SkyBasic | EntityKind::SkyTextured => EntityPassState {
             blend: Some(if second {
                 BlendState {

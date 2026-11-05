@@ -307,6 +307,7 @@ pub(super) fn tick_spark(p: &mut Particle, spark: Spark, trails: &mut Vec<Partic
             friction: p.friction,
             tick_acc: 0.0,
             age: 0,
+            seq: next_seq(),
             lifetime: p.lifetime,
             tint: [p.tint[0], p.tint[1], p.tint[2], 0.99],
             size: p.size,

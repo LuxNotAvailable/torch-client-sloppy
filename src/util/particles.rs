@@ -241,6 +241,12 @@ struct ParticleBatches {
     groups: Vec<Vec<u32>>,
 }
 
+/// The next particle's spawn order.
+pub(crate) fn next_seq() -> u32 {
+    static SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
 pub(crate) struct Particle {
     prev: Vec3,
     pos: Vec3,
@@ -249,6 +255,8 @@ pub(crate) struct Particle {
     friction: f32,
     tick_acc: f32,
     age: u32,
+    /// Spawn order, which breaks depth ties as vanilla's draw order does.
+    seq: u32,
     lifetime: u32,
     tint: [f32; 4],
     size: f32,
@@ -646,6 +654,7 @@ pub(crate) fn spawn_block_break(
             friction: 0.98,
             tick_acc: rng.next_f32() / 20.0,
             age: 0,
+            seq: next_seq(),
             lifetime,
             tint,
             size,
@@ -724,6 +733,7 @@ fn spawn_crit_particles(
                     friction: 0.7,
                     tick_acc: particle_rng.0.next_f32() / 20.0,
                     age: 0,
+                    seq: next_seq(),
                     lifetime,
                     tint,
                     size,
@@ -869,6 +879,7 @@ impl Particle {
             friction: recipe.friction,
             tick_acc,
             age: 0,
+            seq: next_seq(),
             lifetime: recipe.lifetime.max(1),
             tint: recipe.tint,
             size: recipe.size,

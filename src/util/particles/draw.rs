@@ -317,7 +317,12 @@ pub(super) fn write_batch_mesh(
         let p = &particles[i as usize];
         let lifetime = p.lifetime.max(1);
         let frac = (p.tick_acc / TICK).clamp(0.0, 1.0);
-        let centre = p.prev.lerp(p.pos, frac) - origin;
+        // Vanilla draws a layer's particles in one buffer, oldest first,
+        // with a less-or-equal depth test, so of two at one spot the later
+        // shows. Ours split into batches drawn in any order; a nudge toward
+        // the camera by spawn order keeps the later one in front.
+        let nudge = Vec3::from(normal) * ((p.seq % 256) as f32 * 1.0e-4);
+        let centre = p.prev.lerp(p.pos, frac) - origin + nudge;
         let t = (p.age as f32 + frac) / lifetime as f32;
         let scale = p.size
             * match p.grow {
