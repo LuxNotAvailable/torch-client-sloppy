@@ -214,10 +214,36 @@ pub(super) fn crumbling_mesh(boxes: &[[f32; 6]], tile: u32, atlas_rows: u32) -> 
     let iv = 0.02 / (atlas_rows * TILE_PX) as f32;
     let (u0, v0) = (col as f32 * tw + iu, row as f32 * th + iv);
     let (u1, v1) = ((col + 1) as f32 * tw - iu, (row + 1) as f32 * th - iv);
-    box_faces_mesh(boxes, 0.002, [[u0, v1], [u1, v1], [u1, v0], [u0, v0]])
+    // `SheetedDecalTextureGenerator`: the crack is laid over the block in
+    // block space, one texel per 1/16 block whatever the face's size, so a
+    // small face shows part of it rather than all of it squeezed.
+    let decal = |corner: [f32; 3], normal: [f32; 3]| {
+        let (a, b) = match normal {
+            [_, y, _] if y != 0.0 => (corner[0], corner[2]),
+            [x, _, _] if x != 0.0 => (corner[2], 1.0 - corner[1]),
+            _ => (corner[0], 1.0 - corner[1]),
+        };
+        let wrap = |t: f32| t.clamp(0.0, 1.0);
+        [u0 + (u1 - u0) * wrap(a), v0 + (v1 - v0) * wrap(b)]
+    };
+    box_faces_mesh_with(boxes, 0.002, &decal)
 }
 
 pub(crate) fn box_faces_mesh(boxes: &[[f32; 6]], inflate: f32, face_uv: [[f32; 2]; 4]) -> Mesh {
+    let corner_uv = std::cell::Cell::new(0usize);
+    box_faces_mesh_with(boxes, inflate, &|_, _| {
+        let i = corner_uv.get();
+        corner_uv.set((i + 1) % 4);
+        face_uv[i]
+    })
+}
+
+/// Each box's six faces, inflated, with a UV per corner from `uv`.
+fn box_faces_mesh_with(
+    boxes: &[[f32; 6]],
+    inflate: f32,
+    uv: &dyn Fn([f32; 3], [f32; 3]) -> [f32; 2],
+) -> Mesh {
     let mut pos: Vec<[f32; 3]> = Vec::new();
     let mut nrm: Vec<[f32; 3]> = Vec::new();
     let mut uvs: Vec<[f32; 2]> = Vec::new();
@@ -254,10 +280,10 @@ pub(crate) fn box_faces_mesh(boxes: &[[f32; 6]], inflate: f32, face_uv: [[f32; 2
         ];
         for (corners, normal) in faces {
             let base = pos.len() as u32;
-            for i in 0..4 {
-                pos.push(corners[i]);
+            for corner in corners {
+                pos.push(corner);
                 nrm.push(normal);
-                uvs.push(face_uv[i]);
+                uvs.push(uv(corner, normal));
             }
             idx.extend_from_slice(&[base + 2, base + 1, base, base + 3, base + 2, base]);
         }
