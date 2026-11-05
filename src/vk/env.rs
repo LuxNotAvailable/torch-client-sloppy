@@ -10,7 +10,7 @@
 //! (`terrain::CullView`, `shaders/world.slang`).
 
 use ash::vk;
-use bevy::math::Vec3;
+use bevy::math::{Mat4, Vec3};
 use gpu_allocator::MemoryLocation;
 
 use super::bindless::Bindless;
@@ -27,10 +27,11 @@ struct Pipes {
     sky_blend: vk::Pipeline,
     sky_add: vk::Pipeline,
     clouds: vk::Pipeline,
+    screen: vk::Pipeline,
 }
 
-/// One part's draw: its pipeline (0 blended sky, 1 added sky, 2 clouds),
-/// part index, and index range.
+/// One part's draw: its pipeline (0 blended sky, 1 added sky, 2 clouds,
+/// 3 a screen overlay), part index, and index range.
 #[derive(Clone, Copy)]
 struct Draw {
     pipe: u8,
@@ -44,6 +45,10 @@ pub struct EnvScene {
     pub clear: [f32; 4],
     pub fog_color: [f32; 4],
     pub fog_ranges: [f32; 4],
+    /// The portal and nausea warp, after the projection's view.
+    pub warp: Mat4,
+    /// The server's post effects (`renderer::post_effects` flags).
+    pub post: u32,
     module: vk::ShaderModule,
     pipes: Option<Pipes>,
     pending: Option<Pending>,
@@ -57,7 +62,8 @@ pub struct EnvScene {
     staging: Option<(Buffer, Vec<u64>, [u64; 3], Option<u64>)>,
     /// The lightmap's offset in the staging.
     staged_lightmap: u64,
-    /// The sky parts, lowest bias first, then the clouds.
+    /// The sky parts, lowest bias first, then the clouds, then the
+    /// screen overlays.
     draws: Vec<Draw>,
 }
 
@@ -74,29 +80,37 @@ impl EnvScene {
         color_format: vk::Format,
         env: Environment,
         eye: Vec3,
+        atlas_index: u32,
     ) -> Result<EnvScene, SetupError> {
         let module = pipelines.module(ctx, super::shaders::ENV)?;
-        let spec = |fragment: &std::ffi::CStr, depth_test, blend, additive| {
+        let spec = |fragment: &std::ffi::CStr, depth_test, additive, depth| {
             Spec::Graphics(GraphicsSpec {
                 module,
                 vertex: c"env_vertex".to_owned(),
                 fragment: fragment.to_owned(),
                 color: vec![color_format],
-                depth: Some(DEPTH_FORMAT),
+                depth,
                 depth_test,
                 depth_write: false,
                 cull: vk::CullModeFlags::NONE,
                 topology: vk::PrimitiveTopology::TRIANGLE_LIST,
-                blend,
+                blend: true,
                 additive,
             })
         };
         let pending = pipelines.build_on_worker(
             ctx,
             vec![
-                spec(c"sky_blend", None, true, false),
-                spec(c"sky_add", None, true, true),
-                spec(c"clouds", Some(vk::CompareOp::GREATER), true, false),
+                spec(c"sky_blend", None, false, Some(DEPTH_FORMAT)),
+                spec(c"sky_add", None, true, Some(DEPTH_FORMAT)),
+                spec(
+                    c"clouds",
+                    Some(vk::CompareOp::GREATER),
+                    false,
+                    Some(DEPTH_FORMAT),
+                ),
+                // The overlays draw in a pass of their own on the output.
+                spec(c"screen", None, false, None),
             ],
         );
 
@@ -119,13 +133,14 @@ impl EnvScene {
             .filter_map(|(i, p)| {
                 let (first, count, base) = *ranges.get(p.mesh as usize)?;
                 let pipe = match (p.kind, p.alpha) {
+                    (2, _) => 3,
                     (1, _) => 2,
                     (_, 3) => 1,
                     _ => 0,
                 };
                 // Clouds after every sky part, as their bias already says.
                 Some((
-                    p.bias + if p.kind == 1 { 1e9 } else { 0.0 },
+                    p.bias + p.kind as f32 * 1e9,
                     Draw {
                         pipe,
                         part: i as u32,
@@ -187,7 +202,9 @@ impl EnvScene {
                     *t -= e;
                 }
             }
-            if let Some((_, index, _, _)) = textures.get(part.texture as usize) {
+            if part.texture == super::entity_dump::TEXTURE_ATLAS {
+                part.texture = atlas_index;
+            } else if let Some((_, index, _, _)) = textures.get(part.texture as usize) {
                 part.texture = *index;
             }
         }
@@ -243,6 +260,8 @@ impl EnvScene {
             clear: env.clear,
             fog_color: env.fog_color,
             fog_ranges: env.fog_ranges,
+            warp: Mat4::from_cols_array(&env.warp),
+            post: env.post,
             module,
             pipes: None,
             pending: Some(pending),
@@ -277,6 +296,7 @@ impl EnvScene {
                 sky_blend: built[0],
                 sky_add: built[1],
                 clouds: built[2],
+                screen: built[3],
             });
             self.pending = None;
         }
@@ -385,7 +405,7 @@ impl EnvScene {
         pipelines: &Pipelines,
         view_index: u32,
         view_proj: [[f32; 4]; 4],
-        clouds: bool,
+        stage: u8,
     ) {
         let Some(pipes) = self.pipes else { return };
         let device = &ctx.device;
@@ -404,11 +424,12 @@ impl EnvScene {
         // bound by the caller; each draw names a part's own range.
         unsafe {
             device.cmd_bind_index_buffer(cmd, self.indices.raw, 0, vk::IndexType::UINT32);
-            for d in self.draws.iter().filter(|d| (d.pipe == 2) == clouds) {
+            for d in self.draws.iter().filter(|d| d.pipe.max(1) - 1 == stage) {
                 let pipeline = match d.pipe {
                     0 => pipes.sky_blend,
                     1 => pipes.sky_add,
-                    _ => pipes.clouds,
+                    2 => pipes.clouds,
+                    _ => pipes.screen,
                 };
                 device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
                 device.cmd_draw_indexed(cmd, d.count, 1, d.first, d.base, d.part);
@@ -425,7 +446,7 @@ impl EnvScene {
         view_index: u32,
         view_proj: [[f32; 4]; 4],
     ) {
-        self.draw(ctx, cmd, pipelines, view_index, view_proj, false);
+        self.draw(ctx, cmd, pipelines, view_index, view_proj, 0);
     }
 
     /// The clouds, last in the terrain pass.
@@ -437,13 +458,70 @@ impl EnvScene {
         view_index: u32,
         view_proj: [[f32; 4]; 4],
     ) {
-        self.draw(ctx, cmd, pipelines, view_index, view_proj, true);
+        self.draw(ctx, cmd, pipelines, view_index, view_proj, 1);
+    }
+
+    /// The screen overlays, in a pass of their own over the finished
+    /// `output`; `clip` the display's pre-rotation.
+    #[allow(clippy::too_many_arguments, reason = "one pass's whole context")]
+    pub fn record_screen(
+        &self,
+        ctx: &Context,
+        bindless: &Bindless,
+        pipelines: &Pipelines,
+        graph: &mut Graph,
+        output: (vk::Image, vk::ImageView),
+        extent: vk::Extent2D,
+        clip: Mat4,
+        atlas: vk::Image,
+        view_index: u32,
+    ) {
+        if self.pipes.is_none() || !self.draws.iter().any(|d| d.pipe == 3) {
+            return;
+        }
+        let mut images = vec![
+            (output.0, Use::ColorAttachment),
+            (atlas, Use::SampledFragment),
+        ];
+        let mut buffers = Vec::new();
+        self.uses(&mut images, &mut buffers);
+        let device = &ctx.device;
+        graph.pass("screen overlays", &images, &buffers, |cmd| unsafe {
+            // SAFETY: the graph moved the output to an attachment and the
+            // textures to sampled layouts.
+            let colors = [vk::RenderingAttachmentInfo::default()
+                .image_view(output.1)
+                .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                .load_op(vk::AttachmentLoadOp::LOAD)
+                .store_op(vk::AttachmentStoreOp::STORE)];
+            device.cmd_begin_rendering(
+                cmd,
+                &vk::RenderingInfo::default()
+                    .render_area(vk::Rect2D {
+                        offset: vk::Offset2D::default(),
+                        extent,
+                    })
+                    .layer_count(1)
+                    .color_attachments(&colors),
+            );
+            super::depth_view::set_viewport(ctx, cmd, extent);
+            device.cmd_bind_descriptor_sets(
+                cmd,
+                vk::PipelineBindPoint::GRAPHICS,
+                pipelines.layout,
+                0,
+                &[bindless.set],
+                &[],
+            );
+            self.draw(ctx, cmd, pipelines, view_index, clip.to_cols_array_2d(), 2);
+            device.cmd_end_rendering(cmd);
+        });
     }
 
     pub fn destroy(mut self, ctx: &Context, memory: &Memory) {
         let mut pipelines: Vec<vk::Pipeline> = self
             .pipes
-            .map(|p| vec![p.sky_blend, p.sky_add, p.clouds])
+            .map(|p| vec![p.sky_blend, p.sky_add, p.clouds, p.screen])
             .unwrap_or_default();
         if let Some(Ok((built, _))) = self.pending.as_mut().and_then(|p| p.wait()) {
             pipelines.extend(built);

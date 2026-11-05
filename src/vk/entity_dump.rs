@@ -87,9 +87,13 @@ pub struct EntityInstance {
 const _: () = assert!(std::mem::size_of::<EntityInstance>() == 184);
 
 pub const ENV_MAGIC: &[u8; 4] = b"TVKS";
-pub const ENV_VERSION: u32 = 1;
+pub const ENV_VERSION: u32 = 2;
 
-/// One sky part or the cloud layer.
+/// A screen part's texture that is the terrain atlas (the wall overlay),
+/// which vkview has from the terrain dump.
+pub const TEXTURE_ATLAS: u32 = u32::MAX - 1;
+
+/// One sky part, the cloud layer, or a screen overlay.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct EnvPart {
@@ -99,17 +103,29 @@ pub struct EnvPart {
     /// 0 opaque, 1 cutout, 2 blended, 3 additive.
     pub alpha: u32,
     /// 0 a sky part (pinned to the far plane), 1 the clouds (at their
-    /// depth).
+    /// depth), 2 a screen overlay (its transform straight to clip space,
+    /// drawn over everything).
     pub kind: u32,
     /// Drawing order among the parts, lowest first.
     pub bias: f32,
     pub pad: [f32; 3],
+    /// The texture coordinates' scale (xy) and offset (zw).
+    pub uv: [f32; 4],
     pub tint: [f32; 4],
-    /// The world transform, columns.
+    /// The world transform (clip from local for overlays), columns.
     pub transform: [f32; 16],
 }
 
-const _: () = assert!(std::mem::size_of::<EnvPart>() == 112);
+const _: () = assert!(std::mem::size_of::<EnvPart>() == 128);
+
+/// A screen overlay (`renderer::screen_effects`), in the hand camera's view
+/// space.
+type ScreenDrawn<'a> = (
+    &'a Mesh3d,
+    &'a MeshMaterial3d<StandardMaterial>,
+    &'a Transform,
+    &'a InheritedVisibility,
+);
 
 /// Mesh and image data copied while they still sit in the main world.
 #[derive(Resource, Default)]
@@ -129,6 +145,13 @@ pub fn plugin(app: &mut App) {
 
 fn mesh_data(mesh: &Mesh) -> Option<(Vec<EntityVertex>, Vec<u32>, bool)> {
     use bevy::mesh::VertexAttributeValues as V;
+    // A mesh kept only in the render world panics on attribute access.
+    if !mesh
+        .asset_usage
+        .contains(bevy::asset::RenderAssetUsages::MAIN_WORLD)
+    {
+        return None;
+    }
     let positions = match mesh.attribute(Mesh::ATTRIBUTE_POSITION)? {
         V::Float32x3(p) => p,
         _ => return None,
@@ -264,6 +287,12 @@ fn write_env(
     standard: &Assets<StandardMaterial>,
     lightmap: Option<&crate::renderer::terrain::LightmapPixels>,
     fog: Option<(&DistanceFog, &Camera)>,
+    (overlays, hand, atlas, warp): (
+        &Query<ScreenDrawn, With<crate::renderer::screen_effects::Overlay>>,
+        Option<Mat4>,
+        Option<AssetId<Image>>,
+        Mat4,
+    ),
 ) {
     let mut parts = Vec::new();
     let (mut mesh_ids, mut image_ids) = (HashMap::new(), HashMap::new());
@@ -274,7 +303,8 @@ fn write_env(
                    alpha: AlphaMode,
                    bias: f32,
                    kind: u32,
-                   transform: &GlobalTransform| {
+                   uv: [f32; 4],
+                   transform: Mat4| {
         if !cache.meshes.contains_key(&mesh) {
             return;
         }
@@ -283,9 +313,13 @@ fn write_env(
             used_meshes.push(mesh);
             next
         });
+        // The atlas goes by name: vkview has its own copy.
         let texture = texture
-            .filter(|t| cache.images.contains_key(t))
+            .filter(|t| Some(*t) == atlas || cache.images.contains_key(t))
             .map_or(u32::MAX, |t| {
+                if Some(t) == atlas {
+                    return TEXTURE_ATLAS;
+                }
                 let next = image_ids.len() as u32;
                 *image_ids.entry(t).or_insert_with(|| {
                     used_images.push(t);
@@ -299,8 +333,9 @@ fn write_env(
             kind,
             bias,
             pad: [0.0; 3],
+            uv,
             tint: tint.to_array(),
-            transform: transform.to_matrix().to_cols_array(),
+            transform: transform.to_cols_array(),
         });
     };
     for (mesh, material, transform, visible) in sky {
@@ -316,7 +351,8 @@ fn write_env(
                 alpha,
                 bias,
                 0,
-                transform,
+                [1.0, 1.0, 0.0, 0.0],
+                transform.to_matrix(),
             );
         }
     }
@@ -332,8 +368,36 @@ fn write_env(
                 m.alpha_mode,
                 m.depth_bias,
                 1,
-                transform,
+                [1.0, 1.0, 0.0, 0.0],
+                transform.to_matrix(),
             );
+        }
+    }
+    // Screen overlays as the hand camera draws them: their transforms are
+    // in its view space.
+    if let Some(clip_from_view) = hand {
+        for (i, (mesh, material, transform, visible)) in overlays.iter().enumerate() {
+            if !visible.get() {
+                continue;
+            }
+            if let Some(m) = standard.get(&material.0) {
+                let uv = m.uv_transform;
+                add(
+                    mesh.0.id(),
+                    m.base_color_texture.as_ref().map(Handle::id),
+                    m.base_color.to_linear().to_vec4(),
+                    m.alpha_mode,
+                    i as f32,
+                    2,
+                    [
+                        uv.matrix2.x_axis.x,
+                        uv.matrix2.y_axis.y,
+                        uv.translation.x,
+                        uv.translation.y,
+                    ],
+                    clip_from_view * transform.to_matrix(),
+                );
+            }
         }
     }
 
@@ -394,6 +458,15 @@ fn write_env(
     }
     put(&(parts.len() as u32).to_le_bytes());
     put(bytemuck::cast_slice(&parts));
+    // The portal and nausea warp on the world's projection, and the
+    // server's post effects (`renderer::post_effects` flags).
+    put(bytemuck::cast_slice(&warp.to_cols_array()));
+    put(bytemuck::cast_slice(&[
+        crate::renderer::post_effects::active(),
+        0,
+        0,
+        0,
+    ]));
     let partial = dir.join("env.bin.part");
     if std::fs::write(&partial, &out).is_ok() {
         let _ = std::fs::rename(&partial, dir.join("env.bin"));
@@ -417,6 +490,12 @@ fn write(
         Res<Assets<StandardMaterial>>,
         Option<Res<crate::renderer::terrain::LightmapPixels>>,
         Query<(&DistanceFog, &Camera), With<crate::renderer::systems::WorldCamera>>,
+    ),
+    (overlays, hand, terrain_textures, frame_view): (
+        Query<ScreenDrawn, With<crate::renderer::screen_effects::Overlay>>,
+        Query<&Projection, With<crate::renderer::hand::HandCamera>>,
+        Option<Res<crate::renderer::terrain_pool::TerrainTextures>>,
+        Res<crate::renderer::frame_view::FrameView>,
     ),
 ) {
     *since += time.delta_secs();
@@ -551,6 +630,12 @@ fn write(
         &standard,
         images.as_deref(),
         fog.iter().next(),
+        (
+            &overlays,
+            hand.iter().next().map(|p| p.get_clip_from_view()),
+            terrain_textures.as_ref().map(|t| t.atlas.id()),
+            crate::renderer::view_bob::current_warp(&frame_view),
+        ),
     );
     let partial = dir.join("entities.bin.part");
     if std::fs::write(&partial, &out).is_ok() {
@@ -679,6 +764,10 @@ pub struct Environment {
     pub textures: Vec<(u32, u32, Vec<u8>)>,
     pub meshes: Vec<(Vec<EntityVertex>, Vec<u32>, bool)>,
     pub parts: Vec<EnvPart>,
+    /// The portal and nausea warp, applied after the projection's view.
+    pub warp: [f32; 16],
+    /// The server's post effects (`renderer::post_effects` flags).
+    pub post: u32,
 }
 
 /// Reads `env.bin`.
@@ -720,6 +809,8 @@ pub fn read_env(bytes: &[u8]) -> Result<Environment, String> {
     }
     let count = u32_at(take(4)?) as usize;
     let parts = bytemuck::pod_collect_to_vec(take(count * std::mem::size_of::<EnvPart>())?);
+    let warp = bytemuck::pod_read_unaligned::<[f32; 16]>(take(64)?);
+    let post = u32_at(&take(16)?[..4]);
     Ok(Environment {
         clear,
         fog_color,
@@ -728,5 +819,7 @@ pub fn read_env(bytes: &[u8]) -> Result<Environment, String> {
         textures,
         meshes,
         parts,
+        warp,
+        post,
     })
 }

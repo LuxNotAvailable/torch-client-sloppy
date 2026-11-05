@@ -24,6 +24,11 @@ pub const BLUR: u32 = 8;
 
 static ACTIVE: AtomicU32 = AtomicU32::new(0);
 
+/// The active effects' flags.
+pub fn active() -> u32 {
+    ACTIVE.load(Ordering::Relaxed)
+}
+
 /// Replaces the active set; unknown ids are ignored.
 pub fn set<'a>(ids: impl IntoIterator<Item = &'a str>) {
     let flags = ids.into_iter().fold(0, |flags, id| {

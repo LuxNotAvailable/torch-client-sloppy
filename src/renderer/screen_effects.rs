@@ -31,8 +31,9 @@ const WALL_SHADE: f32 = 25.0 / 255.0;
 const FIRE_ALPHA: f32 = 0.9;
 const FIRE_TILT: f32 = std::f32::consts::PI / 18.0;
 
+/// A full-view overlay quad (public for the Vulkan dump's query).
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
-enum Overlay {
+pub(crate) enum Overlay {
     Water,
     Wall,
     Fire(bool),
@@ -85,7 +86,9 @@ fn load(path: &str, repeat: bool, f: impl FnOnce(&mut image::RgbaImage)) -> Imag
         TextureDimension::D2,
         rgba.into_raw(),
         TextureFormat::Rgba8UnormSrgb,
-        RenderAssetUsages::RENDER_WORLD,
+        // Kept in the main world too, for the Vulkan dump (a few small
+        // images).
+        RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD,
     );
     let mode = if repeat {
         ImageAddressMode::Repeat

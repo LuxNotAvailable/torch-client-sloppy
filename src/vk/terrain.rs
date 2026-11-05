@@ -178,6 +178,8 @@ pub struct Options {
     pub budget: u64,
     /// The pyramid level `--view hiz` shows.
     pub hiz_level: u32,
+    /// FXAA, SSAA and post effects (`vk::post`).
+    pub post: super::post::Settings,
 }
 
 impl Default for Options {
@@ -189,6 +191,7 @@ impl Default for Options {
             wave: true,
             budget: UPLOAD_BUDGET,
             hiz_level: 3,
+            post: super::post::Settings::default(),
         }
     }
 }
@@ -408,6 +411,7 @@ pub struct TerrainScene {
     pipes: Option<Pipes>,
     pending: Option<super::pipeline::Pending>,
     depth_view: DepthView,
+    post: super::post::PostPass,
 
     pools: Vec<Pool>,
     translucent: Grown,
@@ -538,6 +542,7 @@ impl TerrainScene {
             ],
         );
         let depth_view = DepthView::new(ctx, pipelines, color_format)?;
+        let post = super::post::PostPass::new(ctx, pipelines, color_format)?;
 
         let storage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
         let grown = |bindless: &mut Bindless, name, size, usage| -> Result<Grown, SetupError> {
@@ -694,6 +699,7 @@ impl TerrainScene {
                     entities
                         .as_ref()
                         .map_or(Vec3::ZERO, |e| e.camera.0.w_axis.truncate()),
+                    atlas_index,
                 )?)
             }
             Err(_) => None,
@@ -705,6 +711,7 @@ impl TerrainScene {
             pipes: None,
             pending: Some(pending),
             depth_view,
+            post,
             pools: Vec::new(),
             translucent,
             translucent_alloc: Allocator::new(TRANSLUCENT_INITIAL),
@@ -1389,10 +1396,88 @@ impl TerrainScene {
         self.visible_dirty = true;
     }
 
-    /// Records the terrain into `graph`, drawing to `color`. `slot` is the
+    /// Records the terrain into `graph`, drawing to `output` (through the
+    /// post pass when it has work), then the screen overlays. `slot` is the
     /// frame-in-flight slot, whose fence has signalled.
     #[allow(clippy::too_many_arguments, reason = "one frame's whole context")]
     pub fn record(
+        &mut self,
+        ctx: &Context,
+        memory: &Memory,
+        bindless: &mut Bindless,
+        pipelines: &Pipelines,
+        uploads: &mut Uploads,
+        graph: &mut Graph,
+        output: (vk::Image, vk::ImageView),
+        extent: vk::Extent2D,
+        rotation: super::swapchain::PreRotation,
+        frame: u64,
+        slot: usize,
+        camera: Camera,
+        view: View,
+    ) -> Result<(), SetupError> {
+        // The scene goes through the post pass when it has anything to do
+        // (and never under a debug view, which reads the depth 1:1).
+        let settings = self.options.post;
+        let effects = settings
+            .effects
+            .unwrap_or_else(|| self.env.as_ref().map_or(0, |e| e.post));
+        let post = !matches!(view, View::Depth | View::Pyramid)
+            && (settings.fxaa || settings.ssaa != 1.0 || effects != 0);
+        if post {
+            let scene_extent = settings.scene_extent(extent);
+            let scene = self
+                .post
+                .scene(ctx, memory, bindless, graph, scene_extent, frame)?;
+            self.record_scene(
+                ctx,
+                memory,
+                bindless,
+                pipelines,
+                uploads,
+                graph,
+                scene,
+                scene_extent,
+                rotation,
+                frame,
+                slot,
+                camera,
+                view,
+            )?;
+            self.post.record(
+                ctx,
+                bindless,
+                pipelines,
+                graph,
+                output,
+                extent,
+                effects,
+                settings.fxaa,
+            );
+        } else {
+            self.record_scene(
+                ctx, memory, bindless, pipelines, uploads, graph, output, extent, rotation, frame,
+                slot, camera, view,
+            )?;
+        }
+        if let Some(env) = &self.env {
+            env.record_screen(
+                ctx,
+                bindless,
+                pipelines,
+                graph,
+                output,
+                extent,
+                rotation.clip,
+                self.atlas.raw,
+                self.view_indices[slot],
+            );
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments, reason = "one frame's whole context")]
+    fn record_scene(
         &mut self,
         ctx: &Context,
         memory: &Memory,
@@ -1568,6 +1653,7 @@ impl TerrainScene {
         let aspect = rotation.aspect;
         let view_proj = rotation.clip
             * Mat4::perspective_infinite_reverse_rh(camera.fov.to_radians(), aspect, NEAR)
+            * self.env.as_ref().map_or(Mat4::IDENTITY, |e| e.warp)
             * Mat4::look_to_rh(camera.eye, camera.forward(), Vec3::Y);
 
         // Hi-Z only with a pyramid of this size, from a camera close by.
@@ -2231,6 +2317,7 @@ impl TerrainScene {
             }
         }
         self.depth_view.destroy(ctx);
+        self.post.destroy(ctx, memory);
         let mut buffers = vec![
             self.translucent.buffer,
             self.slots.buffer,

@@ -5,7 +5,8 @@
 //! `vkview [--frames N] [--device NAME] [--vsync] [--size WxH] [--stress]
 //!         [--view shaded|normals|texture|depth] [--screenshot FILE.png]
 //!         [--terrain DIR [--camera X,Y,Z,YAW,PITCH|game] [--no-hiz] [--no-vis]
-//!          [--no-buckets] [--budget MB] [--hiz-level N] [--greedy]]`
+//!          [--no-buckets] [--budget MB] [--hiz-level N] [--greedy]
+//!          [--fxaa] [--ssaa SCALE] [--post creeper,spider,invert,blur|none]]`
 //!
 //! The scene is the test scene, or with `--terrain` a terrain dump the game
 //! wrote (`MC_DUMP_TERRAIN=DIR`), seen from `--camera` or, without one,
@@ -20,7 +21,9 @@
 //! by frame and drawn amplified in FILE-diff.png. `--step S` moves the
 //! scene's clock S seconds a frame, so two runs (say, with and without a
 //! culling stage) give the same frames to compare. `--greedy` only measures how many of the dump's quads greedy
-//! meshing would merge (3.9), and exits.
+//! meshing would merge (3.9), and exits. `--fxaa`, `--ssaa` and `--post`
+//! run the final pass (`vk::post`); `--post` replaces the snapshot's
+//! server effects.
 //!
 //! With `--frames`, it draws that many frames, prints a summary (device,
 //! frame times, GPU time per pass, barriers, memory, validation-layer errors
@@ -131,6 +134,26 @@ fn options(args: Vec<String>) -> Options {
                 if let Some(mb) = args.next().and_then(|v| v.parse::<f64>().ok()) {
                     options.terrain_options.budget = (mb * 1048576.0) as u64;
                 }
+            }
+            "--fxaa" => options.terrain_options.post.fxaa = true,
+            "--ssaa" => {
+                if let Some(scale) = args.next().and_then(|v| v.parse::<f32>().ok()) {
+                    options.terrain_options.post.ssaa = scale.clamp(1.0, 4.0);
+                }
+            }
+            "--post" => {
+                let text = args.next().unwrap_or_default();
+                let flags = text.split(',').fold(0, |flags, id| {
+                    flags
+                        | match id.trim() {
+                            "creeper" => 1,
+                            "spider" => 2,
+                            "invert" => 4,
+                            "blur" => 8,
+                            _ => 0,
+                        }
+                });
+                options.terrain_options.post.effects = Some(flags);
             }
             "--hiz-level" => {
                 if let Some(level) = args.next().and_then(|v| v.parse().ok()) {
