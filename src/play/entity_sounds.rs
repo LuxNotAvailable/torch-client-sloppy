@@ -596,3 +596,38 @@ impl EndFlashes {
         });
     }
 }
+
+/// The player's own hurt sound (`Player.getHurtSound`): the damage type's
+/// `effects`, from the server's registry entry, else vanilla's for that
+/// type (`data/minecraft/damage_type`), else `hurt`.
+pub(crate) fn local_hurt(effects: Option<&str>, damage_type: Option<&str>) {
+    let effects = effects.unwrap_or_else(|| {
+        match damage_type.map(|t| t.strip_prefix("minecraft:").unwrap_or(t)) {
+            Some(
+                "campfire"
+                | "fireball"
+                | "hot_floor"
+                | "in_fire"
+                | "lava"
+                | "on_fire"
+                | "sulfur_cube_hot"
+                | "unattributed_fireball",
+            ) => "burning",
+            Some("drown") => "drowning",
+            Some("freeze") => "freezing",
+            Some("sweet_berry_bush") => "poking",
+            Some("thorns") => "thorns",
+            _ => "hurt",
+        }
+    });
+    // `DamageEffects`: thorns sounds like any hurt.
+    let event = match effects {
+        "drowning" => "entity.player.hurt_drown",
+        "burning" => "entity.player.hurt_on_fire",
+        "poking" => "entity.player.hurt_sweet_berry_bush",
+        "freezing" => "entity.player.hurt_freeze",
+        _ => "entity.player.hurt",
+    };
+    let pitch = (unit() - unit()) * 0.2 + 1.0;
+    crate::audio::play(event, SoundCategory::Players, 1.0, pitch);
+}

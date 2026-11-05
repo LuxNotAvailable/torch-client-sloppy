@@ -935,6 +935,38 @@ fn entity_state(packet: &ClientboundGamePacket) {
 
 fn session_state(world: &WorldHolder, shared: &Arc<SharedMutex>, packet: &ClientboundGamePacket) {
     match packet {
+        // `LivingEntity.handleEntityEvent(3)`: the player's own death sound.
+        #[cfg(audio)]
+        ClientboundGamePacket::EntityEvent(p)
+            if p.event_id == 3 && p.entity_id.0 == crate::client::tracking::local_entity_id() =>
+        {
+            let pitch = (crate::audio::random_unit() - crate::audio::random_unit()) * 0.2 + 1.0;
+            crate::audio::play(
+                "entity.player.death",
+                crate::audio::SoundCategory::Players,
+                1.0,
+                pitch,
+            );
+        }
+        // `LivingEntity.handleDamageEvent`: the player hears their own hurt
+        // sound; the server's goes to everyone else.
+        #[cfg(audio)]
+        ClientboundGamePacket::DamageEvent(p)
+            if p.entity_id.0 == crate::client::tracking::local_entity_id() =>
+        {
+            let world = world.shared.read();
+            let registry = azalea_registry::identifier::Identifier::new("minecraft:damage_type");
+            let damage_type = world
+                .registries
+                .extra
+                .get(&registry)
+                .and_then(|r| r.map.get_index(p.source_type_id as usize));
+            let effects =
+                damage_type.and_then(|(_, nbt)| nbt.string("effects").map(|s| s.to_string()));
+            let name = damage_type.map(|(id, _)| id.to_string());
+            drop(world);
+            crate::play::entity_sounds::local_hurt(effects.as_deref(), name.as_deref());
+        }
         ClientboundGamePacket::EntityEvent(p)
             if (entity_event::PERMISSION_LEVEL_ALL..=entity_event::PERMISSION_LEVEL_OWNERS)
                 .contains(&p.event_id)
