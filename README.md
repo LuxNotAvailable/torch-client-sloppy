@@ -37,13 +37,18 @@ Run `torch-client --help` for the command line:
 
 Optional features (the click GUI, touch controls, profilers) are listed in [CONTRIBUTING.md](.github/CONTRIBUTING.md#feature-system).
 
-### Performance reports
+### Tests
 
 ```sh
-cargo build --release --features perf_report
+MINECRAFT_ASSETS=reference/minecraft-26.3/assets/minecraft MINECRAFT_DATA=reference/minecraft-26.3/data/minecraft cargo test --release --lib                                   # the client
+cargo test --manifest-path crates/torch-opus/Cargo.toml       # the Opus wrapper
 ```
 
-This build adds a **Profile** button to the pause menu. It records ten seconds of play and writes a report to `profiles/` in the client's folder. The report covers frame rate and lows, every timed stage, GPU passes, memory and CPU use, and the machine's hardware and settings. It comes as a `.txt` to read and a `.json` to compare across machines.
+The tests read the game's assets and data from `reference/`.
+
+### Performance reports
+
+The default build has a **Profile** button under Options, Debug Options (the `perf_report` feature). It records ten seconds of play and writes a report to `profiles/` in the client's folder. The report covers frame rate and lows, every timed stage, GPU passes, memory and CPU use, and the machine's hardware and settings. It comes as a `.txt` to read and a `.json` to compare across machines.
 
 ## Contributing
 

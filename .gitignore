@@ -4,3 +4,5 @@ __pycache__/
 /dist/
 /reference/
 /keystore/
+/screenshot-dump/
+/aquired-profiles/

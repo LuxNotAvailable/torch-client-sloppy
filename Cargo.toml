@@ -17,47 +17,29 @@ name = "vkview"
 path = "src/bin/vkview.rs"
 required-features = ["vulkan"]
 
+# ---------------------------------------------------------------------------
+# Features
+# ---------------------------------------------------------------------------
+
 [features]
-default = ["asset_download", "multiversion", "full_font", "skins", "online_mode", "shader_support", "audio", "voice", "hud_editor", "resourcepacks", "vulkan", "perf_report"]
+default = [
+    "asset_download",
+    "multiversion",
+    "full_font",
+    "skins",
+    "online_mode",
+    "shader_support",
+    "audio",
+    "voice",
+    "hud_editor",
+    "resourcepacks",
+    "vulkan",
+    "perf_report",
+]
 
-skins = ["dep:reqwest", "dep:rustls"]
+# --- Connecting ---
 
-full_font = []
-profiling = ["bevy/trace"]
-
-deadlock-detection = ["parking_lot/deadlock_detection"]
-
-alloc_diag = []
-
-budget = []
-
-# A Debug Options button that records ten seconds of play and writes a
-# report: frame times, every timed stage and span, GPU passes, counters,
-# process use and the machine it ran on.
-perf_report = ["dep:sysinfo", "dep:wgpu", "wgpu/counters", "dep:bevy_render_trace", "bevy_render_trace/trace"]
-
-mobile_ui = ["bevy/touch"]
-
-click_gui = []
-
-hud_editor = []
-
-shader_support = ["dep:flate2", "dep:naga", "dep:wgpu"]
-
-# The native Vulkan renderer, being built alongside the current one
-# (VULKAN_REWRITE_CHECKLIST.md). For now it only drives the `vkview`
-# development viewer; the game still renders through Bevy.
-vulkan = ["dep:ash", "dep:ash-window", "dep:gpu-allocator", "dep:winit", "dep:raw-window-handle"]
-# The Vulkan viewer as an Android app (tools/vkview-apk): the library's
-# android_main runs the viewer instead of the game.
-vkview_apk = ["vulkan"]
-
-resourcepacks = ["dep:flate2"]
-
-explore_modrinth = ["resourcepacks", "dep:reqwest", "dep:rustls", "dep:sha1", "image/webp"]
-
-webgpu = ["bevy/webgpu"]
-
+# Microsoft accounts (azalea-auth) and the session server.
 online_mode = [
     "dep:azalea-auth",
     "dep:reqwest",
@@ -66,100 +48,91 @@ online_mode = [
     "azalea/online-mode",
     "uuid/v4",
 ]
-
-asset_download = ["dep:flate2", "dep:reqwest", "dep:rustls"]
+# Servers on other protocol versions, translated at the packet level.
 multiversion = ["azalea/multiversion"]
+# Eaglercraft servers over WebSocket.
+eagler = ["dep:tokio-tungstenite", "dep:futures-util", "dep:azalea-auth", "dep:rustls"]
 
+# --- Assets and content ---
+
+# Fetches the game's assets from Mojang on first run.
+asset_download = ["dep:flate2", "dep:reqwest", "dep:rustls"]
+# The full Unifont fallback font, when the asset index stubs it.
+full_font = []
+# Player skins and capes from the session server.
+skins = ["dep:reqwest", "dep:rustls"]
+# Resource packs, and browsing Modrinth for them.
+resourcepacks = ["dep:flate2"]
+explore_modrinth = ["resourcepacks", "dep:reqwest", "dep:rustls", "dep:sha1", "image/webp"]
+
+# --- Rendering ---
+
+# Iris/OptiFine-style shader packs.
+shader_support = ["dep:flate2", "dep:naga", "dep:wgpu"]
+# The native Vulkan renderer, being built alongside the current one
+# (VULKAN_REWRITE_CHECKLIST.md). For now it only drives the `vkview`
+# development viewer; the game still renders through Bevy.
+vulkan = ["dep:ash", "dep:ash-window", "dep:gpu-allocator", "dep:winit", "dep:raw-window-handle"]
+# The Vulkan viewer as an Android app (tools/vkview-apk): the library's
+# android_main runs the viewer instead of the game.
+vkview_apk = ["vulkan"]
+# WebGPU instead of WebGL 2 in the browser build.
+webgpu = ["bevy/webgpu"]
+
+# --- Sound ---
+
+# Sound, desktop only: on the web and Android the feature does nothing (see
+# build.rs). Downloads about 332 MB of sounds on first run, which can be skipped.
+audio = ["asset_download", "dep:rodio"]
 # Simple Voice Chat, when the server runs it (see src/voice): voices played at
 # the players speaking, and the microphone by push-to-talk or voice
 # activation. Desktop only (build.rs); needs `audio` for the mixer.
 voice = ["audio", "dep:aes-gcm", "dep:torch-opus"]
 
-# Sound, desktop only: on the web and Android the feature does nothing (see
-# build.rs). Downloads about 332 MB of sounds on first run, which can be skipped.
-audio = ["asset_download", "dep:rodio"]
+# --- Interface ---
 
-eagler = [
-    "dep:tokio-tungstenite",
-    "dep:futures-util",
-    "dep:azalea-auth",
-    "dep:rustls",
-]
+# The HUD layout editor.
+hud_editor = []
+# Mouse buttons bindable in the click GUI.
+click_gui = []
+# Touch controls and the phone layout.
+mobile_ui = ["bevy/touch"]
 
-[profile.dev]
-debug = 0
-opt-level = 1
-incremental = false
+# --- Diagnostics ---
 
-[profile.web]
-inherits = "release"
-opt-level = 3
-strip = false
+# A Debug Options button that records ten seconds of play and writes a
+# report: frame times, every timed stage and span, GPU passes, counters,
+# process use and the machine it ran on.
+perf_report = ["dep:sysinfo", "dep:wgpu", "wgpu/counters", "dep:bevy_render_trace", "bevy_render_trace/trace"]
+# Bevy's tracing spans, for a profiler.
+profiling = ["bevy/trace"]
+# parking_lot's deadlock detector, reported by the watchdog.
+deadlock-detection = ["parking_lot/deadlock_detection"]
+# Allocation counts by site (src/diag/alloc.rs).
+alloc_diag = []
+# Per-frame time budgets for the bot and render loops (src/diag/budget.rs).
+budget = []
 
-[profile.android]
-inherits = "release"
-strip = true
-
-[package.metadata.android]
-package = "com.torch.client"
-build_targets = ["aarch64-linux-android"]
-features = ["+mobile_ui"]
-
-# cargo-apk 0.10 synthesizes the APK manifest from this metadata (it does NOT
-# read ./android/AndroidManifest.xml), so the app must declare its own
-# permissions/features here. INTERNET is required for reqwest/hyper sockets.
-[[package.metadata.android.uses_permission]]
-name = "android.permission.INTERNET"
-
-[[package.metadata.android.uses_feature]]
-name = "android.hardware.touchscreen"
-required = true
-
-[[package.metadata.android.uses_feature]]
-name = "android.hardware.touchscreen.multitouch"
-required = true
-
-# Signing comes from the environment, never this file: set
-# CARGO_APK_<PROFILE>_KEYSTORE and CARGO_APK_<PROFILE>_KEYSTORE_PASSWORD
-# (e.g. CARGO_APK_RELEASE_KEYSTORE). A dev build without them uses the
-# Android debug key. Keystores live in the git-ignored `keystore/` folder.
-
-# The same SDK levels as tools/build_android.sh.
-[package.metadata.android.sdk]
-min_sdk_version = 28
-target_sdk_version = 36
-
-[profile.linux]
-inherits = "release"
-strip = true
-
-[profile.dev.package."*"]
-debug = 0
-opt-level = 3
+# ---------------------------------------------------------------------------
+# Dependencies, every platform
+# ---------------------------------------------------------------------------
 
 [dependencies]
-ash = { version = "0.38", optional = true }
-ash-window = { version = "0.13", optional = true }
-gpu-allocator = { version = "0.27", default-features = false, features = ["vulkan"], optional = true }
-# The viewer's own window; the game's comes from bevy_winit.
-winit = { version = "0.30", optional = true }
-raw-window-handle = { version = "0.6", optional = true }
+# The protocol, world and physics (vendored and patched azalea).
 azalea = { path = "vendor/azalea/azalea", default-features = false, features = ["log", "serde", "packet-trace"] }
-azalea-inventory = { path = "vendor/azalea/azalea-inventory" }
-azalea-protocol = { path = "vendor/azalea/azalea-protocol", default-features = false }
-azalea-world = { path = "vendor/azalea/azalea-world" }
-azalea-physics = { path = "vendor/azalea/azalea-physics" }
-azalea-core = { path = "vendor/azalea/azalea-core" }
+azalea-auth = { path = "vendor/azalea/azalea-auth", default-features = false, optional = true }
 azalea-buf = { path = "vendor/azalea/azalea-buf" }
 azalea-chat = { path = "vendor/azalea/azalea-chat", features = ["simdnbt"] }
-azalea-registry = { path = "vendor/azalea/azalea-registry" }
+azalea-core = { path = "vendor/azalea/azalea-core" }
+azalea-inventory = { path = "vendor/azalea/azalea-inventory" }
 azalea-language = { path = "vendor/azalea/azalea-language" }
+azalea-physics = { path = "vendor/azalea/azalea-physics" }
+azalea-protocol = { path = "vendor/azalea/azalea-protocol", default-features = false }
+azalea-registry = { path = "vendor/azalea/azalea-registry" }
+azalea-world = { path = "vendor/azalea/azalea-world" }
 simdnbt = "0.10"
-parking_lot = "0.12"
-offset-allocator = "0.2"
-bytemuck = { version = "1", features = ["derive"] }
 
-eyre = "0.6"
+# The engine. Platform windowing features are added per target below.
 bevy = { version = "0.18", default-features = false, features = [
     "std",
     "async_executor",
@@ -187,44 +160,102 @@ bevy = { version = "0.18", default-features = false, features = [
     "zstd_rust",
     "reflect_auto_register",
 ] }
-serde_json = "1"
-image = { version = "0.25", default-features = false, features = ["png"] }
-sha1 = { version = "0.11", optional = true }
-base64 = "0.22"
-
-azalea-auth = { path = "vendor/azalea/azalea-auth", default-features = false, optional = true }
-uuid = "1"
-
-reqwest = { version = "0.13", default-features = false, optional = true }
-
-
-flate2 = { version = "1", optional = true }
-naga = { version = "27", default-features = false, features = [
-    "glsl-in",
-    "wgsl-out",
-], optional = true }
-wgpu = { version = "27", default-features = false, optional = true }
 # Only for its `trace` feature (perf_report), which marks each render graph
 # node and the queue submit. Renamed so Bevy's derive macros, which look
 # for a `bevy_render` dependency, keep using `bevy::render`.
 bevy_render_trace = { package = "bevy_render", version = "0.18", default-features = false, optional = true }
 
+# Shader packs: GLSL in, WGSL out, and wgpu directly.
+naga = { version = "27", default-features = false, features = ["glsl-in", "wgsl-out"], optional = true }
+wgpu = { version = "27", default-features = false, optional = true }
+
+# The Vulkan renderer (feature `vulkan`).
+ash = { version = "0.38", optional = true }
+ash-window = { version = "0.13", optional = true }
+gpu-allocator = { version = "0.27", default-features = false, features = ["vulkan"], optional = true }
+raw-window-handle = { version = "0.6", optional = true }
+# The viewer's own window; the game's comes from bevy_winit.
+winit = { version = "0.30", optional = true }
+
+# Data and utilities.
+base64 = "0.22"
+bytemuck = { version = "1", features = ["derive"] }
+eyre = "0.6"
+flate2 = { version = "1", optional = true }
+image = { version = "0.25", default-features = false, features = ["png"] }
+offset-allocator = "0.2"
+parking_lot = "0.12"
+serde_json = "1"
+sha1 = { version = "0.11", optional = true }
+uuid = "1"
+
+# Networking.
+reqwest = { version = "0.13", default-features = false, optional = true }
+futures-util = { version = "0.3", default-features = false, features = ["sink"], optional = true }
 tokio-tungstenite = { version = "0.30", default-features = false, features = [
     "connect",
     "rustls-tls-webpki-roots",
 ], optional = true }
-futures-util = { version = "0.3", default-features = false, features = [
-    "sink",
-], optional = true }
+
+# ---------------------------------------------------------------------------
+# Dependencies by platform
+# ---------------------------------------------------------------------------
+
+# --- Native (desktop and Android) ---
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+azalea-protocol = { path = "vendor/azalea/azalea-protocol", default-features = false, features = ["dns"] }
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls-no-provider"], optional = true }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"], optional = true }
+sysinfo = { version = "0.33", default-features = false, features = ["system"], optional = true }
+tokio = { version = "1", features = ["full"] }
+
+# --- Desktop ---
+
+[target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))'.dependencies]
+bevy = { version = "0.18", default-features = false, features = ["multi_threaded", "x11", "wayland"] }
+arboard = { version = "3.6", default-features = false }
+mimalloc = { version = "0.1", default-features = false }
+# Bevy's wgpu, for the startup probe that checks the Renderer setting's
+# backend has an adapter.
+wgpu = { version = "27", default-features = false, features = ["vulkan"] }
+# Sound and voice chat.
+rodio = { version = "0.20", default-features = false, features = ["vorbis"], optional = true }
+aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc", "getrandom"], optional = true }
+# A safe Opus interface over unsafe-libopus (libopus 1.3.1 translated to
+# Rust, so no C toolchain is needed).
+torch-opus = { path = "crates/torch-opus", optional = true }
+
+# Load libwayland at runtime: no link-time dependency, so the binary also runs
+# on X11-only systems and cross-builds without a Linux sysroot.
+[target.'cfg(all(target_os = "linux", not(target_os = "android")))'.dependencies]
+winit = { version = "0.30", default-features = false, features = ["wayland-dlopen"] }
+
+[target.'cfg(all(unix, not(target_arch = "wasm32")))'.dependencies]
+# Exit signals without hand-written `signal()` calls.
+ctrlc = { version = "3.5", features = ["termination"] }
+
+# --- Android ---
+
+[target.'cfg(target_os = "android")'.dependencies]
+bevy = { version = "0.18", default-features = false, features = ["multi_threaded", "android-native-activity"] }
+jni = "0.22"
+webpki-roots = "1"
+
+# --- Browser ---
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-web-time = "1"
-wasm-bindgen = "0.2"
-wasm-bindgen-futures = "0.4"
-console_error_panic_hook = "0.1"
+bevy = { version = "0.18", default-features = false, features = ["webgl2"] }
+tokio = { version = "1", default-features = false, features = ["sync", "macros", "rt", "time"] }
 azalea-auth = { path = "vendor/azalea/azalea-auth", default-features = false }
 uuid = "1"
+console_error_panic_hook = "0.1"
+getrandom = { version = "0.4", features = ["wasm_js"] }
+getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
 js-sys = "0.3"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-time = "1"
 web-sys = { version = "0.3", features = [
     "Window",
     "Location",
@@ -257,8 +288,70 @@ web-sys = { version = "0.3", features = [
     "Request",
     "RequestInit",
 ] }
-getrandom = { version = "0.4", features = ["wasm_js"] }
-getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
+
+# ---------------------------------------------------------------------------
+# Profiles
+# ---------------------------------------------------------------------------
+
+[profile.dev]
+debug = 0
+opt-level = 1
+incremental = false
+
+# Dependencies optimised even in dev builds: the game is unplayable without.
+[profile.dev.package."*"]
+debug = 0
+opt-level = 3
+
+[profile.linux]
+inherits = "release"
+strip = true
+
+[profile.android]
+inherits = "release"
+strip = true
+
+[profile.web]
+inherits = "release"
+opt-level = 3
+strip = false
+
+# ---------------------------------------------------------------------------
+# Android packaging (cargo-apk)
+# ---------------------------------------------------------------------------
+
+[package.metadata.android]
+package = "com.torch.client"
+build_targets = ["aarch64-linux-android"]
+features = ["+mobile_ui"]
+
+# The same SDK levels as tools/build_android.sh.
+[package.metadata.android.sdk]
+min_sdk_version = 28
+target_sdk_version = 36
+
+# cargo-apk 0.10 synthesizes the APK manifest from this metadata (it does NOT
+# read ./android/AndroidManifest.xml), so the app must declare its own
+# permissions/features here. INTERNET is required for reqwest/hyper sockets.
+[[package.metadata.android.uses_permission]]
+name = "android.permission.INTERNET"
+
+[[package.metadata.android.uses_feature]]
+name = "android.hardware.touchscreen"
+required = true
+
+[[package.metadata.android.uses_feature]]
+name = "android.hardware.touchscreen.multitouch"
+required = true
+
+# Signing comes from the environment, never this file: set
+# CARGO_APK_<PROFILE>_KEYSTORE and CARGO_APK_<PROFILE>_KEYSTORE_PASSWORD
+# (e.g. CARGO_APK_RELEASE_KEYSTORE). A dev build without them uses the
+# Android debug key. Keystores live in the git-ignored `keystore/` folder.
+
+# ---------------------------------------------------------------------------
+# Patched crates
+# ---------------------------------------------------------------------------
 
 [patch.crates-io]
 bevy_camera = { path = "vendor/bevy_camera" }
@@ -268,81 +361,3 @@ simdnbt = { path = "vendor/simdnbt" }
 # + 12 storage textures). This fork skips pipeline creation; see
 # create_downsample_depth_pipelines in the forked file.
 bevy_core_pipeline = { path = "vendor/bevy_core_pipeline" }
-
-[target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))'.dependencies.bevy]
-version = "0.18"
-default-features = false
-features = ["multi_threaded", "x11", "wayland"]
-
-# Load libwayland at runtime: no link-time dependency, so the binary also runs
-# on X11-only systems and cross-builds without a Linux sysroot.
-[target.'cfg(all(target_os = "linux", not(target_os = "android")))'.dependencies.winit]
-version = "0.30"
-default-features = false
-features = ["wayland-dlopen"]
-
-[target.'cfg(target_os = "android")'.dependencies.bevy]
-version = "0.18"
-default-features = false
-features = ["multi_threaded", "android-native-activity"]
-
-[target.'cfg(target_os = "android")'.dependencies.jni]
-version = "0.22"
-
-[target.'cfg(target_os = "android")'.dependencies.webpki-roots]
-version = "1"
-
-[target.'cfg(target_arch = "wasm32")'.dependencies.bevy]
-version = "0.18"
-default-features = false
-features = ["webgl2"]
-
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies.tokio]
-version = "1"
-features = ["full"]
-
-[target.'cfg(target_arch = "wasm32")'.dependencies.tokio]
-version = "1"
-default-features = false
-features = ["sync", "macros", "rt", "time"]
-
-[target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))'.dependencies]
-rodio = { version = "0.20", default-features = false, features = [
-    "vorbis",
-], optional = true }
-# A safe Opus interface over unsafe-libopus (libopus 1.3.1 translated to
-# Rust, so no C toolchain is needed).
-torch-opus = { path = "crates/torch-opus", optional = true }
-aes-gcm = { version = "0.10", default-features = false, features = [
-    "aes",
-    "alloc",
-    "getrandom",
-], optional = true }
-arboard = { version = "3.6", default-features = false }
-mimalloc = { version = "0.1", default-features = false }
-# Bevy's wgpu, for the startup probe that checks the Renderer setting's
-# backend has an adapter.
-wgpu = { version = "27", default-features = false, features = ["vulkan"] }
-
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-sysinfo = { version = "0.33", default-features = false, features = [
-    "system",
-], optional = true }
-reqwest = { version = "0.13", default-features = false, features = [
-    "blocking",
-    "rustls-no-provider",
-], optional = true }
-rustls = { version = "0.23", default-features = false, features = [
-    "ring",
-    "std",
-    "tls12",
-], optional = true }
-
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies.azalea-protocol]
-path = "vendor/azalea/azalea-protocol"
-default-features = false
-features = ["dns"]
-
-[target.'cfg(all(unix, not(target_arch = "wasm32")))'.dependencies]
-# Exit signals without hand-written `signal()` calls.
-ctrlc = { version = "3.5", features = ["termination"] }
