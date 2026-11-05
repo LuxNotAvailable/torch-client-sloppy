@@ -450,6 +450,16 @@ fn pack_render_scale_label(value: i32) -> String {
     format!("Shader Render Scale: {value}%")
 }
 
+/// Vanilla's Biome Blend label: off, or the blended square's width.
+fn biome_blend_label(value: i32) -> String {
+    if value == 0 {
+        "Biome Blend: OFF".to_owned()
+    } else {
+        let width = value * 2 + 1;
+        format!("Biome Blend: {width}x{width}")
+    }
+}
+
 fn water_clarity_label(value: i32) -> String {
     if value as u32 == crate::gui::WATER_CLARITY_DEFAULT {
         "Water Clarity: Vanilla".to_owned()
@@ -894,6 +904,7 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
             RENDER_DISTANCE_MAX as u32,
             render_distance_label,
         );
+        f.slider(&mut o.biome_blend, 0, 7, biome_blend_label);
         f.slider(
             &mut o.water_clarity,
             0,

@@ -66,7 +66,7 @@ mod seam {
         false
     }
 
-    pub(crate) fn sync_options(_lighting: bool, _smooth: bool) {}
+    pub(crate) fn sync_options(_lighting: bool, _smooth: bool, _biome_blend: u8) {}
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -305,11 +305,15 @@ mod seam {
         RECEIVED.with(|r| r.set(r.get().wrapping_add(n as u32)));
     }
 
-    pub(crate) fn sync_options(lighting: bool, smooth: bool) {
+    pub(crate) fn sync_options(lighting: bool, smooth: bool, biome_blend: u8) {
         if !active() {
             return;
         }
-        send(&ToWorker::Options { lighting, smooth });
+        send(&ToWorker::Options {
+            lighting,
+            smooth,
+            biome_blend,
+        });
     }
 }
 

@@ -513,6 +513,9 @@ crate::options! {
         pub antialiasing: crate::renderer::antialias::Antialiasing = Default::default()
             => custom(|v| crate::renderer::antialias::Antialiasing::read(v), |m, a| a.write(m)),
         pub smooth_lighting: bool = SMOOTH_LIGHTING_DEFAULT => key("ao"),
+        /// Vanilla's Biome Blend: how far grass, foliage and water colours
+        /// average, in blocks (0 to 7).
+        pub biome_blend: u32 = 2 => key("biomeBlendRadius").clamp(0, 7),
         pub lighting_enabled: bool = LIGHTING_ENABLED_DEFAULT => key("lightingEnabled"),
         /// The window size chosen in Video Settings, in physical pixels; 0
         /// for the default size.

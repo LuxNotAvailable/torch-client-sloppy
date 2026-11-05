@@ -17,6 +17,17 @@ pub fn set_smooth_lighting(enabled: bool) {
     SMOOTH_LIGHTING.store(enabled, Ordering::Relaxed);
 }
 
+static BIOME_BLEND: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(2);
+
+/// The Biome Blend radius in blocks (vanilla's option, 0 to 7).
+pub fn biome_blend() -> i32 {
+    i32::from(BIOME_BLEND.load(Ordering::Relaxed))
+}
+
+pub fn set_biome_blend(radius: u8) {
+    BIOME_BLEND.store(radius.min(7), Ordering::Relaxed);
+}
+
 static LIGHTING_ENABLED: AtomicBool = AtomicBool::new(true);
 
 pub fn lighting_enabled() -> bool {
@@ -474,7 +485,13 @@ pub fn build_section_mesh(
             } => {
                 let is_water = !*lava;
                 let tint = if is_water {
-                    crate::util::biome_color::water_ratio(occ.biome(*bx, *by, *bz))
+                    occ.blend(
+                        *bx,
+                        *by,
+                        *bz,
+                        biome_blend(),
+                        crate::util::biome_color::water_ratio,
+                    )
                 } else {
                     crate::util::biome_color::NEUTRAL
                 };
@@ -506,7 +523,13 @@ pub fn build_section_mesh(
                 block.emission = 0;
                 block.tint = crate::util::biome_color::pack_water(occ.biome(*bx, *by, *bz));
             }
-            let tint = crate::util::biome_color::water_ratio(occ.biome(*bx, *by, *bz));
+            let tint = occ.blend(
+                *bx,
+                *by,
+                *bz,
+                biome_blend(),
+                crate::util::biome_color::water_ratio,
+            );
             emit_fluid(
                 wx,
                 wy,
@@ -556,13 +579,35 @@ fn emit_baked(
 
     let tint = match rb.tint_kind {
         super::TintKind::None => crate::util::biome_color::NEUTRAL,
-        super::TintKind::Grass => crate::util::biome_color::grass_ratio(occ.biome(bx, by, bz)),
-        super::TintKind::Foliage => crate::util::biome_color::foliage_ratio(occ.biome(bx, by, bz)),
-        super::TintKind::DryFoliage => {
-            crate::util::biome_color::dry_foliage_ratio(occ.biome(bx, by, bz))
-        }
+        super::TintKind::Grass => occ.blend(
+            bx,
+            by,
+            bz,
+            biome_blend(),
+            crate::util::biome_color::grass_ratio,
+        ),
+        super::TintKind::Foliage => occ.blend(
+            bx,
+            by,
+            bz,
+            biome_blend(),
+            crate::util::biome_color::foliage_ratio,
+        ),
+        super::TintKind::DryFoliage => occ.blend(
+            bx,
+            by,
+            bz,
+            biome_blend(),
+            crate::util::biome_color::dry_foliage_ratio,
+        ),
         super::TintKind::Redstone(power) => crate::util::biome_color::redstone_ratio(power),
-        super::TintKind::Water => crate::util::biome_color::water_ratio(occ.biome(bx, by, bz)),
+        super::TintKind::Water => occ.blend(
+            bx,
+            by,
+            bz,
+            biome_blend(),
+            crate::util::biome_color::water_ratio,
+        ),
         super::TintKind::Modded(id) => crate::util::block_model::modded_tint(id),
     };
     #[cfg(feature = "shader_support")]

@@ -106,6 +106,7 @@ pub enum ToWorker {
     Options {
         lighting: bool,
         smooth: bool,
+        biome_blend: u8,
     },
     Level {
         dim: u8,
@@ -155,10 +156,15 @@ impl ToWorker {
 
     pub fn encode(&self) -> Vec<u8> {
         match self {
-            ToWorker::Options { lighting, smooth } => {
+            ToWorker::Options {
+                lighting,
+                smooth,
+                biome_blend,
+            } => {
                 let mut w = Writer::new(TO_OPTIONS);
                 w.bool(*lighting);
                 w.bool(*smooth);
+                w.u8(*biome_blend);
                 w.finish()
             }
             ToWorker::Level { dim, min_y, height } => {
@@ -231,6 +237,7 @@ impl ToWorker {
             TO_OPTIONS => ToWorker::Options {
                 lighting: r.bool()?,
                 smooth: r.bool()?,
+                biome_blend: r.u8()?,
             },
             TO_LEVEL => ToWorker::Level {
                 dim: r.u8()?,

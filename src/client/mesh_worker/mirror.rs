@@ -170,9 +170,14 @@ impl Mirror {
 
     fn apply(&mut self, message: ToWorker) {
         match message {
-            ToWorker::Options { lighting, smooth } => {
+            ToWorker::Options {
+                lighting,
+                smooth,
+                biome_blend,
+            } => {
                 crate::renderer::set_lighting_enabled(lighting);
                 crate::renderer::set_smooth_lighting(smooth);
+                crate::renderer::set_biome_blend(biome_blend);
             }
             ToWorker::Level { dim, min_y, height } => {
                 crate::renderer::dimension::set_current(crate::renderer::dimension::from_id(dim));

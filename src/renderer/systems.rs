@@ -2099,7 +2099,24 @@ fn forward_lighting_options() {
     crate::client::mesh_worker::sync_options(
         crate::renderer::lighting_enabled(),
         crate::renderer::smooth_lighting_enabled(),
+        crate::renderer::biome_blend() as u8,
     );
+}
+
+/// Video Settings > Biome Blend: every chunk is meshed again with the new
+/// radius, as vanilla's `allChanged`.
+fn sync_biome_blend(state: Res<crate::gui::GuiState>, mut last: Local<Option<u32>>) {
+    let wanted = state.options.biome_blend;
+    if *last == Some(wanted) {
+        return;
+    }
+    let had_previous_value = last.is_some();
+    *last = Some(wanted);
+    crate::renderer::set_biome_blend(wanted as u8);
+    forward_lighting_options();
+    if had_previous_value {
+        crate::client::bus::request(crate::client::bus::ClientRequest::ReloadChunks);
+    }
 }
 
 fn sync_lighting_enabled(
@@ -2667,7 +2684,7 @@ pub fn run(
     #[cfg(not(target_arch = "wasm32"))]
     app.add_systems(Update, sync_vsync);
     app.add_systems(Last, trace_reextracted_meshes)
-        .add_systems(Update, sync_smooth_lighting)
+        .add_systems(Update, (sync_smooth_lighting, sync_biome_blend))
         .add_systems(Update, sync_lighting_enabled)
         .add_systems(Update, toggle_screen.after(apply_gui_nav))
         .add_systems(

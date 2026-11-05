@@ -689,6 +689,7 @@ fn process_job(
             cache,
             &biomes,
         );
+        fill_biome_quarts(occ, &chunk, min_y, x_base, z_base, &biomes);
     }
     if crate::renderer::lighting_enabled() {
         let light = LockWaits::take(timing, &mut waits.light, || {
@@ -727,6 +728,16 @@ fn process_job(
             cache,
             &biomes,
         );
+        if crate::renderer::biome_blend() > 0 {
+            fill_biome_quarts(
+                occ,
+                &chunk,
+                min_y,
+                x_base + dx * 16,
+                z_base + dz * 16,
+                &biomes,
+            );
+        }
     }
 
     let atlas_rows = ATLAS_ROWS.get().copied().unwrap_or(renderer::TILE_PX);
@@ -926,6 +937,40 @@ pub(crate) fn biome_table(registries: &RegistryHolder) -> Arc<Vec<u8>> {
         *BIOME_TABLE.write() = Some(table.clone());
     }
     table
+}
+
+/// Copies a chunk's biomes, by quart, into the occupancy's blending grid
+/// (only the quarts it reaches: the window and `BLEND_REACH` around it).
+fn fill_biome_quarts(
+    occ: &mut Occupancy,
+    chunk: &Chunk,
+    min_y: i32,
+    ox: i32,
+    oz: i32,
+    biomes: &[u8],
+) {
+    use azalea_registry::DataRegistry;
+    let (qx0, qz0) = (ox.div_euclid(4), oz.div_euclid(4));
+    if !(0..4).any(|i| (0..4).any(|j| occ.quart_column_in_range(qx0 + i, qz0 + j))) {
+        return;
+    }
+    let (qy_lo, qy_hi) = occ.quart_y_range();
+    for (sec_idx, section) in chunk.sections.iter().enumerate() {
+        let qy_base = (min_y + sec_idx as i32 * 16).div_euclid(4);
+        if qy_base + 4 <= qy_lo || qy_base >= qy_hi {
+            continue;
+        }
+        let mut quarts = [azalea_registry::data::Biome::default(); 64];
+        section.biomes.copy_into(&mut quarts);
+        for (i, biome) in quarts.iter().enumerate() {
+            let (qx, qz, qy) = (i & 3, (i >> 2) & 3, i >> 4);
+            let idx = biomes
+                .get(biome.protocol_id() as usize)
+                .copied()
+                .unwrap_or(u8::MAX);
+            occ.set_quart(qx0 + qx as i32, qy_base + qy as i32, qz0 + qz as i32, idx);
+        }
+    }
 }
 
 fn fill_occupancy(

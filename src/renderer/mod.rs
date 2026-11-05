@@ -50,7 +50,7 @@ pub use anim::{AnimInput, Armor, HeldItem, HumanoidAnim};
 pub use atlas::{Textures, build_block_atlas, placeholder_atlas, texture_is_opaque};
 pub use frame_view::{FrameView, FrameViewSystems};
 pub use mesh::{
-    MeshBuf, build_section_mesh, lighting_enabled, set_lighting_enabled, set_smooth_lighting,
+    MeshBuf, build_section_mesh, lighting_enabled, set_biome_blend, set_lighting_enabled, set_smooth_lighting, biome_blend,
     smooth_lighting_enabled,
 };
 pub use occupancy::Occupancy;
