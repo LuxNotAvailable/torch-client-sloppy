@@ -121,9 +121,17 @@ fn hiz_occluded(box_lo: vec3<f32>, box_hi: vec3<f32>) -> bool {
     let size0 = vec2<f32>(textureDimensions(hiz, 0));
     let extent = (uv_max - uv_min) * size0;
     let level = min(u32(ceil(log2(max(max(extent.x, extent.y), 1.0)))), cull.hiz_levels - 1u);
+    // Address the level through level 0: a level is level 0 halved and
+    // floored, its odd edge's extra row or column folded into its last
+    // texel, so texel i covers level-0 texels i << level up to the next.
+    // Indexing it by uv * its own size instead lands up to half a texel up
+    // and left of the box wherever a size isn't a multiple of 1 << level,
+    // and read nearer depth from above the box: sections near the bottom
+    // and right of the screen were culled behind what was above them.
     let dims = vec2<i32>(textureDimensions(hiz, level));
-    let p0 = clamp(vec2<i32>(uv_min * vec2<f32>(dims)), vec2<i32>(0), dims - 1);
-    let p1 = clamp(vec2<i32>(uv_max * vec2<f32>(dims)), vec2<i32>(0), dims - 1);
+    let shift = vec2<u32>(level);
+    let p0 = clamp(vec2<i32>(uv_min * size0) >> shift, vec2<i32>(0), dims - 1);
+    let p1 = clamp(vec2<i32>(uv_max * size0) >> shift, vec2<i32>(0), dims - 1);
     var far = 0.0;
     for (var y = p0.y; y <= p1.y; y = y + 1) {
         for (var x = p0.x; x <= p1.x; x = x + 1) {
