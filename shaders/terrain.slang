@@ -13,6 +13,7 @@
 
 import common;
 import cull;
+import world;
 
 // One section layer's slot, matching `Slot` in `src/vk/terrain.rs`.
 // Counts stay integers: index offsets kept as float bits are denormals
@@ -132,8 +133,8 @@ int sign16(uint bits) {
     return int(bits << 16) >> 16;
 }
 
-// Push: ids.x slots, more.x atlas texture, more.y view mode, view_proj the
-//       camera.
+// Push: ids.x slots, ids.y the view buffer, more.x atlas texture, more.y
+//       view mode, view_proj the camera.
 [shader("vertex")]
 VertexOut terrain_vertex(uint vertex: SV_VulkanVertexID, uint instance: SV_VulkanInstanceID) {
     // Only the two fields a vertex needs, not the whole slot.
@@ -149,16 +150,14 @@ VertexOut terrain_vertex(uint vertex: SV_VulkanVertexID, uint instance: SV_Vulka
 
     float3 world = float3(origin_base.xyz) + float3(local) / 256.0;
 
-    // Until the lightmap is ported (phase 5): daylight from the brighter of
-    // block and sky light, on vanilla's brightness curve.
-    float level = max(light.x, light.y) / 240.0;
-    float bright = level / (4.0 - 3.0 * level);
-    float shade = color.a * lerp(0.05, 1.0, saturate(bright));
+    // The colour darkened by its ambient occlusion (alpha), lit by the
+    // lightmap at the vertex's levels, as terrain.wgsl.
+    float3 lit = lightmap_at(buffer_at(pc.ids.y), light);
 
     VertexOut out;
     out.position = mul(pc.view_proj, float4(world, 1));
     out.uv = uv;
-    out.color = float4(color.rgb * shade, 1);
+    out.color = float4(color.rgb * color.a * lit, 1);
     out.world = world;
     out.slot = instance;
     return out;
@@ -177,7 +176,9 @@ float4 terrain_shade(VertexOut in, bool cutout) {
     if (cutout && texel.a < 0.1) {
         discard;
     }
-    return float4(texel.rgb * in.color.rgb, texel.a);
+    RWByteAddressBuffer view = buffer_at(pc.ids.y);
+    float3 camera = asfloat(view.Load3(VIEW_CAMERA));
+    return vanilla_fog(view, float4(texel.rgb * in.color.rgb, texel.a), in.world - camera);
 }
 
 [shader("fragment")]

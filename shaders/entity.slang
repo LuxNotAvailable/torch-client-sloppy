@@ -12,6 +12,7 @@
 
 import common;
 import cull;
+import world;
 
 static const uint INSTANCE_SIZE = 184;
 static const uint I_MESH = 0;
@@ -95,6 +96,7 @@ struct VertexOut {
     float2 uv;
     float4 color;
     float2 accum;
+    float3 world;
     nointerpolation uint instance;
 };
 
@@ -107,8 +109,8 @@ float mix_light_separate(float2 light) {
 }
 
 // Push: ids.x instances, ids.y mesh table, ids.z vertex pool, ids.w part
-//       rows, more.y view mode, more.z glint texture, params.x seconds,
-//       view_proj the camera.
+//       rows, more.x the view buffer, more.y view mode, more.z glint
+//       texture, params.x seconds, view_proj the camera.
 [shader("vertex")]
 VertexOut entity_vertex(uint vertex: SV_VulkanVertexID, uint instance: SV_VulkanInstanceID) {
     ByteAddressBuffer instances = buffer_ro(pc.ids.x);
@@ -148,6 +150,7 @@ VertexOut entity_vertex(uint vertex: SV_VulkanVertexID, uint instance: SV_Vulkan
     VertexOut out;
     out.position = mul(pc.view_proj, float4(world_position.xyz, 1));
     out.uv = uv;
+    out.world = world_position.xyz;
     out.instance = instance;
     uint mode = instances.Load(at + I_MODE);
     if (mode == MODE_CARDINAL) {
@@ -166,18 +169,6 @@ VertexOut entity_vertex(uint vertex: SV_VulkanVertexID, uint instance: SV_Vulkan
     return out;
 }
 
-float3 srgb_encode(float3 c) {
-    float3 low = c * 12.92;
-    float3 high = 1.055 * pow(c, 1.0 / 2.4) - 0.055;
-    return select(c <= 0.0031308, low, high);
-}
-
-float3 srgb_decode(float3 c) {
-    float3 low = c / 12.92;
-    float3 high = pow((c + 0.055) / 1.055, 2.4);
-    return select(c <= 0.04045, low, high);
-}
-
 // Vanilla's armor glint (see entity.wgsl): the glint texture through
 // translate(-f, g) * rotateZ(pi / 18) * scale(0.16).
 float3 glint(float2 uv) {
@@ -189,18 +180,6 @@ float3 glint(float2 uv) {
     float2 p = uv * 0.16;
     float2 st = float2(c * p.x - s * p.y, s * p.x + c * p.y) + float2(-f, g);
     return texture_at(pc.more.z).SampleLevel(g_samplers[SAMPLER_LINEAR], st, 0).rgb * 0.75;
-}
-
-// The light at the instance's levels. Until the lightmap is ported
-// (phase 5): daylight from the brighter of block and sky light, on
-// vanilla's brightness curve, as the terrain does.
-float3 cell_light(float4 switches, float2 levels) {
-    if (switches.x < 0.5) {
-        return 1;
-    }
-    float level = max(levels.x, levels.y) / 240.0;
-    float bright = level / (4.0 - 3.0 * level);
-    return lerp(0.05, 1.0, saturate(bright));
 }
 
 float4 entity_shade(VertexOut in, bool front) {
@@ -230,14 +209,19 @@ float4 entity_shade(VertexOut in, bool front) {
         color.rgb = srgb_decode(lerp(overlay, srgb_encode(color.rgb), light1.w));
     }
     if (instances.Load(at + I_MODE) != MODE_EMISSIVE) {
-        color.rgb *= cell_light(switches, asfloat(instances.Load2(at + I_LEVELS)));
+        // The light at the instance's levels from the lightmap, or full
+        // bright for entities drawn outside the world.
+        if (switches.x > 0.5) {
+            color.rgb *= lightmap_texel(buffer_at(pc.more.x), asfloat(instances.Load2(at + I_LEVELS)));
+        }
     }
     if (switches.w > 0.0 && pc.more.z != NO_TEXTURE) {
         // Vanilla adds the glint's colour squared to the encoded value.
         float3 g = glint(in.uv);
         color.rgb = srgb_decode(min(srgb_encode(saturate(color.rgb)) + g * g, 1.0));
     }
-    return color;
+    RWByteAddressBuffer view = buffer_at(pc.more.x);
+    return vanilla_fog(view, color, in.world - asfloat(view.Load3(VIEW_CAMERA)));
 }
 
 [shader("fragment")]

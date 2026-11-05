@@ -105,10 +105,13 @@ pub struct State {
 
 impl Default for State {
     fn default() -> Self {
+        // `MC_NO_SHADERPACK=1` starts without one (test runs comparing
+        // the vanilla look), leaving the saved choice as it is.
         let saved = storage::SHADER_PACK
             .load()
             .map(|t| t.trim().to_owned())
-            .filter(|n| !n.is_empty());
+            .filter(|n| !n.is_empty())
+            .filter(|_| crate::platform::env::var("MC_NO_SHADERPACK").as_deref() != Ok("1"));
         let (loaded, error) = match saved {
             None => (None, None),
             Some(name) => match load(&name) {

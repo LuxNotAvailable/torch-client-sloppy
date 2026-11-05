@@ -63,6 +63,19 @@ impl SkyPartMaterial {
     }
 }
 
+impl SkyPartMaterial {
+    /// Tint, texture, alpha mode and ordering bias, for the Vulkan
+    /// renderer's environment snapshot (`vk::entity_dump`).
+    pub(crate) fn parts(&self) -> (Vec4, Option<&Handle<Image>>, AlphaMode, f32) {
+        (
+            self.tint,
+            self.texture.as_ref(),
+            self.alpha_mode,
+            self.depth_bias,
+        )
+    }
+}
+
 impl bevy::pbr::Material for SkyPartMaterial {
     fn vertex_shader() -> bevy::shader::ShaderRef {
         super::embedded_shader("renderer/sky_part.wgsl")

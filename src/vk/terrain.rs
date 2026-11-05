@@ -119,6 +119,12 @@ struct CullView {
     hiz: [u32; 4],
     flags: [u32; 4],
     pad: [u32; 4],
+    /// The fog's colour and its ranges (environmental start and end,
+    /// render-distance start and end), and the lightmap's bindless index
+    /// (or `u32::MAX`) with fog on or off (`shaders/world.slang`).
+    fog_color: [f32; 4],
+    fog_ranges: [f32; 4],
+    env: [u32; 4],
 }
 
 /// Where `vkview --terrain` looks from: a position and a yaw and pitch in
@@ -468,6 +474,7 @@ pub struct TerrainScene {
     /// The entity snapshot beside the terrain dump, when there is one
     /// (phase 4).
     entities: Option<super::entities::EntityScene>,
+    env: Option<super::env::EnvScene>,
 }
 
 fn full() -> SetupError {
@@ -509,6 +516,7 @@ impl TerrainScene {
                 cull,
                 topology: vk::PrimitiveTopology::TRIANGLE_LIST,
                 blend,
+                additive: false,
             })
         };
         let pending = pipelines.build_on_worker(
@@ -671,6 +679,25 @@ impl TerrainScene {
             }
             Err(_) => None,
         };
+        // And what surrounds the world: sky, clouds, fog, lightmap.
+        let env = match std::fs::read(dir.join("env.bin")) {
+            Ok(bytes) => {
+                let snapshot =
+                    super::entity_dump::read_env(&bytes).map_err(|e| failed("bad env.bin", &e))?;
+                Some(super::env::EnvScene::new(
+                    ctx,
+                    memory,
+                    bindless,
+                    pipelines,
+                    color_format,
+                    snapshot,
+                    entities
+                        .as_ref()
+                        .map_or(Vec3::ZERO, |e| e.camera.0.w_axis.truncate()),
+                )?)
+            }
+            Err(_) => None,
+        };
 
         Ok(TerrainScene {
             options,
@@ -728,6 +755,7 @@ impl TerrainScene {
             hi: Vec3::splat(f32::MIN),
             stats: Stats::default(),
             entities,
+            env,
         })
     }
 
@@ -1398,6 +1426,9 @@ impl TerrainScene {
         if let Some(entities) = &mut self.entities {
             entities.prepare(ctx, memory, graph, frame, slot);
         }
+        if let Some(env) = &mut self.env {
+            env.prepare(ctx, memory, graph, frame);
+        }
 
         // Section changes, re-sorts and per-slot data, all copied in one
         // pass.
@@ -1573,6 +1604,12 @@ impl TerrainScene {
             }),
             flags: [flags, 0, 0, 0],
             pad: [0; 4],
+            fog_color: self.env.as_ref().map_or([0.0; 4], |e| e.fog_color),
+            fog_ranges: self.env.as_ref().map_or([0.0; 4], |e| e.fog_ranges),
+            env: self
+                .env
+                .as_ref()
+                .map_or([u32::MAX, 0, 0, 0], |e| [e.lightmap_index(), 1, 0, 0]),
         };
         self.views[slot].write(0, bytemuck::bytes_of(&cull_view));
 
@@ -1694,6 +1731,14 @@ impl TerrainScene {
         if let Some(entities) = &self.entities {
             entities.uses(&mut images, &mut buffers);
         }
+        if let Some(env) = &self.env {
+            env.uses(&mut images, &mut buffers);
+        }
+        let view_index = self.view_indices[slot];
+        let clear = self
+            .env
+            .as_ref()
+            .map_or([0.47, 0.65, 1.0, 1.0], |e| e.clear);
         let seconds = frame as f32 / 60.0;
         graph.pass("terrain", &images, &buffers, |cmd| unsafe {
             // SAFETY: as above; the attachments are in the layouts the
@@ -1704,9 +1749,7 @@ impl TerrainScene {
                 .load_op(vk::AttachmentLoadOp::CLEAR)
                 .store_op(vk::AttachmentStoreOp::STORE)
                 .clear_value(vk::ClearValue {
-                    color: vk::ClearColorValue {
-                        float32: [0.47, 0.65, 1.0, 1.0],
-                    },
+                    color: vk::ClearColorValue { float32: clear },
                 })];
             let depth_attachment = vk::RenderingAttachmentInfo::default()
                 .image_view(depth_view)
@@ -1742,12 +1785,15 @@ impl TerrainScene {
                 &[bindless.set],
                 &[],
             );
+            if let Some(env) = &self.env {
+                env.draw_sky(ctx, cmd, pipelines, view_index, view_proj_cols);
+            }
             push(
                 ctx,
                 cmd,
                 pipelines.layout,
                 &Push {
-                    ids: [self.slots.index, 0, 0, 0],
+                    ids: [self.slots.index, view_index, 0, 0],
                     more: [self.atlas_index, view.mode(), 0, 0],
                     params: [0.0; 4],
                     view_proj: view_proj_cols,
@@ -1771,7 +1817,15 @@ impl TerrainScene {
                 }
             }
             if let Some(entities) = &self.entities {
-                entities.draw_solid(ctx, cmd, pipelines, view_proj_cols, view.mode(), seconds);
+                entities.draw_solid(
+                    ctx,
+                    cmd,
+                    pipelines,
+                    view_proj_cols,
+                    view.mode(),
+                    seconds,
+                    view_index,
+                );
                 // The entity draw pushed its own constants; the terrain's
                 // translucent draw needs its own back (its slot buffer
                 // index, or it reads past the entity buffer and the
@@ -1781,7 +1835,7 @@ impl TerrainScene {
                     cmd,
                     pipelines.layout,
                     &Push {
-                        ids: [self.slots.index, 0, 0, 0],
+                        ids: [self.slots.index, view_index, 0, 0],
                         more: [self.atlas_index, view.mode(), 0, 0],
                         params: [0.0; 4],
                         view_proj: view_proj_cols,
@@ -1806,7 +1860,18 @@ impl TerrainScene {
                 );
             }
             if let Some(entities) = &self.entities {
-                entities.draw_blend(ctx, cmd, pipelines, view_proj_cols, view.mode(), seconds);
+                entities.draw_blend(
+                    ctx,
+                    cmd,
+                    pipelines,
+                    view_proj_cols,
+                    view.mode(),
+                    seconds,
+                    view_index,
+                );
+            }
+            if let Some(env) = &self.env {
+                env.draw_clouds(ctx, cmd, pipelines, view_index, view_proj_cols);
             }
             device.cmd_end_rendering(cmd);
             if let Some(pool) = stats_pool {
@@ -2192,6 +2257,9 @@ impl TerrainScene {
         }
         if let Some(entities) = self.entities.take() {
             entities.destroy(ctx, memory);
+        }
+        if let Some(env) = self.env.take() {
+            env.destroy(ctx, memory);
         }
         memory.free_image(ctx, self.atlas);
         self.depth.destroy(ctx, memory);

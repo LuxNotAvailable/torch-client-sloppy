@@ -10,6 +10,12 @@ static const uint VIEW_PREV_VIEW_PROJ = 64;
 static const uint VIEW_CAMERA = 128;
 static const uint VIEW_HIZ = 144;
 static const uint VIEW_FLAGS = 160;
+// The environment (phase 5): fog colour, fog ranges (environmental start
+// and end, render-distance start and end), and x the lightmap's texture
+// index (none: 0xFFFFFFFF), y 1 when fog is on.
+static const uint VIEW_FOG_COLOR = 192;
+static const uint VIEW_FOG_RANGES = 208;
+static const uint VIEW_ENV = 224;
 
 static const uint CULL_HIZ = 1;
 static const uint CULL_VISIBILITY = 2;

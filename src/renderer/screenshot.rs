@@ -13,7 +13,7 @@ fn discard(_captured: On<ScreenshotCaptured>) {}
 
 /// Saves the next frame as `<dir>/<n>.png`, quietly, for capture runs
 /// frames (`MC_AUTO_SHOT_MS`), for comparing culling settings.
-pub(super) fn request_numbered(commands: &mut Commands, dir: std::path::PathBuf, n: u32) {
+pub(crate) fn request_numbered(commands: &mut Commands, dir: std::path::PathBuf, n: u32) {
     commands.spawn(Screenshot::primary_window()).observe(
         move |captured: On<ScreenshotCaptured>| {
             if let Ok(image) = captured.image.clone().try_into_dynamic() {

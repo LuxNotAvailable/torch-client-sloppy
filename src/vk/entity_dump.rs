@@ -20,6 +20,16 @@
 //! - part rows: count, then rows (12 × f32, the top three rows of each part
 //!   matrix)
 //! - instances: count, then `EntityInstance` (184 bytes)
+//!
+//! Beside it, `env.bin` (`TVKS`, version 1) holds what surrounds the world
+//! (VULKAN_REWRITE_CHECKLIST.md phase 5):
+//! - the clear colour (4 × f32), and the fog: colour (4 × f32), the
+//!   environmental start and end and the render-distance start and end
+//!   (4 × f32)
+//! - the lightmap: 16 × 16 RGBA8, sRGB, block level across, sky down
+//! - textures and meshes as in `entities.bin`
+//! - parts: count, then `EnvPart` (112 bytes): the sky parts and the cloud
+//!   layer
 
 use std::collections::HashMap;
 
@@ -75,6 +85,31 @@ pub struct EntityInstance {
 }
 
 const _: () = assert!(std::mem::size_of::<EntityInstance>() == 184);
+
+pub const ENV_MAGIC: &[u8; 4] = b"TVKS";
+pub const ENV_VERSION: u32 = 1;
+
+/// One sky part or the cloud layer.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct EnvPart {
+    pub mesh: u32,
+    /// The texture's id, or `u32::MAX` for none.
+    pub texture: u32,
+    /// 0 opaque, 1 cutout, 2 blended, 3 additive.
+    pub alpha: u32,
+    /// 0 a sky part (pinned to the far plane), 1 the clouds (at their
+    /// depth).
+    pub kind: u32,
+    /// Drawing order among the parts, lowest first.
+    pub bias: f32,
+    pub pad: [f32; 3],
+    pub tint: [f32; 4],
+    /// The world transform, columns.
+    pub transform: [f32; 16],
+}
+
+const _: () = assert!(std::mem::size_of::<EnvPart>() == 112);
 
 /// Mesh and image data copied while they still sit in the main world.
 #[derive(Resource, Default)]
@@ -195,8 +230,179 @@ type Drawn<'a> = (
 );
 
 /// Rewrites `entities.bin` every few seconds.
+type SkyDrawn<'a> = (
+    &'a Mesh3d,
+    &'a MeshMaterial3d<crate::renderer::sky::SkyPartMaterial>,
+    &'a GlobalTransform,
+    &'a InheritedVisibility,
+);
+
+type CloudDrawn<'a> = (
+    &'a Mesh3d,
+    &'a MeshMaterial3d<StandardMaterial>,
+    &'a GlobalTransform,
+    &'a InheritedVisibility,
+);
+
+fn alpha_code(mode: AlphaMode) -> u32 {
+    match mode {
+        AlphaMode::Opaque => 0,
+        AlphaMode::Mask(_) => 1,
+        AlphaMode::Add => 3,
+        _ => 2,
+    }
+}
+
+/// Writes `env.bin`: fog, clear colour, lightmap, sky parts and clouds.
+#[allow(clippy::too_many_arguments, reason = "a system's queries")]
+fn write_env(
+    dir: &std::path::Path,
+    cache: &Cache,
+    sky: &Query<SkyDrawn>,
+    clouds: &Query<CloudDrawn, With<crate::renderer::clouds::CloudLayer>>,
+    sky_materials: &Assets<crate::renderer::sky::SkyPartMaterial>,
+    standard: &Assets<StandardMaterial>,
+    lightmap: Option<&crate::renderer::terrain::LightmapPixels>,
+    fog: Option<(&DistanceFog, &Camera)>,
+) {
+    let mut parts = Vec::new();
+    let (mut mesh_ids, mut image_ids) = (HashMap::new(), HashMap::new());
+    let (mut used_meshes, mut used_images) = (Vec::new(), Vec::new());
+    let mut add = |mesh: AssetId<Mesh>,
+                   texture: Option<AssetId<Image>>,
+                   tint: Vec4,
+                   alpha: AlphaMode,
+                   bias: f32,
+                   kind: u32,
+                   transform: &GlobalTransform| {
+        if !cache.meshes.contains_key(&mesh) {
+            return;
+        }
+        let next = mesh_ids.len() as u32;
+        let mesh_id = *mesh_ids.entry(mesh).or_insert_with(|| {
+            used_meshes.push(mesh);
+            next
+        });
+        let texture = texture
+            .filter(|t| cache.images.contains_key(t))
+            .map_or(u32::MAX, |t| {
+                let next = image_ids.len() as u32;
+                *image_ids.entry(t).or_insert_with(|| {
+                    used_images.push(t);
+                    next
+                })
+            });
+        parts.push(EnvPart {
+            mesh: mesh_id,
+            texture,
+            alpha: alpha_code(alpha),
+            kind,
+            bias,
+            pad: [0.0; 3],
+            tint: tint.to_array(),
+            transform: transform.to_matrix().to_cols_array(),
+        });
+    };
+    for (mesh, material, transform, visible) in sky {
+        if !visible.get() {
+            continue;
+        }
+        if let Some(m) = sky_materials.get(&material.0) {
+            let (tint, texture, alpha, bias) = m.parts();
+            add(
+                mesh.0.id(),
+                texture.map(Handle::id),
+                tint,
+                alpha,
+                bias,
+                0,
+                transform,
+            );
+        }
+    }
+    for (mesh, material, transform, visible) in clouds {
+        if !visible.get() {
+            continue;
+        }
+        if let Some(m) = standard.get(&material.0) {
+            add(
+                mesh.0.id(),
+                m.base_color_texture.as_ref().map(Handle::id),
+                m.base_color.to_linear().to_vec4(),
+                m.alpha_mode,
+                m.depth_bias,
+                1,
+                transform,
+            );
+        }
+    }
+
+    let mut out = Vec::new();
+    let mut put = |bytes: &[u8]| out.extend_from_slice(bytes);
+    put(ENV_MAGIC);
+    put(&ENV_VERSION.to_le_bytes());
+    let (clear, fog_color, ranges) = match fog {
+        Some((fog, camera)) => {
+            let clear = match camera.clear_color {
+                ClearColorConfig::Custom(c) => c.to_linear().to_f32_array(),
+                _ => fog.color.to_linear().to_f32_array(),
+            };
+            let (start, end) = match fog.falloff {
+                bevy::pbr::FogFalloff::Linear { start, end } => (start, end),
+                _ => (0.0, f32::MAX),
+            };
+            let env = fog.directional_light_color.to_linear();
+            (
+                clear,
+                fog.color.to_linear().to_f32_array(),
+                [env.red, env.green, start, end],
+            )
+        }
+        None => ([0.0; 4], [0.0; 4], [0.0, f32::MAX, 0.0, f32::MAX]),
+    };
+    put(bytemuck::cast_slice(&clear));
+    put(bytemuck::cast_slice(&fog_color));
+    put(bytemuck::cast_slice(&ranges));
+    // The lightmap is rewritten each frame from these pixels; the image
+    // asset itself keeps its first fill.
+    let lightmap = lightmap
+        .map(|l| l.data.clone())
+        .filter(|d| d.len() >= 1024)
+        .unwrap_or_else(|| vec![255; 1024]);
+    put(&lightmap[..1024]);
+    put(&(used_images.len() as u32).to_le_bytes());
+    for (i, id) in used_images.iter().enumerate() {
+        let (w, h, rgba) = &cache.images[id];
+        for n in [i as u32, *w, *h] {
+            put(&n.to_le_bytes());
+        }
+        put(rgba);
+    }
+    put(&(used_meshes.len() as u32).to_le_bytes());
+    for (i, id) in used_meshes.iter().enumerate() {
+        let (verts, indices, rigged) = &cache.meshes[id];
+        for n in [
+            i as u32,
+            verts.len() as u32,
+            indices.len() as u32,
+            u32::from(*rigged),
+        ] {
+            put(&n.to_le_bytes());
+        }
+        put(bytemuck::cast_slice(verts));
+        put(bytemuck::cast_slice(indices));
+    }
+    put(&(parts.len() as u32).to_le_bytes());
+    put(bytemuck::cast_slice(&parts));
+    let partial = dir.join("env.bin.part");
+    if std::fs::write(&partial, &out).is_ok() {
+        let _ = std::fs::rename(&partial, dir.join("env.bin"));
+    }
+}
+
 #[allow(clippy::too_many_arguments, reason = "a system's queries")]
 fn write(
+    mut commands: Commands,
     time: Res<Time>,
     mut since: Local<f32>,
     cache: Res<Cache>,
@@ -204,6 +410,14 @@ fn write(
     materials: Res<Assets<EntityMaterial>>,
     parts: Res<crate::renderer::rig_parts::RigParts>,
     camera: Query<(&GlobalTransform, &Projection), With<crate::renderer::systems::WorldCamera>>,
+    (sky, clouds, sky_materials, standard, images, fog): (
+        Query<SkyDrawn>,
+        Query<CloudDrawn, With<crate::renderer::clouds::CloudLayer>>,
+        Res<Assets<crate::renderer::sky::SkyPartMaterial>>,
+        Res<Assets<StandardMaterial>>,
+        Option<Res<crate::renderer::terrain::LightmapPixels>>,
+        Query<(&DistanceFog, &Camera), With<crate::renderer::systems::WorldCamera>>,
+    ),
 ) {
     *since += time.delta_secs();
     if *since < EVERY {
@@ -324,6 +538,20 @@ fn write(
 
     // Written aside then renamed, so a reader never sees half a snapshot.
     let _ = std::fs::create_dir_all(&dir);
+    // The game's own frame beside it, the ground truth for vkview
+    // (`frames/0000.png` is the latest; one frame late, which a still
+    // camera doesn't mind).
+    crate::renderer::screenshot::request_numbered(&mut commands, dir.join("frames"), 0);
+    write_env(
+        &dir,
+        &cache,
+        &sky,
+        &clouds,
+        &sky_materials,
+        &standard,
+        images.as_deref(),
+        fog.iter().next(),
+    );
     let partial = dir.join("entities.bin.part");
     if std::fs::write(&partial, &out).is_ok() {
         let _ = std::fs::rename(&partial, dir.join("entities.bin"));
@@ -438,4 +666,67 @@ mod tests {
             "a cut file is refused"
         );
     }
+}
+
+/// `env.bin` read back.
+pub struct Environment {
+    pub clear: [f32; 4],
+    pub fog_color: [f32; 4],
+    /// Environmental start and end, render-distance start and end.
+    pub fog_ranges: [f32; 4],
+    /// 16 × 16 RGBA8 (sRGB): block level across, sky level down.
+    pub lightmap: Vec<u8>,
+    pub textures: Vec<(u32, u32, Vec<u8>)>,
+    pub meshes: Vec<(Vec<EntityVertex>, Vec<u32>, bool)>,
+    pub parts: Vec<EnvPart>,
+}
+
+/// Reads `env.bin`.
+pub fn read_env(bytes: &[u8]) -> Result<Environment, String> {
+    let mut at = 0usize;
+    let mut take = |n: usize| -> Result<&[u8], String> {
+        let slice = bytes.get(at..at + n).ok_or("env.bin ends early")?;
+        at += n;
+        Ok(slice)
+    };
+    if take(4)? != ENV_MAGIC {
+        return Err("not an environment dump".to_owned());
+    }
+    let u32_at = |b: &[u8]| u32::from_le_bytes(b.try_into().unwrap());
+    let version = u32_at(take(4)?);
+    if version != ENV_VERSION {
+        return Err(format!(
+            "environment dump version {version}, expected {ENV_VERSION}"
+        ));
+    }
+    let clear = bytemuck::pod_read_unaligned::<[f32; 4]>(take(16)?);
+    let fog_color = bytemuck::pod_read_unaligned::<[f32; 4]>(take(16)?);
+    let fog_ranges = bytemuck::pod_read_unaligned::<[f32; 4]>(take(16)?);
+    let lightmap = take(1024)?.to_vec();
+    let mut textures = Vec::new();
+    for _ in 0..u32_at(take(4)?) {
+        let head = take(12)?;
+        let (w, h) = (u32_at(&head[4..8]), u32_at(&head[8..12]));
+        textures.push((w, h, take((w * h * 4) as usize)?.to_vec()));
+    }
+    let mut meshes = Vec::new();
+    for _ in 0..u32_at(take(4)?) {
+        let head = take(16)?;
+        let (v, i) = (u32_at(&head[4..8]) as usize, u32_at(&head[8..12]) as usize);
+        let rigged = u32_at(&head[12..16]) != 0;
+        let verts = bytemuck::pod_collect_to_vec(take(v * 52)?);
+        let indices = bytemuck::pod_collect_to_vec(take(i * 4)?);
+        meshes.push((verts, indices, rigged));
+    }
+    let count = u32_at(take(4)?) as usize;
+    let parts = bytemuck::pod_collect_to_vec(take(count * std::mem::size_of::<EnvPart>())?);
+    Ok(Environment {
+        clear,
+        fog_color,
+        fog_ranges,
+        lightmap,
+        textures,
+        meshes,
+        parts,
+    })
 }

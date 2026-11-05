@@ -255,6 +255,12 @@ const ALL: &[Var] = &[
         enabled: true,
     },
     Var {
+        name: "MC_NO_SHADERPACK",
+        what: "1 starts without the saved shader pack (test runs), leaving the choice saved",
+        default: "the saved pack",
+        enabled: true,
+    },
+    Var {
         name: "MC_JOIN_COMMANDS",
         what: "chat commands sent once on entering the world, separated by ';' (test runs: /gamemode creative)",
         default: "none",

@@ -96,6 +96,7 @@ impl TestScene {
                 cull: vk::CullModeFlags::NONE,
                 topology: vk::PrimitiveTopology::TRIANGLE_LIST,
                 blend: false,
+                additive: false,
             },
         )?;
         let depth_view = DepthView::new(ctx, pipelines, color_format)?;

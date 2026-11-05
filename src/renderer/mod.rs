@@ -31,7 +31,7 @@ pub mod post;
 pub mod post_effects;
 pub mod rig_parts;
 pub mod screen_effects;
-mod screenshot;
+pub(crate) mod screenshot;
 pub mod shadows;
 pub mod skin;
 pub mod sky;

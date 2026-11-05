@@ -48,6 +48,9 @@ pub struct GraphicsDesc<'a> {
     pub topology: vk::PrimitiveTopology,
     /// Straight alpha blending on every colour attachment.
     pub blend: bool,
+    /// With `blend`: add the colour (premultiplied by the shader) instead
+    /// of mixing by alpha (the sun, moon and stars).
+    pub additive: bool,
 }
 
 impl Pipelines {
@@ -146,6 +149,7 @@ impl Pipelines {
                                 cull: g.cull,
                                 topology: g.topology,
                                 blend: g.blend,
+                                additive: g.additive,
                             },
                         ),
                     };
@@ -227,8 +231,16 @@ fn build_graphics(
             vk::PipelineColorBlendAttachmentState::default()
                 .color_write_mask(vk::ColorComponentFlags::RGBA)
                 .blend_enable(desc.blend)
-                .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
-                .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+                .src_color_blend_factor(if desc.additive {
+                    vk::BlendFactor::ONE
+                } else {
+                    vk::BlendFactor::SRC_ALPHA
+                })
+                .dst_color_blend_factor(if desc.additive {
+                    vk::BlendFactor::ONE
+                } else {
+                    vk::BlendFactor::ONE_MINUS_SRC_ALPHA
+                })
                 .color_blend_op(vk::BlendOp::ADD)
                 .src_alpha_blend_factor(vk::BlendFactor::ONE)
                 .dst_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
@@ -301,6 +313,9 @@ pub struct GraphicsSpec {
     pub cull: vk::CullModeFlags,
     pub topology: vk::PrimitiveTopology,
     pub blend: bool,
+    /// With `blend`: add the colour (premultiplied by the shader) instead
+    /// of mixing by alpha (the sun, moon and stars).
+    pub additive: bool,
 }
 
 /// A worker's batch: its pipelines and milliseconds, or why it failed.

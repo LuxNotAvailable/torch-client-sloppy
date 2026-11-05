@@ -110,6 +110,7 @@ impl EntityScene {
                 cull: vk::CullModeFlags::NONE,
                 topology: vk::PrimitiveTopology::TRIANGLE_LIST,
                 blend,
+                additive: false,
             })
         };
         let pending = pipelines.build_on_worker(
@@ -597,6 +598,7 @@ impl EntityScene {
         view_proj: [[f32; 4]; 4],
         mode: u32,
         seconds: f32,
+        view_index: u32,
     ) {
         push(
             ctx,
@@ -609,7 +611,12 @@ impl EntityScene {
                     self.vertices.1,
                     self.parts.1,
                 ],
-                more: [0, mode, self.glint.as_ref().map_or(u32::MAX, |g| g.1), 0],
+                more: [
+                    view_index,
+                    mode,
+                    self.glint.as_ref().map_or(u32::MAX, |g| g.1),
+                    0,
+                ],
                 params: [seconds, 0.0, 0.0, 0.0],
                 view_proj,
             },
@@ -632,6 +639,7 @@ impl EntityScene {
         view_proj: [[f32; 4]; 4],
         mode: u32,
         seconds: f32,
+        view_index: u32,
     ) {
         let Some(pipes) = self.pipes else { return };
         // SAFETY: inside the terrain pass, with the shared layout and set
@@ -640,7 +648,7 @@ impl EntityScene {
             ctx.device
                 .cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipes.solid)
         };
-        self.bind(ctx, cmd, pipelines, view_proj, mode, seconds);
+        self.bind(ctx, cmd, pipelines, view_proj, mode, seconds, view_index);
         // SAFETY: as above; the commands and count the cull wrote.
         unsafe {
             ctx.device.cmd_draw_indexed_indirect_count(
@@ -665,6 +673,7 @@ impl EntityScene {
         view_proj: [[f32; 4]; 4],
         mode: u32,
         seconds: f32,
+        view_index: u32,
     ) {
         let Some(pipes) = self.pipes else { return };
         if self.blended.is_empty() {
@@ -675,7 +684,7 @@ impl EntityScene {
             ctx.device
                 .cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipes.blend)
         };
-        self.bind(ctx, cmd, pipelines, view_proj, mode, seconds);
+        self.bind(ctx, cmd, pipelines, view_proj, mode, seconds, view_index);
         // SAFETY: as above; one command per blended instance, at its rank.
         unsafe {
             ctx.device.cmd_draw_indexed_indirect(
