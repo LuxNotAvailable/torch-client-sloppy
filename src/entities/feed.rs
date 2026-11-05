@@ -595,6 +595,11 @@ pub struct EntityAnim {
 }
 
 impl EntityAnim {
+    /// Ticks since this client started animating it (`tickCount`).
+    pub(crate) fn ticks(&self) -> u32 {
+        self.ticks
+    }
+
     pub fn new(id: i32, kind: EntityKind) -> EntityAnim {
         let mut rng = JavaRandom::new(id as i64);
         let tentacle_speed = 1.0 / (rng.next_f32() + 1.0) * 0.2;

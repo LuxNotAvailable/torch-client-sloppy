@@ -495,6 +495,11 @@ fn use_item(bot: &Client, shared: &Arc<SharedMutex>) -> bool {
     let Some(kind) = held_item_kind(bot) else {
         return false;
     };
+    #[cfg(audio)]
+    if let Ok(pos) = bot.position() {
+        let water = kind == ItemKind::GlassBottle && looks_at_water_source(bot);
+        crate::play::use_sounds::item_used(kind, water, [pos.x as f32, pos.y as f32, pos.z as f32]);
+    }
     send_use_item(bot);
 
     let duration = held_use_duration(bot);
@@ -833,7 +838,64 @@ fn in_water_or_rain(bot: &Client) -> bool {
     raining_at(pos.y) || raining_at(pos.y + 1.8)
 }
 
+/// `getPlayerPOVHitResult(SOURCE_ONLY)` meeting a water source: steps along
+/// the look within reach until a water source or a solid block.
+#[cfg(audio)]
+fn looks_at_water_source(bot: &Client) -> bool {
+    let (Ok(world), Ok(pos), Ok(look)) = (
+        bot.world(),
+        bot.position(),
+        bot.component::<azalea::entity::LookDirection>(),
+    ) else {
+        return false;
+    };
+    let pose = bot.component::<azalea::entity::Pose>().ok().map(|p| *p);
+    let eye = azalea_core::position::Vec3::new(
+        pos.x,
+        pos.y + f64::from(crate::renderer::systems::pose_eye_height(pose)),
+        pos.z,
+    );
+    let (yaw, pitch) = (look.y_rot().to_radians(), look.x_rot().to_radians());
+    let dir = azalea_core::position::Vec3::new(
+        -f64::from(yaw.sin() * pitch.cos()),
+        -f64::from(pitch.sin()),
+        f64::from(yaw.cos() * pitch.cos()),
+    );
+    let reach = bot
+        .component::<azalea::entity::Attributes>()
+        .map(|a| a.block_interaction_range.calculate())
+        .unwrap_or(4.5);
+    let world = world.read();
+    let steps = (reach * 20.0) as i32;
+    for i in 0..=steps {
+        let t = f64::from(i) / 20.0;
+        let at = BlockPos::new(
+            (eye.x + dir.x * t).floor() as i32,
+            (eye.y + dir.y * t).floor() as i32,
+            (eye.z + dir.z * t).floor() as i32,
+        );
+        let Some(state) = world.get_block_state(at) else {
+            return false;
+        };
+        let fluid = azalea::block::fluid_state::FluidState::from(state);
+        if fluid.kind == azalea::block::fluid_state::FluidKind::Water
+            && fluid.amount >= 8
+            && !fluid.falling
+        {
+            return true;
+        }
+        if crate::util::block_model::is_solid(state) {
+            return false;
+        }
+    }
+    false
+}
+
 fn release_using_item(bot: &Client) {
+    #[cfg(audio)]
+    if let (Some(item), Ok(pos)) = (USE_ITEM.lock().unwrap().item, bot.position()) {
+        crate::play::use_sounds::item_released(item, [pos.x as f32, pos.y as f32, pos.z as f32]);
+    }
     bot.write_packet(ServerboundPlayerAction {
         action: Action::ReleaseUseItem,
         pos: BlockPos::new(0, 0, 0),
@@ -942,6 +1004,22 @@ fn send_use_item_on(bot: &Client, hit: &BlockHitResult, interacted: bool) {
     let Some(seq) = next_sequence(bot) else {
         return;
     };
+    #[cfg(audio)]
+    if !interacted
+        && let (Ok(world), Some(item), Ok(pos)) = (bot.world(), held_item_kind(bot), bot.position())
+    {
+        let world = world.read();
+        if let Some(state) = world.get_block_state(hit.block_pos) {
+            crate::play::use_sounds::item_used_on(
+                item,
+                state,
+                hit.block_pos,
+                hit.direction,
+                world.get_block_state(hit.block_pos + hit.direction.normal()),
+                [pos.x as f32, pos.y as f32, pos.z as f32],
+            );
+        }
+    }
     if interacted {
         #[cfg(audio)]
         if let Ok(world) = bot.world()

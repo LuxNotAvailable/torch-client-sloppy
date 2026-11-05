@@ -471,6 +471,38 @@ pub(crate) fn collect_entities(
         accepted.push((entity_ref, id, kind, pos));
     }
 
+    // What `play::entity_sounds` reads beyond the tick input.
+    #[cfg(audio)]
+    let sound_meta: HashMap<i32, (bool, i32, bool, bool, bool)> = accepted
+        .iter()
+        .filter(|(_, _, kind, _)| {
+            matches!(
+                kind,
+                EntityKind::LightningBolt
+                    | EntityKind::Blaze
+                    | EntityKind::Phantom
+                    | EntityKind::Warden
+                    | EntityKind::Breeze
+                    | EntityKind::Sniffer
+                    | EntityKind::Enderman
+            )
+        })
+        .map(|&(entity_ref, id, _, _)| {
+            let eref = &EntityView(entity_ref);
+            (
+                id,
+                (
+                    meta::<metadata::Silent>(eref).unwrap_or(false),
+                    meta::<metadata::ClientAngerLevel>(eref).unwrap_or(0),
+                    meta::<metadata::Creepy>(eref).unwrap_or(false),
+                    meta::<metadata::StaredAt>(eref).unwrap_or(false),
+                    meta::<metadata::SnifferState>(eref)
+                        == Some(azalea::entity::SnifferStateKind::Searching),
+                ),
+            )
+        })
+        .collect();
+
     let mut meta_cache_guard = meta_cache().lock().unwrap();
     let mut meta_dirty_guard = crate::client::tracking::meta_dirty().lock().unwrap();
     let meta_cache_ref = &*meta_cache_guard;
@@ -1289,6 +1321,29 @@ pub(crate) fn collect_entities(
         anim.tick_in(input, level);
     });
     drop(work);
+
+    #[cfg(audio)]
+    {
+        let ticked: Vec<crate::play::entity_sounds::Ticked> = pending
+            .iter()
+            .filter_map(|p| {
+                let &(silent, anger, creepy, stared_at, searching) = sound_meta.get(&p.id)?;
+                Some(crate::play::entity_sounds::Ticked {
+                    id: p.id,
+                    kind: p.kind,
+                    pos: p.input.pos,
+                    eye_height: p.input.eye_height,
+                    ticks: anims.get(&p.id)?.ticks(),
+                    silent,
+                    anger,
+                    creepy,
+                    stared_at,
+                    searching,
+                })
+            })
+            .collect();
+        crate::play::entity_sounds::tick(&ticked);
+    }
 
     drop(_tick_timer);
     let _snap_timer = crate::diag::timed(crate::diag::Phase::Snapshot);

@@ -2,6 +2,8 @@ pub(crate) mod boat;
 pub(crate) mod commands;
 pub(crate) mod dialog;
 pub(crate) mod entity_feed;
+#[cfg(audio)]
+pub(crate) mod entity_sounds;
 pub(crate) mod event_particles;
 pub(crate) mod flight;
 pub(crate) mod gliding;
