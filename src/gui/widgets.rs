@@ -1109,7 +1109,7 @@ const HANDLE_WIDTH: f32 = 8.0;
 
 fn draw_label(p: &mut Painter, label: &str, x: f32, y: f32, w: f32, h: f32, color: u32) {
     let spans = [Span {
-        text: label.to_string(),
+        text: crate::gui::tooltip::localize(label).into_owned(),
         style: Style::colored(color),
     }];
     draw_label_spans(p, &spans, x, y, w, h);

@@ -2269,7 +2269,8 @@ fn auto_harness(
                 .push(command);
         }
     }
-    // Frames saved every `MC_AUTO_SHOT_MS` once in the world.
+    // Frames saved every `MC_AUTO_SHOT_MS` once in the world, or on the
+    // menus too with `MC_AUTO_SHOT_MENUS` (for checking screens).
     let every = shots.0.get_or_insert_with(|| {
         let ms = crate::platform::env::var("MC_AUTO_SHOT_MS")
             .ok()
@@ -2280,7 +2281,8 @@ fn auto_harness(
         Some((ms.max(1), dir))
     });
     if let Some((ms, dir)) = every.clone()
-        && shared.0.lock().unwrap().in_world
+        && (shared.0.lock().unwrap().in_world
+            || crate::platform::env::var("MC_AUTO_SHOT_MENUS").is_ok())
     {
         let now = time.elapsed().as_millis() as u64;
         if now >= shots.1 {

@@ -167,7 +167,9 @@ const EAGLER_MODE: &str = "Eagler mode (wss:// enabled)";
 /// `SplashRenderer`: yellow, turned 20 degrees up, at the logo's right end,
 /// pulsing in size once a second and shrunk to fit long lines.
 fn draw_splash(p: &mut Painter, ctx: &ScreenCtx, splash: &str) {
-    let width = p.atlas.font.width_str(splash);
+    // Splashes may carry `§` codes ("Colormatic"); uncoloured text is yellow.
+    let spans = crate::text::parse_formatted_from(splash, crate::text::Style::colored(0xFFFF00));
+    let width = p.atlas.font.width(&spans);
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_millis() % 1000) as f32;
@@ -175,7 +177,7 @@ fn draw_splash(p: &mut Painter, ctx: &ScreenCtx, splash: &str) {
     let scale = phase * 100.0 / (width + 32.0);
     let radians = -std::f32::consts::PI / 9.0;
     p.rotated(scale, radians, ctx.vw / 2.0 + 123.0, 69.0, |p| {
-        p.text_str(splash, (-width / 2.0).trunc(), -8.0, 0xFFFF00, true);
+        p.text(&spans, (-width / 2.0).trunc(), -8.0, true);
     });
 }
 

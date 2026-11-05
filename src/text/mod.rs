@@ -573,7 +573,9 @@ impl Font {
             .sum()
     }
 
+    /// The width of `s` as the GUI draws it: localized, as `text_plain` is.
     pub fn width_str(&self, s: &str) -> f32 {
+        let s = &*crate::gui::tooltip::localize(s);
         s.chars().map(|c| self.advance(c, false)).sum()
     }
 

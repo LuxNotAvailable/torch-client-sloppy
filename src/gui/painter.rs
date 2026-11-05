@@ -1068,6 +1068,7 @@ impl<'a> Painter<'a> {
     }
 
     pub fn text_plain(&mut self, s: &str, x: f32, y: f32, argb_rgb: u32, shadow: bool) -> f32 {
+        let s = &*crate::gui::tooltip::localize(s);
         if shadow {
             self.plain_run(s, x + 1.0, y + 1.0, Style::shadow_color(argb_rgb));
         }

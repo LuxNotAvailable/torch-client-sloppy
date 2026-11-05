@@ -409,11 +409,13 @@ fn draw_hud_layers(
         }
     }
 
+    // The saved language and font, from the first frame: the title screen
+    // is drawn before any world.
+    crate::gui::more_options::apply(&state.options);
     if !in_menu {
         let focused = state.screen.chat_open();
         let placed = !focused && hud_visible && elements.shown(ElementId::Chat);
         let visible = hud_visible && (focused || placed);
-        crate::gui::more_options::apply(&state.options);
         macro_rules! draw_chat {
             ($p:expr) => {
                 chat::draw(

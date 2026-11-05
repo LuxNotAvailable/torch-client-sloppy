@@ -22,8 +22,12 @@ const RED: u32 = 0xFF5555;
 const DARK_PURPLE: u32 = 0xAA00AA;
 const WHITE: u32 = 0xFFFFFF;
 
+/// The client's own strings (`torch.*`), under vanilla's English so a
+/// resource pack or language file can still replace them.
+const TORCH_ENGLISH: &str = include_str!("lang/en_us.json");
+
 static ENGLISH: LazyLock<HashMap<String, String>> = LazyLock::new(|| {
-    let mut out = HashMap::new();
+    let mut out: HashMap<String, String> = serde_json::from_str(TORCH_ENGLISH).unwrap_or_default();
     for text in crate::platform::assets::read_stack(crate::assets_root().join("lang/en_us.json")) {
         let Ok(serde_json::Value::Object(map)) = serde_json::from_str(&text) else {
             continue;
@@ -49,6 +53,7 @@ fn lang() -> &'static HashMap<String, String> {
 
 /// Lays a language's strings over English, or goes back to English.
 pub(crate) fn set_language(strings: Option<HashMap<String, String>>) {
+    NOT_ENGLISH.store(strings.is_some(), std::sync::atomic::Ordering::Relaxed);
     *LANG_MAP.write().unwrap() = strings.map(|over| {
         let mut map = ENGLISH.clone();
         map.extend(over);
@@ -93,20 +98,118 @@ pub(crate) fn all_enchantments() -> Vec<(&'static str, i32)> {
         .collect()
 }
 
-pub(crate) fn translate_once(
-    key: &'static str,
-    cell: &'static std::sync::OnceLock<String>,
-) -> &'static str {
-    cell.get_or_init(|| translate(key, &[]))
+/// The chosen language's string for `key` (the key itself if none has
+/// it). The language tables live for the whole run, so the string does too,
+/// and a language change shows at the next frame.
+pub(crate) fn tr(key: &'static str) -> &'static str {
+    lang().get(key).map_or(key, String::as_str)
 }
 
 macro_rules! label {
-    ($key:literal) => {{
-        static CELL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-        $crate::gui::tooltip::translate_once($key, &CELL)
-    }};
+    ($key:literal) => {{ $crate::gui::tooltip::tr($key) }};
 }
 pub(crate) use label;
+
+/// Whether a language other than English is chosen.
+static NOT_ENGLISH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The translation key for each English string, for `localize`. Where
+/// several keys share a string, the menu's own wins: options, then the
+/// general GUI ones, then the rest, shortest first.
+static KEY_OF_ENGLISH: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
+    const PREFERRED: [&str; 10] = [
+        "torch.",
+        "options.",
+        "gui.",
+        "menu.",
+        "selectServer.",
+        "multiplayer.",
+        "controls.",
+        "key.",
+        "advMode.",
+        "pack.",
+    ];
+    let rank = |key: &str| {
+        let prefix = PREFERRED
+            .iter()
+            .position(|p| key.starts_with(p))
+            .unwrap_or(PREFERRED.len());
+        (prefix, key.len())
+    };
+    let mut out: HashMap<&'static str, &'static str> = HashMap::new();
+    for (key, value) in ENGLISH.iter() {
+        let entry = out.entry(value.as_str()).or_insert(key.as_str());
+        if rank(key) < rank(entry) {
+            *entry = key.as_str();
+        }
+    }
+    out
+});
+
+/// GUI text in the chosen language. The menus are written in English, so
+/// the English is the message id (as gettext's are): an exact match for a
+/// language string is swapped for the chosen language's, and `Label:
+/// value` is put back together with `options.generic_value`. Anything else,
+/// and everything in English, passes through untouched.
+pub(crate) fn localize(s: &str) -> std::borrow::Cow<'_, str> {
+    use std::borrow::Cow;
+    if !NOT_ENGLISH.load(std::sync::atomic::Ordering::Relaxed) || s.is_empty() {
+        return Cow::Borrowed(s);
+    }
+    localize_in(s, &KEY_OF_ENGLISH, lang())
+}
+
+/// `localize` against a given English-to-key map and language.
+fn localize_in<'a>(
+    s: &'a str,
+    key_of: &HashMap<&str, &str>,
+    language: &'a HashMap<String, String>,
+) -> std::borrow::Cow<'a, str> {
+    use std::borrow::Cow;
+    let whole = |text: &str| -> Option<&'a str> {
+        let key = key_of.get(text)?;
+        language.get(*key).map(String::as_str)
+    };
+    if let Some(t) = whole(s) {
+        return Cow::Borrowed(t);
+    }
+    if let Some((label, value)) = s.split_once(": ")
+        && let Some(label) = whole(label)
+        && let Some(template) = language.get("options.generic_value")
+    {
+        let value = whole(value).unwrap_or(value);
+        return Cow::Owned(template.replacen("%s", label, 1).replacen("%s", value, 1));
+    }
+    Cow::Borrowed(s)
+}
+
+#[cfg(test)]
+mod localize_tests {
+    use super::*;
+
+    #[test]
+    fn english_text_turns_into_the_chosen_language() {
+        let key_of: HashMap<&str, &str> = [
+            ("Done", "gui.done"),
+            ("FOV", "options.fov"),
+            ("ON", "options.on"),
+        ]
+        .into();
+        let german: HashMap<String, String> = [
+            ("gui.done", "Fertig"),
+            ("options.fov", "Sichtfeld"),
+            ("options.on", "AN"),
+            ("options.generic_value", "%s: %s"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_owned(), v.to_owned()))
+        .collect();
+        assert_eq!(localize_in("Done", &key_of, &german), "Fertig");
+        assert_eq!(localize_in("FOV: 70", &key_of, &german), "Sichtfeld: 70");
+        assert_eq!(localize_in("FOV: ON", &key_of, &german), "Sichtfeld: AN");
+        assert_eq!(localize_in("Player123", &key_of, &german), "Player123");
+    }
+}
 
 /// Whether the language has a string for `key`.
 pub(crate) fn has_translation(key: &str) -> bool {

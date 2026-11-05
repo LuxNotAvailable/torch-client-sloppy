@@ -291,6 +291,12 @@ const ALL: &[Var] = &[
         enabled: true,
     },
     Var {
+        name: "MC_AUTO_SHOT_MENUS",
+        what: "let MC_AUTO_SHOT_MS also save frames on the title and other menus, to check screens",
+        default: "off",
+        enabled: true,
+    },
+    Var {
         name: "MC_AUTO_SHOT_DIR",
         what: "where MC_AUTO_SHOT_MS saves its numbered frames",
         default: "auto-shots",
