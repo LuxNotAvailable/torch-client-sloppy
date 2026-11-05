@@ -15,11 +15,29 @@ use parking_lot::RwLock;
 use super::{BLOCK_SHAPE, Shapes};
 use crate::collision::{Aabb, BlockWithShape, VoxelShape, box_shape};
 
+// Vanilla's `ScaffoldingBlock` shapes: the stable one is the top 2 pixels
+// and four 2×2 corner posts; the unstable bottom is a 2 pixel floor.
+static SCAFFOLDING_STABLE_SHAPE: LazyLock<VoxelShape> = LazyLock::new(|| {
+    let top = box_shape(0.0, 0.875, 0.0, 1.0, 1.0, 1.0);
+    [(0.0, 0.0), (0.875, 0.0), (0.0, 0.875), (0.875, 0.875)]
+        .into_iter()
+        .fold(top, |shape, (x, z)| {
+            Shapes::or(shape, box_shape(x, 0.0, z, x + 0.125, 1.0, z + 0.125))
+        })
+});
+static SCAFFOLDING_UNSTABLE_BOTTOM_SHAPE: LazyLock<VoxelShape> =
+    LazyLock::new(|| box_shape(0.0, 0.0, 0.0, 1.0, 0.125, 1.0));
+
 static POWDER_SNOW_FALLING_SHAPE: LazyLock<VoxelShape> =
     LazyLock::new(|| box_shape(0.0, 0.0, 0.0, 1.0, 0.8999999761581421, 1.0));
 
+/// The moving entity's collision context for the blocks whose shape depends
+/// on it: powder snow and scaffolding (vanilla's `EntityCollisionContext`).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PowderSnowCollision {
+    /// Whether an entity is moving at all. Without one, vanilla's
+    /// `CollisionContext.empty()` answers `isAbove` with its default, true.
+    pub entity: bool,
     pub walkable: bool,
     pub descending: bool,
     pub entity_bottom: f64,
@@ -42,6 +60,23 @@ impl PowderSnowCollision {
             return Some(&BLOCK_SHAPE);
         }
         None
+    }
+
+    /// Vanilla's `ScaffoldingBlock.getCollisionShape`: solid on top for an
+    /// entity above it that isn't sneaking down, else only an unstable bottom
+    /// floor for an entity standing on it, else nothing.
+    fn scaffolding_shape(&self, state: BlockState, pos: BlockPos) -> Option<&'static VoxelShape> {
+        use azalea_block::properties::{Bottom, ScaffoldingDistance};
+        let is_above = |top: f64| {
+            !self.entity || self.entity_bottom > f64::from(pos.y) + top - 9.999999747378752e-6
+        };
+        if is_above(1.0) && !self.descending {
+            return Some(&SCAFFOLDING_STABLE_SHAPE);
+        }
+        let bottom = state.property::<Bottom>().unwrap_or(false);
+        let distance = state.property::<ScaffoldingDistance>();
+        (distance.is_some_and(|d| d != ScaffoldingDistance::_0) && bottom && is_above(0.0))
+            .then(|| &*SCAFFOLDING_UNSTABLE_BOTTOM_SHAPE)
     }
 }
 
@@ -140,6 +175,16 @@ impl<'a> BlockCollisionsState<'a> {
 
         if self.powder_snow.collides() && BlockKind::from(block_state) == BlockKind::PowderSnow {
             if let Some(shape) = self.powder_snow.shape(item.pos) {
+                let shape = shape.move_relative(item.pos.to_vec3_floored());
+                if Shapes::matches_anywhere(&shape, &self.entity_shape, |a, b| a && b) {
+                    block_collisions.push(shape);
+                }
+            }
+            return;
+        }
+
+        if BlockKind::from(block_state) == BlockKind::Scaffolding {
+            if let Some(shape) = self.powder_snow.scaffolding_shape(block_state, item.pos) {
                 let shape = shape.move_relative(item.pos.to_vec3_floored());
                 if Shapes::matches_anywhere(&shape, &self.entity_shape, |a, b| a && b) {
                     block_collisions.push(shape);
@@ -328,5 +373,34 @@ pub fn for_entities_in_chunks_colliding_with(
                 consumer(chunk_pos, entities);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod scaffolding_tests {
+    use super::*;
+
+    #[test]
+    fn scaffolding_is_solid_only_from_above_and_not_when_sneaking() {
+        let state = BlockState::from(BlockKind::Scaffolding);
+        let pos = BlockPos::new(0, 10, 0);
+        let on_top = PowderSnowCollision {
+            entity: true,
+            entity_bottom: 11.0,
+            ..Default::default()
+        };
+        assert!(on_top.scaffolding_shape(state, pos).is_some());
+        let sneaking = PowderSnowCollision {
+            descending: true,
+            ..on_top
+        };
+        assert!(sneaking.scaffolding_shape(state, pos).is_none());
+        let inside = PowderSnowCollision {
+            entity_bottom: 10.5,
+            ..on_top
+        };
+        assert!(inside.scaffolding_shape(state, pos).is_none());
+        // With no entity it's solid, as vanilla's empty context answers.
+        assert!(PowderSnowCollision::default().scaffolding_shape(state, pos).is_some());
     }
 }

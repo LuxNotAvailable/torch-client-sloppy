@@ -87,6 +87,32 @@ pub fn predict(
 
     let clicked_state = block_at(hit.block_pos)?;
 
+    if block == BlockKind::Scaffolding && clicked_state.as_block_kind() == BlockKind::Scaffolding {
+        let (pos, face) = scaffolding_extension(hit, yaw, secondary_use, &block_at)?;
+        if pos.y < min_y || pos.y >= min_y + height as i32 {
+            return None;
+        }
+        let hit = BlockHitResult {
+            block_pos: pos,
+            direction: face,
+            ..hit.clone()
+        };
+        let replaced_state = block_at(pos)?;
+        let state = state_for_placement(
+            block,
+            Attachment::None,
+            &hit,
+            yaw,
+            pitch,
+            replaced_state,
+            pos,
+            true,
+            secondary_use,
+            &block_at,
+        )?;
+        return Some((pos, state));
+    }
+
     let (pos, replacing_clicked) = if replaceable(clicked_state, block)? {
         (hit.block_pos, true)
     } else {
@@ -130,6 +156,11 @@ pub fn predict(
 }
 
 pub fn is_unobstructed(state: BlockState, pos: BlockPos, entities: &[Aabb]) -> bool {
+    // Scaffolding has no shape in a placement context, so it goes where
+    // entities stand.
+    if state.as_block_kind() == BlockKind::Scaffolding {
+        return true;
+    }
     let offset = pos.to_vec3_floored();
     state.collision_shape(pos).to_aabbs().iter().all(|part| {
         let part = part.move_relative(offset);
@@ -468,6 +499,44 @@ fn scaffolding_placement(
     let _ = placed.set_property("bottom", bool_str(bottom));
     let _ = placed.set_property("waterlogged", bool_str(is_water(replaced_state)));
     Some(placed.as_block_state())
+}
+
+/// Vanilla's `ScaffoldingBlockItem.updatePlacementContext` for scaffolding
+/// clicked with scaffolding: up the column (or, clicking its top, the way
+/// the player faces), or along the clicked face while sneaking, to the first
+/// replaceable block within 7 horizontal steps.
+fn scaffolding_extension(
+    hit: &BlockHitResult,
+    yaw: f32,
+    secondary_use: bool,
+    block_at: &dyn Fn(BlockPos) -> Option<BlockState>,
+) -> Option<(BlockPos, Direction)> {
+    let direction = if secondary_use {
+        if hit.inside {
+            hit.direction.opposite()
+        } else {
+            hit.direction
+        }
+    } else if hit.direction == Direction::Up {
+        player_facing(yaw)
+    } else {
+        Direction::Up
+    };
+    let mut pos = hit.block_pos + direction.normal();
+    let mut horizontal = 0;
+    while horizontal < 7 {
+        let state = block_at(pos)?;
+        if state.as_block_kind() != BlockKind::Scaffolding {
+            return REPLACEABLE
+                .contains(&state.as_block_kind())
+                .then_some((pos, direction));
+        }
+        pos = pos + direction.normal();
+        if direction != Direction::Up && direction != Direction::Down {
+            horizontal += 1;
+        }
+    }
+    None
 }
 
 fn scaffolding_distance(pos: BlockPos, block_at: &dyn Fn(BlockPos) -> Option<BlockState>) -> u32 {
@@ -1356,6 +1425,20 @@ mod tests {
         .expect("scaffolding on stone is predictable");
         assert_eq!(property(state, "distance"), Some("0"));
         assert_eq!(property(state, "bottom"), Some("false"));
+    }
+
+    #[test]
+    fn scaffolding_clicked_with_scaffolding_extends_it() {
+        // A side click climbs the column; a top click runs the way the
+        // player faces (yaw 0 is south).
+        for (face, placed) in [
+            (Direction::North, TARGET + Direction::Up.normal()),
+            (Direction::Up, TARGET + Direction::South.normal()),
+        ] {
+            let (pos, _) = place(ItemKind::Scaffolding, face, 0.5, 0., BlockKind::Scaffolding)
+                .expect("extending scaffolding is predictable");
+            assert_eq!(pos, placed, "clicked {face:?}");
+        }
     }
 
     #[test]

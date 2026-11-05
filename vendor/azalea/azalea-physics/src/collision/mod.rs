@@ -49,6 +49,7 @@ pub enum MoverType {
 impl MoveCtx<'_, '_, '_, '_> {
     fn powder_snow(&self) -> PowderSnowCollision {
         PowderSnowCollision {
+            entity: true,
             walkable: self.powder_snow_walkable,
             descending: self.physics_state.is_some_and(|state| state.trying_to_crouch),
             entity_bottom: self.position.y,

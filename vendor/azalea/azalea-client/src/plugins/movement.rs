@@ -618,6 +618,12 @@ fn can_player_fit_within_blocks_and_entities_when(ctx: &CanPlayerFitCtx, pose: P
             .make_bounding_box(*ctx.position)
             .deflate_all(1.0e-7),
         false,
-        PowderSnowCollision::default(),
+        // Vanilla fits the pose with the player's own context, so standing
+        // inside scaffolding fits.
+        PowderSnowCollision {
+            entity: true,
+            entity_bottom: ctx.position.y,
+            ..Default::default()
+        },
     )
 }
