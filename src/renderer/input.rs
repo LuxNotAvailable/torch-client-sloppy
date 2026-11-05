@@ -303,6 +303,15 @@ pub(super) fn apply_gui_nav(
     enter_screen(next, &mut state, &shared, &mut windows);
 }
 
+/// Minecraft's yaw and pitch from `from` towards `to`, as `Entity.lookAt`.
+fn look_at_angles(from: [f64; 3], to: [f64; 3]) -> (f32, f32) {
+    let (dx, dy, dz) = (to[0] - from[0], to[1] - from[1], to[2] - from[2]);
+    let horizontal = (dx * dx + dz * dz).sqrt();
+    let pitch = -(dy.atan2(horizontal).to_degrees());
+    let yaw = dz.atan2(dx).to_degrees() - 90.0;
+    (yaw as f32, pitch as f32)
+}
+
 pub(super) fn mouse_look(
     motion: Res<AccumulatedMouseMotion>,
     mut angles: ResMut<CameraAngles>,
@@ -331,6 +340,36 @@ pub(super) fn mouse_look(
             -pitch
         }
         .clamp(-89.0, 89.0);
+        if let Ok(mut t) = camera.single_mut() {
+            t.rotation = angles.rotation();
+        }
+        let mut s = shared.0.lock().unwrap();
+        s.camera_yaw = angles.yaw;
+        s.camera_pitch = angles.pitch;
+    }
+    // A look-at (`LocalPlayer.lookAt`): aimed from the player's feet or eyes
+    // at the point.
+    let look_at = {
+        let mut s = shared.0.lock().unwrap();
+        s.session.look_at.take().map(|target| {
+            let eye = if target.1 {
+                f64::from(super::systems::session_eye_height(&s.session))
+            } else {
+                0.0
+            };
+            let p = s.session.player_pos;
+            (
+                target.0,
+                [f64::from(p[0]), f64::from(p[1]) + eye, f64::from(p[2])],
+            )
+        })
+    };
+    if let Some((target, from)) = look_at
+        && !freecam.active
+    {
+        let (yaw, pitch) = look_at_angles(from, target);
+        angles.yaw = -yaw - 180.0;
+        angles.pitch = (-pitch).clamp(-89.0, 89.0);
         if let Ok(mut t) = camera.single_mut() {
             t.rotation = angles.rotation();
         }
@@ -1523,7 +1562,18 @@ pub(super) fn handle_keybinds(
 
 #[cfg(test)]
 mod tests {
-    use super::{BoatTurn, ZoomState};
+    use super::{BoatTurn, ZoomState, look_at_angles};
+
+    #[test]
+    fn a_look_at_faces_the_point_as_vanilla() {
+        // North (-z): yaw 180 (or -180); east (+x): -90; straight up: pitch -90.
+        let (yaw, pitch) = look_at_angles([0.0; 3], [0.0, 0.0, -5.0]);
+        assert!((yaw.rem_euclid(360.0) - 180.0).abs() < 1e-3 && pitch.abs() < 1e-3);
+        let (yaw, _) = look_at_angles([0.0; 3], [5.0, 0.0, 0.0]);
+        assert!((yaw + 90.0).abs() < 1e-3);
+        let (_, pitch) = look_at_angles([0.0; 3], [0.0, 5.0, 0.0]);
+        assert!((pitch + 90.0).abs() < 1e-3);
+    }
 
     #[test]
     fn the_wheel_zooms_within_limits() {

@@ -286,6 +286,10 @@ pub struct SessionState {
     /// as `LocalPlayer.absSnapRotationTo`): Minecraft yaw and pitch, and
     /// whether each adds to the current one.
     pub teleport_look: Option<(f32, f32, bool, bool)>,
+    /// A point the server turned the view to (`ClientboundPlayerLookAt`,
+    /// as `/tp ... facing` sends), and whether it's aimed from the eyes
+    /// (else the feet). Taken after `teleport_look`.
+    pub look_at: Option<([f64; 3], bool)>,
     /// The yaw of the boat this player steers, which the camera keeps the
     /// look within 105° of (`AbstractBoat.clampRotation`).
     pub steered_boat_yaw: Option<f32>,

@@ -73,6 +73,18 @@ pub(crate) fn handle_packet(
             p.relative.x_rot,
         ));
     }
+    // `/tp ... facing` turns the view with a look-at, apart from the
+    // position (whose own rotation is then a relative zero); `/rotate` with
+    // a rotation packet.
+    if let ClientboundGamePacket::PlayerLookAt(p) = packet {
+        use azalea_protocol::packets::game::c_player_look_at::Anchor;
+        shared.lock().unwrap().session.look_at =
+            Some(([p.pos.x, p.pos.y, p.pos.z], p.from_anchor == Anchor::Eyes));
+    }
+    if let ClientboundGamePacket::PlayerRotation(p) = packet {
+        shared.lock().unwrap().session.teleport_look =
+            Some((p.y_rot, p.x_rot, p.relative_y, p.relative_x));
+    }
     if let ClientboundGamePacket::PlayerPosition(p) = packet
         && !p.relative.x
         && !p.relative.z
