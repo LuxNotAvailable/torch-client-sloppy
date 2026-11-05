@@ -32,6 +32,7 @@ import net.minecraft.world.level.block.state.BlockState;
  *   item  <id> <rarity> <maxStackSize> <maxDamage>
  *   tab   <id> <TOP|BOTTOM> <column> <title key> <icon id> <item id>...
  *   sound <id> <volume> <pitch> <break> <step> <place> <hit> <fall>
+ *   use   <id> <door|trapdoor|fence_gate|button> <byHand> <open/on event> <close/off event>
  *
  * Run it with the server jar and its libraries on the classpath.
  */
@@ -58,6 +59,33 @@ public class DumpGameData {
                 out.append(' ').append(event.location().getPath());
             }
             out.append('\n');
+        }
+
+        for (Block block : BuiltInRegistries.BLOCK) {
+            String kind = block instanceof net.minecraft.world.level.block.DoorBlock ? "door"
+                : block instanceof net.minecraft.world.level.block.TrapDoorBlock ? "trapdoor"
+                : block instanceof net.minecraft.world.level.block.FenceGateBlock ? "fence_gate"
+                : block instanceof net.minecraft.world.level.block.ButtonBlock ? "button" : null;
+            if (kind == null) {
+                continue;
+            }
+            Object type = typeField(block);
+            boolean byHand = true;
+            net.minecraft.sounds.SoundEvent on, off;
+            if (type instanceof net.minecraft.world.level.block.state.properties.BlockSetType set) {
+                byHand = set.canOpenByHand();
+                on = switch (kind) { case "door" -> set.doorOpen(); case "trapdoor" -> set.trapdoorOpen(); default -> set.buttonClickOn(); };
+                off = switch (kind) { case "door" -> set.doorClose(); case "trapdoor" -> set.trapdoorClose(); default -> set.buttonClickOff(); };
+            } else if (type instanceof net.minecraft.world.level.block.state.properties.WoodType wood) {
+                on = wood.fenceGateOpen();
+                off = wood.fenceGateClose();
+            } else {
+                throw new IllegalStateException("no set type on " + block);
+            }
+            out.append("use ").append(BuiltInRegistries.BLOCK.getKey(block).getPath())
+                .append(' ').append(kind).append(' ').append(byHand)
+                .append(' ').append(on.location().getPath())
+                .append(' ').append(off.location().getPath()).append('\n');
         }
 
         for (Item item : BuiltInRegistries.ITEM) {
@@ -117,5 +145,20 @@ public class DumpGameData {
                 )
             )
             .get();
+    }
+
+    /** The block's private BlockSetType or WoodType field. */
+    private static Object typeField(Block block) throws IllegalAccessException {
+        for (Class<?> c = block.getClass(); c != null; c = c.getSuperclass()) {
+            for (var field : c.getDeclaredFields()) {
+                Class<?> t = field.getType();
+                if (t == net.minecraft.world.level.block.state.properties.BlockSetType.class
+                    || t == net.minecraft.world.level.block.state.properties.WoodType.class) {
+                    field.setAccessible(true);
+                    return field.get(block);
+                }
+            }
+        }
+        return null;
     }
 }

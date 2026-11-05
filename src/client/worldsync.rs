@@ -12,41 +12,6 @@ use crate::client::worker::JobScope;
 use crate::session::SharedMutex;
 use crate::{CHUNK_Q, SHARED, blockentities, lighting};
 
-/// Where this player last tried to place, and when: a block appearing there
-/// soon after is theirs, whose place sound the server leaves to this client
-/// (`BlockItem.place` plays it for everyone but the placer).
-#[cfg(audio)]
-static LOCAL_PLACES: Mutex<Vec<(AzBlockPos, crate::platform::time::Instant)>> =
-    Mutex::new(Vec::new());
-
-#[cfg(audio)]
-const LOCAL_PLACE_WINDOW: std::time::Duration = std::time::Duration::from_millis(600);
-
-/// A placement this player just sent, at either cell it could fill.
-#[cfg(audio)]
-pub(crate) fn note_local_place(cells: [AzBlockPos; 2]) {
-    let now = crate::platform::time::Instant::now();
-    if let Ok(mut places) = LOCAL_PLACES.lock() {
-        places.retain(|(_, at)| now.duration_since(*at) < LOCAL_PLACE_WINDOW);
-        places.extend(cells.map(|cell| (cell, now)));
-    }
-}
-
-#[cfg(audio)]
-fn placed_locally(pos: AzBlockPos) -> bool {
-    let now = crate::platform::time::Instant::now();
-    LOCAL_PLACES.lock().is_ok_and(|mut places| {
-        places.retain(|(_, at)| now.duration_since(*at) < LOCAL_PLACE_WINDOW);
-        match places.iter().position(|(cell, _)| *cell == pos) {
-            Some(i) => {
-                places.swap_remove(i);
-                true
-            }
-            None => false,
-        }
-    })
-}
-
 pub(crate) fn install_block_change_hook() {
     let hook_installed =
         azalea_world::block_change::set_block_change_hook(Box::new(|pos, old, new| {
@@ -68,33 +33,6 @@ pub(crate) fn install_block_change_hook() {
                     }
                 }
                 send_light(lighting::LightJob::Block { world, pos });
-            }
-
-            #[cfg(audio)]
-            {
-                let at = [pos.x as f32 + 0.5, pos.y as f32 + 0.5, pos.z as f32 + 0.5];
-                if crate::audio::audible_at(at) {
-                    use crate::util::block_model::block_id;
-                    let name = |state| crate::util::block_model::sound_group(block_id(state));
-                    let is_fluid =
-                        |state| matches!(block_id(state), "water" | "lava" | "bubble_column");
-                    let group =
-                        if old.is_air() && !new.is_air() && !is_fluid(new) && placed_locally(pos) {
-                            Some(name(new))
-                        } else {
-                            None
-                        };
-                    // `BlockItem.place`: (volume + 1) / 2, pitch × 0.8.
-                    if let Some(group) = group {
-                        crate::audio::play_at(
-                            group.place_event,
-                            crate::audio::SoundCategory::Blocks,
-                            at,
-                            (group.volume + 1.0) / 2.0,
-                            group.pitch * 0.8,
-                        );
-                    }
-                }
             }
 
             if !old.is_air()

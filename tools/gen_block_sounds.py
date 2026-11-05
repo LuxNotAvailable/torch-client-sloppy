@@ -6,14 +6,17 @@ Reads the `sound` lines `tools/DumpGameData.java` prints (see
 
     python3 tools/gen_block_sounds.py game.txt > src/generated_block_sounds.rs
 
-Each line is `sound <block> <volume> <pitch> <break> <step> <place> <hit>
-<fall>`: the default state's `SoundType`. Identical sound types are emitted
-once and blocks map to them.
+Each `sound <block> <volume> <pitch> <break> <step> <place> <hit> <fall>`
+line is the default state's `SoundType`; identical sound types are emitted
+once and blocks map to them. Each `use <block> <kind> <byHand> <on> <off>`
+line is a door, trapdoor, fence gate or button's open and close (or press
+and release) sounds from its `BlockSetType` or `WoodType`.
 """
 
 import re
 import sys
 
+USE = re.compile(r"use ([a-z0-9_]+) (door|trapdoor|fence_gate|button) (true|false) ([a-z0-9_./]+) ([a-z0-9_./]+)\s*$")
 LINE = re.compile(r"sound ([a-z0-9_]+) ([0-9.]+) ([0-9.]+) ((?:[a-z0-9_./]+ ?){5})\s*$")
 
 
@@ -24,9 +27,13 @@ def ident(events):
 
 
 def main():
-    types, blocks = {}, []
+    types, blocks, uses = {}, [], []
     with open(sys.argv[1], encoding="utf-8") as dump:
         for line in dump:
+            u = USE.search(line)
+            if u:
+                uses.append(u.groups())
+                continue
             m = LINE.search(line)
             if not m:
                 continue
@@ -68,6 +75,21 @@ def main():
         w("        " + "\n        | ".join(f'"{b}"' for b in sorted(members)))
         w(f" => &{name},\n")
     w(f"        _ => &{default},\n    }}\n}}\n")
+
+    w("\n/// What a hand-used door, trapdoor, fence gate or button sounds like.\n")
+    w("#[derive(Clone, Copy, Debug, PartialEq, Eq)]\npub enum UseKind {\n")
+    w("    Door,\n    Trapdoor,\n    FenceGate,\n    Button,\n}\n\n")
+    w("pub struct UseSounds {\n    pub kind: UseKind,\n")
+    w("    /// `BlockSetType.canOpenByHand`: iron doors and trapdoors can't.\n")
+    w("    pub by_hand: bool,\n    /// Opening, or pressing.\n    pub on: &'static str,\n")
+    w("    /// Closing, or releasing.\n    pub off: &'static str,\n}\n\n")
+    w("/// The block's use sounds, if it's a door, trapdoor, fence gate or button.\n")
+    w("pub fn use_sounds(id: &str) -> Option<UseSounds> {\n    let (kind, by_hand, on, off) = match id {\n")
+    kinds = {"door": "Door", "trapdoor": "Trapdoor", "fence_gate": "FenceGate", "button": "Button"}
+    for block, kind, by_hand, on, off in sorted(uses):
+        w(f'        "{block}" => (UseKind::{kinds[kind]}, {by_hand}, "{on}", "{off}"),\n')
+    w("        _ => return None,\n    };\n")
+    w("    Some(UseSounds {\n        kind,\n        by_hand,\n        on,\n        off,\n    })\n}\n")
 
 
 if __name__ == "__main__":

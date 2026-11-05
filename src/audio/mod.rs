@@ -437,6 +437,11 @@ pub fn random_below(bound: u32) -> u32 {
     (roll_seed() as u64 % u64::from(bound.max(1))) as u32
 }
 
+/// A float in [0, 1), for a sound's random pitch.
+pub fn random_unit() -> f32 {
+    uniform()
+}
+
 fn uniform() -> f32 {
     (roll_seed() as u64 >> 40) as f32 / (1u64 << 24) as f32
 }

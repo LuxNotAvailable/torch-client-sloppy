@@ -2,19 +2,29 @@
 """Surveys which sounds the client plays against what vanilla's client plays.
 
 Most sounds reach the client as `ClientboundSound*` packets and play through
-one generic path. The rest vanilla's client plays itself: its own footsteps,
-block hits, the UI, ambience, music, level events and so on. This lists, for
-each vanilla source file that plays sounds on the client, the sound events it
-names that nothing in `src/` mentions, and every sound id written in `src/`
-that the sound index doesn't define (a typo or a renamed event).
+one generic path. The rest the client must play itself:
+
+- code under net/minecraft/client/ (UI, ambience, music, sound instances);
+- `playLocalSound` calls, which only ever play on the client (block
+  `animateTick`s, level events);
+- `playSound(player, ...)` calls in shared code: the server sends the sound to
+  everyone but `player`, so the acting player's own client plays it when it
+  runs the same code (placing, using doors and trapdoors, item use);
+- `player.playSound(...)` / `entity.playSound(...)`, which play locally for
+  the local player.
+
+For each call site the tool collects the `SoundEvents` it names, and lists
+those nothing in `src/` mentions. Sites that pick their sound at run time
+(`getPlaceSound()`, a variable) are listed as dynamic for a manual look.
+It also lists every sound id written in `src/` that the sound index doesn't
+define.
 
 Usage:
     tools/sound_survey.py [--all] [SOUNDS_JSON]
 
 SOUNDS_JSON defaults to the newest installed index (see check_subtitles.py).
-Vanilla source is the newest reference/minecraft-*/ decompile. A file counts
-as client-played if it lives under net/minecraft/client/ or calls
-playLocalSound; --all lists every file that names a sound event.
+Vanilla source is the newest reference/minecraft-*/ decompile. --all also
+lists covered call sites.
 """
 
 import json
@@ -32,6 +42,16 @@ REFERENCE = re.compile(r"SoundEvents\.(\w+)")
 LITERAL = re.compile(r'"(?:minecraft:)?([a-z0-9_]+(?:\.[a-z0-9_]+)+)"')
 SOUNDISH = ("ambient.", "block.", "entity.", "item.", "music.", "music_disc.",
             "ui.", "weather.", "event.", "enchant.", "particle.", "intentionally_empty")
+CALL = re.compile(r"(\b[\w.()]+?)?\.?\b(playSound|playLocalSound|playPlayerSound)\s*\(")
+# First arguments that name the acting entity: the call plays for it alone.
+ACTOR = re.compile(r"^\s*(player|context\.getPlayer\(\)|useContext\.getPlayer\(\)|"
+                   r"ctx\.getPlayer\(\)|user|livingEntity|owner|holder)\s*$")
+# Where an actor or `entity.playSound` can be the local player: item and block
+# use, and the player and living-entity code it runs through.
+PLAYER_CODE = ("net/minecraft/world/item/", "net/minecraft/world/level/block/",
+               "net/minecraft/world/entity/player/", "net/minecraft/world/entity/LivingEntity.java",
+               "net/minecraft/world/entity/Entity.java", "net/minecraft/world/entity/vehicle/",
+               "net/minecraft/world/entity/projectile/", "net/minecraft/world/inventory/")
 
 
 def looks_like_other_key(s: str) -> bool:
@@ -46,6 +66,53 @@ def newest_reference() -> Path:
     if not found:
         sys.exit("no reference decompile")
     return found[-1]
+
+
+def call_args(text: str, open_at: int) -> str:
+    """The argument text of the call whose `(` is at `open_at`."""
+    depth = 0
+    for i in range(open_at, len(text)):
+        c = text[i]
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return text[open_at + 1:i]
+    return text[open_at + 1:]
+
+
+def first_arg(args: str) -> str:
+    depth = 0
+    for i, c in enumerate(args):
+        if c in "([":
+            depth += 1
+        elif c in ")]":
+            depth -= 1
+        elif c == "," and depth == 0:
+            return args[:i]
+    return args
+
+
+def client_heard(rel: str, receiver: str, method: str, args: str) -> str | None:
+    """Why the client plays this call itself, or None if the server's packet
+    covers it."""
+    if rel.startswith("net/minecraft/client/"):
+        return "client"
+    if method == "playLocalSound":
+        return "local"
+    if method == "playPlayerSound":
+        return "actor"
+    if method == "playSound" and rel.startswith(PLAYER_CODE):
+        if receiver and receiver not in ("level", "this.level()", "level()", "serverLevel",
+                                         "this.level", "world", "clientLevel"):
+            # entity.playSound(...): Entity.playSound plays on whichever side
+            # runs it, so the local player's own runs are client-heard.
+            return "entity"
+        first = first_arg(args)
+        if ACTOR.match(first):
+            return "actor"
+    return None
 
 
 def main() -> int:
@@ -74,23 +141,50 @@ def main() -> int:
     if not unknown:
         print("(none)")
 
-    print("\n## Vanilla client sounds nothing in src/ mentions\n")
-    missing_total = 0
+    missing, dynamic, covered = [], [], 0
     for path in sorted((ref / "net/minecraft").rglob("*.java")):
         text = path.read_text(encoding="utf-8", errors="replace")
         rel = path.relative_to(ref).as_posix()
-        client = rel.startswith("net/minecraft/client/") or "playLocalSound" in text
-        if not (client or every):
-            continue
-        named = {events[n] for n in REFERENCE.findall(text) if n in events}
-        missing = sorted(s for s in named if s not in ours)
-        if missing:
-            missing_total += len(missing)
-            print(f"### {rel}\n")
-            for sound in missing:
-                print(f"- `{sound}`")
-            print()
-    print(f"{missing_total} missing across the files listed; {len(unknown)} unknown ids")
+        whole_file = rel.startswith("net/minecraft/client/")
+        sites = []
+        for m in CALL.finditer(text):
+            receiver = (m.group(1) or "").rstrip(".")
+            call_text = call_args(text, m.end() - 1)
+            why = client_heard(rel, receiver, m.group(2), call_text)
+            if why:
+                sites.append((text.count("\n", 0, m.start()) + 1, why, call_text))
+        if whole_file:
+            # Client code also picks sounds outside the call (sound instances).
+            named = {events[n] for n in REFERENCE.findall(text) if n in events}
+            sites.append((0, "client", " ".join(f"SoundEvents.{n}" for n in REFERENCE.findall(text))))
+        for line, why, call_text in sites:
+            named = sorted({events[n] for n in REFERENCE.findall(call_text) if n in events})
+            if not named and line:
+                dynamic.append((rel, line, why, " ".join(call_text.split())[:90]))
+                continue
+            gaps = [s for s in named if s not in ours]
+            if gaps:
+                missing.append((rel, line, why, gaps))
+            elif named:
+                covered += 1
+                if every:
+                    missing.append((rel, line, why + ", covered", named))
+
+    print("\n## Client-heard sounds nothing in src/ mentions\n")
+    print("Kinds: client = client code, local = playLocalSound, actor = playSound for the")
+    print("acting player, entity = Entity.playSound run by the local player.\n")
+    total = 0
+    for rel, line, why, gaps in missing:
+        total += len(gaps)
+        where = f"{rel.removeprefix('net/minecraft/')}" + (f":{line}" if line else "")
+        print(f"- {where} ({why}): " + ", ".join(f"`{g}`" for g in gaps))
+
+    print("\n## Dynamic sites (the sound is chosen at run time; check by hand)\n")
+    for rel, line, why, call_text in dynamic:
+        print(f"- {rel.removeprefix('net/minecraft/')}:{line} ({why}): `{call_text}`")
+
+    print(f"\n{total} missing events at {len(missing)} sites; {covered} covered sites; "
+          f"{len(dynamic)} dynamic sites; {len(unknown)} unknown ids")
     return 0
 
 

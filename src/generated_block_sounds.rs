@@ -1982,3 +1982,467 @@ pub fn sound_group(id: &str) -> &'static SoundGroup {
         _ => &STONE,
     }
 }
+
+/// What a hand-used door, trapdoor, fence gate or button sounds like.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UseKind {
+    Door,
+    Trapdoor,
+    FenceGate,
+    Button,
+}
+
+pub struct UseSounds {
+    pub kind: UseKind,
+    /// `BlockSetType.canOpenByHand`: iron doors and trapdoors can't.
+    pub by_hand: bool,
+    /// Opening, or pressing.
+    pub on: &'static str,
+    /// Closing, or releasing.
+    pub off: &'static str,
+}
+
+/// The block's use sounds, if it's a door, trapdoor, fence gate or button.
+pub fn use_sounds(id: &str) -> Option<UseSounds> {
+    let (kind, by_hand, on, off) = match id {
+        "acacia_button" => (
+            UseKind::Button,
+            true,
+            "block.wooden_button.click_on",
+            "block.wooden_button.click_off",
+        ),
+        "acacia_door" => (
+            UseKind::Door,
+            true,
+            "block.wooden_door.open",
+            "block.wooden_door.close",
+        ),
+        "acacia_fence_gate" => (
+            UseKind::FenceGate,
+            true,
+            "block.fence_gate.open",
+            "block.fence_gate.close",
+        ),
+        "acacia_trapdoor" => (
+            UseKind::Trapdoor,
+            true,
+            "block.wooden_trapdoor.open",
+            "block.wooden_trapdoor.close",
+        ),
+        "bamboo_button" => (
+            UseKind::Button,
+            true,
+            "block.bamboo_wood_button.click_on",
+            "block.bamboo_wood_button.click_off",
+        ),
+        "bamboo_door" => (
+            UseKind::Door,
+            true,
+            "block.bamboo_wood_door.open",
+            "block.bamboo_wood_door.close",
+        ),
+        "bamboo_fence_gate" => (
+            UseKind::FenceGate,
+            true,
+            "block.bamboo_wood_fence_gate.open",
+            "block.bamboo_wood_fence_gate.close",
+        ),
+        "bamboo_trapdoor" => (
+            UseKind::Trapdoor,
+            true,
+            "block.bamboo_wood_trapdoor.open",
+            "block.bamboo_wood_trapdoor.close",
+        ),
+        "birch_button" => (
+            UseKind::Button,
+            true,
+            "block.wooden_button.click_on",
+            "block.wooden_button.click_off",
+        ),
+        "birch_door" => (
+            UseKind::Door,
+            true,
+            "block.wooden_door.open",
+            "block.wooden_door.close",
+        ),
+        "birch_fence_gate" => (
+            UseKind::FenceGate,
+            true,
+            "block.fence_gate.open",
+            "block.fence_gate.close",
+        ),
+        "birch_trapdoor" => (
+            UseKind::Trapdoor,
+            true,
+            "block.wooden_trapdoor.open",
+            "block.wooden_trapdoor.close",
+        ),
+        "cherry_button" => (
+            UseKind::Button,
+            true,
+            "block.cherry_wood_button.click_on",
+            "block.cherry_wood_button.click_off",
+        ),
+        "cherry_door" => (
+            UseKind::Door,
+            true,
+            "block.cherry_wood_door.open",
+            "block.cherry_wood_door.close",
+        ),
+        "cherry_fence_gate" => (
+            UseKind::FenceGate,
+            true,
+            "block.cherry_wood_fence_gate.open",
+            "block.cherry_wood_fence_gate.close",
+        ),
+        "cherry_trapdoor" => (
+            UseKind::Trapdoor,
+            true,
+            "block.cherry_wood_trapdoor.open",
+            "block.cherry_wood_trapdoor.close",
+        ),
+        "copper_door" => (
+            UseKind::Door,
+            true,
+            "block.copper_door.open",
+            "block.copper_door.close",
+        ),
+        "copper_trapdoor" => (
+            UseKind::Trapdoor,
+            true,
+            "block.copper_trapdoor.open",
+            "block.copper_trapdoor.close",
+        ),
+        "crimson_button" => (
+            UseKind::Button,
+            true,
+            "block.nether_wood_button.click_on",
+            "block.nether_wood_button.click_off",
+        ),
+        "crimson_door" => (
+            UseKind::Door,
+            true,
+            "block.nether_wood_door.open",
+            "block.nether_wood_door.close",
+        ),
+        "crimson_fence_gate" => (
+            UseKind::FenceGate,
+            true,
+            "block.nether_wood_fence_gate.open",
+            "block.nether_wood_fence_gate.close",
+        ),
+        "crimson_trapdoor" => (
+            UseKind::Trapdoor,
+            true,
+            "block.nether_wood_trapdoor.open",
+            "block.nether_wood_trapdoor.close",
+        ),
+        "dark_oak_button" => (
+            UseKind::Button,
+            true,
+            "block.wooden_button.click_on",
+            "block.wooden_button.click_off",
+        ),
+        "dark_oak_door" => (
+            UseKind::Door,
+            true,
+            "block.wooden_door.open",
+            "block.wooden_door.close",
+        ),
+        "dark_oak_fence_gate" => (
+            UseKind::FenceGate,
+            true,
+            "block.fence_gate.open",
+            "block.fence_gate.close",
+        ),
+        "dark_oak_trapdoor" => (
+            UseKind::Trapdoor,
+            true,
+            "block.wooden_trapdoor.open",
+            "block.wooden_trapdoor.close",
+        ),
+        "exposed_copper_door" => (
+            UseKind::Door,
+            true,
+            "block.copper_door.open",
+            "block.copper_door.close",
+        ),
+        "exposed_copper_trapdoor" => (
+            UseKind::Trapdoor,
+            true,
+            "block.copper_trapdoor.open",
+            "block.copper_trapdoor.close",
+        ),
+        "iron_door" => (
+            UseKind::Door,
+            false,
+            "block.iron_door.open",
+            "block.iron_door.close",
+        ),
+        "iron_trapdoor" => (
+            UseKind::Trapdoor,
+            false,
+            "block.iron_trapdoor.open",
+            "block.iron_trapdoor.close",
+        ),
+        "jungle_button" => (
+            UseKind::Button,
+            true,
+            "block.wooden_button.click_on",
+            "block.wooden_button.click_off",
+        ),
+        "jungle_door" => (
+            UseKind::Door,
+            true,
+            "block.wooden_door.open",
+            "block.wooden_door.close",
+        ),
+        "jungle_fence_gate" => (
+            UseKind::FenceGate,
+            true,
+            "block.fence_gate.open",
+            "block.fence_gate.close",
+        ),
+        "jungle_trapdoor" => (
+            UseKind::Trapdoor,
+            true,
+            "block.wooden_trapdoor.open",
+            "block.wooden_trapdoor.close",
+        ),
+        "mangrove_button" => (
+            UseKind::Button,
+            true,
+            "block.wooden_button.click_on",
+            "block.wooden_button.click_off",
+        ),
+        "mangrove_door" => (
+            UseKind::Door,
+            true,
+            "block.wooden_door.open",
+            "block.wooden_door.close",
+        ),
+        "mangrove_fence_gate" => (
+            UseKind::FenceGate,
+            true,
+            "block.fence_gate.open",
+            "block.fence_gate.close",
+        ),
+        "mangrove_trapdoor" => (
+            UseKind::Trapdoor,
+            true,
+            "block.wooden_trapdoor.open",
+            "block.wooden_trapdoor.close",
+        ),
+        "oak_button" => (
+            UseKind::Button,
+            true,
+            "block.wooden_button.click_on",
+            "block.wooden_button.click_off",
+        ),
+        "oak_door" => (
+            UseKind::Door,
+            true,
+            "block.wooden_door.open",
+            "block.wooden_door.close",
+        ),
+        "oak_fence_gate" => (
+            UseKind::FenceGate,
+            true,
+            "block.fence_gate.open",
+            "block.fence_gate.close",
+        ),
+        "oak_trapdoor" => (
+            UseKind::Trapdoor,
+            true,
+            "block.wooden_trapdoor.open",
+            "block.wooden_trapdoor.close",
+        ),
+        "oxidized_copper_door" => (
+            UseKind::Door,
+            true,
+            "block.copper_door.open",
+            "block.copper_door.close",
+        ),
+        "oxidized_copper_trapdoor" => (
+            UseKind::Trapdoor,
+            true,
+            "block.copper_trapdoor.open",
+            "block.copper_trapdoor.close",
+        ),
+        "pale_oak_button" => (
+            UseKind::Button,
+            true,
+            "block.wooden_button.click_on",
+            "block.wooden_button.click_off",
+        ),
+        "pale_oak_door" => (
+            UseKind::Door,
+            true,
+            "block.wooden_door.open",
+            "block.wooden_door.close",
+        ),
+        "pale_oak_fence_gate" => (
+            UseKind::FenceGate,
+            true,
+            "block.fence_gate.open",
+            "block.fence_gate.close",
+        ),
+        "pale_oak_trapdoor" => (
+            UseKind::Trapdoor,
+            true,
+            "block.wooden_trapdoor.open",
+            "block.wooden_trapdoor.close",
+        ),
+        "polished_blackstone_button" => (
+            UseKind::Button,
+            true,
+            "block.stone_button.click_on",
+            "block.stone_button.click_off",
+        ),
+        "poplar_button" => (
+            UseKind::Button,
+            true,
+            "block.wooden_button.click_on",
+            "block.wooden_button.click_off",
+        ),
+        "poplar_door" => (
+            UseKind::Door,
+            true,
+            "block.wooden_door.open",
+            "block.wooden_door.close",
+        ),
+        "poplar_fence_gate" => (
+            UseKind::FenceGate,
+            true,
+            "block.fence_gate.open",
+            "block.fence_gate.close",
+        ),
+        "poplar_trapdoor" => (
+            UseKind::Trapdoor,
+            true,
+            "block.wooden_trapdoor.open",
+            "block.wooden_trapdoor.close",
+        ),
+        "spruce_button" => (
+            UseKind::Button,
+            true,
+            "block.wooden_button.click_on",
+            "block.wooden_button.click_off",
+        ),
+        "spruce_door" => (
+            UseKind::Door,
+            true,
+            "block.wooden_door.open",
+            "block.wooden_door.close",
+        ),
+        "spruce_fence_gate" => (
+            UseKind::FenceGate,
+            true,
+            "block.fence_gate.open",
+            "block.fence_gate.close",
+        ),
+        "spruce_trapdoor" => (
+            UseKind::Trapdoor,
+            true,
+            "block.wooden_trapdoor.open",
+            "block.wooden_trapdoor.close",
+        ),
+        "stone_button" => (
+            UseKind::Button,
+            true,
+            "block.stone_button.click_on",
+            "block.stone_button.click_off",
+        ),
+        "warped_button" => (
+            UseKind::Button,
+            true,
+            "block.nether_wood_button.click_on",
+            "block.nether_wood_button.click_off",
+        ),
+        "warped_door" => (
+            UseKind::Door,
+            true,
+            "block.nether_wood_door.open",
+            "block.nether_wood_door.close",
+        ),
+        "warped_fence_gate" => (
+            UseKind::FenceGate,
+            true,
+            "block.nether_wood_fence_gate.open",
+            "block.nether_wood_fence_gate.close",
+        ),
+        "warped_trapdoor" => (
+            UseKind::Trapdoor,
+            true,
+            "block.nether_wood_trapdoor.open",
+            "block.nether_wood_trapdoor.close",
+        ),
+        "waxed_copper_door" => (
+            UseKind::Door,
+            true,
+            "block.copper_door.open",
+            "block.copper_door.close",
+        ),
+        "waxed_copper_trapdoor" => (
+            UseKind::Trapdoor,
+            true,
+            "block.copper_trapdoor.open",
+            "block.copper_trapdoor.close",
+        ),
+        "waxed_exposed_copper_door" => (
+            UseKind::Door,
+            true,
+            "block.copper_door.open",
+            "block.copper_door.close",
+        ),
+        "waxed_exposed_copper_trapdoor" => (
+            UseKind::Trapdoor,
+            true,
+            "block.copper_trapdoor.open",
+            "block.copper_trapdoor.close",
+        ),
+        "waxed_oxidized_copper_door" => (
+            UseKind::Door,
+            true,
+            "block.copper_door.open",
+            "block.copper_door.close",
+        ),
+        "waxed_oxidized_copper_trapdoor" => (
+            UseKind::Trapdoor,
+            true,
+            "block.copper_trapdoor.open",
+            "block.copper_trapdoor.close",
+        ),
+        "waxed_weathered_copper_door" => (
+            UseKind::Door,
+            true,
+            "block.copper_door.open",
+            "block.copper_door.close",
+        ),
+        "waxed_weathered_copper_trapdoor" => (
+            UseKind::Trapdoor,
+            true,
+            "block.copper_trapdoor.open",
+            "block.copper_trapdoor.close",
+        ),
+        "weathered_copper_door" => (
+            UseKind::Door,
+            true,
+            "block.copper_door.open",
+            "block.copper_door.close",
+        ),
+        "weathered_copper_trapdoor" => (
+            UseKind::Trapdoor,
+            true,
+            "block.copper_trapdoor.open",
+            "block.copper_trapdoor.close",
+        ),
+        _ => return None,
+    };
+    Some(UseSounds {
+        kind,
+        by_hand,
+        on,
+        off,
+    })
+}

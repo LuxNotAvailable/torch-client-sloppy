@@ -943,6 +943,17 @@ fn send_use_item_on(bot: &Client, hit: &BlockHitResult, interacted: bool) {
         return;
     };
     if interacted {
+        #[cfg(audio)]
+        if let Ok(world) = bot.world()
+            && let Some(state) = world.read().get_block_state(hit.block_pos)
+        {
+            // `Abilities.mayBuild`: off in adventure and spectator.
+            let may_build = !matches!(
+                bot.component::<GameMode>().map(|gm| *gm),
+                Ok(GameMode::Adventure | GameMode::Spectator)
+            );
+            crate::play::use_sounds::block_used(state, hit.block_pos, may_build);
+        }
         predict_open_toggle(bot, hit);
     }
     bot.write_packet(ServerboundUseItemOn {
@@ -1141,15 +1152,6 @@ fn predict_place(bot: &Client, secondary_use: bool) -> bool {
     let Some(predicted) = predict_use(bot, UseKind::Place, secondary_use) else {
         return false;
     };
-    #[cfg(audio)]
-    {
-        let clicked = predicted.hit.block_pos;
-        crate::client::worldsync::note_local_place([
-            clicked,
-            clicked + predicted.hit.direction.normal(),
-        ]);
-    }
-
     bot.write_packet(ServerboundUseItemOn {
         hand: InteractionHand::MainHand,
         block_hit: (&predicted.hit).into(),
@@ -1366,7 +1368,24 @@ fn predict_use(bot: &Client, kind: UseKind, secondary_use: bool) -> Option<Predi
                 crate::audio::play_at(event, crate::audio::SoundCategory::Blocks, at, 1.0, 1.0);
             }
         }
-        None => {}
+        // `BlockItem.place`: the placer hears the placed state's sound
+        // itself; the server's goes to everyone else.
+        None => {
+            #[cfg(audio)]
+            {
+                let group = crate::util::block_model::sound_group(
+                    crate::util::block_model::block_id(state),
+                );
+                let at = [pos.x as f32 + 0.5, pos.y as f32 + 0.5, pos.z as f32 + 0.5];
+                crate::audio::play_at(
+                    group.place_event,
+                    crate::audio::SoundCategory::Blocks,
+                    at,
+                    (group.volume + 1.0) / 2.0,
+                    group.pitch * 0.8,
+                );
+            }
+        }
     }
 
     Some(Predicted {
