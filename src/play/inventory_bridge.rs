@@ -45,8 +45,15 @@ pub(crate) fn armor_trim(
     fn name<K: azalea_registry::DataRegistryKey>(key: Option<K>) -> Option<String> {
         Some(key?.into_ident().path().to_owned())
     }
-    let pattern = name(trim.pattern.key_owned(registries))?;
-    let material = name(trim.material.key_owned(registries))?;
+    use azalea_registry::Holder;
+    let pattern = match &trim.pattern {
+        Holder::Reference(p) => name(p.key_owned(registries))?,
+        Holder::Direct(d) => d.asset_id.path().to_owned(),
+    };
+    let material = match &trim.material {
+        Holder::Reference(m) => name(m.key_owned(registries))?,
+        Holder::Direct(d) => d.palette_id.path().to_owned(),
+    };
     Some(crate::entities::render::humanoid::armor::Trim::new(
         &pattern, &material,
     ))
@@ -233,10 +240,12 @@ fn model_data(
     }
     if let (Some(trim), Some(registries)) = (data.get_component::<comp::Trim>(), registries) {
         use azalea_core::data_registry::DataRegistryWithKey;
-        out.trim_material = trim
-            .material
-            .key_owned(registries)
-            .map(|k| azalea_registry::DataRegistryKey::into_ident(k).to_string());
+        out.trim_material = match &trim.material {
+            azalea_registry::Holder::Reference(m) => m
+                .key_owned(registries)
+                .map(|k| azalea_registry::DataRegistryKey::into_ident(k).to_string()),
+            azalea_registry::Holder::Direct(d) => Some(d.palette_id.to_string()),
+        };
     }
     if let Some(charged) = data.get_component::<comp::ChargedProjectiles>() {
         out.charge = charged.items.first().map(|stack| match stack.kind() {

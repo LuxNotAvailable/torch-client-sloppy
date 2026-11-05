@@ -737,10 +737,27 @@ pub struct WrittenBookContent {
     pub resolved: bool,
 }
 
+/// `ArmorTrim`: both parts are holders (`ByteBufCodecs.holder`), a
+/// registry id plus one or an inline definition.
 #[derive(AzBuf, Clone, Debug, PartialEq, Serialize)]
 pub struct Trim {
-    pub material: TrimMaterial,
-    pub pattern: TrimPattern,
+    pub material: Holder<TrimMaterial, TrimMaterialData>,
+    pub pattern: Holder<TrimPattern, TrimPatternData>,
+}
+
+/// An inline `TrimMaterial`: its palette suffix and name.
+#[derive(AzBuf, Clone, Debug, PartialEq, Serialize)]
+pub struct TrimMaterialData {
+    pub palette_id: Identifier,
+    pub description: FormattedText,
+}
+
+/// An inline `TrimPattern`: its texture, name and whether it's a decal.
+#[derive(AzBuf, Clone, Debug, PartialEq, Serialize)]
+pub struct TrimPatternData {
+    pub asset_id: Identifier,
+    pub description: FormattedText,
+    pub decal: bool,
 }
 
 #[derive(AzBuf, Clone, Debug, PartialEq, Serialize)]
