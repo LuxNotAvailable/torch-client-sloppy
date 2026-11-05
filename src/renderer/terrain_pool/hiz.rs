@@ -237,7 +237,14 @@ impl HiZ {
         self.built = previous;
         self.build = source;
         let source = source?;
+        let generation = self.generation;
         self.ensure(device, size.max(UVec2::ONE));
+        // A pyramid made just now is all zeros (the nearest depth): tested
+        // against it, nearly every section would count as hidden for a
+        // frame (a window resize, a pack's render scale).
+        if self.generation != generation {
+            return None;
+        }
         let built = self.built?;
         // A pyramid from the other source (a pack turned on or off) is
         // in the wrong depth convention and maybe the wrong size.
@@ -848,7 +855,8 @@ impl Pipelines {
 #[derive(RenderLabel, Debug, Hash, PartialEq, Eq, Clone)]
 pub struct HiZLabel;
 
-/// Builds this frame's pyramid from the camera's depth, after the main pass.
+/// Builds this frame's pyramid from the camera's depth, after the opaque pass
+/// (before translucent water, which writes depth but hides nothing).
 #[derive(Default)]
 pub struct HiZNode;
 

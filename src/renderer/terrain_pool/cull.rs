@@ -601,8 +601,18 @@ pub fn build(app: &mut App) {
         .add_render_graph_edges(
             bevy::core_pipeline::core_3d::graph::Core3d,
             (
-                bevy::core_pipeline::core_3d::graph::Node3d::EndMainPass,
+                // The opaque terrain's depth, before translucent water (which
+                // writes depth too) and the rest: water hides nothing behind
+                // it, so it mustn't occlude in the pyramid.
+                bevy::core_pipeline::core_3d::graph::Node3d::MainOpaquePass,
                 super::hiz::HiZLabel,
+                bevy::core_pipeline::core_3d::graph::Node3d::MainTransmissivePass,
+            ),
+        )
+        .add_render_graph_edges(
+            bevy::core_pipeline::core_3d::graph::Core3d,
+            (
+                bevy::core_pipeline::core_3d::graph::Node3d::EndMainPass,
                 super::hiz::HiZViewLabel,
                 bevy::core_pipeline::core_3d::graph::Node3d::StartMainPassPostProcessing,
             ),
