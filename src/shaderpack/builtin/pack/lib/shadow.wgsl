@@ -7,6 +7,13 @@
 // texels per block or fewer.
 #define TEXEL_DENOISE 8 // [1 2 4 8 16]
 #define TEXEL_DENOISE_RES 8 // [1 2 4 8]
+// Temporal denoising of those texels (the texel cache only): each frame a
+// few points scattered anew across the texel, averaged into its history
+// over up to TEXEL_TEMPORAL frames at 1 texel per block, half that at 2,
+// and so on (finer texels keep less history, so they follow a moving
+// shadow more closely). 0 is off (TEXEL_DENOISE fixed points a frame).
+#define TEXEL_TEMPORAL 32 // [0 8 16 32 64]
+#define TEXEL_TEMPORAL_POINTS 2 // [1 2 4]
 
 const SHADOW_DISTORTION: f32 = 0.85;
 
@@ -44,6 +51,40 @@ fn face_tangents(n: vec3<f32>) -> array<vec3<f32>, 2> {
 /// cover the square evenly, so every TEXEL_DENOISE setting is balanced.
 fn denoise_point(i: u32) -> vec2<f32> {
     return fract(vec2<f32>(0.5) + f32(i) * vec2<f32>(0.7548776662, 0.5698402910)) - 0.5;
+}
+
+/// The `i`th of a frame's scattered points: the R2 sequence turned by an
+/// offset that steps along R2 itself from frame to frame, so over the
+/// frames the points cover the texel evenly, not the same few spots.
+fn scattered_point(i: u32, frame_index: u32) -> vec2<f32> {
+    let turn = fract(f32(frame_index) * vec2<f32>(0.7548776662, 0.5698402910));
+    return fract(vec2<f32>(0.5) + f32(i) * vec2<f32>(0.7548776662, 0.5698402910) + turn) - 0.5;
+}
+
+/// A texel's shade from TEXEL_TEMPORAL_POINTS points scattered for
+/// `frame_index`, one frame's sample for the temporal history.
+fn texel_visibility_scattered(centre: vec3<f32>, n: vec3<f32>, res: f32, taps: u32, frame_index: u32) -> f32 {
+    let points = u32(TEXEL_TEMPORAL_POINTS);
+    let t = face_tangents(n);
+    let width = 1.0 / res;
+    let each = max(taps / points, 1u);
+    var lit = 0.0;
+    for (var i = 0u; i < points; i++) {
+        let p = scattered_point(i, frame_index) * width;
+        lit += shadow_visibility(centre + t[0] * p.x + t[1] * p.y, n, each);
+    }
+    return lit / f32(points);
+}
+
+/// The frames a texel at `res` texels per block keeps in its history:
+/// TEXEL_TEMPORAL at 1, halved for each doubling.
+fn temporal_window(res: f32) -> u32 {
+    return max(u32(TEXEL_TEMPORAL) >> u32(log2(max(res, 1.0))), 2u);
+}
+
+/// Whether a texel at `res` takes the temporal path.
+fn temporal_texel(res: f32) -> bool {
+    return TEXEL_TEMPORAL > 0 && res < 16.0 && res <= f32(TEXEL_DENOISE_RES);
 }
 
 /// The direct light reaching a texel shaded at `res` texels per block, from

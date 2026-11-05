@@ -31,3 +31,7 @@ option.TEXEL_DENOISE=Texel Denoise
 option.TEXEL_DENOISE.comment=How many points across each coarse texel its shadow averages. More is steadier under leaves and plants, at more shadow lookups far away. 1 is off.
 option.TEXEL_DENOISE_RES=Denoise Threshold
 option.TEXEL_DENOISE_RES.comment=Texels this coarse or coarser are denoised, in texels per block. Finer texels shade at a single point, in real time.
+option.TEXEL_TEMPORAL=Temporal Denoise
+option.TEXEL_TEMPORAL.comment=Frames of history the coarsest texels' shadows average over, with new points scattered across the texel every frame; finer texels keep less (half per step), so they follow moving shadows more closely. Steadier under swaying plants and kelp, with a slight trail on fast shadows. 0 is off.
+option.TEXEL_TEMPORAL_POINTS=Temporal Points
+option.TEXEL_TEMPORAL_POINTS.comment=Points each denoised texel takes a frame while the history averages them. More converges faster, at more shadow lookups.
