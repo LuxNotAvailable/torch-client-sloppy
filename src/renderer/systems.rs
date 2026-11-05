@@ -615,8 +615,12 @@ fn poll_shared_state(
         if let Ok(mut transform) = camera.single_mut() {
             let eye = Vec3::new(ix, iy + view.eye_height, iz);
             if third_person.active {
+                // The rotation is set afresh too: the view bob composes its
+                // inverse onto this transform each frame, so a kept rotation
+                // would pile the sway up while walking.
                 let forward = angles.rotation() * Vec3::NEG_Z;
                 transform.translation = eye - forward * THIRD_PERSON_DISTANCE;
+                transform.rotation = angles.rotation();
             } else if view.sleeping {
                 let mc_yaw = match view.bed_orientation {
                     Some(dir) => dir.to_y_rot() - 180.0,
