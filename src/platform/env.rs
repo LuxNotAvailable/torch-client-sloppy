@@ -262,7 +262,7 @@ const ALL: &[Var] = &[
     },
     Var {
         name: "MC_JOIN_COMMANDS",
-        what: "chat commands sent once on entering the world, separated by ';' (test runs: /gamemode creative)",
+        what: "chat commands sent 3 s after entering the world, separated by ';'; 'wait N' holds the rest back N seconds (test runs: /gamemode creative)",
         default: "none",
         enabled: true,
     },

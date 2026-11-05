@@ -145,13 +145,9 @@ pub fn plugin(app: &mut App) {
 
 fn mesh_data(mesh: &Mesh) -> Option<(Vec<EntityVertex>, Vec<u32>, bool)> {
     use bevy::mesh::VertexAttributeValues as V;
-    // A mesh kept only in the render world panics on attribute access.
-    if !mesh
-        .asset_usage
-        .contains(bevy::asset::RenderAssetUsages::MAIN_WORLD)
-    {
-        return None;
-    }
+    // A mesh kept only in the render world panics on attribute access once
+    // extracted; until then (its first frame) it can still be read.
+    mesh.try_attribute_option(Mesh::ATTRIBUTE_POSITION).ok()?;
     let positions = match mesh.attribute(Mesh::ATTRIBUTE_POSITION)? {
         V::Float32x3(p) => p,
         _ => return None,
@@ -222,6 +218,22 @@ fn capture(
             _ => {}
         }
     }
+    // Meshes made before the dump's first frame (the sky's stars and
+    // moon at the loading screen) sent their events unseen too.
+    let missed: Vec<_> = meshes
+        .iter()
+        .filter(|(id, _)| !cache.meshes.contains_key(id))
+        .filter_map(|(id, mesh)| Some((id, mesh_data(mesh)?)))
+        .collect();
+    cache.meshes.extend(missed);
+    // Images made before the dump's first frame (weather at the loading
+    // screen) sent their events unseen: pick up any still readable.
+    let missed: Vec<_> = images
+        .iter()
+        .filter(|(id, _)| !cache.images.contains_key(id))
+        .filter_map(|(id, image)| Some((id, image_data(image)?)))
+        .collect();
+    cache.images.extend(missed);
     for event in image_events.read() {
         match *event {
             AssetEvent::Added { id } | AssetEvent::Modified { id } => {

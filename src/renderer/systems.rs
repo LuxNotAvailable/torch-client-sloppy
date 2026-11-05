@@ -2100,7 +2100,7 @@ fn sync_vsync(
 fn auto_harness(
     mut commands: Commands,
     mut shots: Local<(Option<Option<(u64, std::path::PathBuf)>>, u64, u32)>,
-    mut joined: Local<bool>,
+    mut joined: Local<(bool, Option<f32>, std::collections::VecDeque<(f32, String)>)>,
     time: Res<Time<bevy::time::Real>>,
     mut angles: ResMut<CameraAngles>,
     shared: Res<Shared>,
@@ -2124,15 +2124,46 @@ fn auto_harness(
     {
         exit.write(bevy::app::AppExit::Success);
     }
-    // `MC_JOIN_COMMANDS`, sent once on entering the world (test runs switch
-    // to creative, so mobs can't spoil them).
-    if !*joined && shared.0.lock().unwrap().in_world {
-        *joined = true;
+    // `MC_JOIN_COMMANDS`, sent once, 3 s after entering the world (test
+    // runs switch to creative, so mobs can't spoil them). Sent at once, the
+    // server could still hold the default chat visibility and refuse them
+    // ("Chat disabled in client options"). A `wait N` entry holds the rest
+    // back N seconds: a dimension change resets the game mode after the
+    // commands sent with it, so creative has to follow later.
+    let in_world = shared.0.lock().unwrap().in_world;
+    let entered = *joined.1.get_or_insert_with(|| time.elapsed_secs());
+    if !in_world {
+        joined.1 = None;
+    }
+    if !joined.0 && in_world && time.elapsed_secs() - entered >= 3.0 {
+        joined.0 = true;
         if let Ok(commands) = crate::platform::env::var("MC_JOIN_COMMANDS") {
-            let mut s = shared.0.lock().unwrap();
+            let mut at = time.elapsed_secs();
             for command in commands.split(';').map(str::trim).filter(|c| !c.is_empty()) {
-                s.session.chat.outgoing_chat.push(command.to_owned());
+                match command
+                    .strip_prefix("wait ")
+                    .and_then(|n| n.parse::<f32>().ok())
+                {
+                    Some(seconds) => at += seconds,
+                    None => joined.2.push_back((at, command.to_owned())),
+                }
             }
+        }
+    }
+    while joined
+        .2
+        .front()
+        .is_some_and(|(at, _)| time.elapsed_secs() >= *at)
+    {
+        if let Some((_, command)) = joined.2.pop_front() {
+            shared
+                .0
+                .lock()
+                .unwrap()
+                .session
+                .chat
+                .outgoing_chat
+                .push(command);
         }
     }
     // Frames saved every `MC_AUTO_SHOT_MS` once in the world.

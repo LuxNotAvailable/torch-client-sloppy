@@ -904,8 +904,16 @@ pub(crate) fn sheet_animation(path: &str) -> Option<SheetAnimation> {
     found
 }
 
-pub(crate) fn load_entity_image(path: &str, images: &mut Assets<Image>) -> Option<Handle<Image>> {
+fn entity_image_usage() -> bevy::asset::RenderAssetUsages {
     use bevy::asset::RenderAssetUsages;
+    #[cfg(feature = "vulkan")]
+    if crate::vk::terrain_dump::folder().is_some() {
+        return RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD;
+    }
+    RenderAssetUsages::RENDER_WORLD
+}
+
+pub(crate) fn load_entity_image(path: &str, images: &mut Assets<Image>) -> Option<Handle<Image>> {
     use bevy::image::ImageSampler;
     use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
@@ -937,7 +945,10 @@ pub(crate) fn load_entity_image(path: &str, images: &mut Assets<Image>) -> Optio
         TextureDimension::D2,
         decoded.into_raw(),
         TextureFormat::Rgba8UnormSrgb,
-        RenderAssetUsages::RENDER_WORLD,
+        // The Vulkan renderer's snapshot (`MC_DUMP_TERRAIN`) reads the
+        // pixels from the main world; images made at the loading screen
+        // (rain, snow) are gone from it before the dump's first frame.
+        entity_image_usage(),
     );
     image.sampler = ImageSampler::nearest();
     Some(images.add(image))
