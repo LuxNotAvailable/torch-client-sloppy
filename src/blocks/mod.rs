@@ -12,6 +12,7 @@ pub mod info;
 pub mod rand;
 pub mod rotation;
 pub mod state;
+pub mod tags;
 
 #[cfg(test)]
 pub(crate) mod tests;

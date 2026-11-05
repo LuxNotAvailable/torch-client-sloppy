@@ -30,6 +30,7 @@ mod fireworks;
 #[allow(unused_imports)]
 use fireworks::*;
 mod ambient;
+pub(crate) use ambient::set_day_tick;
 #[allow(unused_imports)]
 use ambient::*;
 pub(crate) mod draw;

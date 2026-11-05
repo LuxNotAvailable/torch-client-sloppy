@@ -1066,6 +1066,7 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
         s.session.tick_seq = s.session.tick_seq.wrapping_add(1);
         s.session.world.game_time = s.session.world.game_time.wrapping_add(1);
         s.session.world.day_clock.advance();
+        crate::util::particles::set_day_tick(s.session.world.day_clock.ticks);
         if let Some(env) = env {
             s.session.world.env_prev = s.session.world.env.or(Some(env));
             s.session.world.env = Some(env);

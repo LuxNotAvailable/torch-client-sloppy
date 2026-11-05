@@ -6,6 +6,25 @@ use super::*;
 
 pub(super) const ANIMATE_SAMPLES: u32 = 667;
 
+/// The day clock's tick, for the day timeline's night tracks.
+static DAY_TICK: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(6000);
+
+pub(crate) fn set_day_tick(ticks: f64) {
+    DAY_TICK.store(
+        ticks.rem_euclid(24000.0) as u32,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
+/// `minecraft:timeline/day`'s `firefly_bush_sounds` and `creaking_active`
+/// tracks: on from tick 12600 to 23401, in the overworld, which runs that
+/// timeline.
+fn night_tracks() -> bool {
+    let tick = DAY_TICK.load(std::sync::atomic::Ordering::Relaxed);
+    crate::renderer::dimension::current().registry_id() == "minecraft:overworld"
+        && (12600..23401).contains(&tick)
+}
+
 pub(super) const ANIMATE_RADII: [u32; 2] = [16, 32];
 
 #[derive(Resource, Default)]
@@ -30,9 +49,6 @@ pub(super) fn animate_tick_particles(
         return;
     };
     let status = gui.options.particles;
-    if status == ParticleStatus::Minimal {
-        return;
-    }
     let Some(eye) = camera.iter().next().map(GlobalTransform::translation) else {
         return;
     };
@@ -53,11 +69,8 @@ pub(super) fn animate_tick_particles(
     let near = NearChunks::around(&world, center);
     let rng = &mut particle_rng.0;
     let before = live.0.len();
-    'sampling: for _ in 0..ANIMATE_SAMPLES {
+    for _ in 0..ANIMATE_SAMPLES {
         for radius in ANIMATE_RADII {
-            if live.0.len() >= MAX_LIVE_PARTICLES {
-                break 'sampling;
-            }
             let cell = [
                 center[0] + rng.next_int(radius) as i32 - rng.next_int(radius) as i32,
                 center[1] + rng.next_int(radius) as i32 - rng.next_int(radius) as i32,
@@ -159,6 +172,7 @@ pub(super) fn do_animate_tick(
     if let Some(ambient) = crate::blocks::ambient::of(state) {
         emit_ambient(ambient, state, &mut ctx);
     }
+    block_sounds(state, &mut ctx);
 
     let fluid = azalea::block::fluid_state::FluidState::from(state);
     if fluid.is_empty() {
@@ -218,6 +232,27 @@ impl Emitter<'_> {
         self.rng.next_f32()
     }
 
+    /// `level.playLocalSound` at a point in the cell.
+    #[allow(unused_variables)]
+    pub(crate) fn sound(
+        &mut self,
+        event: &str,
+        offset: [f32; 3],
+        category: SoundBus,
+        volume: f32,
+        pitch: f32,
+    ) {
+        #[cfg(audio)]
+        {
+            let at = rel(self.cell, offset);
+            let category = match category {
+                SoundBus::Blocks => crate::audio::SoundCategory::Blocks,
+                SoundBus::Ambient => crate::audio::SoundCategory::Ambient,
+            };
+            crate::audio::play_at(event, category, [at.x, at.y, at.z], volume, pitch);
+        }
+    }
+
     pub(crate) fn one_in(&mut self, bound: u32) -> bool {
         self.rng.next_int(bound) == 0
     }
@@ -236,6 +271,169 @@ impl Emitter<'_> {
         let z = self.f32();
         let cell = self.cell;
         self.emit(kind, rel(cell, [x, -0.05, z]), Vec3::ZERO, false);
+    }
+}
+
+/// The sound source a block's ambient sound plays on.
+#[derive(Clone, Copy)]
+pub(crate) enum SoundBus {
+    Blocks,
+    Ambient,
+}
+
+/// `getHeight(MOTION_BLOCKING_NO_LEAVES) <= y`: nothing above blocks motion
+/// but leaves, up to the loaded height.
+fn open_sky_above(ctx: &Emitter, cell: [i32; 3]) -> bool {
+    let top = ctx.world.chunks.min_y() + ctx.world.chunks.height() as i32;
+    (cell[1] + 1..top).all(|y| {
+        ctx.block([cell[0], y, cell[2]]).is_none_or(|s| {
+            !crate::util::block_model::is_solid(s) || crate::blocks::tags::has(s, "leaves")
+        })
+    })
+}
+
+/// Blocks whose `animateTick` only plays a sound.
+fn block_sounds(state: azalea::block::BlockState, ctx: &mut Emitter) {
+    let cell = ctx.cell;
+    let id = crate::util::block_model::block_id(state);
+    let below_cell = [cell[0], cell[1] - 1, cell[2]];
+    let tagged = |s: Option<azalea::block::BlockState>, tag: &str| {
+        s.is_some_and(|s| crate::blocks::tags::has(s, tag))
+    };
+    let at = [0.0, 0.0, 0.0];
+    match id {
+        // `CreakingHeartBlock`: at night, rooted, wrapped in logs.
+        "creaking_heart" => {
+            if crate::blocks::info::property(state, "creaking_heart_state") != Some("uprooted")
+                && night_tracks()
+                && ctx.one_in(16)
+                && surrounded_by_logs(ctx, cell)
+            {
+                ctx.sound("block.creaking_heart.idle", at, SoundBus::Blocks, 1.0, 1.0);
+            }
+        }
+        // `EyeblossomBlock`: an open one on pale moss.
+        "open_eyeblossom" => {
+            if ctx.one_in(700)
+                && ctx
+                    .block(below_cell)
+                    .is_some_and(|b| crate::util::block_model::block_id(b) == "pale_moss_block")
+            {
+                ctx.sound("block.eyeblossom.idle", at, SoundBus::Ambient, 1.0, 1.0);
+            }
+        }
+        // `HangingMossBlock`: under pale oak.
+        "pale_hanging_moss" => {
+            if ctx.one_in(500) {
+                let above = ctx.block([cell[0], cell[1] + 1, cell[2]]);
+                if tagged(above, "pale_oak_logs")
+                    || above
+                        .is_some_and(|a| crate::util::block_model::block_id(a) == "pale_oak_leaves")
+                {
+                    ctx.sound(
+                        "block.pale_hanging_moss.idle",
+                        at,
+                        SoundBus::Ambient,
+                        1.0,
+                        1.0,
+                    );
+                }
+            }
+        }
+        // `AmbientDesertBlockSoundsPlayer`.
+        "sand" | "red_sand" | "suspicious_sand" => {
+            if ctx
+                .block([cell[0], cell[1] + 1, cell[2]])
+                .is_some_and(|a| a.is_air())
+                && ctx.one_in(2100)
+                && sand_surrounded(ctx, cell)
+            {
+                ctx.sound("block.sand.idle", at, SoundBus::Ambient, 1.0, 1.0);
+            }
+        }
+        "short_dry_grass" | "tall_dry_grass" => {
+            if ctx.one_in(200) && dry_vegetation_ground(ctx, cell) {
+                // `playPlayerSound`: at the listener.
+                #[cfg(audio)]
+                crate::audio::play(
+                    "block.dry_grass.ambient",
+                    crate::audio::SoundCategory::Ambient,
+                    1.0,
+                    1.0,
+                );
+            }
+        }
+        "dead_bush" => {
+            if ctx.one_in(130) {
+                let under = ctx.block(below_cell);
+                let badlands = under.is_some_and(|b| {
+                    crate::util::block_model::block_id(b) == "red_sand"
+                        || crate::blocks::tags::has(b, "terracotta")
+                });
+                if (!badlands || ctx.one_in(3)) && dry_vegetation_ground(ctx, cell) {
+                    ctx.sound("block.deadbush.idle", at, SoundBus::Ambient, 1.0, 1.0);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// `CreakingHeartBlock.isSurroundedByLogs`: a log on every side.
+fn surrounded_by_logs(ctx: &Emitter, cell: [i32; 3]) -> bool {
+    [
+        [1, 0, 0],
+        [-1, 0, 0],
+        [0, 1, 0],
+        [0, -1, 0],
+        [0, 0, 1],
+        [0, 0, -1],
+    ]
+    .iter()
+    .all(|d| {
+        ctx.block([cell[0] + d[0], cell[1] + d[1], cell[2] + d[2]])
+            .is_some_and(|s| crate::blocks::tags::has(s, "pale_oak_logs"))
+    })
+}
+
+/// `shouldPlayDesertDryVegetationBlockSounds`: two tagged blocks beneath.
+fn dry_vegetation_ground(ctx: &Emitter, cell: [i32; 3]) -> bool {
+    const TAG: &str = "triggers_ambient_desert_dry_vegetation_block_sounds";
+    (1..=2).all(|d| {
+        ctx.block([cell[0], cell[1] - d, cell[2]])
+            .is_some_and(|s| crate::blocks::tags::has(s, TAG))
+    })
+}
+
+/// `shouldPlayAmbientSandSound`: the columns 8 out on all four sides hold
+/// tagged sand at their surface (vanilla's `matchingBlocksFound++ >= 3`
+/// needs the fourth).
+fn sand_surrounded(ctx: &Emitter, cell: [i32; 3]) -> bool {
+    [[8, 0], [-8, 0], [0, 8], [0, -8]]
+        .iter()
+        .all(|[dx, dz]| sand_column(ctx, [cell[0] + dx, cell[1], cell[2] + dz]))
+}
+
+/// `columnContainsTriggeringBlock`: near the surface, the surface block;
+/// otherwise the first tagged block under air within 5 of `at`.
+fn sand_column(ctx: &Emitter, at: [i32; 3]) -> bool {
+    const TAG: &str = "triggers_ambient_desert_sand_block_sounds";
+    let state = |y: i32| ctx.block([at[0], y, at[2]]);
+    let air = |y: i32| state(y).is_none_or(|s| s.is_air());
+    let tagged = |y: i32| state(y).is_some_and(|s| crate::blocks::tags::has(s, TAG));
+    let top = ctx.world.chunks.min_y() + ctx.world.chunks.height() as i32;
+    // `getHeight(WORLD_SURFACE) - 1`: the highest block that isn't air.
+    let surface = (ctx.world.chunks.min_y()..top).rev().find(|&y| !air(y));
+    let Some(surface) = surface else {
+        return false;
+    };
+    if (surface - at[1]).abs() > 5 {
+        (0..10).any(|i| {
+            let y = at[1] + 5 - i;
+            air(y + 1) && tagged(y)
+        })
+    } else {
+        air(surface + 1) && tagged(surface)
     }
 }
 
@@ -339,13 +537,33 @@ fn fire_and_light(
         Ambient::Candle { wicks, count } => {
             for wick in wicks.iter().take(count as usize) {
                 let pos = rel(cell, *wick);
-                if ctx.f32() < 0.3 {
+                let chance = ctx.f32();
+                if chance < 0.3 {
                     ctx.emit(&P::Smoke, pos, Vec3::ZERO, false);
+                    if chance < 0.17 {
+                        // Vanilla adds half a block to the wick's position.
+                        let at = [wick[0] + 0.5, wick[1] + 0.5, wick[2] + 0.5];
+                        let volume = 1.0 + ctx.f32();
+                        let pitch = ctx.f32() * 0.7 + 0.3;
+                        ctx.sound("block.candle.ambient", at, SoundBus::Blocks, volume, pitch);
+                    }
                 }
                 ctx.emit(&P::SmallFlame, pos, Vec3::ZERO, false);
             }
         }
         Ambient::Fire => {
+            // `BaseFireBlock.animateTick`.
+            if ctx.one_in(24) {
+                let volume = 1.0 + ctx.f32();
+                let pitch = ctx.f32() * 0.7 + 0.3;
+                ctx.sound(
+                    "block.fire.ambient",
+                    [0.5, 0.5, 0.5],
+                    SoundBus::Blocks,
+                    volume,
+                    pitch,
+                );
+            }
             for _ in 0..3 {
                 let x = ctx.f32();
                 let y = ctx.f32() * 0.5 + 0.5;
@@ -354,6 +572,17 @@ fn fire_and_light(
             }
         }
         Ambient::Campfire => {
+            if ctx.one_in(10) {
+                let volume = 0.5 + ctx.f32();
+                let pitch = ctx.f32() * 0.7 + 0.6;
+                ctx.sound(
+                    "block.campfire.crackle",
+                    [0.5, 0.5, 0.5],
+                    SoundBus::Blocks,
+                    volume,
+                    pitch,
+                );
+            }
             if !ctx.one_in(5) {
                 return;
             }
@@ -367,6 +596,14 @@ fn fire_and_light(
             );
         }
         Ambient::Furnace { kind, front } => {
+            if ctx.rng.next_f64() < 0.1 {
+                let event = match kind {
+                    Furnace::Furnace => "block.furnace.fire_crackle",
+                    Furnace::Blast => "block.blastfurnace.fire_crackle",
+                    Furnace::Smoker => "block.smoker.smoke",
+                };
+                ctx.sound(event, [0.5, 0.0, 0.5], SoundBus::Blocks, 1.0, 1.0);
+            }
             if kind == Furnace::Smoker {
                 ctx.emit(&P::Smoke, rel(cell, [0.5, 1.1, 0.5]), Vec3::ZERO, false);
                 return;
@@ -428,6 +665,16 @@ fn magic_and_portals(
             ctx.emit(&P::Smoke, rel(cell, [x, 0.8, z]), Vec3::ZERO, false);
         }
         Ambient::NetherPortal { axis_x } => {
+            if ctx.one_in(100) {
+                let pitch = ctx.f32() * 0.4 + 0.8;
+                ctx.sound(
+                    "block.portal.ambient",
+                    [0.5, 0.5, 0.5],
+                    SoundBus::Blocks,
+                    0.5,
+                    pitch,
+                );
+            }
             for _ in 0..4 {
                 let mut x = ctx.f32();
                 let y = ctx.f32();
@@ -468,6 +715,15 @@ fn magic_and_portals(
             }
         }
         Ambient::RespawnAnchor => {
+            if ctx.one_in(100) {
+                ctx.sound(
+                    "block.respawn_anchor.ambient",
+                    [0.5, 0.5, 0.5],
+                    SoundBus::Blocks,
+                    1.0,
+                    1.0,
+                );
+            }
             let x = 0.5 + (0.5 - ctx.f32());
             let z = 0.5 + (0.5 - ctx.f32());
             let ya = ctx.f32() * 0.04;
@@ -614,6 +870,16 @@ fn plants(
             }
         }
         Ambient::FireflyBush => {
+            // `FireflyBushBlock.animateTick`: at night, under open sky.
+            if ctx.one_in(30) && night_tracks() && open_sky_above(ctx, cell) {
+                ctx.sound(
+                    "block.firefly_bush.idle",
+                    [0.5, 0.5, 0.5],
+                    SoundBus::Ambient,
+                    1.0,
+                    1.0,
+                );
+            }
             let (block_light, sky_light) = crate::renderer::lightmap::levels_at([
                 cell[0] as f32 + 0.5,
                 cell[1] as f32 + 0.5,
@@ -691,13 +957,14 @@ fn water_and_drips(
             ctx.emit(&drip, rel(cell, [0.5, 0.25, 0.5]), Vec3::ZERO, false);
         }
         Ambient::BubbleColumn { drag } => {
-            if drag {
+            let event = if drag {
                 ctx.emit(
                     &P::CurrentDown,
                     rel(cell, [0.5, 0.8, 0.0]),
                     Vec3::ZERO,
                     true,
                 );
+                "block.bubble_column.whirlpool_ambient"
             } else {
                 let up = Vec3::new(0.0, 0.04, 0.0);
                 ctx.emit(&P::BubbleColumnUp, rel(cell, [0.5, 0.0, 0.5]), up, true);
@@ -705,9 +972,35 @@ fn water_and_drips(
                 let y = ctx.f32();
                 let z = ctx.f32();
                 ctx.emit(&P::BubbleColumnUp, rel(cell, [x, y, z]), up, true);
+                "block.bubble_column.upwards_ambient"
+            };
+            if ctx.one_in(200) {
+                let volume = 0.2 + ctx.f32() * 0.2;
+                let pitch = 0.9 + ctx.f32() * 0.15;
+                ctx.sound(event, [0.0; 3], SoundBus::Blocks, volume, pitch);
             }
         }
         Ambient::DriedGhast { waterlogged } => {
+            // `DriedGhastBlock.animateTick`: dry, it rustles only on the
+            // blocks tagged for it.
+            if ctx.one_in(40)
+                && (waterlogged
+                    || ctx
+                        .block([cell[0], cell[1] - 1, cell[2]])
+                        .is_some_and(|below| {
+                            crate::blocks::tags::has(
+                                below,
+                                "triggers_ambient_dried_ghast_block_sounds",
+                            )
+                        }))
+            {
+                let event = if waterlogged {
+                    "block.dried_ghast.ambient_water"
+                } else {
+                    "block.dried_ghast.ambient"
+                };
+                ctx.sound(event, [0.5, 0.5, 0.5], SoundBus::Blocks, 1.0, 1.0);
+            }
             if !ctx.one_in(6) {
                 return;
             }
@@ -951,24 +1244,55 @@ pub(super) fn emit_fluid_ambient(
             if ctx.block(above).is_some_and(|s| !s.is_air()) {
                 return;
             }
-            if !ctx.one_in(100) {
-                return;
+            // `LavaFluid.animateTick`.
+            if ctx.one_in(100) {
+                let x = ctx.rng.next_f64() as f32;
+                let z = ctx.rng.next_f64() as f32;
+                ctx.emit(&P::Lava, rel(cell, [x, 1.0, z]), Vec3::ZERO, false);
+                let volume = 0.2 + ctx.f32() * 0.2;
+                let pitch = 0.9 + ctx.f32() * 0.15;
+                ctx.sound(
+                    "block.lava.pop",
+                    [x, 1.0, z],
+                    SoundBus::Ambient,
+                    volume,
+                    pitch,
+                );
             }
-            let x = ctx.f32();
-            let z = ctx.f32();
-            ctx.emit(&P::Lava, rel(cell, [x, 1.0, z]), Vec3::ZERO, false);
+            if ctx.one_in(200) {
+                let volume = 0.2 + ctx.f32() * 0.2;
+                let pitch = 0.9 + ctx.f32() * 0.15;
+                ctx.sound(
+                    "block.lava.ambient",
+                    [0.0; 3],
+                    SoundBus::Ambient,
+                    volume,
+                    pitch,
+                );
+            }
         }
+        // `WaterFluid.animateTick`: flowing water murmurs, still and
+        // falling water bubbles.
         FluidKind::Water => {
-            if fluid.amount == 0 || fluid.amount >= 8 {
-                return;
+            let source = fluid.amount >= 8 && !fluid.falling;
+            if !source && !fluid.falling {
+                if ctx.one_in(64) {
+                    let volume = ctx.f32() * 0.25 + 0.75;
+                    let pitch = ctx.f32() + 0.5;
+                    ctx.sound(
+                        "block.water.ambient",
+                        [0.5, 0.5, 0.5],
+                        SoundBus::Ambient,
+                        volume,
+                        pitch,
+                    );
+                }
+            } else if ctx.one_in(10) {
+                let x = ctx.rng.next_f64() as f32;
+                let y = ctx.rng.next_f64() as f32;
+                let z = ctx.rng.next_f64() as f32;
+                ctx.emit(&P::Underwater, rel(cell, [x, y, z]), Vec3::ZERO, false);
             }
-            if !ctx.one_in(10) {
-                return;
-            }
-            let x = ctx.f32();
-            let y = ctx.f32();
-            let z = ctx.f32();
-            ctx.emit(&P::Underwater, rel(cell, [x, y, z]), Vec3::ZERO, false);
         }
         FluidKind::Empty => {}
     }

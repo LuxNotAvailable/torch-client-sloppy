@@ -41,41 +41,6 @@ fn id(state: BlockState) -> &'static str {
     crate::util::block_model::block_id(state)
 }
 
-/// `#minecraft:inside_step_sound_blocks`.
-fn inside_step_sound(id: &str) -> bool {
-    matches!(
-        id,
-        "powder_snow"
-            | "sculk_vein"
-            | "glow_lichen"
-            | "lily_pad"
-            | "small_amethyst_bud"
-            | "pink_petals"
-            | "wildflowers"
-            | "leaf_litter"
-    )
-}
-
-/// `#minecraft:combination_step_sound_blocks`, with `#wool_carpets`.
-fn combination_step_sound(id: &str) -> bool {
-    (id.ends_with("_carpet") && id != "moss_carpet" && id != "pale_moss_carpet")
-        || matches!(
-            id,
-            "moss_carpet"
-                | "pale_moss_carpet"
-                | "snow"
-                | "nether_sprouts"
-                | "warped_roots"
-                | "crimson_roots"
-                | "resin_clump"
-        )
-}
-
-/// `#minecraft:crystal_sound_blocks`.
-fn crystal_sound(id: &str) -> bool {
-    matches!(id, "amethyst_block" | "budding_amethyst")
-}
-
 fn random_spread() -> f32 {
     crate::audio::random_unit() - crate::audio::random_unit()
 }
@@ -170,18 +135,20 @@ impl Steps {
         } else {
             let above = pos + BlockPos::new(0, 1, 0);
             let above_state = (m.block_at)(above).unwrap_or(BlockState::AIR);
-            let above_id = id(above_state);
-            if combination_step_sound(above_id) {
+            let tagged = |tag| crate::blocks::tags::has(above_state, tag);
+            if tagged("combination_step_sound_blocks") {
                 normal(above_state);
                 muffled(state);
-            } else if inside_step_sound(above_id) {
+            } else if tagged("inside_step_sound_blocks") {
                 normal(above_state);
             } else {
                 normal(state);
             }
         }
         // `shouldPlayAmethystStepSound`.
-        if crystal_sound(id(state)) && self.tick >= self.last_crystal_tick + 20 {
+        if crate::blocks::tags::has(state, "crystal_sound_blocks")
+            && self.tick >= self.last_crystal_tick + 20
+        {
             let since = (self.tick - self.last_crystal_tick) as f32;
             self.crystal_intensity *= 0.997f32.powf(since);
             self.crystal_intensity = (self.crystal_intensity + 0.07).min(1.0);
@@ -190,19 +157,5 @@ impl Steps {
             play("block.amethyst_block.chime", volume, pitch);
             self.last_crystal_tick = self.tick;
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn carpets_and_snow_layer_their_steps_over_the_block_below() {
-        assert!(combination_step_sound("red_carpet"));
-        assert!(combination_step_sound("moss_carpet"));
-        assert!(combination_step_sound("snow"));
-        assert!(!combination_step_sound("snow_block"));
-        assert!(inside_step_sound("pink_petals"));
     }
 }

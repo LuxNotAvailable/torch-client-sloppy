@@ -39,6 +39,13 @@ fn known_link_name(kind: KnownLinkKind) -> &'static str {
 }
 
 pub(crate) fn update_tags(tags: &TagMap) {
+    if let Some(blocks) = tags.get(&azalea_registry::identifier::Identifier::new("block")) {
+        crate::blocks::tags::set(
+            blocks
+                .iter()
+                .map(|tag| (tag.name.to_string(), tag.elements.clone())),
+        );
+    }
     let Some(entries) = tags.get(&azalea_registry::identifier::Identifier::new("dialog")) else {
         return;
     };
