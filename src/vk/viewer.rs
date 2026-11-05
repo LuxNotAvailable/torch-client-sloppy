@@ -130,6 +130,7 @@ fn options(args: Vec<String>) -> Options {
             "--no-vis" => options.terrain_options.visibility = false,
             "--no-buckets" => options.terrain_options.buckets = false,
             "--no-wave" => options.terrain_options.wave = false,
+            "--no-packed" => options.terrain_options.packed = false,
             "--budget" => {
                 if let Some(mb) = args.next().and_then(|v| v.parse::<f64>().ok()) {
                     options.terrain_options.budget = (mb * 1048576.0) as u64;

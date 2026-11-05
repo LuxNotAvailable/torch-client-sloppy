@@ -133,6 +133,50 @@ int sign16(uint bits) {
     return int(bits << 16) >> 16;
 }
 
+// Indices from here up name a packed quad's corner: PACKED_BASE + 4 ×
+// record + corner (`src/vk/packed.rs`, whose `unpack` this mirrors).
+static const uint PACKED_BASE = 1u << 28;
+
+// A packed corner as the vertex words the mesher would have written: the
+// position (x, y, z in 1/256 block), uv, light and colour.
+struct Corner {
+    int3 local;
+    float2 uv;
+    float2 light;
+    float4 color;
+};
+
+uint tinted(uint tint, uint grey) {
+    return (tint * grey + 127) / 255;
+}
+
+Corner packed_corner(ByteAddressBuffer pool, uint record_at, uint corner) {
+    uint4 r0 = pool.Load4(record_at);
+    uint4 r1 = pool.Load4(record_at + 16);
+    uint w0 = r0.x;
+    uint3 block = uint3(w0 & 31, (w0 >> 5) & 31, (w0 >> 10) & 31);
+    uint axis = (w0 >> 15) & 3;
+    uint steps = (w0 >> (17 + 2 * corner)) & 3;
+    int3 pos = int3(block) * 256;
+    uint b = (axis + 1) % 3;
+    uint c = (axis + 2) % 3;
+    pos[b] += int(steps & 1) * 256;
+    pos[c] += int((steps >> 1) & 1) * 256;
+    uint edges = (r1.z >> (24 + 2 * corner)) & 3;
+    uint u = (edges & 1) != 0 ? r0.y >> 16 : r0.y & 0xFFFF;
+    uint v = (edges & 2) != 0 ? r0.z >> 16 : r0.z & 0xFFFF;
+    uint light = ((corner < 2 ? r0.w : r1.x) >> (16 * (corner % 2))) & 0xFFFF;
+    uint grey = (r1.y >> (8 * corner)) & 0xFF;
+    uint3 tint = uint3(r1.z & 0xFF, (r1.z >> 8) & 0xFF, (r1.z >> 16) & 0xFF);
+    uint alpha = (r1.w >> (8 * corner)) & 0xFF;
+    Corner out;
+    out.local = pos;
+    out.uv = float2(u, v) / 65535.0;
+    out.light = float2(light & 0xFF, light >> 8);
+    out.color = float4(tinted(tint.x, grey), tinted(tint.y, grey), tinted(tint.z, grey), alpha) / 255.0;
+    return out;
+}
+
 // Push: ids.x slots, ids.y the view buffer, more.x atlas texture, more.y
 //       view mode, view_proj the camera.
 [shader("vertex")]
@@ -141,12 +185,29 @@ VertexOut terrain_vertex(uint vertex: SV_VulkanVertexID, uint instance: SV_Vulka
     ByteAddressBuffer slots = buffer_ro(pc.ids.x);
     int4 origin_base = asint(slots.Load4(instance * SLOT_SIZE + 32));
     ByteAddressBuffer pool = buffer_ro(slots.Load(instance * SLOT_SIZE + 52));
-    uint4 raw = pool.Load4(vertex * 20);
-    uint tail = pool.Load(vertex * 20 + 16);
-    int3 local = int3(sign16(raw.x & 0xFFFF), sign16(raw.x >> 16), sign16(raw.y & 0xFFFF));
-    float2 uv = float2(raw.z & 0xFFFF, raw.z >> 16) / 65535.0;
-    float2 light = float2(raw.w & 0xFF, (raw.w >> 8) & 0xFF);
-    float4 color = float4(tail & 0xFF, (tail >> 8) & 0xFF, (tail >> 16) & 0xFF, tail >> 24) / 255.0;
+    int3 local;
+    float2 uv;
+    float2 light;
+    float4 color;
+    // The draw adds the base vertex to every index; a packed one is
+    // recognised past it.
+    uint named = vertex - uint(origin_base.w);
+    if (named >= PACKED_BASE) {
+        uint quad = (named - PACKED_BASE) >> 2;
+        uint records = slots.Load(instance * SLOT_SIZE + 112);
+        Corner corner = packed_corner(pool, records + quad * 32, named & 3);
+        local = corner.local;
+        uv = corner.uv;
+        light = corner.light;
+        color = corner.color;
+    } else {
+        uint4 raw = pool.Load4(vertex * 20);
+        uint tail = pool.Load(vertex * 20 + 16);
+        local = int3(sign16(raw.x & 0xFFFF), sign16(raw.x >> 16), sign16(raw.y & 0xFFFF));
+        uv = float2(raw.z & 0xFFFF, raw.z >> 16) / 65535.0;
+        light = float2(raw.w & 0xFF, (raw.w >> 8) & 0xFF);
+        color = float4(tail & 0xFF, (tail >> 8) & 0xFF, (tail >> 16) & 0xFF, tail >> 24) / 255.0;
+    }
 
     float3 world = float3(origin_base.xyz) + float3(local) / 256.0;
 

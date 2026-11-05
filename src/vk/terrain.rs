@@ -180,6 +180,8 @@ pub struct Options {
     pub hiz_level: u32,
     /// FXAA, SSAA and post effects (`vk::post`).
     pub post: super::post::Settings,
+    /// Store whole-face quads as compact records (`vk::packed`).
+    pub packed: bool,
 }
 
 impl Default for Options {
@@ -191,6 +193,7 @@ impl Default for Options {
             wave: true,
             budget: UPLOAD_BUDGET,
             hiz_level: 3,
+            packed: true,
             post: super::post::Settings::default(),
         }
     }
@@ -981,7 +984,23 @@ impl TerrainScene {
                 (counts, solid)
             };
             let index_count = (section.idx.len() + section.cutout_idx.len()) as u32;
-            let vertex_count = section.verts.len() as u32;
+            // Solid layers' whole-face quads as compact records
+            // (`vk::packed`): the records go first in the section's vertex
+            // range, in 20-byte units, then the vertices left.
+            let packed = (!section.water && self.options.packed)
+                .then(|| super::packed::pack(&section.verts, &indices));
+            let (indices, record_units) = match &packed {
+                Some(p) => (
+                    p.indices.clone(),
+                    (p.records.len() as u32 * 32).div_ceil(20),
+                ),
+                None => (indices, 0),
+            };
+            let plain_verts: &[crate::renderer::mesh::PackedVertex] = match &packed {
+                Some(p) => &p.verts,
+                None => &section.verts,
+            };
+            let vertex_count = record_units + plain_verts.len() as u32;
 
             // Room for the vertices (and opaque indices) in some pool.
             let mut placed = None;
@@ -1041,7 +1060,13 @@ impl TerrainScene {
                 Some(sorted) => bytemuck::cast_slice(sorted),
                 None => bytemuck::cast_slice(&indices),
             };
-            let staged_v = uploads.stage(bytemuck::cast_slice(&section.verts));
+            let mut vertex_bytes = Vec::with_capacity(vertex_count as usize * 20);
+            if let Some(p) = &packed {
+                vertex_bytes.extend_from_slice(bytemuck::cast_slice(&p.records));
+                vertex_bytes.resize(record_units as usize * 20, 0);
+            }
+            vertex_bytes.extend_from_slice(bytemuck::cast_slice(plain_verts));
+            let staged_v = uploads.stage(&vertex_bytes);
             let staged_i = staged_v.as_ref().and_then(|_| uploads.stage(index_bytes));
             let (Some(staged_v), Some(staged_i)) = (staged_v, staged_i) else {
                 // The ring is full this frame: undo and try again next one.
@@ -1101,7 +1126,7 @@ impl TerrainScene {
                     section.origin[0],
                     section.origin[1],
                     section.origin[2],
-                    vertices.offset as i32,
+                    (vertices.offset + record_units) as i32,
                 ],
                 info: [
                     pool,
@@ -1120,7 +1145,8 @@ impl TerrainScene {
                     0,
                 ],
                 buckets,
-                spare: [0; 4],
+                // The packed records' byte offset in the vertex pool.
+                spare: [vertices.offset * 20, 0, 0, 0],
             };
             self.dirty_slots.push(slot);
             self.set_visible(slot, true);
@@ -2153,6 +2179,26 @@ impl TerrainScene {
         if copies.is_empty() && grow.is_empty() && atlas.is_none() {
             return;
         }
+        // A copy staged before its buffer grew this frame still names the
+        // old buffer, which the grow copies (run first) have already left:
+        // its data would be lost (sections of water missing, more of them
+        // the more uploaded a frame). The old contents keep their offsets at
+        // the start of the new buffer, so such a copy goes to the newest
+        // buffer in the chain at the same offset.
+        let newest = |mut buffer: vk::Buffer| {
+            while let Some(g) = grow.iter().find(|g| g.from == buffer) {
+                buffer = g.to;
+            }
+            buffer
+        };
+        let retargeted: Vec<Copy> = copies
+            .iter()
+            .map(|c| Copy {
+                to: newest(c.to),
+                ..*c
+            })
+            .collect();
+        let copies = &retargeted[..];
         let mut buffers: Vec<(vk::Buffer, Use)> = Vec::new();
         for g in grow {
             buffers.push((g.from, Use::TransferSrc));
