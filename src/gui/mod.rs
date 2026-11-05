@@ -502,6 +502,10 @@ crate::options! {
             crate::util::particles::ParticleStatus::All
         } => key("particles"),
         pub render_distance: u32 = RENDER_DISTANCE_DEFAULT => key("renderDistance"),
+        /// How clear water looks, 0 to 100, vanilla at 50: the surface's
+        /// alpha and the underwater fog's reach scale together
+        /// (`renderer::environment::water_opacity`).
+        pub water_clarity: u32 = WATER_CLARITY_DEFAULT => key("waterClarity").clamp(0, WATER_CLARITY_MAX),
         /// Percent of the window's size a shader pack draws at, scaled up at
         /// the end: full-screen passes cost per pixel.
         pub pack_render_scale: u32 = PACK_RENDER_SCALE_MAX => key("shaderRenderScale").clamp(PACK_RENDER_SCALE_MIN, PACK_RENDER_SCALE_MAX),
@@ -861,6 +865,8 @@ pub const MAX_FPS_DEFAULT: u32 = if cfg!(feature = "mobile_ui") { 30 } else { 60
 
 pub const VSYNC_DEFAULT: bool = !cfg!(target_os = "android");
 
+pub const WATER_CLARITY_DEFAULT: u32 = 50;
+pub const WATER_CLARITY_MAX: u32 = 100;
 pub const RENDER_DISTANCE_DEFAULT: u32 = if cfg!(feature = "mobile_ui") { 2 } else { 8 };
 
 pub const SMOOTH_LIGHTING_DEFAULT: bool = !cfg!(feature = "mobile_ui");

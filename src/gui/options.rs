@@ -450,6 +450,14 @@ fn pack_render_scale_label(value: i32) -> String {
     format!("Shader Render Scale: {value}%")
 }
 
+fn water_clarity_label(value: i32) -> String {
+    if value as u32 == crate::gui::WATER_CLARITY_DEFAULT {
+        "Water Clarity: Vanilla".to_owned()
+    } else {
+        format!("Water Clarity: {value}%")
+    }
+}
+
 /// Vanilla's framerate slider: steps of 10, the top step unlimited.
 fn max_fps_label(value: i32) -> String {
     if value as u32 >= crate::gui::MAX_FPS_UNLIMITED {
@@ -885,6 +893,12 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
             RENDER_DISTANCE_MIN as u32,
             RENDER_DISTANCE_MAX as u32,
             render_distance_label,
+        );
+        f.slider(
+            &mut o.water_clarity,
+            0,
+            crate::gui::WATER_CLARITY_MAX,
+            water_clarity_label,
         );
         if f.button(&format!("{CLOUDS}: {}", o.clouds.caption())) {
             o.clouds = o.clouds.next();
@@ -1920,7 +1934,8 @@ mod tests {
     #[test]
     fn video_grid_stacks_like_the_options_list() {
         // Display: header and four rows (five with the desktop's window
-        // size button); Quality: header (spaced) and four rows; then entity
+        // size button); Quality: header (spaced) and five rows (water
+        // clarity the fifth); then entity
         // shadows, the shader packs button when built in, and reset.
         let atlas = crate::gui::atlas::build_gui_atlas(&crate::assets_root());
         let mut p = Painter::new(&atlas, 0);
@@ -1934,7 +1949,7 @@ mod tests {
         draw_video(&mut p, &mut state, &ctx);
         const EXTRA_ROWS: f32 = cfg!(feature = "shader_support") as u32 as f32
             + cfg!(all(not(target_arch = "wasm32"), not(target_os = "android"))) as u32 as f32;
-        let reset_row = 244.0 + (EXTRA_ROWS + 1.0) * ROW_H;
+        let reset_row = 244.0 + (EXTRA_ROWS + 2.0) * ROW_H;
         assert_eq!(
             state.video_list.content_h,
             reset_row + ROW_H + LIST_PAD_BOTTOM

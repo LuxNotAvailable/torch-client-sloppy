@@ -148,7 +148,10 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         discard;
     }
 #endif
-#ifndef WATER
+#ifdef WATER
+    // params.w: the water clarity setting's scale on the surface alpha.
+    color.a = saturate(color.a * params.w);
+#else
     color.a = 1.0;
 #endif
 

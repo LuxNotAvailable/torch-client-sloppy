@@ -419,7 +419,12 @@ fn update_clouds(
         *visibility = Visibility::Hidden;
         return;
     };
-    if status == CloudStatus::Off || color.alpha() == 0 {
+    // Under water the clouds sit past the water fog's end (vanilla's
+    // `cloudEnd`), so they're fogged out entirely.
+    let [eye_x, eye_y, eye_z] = view.tick_eye();
+    let underwater = crate::util::block_model::eye_fluid_at(eye_x, eye_y, eye_z)
+        == Some(crate::util::block_model::EyeFluid::Water);
+    if status == CloudStatus::Off || color.alpha() == 0 || underwater {
         *visibility = Visibility::Hidden;
         return;
     }

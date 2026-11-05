@@ -100,6 +100,8 @@ pub struct TerrainParams {
     pub cutoff: f32,
     pub mip_bias: f32,
     pub shadow_mip: f32,
+    /// Scales the water surface's alpha (the water clarity setting).
+    pub water_alpha: f32,
 }
 
 impl Default for TerrainParams {
@@ -108,6 +110,7 @@ impl Default for TerrainParams {
             cutoff: 0.1,
             mip_bias: 0.0,
             shadow_mip: super::terrain::SHADOW_ALPHA_MIP,
+            water_alpha: 1.0,
         }
     }
 }

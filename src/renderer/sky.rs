@@ -172,7 +172,7 @@ impl Plugin for SkyPlugin {
             )
             .add_systems(
                 PostUpdate,
-                (update_sky, mirror_sky_materials)
+                (sync_water_clarity, update_sky, mirror_sky_materials)
                     .chain()
                     .before(TransformSystems::Propagate)
                     .run_if(in_state(AppState::InGame))
@@ -646,8 +646,24 @@ const LAVA_FOG_COLOR: Argb = Argb(0xFF99_1900);
 
 const LAVA_FOG_RANGE: (f32, f32) = (0.25, 1.0);
 
+fn sync_water_clarity(
+    gui: Res<crate::gui::GuiState>,
+    mut params: ResMut<crate::renderer::terrain_pool::TerrainParams>,
+) {
+    let alpha = super::environment::water_opacity(gui.options.water_clarity);
+    if params.water_alpha != alpha {
+        params.water_alpha = alpha;
+    }
+}
+
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn update_sky(
+    time: Res<Time>,
+    gui: Res<crate::gui::GuiState>,
+    // Ticks the eye has spent underwater, as vanilla's `waterVisionTime`:
+    // up one a tick under water, down ten a tick out of it. (Vanilla's
+    // spectators gain ten a tick; not told apart here.)
+    mut water_vision_ticks: Local<f32>,
     view: Res<super::frame_view::FrameView>,
     env: Res<super::environment::Environment>,
     mut assets: ResMut<SkyAssets>,
@@ -681,10 +697,32 @@ fn update_sky(
     );
 
     let eye_fluid = eye_fluid_at(eye_x, eye_y, eye_z);
+    let ticks = time.delta_secs() * 20.0;
+    *water_vision_ticks = if eye_fluid == Some(EyeFluid::Water) {
+        (*water_vision_ticks + ticks).min(600.0)
+    } else {
+        (*water_vision_ticks - ticks * 10.0).max(0.0)
+    };
     let environmental = match eye_fluid {
         Some(EyeFluid::Water) => {
-            sky.fog_color = env.water_fog_color;
-            env.water_fog_distance
+            // Vanilla's WaterFogEnvironment and FogRenderer: the fog reaches
+            // further and its colour brightens as the eyes adjust.
+            let vision = super::environment::water_vision(*water_vision_ticks);
+            let color = env.water_fog_color;
+            let top = color
+                .channel(16)
+                .max(color.channel(8))
+                .max(color.channel(0));
+            sky.fog_color =
+                if top > 0 && color.channel(16) * color.channel(8) * color.channel(0) > 0 {
+                    let scale = 1.0 + vision * (255.0 / top as f32 - 1.0);
+                    color.scale_rgb(scale, scale, scale)
+                } else {
+                    color
+                };
+            let opacity = super::environment::water_opacity(gui.options.water_clarity);
+            let (start, end) = env.water_fog_distance;
+            (start, end * vision.max(0.25) / opacity)
         }
         Some(EyeFluid::Lava) => {
             sky.fog_color = LAVA_FOG_COLOR;
@@ -733,7 +771,10 @@ fn update_sky(
             };
             continue;
         }
-        if skybox != Skybox::Overworld {
+        // Under water vanilla fogs the sky out at the water fog's end
+        // (`WaterFogEnvironment` sets `skyEnd`), well short of the sky, so
+        // only the clear colour (the water fog's) shows.
+        if skybox != Skybox::Overworld || eye_fluid == Some(EyeFluid::Water) {
             *visibility = Visibility::Hidden;
             continue;
         }

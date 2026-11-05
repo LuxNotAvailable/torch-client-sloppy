@@ -480,6 +480,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn water_vision_matches_vanilla() {
+        assert_eq!(water_vision(0.0), 0.0);
+        assert!((water_vision(50.0) - 0.3).abs() < 1e-6);
+        assert!((water_vision(100.0) - 0.6).abs() < 1e-6);
+        assert!((water_vision(350.0) - 0.8).abs() < 1e-6);
+        assert_eq!(water_vision(600.0), 1.0);
+    }
+
+    #[test]
+    fn water_opacity_is_vanilla_at_default() {
+        assert_eq!(water_opacity(crate::gui::WATER_CLARITY_DEFAULT), 1.0);
+        assert_eq!(water_opacity(0), 2.0);
+        assert_eq!(water_opacity(100), 0.5);
+    }
+
+    #[test]
     fn the_axis_weights_are_the_kernel_slid_along() {
         assert_eq!(axis_weights(0.0), [1.0, 4.0, 6.0, 4.0, 1.0, 0.0]);
         assert_eq!(axis_weights(1.0), [0.0, 1.0, 4.0, 6.0, 4.0, 1.0]);
@@ -636,6 +652,30 @@ pub fn effective_render_distance(client: i32) -> i32 {
         0 => client,
         server => client.min(server as i32),
     }
+}
+
+/// How opaque water is under the water clarity setting (0 to 100,
+/// vanilla at 50): 2 at 0, 1 at 50, 0.5 at 100. The surface's alpha is
+/// multiplied by it and the underwater fog's end divided by it.
+pub fn water_opacity(clarity: u32) -> f32 {
+    let default = crate::gui::WATER_CLARITY_DEFAULT as f32;
+    2f32.powf((default - clarity as f32) / default)
+}
+
+/// Vanilla's water vision (`LocalPlayer.getWaterVision`) from the ticks
+/// the eye has spent underwater (0 to 600): it ramps to 0.6 over the first
+/// 100 ticks and to 1 by 600.
+pub fn water_vision(ticks: f32) -> f32 {
+    if ticks >= 600.0 {
+        return 1.0;
+    }
+    let a = (ticks / 100.0).clamp(0.0, 1.0);
+    let b = if ticks < 100.0 {
+        0.0
+    } else {
+        ((ticks - 100.0) / 500.0).clamp(0.0, 1.0)
+    };
+    a * 0.6 + b * 0.4
 }
 
 #[derive(Resource)]

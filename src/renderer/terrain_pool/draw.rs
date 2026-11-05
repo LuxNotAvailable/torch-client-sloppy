@@ -629,7 +629,12 @@ pub fn prepare_params(
     params: Option<Res<TerrainParams>>,
 ) {
     let params = params.as_deref().copied().unwrap_or_default();
-    let values = [params.cutoff, params.mip_bias, params.shadow_mip, 0.0f32];
+    let values = [
+        params.cutoff,
+        params.mip_bias,
+        params.shadow_mip,
+        params.water_alpha,
+    ];
     queue.write_buffer(&buffer.0, 0, bytemuck::bytes_of(&values));
 }
 
