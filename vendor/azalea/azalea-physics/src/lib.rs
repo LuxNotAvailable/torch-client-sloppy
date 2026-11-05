@@ -365,6 +365,11 @@ fn handle_relative_friction_and_calculate_movement(ctx: &mut MoveCtx, block_fric
         ),
     );
 
+    // `handleOnClimbable` resets the fall distance, so climbing down a ladder
+    // never ends in a fall.
+    if *ctx.on_climbable {
+        ctx.physics.reset_fall_distance();
+    }
     ctx.physics.velocity = handle_on_climbable(
         ctx.physics.velocity,
         ctx.on_climbable,

@@ -467,10 +467,17 @@ struct Playing {
 
 impl Playing {
     /// The two channels' gains now: the category's and master's volume times
-    /// the instance volume (clamped to 1), then for a positioned mono sound
-    /// the linear fall-off to its range and a constant-power pan.
+    /// the instance volume (clamped to 1, as OpenAL does), then for a
+    /// positioned mono sound the linear fall-off to its range and a
+    /// constant-power pan. Voice chat may go past 1, so a player turned up
+    /// above 100% is louder.
     fn gains(&self, listener: &super::Listener) -> [f32; 2] {
-        let gain = self.volume.clamp(0.0, 1.0) * super::category_gain(self.category);
+        let ceiling = if self.category == SoundCategory::Voice {
+            VOICE_MAX_GAIN
+        } else {
+            1.0
+        };
+        let gain = self.volume.clamp(0.0, ceiling) * super::category_gain(self.category);
         let Place::World { at, range } = self.place else {
             return [gain; 2];
         };
@@ -495,11 +502,14 @@ impl Playing {
         // Centred, each ear hears what an unpositioned sound gives both.
         let level = gain * falloff * std::f32::consts::SQRT_2;
         [
-            (level * angle.cos()).min(1.0),
-            (level * angle.sin()).min(1.0),
+            (level * angle.cos()).min(ceiling),
+            (level * angle.sin()).min(ceiling),
         ]
     }
 }
+
+/// The loudest a voice chat stream plays, a player's volume turned up.
+const VOICE_MAX_GAIN: f32 = 4.0;
 
 fn run(index_id: &str) {
     let mut pack = match Pack::open(index_id) {

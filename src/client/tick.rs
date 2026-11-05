@@ -1772,7 +1772,7 @@ fn tick_local_anim(
         main_hand,
         off_hand,
         armor,
-        using_offhand: false,
+        using_offhand: interaction::using_offhand(),
         main_arm_left: prefs.main_hand_left,
         crouching: pose == Pose::Crouching,
         sprinting,

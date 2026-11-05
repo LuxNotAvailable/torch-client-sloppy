@@ -25,6 +25,7 @@ static PLACE_DELAY: AtomicU32 = AtomicU32::new(0);
 static USE_ITEM: Mutex<UseItem> = Mutex::new(UseItem {
     started: false,
     item: None,
+    offhand: false,
     remaining: 0,
     held: 0,
     unconfirmed: None,
@@ -61,6 +62,8 @@ impl ConsumeFx {
 struct UseItem {
     started: bool,
     item: Option<ItemKind>,
+    /// The use is the off hand's (`getUsedItemHand`).
+    offhand: bool,
     remaining: i32,
     /// Ticks the use has lasted.
     held: i32,
@@ -535,6 +538,9 @@ fn start_use_item(bot: &Client, shared: &Arc<SharedMutex>) -> bool {
 
 fn use_item(bot: &Client, shared: &Arc<SharedMutex>) -> bool {
     let Some(kind) = held_item_kind(bot) else {
+        // An empty main hand passes straight to the off hand.
+        send_use_item(bot);
+        use_offhand_item(bot);
         return false;
     };
     #[cfg(audio)]
@@ -543,6 +549,10 @@ fn use_item(bot: &Client, shared: &Arc<SharedMutex>) -> bool {
         crate::play::use_sounds::item_used(kind, water, [pos.x as f32, pos.y as f32, pos.z as f32]);
     }
     send_use_item(bot);
+    if main_hand_passes(bot, kind) {
+        use_offhand_item(bot);
+        return false;
+    }
 
     let duration = held_use_duration(bot);
     if duration == 0 || !can_consume(bot) {
@@ -598,6 +608,12 @@ pub(crate) fn is_using_item() -> bool {
     USE_ITEM.lock().unwrap().started
 }
 
+/// Whether the item in use is in the off hand.
+pub(crate) fn using_offhand() -> bool {
+    let use_item = USE_ITEM.lock().unwrap();
+    use_item.started && use_item.offhand
+}
+
 /// How many uses this client has started; see `AnimInput::use_generation`.
 static USE_GENERATION: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
@@ -612,6 +628,7 @@ fn start_using_item(kind: ItemKind, duration: i32) {
     }
     use_item.started = true;
     use_item.item = Some(kind);
+    use_item.offhand = false;
     use_item.remaining = duration;
     use_item.held = 0;
     USE_GENERATION.fetch_add(1, Ordering::Relaxed);
@@ -1019,14 +1036,18 @@ fn held_item_kind(bot: &Client) -> Option<ItemKind> {
 }
 
 fn held_use_duration(bot: &Client) -> i32 {
+    let Ok(inventory) = bot.component::<azalea::entity::inventory::Inventory>() else {
+        return 0;
+    };
+    use_duration(inventory.held_item())
+}
+
+/// How long an item is held in use, 0 for none.
+fn use_duration(held: &ItemStack) -> i32 {
     use azalea_inventory::components::{BlocksAttacks, Consumable, KineticWeapon};
 
     const HELD_INDEFINITELY: i32 = 72000;
 
-    let Ok(inventory) = bot.component::<azalea::entity::inventory::Inventory>() else {
-        return 0;
-    };
-    let held = inventory.held_item();
     if let Some(consumable) = held.get_component::<Consumable>() {
         return (consumable.consume_seconds * 20.0) as i32;
     }
@@ -1323,6 +1344,98 @@ fn next_sequence(bot: &Client) -> Option<u32> {
     let mut ecs = bot.ecs.write();
     let mut handler = ecs.get_mut::<BlockStatePredictionHandler>(bot.entity)?;
     Some(handler.start_predicting())
+}
+
+/// Whether the main hand's `Item.use` would pass, so vanilla's
+/// `startUseItem` goes on to the off hand: an item with no use, held or
+/// instant. Instant uses throw, pour, fill, open, equip and the like.
+fn main_hand_passes(bot: &Client, kind: ItemKind) -> bool {
+    use azalea_inventory::components::Equippable;
+    if held_use_duration(bot) > 0 {
+        return false;
+    }
+    let equips = bot
+        .component::<azalea::entity::inventory::Inventory>()
+        .is_ok_and(|i| i.held_item().get_component::<Equippable>().is_some());
+    let name = kind.to_str().trim_start_matches("minecraft:");
+    let instant = equips
+        || name.ends_with("_bucket")
+        || name.ends_with("_spawn_egg")
+        || name.ends_with("_boat")
+        || name.ends_with("_raft")
+        || matches!(
+            name,
+            "bucket"
+                | "snowball"
+                | "egg"
+                | "blue_egg"
+                | "brown_egg"
+                | "ender_pearl"
+                | "ender_eye"
+                | "splash_potion"
+                | "lingering_potion"
+                | "experience_bottle"
+                | "wind_charge"
+                | "fishing_rod"
+                | "glass_bottle"
+                | "map"
+                | "written_book"
+                | "writable_book"
+                | "firework_rocket"
+                | "bundle"
+                | "lily_pad"
+                | "frogspawn"
+                | "knowledge_book"
+                | "carrot_on_a_stick"
+                | "warped_fungus_on_a_stick"
+        );
+    !instant
+}
+
+/// `startUseItem` for the off hand, after the main hand passed: sends the
+/// use and holds the item in use if it is held (a shield).
+fn use_offhand_item(bot: &Client) {
+    use azalea_protocol::packets::game::{ServerboundUseItem, s_interact::InteractionHand};
+    let (kind, duration) = {
+        let Ok(inventory) = bot.component::<azalea::entity::inventory::Inventory>() else {
+            return;
+        };
+        let Some(ItemStack::Present(data)) =
+            inventory.get_equipment(azalea_inventory::components::EquipmentSlot::Offhand)
+        else {
+            return;
+        };
+        (
+            data.kind,
+            use_duration(
+                inventory
+                    .get_equipment(azalea_inventory::components::EquipmentSlot::Offhand)
+                    .unwrap(),
+            ),
+        )
+    };
+    let Ok(look) = bot.component::<azalea::entity::LookDirection>() else {
+        return;
+    };
+    let (x_rot, y_rot) = (look.x_rot(), look.y_rot());
+    drop(look);
+    let Some(seq) = next_sequence(bot) else {
+        return;
+    };
+    bot.write_packet(ServerboundUseItem {
+        hand: InteractionHand::OffHand,
+        seq,
+        x_rot,
+        y_rot,
+    });
+    if duration > 0 {
+        start_using_item(kind, duration);
+        let mut use_item = USE_ITEM.lock().unwrap();
+        use_item.offhand = true;
+        if !SERVER_USING_ITEM.load(Ordering::Relaxed) {
+            use_item.unconfirmed.get_or_insert(0);
+        }
+    }
 }
 
 fn send_use_item(bot: &Client) {
