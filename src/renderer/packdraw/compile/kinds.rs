@@ -262,13 +262,15 @@ impl EntityKind {
             EntityKind::Hand => Segment::HandSolid,
             EntityKind::HandWater => Segment::HandTranslucent,
             EntityKind::ShadowCaster => Segment::Shadow,
-            EntityKind::EntityTranslucent
-            | EntityKind::BlockTranslucent
-            | EntityKind::ParticleTranslucent => Segment::WorldTranslucent,
+            EntityKind::EntityTranslucent | EntityKind::BlockTranslucent => {
+                Segment::WorldTranslucent
+            }
+            // Iris draws particles after the translucent terrain.
+            EntityKind::ParticleTranslucent => Segment::AfterTranslucent,
             EntityKind::DamagedBlock | EntityKind::Line | EntityKind::SpiderEyes => Segment::World,
             // Iris draws beams with the block entities; their glow blends, so
             // they go after the translucent terrain they shine through.
-            EntityKind::BeaconBeam => Segment::WorldTranslucent,
+            EntityKind::BeaconBeam => Segment::AfterTranslucent,
             // Iris draws weather after the translucent terrain.
             EntityKind::Weather => Segment::AfterTranslucent,
         }

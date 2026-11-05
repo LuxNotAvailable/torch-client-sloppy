@@ -498,10 +498,13 @@ impl PackFrameNode {
         steps(render_context, &plan.stages[ScreenStage::Deferred.index()]);
         span.end(render_context.command_encoder());
         let span = recorder.time_span(render_context.command_encoder(), "shaderpack/translucent");
+        // Blended entities and block entities draw before translucent
+        // terrain, as vanilla's do: water writes depth, so a banner's
+        // pattern layers behind it would otherwise fail the depth test.
+        entity_segment(render_context, Segment::WorldTranslucent);
         for pass in &plan.translucent {
             geometry(render_context, pass);
         }
-        entity_segment(render_context, Segment::WorldTranslucent);
         entity_segment(render_context, Segment::AfterTranslucent);
         entity_segment(render_context, Segment::HandTranslucent);
         if let Some(center) = world.get_resource::<super::center_depth::CenterDepth>() {
