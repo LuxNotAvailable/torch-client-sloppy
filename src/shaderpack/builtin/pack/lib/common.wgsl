@@ -4,6 +4,8 @@
 #define SUN_BRIGHTNESS 2.4 // [1.6 2.0 2.4 2.8 3.2]
 #define TORCH_BRIGHTNESS 2.2 // [1.4 1.8 2.2 2.6 3.0]
 #define FOG_DENSITY 1.0 // [0.0 0.5 1.0 1.5 2.0]
+// How far you see into water: lower is murkier, higher clearer.
+#define WATER_CLARITY 1.0 // [0.25 0.5 0.75 1.0 1.25 1.5 2.0]
 #define EXPOSURE 1.0 // [0.6 0.8 1.0 1.2 1.4]
 // The fraction of the screen reflections and light shafts are traced at
 // (1/1 to 1/4; shaders.properties sizes their targets), and how that is

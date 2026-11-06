@@ -144,7 +144,7 @@ fn fragment(v: Varyings) -> Lit {
         depth = 64.0;
     }
     depth = max(depth, 0.0);
-    let absorbed = exp(-depth * vec3<f32>(0.2, 0.05, 0.04));
+    let absorbed = exp(-depth * vec3<f32>(0.2, 0.05, 0.04) / WATER_CLARITY);
     let through = (absorbed.r + absorbed.g + absorbed.b) / 3.0;
 
     // The biome's water colour, pulled toward a clear teal.
@@ -155,7 +155,9 @@ fn fragment(v: Varyings) -> Lit {
     let scatter = tint * 0.45 * (ambient + direct_light() * vis * 0.2);
     let shine = direct_light() * ggx(n, view_dir, light_dir(), 0.28) * vis * smoothstep(0.05, 0.45, sky) * 0.5;
 
-    let alpha = clamp((1.0 - through) * 0.7, 0.05, 0.65);
+    // Murkier water starts less see-through and can close up entirely.
+    let murk = clamp(1.0 / WATER_CLARITY, 0.5, 4.0);
+    let alpha = clamp((1.0 - through) * 0.7, 0.05 * murk, min(0.65 * sqrt(murk), 0.95));
     // Blending scales the colour by alpha; the glint is light off the
     // surface, so undo that, but not without bound for clear water.
     out.color = vec4<f32>(scatter + min(shine, vec3<f32>(2.0)) / max(alpha, 0.35), alpha);
