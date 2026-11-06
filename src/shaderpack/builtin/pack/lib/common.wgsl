@@ -6,6 +6,9 @@
 #define FOG_DENSITY 1.0 // [0.0 0.5 1.0 1.5 2.0]
 // How far you see into water: lower is murkier, higher clearer.
 #define WATER_CLARITY 1.0 // [0.25 0.5 0.75 1.0 1.25 1.5 2.0]
+// How much of the water's surface is its own colour however shallow it is,
+// so a pool a block deep still reads as water.
+#define WATER_SURFACE_OPACITY 0.2 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8]
 #define EXPOSURE 1.0 // [0.6 0.8 1.0 1.2 1.4]
 // The fraction of the screen reflections and light shafts are traced at
 // (1/1 to 1/4; shaders.properties sizes their targets), and how that is

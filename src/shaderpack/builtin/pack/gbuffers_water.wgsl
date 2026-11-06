@@ -157,7 +157,10 @@ fn fragment(v: Varyings) -> Lit {
 
     // Murkier water starts less see-through and can close up entirely.
     let murk = clamp(1.0 / WATER_CLARITY, 0.5, 4.0);
-    let alpha = clamp((1.0 - through) * 0.7, 0.05 * murk, min(0.65 * sqrt(murk), 0.95));
+    let depth_alpha = clamp((1.0 - through) * 0.7, 0.05 * murk, min(0.65 * sqrt(murk), 0.95));
+    // The surface's own share covers the rest of the way less what depth
+    // already covers, so the two add up without passing opaque.
+    let alpha = WATER_SURFACE_OPACITY + (1.0 - WATER_SURFACE_OPACITY) * depth_alpha;
     // Blending scales the colour by alpha; the glint is light off the
     // surface, so undo that, but not without bound for clear water.
     out.color = vec4<f32>(scatter + min(shine, vec3<f32>(2.0)) / max(alpha, 0.35), alpha);
