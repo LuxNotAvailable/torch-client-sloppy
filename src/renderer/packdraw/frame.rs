@@ -419,7 +419,11 @@ pub(crate) fn prepare_uniforms(
         });
         // A shadow pass drawing solid back faces culls the faces toward the
         // light, so those facing groups need not be sent at all.
-        if installed.shadow_casters.solid_back_faces {
+        static NO_SKIP: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let no_skip = *NO_SKIP.get_or_init(|| {
+            crate::platform::env::var("MC_NO_SHADOW_SKIP").is_ok_and(|v| v == "1")
+        });
+        if installed.shadow_casters.solid_back_faces && !no_skip {
             shape.skip_groups =
                 crate::renderer::terrain_pool::groups_facing(values.toward_light());
         }

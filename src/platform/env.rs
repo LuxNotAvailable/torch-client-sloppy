@@ -213,6 +213,12 @@ const ALL: &[Var] = &[
         enabled: true,
     },
     Var {
+        name: "MC_NO_SHADOW_SKIP",
+        what: "1 sends a back-face shadow pass the faces toward the light too, to measure what leaving them out saves",
+        default: "off",
+        enabled: true,
+    },
+    Var {
         name: "MC_NO_HIZ",
         what: "turn off terrain occlusion culling against last frame's depth, when set to 1 (overrides MC_HIZ and the debug toggle)",
         default: "off",
