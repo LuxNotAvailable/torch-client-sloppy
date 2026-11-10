@@ -845,7 +845,10 @@ fn emit_fluid_side(
     tint: [f32; 3],
     buf: &mut MeshBuf,
 ) {
-    const EPS: f32 = 0.001;
+    // Vanilla's 0.001 inset is under one step of the vertex position
+    // (1/256 block) and would round away, leaving the fluid's faces on the
+    // neighbour's to z-fight; one step is the smallest gap that survives.
+    const EPS: f32 = 1.0 / 256.0;
     let corners: [[f32; 3]; 4] = match fi {
         2 => [
             [1. - EPS, bottom, 0.],
@@ -906,7 +909,10 @@ fn emit_fluid(
     tint: [f32; 3],
     buf: &mut MeshBuf,
 ) {
-    const EPS: f32 = 0.001;
+    // Vanilla's 0.001 inset is under one step of the vertex position
+    // (1/256 block) and would round away, leaving the fluid's faces on the
+    // neighbour's to z-fight; one step is the smallest gap that survives.
+    const EPS: f32 = 1.0 / 256.0;
     let lava = material == MATERIAL_LAVA;
 
     let above_fluid = occ.same_fluid(bx, by + 1, bz, lava);
