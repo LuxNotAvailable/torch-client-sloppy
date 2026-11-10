@@ -52,15 +52,7 @@ pub struct SlotMeta {
     pub flags: u32,
     pub pool: u32,
     pub cutout_first: u32,
-    /// The solid stream's index counts by the way its quads face, in
-    /// `FACE_GROUP` order and laid end to end from `first_index`, so the
-    /// cull can leave out the groups facing away from the camera.
-    pub solid_groups: [u32; 8],
 }
-
-/// The solid stream's facing groups: +Y, -Y, -Z, +Z, -X, +X, then quads
-/// that face no axis (or are drawn from both sides), which always draw.
-pub const FACE_GROUPS: u32 = 7;
 
 impl SlotMeta {
     pub fn stream_range(&self, stream: u32) -> (u32, u32) {

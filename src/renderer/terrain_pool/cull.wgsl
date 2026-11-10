@@ -9,7 +9,6 @@ struct SlotMeta {
     flags: u32,
     pool: u32,
     cutout_first: u32,
-    solid_groups: array<u32, 8>,
 }
 
 struct DrawIndexedIndirectArgs {
@@ -32,7 +31,7 @@ struct CullView {
     compact: u32,
     flags: u32,
     plane_count: u32,
-    region_cap: u32,
+    pad0: u32,
     pad1: u32,
     // The occlusion pyramid's view: the clip matrix of the frame it was
     // built from, whether that depth was reversed, and its level count.
@@ -41,11 +40,7 @@ struct CullView {
     hiz_levels: u32,
     hiz_pad0: u32,
     hiz_pad1: u32,
-    // The camera; w 1 when solid quads facing away from it are left out.
-    eye: vec4<f32>,
 }
-
-const FACE_GROUPS: u32 = 7u;
 
 const STREAM_SOLID: u32 = 0u;
 const STREAM_CUTOUT: u32 = 1u;
@@ -166,30 +161,11 @@ fn in_frustum(lo: vec3<f32>, hi: vec3<f32>) -> bool {
 }
 
 fn write_zero(region: u32, k: u32) {
-    commands[region * cull.region_cap + k] = DrawIndexedIndirectArgs(0u, 1u, 0u, 0i, 0u);
-}
-
-/// Whether a facing group's quads can face the eye from anywhere in the
-/// section's box (Sodium's face culling): a +Y face shows only from above
-/// the section's bottom, and so on. The last group always draws.
-fn group_faces_eye(group: u32, lo: vec3<f32>, hi: vec3<f32>) -> bool {
-    if cull.eye.w == 0.0 {
-        return true;
-    }
-    let e = cull.eye.xyz;
-    switch group {
-        case 0u: { return e.y > lo.y; }
-        case 1u: { return e.y < hi.y; }
-        case 2u: { return e.z < hi.z; }
-        case 3u: { return e.z > lo.z; }
-        case 4u: { return e.x < hi.x; }
-        case 5u: { return e.x > lo.x; }
-        default: { return true; }
-    }
+    commands[region * cull.slot_cap + k] = DrawIndexedIndirectArgs(0u, 1u, 0u, 0i, 0u);
 }
 
 fn write_cmd(region: u32, k: u32, first_index: u32, count: u32, base_vertex: u32, slot: u32) {
-    commands[region * cull.region_cap + k] = DrawIndexedIndirectArgs(
+    commands[region * cull.slot_cap + k] = DrawIndexedIndirectArgs(
         count, 1u, first_index, i32(base_vertex), slot,
     );
 }
@@ -243,30 +219,24 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let has_solid = draws && !is_water && m.solid_count > 0u;
     let has_cutout = draws && !is_water && m.index_count > m.solid_count;
 
-    let lo = vec3<f32>(m.origin) + m.min;
-    let hi = vec3<f32>(m.origin) + m.max;
     if (!compact) {
-        // Each slot owns FACE_GROUPS commands: the solid groups facing the
-        // eye, the cutout run in the first, the rest zeroed.
-        let own = slot * FACE_GROUPS;
         for (var pool = 0u; pool < cull.pool_count; pool = pool + 1u) {
             let base = ((cull.view_index * cull.pool_count) + pool) * STREAMS;
-            let mine = draws && m.pool == pool;
-            var first = m.first_index;
-            for (var g = 0u; g < FACE_GROUPS; g = g + 1u) {
-                let count = m.solid_groups[g];
-                if (mine && has_solid && count > 0u && group_faces_eye(g, lo, hi)) {
-                    write_cmd(base + STREAM_SOLID, own + g, first, count, m.base_vertex, slot);
+            if (draws && m.pool == pool) {
+                if (has_solid) {
+                    write_cmd(base + STREAM_SOLID, slot, m.first_index, m.solid_count, m.base_vertex, slot);
                 } else {
-                    write_zero(base + STREAM_SOLID, own + g);
+                    write_zero(base + STREAM_SOLID, slot);
                 }
-                first = first + count;
-                if (g == 0u && mine && has_cutout) {
-                    write_cmd(base + STREAM_CUTOUT, own, m.cutout_first,
+                if (has_cutout) {
+                    write_cmd(base + STREAM_CUTOUT, slot, m.cutout_first,
                         m.index_count - m.solid_count, m.base_vertex, slot);
                 } else {
-                    write_zero(base + STREAM_CUTOUT, own + g);
+                    write_zero(base + STREAM_CUTOUT, slot);
                 }
+            } else {
+                write_zero(base + STREAM_SOLID, slot);
+                write_zero(base + STREAM_CUTOUT, slot);
             }
         }
         return;
@@ -278,15 +248,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let base = ((cull.view_index * cull.pool_count) + m.pool) * STREAMS;
     if (has_solid) {
         let region = base + STREAM_SOLID;
-        var first = m.first_index;
-        for (var g = 0u; g < FACE_GROUPS; g = g + 1u) {
-            let count = m.solid_groups[g];
-            if (count > 0u && group_faces_eye(g, lo, hi)) {
-                let k = atomicAdd(&counts[region], 1u);
-                write_cmd(region, k, first, count, m.base_vertex, slot);
-            }
-            first = first + count;
-        }
+        let k = atomicAdd(&counts[region], 1u);
+        write_cmd(region, k, m.first_index, m.solid_count, m.base_vertex, slot);
     }
     if (has_cutout) {
         let region = base + STREAM_CUTOUT;
