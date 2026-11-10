@@ -824,6 +824,7 @@ fn sync_block_entities(
         keep
     });
 
+    let mut cull_blocks = Vec::new();
     for (pos, info) in snapshot.iter() {
         let Some(entry) = registry.by_kind.get(&info.kind) else {
             continue;
@@ -933,7 +934,12 @@ fn sync_block_entities(
 
         let moving =
             st.open > 0.0 || matches!(&st.anim, sim::Anim::Shulker(s) if s.progress(partial) > 0.0);
+        let beam = matches!(info.kind, BlockEntityKind::Beacon | BlockEntityKind::EndGateway);
+        if crate::entities::cull::enabled() && !beam {
+            cull_blocks.push(*pos);
+        }
         let open = in_open_view(info.kind, *pos, &occlusion)
+            && (beam || !crate::entities::cull::block_hidden(*pos))
             && bake::rig_wanted(info.state.state_id, *pos, moving);
         for layer in &mut rig.layers {
             let spec = &registry.specs[layer.spec];
@@ -1022,6 +1028,7 @@ fn sync_block_entities(
             apply_layer(layer, &(spec.transform)(&st), *pos, &mut nodes);
         }
     }
+    crate::entities::cull::request_blocks(cull_blocks);
 
     transient::each(|pos, state| {
         let mut out = Submit {

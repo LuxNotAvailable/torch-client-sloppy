@@ -513,6 +513,9 @@ crate::options! {
         pub antialiasing: crate::renderer::antialias::Antialiasing = Default::default()
             => custom(|v| crate::renderer::antialias::Antialiasing::read(v), |m, a| a.write(m)),
         pub smooth_lighting: bool = SMOOTH_LIGHTING_DEFAULT => key("ao"),
+        /// Entities and block entities behind solid blocks are not drawn
+        /// (`entities::cull`).
+        pub entity_culling: bool = true => key("torchEntityCulling"),
         /// Vanilla's Biome Blend: how far grass, foliage and water colours
         /// average, in blocks (0 to 7).
         pub biome_blend: u32 = 2 => key("biomeBlendRadius").clamp(0, 7),

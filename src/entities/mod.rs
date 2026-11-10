@@ -1,5 +1,6 @@
 pub mod bake;
 pub mod blockmodel;
+pub mod cull;
 pub mod facts;
 pub mod feed;
 pub mod geom;
@@ -1397,12 +1398,28 @@ fn sync_entities(
     let mut copy_locals: Vec<Transform> = Vec::new();
     let mut posed: Vec<PosedPart> = Vec::new();
 
+    let mut cull_boxes = Vec::new();
     for st in frame.iter().copied().chain(&carried.0) {
         let spec_ids = registry.specs_for_state(st);
         if spec_ids.is_empty() {
             continue;
         }
-        let in_range = within_view_range(st, &camera) && in_open_view(st, &occlusion);
+        if cull::enabled() {
+            let half = f64::from(st.bounding_box_width.max(0.2)) * 0.5;
+            let feet = st.pos.map(f64::from);
+            cull_boxes.push((
+                st.id,
+                [feet[0] - half, feet[1], feet[2] - half],
+                [
+                    feet[0] + half,
+                    feet[1] + f64::from(st.bounding_box_height.max(0.2)),
+                    feet[2] + half,
+                ],
+            ));
+        }
+        let in_range = within_view_range(st, &camera)
+            && in_open_view(st, &occlusion)
+            && !cull::entity_hidden(st.id);
         let flash = tnt_flash_alpha(st);
         let levels = entity_levels(&light, st);
         let lit = Lit {
@@ -1702,6 +1719,10 @@ fn sync_entities(
                 &mut globals,
             );
         }
+    }
+    if cull::enabled() {
+        let eye = camera.position.to_array().map(f64::from);
+        cull::request_entities(eye, cull_boxes);
     }
 }
 

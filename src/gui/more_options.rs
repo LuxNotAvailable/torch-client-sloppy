@@ -41,6 +41,7 @@ pub fn apply(options: &crate::gui::GuiOptions) {
     static APPLIED: std::sync::Once = std::sync::Once::new();
     APPLIED.call_once(|| crate::client::languages::apply(&options.language));
     crate::text::FORCE_UNICODE.store(options.force_unicode, std::sync::atomic::Ordering::Relaxed);
+    crate::entities::cull::set_enabled(options.entity_culling);
 }
 
 fn done(p: &mut Painter, ctx: &ScreenCtx) -> bool {
