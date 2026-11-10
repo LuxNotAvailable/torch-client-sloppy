@@ -62,6 +62,29 @@ pub struct SlotMeta {
 /// that face no axis (or are drawn from both sides), which always draw.
 pub const FACE_GROUPS: u32 = 7;
 
+static FOG_CYLINDRICAL: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(f32::INFINITY.to_bits());
+static FOG_SPHERICAL: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(f32::INFINITY.to_bits());
+
+/// Where vanilla's fog fully hides terrain, set by the sky each frame
+/// (infinite while a shader pack draws its own fog): the render fog's
+/// cylindrical end and the environment's spherical end. The cull leaves out
+/// sections wholly past either.
+pub fn set_fog_cull(cylindrical: f32, spherical: f32) {
+    use std::sync::atomic::Ordering::Relaxed;
+    FOG_CYLINDRICAL.store(cylindrical.to_bits(), Relaxed);
+    FOG_SPHERICAL.store(spherical.to_bits(), Relaxed);
+}
+
+pub(crate) fn fog_cull() -> (f32, f32) {
+    use std::sync::atomic::Ordering::Relaxed;
+    (
+        f32::from_bits(FOG_CYLINDRICAL.load(Relaxed)),
+        f32::from_bits(FOG_SPHERICAL.load(Relaxed)),
+    )
+}
+
 impl SlotMeta {
     pub fn stream_range(&self, stream: u32) -> (u32, u32) {
         match stream {

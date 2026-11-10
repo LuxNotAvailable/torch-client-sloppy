@@ -33,7 +33,7 @@ struct CullView {
     flags: u32,
     plane_count: u32,
     region_cap: u32,
-    pad1: u32,
+    order_len: u32,
     // The occlusion pyramid's view: the clip matrix of the frame it was
     // built from, whether that depth was reversed, and its level count.
     hiz_clip: mat4x4<f32>,
@@ -43,6 +43,8 @@ struct CullView {
     hiz_pad1: u32,
     // The camera; w 1 when solid quads facing away from it are left out.
     eye: vec4<f32>,
+    // Where vanilla's fog hides everything: x cylindrical, y spherical.
+    fog: vec4<f32>,
 }
 
 const FACE_GROUPS: u32 = 7u;
@@ -65,6 +67,9 @@ const HIZ_STATS: u32 = 4u;
 @group(0) @binding(3) var<storage, read_write> counts: array<atomic<u32>>;
 @group(0) @binding(4) var<uniform> cull: CullView;
 @group(0) @binding(5) var hiz: texture_2d<f32>;
+// Slots nearest the camera first; the dispatch walks it so commands come out
+// roughly front to back.
+@group(0) @binding(6) var<storage, read> order: array<u32>;
 
 /// Whether last frame's depth hides a box entirely: its nearest point, seen
 /// from last frame's camera, lies behind the farthest depth over the area
@@ -188,6 +193,17 @@ fn group_faces_eye(group: u32, lo: vec3<f32>, hi: vec3<f32>) -> bool {
     }
 }
 
+/// Whether vanilla's fog covers the whole box from the eye (the terrain
+/// shader's formula at the box's nearest point), for a camera view.
+fn fogged(lo: vec3<f32>, hi: vec3<f32>) -> bool {
+    if (cull.eye.w == 0.0) {
+        return false;
+    }
+    let d = clamp(cull.eye.xyz, lo, hi) - cull.eye.xyz;
+    let cylindrical = max(length(d.xz), abs(d.y));
+    return cylindrical >= cull.fog.x || length(d) >= cull.fog.y;
+}
+
 fn write_cmd(region: u32, k: u32, first_index: u32, count: u32, base_vertex: u32, slot: u32) {
     commands[region * cull.region_cap + k] = DrawIndexedIndirectArgs(
         count, 1u, first_index, i32(base_vertex), slot,
@@ -196,7 +212,15 @@ fn write_cmd(region: u32, k: u32, first_index: u32, count: u32, base_vertex: u32
 
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
-    let slot = id.x;
+    // This invocation's place in the walk, and the slot there.
+    let at = id.x;
+    if (at >= cull.slot_cap) {
+        return;
+    }
+    var slot = at;
+    if (at < cull.order_len && at < arrayLength(&order)) {
+        slot = order[at];
+    }
     if (slot >= cull.slot_cap) {
         return;
     }
@@ -221,7 +245,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if (live && visible) {
         let lo = vec3<f32>(m.origin) + m.min;
         let hi = vec3<f32>(m.origin) + m.max;
-        inside = in_frustum(lo, hi);
+        inside = in_frustum(lo, hi) && !fogged(lo, hi);
         if (inside && (cull.flags & VIEW_HIZ) != 0u) {
             // The report's Hi-Z counters, after the regions' counts:
             // sections tested against the pyramid, and those it hid.
@@ -248,7 +272,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if (!compact) {
         // Each slot owns FACE_GROUPS commands: the solid groups facing the
         // eye, the cutout run in the first, the rest zeroed.
-        let own = slot * FACE_GROUPS;
+        let own = at * FACE_GROUPS;
         for (var pool = 0u; pool < cull.pool_count; pool = pool + 1u) {
             let base = ((cull.view_index * cull.pool_count) + pool) * STREAMS;
             let mine = draws && m.pool == pool;

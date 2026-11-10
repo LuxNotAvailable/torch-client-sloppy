@@ -746,6 +746,17 @@ fn update_sky(
         };
         fog.directional_light_color =
             Color::linear_rgba(environmental.0, environmental.1, 0.0, 0.0);
+        // Terrain wholly inside the fog is left out of the draw; a shader
+        // pack draws its own fog, so then nothing is.
+        #[cfg(feature = "shader_support")]
+        let pack = crate::renderer::packvertex::active();
+        #[cfg(not(feature = "shader_support"))]
+        let pack = false;
+        if pack {
+            crate::renderer::terrain_pool::set_fog_cull(f32::INFINITY, f32::INFINITY);
+        } else {
+            crate::renderer::terrain_pool::set_fog_cull(env.render_fog_distance.1, environmental.1);
+        }
         camera.clear_color = ClearColorConfig::Custom(fog_color);
     }
 

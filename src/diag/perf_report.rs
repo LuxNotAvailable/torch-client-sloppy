@@ -94,6 +94,11 @@ enum Phase {
     Recording { started: Instant, until: Instant },
 }
 
+/// A diagnostic's value for one frame.
+struct Measured {
+    value: f64,
+}
+
 struct Capture {
     phase: Phase,
     frame_ms: Vec<f32>,
@@ -101,6 +106,10 @@ struct Capture {
     counts_at_start: Counts,
     traffic_at_start: (u64, u64),
     process: Option<ProcessSampler>,
+    /// When the diagnostics were last read: each frame sums what they
+    /// measured since, as a pass can report more than once a frame (the
+    /// world and hand cameras each run a main opaque pass under one name).
+    diagnostics_read: Option<Instant>,
 }
 
 /// One reading of the process, taken off the main thread.
@@ -189,6 +198,7 @@ pub fn start() {
         counts_at_start: Counts::default(),
         traffic_at_start: (0, 0),
         process: None,
+        diagnostics_read: None,
     });
 }
 
@@ -457,6 +467,7 @@ impl Capture {
             };
             self.push(section, name, ns as f32 / 1e6);
         }
+        let read_since = self.diagnostics_read.replace(Instant::now());
         if let Some(store) = diagnostics {
             // A shader pack's own span brackets nothing on the GPU (its
             // passes go to command buffers encoded in parallel), so its
@@ -468,14 +479,22 @@ impl Capture {
             let (mut gpu_total, mut opaque_fragments, mut output_pixels) =
                 (0.0f32, None::<f32>, None::<f32>);
             for diagnostic in store.iter() {
-                // A value nothing measured lately (a pass that stopped
-                // running) would only repeat its last reading.
-                let Some(m) = diagnostic
-                    .measurement()
-                    .filter(|m| m.time.elapsed() < Duration::from_secs(1))
-                else {
+                // Everything measured since the last frame's read, summed;
+                // a pass nothing measured since (one that stopped running)
+                // is left out rather than repeating its last reading.
+                let fresh = diagnostic.measurements().filter(|m| match read_since {
+                    Some(since) => m.time > since,
+                    None => m.time.elapsed() < Duration::from_secs(1),
+                });
+                let (mut value, mut any) = (0.0f64, false);
+                for m in fresh {
+                    value += m.value;
+                    any = true;
+                }
+                if !any {
                     continue;
-                };
+                }
+                let m = Measured { value };
                 let name = match diagnostic.suffix.trim() {
                     "" => diagnostic.path().as_str().to_owned(),
                     unit => format!("{} ({unit})", diagnostic.path().as_str()),

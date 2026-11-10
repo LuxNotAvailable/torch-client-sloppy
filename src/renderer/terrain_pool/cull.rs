@@ -45,7 +45,8 @@ pub struct CullView {
     pub plane_count: u32,
     /// Commands each region holds: `FACE_GROUPS` per slot.
     pub region_cap: u32,
-    pub pad: u32,
+    /// Slots in `order` (0: walk slots in their own order).
+    pub order_len: u32,
     /// The occlusion pyramid's clip matrix (last frame's camera), whether
     /// its depth was reversed, and its level count (0: no pyramid).
     pub hiz_clip: [[f32; 4]; 4],
@@ -55,6 +56,10 @@ pub struct CullView {
     /// The camera, with w 1 when solid quads facing away from it may be
     /// left out (not for a shadow view, which looks from the sun).
     pub eye: [f32; 4],
+    /// Where vanilla's fog hides everything, for a camera view without a
+    /// shader pack: x the render fog's cylindrical end, y the environment's
+    /// spherical end (infinite when nothing is to be left out).
+    pub fog: [f32; 4],
 }
 
 pub const VIEW_WATER: u32 = 1;
@@ -135,12 +140,13 @@ impl CullShape {
                 },
             plane_count: self.plane_count as u32,
             region_cap: slot_cap * super::FACE_GROUPS,
-            pad: 0,
+            order_len: 0,
             hiz_clip: [[0.0; 4]; 4],
             hiz_reverse: 0,
             hiz_levels: 0,
             hiz_pad: [0; 2],
             eye: [0.0; 4],
+            fog: [f32::INFINITY, f32::INFINITY, 0.0, 0.0],
         }
     }
 }
@@ -157,6 +163,14 @@ const INDIRECT_ARGS_SIZE: u64 = 20;
 #[derive(Resource)]
 pub struct CullBuffers {
     pub commands: Buffer,
+    /// Slots nearest the camera first, for the cull to walk: commands come
+    /// out roughly front to back, so near terrain fills the depth buffer
+    /// before far terrain is shaded behind it.
+    pub order: Buffer,
+    order_cpu: Vec<u32>,
+    /// Where the camera was, and frames since, when `order` was sorted.
+    order_eye: Option<Vec3>,
+    order_age: u32,
     pub counts: Buffer,
     /// Copies of the Hi-Z counters at the end of `counts`, read back while
     /// a performance report records.
@@ -210,6 +224,12 @@ impl CullBuffers {
                 state: Arc::new(AtomicU8::new(READBACK_FREE)),
             })
             .collect();
+        let order = device.create_buffer(&BufferDescriptor {
+            label: Some("terrain_cull_order"),
+            size: u64::from(slot_cap.max(1)) * 4,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         let views = device.create_buffer(&BufferDescriptor {
             label: Some("terrain_cull_views"),
             size: (MAX_VIEWS as u64) * CULL_VIEW_STRIDE,
@@ -218,6 +238,10 @@ impl CullBuffers {
         });
         Self {
             commands,
+            order,
+            order_cpu: Vec::new(),
+            order_eye: None,
+            order_age: 0,
             counts,
             views,
             regions,
@@ -250,6 +274,10 @@ impl CullBuffers {
         };
         Self {
             commands: plain("terrain_cull_commands_unused", 16),
+            order: plain("terrain_cull_order_unused", 16),
+            order_cpu: Vec::new(),
+            order_eye: None,
+            order_age: 0,
             counts: plain("terrain_cull_counts_unused", 16),
             views: plain("terrain_cull_views_unused", 16),
             regions: 0,
@@ -265,6 +293,43 @@ impl CullBuffers {
             water_args: Vec::new(),
             water_runs: Vec::new(),
         }
+    }
+
+    /// Sorts the drawn slots nearest `eye` first into `order`, when the
+    /// camera has moved a couple of blocks or a few frames have passed (an
+    /// older order only costs a little overdraw). Returns its length.
+    fn sort_order(&mut self, queue: &RenderQueue, pools: &TerrainPools, eye: Option<Vec3>) -> u32 {
+        const MOVED: f32 = 2.0;
+        const MAX_AGE: u32 = 15;
+        let Some(eye) = eye else {
+            return 0;
+        };
+        let end = pools.draw_end.min(pools.meta_cpu.len() as u32).min(self.slot_cap);
+        self.order_age += 1;
+        let fresh = self.order_cpu.len() == end as usize
+            && self.order_age < MAX_AGE
+            && self.order_eye.is_some_and(|at| at.distance(eye) < MOVED);
+        if !fresh {
+            let distance = |slot: u32| {
+                let (lo, hi) = pools.meta_cpu[slot as usize].world_box();
+                let centre = Vec3::from(lo).lerp(Vec3::from(hi), 0.5);
+                centre.distance_squared(eye)
+            };
+            // Each slot's distance once, then the sort on the keys alone:
+            // computed in the comparison, it cost a spike every re-sort.
+            let mut keyed: Vec<(u32, u32)> = (0..end)
+                .map(|slot| (distance(slot).to_bits(), slot))
+                .collect();
+            keyed.sort_unstable();
+            self.order_cpu.clear();
+            self.order_cpu.extend(keyed.into_iter().map(|(_, slot)| slot));
+            if !self.order_cpu.is_empty() {
+                queue.write_buffer(&self.order, 0, bytemuck::cast_slice(&self.order_cpu));
+            }
+            self.order_eye = Some(eye);
+            self.order_age = 0;
+        }
+        self.order_cpu.len() as u32
     }
 
     /// Commands each region holds: up to `FACE_GROUPS` per slot.
@@ -688,6 +753,7 @@ pub fn finish(app: &mut App) {
             bevy::render::render_resource::binding_types::texture_2d(
                 bevy::render::render_resource::TextureSampleType::Float { filterable: false },
             ),
+            storage_buffer_read_only_sized(false, NonZeroU64::new(4)),
         ),
     );
     let layout = BindGroupLayoutDescriptor::new("terrain_cull", &layout_entries);
@@ -858,6 +924,25 @@ pub fn prepare_cull(
             *cull = CullBuffers::new(&device, views.count, pool_count, pools.slot_cap);
             cull.generation = generation;
         }
+        let camera_eye = assigned
+            .iter()
+            .find(|view| view.flags == CAMERA_FLAGS)
+            .map(|view| view.eye);
+        static NO_NEAR_FIRST: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        static NO_FOG_CULL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let off = |cell: &std::sync::OnceLock<bool>, name: &str| {
+            *cell.get_or_init(|| crate::platform::env::var(name).is_ok_and(|v| v == "1"))
+        };
+        let order_len = if off(&NO_NEAR_FIRST, "MC_NO_NEAR_FIRST") {
+            0
+        } else {
+            cull.sort_order(&queue, &pools, camera_eye)
+        };
+        let fog = if off(&NO_FOG_CULL, "MC_NO_FOG_CULL") {
+            (f32::INFINITY, f32::INFINITY)
+        } else {
+            super::fog_cull()
+        };
         for view in assigned.iter() {
             let mut cull_view = view.shape.view(
                 cull.slot_cap,
@@ -866,8 +951,10 @@ pub fn prepare_cull(
                 tier.count as u32,
                 view.flags,
             );
+            cull_view.order_len = order_len;
             if view.flags == CAMERA_FLAGS {
                 cull_view.eye = [view.eye.x, view.eye.y, view.eye.z, 1.0];
+                cull_view.fog = [fog.0, fog.1, 0.0, 0.0];
             }
             if let Some((clip, levels, reverse)) = view.hiz {
                 cull_view.flags |= VIEW_HIZ;
@@ -1005,6 +1092,7 @@ pub fn prepare_cull_bind_group(
                 size: Some(NonZeroU64::new(CULL_VIEW_STRIDE).unwrap()),
             },
             hiz.view(),
+            cull.order.as_entire_binding(),
         )),
     );
     bind_group.group = Some(group);

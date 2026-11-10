@@ -201,6 +201,18 @@ const ALL: &[Var] = &[
         enabled: cfg!(feature = "vulkan"),
     },
     Var {
+        name: "MC_NO_NEAR_FIRST",
+        what: "1 walks terrain sections in slot order rather than nearest the camera first, to measure what the order saves",
+        default: "off",
+        enabled: true,
+    },
+    Var {
+        name: "MC_NO_FOG_CULL",
+        what: "1 draws terrain wholly inside vanilla's fog too, to measure what leaving it out saves",
+        default: "off",
+        enabled: true,
+    },
+    Var {
         name: "MC_NO_HIZ",
         what: "turn off terrain occlusion culling against last frame's depth, when set to 1 (overrides MC_HIZ and the debug toggle)",
         default: "off",
