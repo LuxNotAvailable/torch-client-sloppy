@@ -302,7 +302,59 @@ struct Retired {
     indices: [Option<IndexRange>; 2],
 }
 
-const META_STRIDE: u64 = 64;
+const META_STRIDE: u64 = 96;
+
+/// Which facing group a quad belongs to (`FACE_GROUPS` order), from its
+/// first triangle; a quad not flat on an axis is group 6.
+fn facing_group(verts: &[crate::renderer::mesh::PackedVertex], tri: &[u32]) -> usize {
+    let p = |i: u32| {
+        let v = verts[i as usize].pos;
+        [f32::from(v[0]), f32::from(v[1]), f32::from(v[2])]
+    };
+    let (a, b, c) = (p(tri[0]), p(tri[1]), p(tri[2]));
+    let e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    let e2 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+    let n = [
+        e1[1] * e2[2] - e1[2] * e2[1],
+        e1[2] * e2[0] - e1[0] * e2[2],
+        e1[0] * e2[1] - e1[1] * e2[0],
+    ];
+    let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+    if len == 0.0 {
+        return 6;
+    }
+    let axis = |v: f32| (v / len).abs() > 0.999;
+    match (axis(n[0]), axis(n[1]), axis(n[2])) {
+        (_, true, _) if n[1] > 0.0 => 0,
+        (_, true, _) => 1,
+        (_, _, true) if n[2] < 0.0 => 2,
+        (_, _, true) => 3,
+        (true, _, _) if n[0] < 0.0 => 4,
+        (true, _, _) => 5,
+        _ => 6,
+    }
+}
+
+/// Orders the solid stream's quads by facing group (stable within each)
+/// and returns each group's index count, for the cull (`SlotMeta`).
+fn group_by_facing(verts: &[crate::renderer::mesh::PackedVertex], idx: &mut Vec<u32>) -> [u32; 8] {
+    let mut counts = [0u32; 8];
+    if idx.len() % 6 != 0 {
+        counts[6] = idx.len() as u32;
+        return counts;
+    }
+    let mut quads: Vec<(usize, [u32; 6])> = idx
+        .chunks_exact(6)
+        .map(|q| (facing_group(verts, &q[..3]), [q[0], q[1], q[2], q[3], q[4], q[5]]))
+        .collect();
+    quads.sort_by_key(|(group, _)| *group);
+    idx.clear();
+    for (group, quad) in quads {
+        counts[group] += 6;
+        idx.extend_from_slice(&quad);
+    }
+    counts
+}
 const _: () = assert!(std::mem::size_of::<SlotMeta>() == META_STRIDE as usize);
 
 pub enum SlotTable {
@@ -899,6 +951,11 @@ pub fn apply_ops(
                 let vertex_count = mesh.verts.len() as u32;
                 let index_count = mesh.index_count() as u32;
                 let solid_count = mesh.idx.len() as u32;
+                let solid_groups = if water {
+                    [0; 8]
+                } else {
+                    group_by_facing(&mesh.verts, &mut mesh.idx)
+                };
                 let streams = if water {
                     [(STREAM_WATER, index_count), (STREAM_WATER, 0)]
                 } else {
@@ -994,6 +1051,7 @@ pub fn apply_ops(
                     flags: META_LIVE | if water { META_WATER } else { 0 },
                     pool: pool_index,
                     cutout_first: if water { 0 } else { cutout_first },
+                    solid_groups,
                 };
                 let state = SlotState {
                     pool: pool_index,

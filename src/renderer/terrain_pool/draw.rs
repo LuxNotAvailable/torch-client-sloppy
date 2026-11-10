@@ -511,7 +511,7 @@ fn draw_water_run<'w>(
         let (start, count) = cull.water_run(view_index, run);
         if count > 0 {
             let region = ((view_index * cull.pool_count) + water.pool) * STREAMS + STREAM_WATER;
-            let offset = (region as u64 * cull.slot_cap as u64 + start as u64) * INDIRECT_ARGS_SIZE;
+            let offset = (region as u64 * cull.region_cap() + start as u64) * INDIRECT_ARGS_SIZE;
             pass.multi_draw_indexed_indirect(&cull.commands, offset, count);
             draws = 1;
         }
@@ -568,7 +568,7 @@ pub fn draw_region<'w>(
             return Err(DrawSkipped::NoCullSlot);
         };
         let region = ((view_index * cull.pool_count) + pool_index) * STREAMS + stream;
-        let commands_offset = region as u64 * cull.slot_cap as u64 * INDIRECT_ARGS_SIZE;
+        let commands_offset = region as u64 * cull.region_cap() * INDIRECT_ARGS_SIZE;
         // Each multi-draw counts as one call, however many sections it draws.
         let mut issued = false;
         if stream == STREAM_WATER {
@@ -583,11 +583,12 @@ pub fn draw_region<'w>(
                 commands_offset,
                 &cull.counts,
                 region as u64 * 4,
-                cull.slot_cap,
+                cull.region_cap() as u32,
             );
             issued = true;
         } else {
-            let draw_end = pools.draw_end.min(cull.slot_cap);
+            // Each slot has `FACE_GROUPS` commands, unused ones zeroed.
+            let draw_end = pools.draw_end.min(cull.slot_cap) * super::FACE_GROUPS;
             if draw_end > 0 {
                 pass.multi_draw_indexed_indirect(&cull.commands, commands_offset, draw_end);
                 issued = true;
