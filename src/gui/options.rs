@@ -99,6 +99,8 @@ const LIGHTING_ENGINE: &str = "Lighting Engine";
 const MAX_FRAMERATE: &str = "Max Framerate";
 const UNLIMITED: &str = "Unlimited";
 const VSYNC: &str = "VSync";
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+const FULLSCREEN: &str = "Fullscreen";
 
 const FPS_COUNTER: &str = "FPS Counter";
 #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
@@ -563,7 +565,8 @@ pub(in crate::gui) fn draw_done(p: &mut Painter, ctx: &ScreenCtx) -> bool {
 
 /// A quality preset in Video Settings: the settings that trade looks for
 /// frame rate, set together. Pitched from performance reports: Potato PC
-/// for integrated graphics (Intel UHD, Radeon Vega 8), Low for an entry
+/// for integrated graphics (Intel UHD, Radeon Vega 8; lighting engine off,
+/// so fullbright), Low for an entry
 /// discrete GPU (MX250), Medium for an older mid-range card, High for a
 /// current one (RTX 4060 Ti), the next for a flagship (RTX 3090), and Lux
 /// Special the settings Lux plays on.
@@ -577,6 +580,8 @@ struct QualityPreset {
     antialiasing: crate::renderer::antialias::AaMode,
     particles: crate::util::particles::ParticleStatus,
     entity_shadows: bool,
+    /// The lighting engine: off is fullbright, with no light computed.
+    lighting: bool,
 }
 
 const QUALITY_PRESETS: [QualityPreset; 6] = {
@@ -594,6 +599,7 @@ const QUALITY_PRESETS: [QualityPreset; 6] = {
             antialiasing: AaMode::Off,
             particles: ParticleStatus::Minimal,
             entity_shadows: false,
+            lighting: false,
         },
         QualityPreset {
             name: "Low",
@@ -605,6 +611,7 @@ const QUALITY_PRESETS: [QualityPreset; 6] = {
             antialiasing: AaMode::Off,
             particles: ParticleStatus::Decreased,
             entity_shadows: false,
+            lighting: true,
         },
         QualityPreset {
             name: "Medium",
@@ -616,6 +623,7 @@ const QUALITY_PRESETS: [QualityPreset; 6] = {
             antialiasing: AaMode::Fxaa,
             particles: ParticleStatus::All,
             entity_shadows: true,
+            lighting: true,
         },
         QualityPreset {
             name: "High",
@@ -627,6 +635,7 @@ const QUALITY_PRESETS: [QualityPreset; 6] = {
             antialiasing: AaMode::Fxaa,
             particles: ParticleStatus::All,
             entity_shadows: true,
+            lighting: true,
         },
         QualityPreset {
             name: "I Paid for the Whole GPU",
@@ -638,6 +647,7 @@ const QUALITY_PRESETS: [QualityPreset; 6] = {
             antialiasing: AaMode::Msaa,
             particles: ParticleStatus::All,
             entity_shadows: true,
+            lighting: true,
         },
         QualityPreset {
             name: "Lux Special",
@@ -649,6 +659,7 @@ const QUALITY_PRESETS: [QualityPreset; 6] = {
             antialiasing: AaMode::Off,
             particles: ParticleStatus::Decreased,
             entity_shadows: true,
+            lighting: true,
         },
     ]
 };
@@ -663,6 +674,7 @@ impl QualityPreset {
             && o.antialiasing.mode == self.antialiasing
             && o.particles == self.particles
             && o.entity_shadows == self.entity_shadows
+            && o.lighting_enabled == self.lighting
     }
 
     fn apply(&self, o: &mut crate::gui::GuiOptions) {
@@ -674,6 +686,7 @@ impl QualityPreset {
         o.antialiasing.mode = self.antialiasing;
         o.particles = self.particles;
         o.entity_shadows = self.entity_shadows;
+        o.lighting_enabled = self.lighting;
     }
 }
 
@@ -973,8 +986,11 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
                 }
                 o.window_width = w;
                 o.window_height = h;
+                // A window size is a windowed one.
+                o.fullscreen = false;
                 f.mark_changed();
             }
+            f.toggle(FULLSCREEN, &mut o.fullscreen);
         }
         f.slider(&mut o.gui_scale, 0, max_gui_scale as u32, gui_scale_label);
         f.slider(&mut o.gamma, 0, GAMMA_MAX, brightness_label);
@@ -2118,8 +2134,10 @@ mod tests {
             vh: 240.0,
         };
         draw_video(&mut p, &mut state, &ctx);
+        // Desktop adds two rows: the window size and fullscreen, and the
+        // renderer with entity culling.
         const EXTRA_ROWS: f32 = cfg!(feature = "shader_support") as u32 as f32
-            + cfg!(all(not(target_arch = "wasm32"), not(target_os = "android"))) as u32 as f32;
+            + 2.0 * cfg!(all(not(target_arch = "wasm32"), not(target_os = "android"))) as u32 as f32;
         let reset_row = 244.0 + (EXTRA_ROWS + 4.0) * ROW_H;
         assert_eq!(
             state.video_list.content_h,

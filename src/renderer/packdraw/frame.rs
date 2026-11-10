@@ -405,7 +405,7 @@ pub(crate) fn prepare_uniforms(
     );
     if install.usage.shadow && takeover.is_some_and(|t| t.0) {
         let constants = &installed.constants;
-        pack_view.0 = Some(shadow_cull_shape(&ShadowCullInput {
+        let mut shape = shadow_cull_shape(&ShadowCullInput {
             mode: installed
                 .shadow_culling
                 .mode(install.usage.shadow_voxelizes),
@@ -416,7 +416,14 @@ pub(crate) fn prepare_uniforms(
             voxel_distance: constants.voxel_distance,
             render_mul: constants.shadow_distance_render_mul,
             render_distance: install.frame.far,
-        }));
+        });
+        // A shadow pass drawing solid back faces culls the faces toward the
+        // light, so those facing groups need not be sent at all.
+        if installed.shadow_casters.solid_back_faces {
+            shape.skip_groups =
+                crate::renderer::terrain_pool::groups_facing(values.toward_light());
+        }
+        pack_view.0 = Some(shape);
     }
     install.frame.camera = values.camera();
     installed

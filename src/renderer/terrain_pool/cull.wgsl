@@ -39,7 +39,8 @@ struct CullView {
     hiz_clip: mat4x4<f32>,
     hiz_reverse: u32,
     hiz_levels: u32,
-    hiz_pad0: u32,
+    // Solid facing groups this view never draws, a bit each.
+    skip_groups: u32,
     hiz_pad1: u32,
     // The camera; w 1 when solid quads facing away from it are left out.
     eye: vec4<f32>,
@@ -178,6 +179,9 @@ fn write_zero(region: u32, k: u32) {
 /// section's box (Sodium's face culling): a +Y face shows only from above
 /// the section's bottom, and so on. The last group always draws.
 fn group_faces_eye(group: u32, lo: vec3<f32>, hi: vec3<f32>) -> bool {
+    if ((cull.skip_groups >> group) & 1u) != 0u {
+        return false;
+    }
     if cull.eye.w == 0.0 {
         return true;
     }

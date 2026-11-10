@@ -26,15 +26,18 @@ pub fn is_fullscreen() -> bool {
     desktop::FULLSCREEN.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// Applies a `toggle` to the window: exclusive fullscreen on the monitor the
-/// window is on, at its current video mode, as vanilla's F11 does; it lets
-/// the driver present without the desktop compositor in between.
+/// Keeps the window as the saved `fullscreen` option says: exclusive
+/// fullscreen on the monitor the window is on, at its current video mode, as
+/// vanilla's does; it lets the driver present without the desktop compositor
+/// in between. F11 (`toggle`) flips and saves the option; Video Settings
+/// sets it directly.
 #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
 pub fn apply_desktop(
     mut windows: bevy::prelude::Query<
         &mut bevy::window::Window,
         bevy::prelude::With<bevy::window::PrimaryWindow>,
     >,
+    mut state: bevy::prelude::ResMut<crate::gui::GuiState>,
 ) {
     use bevy::window::{MonitorSelection, VideoModeSelection, WindowMode};
     use std::sync::atomic::Ordering::Relaxed;
@@ -42,14 +45,19 @@ pub fn apply_desktop(
         return;
     };
     if desktop::TOGGLE.swap(false, Relaxed) {
-        window.mode = match window.mode {
-            WindowMode::Windowed => {
-                WindowMode::Fullscreen(MonitorSelection::Current, VideoModeSelection::Current)
-            }
-            _ => WindowMode::Windowed,
+        state.options.fullscreen = !state.options.fullscreen;
+        crate::gui::save_options(&state.options);
+    }
+    let wanted = state.options.fullscreen;
+    let is = window.mode != WindowMode::Windowed;
+    if wanted != is {
+        window.mode = if wanted {
+            WindowMode::Fullscreen(MonitorSelection::Current, VideoModeSelection::Current)
+        } else {
+            WindowMode::Windowed
         };
     }
-    desktop::FULLSCREEN.store(window.mode != WindowMode::Windowed, Relaxed);
+    desktop::FULLSCREEN.store(wanted, Relaxed);
 }
 
 /// Fullscreen there is the browser's or the system's, not the window's.

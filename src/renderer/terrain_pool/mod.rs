@@ -62,6 +62,26 @@ pub struct SlotMeta {
 /// that face no axis (or are drawn from both sides), which always draw.
 pub const FACE_GROUPS: u32 = 7;
 
+/// The axis-aligned facing groups (`FACE_GROUPS` order, a bit each) whose
+/// faces point along `dir`: with `dir` toward the light, those a shadow pass
+/// culling front faces would discard. Nearly edge-on groups are kept.
+pub fn groups_facing(dir: bevy::math::Vec3) -> u32 {
+    const NORMALS: [[f32; 3]; 6] = [
+        [0.0, 1.0, 0.0],
+        [0.0, -1.0, 0.0],
+        [0.0, 0.0, -1.0],
+        [0.0, 0.0, 1.0],
+        [-1.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+    ];
+    let dir = dir.normalize_or_zero();
+    NORMALS
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| bevy::math::Vec3::from(**n).dot(dir) > 0.01)
+        .fold(0, |mask, (g, _)| mask | 1 << g)
+}
+
 static FOG_CYLINDRICAL: std::sync::atomic::AtomicU32 =
     std::sync::atomic::AtomicU32::new(f32::INFINITY.to_bits());
 static FOG_SPHERICAL: std::sync::atomic::AtomicU32 =
@@ -326,5 +346,20 @@ fn decide_tier(world: &World) -> TerrainTier {
         indirect,
         count,
         base_vertex,
+    }
+}
+
+#[cfg(test)]
+mod facing_tests {
+    use super::groups_facing;
+    use bevy::math::Vec3;
+
+    #[test]
+    fn a_noon_sun_faces_the_tops_and_a_low_one_a_side_too() {
+        assert_eq!(groups_facing(Vec3::Y), 0b000_0001);
+        // Morning: from the east (+X) and above.
+        assert_eq!(groups_facing(Vec3::new(1.0, 0.5, 0.0)), 0b010_0001);
+        // Straight sideways: the top is edge-on and kept.
+        assert_eq!(groups_facing(Vec3::new(0.0, 0.0, -1.0)), 0b000_0100);
     }
 }

@@ -52,7 +52,9 @@ pub struct CullView {
     pub hiz_clip: [[f32; 4]; 4],
     pub hiz_reverse: u32,
     pub hiz_levels: u32,
-    pub hiz_pad: [u32; 2],
+    /// `CullShape::skip_groups`.
+    pub skip_groups: u32,
+    pub hiz_pad: u32,
     /// The camera, with w 1 when solid quads facing away from it may be
     /// left out (not for a shadow view, which looks from the sun).
     pub eye: [f32; 4],
@@ -75,6 +77,10 @@ pub struct CullShape {
     pub plane_count: usize,
     pub within: Option<[[f32; 3]; 2]>,
     pub always: Option<[[f32; 3]; 2]>,
+    /// Solid facing groups this view never draws, a bit each
+    /// (`FACE_GROUPS` order): for a shadow pass that culls the faces toward
+    /// the light, those groups, so they are not sent only to be discarded.
+    pub skip_groups: u32,
 }
 
 impl CullShape {
@@ -86,6 +92,7 @@ impl CullShape {
             plane_count: 6,
             within: None,
             always: None,
+            skip_groups: 0,
         }
     }
 
@@ -144,7 +151,8 @@ impl CullShape {
             hiz_clip: [[0.0; 4]; 4],
             hiz_reverse: 0,
             hiz_levels: 0,
-            hiz_pad: [0; 2],
+            skip_groups: self.skip_groups,
+            hiz_pad: 0,
             eye: [0.0; 4],
             fog: [f32::INFINITY, f32::INFINITY, 0.0, 0.0],
         }
@@ -535,6 +543,7 @@ pub fn shadow_cull_shape(input: &ShadowCullInput) -> CullShape {
         plane_count: 0,
         within: None,
         always: None,
+        skip_groups: 0,
     };
     let render_distance = f64::from(input.render_distance);
     if input.mode == ShadowCullMode::Distance {

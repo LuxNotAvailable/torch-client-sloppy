@@ -528,6 +528,8 @@ crate::options! {
         pub window_height: u32 = 0 => key("windowHeight"),
         pub max_fps: u32 = MAX_FPS_DEFAULT => key("maxFps").clamp(MAX_FPS_MIN, MAX_FPS_UNLIMITED),
         pub vsync: bool = VSYNC_DEFAULT => key("vsync"),
+        /// Exclusive fullscreen on desktop (F11, Video Settings).
+        pub fullscreen: bool = false => key("fullscreen"),
         pub render_backend: RenderBackend = RenderBackend::default() => key("renderBackend"),
         pub auto_jump: bool = AUTO_JUMP_DEFAULT => key("autoJump"),
         pub view_bobbing: bool = true => key("bobView"),
