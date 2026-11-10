@@ -531,6 +531,17 @@ const EXTRAS: &[Extra] = &[
         nearest: true,
         scaling: Scaling::Stretch,
     },
+    // `Gui.extractVignette`: drawn full screen in the GUI, as vanilla does,
+    // its brightness turned to the black's opacity at load.
+    Extra {
+        key: "vignette",
+        path: "misc/vignette.png",
+        alt_path: None,
+        size: (256, 256),
+        crop_h: None,
+        nearest: false,
+        scaling: Scaling::Stretch,
+    },
     Extra {
         key: "spyglass_scope",
         path: "misc/spyglass_scope.png",
@@ -755,9 +766,14 @@ pub fn build_gui_atlas(assets: &Path) -> GuiAtlas {
     }
 
     for extra in EXTRAS {
-        let Some(img) = load_extra(&textures, extra) else {
+        let Some(mut img) = load_extra(&textures, extra) else {
             continue;
         };
+        if extra.key == "vignette" {
+            for p in img.pixels_mut() {
+                *p = image::Rgba([0, 0, 0, p[0]]);
+            }
+        }
         entries.push(Entry {
             kind: Kind::Sprite,
             key: extra.key.to_string(),

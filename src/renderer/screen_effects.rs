@@ -105,6 +105,14 @@ fn load(path: &str, repeat: bool, f: impl FnOnce(&mut image::RgbaImage)) -> Imag
 
 /// The vignette darkens by multiplying with `1 - c * texture`; as black with
 /// the texture in alpha, plain alpha blending does exactly that.
+/// The vignette's opacity this frame, eased toward the light at the eye.
+static VIGNETTE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// The vignette's opacity for the GUI to draw (0 while the HUD is hidden).
+pub(crate) fn vignette_strength() -> f32 {
+    f32::from_bits(VIGNETTE.load(std::sync::atomic::Ordering::Relaxed))
+}
+
 fn luma_to_alpha(img: &mut image::RgbaImage) {
     for p in img.pixels_mut() {
         *p = image::Rgba([0, 0, 0, p[0]]);
@@ -291,6 +299,10 @@ fn update(
     let rate = 1.0 - 0.99f32.powf(time.delta_secs() * 20.0);
     let v = vignette.get_or_insert(target);
     *v += (target - *v) * rate;
+    VIGNETTE.store(
+        if hud { v.clamp(0.0, 1.0).to_bits() } else { 0 },
+        std::sync::atomic::Ordering::Relaxed,
+    );
 
     let water =
         first_person && !spectator && eye_fluid_at(eye[0], eye[1], eye[2]) == Some(EyeFluid::Water);
@@ -307,7 +319,9 @@ fn update(
             Overlay::Water => water,
             Overlay::Wall => wall.is_some() && first_person,
             Overlay::Fire(_) => on_fire && first_person && !spectator && !sleeping,
-            Overlay::Vignette => hud,
+            // Drawn by the GUI (`vignette_strength`), where it costs a
+            // textured quad rather than a full-screen material pass.
+            Overlay::Vignette => false,
             Overlay::Pumpkin => hud && pumpkin && first_person,
         };
         let wanted = if show {

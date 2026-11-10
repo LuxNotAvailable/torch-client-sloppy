@@ -1011,6 +1011,11 @@ fn draw_hud(
 ) {
     let (vw, vh) = (ctx.vw, ctx.vh);
 
+    let vignette = crate::renderer::screen_effects::vignette_strength();
+    if vignette > 0.0 {
+        let alpha = (vignette * 255.0).round() as u32;
+        p.sprite_tinted("vignette", 0.0, 0.0, vw, vh, alpha << 24 | 0x00FF_FFFF);
+    }
     draw_spyglass_scope(p, vw, vh);
     draw_portal_overlay(p, vw, vh);
     draw_item_activation(p, effects, vw, vh);
