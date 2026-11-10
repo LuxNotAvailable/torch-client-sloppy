@@ -516,6 +516,8 @@ crate::options! {
         /// Entities and block entities behind solid blocks are not drawn
         /// (`entities::cull`).
         pub entity_culling: bool = true => key("torchEntityCulling"),
+        /// How glowing sign text is outlined: 0 vanilla, 1 a shadow, 2 none.
+        pub sign_glow_outline: u32 = 0 => key("torchSignGlowOutline").clamp(0, 2),
         /// Vanilla's Biome Blend: how far grass, foliage and water colours
         /// average, in blocks (0 to 7).
         pub biome_blend: u32 = 2 => key("biomeBlendRadius").clamp(0, 7),

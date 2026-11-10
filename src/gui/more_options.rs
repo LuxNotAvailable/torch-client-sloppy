@@ -42,6 +42,9 @@ pub fn apply(options: &crate::gui::GuiOptions) {
     APPLIED.call_once(|| crate::client::languages::apply(&options.language));
     crate::text::FORCE_UNICODE.store(options.force_unicode, std::sync::atomic::Ordering::Relaxed);
     crate::entities::cull::set_enabled(options.entity_culling);
+    crate::blockentities::text::set_glow_outline(
+        crate::blockentities::text::GlowOutline::ALL[options.sign_glow_outline.min(2) as usize],
+    );
 }
 
 fn done(p: &mut Painter, ctx: &ScreenCtx) -> bool {

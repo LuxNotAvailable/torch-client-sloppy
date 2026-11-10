@@ -33,6 +33,7 @@ const ZOOM_DEFAULT_SLIDER_ID: u32 = 50;
 const CHAT_SLIDER_ID_BASE: u32 = 60;
 const ENTITY_SHADOWS: &str = "Entity Shadows";
 const ENTITY_CULLING: &str = "Entity Culling";
+const SIGN_GLOW_OUTLINE: &str = "Glowing Sign Outline";
 const SHADOW_OPACITY: &str = "Shadow Opacity";
 const ZOOM_TITLE: &str = "Zoom Settings";
 const ZOOM_SETTINGS: &str = "Zoom...";
@@ -1093,6 +1094,11 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         f.new_row();
         f.toggle(ENTITY_SHADOWS, &mut o.entity_shadows);
         f.slider(&mut o.shadow_opacity, 0, 100, shadow_opacity_label);
+        let outline = crate::blockentities::text::GlowOutline::ALL[o.sign_glow_outline.min(2) as usize];
+        if f.button(&format!("{SIGN_GLOW_OUTLINE}: {}", outline.caption())) {
+            o.sign_glow_outline = (o.sign_glow_outline + 1) % 3;
+            f.mark_changed();
+        }
         #[cfg(feature = "shader_support")]
         if f.wide_button(crate::gui::shaderpacks::SHADER_PACKS) {
             state.shaderpacks.refresh();
@@ -2100,8 +2106,8 @@ mod tests {
         // Display: header and four rows (five with the desktop's window
         // size button); Quality: header (spaced), the preset button, and
         // five rows (water clarity the fifth); then entity shadows, the
-        // shader packs button when built in, and reset. Entity culling
-        // fills the renderer's row on desktop.
+        // glowing sign outline, the shader packs button when built in, and
+        // reset. Entity culling fills the renderer's row on desktop.
         let atlas = crate::gui::atlas::build_gui_atlas(&crate::assets_root());
         let mut p = Painter::new(&atlas, 0);
         let mut state = GuiState::default();
@@ -2114,15 +2120,15 @@ mod tests {
         draw_video(&mut p, &mut state, &ctx);
         const EXTRA_ROWS: f32 = cfg!(feature = "shader_support") as u32 as f32
             + cfg!(all(not(target_arch = "wasm32"), not(target_os = "android"))) as u32 as f32;
-        let reset_row = 244.0 + (EXTRA_ROWS + 3.0) * ROW_H;
+        let reset_row = 244.0 + (EXTRA_ROWS + 4.0) * ROW_H;
         assert_eq!(
             state.video_list.content_h,
             reset_row + ROW_H + LIST_PAD_BOTTOM
         );
 
-        // A tall window has nothing to scroll.
-        let (_, _, _, list_h) = LAYOUT.content_rect(854.0, 480.0);
-        assert_eq!(list_h, 414.0);
+        // A 1080p window at its automatic GUI scale has nothing to scroll;
+        // the smallest window (854x480) scrolls a little, as vanilla's does.
+        let (_, _, _, list_h) = LAYOUT.content_rect(960.0, 540.0);
         assert!(state.video_list.content_h < list_h);
     }
 

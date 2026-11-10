@@ -54,7 +54,42 @@ const SHADOW_OFFSET: f32 = 1.0;
 pub struct TextStyle {
     pub color: u32,
     pub outline: Option<u32>,
+    /// The outline drawn as one copy down and right, not eight around.
+    pub shadow: bool,
     pub full_bright: bool,
+}
+
+/// How glowing sign text is outlined (Video Settings, after FeyTweaks):
+/// vanilla's eight copies around each line, one copy as a drop shadow, or
+/// none. Glowing black text keeps a shadow when off, or it could not be read.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum GlowOutline {
+    #[default]
+    Vanilla,
+    Shadow,
+    Off,
+}
+
+impl GlowOutline {
+    pub const ALL: [GlowOutline; 3] = [GlowOutline::Vanilla, GlowOutline::Shadow, GlowOutline::Off];
+
+    pub fn caption(self) -> &'static str {
+        match self {
+            GlowOutline::Vanilla => "Vanilla",
+            GlowOutline::Shadow => "Shadow",
+            GlowOutline::Off => "Off",
+        }
+    }
+}
+
+static GLOW_OUTLINE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+pub fn set_glow_outline(mode: GlowOutline) {
+    GLOW_OUTLINE.store(mode as u8, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn glow_outline() -> GlowOutline {
+    GlowOutline::ALL[usize::from(GLOW_OUTLINE.load(std::sync::atomic::Ordering::Relaxed)).min(2)]
 }
 
 pub fn dark_color(face: &SignFace) -> u32 {
@@ -74,17 +109,30 @@ fn scale_rgb(color: u32, scale: f32) -> u32 {
 }
 
 pub fn text_style(face: &SignFace, draw_outline: bool) -> TextStyle {
+    text_style_with(face, draw_outline, glow_outline())
+}
+
+fn text_style_with(face: &SignFace, draw_outline: bool, mode: GlowOutline) -> TextStyle {
     let dark = dark_color(face);
     if face.glowing {
+        let black = face.color == 0;
+        let wanted = black || draw_outline;
+        let (outline, shadow) = match mode {
+            GlowOutline::Vanilla => (wanted, false),
+            GlowOutline::Shadow => (wanted, true),
+            GlowOutline::Off => (black, true),
+        };
         TextStyle {
             color: face.color,
-            outline: (face.color == 0 || draw_outline).then_some(dark),
+            outline: outline.then_some(dark),
+            shadow,
             full_bright: true,
         }
     } else {
         TextStyle {
             color: dark,
             outline: None,
+            shadow: false,
             full_bright: false,
         }
     }
@@ -107,7 +155,11 @@ pub fn sign_text_mesh(
         let x = -(width / 2) as f32;
         let y = i as f32 * metrics.line_height - midpoint;
         if let Some(outline) = style.outline {
-            builder.outline_line(&spans, x, y, outline);
+            if style.shadow {
+                builder.shadow_line(&spans, x, y, outline);
+            } else {
+                builder.outline_line(&spans, x, y, outline);
+            }
         }
         builder.line(&spans, x, y);
     }
@@ -148,6 +200,21 @@ impl<'a> TextMesh<'a> {
             colors: Vec::new(),
             indices: Vec::new(),
         }
+    }
+
+    /// One copy of the line in `color`, a pixel down and right.
+    fn shadow_line(&mut self, spans: &[Span], x: f32, y: f32, color: u32) {
+        let flat: Vec<Span> = spans
+            .iter()
+            .map(|span| Span {
+                text: span.text.clone(),
+                style: Style {
+                    color,
+                    ..span.style
+                },
+            })
+            .collect();
+        self.line(&flat, x + SHADOW_OFFSET, y + SHADOW_OFFSET);
     }
 
     fn outline_line(&mut self, spans: &[Span], x: f32, y: f32, color: u32) {
@@ -311,5 +378,17 @@ mod tests {
         assert!(!plain.full_bright);
         assert_eq!(plain.color, 0x66_0000);
         assert_eq!(plain.outline, None);
+    }
+
+    #[test]
+    fn the_glow_outline_setting_shadows_or_drops_the_outline() {
+        let red = face(0xFF_0000, true);
+        let shadow = text_style_with(&red, true, GlowOutline::Shadow);
+        assert_eq!((shadow.outline, shadow.shadow), (Some(0x66_0000), true));
+        let off = text_style_with(&red, true, GlowOutline::Off);
+        assert_eq!(off.outline, None);
+        // Glowing black text would vanish against the board without one.
+        let black = text_style_with(&face(0, true), false, GlowOutline::Off);
+        assert_eq!((black.outline.is_some(), black.shadow), (true, true));
     }
 }
