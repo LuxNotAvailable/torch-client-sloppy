@@ -214,7 +214,17 @@ impl<'a> Painter<'a> {
                 ]
             });
         }
-        self.xform = (scale, x, y);
+        // Within another `scaled` (a HUD element the editor moved, drawing a
+        // panel at its own size), this one is applied inside it, not in its
+        // place.
+        let (outer, ox, oy) = saved_xform;
+        let (cos, sin) = self.turn;
+        let (dx, dy) = (x * outer, y * outer);
+        self.xform = (
+            outer * scale,
+            ox + dx * cos - dy * sin,
+            oy + dx * sin + dy * cos,
+        );
         let out = f(self);
         self.xform = saved_xform;
         self.clip = saved_clip;

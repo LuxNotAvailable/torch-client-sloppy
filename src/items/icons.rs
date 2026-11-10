@@ -86,6 +86,9 @@ pub(super) enum Synthetic {
     Banner(u8, Mat4),
     Shield(Mat4),
     Rigid(fn() -> geom::LayerDef, String, Mat4),
+    /// A copper golem statue: its pose's model and texture, posed as
+    /// `CopperGolemStatueModel.setupAnim` does.
+    Statue(fn() -> geom::LayerDef, String, Mat4),
     Cube(Option<String>),
 }
 
@@ -94,6 +97,9 @@ pub(super) struct Part {
     pub(super) model: String,
     pub(super) tints: Vec<[f32; 3]>,
     pub(super) synthetic: Option<Synthetic>,
+    /// Where a plain model part sits, from the `transformation`s down to it
+    /// (a bed's foot is a block along from its head).
+    pub(super) local: Mat4,
 }
 
 fn parse_transformation(special: &Json) -> Mat4 {
@@ -273,6 +279,7 @@ pub(super) fn collect_parts_with(
                 model: strip_namespace(model).to_string(),
                 tints: parse_tints(assets, node),
                 synthetic: None,
+                local,
             });
         }
         Dispatch::Special => {
@@ -348,12 +355,35 @@ pub(super) fn collect_parts_with(
                         local,
                     )
                 }
+                "copper_golem_statue" => {
+                    let pose = inner
+                        .and_then(|m| m.get("pose"))
+                        .and_then(Json::as_str)
+                        .unwrap_or("standing");
+                    let texture = inner
+                        .and_then(|m| m.get("texture"))
+                        .and_then(Json::as_str)
+                        .map(strip_namespace)
+                        .unwrap_or("textures/entity/copper_golem/copper_golem.png");
+                    let texture = texture
+                        .trim_start_matches("textures/")
+                        .trim_end_matches(".png")
+                        .to_string();
+                    let layer: fn() -> geom::LayerDef = match pose {
+                        "sitting" => crate::blockentities::models::copper_golem_sitting,
+                        "running" => crate::blockentities::models::copper_golem_running,
+                        "star" => crate::blockentities::models::copper_golem_star,
+                        _ => crate::entities::models::monsters::copper_golem::layer,
+                    };
+                    Synthetic::Statue(layer, texture, local)
+                }
                 _ => Synthetic::Cube(None),
             };
             out.push(Part {
                 model: strip_namespace(base).to_string(),
                 tints: parse_tints(assets, node),
                 synthetic: Some(synthetic),
+                local,
             });
         }
         Dispatch::Composite => {
@@ -568,7 +598,17 @@ pub(super) fn baked_quads(
     tex: &Arc<Tex>,
     out: &mut Vec<Quad>,
 ) {
-    let rest = model.rest_pose();
+    baked_quads_posed(model, &model.rest_pose(), root, tex, out);
+}
+
+/// `baked_quads` with the parts posed as `rest` says.
+pub(super) fn baked_quads_posed(
+    model: &geom::BakedModel,
+    rest: &[geom::PartState],
+    root: Mat4,
+    tex: &Arc<Tex>,
+    out: &mut Vec<Quad>,
+) {
     let mut world = vec![Mat4::IDENTITY; model.parts.len()];
     for (id, part) in model.parts.iter().enumerate() {
         let local = rest[id].transform().to_matrix();
@@ -692,6 +732,38 @@ pub(super) fn shield_quads(
         &tex,
         out,
     );
+}
+
+/// A copper golem statue's model, posed as `CopperGolemStatueModel` does
+/// (its root at rest height, turned upright).
+pub(super) fn statue_quads(
+    assets: &Assets,
+    layer: fn() -> geom::LayerDef,
+    texture: &str,
+    local: Mat4,
+    out: &mut Vec<Quad>,
+) {
+    let Some(tex) = assets.texture(texture) else {
+        return;
+    };
+    let baked = geom::bake(&layer());
+    let mut parts = baked.rest_pose();
+    let root = &mut parts[baked.id("root")];
+    root.y = 0.0;
+    root.z_rot = std::f32::consts::PI;
+    baked_quads_posed(&baked, &parts, local, &tex, out);
+}
+
+/// Moves the quads from `from` on by a plain model part's transform.
+pub(super) fn place_part(quads: &mut [Quad], local: Mat4) {
+    if local == Mat4::IDENTITY {
+        return;
+    }
+    for quad in quads {
+        for p in &mut quad.pos {
+            *p = local.transform_point3(Vec3::from(*p)).to_array();
+        }
+    }
 }
 
 pub(super) fn rigid_quads(
@@ -1063,6 +1135,13 @@ fn bake_path(
                     transform.get_or_insert(model.gui.unwrap_or(block_gui));
                 }
             }
+            Some(Synthetic::Statue(layer, texture, local)) => {
+                let before = quads.len();
+                statue_quads(assets, *layer, texture, *local, &mut quads);
+                if quads.len() > before {
+                    transform.get_or_insert(model.gui.unwrap_or(block_gui));
+                }
+            }
             Some(Synthetic::Cube(explicit)) => {
                 let path = explicit
                     .clone()
@@ -1075,7 +1154,9 @@ fn bake_path(
             }
             None if model.generated => flat.push((model, part.tints.clone())),
             None => {
+                let before = quads.len();
                 model_quads(assets, &model, &part.tints, &mut quads);
+                place_part(&mut quads[before..], part.local);
                 transform.get_or_insert(model.gui.unwrap_or(Transform::NONE));
             }
         }
@@ -1549,6 +1630,9 @@ mod tests {
             "red_shulker_box",
             "decorated_pot",
             "copper_golem_statue",
+            "oxidized_copper_golem_statue",
+            "red_bed",
+            "white_bed",
         ];
         let mut sheet = RgbaImage::new(MODEL_ICON * samples.len() as u32, MODEL_ICON);
         for (i, id) in samples.iter().enumerate() {

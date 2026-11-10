@@ -198,6 +198,9 @@ impl ItemMeshes {
                 Some(Synthetic::Rigid(layer, texture, local)) => {
                     rigid_quads(assets, *layer, texture, *local, &mut quads);
                 }
+                Some(Synthetic::Statue(layer, texture, local)) => {
+                    super::icons::statue_quads(assets, *layer, texture, *local, &mut quads);
+                }
                 Some(Synthetic::Cube(explicit)) => {
                     let path = explicit
                         .clone()
@@ -210,7 +213,10 @@ impl ItemMeshes {
                 None if model.generated => {
                     generated |= extruded_sprite(assets, &model, &part.tints, &mut quads);
                 }
-                None => model_quads(assets, &model, &part.tints, &mut quads),
+                None => {
+                    model_quads(assets, &model, &part.tints, &mut quads);
+                    super::icons::place_part(&mut quads[before..], part.local);
+                }
             }
             if quads.len() > before {
                 synthesised |= part.synthetic.is_some();
