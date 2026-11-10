@@ -49,6 +49,7 @@ enum Section {
     Render,
     Spans,
     Diagnostics,
+    Gpu,
     World,
     RenderWork,
     Assets,
@@ -63,6 +64,7 @@ impl Section {
             Section::Render => "Render stages (ms per frame)",
             Section::Spans => "Timed spans (ms per frame, all threads)",
             Section::Diagnostics => "Bevy diagnostics (render passes in ms)",
+            Section::Gpu => "GPU summary",
             Section::World => "What each frame drew",
             Section::RenderWork => "Render thread work (per frame)",
             Section::Assets => "Assets alive",
@@ -77,6 +79,7 @@ impl Section {
             Section::Render => "render",
             Section::Spans => "spans",
             Section::Diagnostics => "diagnostics",
+            Section::Gpu => "gpu",
             Section::World => "world",
             Section::RenderWork => "render_work",
             Section::Assets => "assets",
@@ -459,6 +462,11 @@ impl Capture {
             // passes go to command buffers encoded in parallel), so its
             // total is the sum of its passes'.
             let mut pack_gpu = None::<f32>;
+            // The GPU summary: every pass's GPU time, and the opaque pass's
+            // fragments against the output's (upscaling shades each output
+            // pixel once).
+            let (mut gpu_total, mut opaque_fragments, mut output_pixels) =
+                (0.0f32, None::<f32>, None::<f32>);
             for diagnostic in store.iter() {
                 // A value nothing measured lately (a pass that stopped
                 // running) would only repeat its last reading.
@@ -476,6 +484,18 @@ impl Capture {
                 if path == "render/shaderpack/elapsed_gpu" {
                     continue;
                 }
+                if path.ends_with("/elapsed_gpu") {
+                    gpu_total += m.value as f32;
+                }
+                match path {
+                    "render/main_opaque_pass_3d/fragment_shader_invocations" => {
+                        opaque_fragments = Some(m.value as f32);
+                    }
+                    "render/upscaling/fragment_shader_invocations" => {
+                        output_pixels = Some(m.value as f32);
+                    }
+                    _ => {}
+                }
                 if path.starts_with("render/shaderpack/shaderpack/")
                     && path.ends_with("/elapsed_gpu")
                 {
@@ -488,6 +508,31 @@ impl Capture {
                     Section::Diagnostics,
                     "render/shaderpack/elapsed_gpu, all passes (ms)".to_owned(),
                     total,
+                );
+            }
+            if gpu_total > 0.0 {
+                self.push(Section::Gpu, "GPU time, all passes (ms)", gpu_total);
+                if let Some(&frame) = self.frame_ms.last()
+                    && frame > 0.0
+                {
+                    // Near 100 the GPU sets the frame rate; well under,
+                    // the CPU or the frame cap does.
+                    self.push(
+                        Section::Gpu,
+                        "GPU busy (% of frame)",
+                        (gpu_total * 100.0 / frame).min(100.0),
+                    );
+                }
+            }
+            // A shader pack draws in its own passes, leaving this one empty.
+            if let (Some(fragments), Some(pixels)) = (opaque_fragments, output_pixels)
+                && pixels > 0.0
+                && fragments > 0.0
+            {
+                self.push(
+                    Section::Gpu,
+                    "opaque fragments per screen pixel (overdraw)",
+                    fragments / pixels,
                 );
             }
         }
@@ -522,11 +567,25 @@ impl Capture {
                     0.0
                 },
             );
+            // Counted on the CPU in the frustum and past cave visibility,
+            // before the GPU's Hi-Z and facing tests; the GPU's own count
+            // is main_opaque_pass_3d/clipper_invocations.
             self.push(
                 Section::World,
-                "terrain triangles drawn (thousands)",
+                "terrain triangles in view (thousands, before Hi-Z)",
                 t.triangles.load(Relaxed) as f32 / 1000.0,
             );
+            for (name, n) in [
+                "terrain solid triangles (thousands)",
+                "terrain solid triangles facing the eye (thousands)",
+                "terrain cutout triangles (thousands)",
+                "terrain water triangles (thousands)",
+            ]
+            .into_iter()
+            .zip(&t.triangle_split)
+            {
+                self.push(Section::World, name, n.load(Relaxed) as f32 / 1000.0);
+            }
             self.push(
                 Section::World,
                 "terrain draw calls",
@@ -817,6 +876,7 @@ fn describe(
                 .unwrap_or_default(),
         ),
         ("memory total".to_owned(), gib(system.total_memory())),
+        ("power".to_owned(), power_state()),
         (
             "memory available".to_owned(),
             gib(system.available_memory()),
@@ -927,6 +987,10 @@ fn describe(
         ("gui scale".to_owned(), o.gui_scale.to_string()),
         ("shader pack".to_owned(), pack),
         (
+            "pack render scale".to_owned(),
+            crate::gui::options::pack_render_scale_label(o.pack_render_scale as i32),
+        ),
+        (
             "dimension".to_owned(),
             crate::renderer::dimension::current()
                 .registry_id()
@@ -934,6 +998,54 @@ fn describe(
         ),
     ];
     vec![("Device", device), ("Build", build), ("Settings", settings)]
+}
+
+/// Whether a laptop runs on its battery and saves power, which can hold
+/// an integrated GPU well below its clock on mains.
+// A platform call: Windows reports power only through GetSystemPowerStatus.
+#[allow(unsafe_code)]
+#[cfg(windows)]
+fn power_state() -> String {
+    #[repr(C)]
+    #[derive(Default)]
+    struct SystemPowerStatus {
+        ac_line_status: u8,
+        battery_flag: u8,
+        battery_life_percent: u8,
+        system_status_flag: u8,
+        battery_life_time: u32,
+        battery_full_life_time: u32,
+    }
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetSystemPowerStatus(status: *mut SystemPowerStatus) -> i32;
+    }
+    let mut s = SystemPowerStatus::default();
+    // SAFETY: the struct matches SYSTEM_POWER_STATUS and outlives the call.
+    if unsafe { GetSystemPowerStatus(&mut s) } == 0 {
+        return "unknown".to_owned();
+    }
+    let source = match s.ac_line_status {
+        0 => "battery",
+        1 => "mains",
+        _ => "unknown source",
+    };
+    let charge = if s.battery_flag == 128 || s.battery_life_percent == 255 {
+        "no battery".to_owned()
+    } else {
+        format!("battery {}%", s.battery_life_percent)
+    };
+    let saver = if s.system_status_flag == 1 {
+        ", battery saver on"
+    } else {
+        ""
+    };
+    format!("{source}, {charge}{saver}")
+}
+
+#[cfg(not(windows))]
+fn power_state() -> String {
+    "unknown".to_owned()
 }
 
 fn finish(mut capture: Capture, secs: f32, context: &Context) {

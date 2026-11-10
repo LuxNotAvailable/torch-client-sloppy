@@ -833,17 +833,25 @@ pub fn prepare_cull(
         // repeating its tests, which a report asks for while it records.
         if stats.count_sections.load(Ordering::Relaxed) {
             crate::prof_span!("render:terrain_count_sections");
-            let (mut drawn, mut indices) = (0usize, 0u64);
+            let (mut drawn, mut indices, mut split) = (0usize, 0u64, [0u64; 4]);
             for view in assigned.iter().filter(|view| view.flags == CAMERA_FLAGS) {
+                let eye = Some([view.eye.x, view.eye.y, view.eye.z]);
                 for index in 0..pools.draw_end.min(pools.meta_cpu.len() as u32) {
                     if camera_keeps(&pools, index, &view.shape) {
+                        let meta = &pools.meta_cpu[index as usize];
                         drawn += 1;
-                        indices += u64::from(pools.meta_cpu[index as usize].index_count);
+                        indices += u64::from(meta.index_count);
+                        for (sum, n) in split.iter_mut().zip(meta.index_split(eye)) {
+                            *sum += n;
+                        }
                     }
                 }
             }
             stats.drawn.store(drawn, Ordering::Relaxed);
             stats.triangles.store(indices / 3, Ordering::Relaxed);
+            for (out, n) in stats.triangle_split.iter().zip(split) {
+                out.store(n / 3, Ordering::Relaxed);
+            }
         }
         if !cull.fits(views.count, pool_count, pools.slot_cap) {
             let generation = cull.generation + 1;

@@ -75,6 +75,37 @@ impl SlotMeta {
         let at = |local: [f32; 3]| [0, 1, 2].map(|a| self.origin[a] as f32 + local[a]);
         (at(self.min), at(self.max))
     }
+
+    /// Indices by kind, for a report: solid, the solid the facing test in
+    /// `cull.wgsl` keeps for an eye there (all of it with no eye), cutout,
+    /// and water.
+    pub fn index_split(&self, eye: Option<[f32; 3]>) -> [u64; 4] {
+        if self.flags & META_WATER != 0 {
+            return [0, 0, 0, u64::from(self.index_count)];
+        }
+        let solid = u64::from(self.solid_count);
+        let facing = match eye {
+            None => solid,
+            Some(e) => {
+                let (lo, hi) = self.world_box();
+                let shows = [
+                    e[1] > lo[1],
+                    e[1] < hi[1],
+                    e[2] < hi[2],
+                    e[2] > lo[2],
+                    e[0] < hi[0],
+                    e[0] > lo[0],
+                    true,
+                ];
+                (0..FACE_GROUPS as usize)
+                    .filter(|&g| shows[g])
+                    .map(|g| u64::from(self.solid_groups[g]))
+                    .sum()
+            }
+        };
+        let cutout = u64::from(self.index_count - self.solid_count);
+        [solid, facing, cutout, 0]
+    }
 }
 
 pub enum TerrainOp {
@@ -149,6 +180,9 @@ pub struct TerrainStatsInner {
     pub drawn: AtomicUsize,
     /// Triangles in the sections the camera draws, counted where `drawn` is.
     pub triangles: AtomicU64,
+    /// `triangles` by kind (solid, solid after the facing test, cutout,
+    /// water), while a report records.
+    pub triangle_split: [AtomicU64; 4],
     pub draws: AtomicUsize,
     draws_pending: AtomicUsize,
     /// 1 while the GPU culls, so `drawn` is only known when counted.

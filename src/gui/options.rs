@@ -446,7 +446,7 @@ fn render_distance_label(value: i32) -> String {
 }
 
 #[cfg(feature = "shader_support")]
-fn pack_render_scale_label(value: i32) -> String {
+pub(crate) fn pack_render_scale_label(value: i32) -> String {
     format!("Shader Render Scale: {value}%")
 }
 
