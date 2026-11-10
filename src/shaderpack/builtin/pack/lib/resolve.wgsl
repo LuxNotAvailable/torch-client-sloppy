@@ -8,18 +8,6 @@
 // those four, chosen by an ordered pattern in the same proportions: crisp,
 // stippled where they differ, never blurred.
 
-const BAYER: array<f32, 16> = array<f32, 16>(
-    0.0, 8.0, 2.0, 10.0,
-    12.0, 4.0, 14.0, 6.0,
-    3.0, 11.0, 1.0, 9.0,
-    15.0, 7.0, 13.0, 5.0,
-);
-
-fn bayer(frag: vec2<f32>) -> f32 {
-    let p = vec2<u32>(frag) & vec2<u32>(3u);
-    return (BAYER[p.y * 4u + p.x] + 0.5) / 16.0;
-}
-
 fn linear_depth(depth: f32) -> f32 {
     let z = depth * 2.0 - 1.0;
     return 2.0 * frame.near * frame.far / (frame.far + frame.near - z * (frame.far - frame.near));

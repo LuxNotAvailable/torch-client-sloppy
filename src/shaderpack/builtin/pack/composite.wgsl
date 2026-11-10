@@ -3,12 +3,18 @@
 // composite2 to resolve. A screen-space ray finds what the surface mirrors;
 // where it leaves the screen the sky stands in, dimmed where the sky does not
 // reach.
+//
+// The ray's start is dithered by a Bayer pattern stepped every frame, and
+// last frame's reflection (colortex5 keeps between frames), moved to where
+// this surface was then, is blended in, so the steps average out over a few
+// frames instead of showing as a stipple.
 
 /* RENDERTARGETS: 5 */
 
 #include "/lib/common.wgsl"
 
 #define REFLECTION_STEPS 24 // [12 16 24 32 48]
+#define REFLECTION_SAMPLES 4 // [1 2 3 4 5 6 7 8]
 
 struct Varyings {
     @builtin(position) clip: vec4<f32>,
@@ -104,10 +110,37 @@ fn fragment(v: Varyings) -> @location(0) vec4<f32> {
 
     let sky = sky_color(player_dir(r)) * smoothstep(0.15, 0.7, surface.w);
     var mirrored = sky;
-    let hit = trace(view, r, size, ign(v.clip.xy));
+    let hit = trace(view, r, size, bayer_temporal(v.clip.xy));
     if (hit.z > 0.0) {
         let seen = textureSampleLevel(colortex0, colortex0_sampler, hit.xy, 0.0).rgb;
         mirrored = mix(sky, seen, hit.z);
     }
-    return vec4<f32>(mirrored, fresnel * 0.7);
+    let current = vec4<f32>(mirrored, fresnel * 0.7);
+    // Each frame's trace is one sample of REFLECTION_SAMPLES: the history
+    // keeps the rest, so the dither's 16 offsets average out (1 is off).
+    if (REFLECTION_SAMPLES <= 1) {
+        return current;
+    }
+    let history = reflection_history(view);
+    if (history.a <= 0.0) {
+        return current;
+    }
+    return mix(history, current, 1.0 / f32(REFLECTION_SAMPLES));
+}
+
+/// Last frame's reflection where this surface point was on screen then,
+/// or nothing (alpha 0) where it was off screen or not water.
+fn reflection_history(view: vec3<f32>) -> vec4<f32> {
+    let moved = frame.cameraPosition - frame.previousCameraPosition;
+    let then = player_pos(view) + moved;
+    let clip = frame.gbufferPreviousProjection * frame.gbufferPreviousModelView * vec4<f32>(then, 1.0);
+    if (clip.w <= 0.0) {
+        return vec4<f32>(0.0);
+    }
+    let uv = clip.xy / clip.w * 0.5 + 0.5;
+    if (any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0))) {
+        return vec4<f32>(0.0);
+    }
+    let low = vec2<f32>(textureDimensions(colortex5));
+    return textureLoad(colortex5, vec2<i32>(uv * low), 0);
 }

@@ -1,3 +1,7 @@
+screen.LIGHTING=Lighting
+screen.WATER=Water
+screen.TEXELS=Texel Shading
+screen.PERFORMANCE=Performance
 option.SUN_BRIGHTNESS=Sun Brightness
 option.TORCH_BRIGHTNESS=Torch Brightness
 option.EXPOSURE=Exposure
@@ -8,6 +12,8 @@ option.WATER_SURFACE_OPACITY=Water Surface Opacity
 option.WATER_SURFACE_OPACITY.comment=How much of the surface is the water's colour, however shallow.
 option.GOD_RAY_STEPS=God Ray Steps
 option.REFLECTION_STEPS=Reflection Steps
+option.REFLECTION_SAMPLES=Reflection Samples
+option.REFLECTION_SAMPLES.comment=Frames a water reflection averages over. More is smoother when still; fewer trails less when moving. 1 is off.
 option.SHADOW_SOFTNESS=Shadow Softness
 option.REFLECTION_RES=Reflection Resolution
 option.REFLECTION_RES.comment=The fraction of the screen water reflections are traced at.

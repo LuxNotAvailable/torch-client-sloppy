@@ -147,6 +147,28 @@ fn ign(p: vec2<f32>) -> f32 {
     return fract(52.9829189 * fract(dot(p, vec2<f32>(0.06711056, 0.00583715))));
 }
 
+// The 4x4 ordered (Bayer) pattern: every value once in each 4x4 block.
+const BAYER: array<f32, 16> = array<f32, 16>(
+    0.0, 8.0, 2.0, 10.0,
+    12.0, 4.0, 14.0, 6.0,
+    3.0, 11.0, 1.0, 9.0,
+    15.0, 7.0, 13.0, 5.0,
+);
+
+fn bayer(frag: vec2<f32>) -> f32 {
+    let p = vec2<u32>(frag) & vec2<u32>(3u);
+    return (BAYER[p.y * 4u + p.x] + 0.5) / 16.0;
+}
+
+/// The Bayer value here, stepped on every frame so each pixel visits all 16
+/// levels in turn (in the pattern's own order, so successive frames land far
+/// apart): an effect accumulated over a few frames sees each offset.
+fn bayer_temporal(frag: vec2<f32>) -> f32 {
+    let p = vec2<u32>(frag) & vec2<u32>(3u);
+    let step = BAYER[u32(frame.frameCounter) & 15u];
+    return (((BAYER[p.y * 4u + p.x] + step) % 16.0) + 0.5) / 16.0;
+}
+
 fn view_pos(uv: vec2<f32>, depth: f32) -> vec3<f32> {
     let v = frame.gbufferProjectionInverse * vec4<f32>(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
     return v.xyz / v.w;
