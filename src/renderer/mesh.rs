@@ -425,7 +425,13 @@ pub fn build_section_mesh(
 ) -> (MeshBuf, MeshBuf) {
     let mut buf = MeshBuf::new();
     let mut water = MeshBuf::new();
-    let cardinal = super::dimension::current().cardinal();
+    // Lighting off is unlit: every face at full brightness.
+    let unshaded = [1.0; 6];
+    let cardinal = if lighting_enabled() {
+        super::dimension::current().cardinal()
+    } else {
+        &unshaded
+    };
     let (water_still, water_flow) = {
         let m = TEXTURE_MAP.get();
         let still = m.and_then(|m| m.get("water_still").copied()).unwrap_or(0);
@@ -574,7 +580,12 @@ fn emit_baked(
     let [ox, oy, oz] = rb.offset.at(bx, bz);
     let (wx, wy, wz) = (wx + ox, wy + oy, wz + oz);
 
-    let smooth = smooth_lighting_enabled() && baked.ambient_occlusion && rb.emission == 0;
+    // Lighting off is unlit: no ambient occlusion (and no face shading, see
+    // `build_section_mesh`).
+    let smooth = lighting_enabled()
+        && smooth_lighting_enabled()
+        && baked.ambient_occlusion
+        && rb.emission == 0;
     let collision_full = occ.is_full_cube(bx, by, bz);
 
     let tint = match rb.tint_kind {

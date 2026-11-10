@@ -57,7 +57,7 @@ pub fn resolved_levels(levels: (u8, u8)) -> (u8, u8) {
     if crate::renderer::lighting_enabled() {
         levels
     } else {
-        (0, 15)
+        (15, 15)
     }
 }
 
@@ -181,6 +181,10 @@ fn not_gamma(color: [f32; 3]) -> [f32; 3] {
 }
 
 pub fn texel(state: &State, block: u32, sky: u32) -> [f32; 3] {
+    // Lighting off is fullbright: every level shows a texture as it is.
+    if !crate::renderer::lighting_enabled() {
+        return [1.0; 3];
+    }
     let block_level = block as f32 / 15.0;
     let sky_level = sky as f32 / 15.0;
 

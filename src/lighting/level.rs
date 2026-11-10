@@ -627,6 +627,35 @@ impl LightWorker {
             v.borrow_mut().clear();
         }
 
+        // Lighting off (Video Settings): nothing is lit, so nothing is
+        // propagated or kept. Chunks still pass on to be meshed (at full
+        // brightness); turning lighting on reloads them, which lights them.
+        if !crate::renderer::lighting_enabled() {
+            if level.is_some() || view.is_some() {
+                *level = None;
+                *view = None;
+                *map.write() = LightMap::default();
+                if let Some(changed) = changed.as_mut() {
+                    changed.clear();
+                }
+            }
+            let mut to_mesh: Vec<(Arc<RwLock<World>>, ColumnPos)> = Vec::new();
+            for job in batch {
+                match job {
+                    LightJob::Chunk { world, mesh, .. } => {
+                        to_mesh.extend(mesh.into_iter().map(|c| (world.clone(), c)));
+                    }
+                    LightJob::Unload { col } => to_mesh.retain(|(_, c)| *c != col),
+                    LightJob::Reset => to_mesh.clear(),
+                    LightJob::Light { .. } | LightJob::Block { .. } => {}
+                }
+            }
+            if !to_mesh.is_empty() {
+                on_dirty(&[], &to_mesh);
+            }
+            return;
+        }
+
         let mut columns_added: Vec<ColumnPos> = Vec::new();
         let mut columns_removed: Vec<ColumnPos> = Vec::new();
         let mut to_mesh: Vec<(Arc<RwLock<World>>, ColumnPos)> = Vec::new();

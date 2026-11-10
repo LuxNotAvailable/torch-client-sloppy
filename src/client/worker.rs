@@ -698,10 +698,10 @@ fn process_job(
         fill_light(occ, &light);
         drop(light);
     } else {
-        // Open sky and no block light: the lightmap still darkens it at night
-        // and the brightness setting still lifts it, which full block light
-        // everywhere would wash out.
-        occ.fill_light_constant(0, 15);
+        // Lighting off is fullbright: every level at its brightest (the
+        // lightmap is white too, so this matters to shader packs, which read
+        // the levels themselves).
+        occ.fill_light_constant(15, 15);
     }
     for (dx, dz, arc) in neighbors.iter() {
         let (dx, dz) = (*dx, *dz);
