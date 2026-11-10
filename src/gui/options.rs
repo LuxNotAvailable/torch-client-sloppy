@@ -450,6 +450,15 @@ fn render_distance_label(value: i32) -> String {
 }
 
 #[cfg(feature = "shader_support")]
+#[cfg(feature = "shader_support")]
+fn shadow_update_label(value: i32) -> String {
+    match value {
+        1 => "Shadow Updates: Every Frame".to_owned(),
+        2 => "Shadow Updates: Every 2nd Frame".to_owned(),
+        n => format!("Shadow Updates: Every {n}rd Frame"),
+    }
+}
+
 pub(crate) fn pack_render_scale_label(value: i32) -> String {
     format!("Shader Render Scale: {value}%")
 }
@@ -582,6 +591,12 @@ struct QualityPreset {
     entity_shadows: bool,
     /// The lighting engine: off is fullbright, with no light computed.
     lighting: bool,
+    /// Shadow Updates: the pack's shadow map is redrawn every this many
+    /// frames.
+    shadow_update: u32,
+    /// Torch Vibrant's shadow map resolution and shadow distance, set when a
+    /// preset is chosen (not part of matching one: they are the pack's).
+    pack_shadow: (&'static str, &'static str),
 }
 
 const QUALITY_PRESETS: [QualityPreset; 6] = {
@@ -600,6 +615,8 @@ const QUALITY_PRESETS: [QualityPreset; 6] = {
             particles: ParticleStatus::Minimal,
             entity_shadows: false,
             lighting: false,
+            shadow_update: 2,
+            pack_shadow: ("1024", "64.0"),
         },
         QualityPreset {
             name: "Low",
@@ -612,6 +629,8 @@ const QUALITY_PRESETS: [QualityPreset; 6] = {
             particles: ParticleStatus::Decreased,
             entity_shadows: false,
             lighting: true,
+            shadow_update: 2,
+            pack_shadow: ("1024", "96.0"),
         },
         QualityPreset {
             name: "Medium",
@@ -624,6 +643,8 @@ const QUALITY_PRESETS: [QualityPreset; 6] = {
             particles: ParticleStatus::All,
             entity_shadows: true,
             lighting: true,
+            shadow_update: 1,
+            pack_shadow: ("2048", "128.0"),
         },
         QualityPreset {
             name: "High",
@@ -636,6 +657,8 @@ const QUALITY_PRESETS: [QualityPreset; 6] = {
             particles: ParticleStatus::All,
             entity_shadows: true,
             lighting: true,
+            shadow_update: 1,
+            pack_shadow: ("2048", "128.0"),
         },
         QualityPreset {
             name: "I Paid for the Whole GPU",
@@ -648,6 +671,8 @@ const QUALITY_PRESETS: [QualityPreset; 6] = {
             particles: ParticleStatus::All,
             entity_shadows: true,
             lighting: true,
+            shadow_update: 1,
+            pack_shadow: ("4096", "192.0"),
         },
         QualityPreset {
             name: "Lux Special",
@@ -660,6 +685,8 @@ const QUALITY_PRESETS: [QualityPreset; 6] = {
             particles: ParticleStatus::Decreased,
             entity_shadows: true,
             lighting: true,
+            shadow_update: 1,
+            pack_shadow: ("2048", "128.0"),
         },
     ]
 };
@@ -675,6 +702,7 @@ impl QualityPreset {
             && o.particles == self.particles
             && o.entity_shadows == self.entity_shadows
             && o.lighting_enabled == self.lighting
+            && o.shadow_update == self.shadow_update
     }
 
     fn apply(&self, o: &mut crate::gui::GuiOptions) {
@@ -687,6 +715,7 @@ impl QualityPreset {
         o.particles = self.particles;
         o.entity_shadows = self.entity_shadows;
         o.lighting_enabled = self.lighting;
+        o.shadow_update = self.shadow_update;
     }
 }
 
@@ -962,6 +991,7 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
 
     #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
     let ctx_size = (ctx.vw * ctx.input.scale, ctx.vh * ctx.input.scale);
+    let mut chosen_preset: Option<usize> = None;
     let changed = scrolling_form(p, ctx, &mut state.video_list, VIDEO_SLIDER_ID_BASE, |f| {
         f.header(DISPLAY_HEADER);
         if f.slider(
@@ -1042,6 +1072,7 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         if f.wide_button(&label) {
             let next = preset.map_or(0, |i| (i + 1) % QUALITY_PRESETS.len());
             QUALITY_PRESETS[next].apply(o);
+            chosen_preset = Some(next);
             f.mark_changed();
         }
         #[cfg(feature = "shader_support")]
@@ -1051,6 +1082,8 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
             crate::gui::PACK_RENDER_SCALE_MAX,
             pack_render_scale_label,
         );
+        #[cfg(feature = "shader_support")]
+        f.slider(&mut o.shadow_update, 1, 3, shadow_update_label);
         f.slider(
             &mut o.render_distance,
             RENDER_DISTANCE_MIN as u32,
@@ -1129,6 +1162,18 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     if changed {
         crate::gui::save_options(&state.options);
     }
+    // A preset also sets Torch Vibrant's shadow map size and reach.
+    #[cfg(feature = "shader_support")]
+    if let Some(at) = chosen_preset {
+        let (resolution, distance) = QUALITY_PRESETS[at].pack_shadow;
+        crate::gui::shaderpacks::set_pack_options(
+            state,
+            crate::shaderpack::builtin::NAME,
+            &[("shadowMapResolution", resolution), ("shadowDistance", distance)],
+        );
+    }
+    #[cfg(not(feature = "shader_support"))]
+    let _ = chosen_preset;
     if let (Some(tip), Some(m)) = (renderer_tip, ctx.mouse()) {
         draw_bind_tooltip(p, &[tip], m.x, m.y, ctx.vw);
     }
@@ -2135,8 +2180,9 @@ mod tests {
         };
         draw_video(&mut p, &mut state, &ctx);
         // Desktop adds two rows: the window size and fullscreen, and the
-        // renderer with entity culling.
-        const EXTRA_ROWS: f32 = cfg!(feature = "shader_support") as u32 as f32
+        // renderer with entity culling. Shader support adds two: the render
+        // scale with shadow updates, and the shader packs button.
+        const EXTRA_ROWS: f32 = 2.0 * cfg!(feature = "shader_support") as u32 as f32
             + 2.0 * cfg!(all(not(target_arch = "wasm32"), not(target_os = "android"))) as u32 as f32;
         let reset_row = 244.0 + (EXTRA_ROWS + 4.0) * ROW_H;
         assert_eq!(

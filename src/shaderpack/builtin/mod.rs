@@ -102,6 +102,22 @@ mod tests {
     }
 
     #[test]
+    fn the_shadow_map_size_and_reach_are_options_the_presets_can_set() {
+        let source = crate::shaderpack::discover::open(super::NAME).expect("embedded");
+        let texts = crate::shaderpack::include::option_texts(&source);
+        let declared = crate::shaderpack::options::discover(texts.iter().map(String::as_str));
+        for (name, values) in [
+            ("shadowMapResolution", ["1024", "2048", "4096"]),
+            ("shadowDistance", ["64.0", "96.0", "192.0"]),
+        ] {
+            let option = declared.get(name).unwrap_or_else(|| panic!("{name} is not an option"));
+            for value in values {
+                assert!(option.accepts(value), "{name} refuses {value}");
+            }
+        }
+    }
+
+    #[test]
     fn the_scale_options_size_the_traced_targets() {
         let source = crate::shaderpack::discover::open(super::NAME).expect("embedded");
         let texts = crate::shaderpack::include::option_texts(&source);

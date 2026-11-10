@@ -121,6 +121,9 @@ pub(super) struct Sized {
 #[derive(Default)]
 pub(super) struct FrameState {
     far: f32,
+    /// The shadow map from an earlier frame stands this frame (Shadow
+    /// Updates), so its pass is not drawn.
+    pub(super) shadow_reused: bool,
     pub(super) inputs: Inputs,
     pub(super) camera: Vec3,
     pub(super) entity_draws: Vec<EntityDraw>,
@@ -430,6 +433,7 @@ pub(crate) fn prepare_uniforms(
         pack_view.0 = Some(shape);
     }
     install.frame.camera = values.camera();
+    install.frame.shadow_reused = values.shadow_reused;
     installed
         .customs
         .evaluate(&mut install.customs, time.delta_secs(), &|id| {

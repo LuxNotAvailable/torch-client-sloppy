@@ -217,6 +217,47 @@ fn parse_properties(
     props
 }
 
+/// Sets some of `pack`'s option values and saves them, as its options screen
+/// would (for Video Settings' presets); a value the pack does not accept is
+/// left alone. The pack reloads with them if it is the one in use.
+pub(crate) fn set_pack_options(state: &mut GuiState, pack: &str, settings: &[(&str, &str)]) {
+    let open = state
+        .shaderpacks
+        .loaded
+        .as_ref()
+        .is_some_and(|loaded| loaded.name == pack);
+    let mut loaded = match state.shaderpacks.loaded.take() {
+        Some(loaded) if open => loaded,
+        other => {
+            state.shaderpacks.loaded = other;
+            match load(pack) {
+                Ok(loaded) => loaded,
+                Err(_) => return,
+            }
+        }
+    };
+    for (name, value) in settings {
+        if let Some(opt) = loaded.options.get(name).cloned()
+            && opt.accepts(value)
+        {
+            loaded.values.set(&opt, value);
+        }
+    }
+    loaded.props = parse_properties(
+        &loaded.name,
+        loaded.properties_text.as_deref(),
+        &loaded.options,
+        &loaded.values,
+    );
+    loaded.menu = Menu::of(&loaded.options, &loaded.props);
+    loaded.profile = matching_profile(&loaded);
+    save(&loaded);
+    if open {
+        state.shaderpacks.loaded = Some(loaded);
+    }
+    state.shaderpacks.revision += 1;
+}
+
 fn values_path(name: &str) -> std::path::PathBuf {
     discover::dir().join(format!("{name}.txt"))
 }

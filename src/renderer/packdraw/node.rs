@@ -321,7 +321,11 @@ impl PackFrameNode {
             }
         };
         let span = recorder.time_span(render_context.command_encoder(), "shaderpack/shadow");
-        if let (Some(shadow), Some(shadow_targets)) = (&plan.shadow, gpu.shadow_targets.as_ref()) {
+        if let (Some(shadow), Some(shadow_targets), false) = (
+            &plan.shadow,
+            gpu.shadow_targets.as_ref(),
+            install.frame.shadow_reused,
+        ) {
             let filter = |render_context: &mut RenderContext<'w>, n: usize| {
                 if let (Some(copy), Some(source), Some(target)) = (
                     &process.depth_copy,

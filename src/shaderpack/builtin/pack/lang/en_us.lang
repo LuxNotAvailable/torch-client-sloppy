@@ -45,3 +45,7 @@ option.TEXEL_TEMPORAL=Temporal Denoise
 option.TEXEL_TEMPORAL.comment=Frames of history the coarsest texels' shadows average over, with new points scattered across the texel every frame; finer texels keep less (half per step), so they follow moving shadows more closely. Steadier under swaying plants and kelp, with a slight trail on fast shadows. 0 is off.
 option.TEXEL_TEMPORAL_POINTS=Temporal Points
 option.TEXEL_TEMPORAL_POINTS.comment=Points each denoised texel takes a frame while the history averages them. More converges faster, at more shadow lookups.
+option.shadowMapResolution=Shadow Resolution
+option.shadowMapResolution.comment=Texels across the shadow map. Lower is faster on weak GPUs, with softer, blockier shadows.
+option.shadowDistance=Shadow Distance
+option.shadowDistance.comment=Blocks from you that cast shadows. Shorter is faster and sharper up close.

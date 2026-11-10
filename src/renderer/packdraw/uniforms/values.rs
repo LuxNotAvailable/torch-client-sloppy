@@ -69,10 +69,14 @@ pub(crate) struct History {
     eye_brightness: [Smooth; 2],
     wetness: Smooth,
     center_depth: Smooth,
+    /// The shadow map's view when it was last drawn, and the camera then.
+    shadow_drawn: Option<(Mat4, Vec3)>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct FrameValues {
+    /// This frame keeps the last shadow map rather than drawing one.
+    pub(crate) shadow_reused: bool,
     view_rotation: Mat4,
     view_rotation_inverse: Mat4,
     projection_inverse: Mat4,
@@ -184,7 +188,19 @@ impl FrameValues {
             constants.center_depth_half_life,
             frame_time,
         );
-        let shadow_model_view = shadow_model_view(shadow_angle, constants, camera);
+        // Shadow Updates: on a frame the shadow map is not redrawn, its last
+        // view stays, moved by how far the camera has gone since (shadow
+        // space is relative to the camera), so the old map still lines up.
+        let every = crate::renderer::packdraw::shadow_every();
+        let shadow_reused = every > 1 && frames % every != 0 && history.shadow_drawn.is_some();
+        let shadow_model_view = match history.shadow_drawn {
+            Some((drawn, at)) if shadow_reused => drawn * Mat4::from_translation(camera - at),
+            _ => {
+                let fresh = shadow_model_view(shadow_angle, constants, camera);
+                history.shadow_drawn = Some((fresh, camera));
+                fresh
+            }
+        };
         let shadow_projection = Mat4::orthographic_rh_gl(
             -constants.shadow_distance,
             constants.shadow_distance,
@@ -194,6 +210,7 @@ impl FrameValues {
             constants.shadow_far_plane,
         );
         FrameValues {
+            shadow_reused,
             view_rotation,
             view_rotation_inverse: view_rotation.inverse(),
             projection_inverse: projection.inverse(),

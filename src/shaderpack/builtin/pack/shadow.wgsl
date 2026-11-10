@@ -2,8 +2,8 @@
 // both draw with it; the warp matches lib/shadow.wgsl.
 
 /*
-const int shadowMapResolution = 2048;
-const float shadowDistance = 128.0;
+const int shadowMapResolution = 2048; // [512 1024 1536 2048 3072 4096]
+const float shadowDistance = 128.0; // [48.0 64.0 96.0 128.0 160.0 192.0 256.0]
 const float sunPathRotation = -25.0;
 */
 

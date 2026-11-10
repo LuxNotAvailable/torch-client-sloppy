@@ -199,6 +199,15 @@ static RENDER_SCALE: std::sync::atomic::AtomicU32 =
 
 fn sync_render_scale(gui: Res<crate::gui::GuiState>) {
     RENDER_SCALE.store(gui.options.pack_render_scale, Ordering::Relaxed);
+    SHADOW_EVERY.store(gui.options.shadow_update.clamp(1, 3), Ordering::Relaxed);
+}
+
+/// Shadow Updates (Video Settings): the shadow map is redrawn every this
+/// many frames.
+static SHADOW_EVERY: AtomicU32 = AtomicU32::new(1);
+
+pub(crate) fn shadow_every() -> u32 {
+    SHADOW_EVERY.load(Ordering::Relaxed)
 }
 
 /// The pack's terrain projection and drawing size this frame, for the

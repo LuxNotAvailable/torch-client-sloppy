@@ -509,6 +509,9 @@ crate::options! {
         /// Percent of the window's size a shader pack draws at, scaled up at
         /// the end: full-screen passes cost per pixel.
         pub pack_render_scale: u32 = PACK_RENDER_SCALE_MAX => key("shaderRenderScale").clamp(PACK_RENDER_SCALE_MIN, PACK_RENDER_SCALE_MAX),
+        /// A shader pack's shadow map is redrawn every this many frames
+        /// (1 to 3); between, the last one is reused, moved with the camera.
+        pub shadow_update: u32 = 1 => key("torchShadowUpdate").clamp(1, 3),
         pub gamma: u32 = GAMMA_DEFAULT => key("gamma").clamp(0, GAMMA_MAX),
         pub antialiasing: crate::renderer::antialias::Antialiasing = Default::default()
             => custom(|v| crate::renderer::antialias::Antialiasing::read(v), |m, a| a.write(m)),
