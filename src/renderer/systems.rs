@@ -2770,6 +2770,10 @@ pub fn run(
         .add_systems(Update, web_fullscreen)
         .add_systems(
             Update,
+            crate::platform::fullscreen::apply_desktop.after(web_fullscreen),
+        )
+        .add_systems(
+            Update,
             web_pointer_lock
                 .after(apply_gui_nav)
                 .after(toggle_screen)

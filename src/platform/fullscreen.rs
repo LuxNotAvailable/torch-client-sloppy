@@ -1,6 +1,8 @@
 pub fn toggle() {
     #[cfg(target_arch = "wasm32")]
     web::toggle();
+    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+    desktop::TOGGLE.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
 #[cfg(target_os = "android")]
@@ -21,7 +23,47 @@ pub fn is_fullscreen() -> bool {
     #[cfg(target_os = "android")]
     return true;
     #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
-    false
+    desktop::FULLSCREEN.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Applies a `toggle` to the window: exclusive fullscreen on the monitor the
+/// window is on, at its current video mode, as vanilla's F11 does; it lets
+/// the driver present without the desktop compositor in between.
+#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+pub fn apply_desktop(
+    mut windows: bevy::prelude::Query<
+        &mut bevy::window::Window,
+        bevy::prelude::With<bevy::window::PrimaryWindow>,
+    >,
+) {
+    use bevy::window::{MonitorSelection, VideoModeSelection, WindowMode};
+    use std::sync::atomic::Ordering::Relaxed;
+    let Ok(mut window) = windows.single_mut() else {
+        return;
+    };
+    if desktop::TOGGLE.swap(false, Relaxed) {
+        window.mode = match window.mode {
+            WindowMode::Windowed => {
+                WindowMode::Fullscreen(MonitorSelection::Current, VideoModeSelection::Current)
+            }
+            _ => WindowMode::Windowed,
+        };
+    }
+    desktop::FULLSCREEN.store(window.mode != WindowMode::Windowed, Relaxed);
+}
+
+/// Fullscreen there is the browser's or the system's, not the window's.
+#[cfg(any(target_arch = "wasm32", target_os = "android"))]
+pub fn apply_desktop() {}
+
+#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+mod desktop {
+    use std::sync::atomic::AtomicBool;
+
+    /// Asked for by F11 or the menu, applied by `apply_desktop`.
+    pub(super) static TOGGLE: AtomicBool = AtomicBool::new(false);
+    /// Whether the window is fullscreen, as `apply_desktop` last saw it.
+    pub(super) static FULLSCREEN: AtomicBool = AtomicBool::new(false);
 }
 
 #[cfg(target_os = "android")]
