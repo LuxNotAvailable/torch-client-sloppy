@@ -559,6 +559,127 @@ pub(in crate::gui) fn draw_done(p: &mut Painter, ctx: &ScreenCtx) -> bool {
     .draw(p, ctx)
 }
 
+/// A quality preset in Video Settings: the settings that trade looks for
+/// frame rate, set together. Pitched from performance reports: Potato PC
+/// for integrated graphics (Intel UHD, Radeon Vega 8), Low for an entry
+/// discrete GPU (MX250), Medium for an older mid-range card, High for a
+/// current one (RTX 4060 Ti), the next for a flagship (RTX 3090), and Lux
+/// Special the settings Lux plays on.
+struct QualityPreset {
+    name: &'static str,
+    render_distance: u32,
+    pack_render_scale: u32,
+    biome_blend: u32,
+    clouds: crate::renderer::clouds::CloudStatus,
+    smooth_lighting: bool,
+    antialiasing: crate::renderer::antialias::AaMode,
+    particles: crate::util::particles::ParticleStatus,
+    entity_shadows: bool,
+}
+
+const QUALITY_PRESETS: [QualityPreset; 6] = {
+    use crate::renderer::antialias::AaMode;
+    use crate::renderer::clouds::CloudStatus;
+    use crate::util::particles::ParticleStatus;
+    [
+        QualityPreset {
+            name: "Potato PC",
+            render_distance: 6,
+            pack_render_scale: 50,
+            biome_blend: 0,
+            clouds: CloudStatus::Off,
+            smooth_lighting: false,
+            antialiasing: AaMode::Off,
+            particles: ParticleStatus::Minimal,
+            entity_shadows: false,
+        },
+        QualityPreset {
+            name: "Low",
+            render_distance: 8,
+            pack_render_scale: 70,
+            biome_blend: 1,
+            clouds: CloudStatus::Fast,
+            smooth_lighting: true,
+            antialiasing: AaMode::Off,
+            particles: ParticleStatus::Decreased,
+            entity_shadows: false,
+        },
+        QualityPreset {
+            name: "Medium",
+            render_distance: 12,
+            pack_render_scale: 85,
+            biome_blend: 2,
+            clouds: CloudStatus::Fast,
+            smooth_lighting: true,
+            antialiasing: AaMode::Fxaa,
+            particles: ParticleStatus::All,
+            entity_shadows: true,
+        },
+        QualityPreset {
+            name: "High",
+            render_distance: 16,
+            pack_render_scale: 100,
+            biome_blend: 3,
+            clouds: CloudStatus::Fancy,
+            smooth_lighting: true,
+            antialiasing: AaMode::Fxaa,
+            particles: ParticleStatus::All,
+            entity_shadows: true,
+        },
+        QualityPreset {
+            name: "I Paid for the Whole GPU",
+            render_distance: 32,
+            pack_render_scale: 100,
+            biome_blend: 7,
+            clouds: CloudStatus::Fancy,
+            smooth_lighting: true,
+            antialiasing: AaMode::Msaa,
+            particles: ParticleStatus::All,
+            entity_shadows: true,
+        },
+        QualityPreset {
+            name: "Lux Special",
+            render_distance: 32,
+            pack_render_scale: 100,
+            biome_blend: 4,
+            clouds: CloudStatus::Fancy,
+            smooth_lighting: true,
+            antialiasing: AaMode::Off,
+            particles: ParticleStatus::Decreased,
+            entity_shadows: true,
+        },
+    ]
+};
+
+impl QualityPreset {
+    fn matches(&self, o: &crate::gui::GuiOptions) -> bool {
+        o.render_distance == self.render_distance
+            && o.pack_render_scale == self.pack_render_scale
+            && o.biome_blend == self.biome_blend
+            && o.clouds == self.clouds
+            && o.smooth_lighting == self.smooth_lighting
+            && o.antialiasing.mode == self.antialiasing
+            && o.particles == self.particles
+            && o.entity_shadows == self.entity_shadows
+    }
+
+    fn apply(&self, o: &mut crate::gui::GuiOptions) {
+        o.render_distance = self.render_distance;
+        o.pack_render_scale = self.pack_render_scale;
+        o.biome_blend = self.biome_blend;
+        o.clouds = self.clouds;
+        o.smooth_lighting = self.smooth_lighting;
+        o.antialiasing.mode = self.antialiasing;
+        o.particles = self.particles;
+        o.entity_shadows = self.entity_shadows;
+    }
+}
+
+/// The preset the settings now match, if any.
+fn current_preset(o: &crate::gui::GuiOptions) -> Option<usize> {
+    QUALITY_PRESETS.iter().position(|p| p.matches(o))
+}
+
 fn reset_video_options(o: &mut crate::gui::GuiOptions) {
     o.gui_scale = 0;
     o.fov_effects = crate::gui::FOV_EFFECTS_DEFAULT;
@@ -891,6 +1012,18 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         }
 
         f.header(QUALITY_HEADER);
+        // Steps through the presets; from settings that match none, the
+        // first.
+        let preset = current_preset(o);
+        let label = format!(
+            "Preset: {}",
+            preset.map_or("Custom", |i| QUALITY_PRESETS[i].name)
+        );
+        if f.wide_button(&label) {
+            let next = preset.map_or(0, |i| (i + 1) % QUALITY_PRESETS.len());
+            QUALITY_PRESETS[next].apply(o);
+            f.mark_changed();
+        }
         #[cfg(feature = "shader_support")]
         f.slider(
             &mut o.pack_render_scale,
@@ -1943,10 +2076,27 @@ mod tests {
     }
 
     #[test]
+    fn each_quality_preset_is_recognised_after_it_is_applied() {
+        let mut o = crate::gui::GuiOptions::default();
+        for (i, preset) in QUALITY_PRESETS.iter().enumerate() {
+            preset.apply(&mut o);
+            assert_eq!(current_preset(&o), Some(i), "{}", preset.name);
+            assert!(
+                (RENDER_DISTANCE_MIN as u32..=RENDER_DISTANCE_MAX as u32)
+                    .contains(&preset.render_distance)
+            );
+            assert!(
+                (crate::gui::PACK_RENDER_SCALE_MIN..=crate::gui::PACK_RENDER_SCALE_MAX)
+                    .contains(&preset.pack_render_scale)
+            );
+        }
+    }
+
+    #[test]
     fn video_grid_stacks_like_the_options_list() {
         // Display: header and four rows (five with the desktop's window
-        // size button); Quality: header (spaced) and five rows (water
-        // clarity the fifth); then entity
+        // size button); Quality: header (spaced), the preset button, and
+        // five rows (water clarity the fifth); then entity
         // shadows, the shader packs button when built in, and reset.
         let atlas = crate::gui::atlas::build_gui_atlas(&crate::assets_root());
         let mut p = Painter::new(&atlas, 0);
@@ -1960,7 +2110,7 @@ mod tests {
         draw_video(&mut p, &mut state, &ctx);
         const EXTRA_ROWS: f32 = cfg!(feature = "shader_support") as u32 as f32
             + cfg!(all(not(target_arch = "wasm32"), not(target_os = "android"))) as u32 as f32;
-        let reset_row = 244.0 + (EXTRA_ROWS + 2.0) * ROW_H;
+        let reset_row = 244.0 + (EXTRA_ROWS + 3.0) * ROW_H;
         assert_eq!(
             state.video_list.content_h,
             reset_row + ROW_H + LIST_PAD_BOTTOM
