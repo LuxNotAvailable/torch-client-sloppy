@@ -43,13 +43,18 @@ pub struct CullView {
     pub compact: u32,
     pub flags: u32,
     pub plane_count: u32,
-    pub pad: [u32; 2],
+    /// Commands each region holds: `FACE_GROUPS` per slot.
+    pub region_cap: u32,
+    pub pad: u32,
     /// The occlusion pyramid's clip matrix (last frame's camera), whether
     /// its depth was reversed, and its level count (0: no pyramid).
     pub hiz_clip: [[f32; 4]; 4],
     pub hiz_reverse: u32,
     pub hiz_levels: u32,
     pub hiz_pad: [u32; 2],
+    /// The camera, with w 1 when solid quads facing away from it may be
+    /// left out (not for a shadow view, which looks from the sun).
+    pub eye: [f32; 4],
 }
 
 pub const VIEW_WATER: u32 = 1;
@@ -129,11 +134,13 @@ impl CullShape {
                     0
                 },
             plane_count: self.plane_count as u32,
-            pad: [0; 2],
+            region_cap: slot_cap * super::FACE_GROUPS,
+            pad: 0,
             hiz_clip: [[0.0; 4]; 4],
             hiz_reverse: 0,
             hiz_levels: 0,
             hiz_pad: [0; 2],
+            eye: [0.0; 4],
         }
     }
 }
@@ -177,7 +184,9 @@ impl CullBuffers {
         let regions = view_count * pool_count * STREAMS;
         let commands = device.create_buffer(&BufferDescriptor {
             label: Some("terrain_cull_commands"),
-            size: (regions as u64) * (slot_cap as u64) * INDIRECT_ARGS_SIZE,
+            size: (regions as u64)
+                * u64::from(slot_cap * super::FACE_GROUPS)
+                * INDIRECT_ARGS_SIZE,
             usage: BufferUsages::INDIRECT | BufferUsages::STORAGE | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -258,6 +267,11 @@ impl CullBuffers {
         }
     }
 
+    /// Commands each region holds: up to `FACE_GROUPS` per slot.
+    pub fn region_cap(&self) -> u64 {
+        u64::from(self.slot_cap) * u64::from(super::FACE_GROUPS)
+    }
+
     fn fits(&self, view_count: u32, pool_count: u32, slot_cap: u32) -> bool {
         self.view_count >= view_count.max(1)
             && self.pool_count >= pool_count.max(1)
@@ -306,7 +320,7 @@ impl CullBuffers {
                     (view.slot * self.pool_count + run.pool) * STREAMS + super::STREAM_WATER;
                 queue.write_buffer(
                     &self.commands,
-                    (region as u64 * self.slot_cap as u64 + start as u64) * INDIRECT_ARGS_SIZE,
+                    (region as u64 * self.region_cap() + start as u64) * INDIRECT_ARGS_SIZE,
                     bytemuck::cast_slice(&self.water_args),
                 );
             }
@@ -361,7 +375,7 @@ impl CullBuffers {
             let region = (view.slot * self.pool_count + pool) * STREAMS + super::STREAM_WATER;
             queue.write_buffer(
                 &self.commands,
-                region as u64 * self.slot_cap as u64 * INDIRECT_ARGS_SIZE,
+                region as u64 * self.region_cap() * INDIRECT_ARGS_SIZE,
                 bytemuck::cast_slice(&self.water_args),
             );
             self.water_counts[(view.slot * self.pool_count + pool) as usize] = run.len() as u32;
@@ -663,7 +677,7 @@ pub fn finish(app: &mut App) {
     let layout_entries = BindGroupLayoutEntries::sequential(
         ShaderStages::COMPUTE,
         (
-            storage_buffer_read_only_sized(false, NonZeroU64::new(64)),
+            storage_buffer_read_only_sized(false, NonZeroU64::new(96)),
             storage_buffer_read_only_sized(false, NonZeroU64::new(4)),
             storage_buffer_sized(false, NonZeroU64::new(INDIRECT_ARGS_SIZE)),
             storage_buffer_sized(false, NonZeroU64::new(4)),
@@ -844,6 +858,9 @@ pub fn prepare_cull(
                 tier.count as u32,
                 view.flags,
             );
+            if view.flags == CAMERA_FLAGS {
+                cull_view.eye = [view.eye.x, view.eye.y, view.eye.z, 1.0];
+            }
             if let Some((clip, levels, reverse)) = view.hiz {
                 cull_view.flags |= VIEW_HIZ;
                 cull_view.hiz_clip = clip.to_cols_array_2d();

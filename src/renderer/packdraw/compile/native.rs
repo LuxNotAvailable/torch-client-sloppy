@@ -307,7 +307,7 @@ fn terrain_prelude(direct: bool) -> String {
         format!(
             "@group({TERRAIN_SET}) @binding({SLOT_TABLE_BINDING}) var<storage, read> iris_SlotWords: array<vec4<i32>>;\n\
              fn iris_origin(input: IrisVertexIn) -> vec3<i32> {{\n    \
-                 return iris_SlotWords[input.instance_index * 4u + 2u].xyz;\n\
+                 return iris_SlotWords[input.instance_index * 6u + 2u].xyz;\n\
              }}\n"
         )
     };

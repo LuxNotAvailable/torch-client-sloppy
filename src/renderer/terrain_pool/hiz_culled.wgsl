@@ -16,6 +16,7 @@ struct SlotMeta {
     flags: u32,
     pool: u32,
     cutout_first: u32,
+    solid_groups: array<u32, 8>,
 }
 
 struct Params {

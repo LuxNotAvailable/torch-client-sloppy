@@ -41,7 +41,7 @@ fn decode_srgb(c: vec3<f32>) -> vec3<f32> {
 @group(2) @binding(3) var lightmap_sampler: sampler;
 @group(2) @binding(4) var<uniform> params: vec4<f32>;
 
-struct SlotMeta { min: vec3<f32>, first_index: u32, max: vec3<f32>, index_count: u32, origin: vec3<i32>, base_vertex: u32, solid_count: u32, flags: u32, pool: u32, cutout_first: u32 }
+struct SlotMeta { min: vec3<f32>, first_index: u32, max: vec3<f32>, index_count: u32, origin: vec3<i32>, base_vertex: u32, solid_count: u32, flags: u32, pool: u32, cutout_first: u32, solid_groups: array<u32, 8> }
 #ifdef META_TEXTURE
 const ORIGIN_ROW: i32 = 256;
 @group(2) @binding(5) var origins: texture_2d<i32>;

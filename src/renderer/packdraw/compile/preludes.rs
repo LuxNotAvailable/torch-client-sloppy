@@ -17,7 +17,7 @@ pub(crate) fn terrain_prelude(direct: bool) -> String {
                  ivec4 iris_SlotWords[];\n\
              }};\n\
              ivec3 iris_origin() {{\n    \
-                 return iris_SlotWords[gl_InstanceIndex * 4 + 2].xyz;\n\
+                 return iris_SlotWords[gl_InstanceIndex * 6 + 2].xyz;\n\
              }}\n"
         )
     };
