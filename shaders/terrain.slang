@@ -253,11 +253,15 @@ float4 terrain_cutout(VertexOut in): SV_Target {
 }
 
 // Vanilla's translucent layer: water, stained glass, ice, slime, honey and
-// the portal, blended with the texture's own alpha.
+// the portal, blended with the texture's own alpha, scaled by the Water
+// Clarity setting (params.w), as the game's water material does.
 [shader("fragment")]
 float4 terrain_translucent(VertexOut in): SV_Target {
     float4 c = terrain_shade(in, false);
-    return pc.more.y == VIEW_SHADED ? c : float4(c.rgb, 0.6);
+    if (pc.more.y != VIEW_SHADED) {
+        return float4(c.rgb, 0.6);
+    }
+    return float4(c.rgb, saturate(c.a * pc.params.w));
 }
 
 groupshared float tile[32][32];

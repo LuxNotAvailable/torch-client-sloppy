@@ -45,6 +45,8 @@ pub struct EnvScene {
     pub clear: [f32; 4],
     pub fog_color: [f32; 4],
     pub fog_ranges: [f32; 4],
+    /// The Water Clarity scale on the translucent layer's alpha.
+    pub water_alpha: f32,
     /// The portal and nausea warp, after the projection's view.
     pub warp: Mat4,
     /// The server's post effects (`renderer::post_effects` flags).
@@ -260,6 +262,7 @@ impl EnvScene {
             clear: env.clear,
             fog_color: env.fog_color,
             fog_ranges: env.fog_ranges,
+            water_alpha: env.water_alpha,
             warp: Mat4::from_cols_array(&env.warp),
             post: env.post,
             module,

@@ -335,11 +335,12 @@ fn write_env(
     standard: &Assets<StandardMaterial>,
     lightmap: Option<&crate::renderer::terrain::LightmapPixels>,
     fog: Option<(&DistanceFog, &Camera)>,
-    (overlays, hand, atlas, warp): (
+    (overlays, hand, atlas, warp, water_alpha): (
         &Query<ScreenDrawn, With<crate::renderer::screen_effects::Overlay>>,
         Option<Mat4>,
         Option<AssetId<Image>>,
         Mat4,
+        f32,
     ),
 ) {
     let mut parts = Vec::new();
@@ -506,12 +507,14 @@ fn write_env(
     }
     put(&(parts.len() as u32).to_le_bytes());
     put(bytemuck::cast_slice(&parts));
-    // The portal and nausea warp on the world's projection, and the
-    // server's post effects (`renderer::post_effects` flags).
+    // The portal and nausea warp on the world's projection, the server's
+    // post effects (`renderer::post_effects` flags), and the Water Clarity
+    // setting's scale on the translucent layer's alpha (in what was
+    // padding; older snapshots read it as 0, meaning unscaled).
     put(bytemuck::cast_slice(&warp.to_cols_array()));
     put(bytemuck::cast_slice(&[
         crate::renderer::post_effects::active(),
-        0,
+        water_alpha.to_bits(),
         0,
         0,
     ]));
@@ -539,11 +542,12 @@ fn write(
         Option<Res<crate::renderer::terrain::LightmapPixels>>,
         Query<(&DistanceFog, &Camera), With<crate::renderer::systems::WorldCamera>>,
     ),
-    (overlays, hand, terrain_textures, frame_view): (
+    (overlays, hand, terrain_textures, frame_view, terrain_params): (
         Query<ScreenDrawn, With<crate::renderer::screen_effects::Overlay>>,
         Query<&Projection, With<crate::renderer::hand::HandCamera>>,
         Option<Res<crate::renderer::terrain_pool::TerrainTextures>>,
         Res<crate::renderer::frame_view::FrameView>,
+        Option<Res<crate::renderer::terrain_pool::TerrainParams>>,
     ),
 ) {
     *since += time.delta_secs();
@@ -697,6 +701,7 @@ fn write(
             hand.iter().next().map(|p| p.get_clip_from_view()),
             terrain_textures.as_ref().map(|t| t.atlas.id()),
             crate::renderer::view_bob::current_warp(&frame_view),
+            terrain_params.as_ref().map_or(1.0, |p| p.water_alpha),
         ),
     );
     let partial = dir.join("entities.bin.part");
@@ -830,6 +835,8 @@ pub struct Environment {
     pub warp: [f32; 16],
     /// The server's post effects (`renderer::post_effects` flags).
     pub post: u32,
+    /// The Water Clarity scale on the translucent layer's alpha.
+    pub water_alpha: f32,
 }
 
 /// Reads `env.bin`.
@@ -872,7 +879,12 @@ pub fn read_env(bytes: &[u8]) -> Result<Environment, String> {
     let count = u32_at(take(4)?) as usize;
     let parts = bytemuck::pod_collect_to_vec(take(count * std::mem::size_of::<EnvPart>())?);
     let warp = bytemuck::pod_read_unaligned::<[f32; 16]>(take(64)?);
-    let post = u32_at(&take(16)?[..4]);
+    let tail = take(16)?;
+    let post = u32_at(&tail[..4]);
+    let water_alpha = match f32::from_bits(u32_at(&tail[4..8])) {
+        a if a > 0.0 => a,
+        _ => 1.0,
+    };
     Ok(Environment {
         clear,
         fog_color,
@@ -883,6 +895,7 @@ pub fn read_env(bytes: &[u8]) -> Result<Environment, String> {
         parts,
         warp,
         post,
+        water_alpha,
     })
 }
 

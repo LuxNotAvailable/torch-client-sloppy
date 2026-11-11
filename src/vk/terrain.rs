@@ -1868,6 +1868,8 @@ impl TerrainScene {
             particles.uses(&mut images, &mut buffers);
         }
         let camera_world = Mat4::look_to_rh(camera.eye, camera.forward(), Vec3::Y).inverse();
+        // The game's Water Clarity scale on the translucent layer's alpha.
+        let water_alpha = self.env.as_ref().map_or(1.0, |e| e.water_alpha);
         if let Some(env) = &self.env {
             env.uses(&mut images, &mut buffers);
         }
@@ -1932,7 +1934,7 @@ impl TerrainScene {
                 &Push {
                     ids: [self.slots.index, view_index, 0, 0],
                     more: [self.atlas_index, view.mode(), 0, 0],
-                    params: [0.0; 4],
+                    params: [0.0, 0.0, 0.0, water_alpha],
                     view_proj: view_proj_cols,
                 },
             );
@@ -1986,7 +1988,7 @@ impl TerrainScene {
                     &Push {
                         ids: [self.slots.index, view_index, 0, 0],
                         more: [self.atlas_index, view.mode(), 0, 0],
-                        params: [0.0; 4],
+                        params: [0.0, 0.0, 0.0, water_alpha],
                         view_proj: view_proj_cols,
                     },
                 );
