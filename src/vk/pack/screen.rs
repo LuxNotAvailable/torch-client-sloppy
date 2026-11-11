@@ -1128,10 +1128,17 @@ impl PackScreen {
             });
         }
 
-        // Debug: MC_PACK_SHOW=shadowcolor0 shows the light's view instead.
-        if std::env::var("MC_PACK_SHOW").is_ok_and(|v| v == "shadowcolor0")
-            && let Some(image) = self.targets.shadow.as_ref().and_then(|s| s.color[0].as_ref())
-        {
+        // Debug: MC_PACK_SHOW shows a target instead (shadowcolor0, or
+        // colortex<n>.<half>).
+        let shown = std::env::var("MC_PACK_SHOW").ok().and_then(|v| {
+            if v == "shadowcolor0" {
+                return self.targets.shadow.as_ref()?.color[0].as_ref();
+            }
+            let (n, half) = v.strip_prefix("colortex")?.split_once('.')?;
+            let (n, half): (usize, usize) = (n.parse().ok()?, half.parse().ok()?);
+            self.targets.color.get(n)?.as_ref().map(|(pair, _)| &pair[half.min(1)])
+        });
+        if let Some(image) = shown {
             let (src, dst) = (image.extent, output.2);
             graph.pass(
                 "pack show",
