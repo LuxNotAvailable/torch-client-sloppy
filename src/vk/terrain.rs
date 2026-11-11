@@ -438,6 +438,8 @@ pub struct PackGeometry {
     pub lightmap: Option<(vk::Image, u32)>,
     /// The snapshot's entities, when it has some.
     pub entities: Option<super::entities::PackEntities>,
+    /// The sky pieces as entities (`TerrainScene::pack_sky`).
+    pub sky: Option<super::entities::PackEntities>,
 }
 
 pub const PACK_COMMAND_SIZE: u64 = COMMAND_SIZE;
@@ -904,6 +906,21 @@ impl TerrainScene {
             shadow: self.shadow.as_ref().map(|s| (s.commands.raw, s.counts.raw)),
             lightmap: self.env.as_ref().map(|e| (e.lightmap.0.raw, e.lightmap.1)),
             entities: self.entities.as_ref().map(|e| e.pack_entities()),
+            sky: self.env.as_ref().and_then(|e| e.pack_entities()),
+        }
+    }
+
+    /// Builds the sky's instances for a pack (`EnvScene::pack_sky`).
+    pub fn pack_sky(
+        &mut self,
+        ctx: &Context,
+        memory: &Memory,
+        bindless: &mut Bindless,
+        sun_path_rotation: f32,
+    ) -> Result<(), SetupError> {
+        match &mut self.env {
+            Some(env) => env.pack_sky(ctx, memory, bindless, sun_path_rotation),
+            None => Ok(()),
         }
     }
 

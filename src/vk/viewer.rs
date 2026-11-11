@@ -359,7 +359,7 @@ impl Renderer {
                 v::ImageAspectFlags::COLOR,
             )?),
         };
-        let scene = match &options.terrain {
+        let mut scene = match &options.terrain {
             _ if options.panorama => Scene::Panorama(crate::vk::panorama::PanoramaScene::new(
                 &ctx,
                 &memory,
@@ -398,6 +398,9 @@ impl Renderer {
                 let installed = crate::vk::pack::load(name, false)
                     .map_err(|e| crate::vk::SetupError(format!("pack {name}: {e}")))?;
                 let programs = installed.programs.len();
+                if let Scene::Terrain(terrain, _) = &mut scene {
+                    terrain.pack_sky(&ctx, &memory, &mut bindless, installed.constants.sun_path_rotation)?;
+                }
                 let screen = crate::vk::pack::screen::PackScreen::new(
                     &ctx,
                     &memory,

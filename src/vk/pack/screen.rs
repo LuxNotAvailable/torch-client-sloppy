@@ -88,6 +88,8 @@ struct Pass {
     entity: Option<bool>,
     /// A compute step: its work groups.
     compute: Option<[u32; 3]>,
+    /// Draws the sky pieces: (textured kind, added ones).
+    sky: Option<(bool, bool)>,
 }
 
 pub(crate) struct PackScreen {
@@ -110,9 +112,11 @@ pub(crate) struct PackScreen {
     terrain_slots: Vec<usize>,
     /// Table words for the entity buffers: 0 instances, 1 meshes, 2
     /// vertices, 3 parts.
-    entity_slots: Vec<(usize, u8)>,
+    entity_slots: Vec<(usize, u8, bool)>,
     /// While building an entity pass: whether it blends.
     building_entity: Option<bool>,
+    /// While building a sky pass: its kind, and whether it adds.
+    building_sky: Option<(EntityKind, bool)>,
     /// While building a compute pass.
     building_compute: bool,
     /// Per program with a uniform block: its bytes and a buffer per frame.
@@ -275,6 +279,7 @@ impl PackScreen {
             terrain_slots: Vec::new(),
             entity_slots: Vec::new(),
             building_entity: None,
+            building_sky: None,
             building_compute: false,
             uniforms: Vec::new(),
             table: Vec::new(),
@@ -313,6 +318,15 @@ impl PackScreen {
                 }
             }
             if stage == ScreenStage::Deferred {
+                // The sky first, as vanilla draws it before the world.
+                for kind in [EntityKind::SkyBasic, EntityKind::SkyTextured] {
+                    if let Some(index) = screen.installed.entities[kind.index()] {
+                        for additive in [false, true] {
+                            let pass = screen.pass_sky(ctx, memory, bindless, pipelines, index, flips, kind, additive)?;
+                            screen.passes.push(pass);
+                        }
+                    }
+                }
                 for slot in [0, 1] {
                     if let Some(index) = screen.installed.geometry[slot] {
                         let pass = screen.pass(ctx, memory, bindless, pipelines, index, flips, None, Some(slot), false)?;
@@ -489,6 +503,27 @@ impl PackScreen {
         pass
     }
 
+    /// A sky pass: `kind`'s pieces, blended or added, no depth test.
+    #[allow(clippy::too_many_arguments, reason = "one pass's whole context")]
+    fn pass_sky(
+        &mut self,
+        ctx: &Context,
+        memory: &Memory,
+        bindless: &mut Bindless,
+        pipelines: &Pipelines,
+        index: usize,
+        flips: Flips,
+        kind: EntityKind,
+        additive: bool,
+    ) -> Result<Pass, SetupError> {
+        self.building_sky = Some((kind, additive));
+        let pass = self.pass(ctx, memory, bindless, pipelines, index, flips, None, Some(0), false);
+        self.building_sky = None;
+        let mut pass = pass?;
+        pass.sky = Some((kind == EntityKind::SkyTextured, additive));
+        Ok(pass)
+    }
+
     #[allow(clippy::too_many_arguments, reason = "one pass's whole context")]
     fn pass(
         &mut self,
@@ -506,7 +541,9 @@ impl PackScreen {
         use crate::shaderpack::programs::Geometry;
         let program: &InstalledProgram = &self.installed.programs[index];
         let entity = self.building_entity;
+        let sky = self.building_sky;
         let fragment = match (output, &program.fragment_linear, geometry) {
+            (_, _, Some(_)) if let Some((kind, _)) = sky => program.fragment_for(kind.alpha_tests()[0]),
             (_, _, Some(_)) if entity.is_some() => {
                 let kind = if entity == Some(true) { EntityKind::EntityTranslucent } else { EntityKind::Entity };
                 program.fragment_for(kind.alpha_tests()[0])
@@ -533,7 +570,7 @@ impl PackScreen {
         for module in stages {
             // An entity's own texture comes with its draw.
             let per_draw = |slot: &Slot| {
-                entity.is_some()
+                (entity.is_some() || sky.is_some())
                     && slot.group == 0
                     && matches!(slot.kind, SlotKind::Texture(_))
                     && program.textures.iter().any(|(b, s)| *b == slot.binding && *s == TextureSource::EntityTexture)
@@ -545,7 +582,9 @@ impl PackScreen {
         }
 
         // Final draws to the output, never into a target it samples.
-        let drawing: u16 = if output.is_some() || compute {
+        // As the game's binds: only geometry passes (they draw current
+        // halves) read a target they draw from its other half.
+        let drawing: u16 = if geometry.is_none() || shadow || output.is_some() || compute {
             0
         } else {
             program.draw_buffers.iter().fold(0, |m, b| m | 1 << b)
@@ -581,7 +620,7 @@ impl PackScreen {
                         .position(|t| *t == ty.as_str())
                         .unwrap_or(0) as u8;
                     let at = self.table.len();
-                    self.entity_slots.push((at, which));
+                    self.entity_slots.push((at, which, self.building_sky.is_some()));
                     0
                 }
                 SlotKind::Buffer { ty, .. }
@@ -709,6 +748,7 @@ impl PackScreen {
                 shadow: None,
                 entity: None,
                 compute: Some(program.dispatch.groups([self.targets.size.width, self.targets.size.height])),
+                sky: None,
             });
         }
         let pipeline = pipelines.graphics(
@@ -720,18 +760,18 @@ impl PackScreen {
                 fragment: c"main",
                 color: &formats,
                 depth: geometry.map(|_| DEPTH_FORMAT),
-                depth_test: geometry.map(|_| {
+                depth_test: geometry.filter(|_| sky.is_none()).map(|_| {
                     if shadow {
                         vk::CompareOp::LESS
                     } else {
                         vk::CompareOp::LESS_OR_EQUAL
                     }
                 }),
-                depth_write: geometry.is_some() && entity != Some(true),
+                depth_write: geometry.is_some() && entity != Some(true) && sky.is_none(),
                 cull: vk::CullModeFlags::NONE,
                 topology: vk::PrimitiveTopology::TRIANGLE_LIST,
-                blend: (geometry == Some(2) && !shadow) || entity == Some(true),
-                additive: false,
+                blend: (geometry == Some(2) && !shadow) || entity == Some(true) || sky.is_some(),
+                additive: sky.is_some_and(|(_, add)| add),
             },
         )?;
         Ok(Pass {
@@ -747,6 +787,7 @@ impl PackScreen {
             shadow: shadow.then_some(shadow_colors),
             entity: None,
             compute: None,
+            sky: None,
         })
     }
 
@@ -1003,8 +1044,8 @@ impl PackScreen {
             for &at in &self.terrain_slots {
                 table[at] = t.slots.1;
             }
-            if let Some(e) = &t.entities {
-                for &(at, which) in &self.entity_slots {
+            for &(at, which, sky) in &self.entity_slots {
+                if let Some(e) = if sky { &t.sky } else { &t.entities } {
                     table[at] = [e.instances.1, e.meshes.1, e.vertices.1, e.parts.1][which as usize];
                 }
             }
@@ -1113,6 +1154,7 @@ impl PackScreen {
             }
             let draw = match (pass.geometry, terrain) {
                 (Some(_), Some(t)) if pass.entity.is_some() && t.entities.is_none() => continue,
+                (Some(_), Some(t)) if pass.sky.is_some() && t.sky.is_none() => continue,
                 (Some(slot), Some(t)) => Some((slot, t)),
                 (Some(_), None) => continue,
                 (None, _) => None,
@@ -1170,7 +1212,8 @@ impl PackScreen {
                         pass_buffers.push((*indices, Use::IndexRead));
                     }
                     pass_buffers.extend(t.quads.iter().map(|q| (*q, Use::VertexRead)));
-                    if let (Some(_), Some(e)) = (pass.entity, &t.entities) {
+                    let source = if pass.sky.is_some() { &t.sky } else { &t.entities };
+                    if let (true, Some(e)) = (pass.entity.is_some() || pass.sky.is_some(), source) {
                         for b in [e.instances.0, e.meshes.0, e.vertices.0, e.parts.0] {
                             pass_buffers.push((b, Use::VertexRead));
                         }
@@ -1186,6 +1229,8 @@ impl PackScreen {
             };
             let (pipeline, base, extent) = (pass.pipeline, pass.base, pass.extent);
             let entity_pass = pass.entity;
+            let sky_pass = pass.sky;
+            let white = self.stubs.white.1;
             let name = if draw.is_some() { "pack geometry" } else { "pack screen" };
             graph.pass(name, &uses, &pass_buffers, |cmd| unsafe {
                 // SAFETY: attachments and sampled images in the layouts the
@@ -1260,6 +1305,31 @@ impl PackScreen {
                     },
                 );
                 match draw {
+                    // Sky pieces: one draw each, in the snapshot's order.
+                    Some((_, t)) if sky_pass.is_some() => {
+                        let Some(e) = &t.sky else { return };
+                        device.cmd_bind_index_buffer(cmd, e.indices, 0, vk::IndexType::UINT32);
+                        let (textured, adds) = sky_pass.unwrap_or_default();
+                        for (i, &(first, count, base_vertex, texture, add)) in e.draws.iter().enumerate() {
+                            // `blended` lists the textured pieces here.
+                            if add != adds || e.blended.contains(&(i as u32)) != textured {
+                                continue;
+                            }
+                            let texture = if texture == u32::MAX { white } else { texture };
+                            push(
+                                ctx,
+                                cmd,
+                                pipelines.layout,
+                                &Push {
+                                    ids: [table_index, base, texture, 0],
+                                    more: [0; 4],
+                                    params: [0.0; 4],
+                                    view_proj: [[0.0; 4]; 4],
+                                },
+                            );
+                            device.cmd_draw_indexed(cmd, count, 1, first, base_vertex, i as u32);
+                        }
+                    }
                     // Entities: one draw each, its texture in the push.
                     Some((_, t)) if entity_pass.is_some() => {
                         let Some(e) = &t.entities else { return };

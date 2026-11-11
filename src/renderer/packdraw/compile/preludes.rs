@@ -223,7 +223,9 @@ void iris_vk_entity() {
     entityId = -1;
     blockEntityId = -1;
     currentRenderedItemId = 0;
-    renderStage = 0;
+    // Kinds past 16 carry a pack renderStage (the sky's pieces).
+    uint kind = iris_VkInst[at + 5u];
+    renderStage = kind >= 16u ? int(kind - 16u) : 0;
 }
 vec3 iris_local_position() {
     if (!iris_Rigged) { return iris_EntityPosition; }

@@ -67,6 +67,21 @@ pub struct EnvScene {
     /// The sky parts, lowest bias first, then the clouds, then the
     /// screen overlays.
     draws: Vec<Draw>,
+    /// Sky pieces for a pack (eye-relative): part, index range.
+    sky: Vec<(EnvPart, (u32, u32, u32))>,
+    /// A pack's sky instances and mesh table (`pack_sky`).
+    pack: Option<PackSky>,
+    /// The snapshot's eye.
+    eye: Vec3,
+}
+
+struct PackSky {
+    instances: (Buffer, u32),
+    meshes: (Buffer, u32),
+    /// Per piece: first index, count, base vertex, texture, additive.
+    draws: Vec<(u32, u32, i32, u32, bool)>,
+    /// Pieces gbuffers_skytextured draws.
+    textured: Vec<u32>,
 }
 
 fn full() -> SetupError {
@@ -211,6 +226,11 @@ impl EnvScene {
                 part.texture = *index;
             }
         }
+        let sky = parts
+            .iter()
+            .filter(|p| p.kind == 0 && p.pad[0] > 0.0)
+            .filter_map(|p| Some((*p, *ranges.get(p.mesh as usize)?)))
+            .collect();
         let parts_bytes: &[u8] = bytemuck::cast_slice(&parts);
 
         let mut total = 0u64;
@@ -282,6 +302,90 @@ impl EnvScene {
             )),
             staged_lightmap: lightmap_at,
             draws,
+            sky,
+            pack: None,
+            eye,
+        })
+    }
+
+    /// Builds a pack's sky: one entity instance per piece, in the sky
+    /// root's unit frame, sun, moon and stars tilted by `sunPathRotation`.
+    pub fn pack_sky(
+        &mut self,
+        ctx: &Context,
+        memory: &Memory,
+        bindless: &mut Bindless,
+        sun_path_rotation: f32,
+    ) -> Result<(), SetupError> {
+        use super::entity_dump::{EntityInstance, SKY_PIECES, SKY_SCALE};
+        let tilt = Mat4::from_rotation_y((-90.0f32).to_radians())
+            * Mat4::from_rotation_z(sun_path_rotation.to_radians())
+            * Mat4::from_rotation_y(90.0f32.to_radians());
+        let mut instances = Vec::new();
+        let mut meshes: Vec<[u32; 4]> = Vec::new();
+        let mut draws = Vec::new();
+        let mut textured = Vec::new();
+        for (part, (first, count, base)) in &self.sky {
+            let piece = SKY_PIECES[(part.pad[0] as usize - 1).min(SKY_PIECES.len() - 1)];
+            let stage = crate::shaderpack::features::render_stage(if piece == "END_SKY" { "SKY" } else { piece });
+            let local = Mat4::from_scale(Vec3::splat(SKY_SCALE.recip())) * Mat4::from_cols_array(&part.transform);
+            let model = if matches!(piece, "SUN" | "MOON" | "STARS") { tilt * local } else { local };
+            // World again: the entity input takes the eye off.
+            let model = Mat4::from_translation(self.eye) * model;
+            if matches!(piece, "SUN" | "MOON" | "END_SKY") {
+                textured.push(draws.len() as u32);
+            }
+            meshes.push([*first, *count, *base, 0]);
+            instances.push(EntityInstance {
+                mesh: meshes.len() as u32 - 1,
+                texture: part.texture,
+                alpha: part.alpha,
+                // The pack's renderStage, past the native kinds.
+                kind: 16 + stage as u32,
+                tint: part.tint,
+                light0: [0.0, 0.0, 0.0, 1.0],
+                light1: [0.0, 0.0, 0.0, 1.0],
+                levels: [240.0, 240.0],
+                transform: model.to_cols_array(),
+                ..Default::default()
+            });
+            draws.push((*first, *count, *base as i32, part.texture, part.alpha == 3));
+        }
+        let mut upload = |name: &str, bytes: &[u8]| -> Result<(Buffer, u32), SetupError> {
+            let mut buffer = memory.buffer(
+                ctx,
+                name,
+                bytes.len().max(16) as u64,
+                vk::BufferUsageFlags::STORAGE_BUFFER,
+                MemoryLocation::CpuToGpu,
+            )?;
+            buffer.write(0, bytes);
+            let index = bindless.add_buffer(ctx, buffer.raw).ok_or_else(full)?;
+            Ok((buffer, index))
+        };
+        self.pack = Some(PackSky {
+            instances: upload("pack sky instances", bytemuck::cast_slice(&instances))?,
+            meshes: upload("pack sky meshes", bytemuck::cast_slice(&meshes))?,
+            draws,
+            textured,
+        });
+        Ok(())
+    }
+
+    /// The pack's sky as entity draws (`pack_sky` first).
+    pub fn pack_entities(&self) -> Option<super::entities::PackEntities> {
+        let pack = self.pack.as_ref()?;
+        Some(super::entities::PackEntities {
+            instances: (pack.instances.0.raw, pack.instances.1),
+            meshes: (pack.meshes.0.raw, pack.meshes.1),
+            vertices: (self.vertices.0.raw, self.vertices.1),
+            // Never read: no piece is posed.
+            parts: (pack.instances.0.raw, pack.instances.1),
+            indices: self.indices.raw,
+            draws: pack.draws.clone(),
+            // For the sky: the textured pieces.
+            blended: pack.textured.clone(),
+            textures: self.textures.iter().map(|t| t.0.raw).collect(),
         })
     }
 
@@ -539,6 +643,10 @@ impl EnvScene {
         }
         for b in [self.parts.0, self.vertices.0, self.indices] {
             memory.free_buffer(ctx, b);
+        }
+        if let Some(p) = self.pack {
+            memory.free_buffer(ctx, p.instances.0);
+            memory.free_buffer(ctx, p.meshes.0);
         }
         if let Some((staging, ..)) = self.staging {
             memory.free_buffer(ctx, staging);

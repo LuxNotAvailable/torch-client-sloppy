@@ -201,6 +201,13 @@ pub(crate) enum SkyPart {
     EndSky,
 }
 
+impl SkyPart {
+    /// Its place in `vk::entity_dump::SKY_PIECES`.
+    pub(crate) fn index(self) -> usize {
+        self as usize
+    }
+}
+
 #[derive(Resource)]
 struct SkyAssets {
     sky_disc_mesh: Handle<Mesh>,

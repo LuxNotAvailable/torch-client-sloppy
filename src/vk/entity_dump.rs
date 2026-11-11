@@ -144,6 +144,7 @@ pub struct EnvPart {
     pub kind: u32,
     /// Drawing order among the parts, lowest first.
     pub bias: f32,
+    /// pad[0]: the sky piece (`SKY_PIECES` index + 1), 0 for none.
     pub pad: [f32; 3],
     /// The texture coordinates' scale (xy) and offset (zw).
     pub uv: [f32; 4],
@@ -153,6 +154,12 @@ pub struct EnvPart {
 }
 
 const _: () = assert!(std::mem::size_of::<EnvPart>() == 128);
+
+/// Sky pieces as `EnvPart::pad[0]` - 1 names them.
+pub const SKY_PIECES: [&str; 7] = ["SKY", "VOID", "SUN", "MOON", "STARS", "SUNSET", "END_SKY"];
+
+/// `renderer::sky::SKY_SCALE`: the sky root's scale.
+pub const SKY_SCALE: f32 = 16.0;
 
 /// A screen overlay (`renderer::screen_effects`), in the hand camera's view
 /// space.
@@ -306,6 +313,7 @@ type SkyDrawn<'a> = (
     &'a MeshMaterial3d<crate::renderer::sky::SkyPartMaterial>,
     &'a GlobalTransform,
     &'a InheritedVisibility,
+    &'a crate::renderer::sky::SkyPart,
 );
 
 type CloudDrawn<'a> = (
@@ -353,7 +361,8 @@ fn write_env(
                    bias: f32,
                    kind: u32,
                    uv: [f32; 4],
-                   transform: Mat4| {
+                   transform: Mat4,
+                   piece: f32| {
         if !cache.meshes.contains_key(&mesh) {
             return;
         }
@@ -381,13 +390,13 @@ fn write_env(
             alpha: alpha_code(alpha),
             kind,
             bias,
-            pad: [0.0; 3],
+            pad: [piece, 0.0, 0.0],
             uv,
             tint: tint.to_array(),
             transform: transform.to_cols_array(),
         });
     };
-    for (mesh, material, transform, visible) in sky {
+    for (mesh, material, transform, visible, piece) in sky {
         if !visible.get() {
             continue;
         }
@@ -402,6 +411,7 @@ fn write_env(
                 0,
                 [1.0, 1.0, 0.0, 0.0],
                 transform.to_matrix(),
+                piece.index() as f32 + 1.0,
             );
         }
     }
@@ -419,6 +429,7 @@ fn write_env(
                 1,
                 [1.0, 1.0, 0.0, 0.0],
                 transform.to_matrix(),
+                0.0,
             );
         }
     }
@@ -445,6 +456,7 @@ fn write_env(
                         uv.translation.y,
                     ],
                     clip_from_view * transform.to_matrix(),
+                    0.0,
                 );
             }
         }
