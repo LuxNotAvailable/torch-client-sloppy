@@ -108,6 +108,11 @@ pub fn section(origin: [i32; 3], vis: VisibilitySet, meshes: &[MeshBuf; 2]) {
 }
 
 /// Records that the column at chunk `(cx, cz)` was unloaded.
+/// Records that every section was dropped (live only; dumps start anew).
+pub fn cleared() {
+    live(Record::Cleared);
+}
+
 pub fn column_dropped(cx: i32, cz: i32) {
     live(Record::Dropped { cx, cz });
     record([cx * 16, 0, cz * 16], DROPPED, 0, &MeshBuf::default());
@@ -170,6 +175,8 @@ pub enum Record {
     Layer(Section),
     /// The column at chunk `(cx, cz)` unloaded.
     Dropped { cx: i32, cz: i32 },
+    /// Every section dropped (a new world or dimension); live only.
+    Cleared,
 }
 
 /// Checks a dump's header; its records start after it.
@@ -263,6 +270,7 @@ pub fn read(bytes: &[u8]) -> Result<Vec<Section>, String> {
             Record::Dropped { cx, cz } => {
                 sections.retain(|&(o, _): &([i32; 3], bool), _| o[0] >> 4 != cx || o[2] >> 4 != cz);
             }
+            Record::Cleared => sections.clear(),
             Record::Layer(section) if section.verts.is_empty() => {
                 sections.remove(&(section.origin, section.water));
             }

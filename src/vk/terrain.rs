@@ -967,6 +967,11 @@ impl TerrainScene {
         }
     }
 
+    /// The anti-aliasing and post settings, as the game's options change.
+    pub fn set_post(&mut self, post: super::post::Settings) {
+        self.options.post = post;
+    }
+
     /// Queues section changes the game made (the live renderer's feed).
     pub fn push(&mut self, records: Vec<Record>) {
         self.queue.extend(records);
@@ -1312,6 +1317,14 @@ impl TerrainScene {
             };
             self.stats.records += 1;
             let section = match record {
+                Record::Cleared => {
+                    let keys: Vec<_> = self.entries.keys().copied().collect();
+                    for key in keys {
+                        self.remove(key);
+                    }
+                    self.vis.clear();
+                    continue;
+                }
                 Record::Dropped { cx, cz } => {
                     let keys: Vec<_> = self
                         .entries

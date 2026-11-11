@@ -294,6 +294,8 @@ impl ChunkIndex {
     }
 
     pub fn clear(&mut self, ops: &TerrainOps) {
+        #[cfg(feature = "vulkan")]
+        crate::vk::terrain_dump::cleared();
         crate::blockentities::transient::clear();
         crate::blockentities::bake::clear();
         ops.push(TerrainOp::ClearAll);

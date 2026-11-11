@@ -69,6 +69,18 @@ struct Live {
     /// The frame's pack inputs (time of day, weather, the eye's light).
     pack_inputs: Option<crate::renderer::packdraw::inputs::Inputs>,
     started: std::time::Instant,
+    /// In a menu: the panorama draws.
+    menu: bool,
+    /// The title panorama, made the first time a menu shows.
+    panorama: Option<super::panorama::PanoramaScene>,
+    /// The game's vsync option, and its anti-aliasing as the post pass's.
+    vsync: bool,
+    post: super::post::Settings,
+    /// Screenshot entities to capture this frame.
+    shots: Vec<Entity>,
+    /// Frames copied back for screenshots: the buffer, its size and
+    /// format, the entities waiting, and the frame it was copied on.
+    readbacks: Vec<(Buffer, vk::Extent2D, vk::Format, Vec<Entity>, u64)>,
     frame: u64,
     size: (u32, u32),
     stale: bool,
@@ -114,6 +126,12 @@ fn setup(world: &mut World) -> Result<Live, SetupError> {
         pack_checked: None,
         pack_inputs: None,
         started: std::time::Instant::now(),
+        menu: false,
+        panorama: None,
+        shots: Vec::new(),
+        readbacks: Vec::new(),
+        vsync: true,
+        post: Default::default(),
         frame: 0,
         size,
         stale: false,
@@ -153,7 +171,14 @@ fn draw_frame(world: &mut World) {
     if let Some(ops) = world.get_resource::<crate::renderer::terrain_pool::TerrainOps>() {
         ops.0.lock().clear();
     }
-    let camera = world_camera(world);
+    // In menus the title panorama shows instead of the world, as the game
+    // switches its cameras.
+    let menu = world
+        .query_filtered::<&bevy::camera::Camera, With<crate::renderer::panorama::PanoramaCamera>>()
+        .iter(world)
+        .next()
+        .is_some_and(|c| c.is_active);
+    let camera = if menu { None } else { world_camera(world) };
     let figure_view = figure_view(world);
     let Some(mut live) = world.remove_non_send_resource::<Live>() else {
         return;
@@ -169,10 +194,51 @@ fn draw_frame(world: &mut World) {
     }
     live.feed_terrain();
     live.update_pack();
+    // Screenshots the game asked for (`renderer::screenshot`): captured
+    // here, answered with the event Bevy's renderer would send.
+    let mut requests = world.query_filtered::<Entity, (
+        With<bevy::render::view::screenshot::Screenshot>,
+        Without<NativeCapture>,
+    )>();
+    let shots: Vec<Entity> = requests.iter(world).collect();
+    for &e in &shots {
+        world.entity_mut(e).insert(NativeCapture);
+    }
+    live.shots = shots;
+    // The game's video options.
+    if let Some(gui) = world.get_resource::<crate::gui::GuiState>() {
+        use crate::renderer::antialias::{AaMode, SSAA_SCALES};
+        let aa = gui.options.antialiasing;
+        live.post = super::post::Settings {
+            fxaa: aa.mode == AaMode::Fxaa,
+            ssaa: if aa.mode == AaMode::Supersample {
+                SSAA_SCALES.get(aa.ssaa).copied().unwrap_or(1.0)
+            } else {
+                1.0
+            },
+            effects: None,
+        };
+        if gui.options.vsync != live.vsync {
+            live.vsync = gui.options.vsync;
+            live.stale = true;
+        }
+    }
     live.figure.view = figure_view;
+    live.menu = menu;
     live.draw(gui_frame.unwrap_or_default(), textures, camera);
+    let captured = live.take_captures();
     world.insert_non_send_resource(live);
+    for (entity, image) in captured {
+        world.trigger(bevy::render::view::screenshot::ScreenshotCaptured { entity, image });
+        if let Ok(e) = world.get_entity_mut(entity) {
+            e.despawn();
+        }
+    }
 }
+
+/// A screenshot request the native renderer has taken on.
+#[derive(Component)]
+struct NativeCapture;
 
 /// The figure camera's view-projection, eye and the texture size the GUI
 /// wants, while the inventory shows the figure.
@@ -259,6 +325,12 @@ impl Drop for Live {
                 scene.destroy(&self.ctx, &memory);
             }
             std::mem::take(&mut self.figure).destroy(&self.ctx, &memory);
+            if let Some(p) = self.panorama.take() {
+                p.destroy(&self.ctx, &memory);
+            }
+            for (b, ..) in self.readbacks.drain(..) {
+                memory.free_buffer(&self.ctx, b);
+            }
             if let Some((_, pack, _)) = self.pack.take() {
                 pack.destroy(&self.ctx, &memory);
             }
@@ -460,9 +532,46 @@ impl Live {
         }
     }
 
+    /// Screenshots whose copies the GPU has finished, as images.
+    fn take_captures(&mut self) -> Vec<(Entity, bevy::image::Image)> {
+        let now = self.frame;
+        let (done, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut self.readbacks)
+            .into_iter()
+            .partition(|r| now >= r.4 + FRAMES_IN_FLIGHT as u64);
+        self.readbacks = keep;
+        let mut out = Vec::new();
+        for (mut buffer, extent, format, entities, _) in done {
+            if let Some(bytes) = buffer.mapped() {
+                let mut rgba = bytes[..(extent.width * extent.height * 4) as usize].to_vec();
+                // Swapchains are mostly BGRA.
+                if matches!(format, vk::Format::B8G8R8A8_SRGB | vk::Format::B8G8R8A8_UNORM) {
+                    for px in rgba.chunks_exact_mut(4) {
+                        px.swap(0, 2);
+                    }
+                }
+                for entity in entities {
+                    let image = bevy::image::Image::new(
+                        bevy::render::render_resource::Extent3d {
+                            width: extent.width,
+                            height: extent.height,
+                            depth_or_array_layers: 1,
+                        },
+                        bevy::render::render_resource::TextureDimension::D2,
+                        rgba.clone(),
+                        bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+                        bevy::asset::RenderAssetUsages::MAIN_WORLD,
+                    );
+                    out.push((entity, image));
+                }
+            }
+            self.memory.free_buffer(&self.ctx, buffer);
+        }
+        out
+    }
+
     fn recreate(&mut self) {
         self.ctx.idle();
-        match Swapchain::new(&self.ctx, self.size, true, self.swapchain.as_ref()) {
+        match Swapchain::new(&self.ctx, self.size, self.vsync, self.swapchain.as_ref()) {
             Ok(Some(new)) => {
                 if let Some(old) = self.swapchain.replace(new) {
                     old.destroy(&self.ctx);
@@ -522,9 +631,38 @@ impl Live {
         let extent = swapchain.extent;
         let mut graph = Graph::new(&self.ctx, recording.commands, None);
         graph.image(image, vk::ImageAspectFlags::COLOR, vk::ImageLayout::UNDEFINED);
-        // The world, when there's one to see.
+        // The world, when there's one to see; in menus, the panorama.
         let mut drew_world = false;
+        if self.menu {
+            if self.panorama.is_none() {
+                match super::panorama::PanoramaScene::new(&self.ctx, &self.memory, &mut self.bindless, &self.pipelines, swapchain.format.format) {
+                    Ok(p) => self.panorama = Some(p),
+                    Err(e) => {
+                        error!("native renderer: panorama: {}", e.0);
+                        self.menu = false;
+                    }
+                }
+            }
+            if let Some(p) = &mut self.panorama {
+                match p.record(
+                    &self.ctx,
+                    &self.memory,
+                    &self.bindless,
+                    &self.pipelines,
+                    &mut graph,
+                    (image, view),
+                    extent,
+                    rotation,
+                    self.frame,
+                    self.started.elapsed().as_secs_f32(),
+                ) {
+                    Ok(()) => drew_world = true,
+                    Err(e) => error!("native renderer: panorama: {}", e.0),
+                }
+            }
+        }
         if let (Some(terrain), Some(camera)) = (&mut self.terrain, camera) {
+            terrain.set_post(self.post);
             match terrain.record(
                 &self.ctx,
                 &self.memory,
@@ -612,6 +750,47 @@ impl Live {
             figure,
         ) {
             error!("native renderer: gui: {}", e.0);
+        }
+        // A screenshot: the finished frame copied back.
+        if !self.shots.is_empty() {
+            match self.memory.buffer(
+                &self.ctx,
+                "screenshot",
+                extent.width as u64 * extent.height as u64 * 4,
+                vk::BufferUsageFlags::TRANSFER_DST,
+                MemoryLocation::GpuToCpu,
+            ) {
+                Ok(buffer) => {
+                    let (device, target) = (&self.ctx.device, buffer.raw);
+                    graph.pass("screenshot", &[(image, Use::TransferSrc)], &[], |cmd| unsafe {
+                        // SAFETY: the image is in TRANSFER_SRC; the buffer
+                        // is sized for it.
+                        device.cmd_copy_image_to_buffer(
+                            cmd,
+                            image,
+                            vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                            target,
+                            &[vk::BufferImageCopy {
+                                image_subresource: vk::ImageSubresourceLayers {
+                                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                                    mip_level: 0,
+                                    base_array_layer: 0,
+                                    layer_count: 1,
+                                },
+                                image_extent: vk::Extent3D {
+                                    width: extent.width,
+                                    height: extent.height,
+                                    depth: 1,
+                                },
+                                ..Default::default()
+                            }],
+                        );
+                    });
+                    let format = swapchain.format.format;
+                    self.readbacks.push((buffer, extent, format, std::mem::take(&mut self.shots), self.frame));
+                }
+                Err(e) => error!("native renderer: screenshot: {}", e.0),
+            }
         }
         graph.pass("present", &[(image, Use::Present)], &[], |_| {});
         drop(graph);
@@ -858,7 +1037,6 @@ impl GuiPass {
 
         let (image, view, extent) = output;
         let tex = self.textures.as_ref().map(|t| [t[0].1, t[1].1]);
-        let white = self.white.1;
         let mut uses = vec![(image, Use::ColorAttachment)];
         uses.push((self.white.0.raw, Use::SampledFragment));
         if let Some(t) = &self.textures {
