@@ -86,6 +86,8 @@ struct Pass {
     shadow: Option<Vec<u8>>,
     /// Draws the entities: `Some(true)` the blended ones.
     entity: Option<bool>,
+    /// A compute step: its work groups.
+    compute: Option<[u32; 3]>,
 }
 
 pub(crate) struct PackScreen {
@@ -111,6 +113,8 @@ pub(crate) struct PackScreen {
     entity_slots: Vec<(usize, u8)>,
     /// While building an entity pass: whether it blends.
     building_entity: Option<bool>,
+    /// While building a compute pass.
+    building_compute: bool,
     /// Per program with a uniform block: its bytes and a buffer per frame.
     uniforms: Vec<(UniformBytes, Vec<(Buffer, u32)>)>,
     table: Vec<u32>,
@@ -170,7 +174,7 @@ impl PackScreen {
         let full = || failed("the bindless set is full");
         let texture = |bindless: &mut Bindless, image: &Image| {
             bindless
-                .add_texture(ctx, image.view, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .add_texture(ctx, image.view, sampled_layout(image.format == DEPTH_FORMAT))
                 .ok_or_else(full)
         };
 
@@ -271,6 +275,7 @@ impl PackScreen {
             terrain_slots: Vec::new(),
             entity_slots: Vec::new(),
             building_entity: None,
+            building_compute: false,
             uniforms: Vec::new(),
             table: Vec::new(),
             tables: Vec::new(),
@@ -301,6 +306,10 @@ impl PackScreen {
                         let pass = screen.pass(ctx, memory, bindless, pipelines, index, flips, None, Some(slot), true)?;
                         screen.passes.push(pass);
                     }
+                }
+                for index in screen.installed.shadowcomp.clone() {
+                    let pass = screen.pass_compute(ctx, memory, bindless, pipelines, index, flips)?;
+                    screen.passes.push(pass);
                 }
             }
             if stage == ScreenStage::Deferred {
@@ -344,10 +353,19 @@ impl PackScreen {
                             .toggles(&program.name, &program.draw_buffers);
                         flips.flip(&toggles);
                     }
-                    Step::Compute(_) => screen.skipped_computes += 1,
+                    Step::Compute(index) => {
+                        let pass = screen.pass_compute(ctx, memory, bindless, pipelines, index, flips)?;
+                        screen.passes.push(pass);
+                    }
                 }
             }
         }
+        for index in screen.installed.final_computes.clone() {
+            let pass = screen.pass_compute(ctx, memory, bindless, pipelines, index, flips)?;
+            screen.passes.push(pass);
+        }
+        // Setup computes (once, at load) aren't run yet.
+        screen.skipped_computes = screen.installed.setup.len();
         if let Some(index) = screen.installed.final_pass {
             let pass = screen.pass(ctx, memory, bindless, pipelines, index, flips, Some(output), None, false)?;
             screen.passes.push(pass);
@@ -455,6 +473,22 @@ impl PackScreen {
         pass
     }
 
+    /// A compute pass: samples current halves, writes buffers.
+    fn pass_compute(
+        &mut self,
+        ctx: &Context,
+        memory: &Memory,
+        bindless: &mut Bindless,
+        pipelines: &Pipelines,
+        index: usize,
+        flips: Flips,
+    ) -> Result<Pass, SetupError> {
+        self.building_compute = true;
+        let pass = self.pass(ctx, memory, bindless, pipelines, index, flips, None, None, false);
+        self.building_compute = false;
+        pass
+    }
+
     #[allow(clippy::too_many_arguments, reason = "one pass's whole context")]
     fn pass(
         &mut self,
@@ -484,7 +518,19 @@ impl PackScreen {
         // One slot list for both stages, so a shared resource keeps its index.
         let mut slots: Vec<Slot> = Vec::new();
         let mut modules = Vec::new();
-        for module in [&program.vertex, fragment] {
+        let compute = self.building_compute;
+        // TODO: odd-frame parity variant; even only for now.
+        let compute_module = program
+            .compute_parity
+            .as_ref()
+            .map(|v| &v[0].0)
+            .or(program.compute.as_ref());
+        let stages: Vec<&crate::renderer::packdraw::install::Module> = match (compute, compute_module) {
+            (true, Some(m)) => vec![m],
+            (true, None) => return Err(failed(format!("{}: no compute module", program.name))),
+            _ => vec![&program.vertex, fragment],
+        };
+        for module in stages {
             // An entity's own texture comes with its draw.
             let per_draw = |slot: &Slot| {
                 entity.is_some()
@@ -499,7 +545,7 @@ impl PackScreen {
         }
 
         // Final draws to the output, never into a target it samples.
-        let drawing: u16 = if output.is_some() {
+        let drawing: u16 = if output.is_some() || compute {
             0
         } else {
             program.draw_buffers.iter().fold(0, |m, b| m | 1 << b)
@@ -648,6 +694,23 @@ impl PackScreen {
                 (Some(list), formats, extent)
             }
         };
+        if compute {
+            let pipeline = pipelines.compute(ctx, modules[0], c"main")?;
+            return Ok(Pass {
+                program: index,
+                pipeline,
+                modules,
+                base,
+                attachments: Some(Vec::new()),
+                sampled,
+                uniform,
+                extent: self.targets.size,
+                geometry: None,
+                shadow: None,
+                entity: None,
+                compute: Some(program.dispatch.groups([self.targets.size.width, self.targets.size.height])),
+            });
+        }
         let pipeline = pipelines.graphics(
             ctx,
             &GraphicsDesc {
@@ -683,6 +746,7 @@ impl PackScreen {
             geometry,
             shadow: shadow.then_some(shadow_colors),
             entity: None,
+            compute: None,
         })
     }
 
@@ -774,12 +838,12 @@ impl PackScreen {
     ) {
         let device = &ctx.device;
         let images = self.all_images();
-        let layout = if self.settled {
-            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-        } else {
-            vk::ImageLayout::UNDEFINED
-        };
         for (image, aspect) in &images {
+            let layout = if self.settled {
+                sampled_layout(*aspect == vk::ImageAspectFlags::DEPTH)
+            } else {
+                vk::ImageLayout::UNDEFINED
+            };
             graph.image(*image, *aspect, layout);
         }
 
@@ -1020,6 +1084,32 @@ impl PackScreen {
                         );
                     },
                 );
+            }
+            if let Some(groups) = pass.compute {
+                let uses: Vec<(vk::Image, Use)> = pass.sampled.iter().map(|i| (*i, Use::ComputeRead)).collect();
+                let writes: Vec<(vk::Buffer, Use)> = buffers
+                    .iter()
+                    .map(|(b, u)| (*b, if self.buffers.iter().any(|(o, _)| o.raw == *b) { Use::ComputeWrite } else { *u }))
+                    .collect();
+                let (pipeline, base) = (pass.pipeline, pass.base);
+                graph.pass("pack compute", &uses, &writes, |cmd| unsafe {
+                    // SAFETY: the shared layout and set; sampled images read-only.
+                    device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipeline);
+                    device.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::COMPUTE, pipelines.layout, 0, &[bindless.set], &[]);
+                    push(
+                        ctx,
+                        cmd,
+                        pipelines.layout,
+                        &Push {
+                            ids: [table_index, base, 0, 0],
+                            more: [0; 4],
+                            params: [0.0; 4],
+                            view_proj: [[0.0; 4]; 4],
+                        },
+                    );
+                    device.cmd_dispatch(cmd, groups[0], groups[1], groups[2]);
+                });
+                continue;
             }
             let draw = match (pass.geometry, terrain) {
                 (Some(_), Some(t)) if pass.entity.is_some() && t.entities.is_none() => continue,
@@ -1343,4 +1433,13 @@ fn noise_bytes(size: u32) -> Vec<u8> {
             (state >> 24) as u8
         })
         .collect()
+}
+
+/// The layout the graph leaves sampled images in.
+fn sampled_layout(depth: bool) -> vk::ImageLayout {
+    if depth {
+        vk::ImageLayout::DEPTH_READ_ONLY_OPTIMAL
+    } else {
+        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+    }
 }
