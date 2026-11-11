@@ -676,7 +676,8 @@ impl PackScreen {
             seconds,
             dt,
             self.frames,
-            256.0,
+            // The game's render-distance fog end, else 16 chunks.
+            if self.inputs.fog_range.y > 0.0 { self.inputs.fog_range.y } else { 256.0 },
             self.inputs,
             &self.installed.constants,
             &mut self.history,
@@ -895,19 +896,20 @@ impl PackScreen {
 
         for (at, pass) in self.passes.iter().enumerate() {
             if self.copy_depth_at == Some(at) {
-                let (from, to) = (self.targets.depth.raw, self.targets.depth_opaque.raw);
+                // depthtex1 (before translucents) and depthtex2 (before the
+                // hand, which isn't drawn yet) both take depthtex0.
+                let from = self.targets.depth.raw;
+                let mut uses = vec![(from, Use::TransferSrc), (self.targets.depth_opaque.raw, Use::TransferDst)];
+                uses.extend(self.targets.depth_no_hand.iter().map(|d| (d.raw, Use::TransferDst)));
                 let extent = self.targets.size;
-                graph.pass(
-                    "pack depth copy",
-                    &[(from, Use::TransferSrc), (to, Use::TransferDst)],
-                    &[],
-                    |cmd| unsafe {
-                        // SAFETY: a copy between depth images in transfer layouts.
+                graph.pass("pack depth copy", &uses, &[], |cmd| unsafe {
+                    // SAFETY: copies between depth images in transfer layouts.
+                    for (to, _) in &uses[1..] {
                         device.cmd_copy_image(
                             cmd,
                             from,
                             vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-                            to,
+                            *to,
                             vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                             &[vk::ImageCopy {
                                 src_subresource: layers(vk::ImageAspectFlags::DEPTH),
@@ -920,8 +922,8 @@ impl PackScreen {
                                 ..Default::default()
                             }],
                         );
-                    },
-                );
+                    }
+                });
             }
             if self.copy_shadow_at == Some(at)
                 && let Some(s) = &self.targets.shadow
