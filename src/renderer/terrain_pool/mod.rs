@@ -189,7 +189,11 @@ pub struct TerrainParams {
 impl Default for TerrainParams {
     fn default() -> Self {
         Self {
-            cutoff: 0.1,
+            // Vanilla's `ALPHA_CUTOUT_THRESHOLD_CUTOUT_TERRAIN`: the atlas's
+            // cutout mips keep their coverage at this reference, so far
+            // leaves, grass and kelp hold their shape instead of turning
+            // into solid tiles or flickering at the edge of the test.
+            cutoff: 0.5,
             mip_bias: 0.0,
             shadow_mip: super::terrain::SHADOW_ALPHA_MIP,
             water_alpha: 1.0,

@@ -118,11 +118,12 @@ fn publish_untinted(
     biome_tinted: &[&str],
     tiles: &HashMap<String, u32>,
     n_mips: u32,
+    biases: &[f32],
 ) {
     let (level0, atlas_w, atlas_h, _) = pack_tiles(entries);
     let tile_px = atlas_w / ATLAS_COLS;
     let chain = if n_mips > 1 {
-        build_mip_chain(&level0, atlas_w, atlas_h, n_mips)
+        build_mip_chain(&level0, atlas_w, atlas_h, n_mips, biases)
     } else {
         level0
     };
@@ -209,6 +210,10 @@ pub fn build_block_atlas(textures: &Textures, textures_dir: &str) -> (Image, Has
     let mut packed = entries.clone();
     packed.extend(frames.iter().map(|f| (f.name.as_str(), &f.image)));
     let (atlas_data, atlas_w, atlas_h, mut tex_to_tile) = pack_tiles(&packed);
+    let biases = cutout_biases(
+        &packed.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
+        textures_dir,
+    );
     publish_animations(&frames, strips, &mut tex_to_tile, base_count + 1);
     let entity_textures = crate::blockentities::bake::textures(textures_dir);
     let (atlas_data, atlas_h, regions) =
@@ -225,12 +230,12 @@ pub fn build_block_atlas(textures: &Textures, textures_dir: &str) -> (Image, Has
 
     let n_mips = (atlas_w / ATLAS_COLS).trailing_zeros() + 1;
     let mip_data = if n_mips > 1 {
-        build_mip_chain(&atlas_data, atlas_w, atlas_h, n_mips)
+        build_mip_chain(&atlas_data, atlas_w, atlas_h, n_mips, &biases)
     } else {
         atlas_data
     };
     #[cfg(feature = "shader_support")]
-    publish_untinted(&untinted_entries, &biome_tinted, &tex_to_tile, n_mips);
+    publish_untinted(&untinted_entries, &biome_tinted, &tex_to_tile, n_mips, &biases);
 
     let mut image = Image::new_uninit(
         Extent3d {
@@ -372,57 +377,180 @@ fn block_atlas_sampler() -> ImageSampler {
     })
 }
 
-fn build_mip_chain(level0: &[u8], atlas_w: u32, atlas_h: u32, n_mips: u32) -> Vec<u8> {
+/// Each tile's `alpha_cutoff_bias` from its `.mcmeta` (kelp's is 0.1), by
+/// atlas tile: tile 0 is the placeholder, `names[i]` is tile `i + 1`. An
+/// animation frame (`stem#n`) takes its texture's.
+fn cutout_biases(names: &[&str], textures_dir: &str) -> Vec<f32> {
+    let mut by_stem: HashMap<&str, f32> = HashMap::new();
+    let mut out = Vec::with_capacity(names.len() + 1);
+    out.push(0.0);
+    for name in names {
+        let stem = name.split('#').next().unwrap_or(name);
+        let bias = *by_stem.entry(stem).or_insert_with(|| {
+            let meta = std::path::Path::new(textures_dir)
+                .join("block")
+                .join(format!("{stem}.png.mcmeta"));
+            crate::platform::assets::read_to_string(meta)
+                .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+                .and_then(|json| json.get("texture")?.get("alpha_cutoff_bias")?.as_f64())
+                .unwrap_or(0.0) as f32
+        });
+        out.push(bias);
+    }
+    out
+}
+
+/// Vanilla's `MipmapGenerator.alphaTestCoverage`: the share of a tile that
+/// passes an alpha test at `alpha_ref`, bilinearly subsampled 4x4 between
+/// each 2x2 of texels, its alpha scaled by `scale`.
+fn alpha_coverage(alpha: &[f32], side: usize, alpha_ref: f32, scale: f32) -> f32 {
+    if side < 2 {
+        return f32::NAN;
+    }
+    let at = |x: usize, y: usize| (alpha[y * side + x] * scale).clamp(0.0, 1.0);
+    let mut coverage = 0.0;
+    for y in 0..side - 1 {
+        for x in 0..side - 1 {
+            let (a00, a10, a01, a11) = (at(x, y), at(x + 1, y), at(x, y + 1), at(x + 1, y + 1));
+            let mut hits = 0.0;
+            for sy in 0..4 {
+                let fy = (sy as f32 + 0.5) / 4.0;
+                for sx in 0..4 {
+                    let fx = (sx as f32 + 0.5) / 4.0;
+                    let a = a00 * (1.0 - fx) * (1.0 - fy)
+                        + a10 * fx * (1.0 - fy)
+                        + a01 * (1.0 - fx) * fy
+                        + a11 * fx * fy;
+                    if a > alpha_ref {
+                        hits += 1.0;
+                    }
+                }
+            }
+            coverage += hits / 16.0;
+        }
+    }
+    coverage / ((side - 1) * (side - 1)) as f32
+}
+
+/// Vanilla's `scaleAlphaToCoverage`: finds the alpha scale (a five-step
+/// search) that keeps `desired` coverage at `alpha_ref`, then scales alpha by
+/// it and adds `bias`, so a cutout texture keeps its shape at a distance
+/// rather than thinning away mip by mip.
+fn scale_alpha_to_coverage(alpha: &mut [f32], side: usize, desired: f32, alpha_ref: f32, bias: f32) {
+    let (mut lo, mut hi, mut scale, mut best, mut best_error) = (0.0f32, 4.0f32, 1.0f32, 1.0f32, f32::MAX);
+    for _ in 0..5 {
+        let coverage = alpha_coverage(alpha, side, alpha_ref, scale);
+        let error = (coverage - desired).abs();
+        if error < best_error {
+            best_error = error;
+            best = scale;
+        }
+        if coverage < desired {
+            lo = scale;
+        } else if coverage > desired {
+            hi = scale;
+        } else {
+            break;
+        }
+        scale = (lo + hi) * 0.5;
+    }
+    // Vanilla adds the bias (and 0.025) to every texel, which is harmless at
+    // its own 0.5 cutoff; a shader pack tests at 0.1 (Iris), where that lifts
+    // a cutout's empty texels over the test and a far kelp draws as a solid
+    // tile. So the bias lifts only texels the cutout already covers (5% or
+    // more); empty and barely-touched ones keep their scaled alpha.
+    const COVERED: f32 = 0.05;
+    for a in alpha.iter_mut() {
+        let lift = if *a >= COVERED { bias + 0.025 } else { 0.0 };
+        *a = (*a * best + lift).clamp(0.0, 1.0);
+    }
+}
+
+/// The atlas's mip levels. Each halves the last, colour weighted by alpha.
+/// A tile with fully transparent texels is cutout (vanilla's `AUTO`
+/// strategy) and keeps its alpha-test coverage at every level, with its
+/// `alpha_cutoff_bias` from `biases` (by tile; past its end, none).
+fn build_mip_chain(
+    level0: &[u8],
+    atlas_w: u32,
+    atlas_h: u32,
+    n_mips: u32,
+    biases: &[f32],
+) -> Vec<u8> {
+    const CUTOUT_REF: f32 = 0.5;
     let mut out = Vec::with_capacity(level0.len() * 2);
     out.extend_from_slice(level0);
 
-    let tile_px = atlas_w / ATLAS_COLS;
-    for level in 1..n_mips {
-        let ts = tile_px >> level;
-        let f = tile_px / ts;
-        let lw = atlas_w >> level;
-        let lh = atlas_h >> level;
-        let tiles_x = ATLAS_COLS;
-        let tiles_y = lh / ts;
-        let mut buf = vec![0u8; (lw * lh * 4) as usize];
+    let tile_px = (atlas_w / ATLAS_COLS) as usize;
+    let tiles_y = atlas_h as usize / tile_px.max(1);
+    let tile_alpha = |data: &[u8], width: usize, side: usize, tx: usize, ty: usize| -> Vec<f32> {
+        let mut alpha = Vec::with_capacity(side * side);
+        for y in 0..side {
+            for x in 0..side {
+                let i = ((ty * side + y) * width + tx * side + x) * 4 + 3;
+                alpha.push(data[i] as f32 / 255.0);
+            }
+        }
+        alpha
+    };
+    // Which tiles are cutout, and their full-size coverage.
+    let mut cutout: Vec<Option<(f32, f32)>> = vec![None; tiles_y * ATLAS_COLS as usize];
+    for (tile, slot) in cutout.iter_mut().enumerate() {
+        let Some(&bias) = biases.get(tile) else {
+            break;
+        };
+        let (tx, ty) = (tile % ATLAS_COLS as usize, tile / ATLAS_COLS as usize);
+        let alpha = tile_alpha(level0, atlas_w as usize, tile_px, tx, ty);
+        if alpha.iter().any(|a| *a == 0.0) {
+            *slot = Some((alpha_coverage(&alpha, tile_px, CUTOUT_REF, 1.0), bias));
+        }
+    }
 
-        for ty in 0..tiles_y {
-            for tx in 0..tiles_x {
-                let s_ox = tx * tile_px;
-                let s_oy = ty * tile_px;
-                let d_ox = tx * ts;
-                let d_oy = ty * ts;
-                for py in 0..ts {
-                    for px in 0..ts {
-                        let (mut sr, mut sg, mut sb, mut sa) = (0u32, 0u32, 0u32, 0u32);
-                        for sy in 0..f {
-                            for sx in 0..f {
-                                let ssx = s_ox + px * f + sx;
-                                let ssy = s_oy + py * f + sy;
-                                let si = ((ssy * atlas_w + ssx) * 4) as usize;
-                                let a = level0[si + 3] as u32;
-                                sr += level0[si] as u32 * a;
-                                sg += level0[si + 1] as u32 * a;
-                                sb += level0[si + 2] as u32 * a;
-                                sa += a;
-                            }
-                        }
-                        let n = (f * f) as u32;
-                        let (r, g, b) = if sa > 0 {
-                            (sr / sa, sg / sa, sb / sa)
-                        } else {
-                            (0, 0, 0)
-                        };
-                        let di = (((d_oy + py) * lw + (d_ox + px)) * 4) as usize;
-                        buf[di] = r as u8;
-                        buf[di + 1] = g as u8;
-                        buf[di + 2] = b as u8;
-                        buf[di + 3] = (sa / n) as u8;
+    let mut last = level0.to_vec();
+    let (mut lw, mut lh) = (atlas_w as usize, atlas_h as usize);
+    for _ in 1..n_mips {
+        let (w, h) = (lw / 2, lh / 2);
+        let mut buf = vec![0u8; w * h * 4];
+        for y in 0..h {
+            for x in 0..w {
+                let (mut sr, mut sg, mut sb, mut sa) = (0u32, 0u32, 0u32, 0u32);
+                for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                    let si = ((y * 2 + dy) * lw + x * 2 + dx) * 4;
+                    let a = last[si + 3] as u32;
+                    sr += last[si] as u32 * a;
+                    sg += last[si + 1] as u32 * a;
+                    sb += last[si + 2] as u32 * a;
+                    sa += a;
+                }
+                let di = (y * w + x) * 4;
+                if sa > 0 {
+                    buf[di] = (sr / sa) as u8;
+                    buf[di + 1] = (sg / sa) as u8;
+                    buf[di + 2] = (sb / sa) as u8;
+                }
+                buf[di + 3] = (sa / 4) as u8;
+            }
+        }
+        let side = (tile_px * w) / atlas_w as usize;
+        if side > 0 {
+            for (tile, entry) in cutout.iter().enumerate() {
+                let Some((coverage, bias)) = *entry else {
+                    continue;
+                };
+                let (tx, ty) = (tile % ATLAS_COLS as usize, tile / ATLAS_COLS as usize);
+                let mut alpha = tile_alpha(&buf, w, side, tx, ty);
+                scale_alpha_to_coverage(&mut alpha, side, coverage, CUTOUT_REF, bias);
+                for yy in 0..side {
+                    for xx in 0..side {
+                        let i = ((ty * side + yy) * w + tx * side + xx) * 4 + 3;
+                        buf[i] = (alpha[yy * side + xx] * 255.0).round() as u8;
                     }
                 }
             }
         }
         out.extend_from_slice(&buf);
+        last = buf;
+        (lw, lh) = (w, h);
     }
     out
 }
@@ -698,4 +826,67 @@ fn pack_tiles(entries: &[(&str, &image::RgbaImage)]) -> (Vec<u8>, u32, u32, Hash
     }
 
     (data, atlas_w, atlas_h, tiles)
+}
+
+#[cfg(test)]
+mod mip_tests {
+    use super::*;
+
+    /// A one-row atlas of 16-pixel tiles: tile 1 is a cutout with a single
+    /// opaque column (kelp-thin), the rest transparent.
+    fn thin_line_atlas() -> (Vec<u8>, u32, u32) {
+        let (w, h) = (ATLAS_COLS * 16, 16);
+        let mut data = vec![0u8; (w * h * 4) as usize];
+        for y in 0..16 {
+            let i = ((y * w + 16 + 7) * 4) as usize;
+            data[i..i + 4].copy_from_slice(&[40, 120, 40, 255]);
+        }
+        (data, w, h)
+    }
+
+    fn max_alpha_of_tile_1(chain: &[u8], w: u32, h: u32, level: u32) -> u8 {
+        let mut offset = 0usize;
+        let (mut lw, mut lh) = (w as usize, h as usize);
+        for _ in 0..level {
+            offset += lw * lh * 4;
+            (lw, lh) = (lw / 2, lh / 2);
+        }
+        let side = 16 >> level;
+        (0..side)
+            .flat_map(|y| (0..side).map(move |x| (x, y)))
+            .map(|(x, y)| chain[offset + (y * lw + side + x) * 4 + 3])
+            .max()
+            .unwrap()
+    }
+
+    #[test]
+    fn a_thin_cutout_keeps_passing_the_alpha_test_at_a_distance() {
+        let (data, w, h) = thin_line_atlas();
+        let averaged = build_mip_chain(&data, w, h, 4, &[]);
+        // Kelp's `alpha_cutoff_bias`.
+        let kept = build_mip_chain(&data, w, h, 4, &[0.0, 0.1]);
+        // Averaged, a one-texel line fades toward a pack's 0.1 alpha test
+        // (Iris's) by the third level, where it flickers in and out as the
+        // sampled level shifts; kept, every level stays well clear of it.
+        assert!(max_alpha_of_tile_1(&averaged, w, h, 3) < 40);
+        for level in 1..4 {
+            let kept = max_alpha_of_tile_1(&kept, w, h, level);
+            assert!(kept >= 50, "level {level}: {kept}");
+            assert!(kept > max_alpha_of_tile_1(&averaged, w, h, level));
+        }
+    }
+}
+
+#[cfg(test)]
+mod mip_bias_tests {
+    use super::*;
+
+    #[test]
+    fn empty_texels_stay_under_a_packs_alpha_test_whatever_the_bias() {
+        let mut alpha = vec![0.0, 0.0, 0.02, 0.6];
+        scale_alpha_to_coverage(&mut alpha, 2, 0.3, 0.5, 0.1);
+        assert_eq!(alpha[0], 0.0);
+        assert!(alpha[2] < 0.1, "{:?}", alpha);
+        assert!(alpha[3] > 0.6, "{:?}", alpha);
+    }
 }
