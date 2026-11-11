@@ -23,6 +23,10 @@ data/minecraft/worldgen/biome/
 
 data/minecraft/tags/banner_pattern/
 
+# The recipe viewer: vanilla's recipes and the item tags they use.
+data/minecraft/recipe/
+data/minecraft/tags/item/
+
 data/minecraft/banner_pattern/
 data/minecraft/cat_variant/
 data/minecraft/chicken_variant/

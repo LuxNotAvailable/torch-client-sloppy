@@ -17,6 +17,7 @@ pub mod command_history;
 pub mod confirmlink;
 pub mod container;
 pub mod creative;
+pub mod recipe_viewer;
 pub mod credits;
 pub mod death;
 pub mod dialog;
@@ -1101,6 +1102,8 @@ pub fn save_options(options: &GuiOptions) {
 pub struct GuiState {
     pub screen: Screen,
     pub creative: creative::CreativeState,
+    /// The recipe viewer beside inventories (`recipe_viewer`).
+    pub recipe_viewer: recipe_viewer::ViewerState,
     pub chat: chat::ChatState,
     pub sign_edit: sign_edit::SignEditState,
     pub command_block: command_block::CommandBlockState,
@@ -1181,7 +1184,8 @@ impl GuiState {
     }
 
     pub fn anvil_typing(&self) -> bool {
-        self.screen == Screen::Container(ContainerKind::Anvil) && self.container.anvil.editable()
+        (self.screen == Screen::Container(ContainerKind::Anvil) && self.container.anvil.editable())
+            || self.recipe_viewer.search_focused()
     }
 
     pub fn in_menu(&self) -> bool {

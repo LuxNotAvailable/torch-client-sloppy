@@ -91,16 +91,50 @@ pub fn draw(
         p.set_lift(lift);
     }
     let mut actions: Vec<InvAction> = Vec::new();
-    let hovered = draw_screen(
-        p,
-        state,
-        &ctx,
-        &snap,
-        shared,
-        #[cfg(feature = "skins")]
-        faces,
-        &mut actions,
-    );
+    // The recipe viewer: beside the inventory and containers, its window in
+    // their place while it is open.
+    static WARM: std::sync::Once = std::sync::Once::new();
+    WARM.call_once(crate::items::recipe_index::warm);
+    let viewer_beside = crate::gui::recipe_viewer::container_width(state.screen);
+    if viewer_beside.is_none() {
+        state.recipe_viewer.leave();
+    }
+    let hovered = if viewer_beside.is_some() && state.recipe_viewer.viewing() {
+        crate::gui::recipe_viewer::draw_view(
+            p,
+            &mut state.recipe_viewer,
+            &ctx,
+            state.screen,
+            &snap.menu_slots,
+            &mut actions,
+        )
+    } else {
+        let under = draw_screen(
+            p,
+            state,
+            &ctx,
+            &snap,
+            shared,
+            #[cfg(feature = "skins")]
+            faces,
+            &mut actions,
+        );
+        match viewer_beside {
+            Some(width) => {
+                let carrying = !state.slots.cursor(&snap).is_empty();
+                crate::gui::recipe_viewer::draw_overlay(
+                    p,
+                    &mut state.recipe_viewer,
+                    &ctx,
+                    width,
+                    under.as_ref(),
+                    carrying,
+                )
+                .or(under)
+            }
+            None => under,
+        }
+    };
     #[cfg(feature = "mobile_ui")]
     if lift > 0.0 {
         p.set_lift(0.0);

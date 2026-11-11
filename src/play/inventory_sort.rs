@@ -123,6 +123,79 @@ pub(crate) fn plan(
     planner.ops
 }
 
+/// The clicks that move `sets` of a recipe's ingredients into the open
+/// menu: each slot in `clear` shift-clicked out, then for each target slot
+/// stacks of any of its names picked up from the player's slots. A stack
+/// that fits whole goes down with a left click; the last one is placed an
+/// item at a time with right clicks and the rest put back. None if the
+/// cursor holds an item, a slot will not empty, or an ingredient runs out,
+/// so nothing half happens.
+pub(crate) fn fill_recipe(
+    inventory: &Inventory,
+    abilities: &PlayerAbilities,
+    clear: &[u16],
+    targets: &[(u16, Vec<&'static str>)],
+    sets: u8,
+) -> Vec<ClickOperation> {
+    if inventory.carried.is_present() {
+        return Vec::new();
+    }
+    let mut planner = Planner {
+        sim: inventory.clone(),
+        abilities,
+        ops: Vec::new(),
+    };
+    let player = player_slots(inventory.menu());
+    for &slot in clear {
+        let slot = slot as usize;
+        if planner.present(slot).is_some() {
+            planner.shift(slot);
+            if planner.present(slot).is_some() {
+                return Vec::new();
+            }
+        }
+    }
+    for (slot, names) in targets {
+        let matches = |s: &ItemStackData| {
+            let name = s.kind.to_str();
+            let name = name.trim_start_matches("minecraft:");
+            names.iter().any(|n| *n == name)
+        };
+        let mut need = sets.max(1) as i32;
+        while need > 0 {
+            let Some(source) = player
+                .clone()
+                .find(|&i| planner.present(i).is_some_and(matches))
+            else {
+                return Vec::new();
+            };
+            planner.left(source);
+            let carried = planner.sim.carried.count();
+            if carried <= need {
+                planner.left(*slot as usize);
+                if planner.sim.carried.is_present() {
+                    // The slot would not take it all.
+                    planner.left(source);
+                    return Vec::new();
+                }
+                need -= carried;
+            } else {
+                for _ in 0..need {
+                    planner.click(
+                        PickupClick::Right {
+                            slot: Some(*slot),
+                        }
+                        .into(),
+                    );
+                }
+                planner.left(source);
+                need = 0;
+            }
+        }
+    }
+    planner.ops
+}
+
 struct Planner<'a> {
     sim: Inventory,
     abilities: &'a PlayerAbilities,

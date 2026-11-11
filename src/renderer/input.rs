@@ -1233,6 +1233,14 @@ pub(super) fn toggle_screen(
         && !creative_search_focused
         && !state.anvil_typing();
     let close_key = keys.just_pressed(KeyCode::Escape) || field_escape;
+    // The recipe viewer takes Escape first: out of its search, or back out of
+    // its recipe window, leaving the screen open.
+    if close_key
+        && crate::gui::recipe_viewer::container_width(state.screen).is_some()
+        && state.recipe_viewer.take_escape()
+    {
+        return;
+    }
     #[cfg(target_arch = "wasm32")]
     let pause_key = state.keybinds.just(Action::Pause, &keys, &buttons);
     #[cfg(not(target_arch = "wasm32"))]

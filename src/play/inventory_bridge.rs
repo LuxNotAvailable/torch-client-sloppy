@@ -774,6 +774,32 @@ pub(crate) fn apply_inv_actions(bot: &Client, actions: Vec<InvAction>, horse: Op
                     });
                 }
             }
+            InvAction::FillRecipe {
+                clear,
+                targets,
+                sets,
+            } => {
+                if horse.is_some() {
+                    continue;
+                }
+                let Ok(inventory) = bot.component::<azalea::entity::inventory::Inventory>() else {
+                    continue;
+                };
+                let abilities = bot
+                    .component::<azalea::entity::PlayerAbilities>()
+                    .map(|a| a.clone())
+                    .unwrap_or_default();
+                let ops = crate::play::inventory_sort::fill_recipe(&inventory, &abilities, &clear, &targets, sets);
+                let window_id = inventory.id;
+                drop(inventory);
+                for operation in ops {
+                    bot.ecs.write().trigger(ContainerClickEvent {
+                        entity: bot.entity,
+                        window_id,
+                        operation,
+                    });
+                }
+            }
             InvAction::Close => {
                 if let Some(horse) = horse.as_ref() {
                     bot.write_packet(ServerboundContainerClose {

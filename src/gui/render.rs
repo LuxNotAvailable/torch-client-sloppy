@@ -684,6 +684,7 @@ pub(crate) fn collect_input(
             Screen::Creative | Screen::Inventory | Screen::None
         )
         && !creative_search_focused
+        && !state.recipe_viewer.search_focused()
     {
         let name = binds.bound(keybinds::Action::Inventory).display_name();
         let mut letters = name.chars();

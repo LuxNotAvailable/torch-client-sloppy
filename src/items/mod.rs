@@ -5,3 +5,4 @@ pub mod mesh;
 pub mod model;
 pub mod potions;
 pub mod raster;
+pub mod recipe_index;

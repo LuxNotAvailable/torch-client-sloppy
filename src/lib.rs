@@ -100,6 +100,13 @@ pub(crate) static ATLAS_ROWS: OnceLock<u32> = OnceLock::new();
     reason = "read only where an asset set can be missing, which is the asset_download builds"
 )]
 const ASSET_PROBE: &str = "font/default.json";
+/// A file only a pack extracted with the recipe viewer's data has; an older
+/// pack lacks it, and is fetched again once.
+#[cfg_attr(
+    not(feature = "asset_download"),
+    expect(dead_code, reason = "read only where an asset set can be missing")
+)]
+const DATA_PROBE: &str = "recipe/oak_planks.json";
 
 pub(crate) const ASSET_VERSION: &str = "26.3";
 
@@ -134,6 +141,7 @@ fn assets_present() -> bool {
     #[cfg(feature = "asset_download")]
     {
         platform::assets::read(assets_root().join(ASSET_PROBE)).is_some()
+            && platform::assets::read(datapack_root().join(DATA_PROBE)).is_some()
     }
     #[cfg(not(feature = "asset_download"))]
     {

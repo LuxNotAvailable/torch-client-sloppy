@@ -1066,6 +1066,14 @@ pub enum InvAction {
     RenameItem(String),
     /// A sort or bulk transfer, planned into clicks against the live menu.
     Sort(SortRequest),
+    /// The recipe viewer's "+": empties the `clear` slots into the player's
+    /// inventory, then puts `sets` of an item from `targets` (any of its
+    /// item names) into each slot, by ordinary clicks against the live menu.
+    FillRecipe {
+        clear: Vec<u16>,
+        targets: Vec<(u16, Vec<&'static str>)>,
+        sets: u8,
+    },
     Close,
 }
 

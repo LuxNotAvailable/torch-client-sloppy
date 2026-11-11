@@ -1659,7 +1659,8 @@ mod tests {
             | InvAction::SelectTrade(_)
             | InvAction::SetBeacon { .. }
             | InvAction::RenameItem(_)
-            | InvAction::Sort(_) => "other".into(),
+            | InvAction::Sort(_)
+            | InvAction::FillRecipe { .. } => "other".into(),
         }
     }
 
