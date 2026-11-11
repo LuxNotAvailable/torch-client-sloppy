@@ -94,6 +94,16 @@ struct Pass {
     sky: Option<(bool, bool)>,
     /// Mip chains to rebuild first: (target, half).
     mipmaps: Vec<(u8, usize)>,
+    /// Draws the first-person hand (with `entity`).
+    hand: bool,
+}
+
+/// Which instance set an entity-style pass draws.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Source {
+    Entities,
+    Sky,
+    Hand,
 }
 
 pub(crate) struct PackScreen {
@@ -105,6 +115,8 @@ pub(crate) struct PackScreen {
     passes: Vec<Pass>,
     /// Before which pass `depthtex0` is copied to `depthtex1`.
     copy_depth_at: Option<usize>,
+    /// Where depthtex0 is copied to depthtex2, before the hand.
+    copy_no_hand_at: Option<usize>,
     /// The plans frames alternate between (the game's two when a frame
     /// ends flipped, so history carries over): pass range, start flips.
     plans: Vec<(std::ops::Range<usize>, Flips)>,
@@ -119,9 +131,11 @@ pub(crate) struct PackScreen {
     terrain_slots: Vec<usize>,
     /// Table words for the entity buffers: 0 instances, 1 meshes, 2
     /// vertices, 3 parts.
-    entity_slots: Vec<(usize, u8, bool)>,
+    entity_slots: Vec<(usize, u8, Source)>,
     /// While building an entity pass: whether it blends.
     building_entity: Option<bool>,
+    /// While building a hand pass.
+    building_hand: bool,
     /// While building a sky pass: its kind, and whether it adds.
     building_sky: Option<(EntityKind, bool)>,
     /// While building a compute pass.
@@ -287,6 +301,7 @@ impl PackScreen {
             buffers,
             passes: Vec::new(),
             copy_depth_at: None,
+            copy_no_hand_at: None,
             plans: Vec::new(),
             copy_shadow_at: None,
             values: None,
@@ -295,6 +310,7 @@ impl PackScreen {
             terrain_slots: Vec::new(),
             entity_slots: Vec::new(),
             building_entity: None,
+            building_hand: false,
             building_sky: None,
             building_compute: false,
             uniforms: Vec::new(),
@@ -357,6 +373,12 @@ impl PackScreen {
                     pass.entity = Some(false);
                     screen.passes.push(pass);
                 }
+                // depthtex2 before the hand, depthtex1 after it.
+                if let Some(index) = screen.installed.entities[EntityKind::Hand.index()] {
+                    screen.copy_no_hand_at = Some(screen.passes.len() - first);
+                    let pass = screen.pass_hand(ctx, memory, bindless, pipelines, index, flips, false)?;
+                    screen.passes.push(pass);
+                }
                 screen.copy_depth_at = Some(screen.passes.len() - first);
             }
             if stage == ScreenStage::Composite
@@ -370,6 +392,12 @@ impl PackScreen {
             {
                 let mut pass = screen.pass_entity(ctx, memory, bindless, pipelines, index, flips, true)?;
                 pass.entity = Some(true);
+                screen.passes.push(pass);
+            }
+            if stage == ScreenStage::Composite
+                && let Some(index) = screen.installed.entities[EntityKind::HandWater.index()]
+            {
+                let pass = screen.pass_hand(ctx, memory, bindless, pipelines, index, flips, true)?;
                 screen.passes.push(pass);
             }
             let steps: Vec<Step> = screen.installed.stages[stage.index()].clone();
@@ -529,6 +557,27 @@ impl PackScreen {
         pass
     }
 
+    /// A hand pass: the first-person hand, solid or translucent parts.
+    #[allow(clippy::too_many_arguments, reason = "one pass's whole context")]
+    fn pass_hand(
+        &mut self,
+        ctx: &Context,
+        memory: &Memory,
+        bindless: &mut Bindless,
+        pipelines: &Pipelines,
+        index: usize,
+        flips: Flips,
+        translucent: bool,
+    ) -> Result<Pass, SetupError> {
+        self.building_hand = true;
+        let pass = self.pass_entity(ctx, memory, bindless, pipelines, index, flips, translucent);
+        self.building_hand = false;
+        let mut pass = pass?;
+        pass.entity = Some(translucent);
+        pass.hand = true;
+        Ok(pass)
+    }
+
     /// A sky pass: `kind`'s pieces, blended or added, no depth test.
     #[allow(clippy::too_many_arguments, reason = "one pass's whole context")]
     fn pass_sky(
@@ -571,7 +620,12 @@ impl PackScreen {
         let fragment = match (output, &program.fragment_linear, geometry) {
             (_, _, Some(_)) if let Some((kind, _)) = sky => program.fragment_for(kind.alpha_tests()[0]),
             (_, _, Some(_)) if entity.is_some() => {
-                let kind = if entity == Some(true) { EntityKind::EntityTranslucent } else { EntityKind::Entity };
+                let kind = match (self.building_hand, entity == Some(true)) {
+                    (true, true) => EntityKind::HandWater,
+                    (true, false) => EntityKind::Hand,
+                    (false, true) => EntityKind::EntityTranslucent,
+                    (false, false) => EntityKind::Entity,
+                };
                 program.fragment_for(kind.alpha_tests()[0])
             }
             (_, _, Some(slot)) => program.fragment_for(geometry_alpha(Geometry::ALL[slot], shadow)),
@@ -669,7 +723,14 @@ impl PackScreen {
                         .position(|t| *t == ty.as_str())
                         .unwrap_or(0) as u8;
                     let at = self.table.len();
-                    self.entity_slots.push((at, which, self.building_sky.is_some()));
+                    let source = if self.building_sky.is_some() {
+                        Source::Sky
+                    } else if self.building_hand {
+                        Source::Hand
+                    } else {
+                        Source::Entities
+                    };
+                    self.entity_slots.push((at, which, source));
                     0
                 }
                 SlotKind::Buffer { ty, .. }
@@ -685,7 +746,12 @@ impl PackScreen {
                     let bytes = UniformBytes::new(
                         [BlockSpec {
                             layout: &program.layout.uniforms,
-                            set: program.kind.matrices(),
+                            // The hand draws with its own projection.
+                            set: if self.building_hand {
+                                crate::renderer::packdraw::uniforms::MatrixSet::Hand
+                            } else {
+                                program.kind.matrices()
+                            },
                             render_stage: program.kind.render_stage(),
                         }],
                         &self.installed.customs,
@@ -799,6 +865,7 @@ impl PackScreen {
                 compute: Some(program.dispatch.groups([self.targets.size.width, self.targets.size.height])),
                 sky: None,
             mipmaps: mipmaps.clone(),
+            hand: false,
             });
         }
         let pipeline = pipelines.graphics(
@@ -839,6 +906,7 @@ impl PackScreen {
             compute: None,
             sky: None,
             mipmaps: mipmaps.clone(),
+            hand: false,
         })
     }
 
@@ -1106,8 +1174,13 @@ impl PackScreen {
             for &at in &self.terrain_slots {
                 table[at] = t.slots.1;
             }
-            for &(at, which, sky) in &self.entity_slots {
-                if let Some(e) = if sky { &t.sky } else { &t.entities } {
+            for &(at, which, source) in &self.entity_slots {
+                let set = match source {
+                    Source::Entities => &t.entities,
+                    Source::Sky => &t.sky,
+                    Source::Hand => &t.hand,
+                };
+                if let Some(e) = set {
                     table[at] = [e.instances.1, e.meshes.1, e.vertices.1, e.parts.1][which as usize];
                 }
             }
@@ -1129,12 +1202,23 @@ impl PackScreen {
 
         let (range, _) = self.plans[self.frames as usize % self.plans.len()].clone();
         for (at, pass) in self.passes[range].iter().enumerate() {
+            // depthtex2 takes depthtex0 before the hand, depthtex1 after it
+            // (both at once without a hand pass).
+            let mut to: Vec<vk::Image> = Vec::new();
+            let no_hand = self.targets.depth_no_hand.iter().map(|d| d.raw);
+            if self.copy_no_hand_at == Some(at) {
+                to.extend(no_hand.clone());
+            }
             if self.copy_depth_at == Some(at) {
-                // depthtex1 (before translucents) and depthtex2 (before the
-                // hand, which isn't drawn yet) both take depthtex0.
+                to.push(self.targets.depth_opaque.raw);
+                if self.copy_no_hand_at.is_none() {
+                    to.extend(no_hand);
+                }
+            }
+            if !to.is_empty() {
                 let from = self.targets.depth.raw;
-                let mut uses = vec![(from, Use::TransferSrc), (self.targets.depth_opaque.raw, Use::TransferDst)];
-                uses.extend(self.targets.depth_no_hand.iter().map(|d| (d.raw, Use::TransferDst)));
+                let mut uses = vec![(from, Use::TransferSrc)];
+                uses.extend(to.iter().map(|d| (*d, Use::TransferDst)));
                 let extent = self.targets.size;
                 graph.pass("pack depth copy", &uses, &[], |cmd| unsafe {
                     // SAFETY: copies between depth images in transfer layouts.
@@ -1223,6 +1307,7 @@ impl PackScreen {
             let draw = match (pass.geometry, terrain) {
                 (Some(_), Some(t)) if pass.entity.is_some() && t.entities.is_none() => continue,
                 (Some(_), Some(t)) if pass.sky.is_some() && t.sky.is_none() => continue,
+                (Some(_), Some(t)) if pass.hand && t.hand.is_none() => continue,
                 (Some(slot), Some(t)) => Some((slot, t)),
                 (Some(_), None) => continue,
                 (None, _) => None,
@@ -1280,7 +1365,13 @@ impl PackScreen {
                         pass_buffers.push((*indices, Use::IndexRead));
                     }
                     pass_buffers.extend(t.quads.iter().map(|q| (*q, Use::VertexRead)));
-                    let source = if pass.sky.is_some() { &t.sky } else { &t.entities };
+                    let source = if pass.sky.is_some() {
+                        &t.sky
+                    } else if pass.hand {
+                        &t.hand
+                    } else {
+                        &t.entities
+                    };
                     if let (true, Some(e)) = (pass.entity.is_some() || pass.sky.is_some(), source) {
                         for b in [e.instances.0, e.meshes.0, e.vertices.0, e.parts.0] {
                             pass_buffers.push((b, Use::VertexRead));
@@ -1297,6 +1388,7 @@ impl PackScreen {
             };
             let (pipeline, base, extent) = (pass.pipeline, pass.base, pass.extent);
             let entity_pass = pass.entity;
+            let hand_pass = pass.hand;
             let sky_pass = pass.sky;
             let white = self.stubs.white.1;
             let name = if draw.is_some() { "pack geometry" } else { "pack screen" };
@@ -1400,7 +1492,7 @@ impl PackScreen {
                     }
                     // Entities: one draw each, its texture in the push.
                     Some((_, t)) if entity_pass.is_some() => {
-                        let Some(e) = &t.entities else { return };
+                        let Some(e) = (if hand_pass { &t.hand } else { &t.entities }) else { return };
                         device.cmd_bind_index_buffer(cmd, e.indices, 0, vk::IndexType::UINT32);
                         let order: Vec<u32> = if entity_pass == Some(true) {
                             e.blended.clone()

@@ -140,7 +140,8 @@ pub struct EnvPart {
     pub alpha: u32,
     /// 0 a sky part (pinned to the far plane), 1 the clouds (at their
     /// depth), 2 a screen overlay (its transform straight to clip space,
-    /// drawn over everything).
+    /// drawn over everything), 3 a first-person hand part (its transform
+    /// in the hand camera's view space).
     pub kind: u32,
     /// Drawing order among the parts, lowest first.
     pub bias: f32,
@@ -168,6 +169,15 @@ type ScreenDrawn<'a> = (
     &'a MeshMaterial3d<StandardMaterial>,
     &'a Transform,
     &'a InheritedVisibility,
+);
+
+/// A first-person hand part (`renderer::hand`, the hand layer).
+type HandDrawn<'a> = (
+    &'a Mesh3d,
+    &'a MeshMaterial3d<StandardMaterial>,
+    &'a GlobalTransform,
+    &'a InheritedVisibility,
+    &'a bevy::camera::visibility::RenderLayers,
 );
 
 /// Mesh and image data copied while they still sit in the main world.
@@ -350,6 +360,10 @@ fn write_env(
         Mat4,
         f32,
     ),
+    (hand_parts, hand_view): (
+        &Query<HandDrawn, Without<crate::renderer::screen_effects::Overlay>>,
+        Option<Mat4>,
+    ),
 ) {
     let mut parts = Vec::new();
     let (mut mesh_ids, mut image_ids) = (HashMap::new(), HashMap::new());
@@ -462,6 +476,29 @@ fn write_env(
         }
     }
 
+    // The first-person hand, in the hand camera's view space.
+    if let Some(view) = hand_view {
+        let layer = bevy::camera::visibility::RenderLayers::layer(crate::renderer::hand::HAND_LAYER);
+        for (mesh, material, transform, visible, layers) in hand_parts {
+            if !visible.get() || !layers.intersects(&layer) {
+                continue;
+            }
+            if let Some(m) = standard.get(&material.0) {
+                add(
+                    mesh.0.id(),
+                    m.base_color_texture.as_ref().map(Handle::id),
+                    m.base_color.to_linear().to_vec4(),
+                    m.alpha_mode,
+                    0.0,
+                    3,
+                    [1.0, 1.0, 0.0, 0.0],
+                    view * transform.to_matrix(),
+                    0.0,
+                );
+            }
+        }
+    }
+
     let mut out = Vec::new();
     let mut put = |bytes: &[u8]| out.extend_from_slice(bytes);
     put(ENV_MAGIC);
@@ -560,6 +597,10 @@ fn write(
         Option<Res<crate::renderer::terrain_pool::TerrainTextures>>,
         Res<crate::renderer::frame_view::FrameView>,
         Option<Res<crate::renderer::terrain_pool::TerrainParams>>,
+    ),
+    (hand_parts, hand_camera): (
+        Query<HandDrawn, Without<crate::renderer::screen_effects::Overlay>>,
+        Query<&GlobalTransform, With<crate::renderer::hand::HandCamera>>,
     ),
 ) {
     *since += time.delta_secs();
@@ -715,6 +756,7 @@ fn write(
             crate::renderer::view_bob::current_warp(&frame_view),
             terrain_params.as_ref().map_or(1.0, |p| p.water_alpha),
         ),
+        (&hand_parts, hand_camera.iter().next().map(|c| c.to_matrix().inverse())),
     );
     let partial = dir.join("entities.bin.part");
     if std::fs::write(&partial, &out).is_ok() {

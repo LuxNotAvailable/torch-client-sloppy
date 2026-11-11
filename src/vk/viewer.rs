@@ -399,7 +399,18 @@ impl Renderer {
                     .map_err(|e| crate::vk::SetupError(format!("pack {name}: {e}")))?;
                 let programs = installed.programs.len();
                 if let Scene::Terrain(terrain, _) = &mut scene {
-                    terrain.pack_sky(&ctx, &memory, &mut bindless, installed.constants.sun_path_rotation)?;
+                    // The hand's light: the eye's, from the snapshot's inputs.
+                    let eye_light = options
+                        .terrain
+                        .as_ref()
+                        .and_then(|dir| std::fs::read_to_string(dir.join("inputs.json")).ok())
+                        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+                        .and_then(|v| {
+                            let l = v.get("eye_light")?.as_array()?;
+                            Some([l.first()?.as_f64()? as f32, l.get(1)?.as_f64()? as f32])
+                        })
+                        .unwrap_or([0.0, 15.0]);
+                    terrain.pack_sky(&ctx, &memory, &mut bindless, installed.constants.sun_path_rotation, eye_light)?;
                 }
                 let screen = crate::vk::pack::screen::PackScreen::new(
                     &ctx,

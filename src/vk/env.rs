@@ -71,6 +71,10 @@ pub struct EnvScene {
     sky: Vec<(EnvPart, (u32, u32, u32))>,
     /// A pack's sky instances and mesh table (`pack_sky`).
     pack: Option<PackSky>,
+    /// Hand parts (view space): part, index range.
+    hand: Vec<(EnvPart, (u32, u32, u32))>,
+    /// A pack's hand instances (`pack_hand`).
+    pack_hand: Option<PackSky>,
     /// The snapshot's eye.
     eye: Vec3,
     /// Each texture's bindless index and its UNORM view's, for packs.
@@ -151,6 +155,10 @@ impl EnvScene {
             .iter()
             .enumerate()
             .filter_map(|(i, p)| {
+                // Hand parts are only for packs (`pack_hand`).
+                if p.kind == 3 {
+                    return None;
+                }
                 let (first, count, base) = *ranges.get(p.mesh as usize)?;
                 let pipe = match (p.kind, p.alpha) {
                     (2, _) => 3,
@@ -237,6 +245,11 @@ impl EnvScene {
             .filter(|p| p.kind == 0 && p.pad[0] > 0.0)
             .filter_map(|p| Some((*p, *ranges.get(p.mesh as usize)?)))
             .collect();
+        let hand = parts
+            .iter()
+            .filter(|p| p.kind == 3)
+            .filter_map(|p| Some((*p, *ranges.get(p.mesh as usize)?)))
+            .collect();
         let parts_bytes: &[u8] = bytemuck::cast_slice(&parts);
 
         let mut total = 0u64;
@@ -310,6 +323,8 @@ impl EnvScene {
             draws,
             sky,
             pack: None,
+            hand,
+            pack_hand: None,
             eye,
             raw_indices,
         })
@@ -359,25 +374,75 @@ impl EnvScene {
             let texture = self.raw_indices.iter().find(|(s, _)| *s == part.texture).map_or(part.texture, |(_, r)| *r);
             draws.push((*first, *count, *base as i32, texture, part.alpha == 3));
         }
-        let mut upload = |name: &str, bytes: &[u8]| -> Result<(Buffer, u32), SetupError> {
-            let mut buffer = memory.buffer(
-                ctx,
-                name,
-                bytes.len().max(16) as u64,
-                vk::BufferUsageFlags::STORAGE_BUFFER,
-                MemoryLocation::CpuToGpu,
-            )?;
-            buffer.write(0, bytes);
-            let index = bindless.add_buffer(ctx, buffer.raw).ok_or_else(full)?;
-            Ok((buffer, index))
-        };
         self.pack = Some(PackSky {
-            instances: upload("pack sky instances", bytemuck::cast_slice(&instances))?,
-            meshes: upload("pack sky meshes", bytemuck::cast_slice(&meshes))?,
+            instances: upload(ctx, memory, bindless, "pack sky instances", bytemuck::cast_slice(&instances))?,
+            meshes: upload(ctx, memory, bindless, "pack sky meshes", bytemuck::cast_slice(&meshes))?,
             draws,
             textured,
         });
         Ok(())
+    }
+
+    /// Builds a pack's first-person hand: one entity instance per part, lit
+    /// by the eye's light (`eye_light`, levels), white, as the game's.
+    pub fn pack_hand(
+        &mut self,
+        ctx: &Context,
+        memory: &Memory,
+        bindless: &mut Bindless,
+        eye_light: [f32; 2],
+    ) -> Result<(), SetupError> {
+        use super::entity_dump::EntityInstance;
+        let stage = |name| crate::shaderpack::features::render_stage(name) as u32;
+        let mut instances = Vec::new();
+        let mut meshes: Vec<[u32; 4]> = Vec::new();
+        let mut draws = Vec::new();
+        let mut blended = Vec::new();
+        for (part, (first, count, base)) in &self.hand {
+            let translucent = part.alpha >= 2;
+            if translucent {
+                blended.push(draws.len() as u32);
+            }
+            meshes.push([*first, *count, *base, 0]);
+            instances.push(EntityInstance {
+                mesh: meshes.len() as u32 - 1,
+                texture: part.texture,
+                alpha: part.alpha,
+                kind: 16 + stage(if translucent { "HAND_TRANSLUCENT" } else { "HAND_SOLID" }),
+                tint: [1.0; 4],
+                light0: [0.0, 0.0, 0.0, 1.0],
+                light1: [0.0, 0.0, 0.0, 1.0],
+                levels: [eye_light[0] * 16.0, eye_light[1] * 16.0],
+                // View space; the entity input takes the eye off.
+                transform: (Mat4::from_translation(self.eye) * Mat4::from_cols_array(&part.transform)).to_cols_array(),
+                ..Default::default()
+            });
+            let texture = self.raw_indices.iter().find(|(s, _)| *s == part.texture).map_or(part.texture, |(_, r)| *r);
+            draws.push((*first, *count, *base as i32, texture, translucent));
+        }
+        self.pack_hand = Some(PackSky {
+            instances: upload(ctx, memory, bindless, "pack hand instances", bytemuck::cast_slice(&instances))?,
+            meshes: upload(ctx, memory, bindless, "pack hand meshes", bytemuck::cast_slice(&meshes))?,
+            draws,
+            textured: blended,
+        });
+        Ok(())
+    }
+
+    /// The pack's hand as entity draws (`pack_hand` first); `blended`
+    /// lists the translucent parts.
+    pub fn pack_hand_entities(&self) -> Option<super::entities::PackEntities> {
+        let pack = self.pack_hand.as_ref()?;
+        Some(super::entities::PackEntities {
+            instances: (pack.instances.0.raw, pack.instances.1),
+            meshes: (pack.meshes.0.raw, pack.meshes.1),
+            vertices: (self.vertices.0.raw, self.vertices.1),
+            parts: (pack.instances.0.raw, pack.instances.1),
+            indices: self.indices.raw,
+            draws: pack.draws.clone(),
+            blended: pack.textured.clone(),
+            textures: self.textures.iter().map(|t| t.0.raw).collect(),
+        })
     }
 
     /// The pack's sky as entity draws (`pack_sky` first).
@@ -652,7 +717,7 @@ impl EnvScene {
         for b in [self.parts.0, self.vertices.0, self.indices] {
             memory.free_buffer(ctx, b);
         }
-        if let Some(p) = self.pack {
+        for p in [self.pack, self.pack_hand].into_iter().flatten() {
             memory.free_buffer(ctx, p.instances.0);
             memory.free_buffer(ctx, p.meshes.0);
         }
@@ -664,4 +729,24 @@ impl EnvScene {
         }
         memory.free_image(ctx, self.lightmap.0);
     }
+}
+
+/// A host-visible storage buffer holding `bytes`, on the bindless set.
+fn upload(
+    ctx: &Context,
+    memory: &Memory,
+    bindless: &mut Bindless,
+    name: &str,
+    bytes: &[u8],
+) -> Result<(Buffer, u32), SetupError> {
+    let mut buffer = memory.buffer(
+        ctx,
+        name,
+        bytes.len().max(16) as u64,
+        vk::BufferUsageFlags::STORAGE_BUFFER,
+        MemoryLocation::CpuToGpu,
+    )?;
+    buffer.write(0, bytes);
+    let index = bindless.add_buffer(ctx, buffer.raw).ok_or_else(full)?;
+    Ok((buffer, index))
 }

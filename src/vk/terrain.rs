@@ -440,6 +440,8 @@ pub struct PackGeometry {
     pub entities: Option<super::entities::PackEntities>,
     /// The sky pieces as entities (`TerrainScene::pack_sky`).
     pub sky: Option<super::entities::PackEntities>,
+    /// The first-person hand as entities (`TerrainScene::pack_sky`).
+    pub hand: Option<super::entities::PackEntities>,
 }
 
 pub const PACK_COMMAND_SIZE: u64 = COMMAND_SIZE;
@@ -916,19 +918,25 @@ impl TerrainScene {
             lightmap: self.env.as_ref().map(|e| (e.lightmap.0.raw, e.lightmap.1)),
             entities: self.entities.as_ref().map(|e| e.pack_entities()),
             sky: self.env.as_ref().and_then(|e| e.pack_entities()),
+            hand: self.env.as_ref().and_then(|e| e.pack_hand_entities()),
         }
     }
 
-    /// Builds the sky's instances for a pack (`EnvScene::pack_sky`).
+    /// Builds the sky's and hand's instances for a pack
+    /// (`EnvScene::pack_sky`, `pack_hand`).
     pub fn pack_sky(
         &mut self,
         ctx: &Context,
         memory: &Memory,
         bindless: &mut Bindless,
         sun_path_rotation: f32,
+        eye_light: [f32; 2],
     ) -> Result<(), SetupError> {
         match &mut self.env {
-            Some(env) => env.pack_sky(ctx, memory, bindless, sun_path_rotation),
+            Some(env) => {
+                env.pack_sky(ctx, memory, bindless, sun_path_rotation)?;
+                env.pack_hand(ctx, memory, bindless, eye_light)
+            }
             None => Ok(()),
         }
     }
