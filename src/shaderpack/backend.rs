@@ -37,10 +37,22 @@ pub(crate) fn to_wgsl(
 /// WGSL already, so this one step covers both kinds of pack.
 #[allow(dead_code, reason = "used by the native renderer's pack path as it lands")]
 pub(crate) fn wgsl_to_spirv(source: &str) -> Result<Vec<u32>, String> {
+    spirv_with(source, ValidationFlags::all())
+}
+
+/// As `wgsl_to_spirv`, for a stage whose resources sit on the bindless set
+/// (`vk::pack::bindless`): several typed arrays alias each binding, which
+/// Vulkan allows and naga's binding check refuses, so that check is off.
+#[allow(dead_code, reason = "used by the native renderer's pack path as it lands")]
+pub(crate) fn wgsl_to_spirv_aliased(source: &str) -> Result<Vec<u32>, String> {
+    spirv_with(source, ValidationFlags::all() - ValidationFlags::BINDINGS)
+}
+
+fn spirv_with(source: &str, flags: ValidationFlags) -> Result<Vec<u32>, String> {
     use naga::back::spv;
     let module = naga::front::wgsl::parse_str(source)
         .map_err(|e| format!("the WGSL could not be parsed: {}", e.emit_to_string(source)))?;
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
+    let info = Validator::new(flags, Capabilities::all())
         .validate(&module)
         .map_err(|e| format!("the shader is not valid: {}", chain(&e)))?;
     let options = spv::Options {

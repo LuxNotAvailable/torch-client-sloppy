@@ -10,6 +10,7 @@
 //!
 //! Passes, pipelines and bindings follow in the next steps.
 
+pub mod bindless;
 pub mod targets;
 
 use crate::renderer::dimension::Dimension;

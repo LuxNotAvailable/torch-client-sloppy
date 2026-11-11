@@ -832,6 +832,35 @@ mod tests {
         })
     }
 
+    /// Writes every stage of every installed pack, as WGSL, to
+    /// `MC_WGSL_DUMP` (a folder), for working on the native renderer's
+    /// rewrite of their bindings.
+    #[test]
+    #[ignore = "needs a shader pack installed and MC_WGSL_DUMP"]
+    fn dump_installed_wgsl() {
+        let Some(dir) = std::env::var_os("MC_WGSL_DUMP").map(std::path::PathBuf::from) else {
+            return;
+        };
+        let _ = std::fs::create_dir_all(&dir);
+        for pack in discover::list() {
+            let Ok(frame) = compile_frame(&pack.name, false, None, Dimension::Overworld) else {
+                continue;
+            };
+            let safe: String = pack.name.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+            for program in &frame.programs {
+                for (stage, source) in [("vsh", &program.vertex), ("fsh", &program.fragment)]
+                    .into_iter()
+                    .chain(program.compute.iter().map(|c| ("csh", c)))
+                {
+                    let _ = std::fs::write(
+                        dir.join(format!("{safe}.{}.{stage}.wgsl", program.name)),
+                        source,
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     #[ignore = "needs a shader pack installed"]
     fn every_installed_program_translates() {
