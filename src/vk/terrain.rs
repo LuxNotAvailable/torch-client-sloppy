@@ -539,10 +539,14 @@ impl TerrainScene {
                     entry: c"hiz_reduce".to_owned(),
                 },
                 // Solid faces are one-sided, as vanilla's; cutout (plants,
-                // leaves) and translucent faces draw both sides.
+                // leaves) draw both sides. Translucent faces are one-sided
+                // and write depth, as the game's water material (vanilla's
+                // translucent layer): a water surface's top and its
+                // underside are two faces, and drawing both from one side
+                // stacked their alpha.
                 stream(c"terrain_solid", vk::CullModeFlags::BACK, true, false),
                 stream(c"terrain_cutout", vk::CullModeFlags::NONE, true, false),
-                stream(c"terrain_translucent", vk::CullModeFlags::NONE, false, true),
+                stream(c"terrain_translucent", vk::CullModeFlags::BACK, true, true),
             ],
         );
         let depth_view = DepthView::new(ctx, pipelines, color_format)?;
