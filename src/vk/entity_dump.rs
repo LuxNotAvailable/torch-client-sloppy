@@ -352,6 +352,18 @@ fn to_live(channel: usize, cache: &Cache, (mut instances, used_meshes, used_imag
 struct Cache {
     meshes: HashMap<AssetId<Mesh>, (Vec<EntityVertex>, Vec<u32>, bool)>,
     images: HashMap<AssetId<Image>, (u32, u32, Vec<u8>)>,
+    /// Images sampled with repeat (rain, beams); the rest clamp.
+    repeat: std::collections::HashSet<AssetId<Image>>,
+}
+
+/// Set in an instance's `kind` when its texture repeats.
+pub const KIND_REPEAT: u32 = 1 << 31;
+
+fn repeats(image: &Image) -> bool {
+    match &image.sampler {
+        bevy::image::ImageSampler::Descriptor(d) => d.address_mode_u == bevy::image::ImageAddressMode::Repeat,
+        _ => false,
+    }
 }
 
 /// Adds the dump's systems when `MC_DUMP_TERRAIN` names a folder.
@@ -457,6 +469,13 @@ fn capture(
     for event in image_events.read() {
         match *event {
             AssetEvent::Added { id } | AssetEvent::Modified { id } => {
+                if let Some(image) = images.get(id) {
+                    if repeats(image) {
+                        cache.repeat.insert(id);
+                    } else {
+                        cache.repeat.remove(&id);
+                    }
+                }
                 if let Some(data) = images.get(id).and_then(image_data) {
                     cache.images.insert(id, data);
                 }
@@ -849,6 +868,10 @@ fn write(
                 (_, _, true, _) => 3,
                 (.., true) => 4,
                 _ => 0,
+            } | if material.texture.as_ref().is_some_and(|t| cache.repeat.contains(&t.id())) {
+                KIND_REPEAT
+            } else {
+                0
             },
             tint: p.tint.to_array(),
             light: p.light.to_array(),

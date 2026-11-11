@@ -502,7 +502,7 @@ fn iris_vk_in(raw: IrisVertexIn) -> IrisVkIn {
     e.entity_id = -1;
     e.block_entity_id = -1;
     e.item_id = 0;
-    let kind = iris_vk_inst.w[at + 5u];
+    let kind = iris_vk_inst.w[at + 5u] & 0xFFFFu;
     e.render_stage = select(0, i32(kind) - 16, kind >= 16u);
     return e;
 }

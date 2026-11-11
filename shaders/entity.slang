@@ -19,6 +19,9 @@ static const uint I_MESH = 0;
 static const uint I_TEXTURE = 4;
 static const uint I_TAG = 8;
 static const uint I_ALPHA = 12;
+static const uint I_KIND = 20;
+// Set in the kind when the texture repeats (`entity_dump::KIND_REPEAT`).
+static const uint KIND_REPEAT = 0x80000000u;
 static const uint I_TINT = 24;
 static const uint I_LIGHT = 40;
 static const uint I_LIGHT0 = 56;
@@ -190,9 +193,12 @@ float4 entity_shade(VertexOut in, bool front) {
         return float4(float3(i & 255, (i >> 8) & 255, (i >> 16) & 255) / 255.0 * 0.8 + 0.2, 1);
     }
     uint texture = instances.Load(at + I_TEXTURE);
+    // Clamped, as the game's entity textures; repeating ones (rain, beams)
+    // say so.
+    uint sampler = (instances.Load(at + I_KIND) & KIND_REPEAT) != 0 ? SAMPLER_NEAREST : 2;
     float4 color = texture == NO_TEXTURE
         ? float4(1, 1, 1, 1)
-        : texture_at(texture).SampleLevel(g_samplers[SAMPLER_NEAREST], in.uv, 0);
+        : texture_at(texture).SampleLevel(g_samplers[sampler], in.uv, 0);
     float4 light = asfloat(instances.Load4(at + I_LIGHT));
     if (color.a < light.a) {
         discard;
