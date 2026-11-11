@@ -321,21 +321,25 @@ impl EntityScene {
 
         let mut textures = Vec::new();
         let mut texture_sizes = Vec::new();
+        let mut raw_indices: Vec<(u32, u32)> = Vec::new();
         for (w, h, _) in &snapshot.textures {
-            let image = memory.image(
+            let image = memory.image_with_raw(
                 ctx,
                 "entity texture",
                 vk::Extent2D {
                     width: *w,
                     height: *h,
                 },
-                vk::Format::R8G8B8A8_SRGB,
                 vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
-                vk::ImageAspectFlags::COLOR,
             )?;
             let index = bindless
                 .add_texture(ctx, image.view, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                 .ok_or_else(full)?;
+            // Packs sample the stored (sRGB-encoded) texels, as the game's.
+            let raw = bindless
+                .add_texture(ctx, image.raw_view.expect("made with a raw view"), vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .ok_or_else(full)?;
+            raw_indices.push((index, raw));
             textures.push((image, index));
             texture_sizes.push((*w, *h));
         }
@@ -375,7 +379,8 @@ impl EntityScene {
             .map(|i| {
                 let m = (i.mesh as usize) * 4;
                 let range = table.get(m..m + 4).unwrap_or(&[0, 0, 0, 0]);
-                (range[0], range[1], range[2] as i32, i.texture, i.alpha >= 2)
+                let texture = raw_indices.iter().find(|(s, _)| *s == i.texture).map_or(i.texture, |(_, r)| *r);
+                (range[0], range[1], range[2] as i32, texture, i.alpha >= 2)
             })
             .collect();
 

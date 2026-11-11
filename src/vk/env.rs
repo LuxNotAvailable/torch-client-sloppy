@@ -73,6 +73,8 @@ pub struct EnvScene {
     pack: Option<PackSky>,
     /// The snapshot's eye.
     eye: Vec3,
+    /// Each texture's bindless index and its UNORM view's, for packs.
+    raw_indices: Vec<(u32, u32)>,
 }
 
 struct PackSky {
@@ -173,21 +175,25 @@ impl EnvScene {
         let draws = draws.into_iter().map(|(_, d)| d).collect();
 
         let mut textures = Vec::new();
+        let mut raw_indices: Vec<(u32, u32)> = Vec::new();
         for (w, h, _) in &env.textures {
-            let image = memory.image(
+            let image = memory.image_with_raw(
                 ctx,
                 "sky texture",
                 vk::Extent2D {
                     width: *w,
                     height: *h,
                 },
-                vk::Format::R8G8B8A8_SRGB,
                 vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
-                vk::ImageAspectFlags::COLOR,
             )?;
             let index = bindless
                 .add_texture(ctx, image.view, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                 .ok_or_else(full)?;
+            // Packs sample the stored (sRGB-encoded) texels.
+            let raw = bindless
+                .add_texture(ctx, image.raw_view.expect("made with a raw view"), vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .ok_or_else(full)?;
+            raw_indices.push((index, raw));
             textures.push((image, index, *w, *h));
         }
         let lightmap_image = memory.image(
@@ -305,6 +311,7 @@ impl EnvScene {
             sky,
             pack: None,
             eye,
+            raw_indices,
         })
     }
 
@@ -349,7 +356,8 @@ impl EnvScene {
                 transform: model.to_cols_array(),
                 ..Default::default()
             });
-            draws.push((*first, *count, *base as i32, part.texture, part.alpha == 3));
+            let texture = self.raw_indices.iter().find(|(s, _)| *s == part.texture).map_or(part.texture, |(_, r)| *r);
+            draws.push((*first, *count, *base as i32, texture, part.alpha == 3));
         }
         let mut upload = |name: &str, bytes: &[u8]| -> Result<(Buffer, u32), SetupError> {
             let mut buffer = memory.buffer(

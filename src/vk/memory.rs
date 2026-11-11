@@ -29,6 +29,9 @@ pub struct Image {
     pub format: vk::Format,
     pub extent: vk::Extent2D,
     pub aspect: vk::ImageAspectFlags,
+    /// An sRGB image's UNORM view (`image_with_raw`): the texels as
+    /// stored, as packs sample them.
+    pub raw_view: Option<vk::ImageView>,
     allocation: Option<Allocation>,
 }
 
@@ -85,7 +88,46 @@ impl Memory {
         usage: vk::ImageUsageFlags,
         aspect: vk::ImageAspectFlags,
     ) -> Result<Image, SetupError> {
+        self.image_inner(ctx, name, extent, format, usage, aspect, None)
+    }
+
+    /// An `R8G8B8A8_SRGB` image that also has a UNORM view (`raw_view`).
+    pub fn image_with_raw(
+        &self,
+        ctx: &Context,
+        name: &str,
+        extent: vk::Extent2D,
+        usage: vk::ImageUsageFlags,
+    ) -> Result<Image, SetupError> {
+        self.image_inner(
+            ctx,
+            name,
+            extent,
+            vk::Format::R8G8B8A8_SRGB,
+            usage,
+            vk::ImageAspectFlags::COLOR,
+            Some(vk::Format::R8G8B8A8_UNORM),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments, reason = "an image's whole description")]
+    fn image_inner(
+        &self,
+        ctx: &Context,
+        name: &str,
+        extent: vk::Extent2D,
+        format: vk::Format,
+        usage: vk::ImageUsageFlags,
+        aspect: vk::ImageAspectFlags,
+        raw_format: Option<vk::Format>,
+    ) -> Result<Image, SetupError> {
+        let flags = if raw_format.is_some() {
+            vk::ImageCreateFlags::MUTABLE_FORMAT
+        } else {
+            vk::ImageCreateFlags::empty()
+        };
         let info = vk::ImageCreateInfo::default()
+            .flags(flags)
             .image_type(vk::ImageType::TYPE_2D)
             .format(format)
             .extent(vk::Extent3D {
@@ -114,12 +156,24 @@ impl Memory {
                     .subresource_range(range(aspect)),
                 None,
             )?;
+            let raw_view = match raw_format {
+                Some(f) => Some(ctx.device.create_image_view(
+                    &vk::ImageViewCreateInfo::default()
+                        .image(raw)
+                        .view_type(vk::ImageViewType::TYPE_2D)
+                        .format(f)
+                        .subresource_range(range(aspect)),
+                    None,
+                )?),
+                None => None,
+            };
             Ok(Image {
                 raw,
                 view,
                 format,
                 extent,
                 aspect,
+                raw_view,
                 allocation: Some(allocation),
             })
         }
@@ -159,6 +213,9 @@ impl Memory {
         // SAFETY: as above.
         unsafe {
             ctx.device.destroy_image_view(image.view, None);
+            if let Some(v) = image.raw_view {
+                ctx.device.destroy_image_view(v, None);
+            }
             ctx.device.destroy_image(image.raw, None);
         }
         if let (Some(a), Ok(mut allocator)) = (image.allocation.take(), self.allocator.lock()) {

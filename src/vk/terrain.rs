@@ -508,6 +508,8 @@ pub struct TerrainScene {
 
     atlas: Image,
     atlas_index: u32,
+    /// The atlas's UNORM view, for packs.
+    atlas_raw_index: u32,
     atlas_staging: Option<(Buffer, Option<u64>)>,
     atlas_size: (u32, u32),
     depth: DepthTarget,
@@ -698,21 +700,27 @@ impl TerrainScene {
             MemoryLocation::CpuToGpu,
         )?;
         atlas_staging.write(0, atlas_bytes);
-        let atlas_image = memory.image(
+        let atlas_image = memory.image_with_raw(
             ctx,
             "block atlas",
             vk::Extent2D {
                 width: atlas_size.0,
                 height: atlas_size.1,
             },
-            vk::Format::R8G8B8A8_SRGB,
             vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
-            vk::ImageAspectFlags::COLOR,
         )?;
         let atlas_index = bindless
             .add_texture(
                 ctx,
                 atlas_image.view,
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            )
+            .ok_or_else(full)?;
+        // Packs sample the texels as stored (sRGB-encoded), as Iris gives them.
+        let atlas_raw_index = bindless
+            .add_texture(
+                ctx,
+                atlas_image.raw_view.expect("made with a raw view"),
                 vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             )
             .ok_or_else(full)?;
@@ -819,6 +827,7 @@ impl TerrainScene {
             stats_pools,
             atlas: atlas_image,
             atlas_index,
+            atlas_raw_index,
             atlas_staging: Some((atlas_staging, None)),
             atlas_size,
             depth: DepthTarget::default(),
@@ -902,7 +911,7 @@ impl TerrainScene {
                 self.translucent_start,
                 self.translucent_count,
             ),
-            atlas: (self.atlas.raw, self.atlas_index),
+            atlas: (self.atlas.raw, self.atlas_raw_index),
             shadow: self.shadow.as_ref().map(|s| (s.commands.raw, s.counts.raw)),
             lightmap: self.env.as_ref().map(|e| (e.lightmap.0.raw, e.lightmap.1)),
             entities: self.entities.as_ref().map(|e| e.pack_entities()),
