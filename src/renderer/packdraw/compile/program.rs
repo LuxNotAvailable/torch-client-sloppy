@@ -1,6 +1,8 @@
 use super::super::sources::TextureSource;
 use super::pack::Pack;
-use super::preludes::{ENTITY_UNIFORMS, TERRAIN_BEGIN, entity_prelude, entity_varyings};
+use super::preludes::{
+    ENTITY_UNIFORMS, TERRAIN_BEGIN, VK_ENTITY_BEGIN, entity_prelude, entity_varyings, vulkan_terrain,
+};
 use super::{AlphaTest, Dispatch, PACK_SET, Program, ProgramKind, SCREEN_PRELUDE, terrain_prelude};
 use crate::shaderpack::pipeline::{Binding, Layout};
 use crate::shaderpack::{backend, directives, pipeline, transform};
@@ -65,6 +67,8 @@ pub(super) fn compile_program(
         vertex_end: &vertex_end,
         vertex_begin: if matches!(kind, ProgramKind::Geometry | ProgramKind::Shadow) {
             TERRAIN_BEGIN
+        } else if kind.draws_entities() && vulkan_terrain() {
+            VK_ENTITY_BEGIN
         } else {
             ""
         },

@@ -165,7 +165,90 @@ const _: () = assert!(PACK_QUADS_SET == 2 && crate::renderer::packvertex::QUAD_R
 /// GPU-posed rig's mesh: each vertex carries its part index, and the part's
 /// matrix (three rows in the rig buffer, from the instance's part base) poses
 /// it before the model matrix, as the client's own entity shader does.
+/// The native renderer's entity input (`vk::entities`): instance (184
+/// bytes, words below), mesh table, vertex pool (52 bytes) and rig parts,
+/// read by `iris_vk_entity` (`VK_ENTITY_BEGIN`) into the globals the game's
+/// entity prelude takes as attributes. Posed or not by the mesh's flag.
+const VK_ENTITY: &str = "layout(std430, set = 2, binding = 10) readonly buffer IrisVkInstances { uint iris_VkInst[]; };
+layout(std430, set = 2, binding = 11) readonly buffer IrisVkMeshes { uvec4 iris_VkMesh[]; };
+layout(std430, set = 2, binding = 12) readonly buffer IrisVkVertices { uint iris_VkVert[]; };
+layout(std430, set = 2, binding = 13) readonly buffer IrisVkParts { vec4 iris_VkPart[]; };
+vec3 iris_EntityPosition;
+vec3 iris_EntityNormal;
+vec2 iris_EntityUV;
+vec4 iris_EntityColor;
+vec4 iris_ModelRow0;
+vec4 iris_ModelRow1;
+vec4 iris_ModelRow2;
+vec4 iris_EntityTint;
+vec4 entityColor;
+vec2 iris_EntityLight;
+int entityId;
+int blockEntityId;
+int currentRenderedItemId;
+int renderStage;
+uint iris_EntityFlags;
+vec4 iris_GlintTransform;
+uint iris_PartRow;
+bool iris_Rigged;
+float iris_vk_f(uint w) { return uintBitsToFloat(iris_VkInst[w]); }
+vec4 iris_vk_f4(uint w) { return vec4(iris_vk_f(w), iris_vk_f(w + 1u), iris_vk_f(w + 2u), iris_vk_f(w + 3u)); }
+void iris_vk_entity() {
+    uint at = uint(gl_InstanceIndex) * 46u;
+    uint v = uint(gl_VertexIndex) * 13u;
+    iris_EntityPosition = uintBitsToFloat(uvec3(iris_VkVert[v], iris_VkVert[v + 1u], iris_VkVert[v + 2u]));
+    iris_EntityNormal = uintBitsToFloat(uvec3(iris_VkVert[v + 3u], iris_VkVert[v + 4u], iris_VkVert[v + 5u]));
+    iris_EntityUV = uintBitsToFloat(uvec2(iris_VkVert[v + 6u], iris_VkVert[v + 7u]));
+    iris_EntityColor = uintBitsToFloat(uvec4(iris_VkVert[v + 8u], iris_VkVert[v + 9u], iris_VkVert[v + 10u], iris_VkVert[v + 11u]));
+    uint mesh = iris_VkInst[at];
+    iris_Rigged = iris_VkMesh[mesh].w != 0u;
+    iris_PartRow = (iris_VkInst[at + 2u] + iris_VkVert[v + 12u]) * 3u;
+    iris_EntityTint = iris_vk_f4(at + 6u);
+    vec4 light0 = iris_vk_f4(at + 14u);
+    vec4 light1 = iris_vk_f4(at + 18u);
+    entityColor = vec4(light0.w < 0.5 ? vec3(1.0, 0.0, 0.0) : vec3(1.0), clamp(1.0 - light1.w, 0.0, 1.0));
+    iris_EntityLight = vec2(iris_vk_f(at + 26u), iris_vk_f(at + 27u));
+    uint mode = iris_VkInst[at + 28u];
+    iris_EntityFlags = (mode == 1u || mode == 2u) ? 1u : 0u;
+    if (mode == 2u) { iris_EntityLight = vec2(240.0); }
+    vec4 c0 = iris_vk_f4(at + 30u);
+    vec4 c1 = iris_vk_f4(at + 34u);
+    vec4 c2 = iris_vk_f4(at + 38u);
+    vec4 c3 = iris_vk_f4(at + 42u);
+    iris_ModelRow0 = vec4(c0.x, c1.x, c2.x, c3.x);
+    iris_ModelRow1 = vec4(c0.y, c1.y, c2.y, c3.y);
+    iris_ModelRow2 = vec4(c0.z, c1.z, c2.z, c3.z);
+    entityId = -1;
+    blockEntityId = -1;
+    currentRenderedItemId = 0;
+    renderStage = 0;
+}
+vec3 iris_local_position() {
+    if (!iris_Rigged) { return iris_EntityPosition; }
+    vec4 p = vec4(iris_EntityPosition, 1.0);
+    return vec3(dot(iris_VkPart[iris_PartRow], p), dot(iris_VkPart[iris_PartRow + 1u], p), dot(iris_VkPart[iris_PartRow + 2u], p));
+}
+vec3 iris_local_normal() {
+    if (!iris_Rigged) { return iris_EntityNormal; }
+    vec4 r0 = iris_VkPart[iris_PartRow];
+    vec4 r1 = iris_VkPart[iris_PartRow + 1u];
+    vec4 r2 = iris_VkPart[iris_PartRow + 2u];
+    vec3 c0 = vec3(r0.x, r1.x, r2.x);
+    vec3 c1 = vec3(r0.y, r1.y, r2.y);
+    vec3 c2 = vec3(r0.z, r1.z, r2.z);
+    vec3 n = mat3(cross(c1, c2), cross(c2, c0), cross(c0, c1)) * iris_EntityNormal;
+    float det = dot(c0, cross(c1, c2));
+    return dot(n, n) > 1e-12 ? normalize(n) * sign(det) : iris_EntityNormal;
+}
+";
+
+/// Before an entity program's `main` on the native renderer.
+pub(super) const VK_ENTITY_BEGIN: &str = "iris_vk_entity();\n    ";
+
 pub(super) fn entity_prelude(skinned: bool) -> String {
+    if vulkan_terrain() {
+        return format!("{VK_ENTITY}{ENTITY_FUNCTIONS}");
+    }
     let local = if skinned {
         SKINNED_LOCAL
     } else {
