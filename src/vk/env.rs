@@ -104,7 +104,17 @@ impl EnvScene {
         env: Environment,
         eye: Vec3,
         atlas_index: u32,
+        reuse: Option<&mut EnvScene>,
     ) -> Result<EnvScene, SetupError> {
+        // A scene renewed each frame (live) keeps its shader and pipelines.
+        if let Some(old) = reuse {
+            let module = std::mem::replace(&mut old.module, vk::ShaderModule::null());
+            let (pipes, pending) = (old.pipes.take(), old.pending.take());
+            let mut scene = Self::build(ctx, memory, bindless, env, eye, atlas_index, module)?;
+            scene.pipes = pipes;
+            scene.pending = pending;
+            return Ok(scene);
+        }
         let module = pipelines.module(ctx, super::shaders::ENV)?;
         let spec = |fragment: &std::ffi::CStr, depth_test, additive, depth| {
             Spec::Graphics(GraphicsSpec {
@@ -137,6 +147,21 @@ impl EnvScene {
                 spec(c"screen", None, false, None),
             ],
         );
+        let mut scene = Self::build(ctx, memory, bindless, env, eye, atlas_index, module)?;
+        scene.pending = Some(pending);
+        Ok(scene)
+    }
+
+    /// The scene's contents from a snapshot, around `module`; no pipelines.
+    fn build(
+        ctx: &Context,
+        memory: &Memory,
+        bindless: &mut Bindless,
+        env: Environment,
+        eye: Vec3,
+        atlas_index: u32,
+        module: vk::ShaderModule,
+    ) -> Result<EnvScene, SetupError> {
 
         // Meshes into one pool, as the entities'.
         let mut vertex_bytes = Vec::new();
@@ -307,7 +332,7 @@ impl EnvScene {
             post: env.post,
             module,
             pipes: None,
-            pending: Some(pending),
+            pending: None,
             parts: parts_buffer,
             vertices,
             indices,
@@ -697,6 +722,24 @@ impl EnvScene {
             self.draw(ctx, cmd, pipelines, view_index, clip.to_cols_array_2d(), 2);
             device.cmd_end_rendering(cmd);
         });
+    }
+
+    /// Gives the scene's bindless slots back (`frame`: when it was last
+    /// used), for a scene replaced while the set lives on.
+    pub fn release(&self, bindless: &mut Bindless, frame: u64) {
+        for (_, index, _, _) in &self.textures {
+            bindless.remove_texture(*index, frame);
+        }
+        for (_, raw) in &self.raw_indices {
+            bindless.remove_texture(*raw, frame);
+        }
+        bindless.remove_texture(self.lightmap.1, frame);
+        bindless.remove_buffer(self.vertices.1, frame);
+        bindless.remove_buffer(self.parts.1, frame);
+        for p in [&self.pack, &self.pack_hand].into_iter().flatten() {
+            bindless.remove_buffer(p.instances.1, frame);
+            bindless.remove_buffer(p.meshes.1, frame);
+        }
     }
 
     pub fn destroy(mut self, ctx: &Context, memory: &Memory) {

@@ -793,6 +793,7 @@ impl TerrainScene {
                         .as_ref()
                         .map_or(Vec3::ZERO, |e| e.camera.0.w_axis.truncate()),
                     atlas_index,
+                    None,
                 )?)
             }
             Err(_) => None,
@@ -863,6 +864,44 @@ impl TerrainScene {
     }
 
     /// Whether the dump has fully streamed in.
+    /// Replaces the environment with a new snapshot's (the live renderer,
+    /// each frame), keeping its pipelines; returns the old scene, which
+    /// the caller frees once no frame in flight uses it.
+    #[allow(clippy::too_many_arguments, reason = "a scene's whole context")]
+    pub fn renew_env(
+        &mut self,
+        ctx: &Context,
+        memory: &Memory,
+        bindless: &mut Bindless,
+        pipelines: &Pipelines,
+        color_format: vk::Format,
+        snapshot: super::entity_dump::Environment,
+        eye: Vec3,
+    ) -> Result<Option<super::env::EnvScene>, SetupError> {
+        let mut old = self.env.take();
+        let new = super::env::EnvScene::new(
+            ctx,
+            memory,
+            bindless,
+            pipelines,
+            color_format,
+            snapshot,
+            eye,
+            self.atlas_index,
+            old.as_mut(),
+        );
+        match new {
+            Ok(scene) => {
+                self.env = Some(scene);
+                Ok(old)
+            }
+            Err(e) => {
+                self.env = old;
+                Err(e)
+            }
+        }
+    }
+
     /// Queues section changes the game made (the live renderer's feed).
     pub fn push(&mut self, records: Vec<Record>) {
         self.queue.extend(records);

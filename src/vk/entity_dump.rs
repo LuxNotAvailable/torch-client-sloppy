@@ -180,6 +180,50 @@ type HandDrawn<'a> = (
     &'a bevy::camera::visibility::RenderLayers,
 );
 
+/// Snapshots for the live renderer (`vk::live`), by file name, as the dump
+/// would write them; each taken once.
+static LIVE: std::sync::Mutex<Vec<(&'static str, Vec<u8>)>> = std::sync::Mutex::new(Vec::new());
+
+/// The latest snapshot named `name` (`entities.bin`, `env.bin`,
+/// `particles.bin`, `inputs.json`), if a new one came since the last take.
+pub fn take_live(name: &str) -> Option<Vec<u8>> {
+    let mut live = LIVE.lock().ok()?;
+    let at = live.iter().position(|(n, _)| *n == name)?;
+    Some(live.swap_remove(at).1)
+}
+
+/// Hands a snapshot to the live renderer, or writes it beside the dump
+/// (aside then renamed, so a reader never sees half of one).
+fn deliver(dir: Option<&std::path::Path>, name: &'static str, bytes: Vec<u8>) {
+    if super::live::wanted() {
+        if let Ok(mut live) = LIVE.lock() {
+            live.retain(|(n, _)| *n != name);
+            live.push((name, bytes));
+        }
+        return;
+    }
+    let Some(dir) = dir else { return };
+    let _ = std::fs::create_dir_all(dir);
+    let partial = dir.join(format!("{name}.part"));
+    if std::fs::write(&partial, &bytes).is_ok() {
+        let _ = std::fs::rename(&partial, dir.join(name));
+    }
+}
+
+/// Whether a writer runs this frame: every frame live, else every
+/// `EVERY` seconds.
+fn due(since: &mut f32, dt: f32) -> bool {
+    if super::live::wanted() {
+        return true;
+    }
+    *since += dt;
+    if *since < EVERY {
+        return false;
+    }
+    *since = 0.0;
+    true
+}
+
 /// Mesh and image data copied while they still sit in the main world.
 #[derive(Resource, Default)]
 struct Cache {
@@ -189,7 +233,7 @@ struct Cache {
 
 /// Adds the dump's systems when `MC_DUMP_TERRAIN` names a folder.
 pub fn plugin(app: &mut App) {
-    if super::terrain_dump::folder().is_none() {
+    if super::terrain_dump::folder().is_none() && !super::live::wanted() {
         return;
     }
     app.init_resource::<Cache>()
@@ -345,7 +389,7 @@ fn alpha_code(mode: AlphaMode) -> u32 {
 /// Writes `env.bin`: fog, clear colour, lightmap, sky parts and clouds.
 #[allow(clippy::too_many_arguments, reason = "a system's queries")]
 fn write_env(
-    dir: &std::path::Path,
+    dir: Option<&std::path::Path>,
     cache: &Cache,
     sky: &Query<SkyDrawn>,
     clouds: &Query<CloudDrawn, With<crate::renderer::clouds::CloudLayer>>,
@@ -567,10 +611,7 @@ fn write_env(
         0,
         0,
     ]));
-    let partial = dir.join("env.bin.part");
-    if std::fs::write(&partial, &out).is_ok() {
-        let _ = std::fs::rename(&partial, dir.join("env.bin"));
-    }
+    deliver(dir, "env.bin", out);
 }
 
 #[allow(clippy::too_many_arguments, reason = "a system's queries")]
@@ -603,14 +644,10 @@ fn write(
         Query<&GlobalTransform, With<crate::renderer::hand::HandCamera>>,
     ),
 ) {
-    *since += time.delta_secs();
-    if *since < EVERY {
+    if !due(&mut since, time.delta_secs()) {
         return;
     }
-    *since = 0.0;
-    let Some(dir) = super::terrain_dump::folder() else {
-        return;
-    };
+    let dir = super::terrain_dump::folder();
     let world = bevy::camera::visibility::RenderLayers::default();
     let mut instances = Vec::new();
     let mut used_meshes = Vec::new();
@@ -734,14 +771,17 @@ fn write(
     put(&(instances.len() as u32).to_le_bytes());
     put(bytemuck::cast_slice(&instances));
 
-    // Written aside then renamed, so a reader never sees half a snapshot.
-    let _ = std::fs::create_dir_all(&dir);
     // The game's own frame beside it, the ground truth for vkview
     // (`frames/0000.png` is the latest; one frame late, which a still
     // camera doesn't mind).
-    crate::renderer::screenshot::request_numbered(&mut commands, dir.join("frames"), 0);
+    if let Some(dir) = &dir
+        && !super::live::wanted()
+    {
+        let _ = std::fs::create_dir_all(dir);
+        crate::renderer::screenshot::request_numbered(&mut commands, dir.join("frames"), 0);
+    }
     write_env(
-        &dir,
+        dir.as_deref(),
         &cache,
         &sky,
         &clouds,
@@ -758,10 +798,7 @@ fn write(
         ),
         (&hand_parts, hand_camera.iter().next().map(|c| c.to_matrix().inverse())),
     );
-    let partial = dir.join("entities.bin.part");
-    if std::fs::write(&partial, &out).is_ok() {
-        let _ = std::fs::rename(&partial, dir.join("entities.bin"));
-    }
+    deliver(dir.as_deref(), "entities.bin", out);
 }
 
 /// A snapshot read back.
@@ -965,14 +1002,10 @@ fn write_particles(
     inputs: Option<Res<crate::renderer::packdraw::inputs::Inputs>>,
 ) {
     use crate::util::particles::draw::{SpriteTexture, live_sprites};
-    *since += time.delta_secs();
-    if *since < EVERY {
+    if !due(&mut since, time.delta_secs()) {
         return;
     }
-    *since = 0.0;
-    let Some(dir) = super::terrain_dump::folder() else {
-        return;
-    };
+    let dir = super::terrain_dump::folder();
     // Out of a world: keep the last snapshot taken in one (see `write`).
     if camera
         .iter()
@@ -983,8 +1016,7 @@ fn write_particles(
     }
     // The frame's pack inputs (time of day, sky, weather), for packs.
     if let Some(inputs) = inputs {
-        let _ = std::fs::create_dir_all(&dir);
-        let _ = std::fs::write(dir.join("inputs.json"), inputs.to_json().to_string());
+        deliver(dir.as_deref(), "inputs.json", inputs.to_json().to_string().into_bytes());
     }
     let (Some(live), Some(atlas)) = (live, atlas) else {
         return;
@@ -1047,11 +1079,7 @@ fn write_particles(
     }
     out.extend_from_slice(&(sprites.len() as u32).to_le_bytes());
     out.extend_from_slice(bytemuck::cast_slice(&sprites));
-    let _ = std::fs::create_dir_all(&dir);
-    let tmp = dir.join("particles.bin.tmp");
-    if std::fs::write(&tmp, &out).is_ok() {
-        let _ = std::fs::rename(&tmp, dir.join("particles.bin"));
-    }
+    deliver(dir.as_deref(), "particles.bin", out);
 }
 
 /// `particles.bin` as written: textures (id, width, height, RGBA8) and the

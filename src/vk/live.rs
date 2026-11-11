@@ -54,6 +54,11 @@ struct Live {
     uploads: ManuallyDrop<Uploads>,
     /// Made once the game has its block atlas.
     terrain: Option<TerrainScene>,
+    /// Scenes replaced by newer snapshots, freed once frames in flight are
+    /// past them: the frame they were replaced on.
+    retired: Vec<(super::env::EnvScene, u64)>,
+    /// The world camera's eye last frame.
+    eye: bevy::math::Vec3,
     frame: u64,
     size: (u32, u32),
     stale: bool,
@@ -92,6 +97,8 @@ fn setup(world: &mut World) -> Result<Live, SetupError> {
         gui: ManuallyDrop::new(gui),
         uploads: ManuallyDrop::new(uploads),
         terrain: None,
+        retired: Vec::new(),
+        eye: bevy::math::Vec3::ZERO,
         frame: 0,
         size,
         stale: false,
@@ -134,6 +141,9 @@ fn draw_frame(world: &mut World) {
     {
         live.size = size;
         live.stale = true;
+    }
+    if let Some(c) = camera {
+        live.eye = c.eye;
     }
     live.feed_terrain();
     live.draw(gui_frame.unwrap_or_default(), textures, camera);
@@ -186,6 +196,9 @@ impl Drop for Live {
             if let Some(t) = self.terrain.take() {
                 t.destroy(&self.ctx, &memory);
             }
+            for (scene, _) in self.retired.drain(..) {
+                scene.destroy(&self.ctx, &memory);
+            }
             ManuallyDrop::take(&mut self.uploads).destroy(&self.ctx, &memory);
             ManuallyDrop::take(&mut self.gui).destroy(&self.ctx, &memory);
             ManuallyDrop::take(&mut self.pipelines).destroy(&self.ctx);
@@ -229,6 +242,26 @@ impl Live {
                     error!("native renderer: terrain: {}", e.0);
                     return;
                 }
+            }
+        }
+        // What surrounds the world: this frame's snapshot, when one came.
+        if let (Some(t), Some(bytes)) = (&mut self.terrain, super::entity_dump::take_live("env.bin")) {
+            match super::entity_dump::read_env(&bytes) {
+                Ok(env) => {
+                    let format = self
+                        .swapchain
+                        .as_ref()
+                        .map_or(vk::Format::B8G8R8A8_SRGB, |s| s.format.format);
+                    match t.renew_env(&self.ctx, &self.memory, &mut self.bindless, &self.pipelines, format, env, self.eye) {
+                        Ok(Some(old)) => {
+                            old.release(&mut self.bindless, self.frame);
+                            self.retired.push((old, self.frame));
+                        }
+                        Ok(None) => {}
+                        Err(e) => error!("native renderer: env: {}", e.0),
+                    }
+                }
+                Err(e) => error!("native renderer: env: {e}"),
             }
         }
         let records = super::terrain_dump::take_live();
@@ -285,6 +318,15 @@ impl Live {
         };
         let slot = self.frames.index;
         self.bindless.recycle(self.frame);
+        // Scenes no frame in flight still reads (this slot's fence passed).
+        let now = self.frame;
+        let (done, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut self.retired)
+            .into_iter()
+            .partition(|(_, at)| now >= at + FRAMES_IN_FLIGHT as u64);
+        self.retired = keep;
+        for (scene, _) in done {
+            scene.destroy(&self.ctx, &self.memory);
+        }
         self.uploads.begin(slot);
         let rotation = swapchain.pre_rotation();
         let image = swapchain.images[recording.image_index as usize];
