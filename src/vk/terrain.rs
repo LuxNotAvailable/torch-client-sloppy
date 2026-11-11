@@ -167,6 +167,14 @@ impl Camera {
 }
 
 /// Which culling the terrain does, for comparing with each off.
+/// Where a scene's sections come from.
+pub enum Source<'a> {
+    /// A dump folder (`terrain_dump`), replayed.
+    Dump(&'a std::path::Path),
+    /// The running game: sections arrive through `TerrainScene::push`.
+    Live { atlas: image::RgbaImage },
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Options {
     pub hiz: bool,
@@ -542,16 +550,26 @@ impl TerrainScene {
         bindless: &mut Bindless,
         pipelines: &Pipelines,
         color_format: vk::Format,
-        dir: &std::path::Path,
+        source: Source,
         options: Options,
     ) -> Result<TerrainScene, SetupError> {
         let failed = |what: &str, e: &dyn std::fmt::Display| SetupError(format!("{what}: {e}"));
-        let bytes = std::fs::read(dir.join("sections.bin"))
-            .map_err(|e| failed("can't read sections.bin", &e))?;
-        let replay = Replay::new(bytes).map_err(|e| failed("bad sections.bin", &e))?;
-        let atlas = image::open(dir.join("atlas.png"))
-            .map_err(|e| failed("can't read atlas.png", &e))?
-            .into_rgba8();
+        let (dir, replay, atlas) = match source {
+            Source::Dump(dir) => {
+                let bytes = std::fs::read(dir.join("sections.bin"))
+                    .map_err(|e| failed("can't read sections.bin", &e))?;
+                let replay = Replay::new(bytes).map_err(|e| failed("bad sections.bin", &e))?;
+                let atlas = image::open(dir.join("atlas.png"))
+                    .map_err(|e| failed("can't read atlas.png", &e))?
+                    .into_rgba8();
+                (Some(dir), Some(replay), atlas)
+            }
+            Source::Live { atlas } => (None, None, atlas),
+        };
+        // A dump's other snapshots, when it has them.
+        let read = |name: &str| -> Result<Vec<u8>, ()> {
+            dir.ok_or(()).and_then(|d| std::fs::read(d.join(name)).map_err(|_| ()))
+        };
         let atlas_size = atlas.dimensions();
 
         let module = pipelines.module(ctx, super::shaders::TERRAIN)?;
@@ -728,7 +746,7 @@ impl TerrainScene {
             .ok_or_else(full)?;
 
         // The entity snapshot, when the game wrote one beside the terrain.
-        let entities = match std::fs::read(dir.join("entities.bin")) {
+        let entities = match read("entities.bin") {
             Ok(bytes) => {
                 let snapshot =
                     super::entity_dump::read(&bytes).map_err(|e| failed("bad entities.bin", &e))?;
@@ -744,7 +762,7 @@ impl TerrainScene {
             Err(_) => None,
         };
         // The live particles, as sprites.
-        let particles = match std::fs::read(dir.join("particles.bin")) {
+        let particles = match read("particles.bin") {
             Ok(bytes) => {
                 let snapshot = super::entity_dump::read_particles(&bytes)
                     .map_err(|e| failed("bad particles.bin", &e))?;
@@ -760,7 +778,7 @@ impl TerrainScene {
             Err(_) => None,
         };
         // And what surrounds the world: sky, clouds, fog, lightmap.
-        let env = match std::fs::read(dir.join("env.bin")) {
+        let env = match read("env.bin") {
             Ok(bytes) => {
                 let snapshot =
                     super::entity_dump::read_env(&bytes).map_err(|e| failed("bad env.bin", &e))?;
@@ -802,7 +820,7 @@ impl TerrainScene {
             entries: HashMap::new(),
             vis: HashMap::new(),
             queue: VecDeque::new(),
-            replay: Some(replay),
+            replay,
             visible,
             visible_bits: vec![0; slot_capacity as usize / 32],
             visible_dirty: true,
@@ -845,6 +863,11 @@ impl TerrainScene {
     }
 
     /// Whether the dump has fully streamed in.
+    /// Queues section changes the game made (the live renderer's feed).
+    pub fn push(&mut self, records: Vec<Record>) {
+        self.queue.extend(records);
+    }
+
     pub fn loaded(&self) -> bool {
         self.replay.is_none() && self.queue.is_empty()
     }
@@ -2131,6 +2154,8 @@ impl TerrainScene {
             .as_ref()
             .map_or([0.47, 0.65, 1.0, 1.0], |e| e.clear);
         let seconds = frame as f32 / 60.0;
+        // Two passes around the depth pyramid: it takes only what's opaque,
+        // or water (which writes depth) would hide what shows through it.
         graph.pass("terrain", &images, &buffers, |cmd| unsafe {
             // SAFETY: as above; the attachments are in the layouts the
             // graph just moved them to, and the query was reset.
@@ -2233,18 +2258,66 @@ impl TerrainScene {
                 // translucent draw needs its own back (its slot buffer
                 // index, or it reads past the entity buffer and the
                 // device is lost).
-                push(
-                    ctx,
-                    cmd,
-                    pipelines.layout,
-                    &Push {
-                        ids: [self.slots.index, view_index, 0, 0],
-                        more: [self.atlas_index, view.mode(), 0, 0],
-                        params: [0.0, 0.0, 0.0, water_alpha],
-                        view_proj: view_proj_cols,
-                    },
-                );
             }
+            device.cmd_end_rendering(cmd);
+        });
+
+        self.build_pyramid(
+            ctx,
+            memory,
+            bindless,
+            pipelines,
+            pipes.hiz_reduce,
+            graph,
+            (depth, depth_index),
+            extent,
+            frame,
+        )?;
+        self.pyramid_view = Some((view_proj, camera.eye));
+
+        graph.pass("terrain translucent", &images, &buffers, |cmd| unsafe {
+            // SAFETY: as the opaque pass; both attachments keep its output.
+            let colors = [vk::RenderingAttachmentInfo::default()
+                .image_view(color.1)
+                .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                .load_op(vk::AttachmentLoadOp::LOAD)
+                .store_op(vk::AttachmentStoreOp::STORE)];
+            let depth_attachment = vk::RenderingAttachmentInfo::default()
+                .image_view(depth_view)
+                .image_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
+                .load_op(vk::AttachmentLoadOp::LOAD)
+                .store_op(vk::AttachmentStoreOp::STORE);
+            device.cmd_begin_rendering(
+                cmd,
+                &vk::RenderingInfo::default()
+                    .render_area(vk::Rect2D {
+                        offset: vk::Offset2D::default(),
+                        extent,
+                    })
+                    .layer_count(1)
+                    .color_attachments(&colors)
+                    .depth_attachment(&depth_attachment),
+            );
+            set_viewport(ctx, cmd, extent);
+            device.cmd_bind_descriptor_sets(
+                cmd,
+                vk::PipelineBindPoint::GRAPHICS,
+                pipelines.layout,
+                0,
+                &[bindless.set],
+                &[],
+            );
+            push(
+                ctx,
+                cmd,
+                pipelines.layout,
+                &Push {
+                    ids: [self.slots.index, view_index, 0, 0],
+                    more: [self.atlas_index, view.mode(), 0, 0],
+                    params: [0.0, 0.0, 0.0, water_alpha],
+                    view_proj: view_proj_cols,
+                },
+            );
             // Translucent last, far to near over everything opaque.
             if self.translucent_count > 0 {
                 device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipes.translucent);
@@ -2294,19 +2367,6 @@ impl TerrainScene {
                 device.cmd_end_query(cmd, pool, 0);
             }
         });
-
-        self.build_pyramid(
-            ctx,
-            memory,
-            bindless,
-            pipelines,
-            pipes.hiz_reduce,
-            graph,
-            (depth, depth_index),
-            extent,
-            frame,
-        )?;
-        self.pyramid_view = Some((view_proj, camera.eye));
 
         match view {
             View::Depth => self.depth_view.record(

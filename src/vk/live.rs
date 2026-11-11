@@ -2,8 +2,9 @@
 //! on with `MC_RENDERER=native`: Bevy's renderer starts with no backend,
 //! and this plugin takes the primary window, draws each frame and presents.
 //!
-//! Step 1: the GUI (`gui::pool`'s painter output) over a clear colour. The
-//! world follows, fed live the way `vkview` reads its snapshots.
+//! Drawn: the terrain (`TerrainScene`, fed the game's section stream by
+//! `terrain_dump::take_live`, seen from the world camera), then the GUI
+//! (`gui::pool`'s painter output). Entities, sky and packs follow.
 
 use std::mem::ManuallyDrop;
 use std::sync::OnceLock;
@@ -18,6 +19,8 @@ use super::frame::{FRAMES_IN_FLIGHT, FrameError, Frames};
 use super::graph::{Graph, Use};
 use super::memory::{Buffer, Image, Memory};
 use super::pipeline::{GraphicsDesc, Pipelines, Push, push};
+use super::terrain::{Camera, TerrainScene};
+use super::upload::Uploads;
 use super::{Context, SetupError, Swapchain};
 
 /// Whether this run draws with the native renderer (`MC_RENDERER=native`).
@@ -48,6 +51,9 @@ struct Live {
     bindless: ManuallyDrop<Bindless>,
     pipelines: ManuallyDrop<Pipelines>,
     gui: ManuallyDrop<GuiPass>,
+    uploads: ManuallyDrop<Uploads>,
+    /// Made once the game has its block atlas.
+    terrain: Option<TerrainScene>,
     frame: u64,
     size: (u32, u32),
     stale: bool,
@@ -75,6 +81,7 @@ fn setup(world: &mut World) -> Result<Live, SetupError> {
         .as_ref()
         .map_or(vk::Format::B8G8R8A8_SRGB, |s| s.format.format);
     let gui = GuiPass::new(&ctx, &memory, &mut bindless, &pipelines, format)?;
+    let uploads = Uploads::new(&ctx, &memory, 16 << 20)?;
     Ok(Live {
         ctx,
         swapchain,
@@ -83,6 +90,8 @@ fn setup(world: &mut World) -> Result<Live, SetupError> {
         bindless: ManuallyDrop::new(bindless),
         pipelines: ManuallyDrop::new(pipelines),
         gui: ManuallyDrop::new(gui),
+        uploads: ManuallyDrop::new(uploads),
+        terrain: None,
         frame: 0,
         size,
         stale: false,
@@ -112,6 +121,11 @@ fn draw_frame(world: &mut World) {
         .get_resource::<crate::gui::pool::GuiFrames>()
         .map(|f| std::mem::take(&mut *f.0.lock()));
     let textures = gui_textures(world);
+    // Bevy's render world would take these; nothing does now.
+    if let Some(ops) = world.get_resource::<crate::renderer::terrain_pool::TerrainOps>() {
+        ops.0.lock().clear();
+    }
+    let camera = world_camera(world);
     let Some(mut live) = world.remove_non_send_resource::<Live>() else {
         return;
     };
@@ -121,8 +135,27 @@ fn draw_frame(world: &mut World) {
         live.size = size;
         live.stale = true;
     }
-    live.draw(gui_frame.unwrap_or_default(), textures);
+    live.feed_terrain();
+    live.draw(gui_frame.unwrap_or_default(), textures, camera);
     world.insert_non_send_resource(live);
+}
+
+/// The world camera as `terrain::Camera` (as `TerrainScene::game_camera`).
+fn world_camera(world: &mut World) -> Option<Camera> {
+    let mut q = world.query_filtered::<(&GlobalTransform, &Projection), With<crate::renderer::systems::WorldCamera>>();
+    let (transform, projection) = q.iter(world).next()?;
+    let Projection::Perspective(p) = projection else {
+        return None;
+    };
+    let eye = transform.translation();
+    // The camera looks down its -z.
+    let forward = transform.forward().as_vec3();
+    Some(Camera {
+        eye,
+        yaw: (-forward.x).atan2(forward.z).to_degrees(),
+        pitch: forward.y.clamp(-1.0, 1.0).asin().to_degrees(),
+        fov: p.fov.to_degrees(),
+    })
 }
 
 /// The GUI's textures as the main world holds them: atlas, unihex font.
@@ -150,6 +183,10 @@ impl Drop for Live {
         // SAFETY: each field is taken once, here, and not used after.
         unsafe {
             let memory = ManuallyDrop::take(&mut self.memory);
+            if let Some(t) = self.terrain.take() {
+                t.destroy(&self.ctx, &memory);
+            }
+            ManuallyDrop::take(&mut self.uploads).destroy(&self.ctx, &memory);
             ManuallyDrop::take(&mut self.gui).destroy(&self.ctx, &memory);
             ManuallyDrop::take(&mut self.pipelines).destroy(&self.ctx);
             ManuallyDrop::take(&mut self.bindless).destroy(&self.ctx);
@@ -164,6 +201,44 @@ impl Drop for Live {
 }
 
 impl Live {
+    /// Makes the terrain once the atlas exists, then queues the game's
+    /// section changes into it.
+    fn feed_terrain(&mut self) {
+        if self.terrain.is_none() {
+            let Some((w, h, rgba)) = super::terrain_dump::live_atlas() else {
+                return;
+            };
+            let Some(atlas) = image::RgbaImage::from_raw(w, h, rgba) else {
+                return;
+            };
+            let format = self
+                .swapchain
+                .as_ref()
+                .map_or(vk::Format::B8G8R8A8_SRGB, |s| s.format.format);
+            match TerrainScene::new(
+                &self.ctx,
+                &self.memory,
+                &mut self.bindless,
+                &self.pipelines,
+                format,
+                super::terrain::Source::Live { atlas },
+                terrain_options(),
+            ) {
+                Ok(t) => self.terrain = Some(t),
+                Err(e) => {
+                    error!("native renderer: terrain: {}", e.0);
+                    return;
+                }
+            }
+        }
+        let records = super::terrain_dump::take_live();
+        if let Some(t) = &mut self.terrain
+            && !records.is_empty()
+        {
+            t.push(records);
+        }
+    }
+
     fn recreate(&mut self) {
         self.ctx.idle();
         match Swapchain::new(&self.ctx, self.size, true, self.swapchain.as_ref()) {
@@ -179,7 +254,12 @@ impl Live {
         }
     }
 
-    fn draw(&mut self, gui: crate::gui::pool::GuiFrame, textures: Option<[(u32, u32, vk::Format, Vec<u8>); 2]>) {
+    fn draw(
+        &mut self,
+        gui: crate::gui::pool::GuiFrame,
+        textures: Option<[(u32, u32, vk::Format, Vec<u8>); 2]>,
+        camera: Option<Camera>,
+    ) {
         if self.stale {
             self.recreate();
             if self.stale {
@@ -205,11 +285,35 @@ impl Live {
         };
         let slot = self.frames.index;
         self.bindless.recycle(self.frame);
+        self.uploads.begin(slot);
+        let rotation = swapchain.pre_rotation();
         let image = swapchain.images[recording.image_index as usize];
         let view = swapchain.views[recording.image_index as usize];
         let extent = swapchain.extent;
         let mut graph = Graph::new(&self.ctx, recording.commands, None);
         graph.image(image, vk::ImageAspectFlags::COLOR, vk::ImageLayout::UNDEFINED);
+        // The world, when there's one to see.
+        let mut drew_world = false;
+        if let (Some(terrain), Some(camera)) = (&mut self.terrain, camera) {
+            match terrain.record(
+                &self.ctx,
+                &self.memory,
+                &mut self.bindless,
+                &self.pipelines,
+                &mut self.uploads,
+                &mut graph,
+                (image, view),
+                extent,
+                rotation,
+                self.frame,
+                slot,
+                camera,
+                super::test_scene::View::Shaded,
+            ) {
+                Ok(()) => drew_world = true,
+                Err(e) => error!("native renderer: terrain: {}", e.0),
+            }
+        }
         if let Err(e) = self.gui.record(
             &self.ctx,
             &self.memory,
@@ -220,6 +324,7 @@ impl Live {
             (image, view, extent),
             gui,
             textures,
+            !drew_world,
         ) {
             error!("native renderer: gui: {}", e.0);
         }
@@ -331,6 +436,7 @@ impl GuiPass {
         output: (vk::Image, vk::ImageView, vk::Extent2D),
         frame: crate::gui::pool::GuiFrame,
         textures: Option<[(u32, u32, vk::Format, Vec<u8>); 2]>,
+        clear: bool,
     ) -> Result<(), SetupError> {
         let device = &ctx.device;
         // Uploads: the white texel once, the GUI textures once they exist.
@@ -456,7 +562,7 @@ impl GuiPass {
             let color = [vk::RenderingAttachmentInfo::default()
                 .image_view(view)
                 .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                .load_op(vk::AttachmentLoadOp::CLEAR)
+                .load_op(if clear { vk::AttachmentLoadOp::CLEAR } else { vk::AttachmentLoadOp::LOAD })
                 .clear_value(vk::ClearValue {
                     color: vk::ClearColorValue { float32: [0.0, 0.0, 0.0, 1.0] },
                 })
@@ -504,4 +610,24 @@ impl GuiPass {
         });
         Ok(())
     }
+}
+
+/// Terrain options, with stages turned off by `MC_NATIVE_TERRAIN`
+/// (comma list: `nohiz`, `novis`, `nobuckets`, `nopacked`), for bisecting.
+fn terrain_options() -> super::terrain::Options {
+    let mut o = super::terrain::Options::default();
+    let flags = std::env::var("MC_NATIVE_TERRAIN").unwrap_or_default();
+    for flag in flags.split(',').map(str::trim) {
+        match flag {
+            "nohiz" => o.hiz = false,
+            "novis" => o.visibility = false,
+            "nobuckets" => o.buckets = false,
+            "nopacked" => o.packed = false,
+            _ => {}
+        }
+    }
+    if !flags.is_empty() {
+        info!("native renderer: terrain options {o:?}");
+    }
+    o
 }

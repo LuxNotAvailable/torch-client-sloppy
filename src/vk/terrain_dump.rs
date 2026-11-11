@@ -40,8 +40,36 @@ pub(crate) fn folder() -> Option<std::path::PathBuf> {
         .clone()
 }
 
+/// The live renderer's feed (`vk::live`): records since its last frame.
+static LIVE: Mutex<Vec<Record>> = Mutex::new(Vec::new());
+/// The block atlas, for the live renderer: width, height, RGBA.
+static LIVE_ATLAS: Mutex<Option<(u32, u32, Vec<u8>)>> = Mutex::new(None);
+
+/// Records the game stored or dropped since the last call.
+pub fn take_live() -> Vec<Record> {
+    LIVE.lock().map(|mut l| std::mem::take(&mut *l)).unwrap_or_default()
+}
+
+/// The block atlas, once the game has made it.
+pub fn live_atlas() -> Option<(u32, u32, Vec<u8>)> {
+    LIVE_ATLAS.lock().ok()?.clone()
+}
+
+fn live(record: Record) {
+    if super::live::wanted()
+        && let Ok(mut l) = LIVE.lock()
+    {
+        l.push(record);
+    }
+}
+
 /// Saves the block atlas's top level, once at startup.
 pub fn atlas(width: u32, height: u32, rgba: &[u8]) {
+    if super::live::wanted()
+        && let Ok(mut a) = LIVE_ATLAS.lock()
+    {
+        *a = Some((width, height, rgba.to_vec()));
+    }
     let Some(dir) = folder() else { return };
     let _ = std::fs::create_dir_all(&dir);
     let bytes = (width * height * 4) as usize;
@@ -58,6 +86,22 @@ pub fn atlas(width: u32, height: u32, rgba: &[u8]) {
 
 /// Appends one stored section's opaque and translucent meshes.
 pub fn section(origin: [i32; 3], vis: VisibilitySet, meshes: &[MeshBuf; 2]) {
+    if super::live::wanted() {
+        for (layer, mesh) in meshes.iter().enumerate() {
+            live(Record::Layer(Section {
+                origin,
+                water: layer == 1,
+                vis,
+                verts: mesh.verts.clone(),
+                idx: mesh.idx.clone(),
+                cutout_idx: mesh.cutout_idx.clone(),
+                #[cfg(feature = "shader_support")]
+                pack: bytemuck::cast_slice(&mesh.pack).to_vec(),
+                #[cfg(not(feature = "shader_support"))]
+                pack: Vec::new(),
+            }));
+        }
+    }
     for (layer, mesh) in meshes.iter().enumerate() {
         record(origin, layer as u8, vis.bits(), mesh);
     }
@@ -65,6 +109,7 @@ pub fn section(origin: [i32; 3], vis: VisibilitySet, meshes: &[MeshBuf; 2]) {
 
 /// Records that the column at chunk `(cx, cz)` was unloaded.
 pub fn column_dropped(cx: i32, cz: i32) {
+    live(Record::Dropped { cx, cz });
     record([cx * 16, 0, cz * 16], DROPPED, 0, &MeshBuf::default());
 }
 

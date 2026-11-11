@@ -83,6 +83,8 @@ struct Options {
     sheet_every: u64,
     step: Option<f32>,
     headless: bool,
+    /// `--turn DEG`: the camera turns this many degrees a second.
+    turn: f32,
 }
 
 fn options(args: Vec<String>) -> Options {
@@ -100,6 +102,7 @@ fn options(args: Vec<String>) -> Options {
         camera: None,
         terrain_options: terrain::Options::default(),
         game_camera: false,
+        turn: 0.0,
         greedy: false,
         sheet: None,
         sheet_tile: (160, 90),
@@ -127,6 +130,7 @@ fn options(args: Vec<String>) -> Options {
             "--sheet" => options.sheet = args.next(),
             "--headless" => options.headless = true,
             "--step" => options.step = args.next().and_then(|v| v.parse().ok()),
+            "--turn" => options.turn = args.next().and_then(|v| v.parse().ok()).unwrap_or(90.0),
             "--sheet-tile" => {
                 if let Some((w, h)) = args.next().as_deref().and_then(|v| v.split_once('x')) {
                     options.sheet_tile = (w.parse().unwrap_or(160), h.parse().unwrap_or(90));
@@ -283,6 +287,7 @@ struct Renderer {
     /// repeat frame for frame.
     step: Option<f32>,
     game_camera: bool,
+    turn: f32,
 }
 
 impl Renderer {
@@ -374,7 +379,7 @@ impl Renderer {
                     &mut bindless,
                     &pipelines,
                     format,
-                    dir,
+                    crate::vk::terrain::Source::Dump(dir),
                     options.terrain_options,
                 )?),
                 options.camera,
@@ -469,6 +474,7 @@ impl Renderer {
             barriers: 0,
             cpu_ms: Vec::new(),
             step: options.step,
+            turn: options.turn,
             game_camera: options.game_camera,
         })
     }
@@ -650,6 +656,7 @@ impl Renderer {
                 let camera = camera
                     .or_else(|| self.game_camera.then(|| scene.game_camera()).flatten())
                     .unwrap_or_else(|| scene.default_camera(seconds));
+                let camera = crate::vk::terrain::Camera { yaw: camera.yaw + self.turn * seconds, ..camera };
                 scene.record(
                     &self.ctx,
                     memory,
@@ -677,6 +684,7 @@ impl Renderer {
                     let c = camera
                         .or_else(|| self.game_camera.then(|| terrain.game_camera()).flatten())
                         .unwrap_or_else(|| terrain.default_camera(seconds));
+                    let c = crate::vk::terrain::Camera { yaw: c.yaw + self.turn * seconds, ..c };
                     (
                         bevy::math::Mat4::look_to_rh(c.eye, c.forward(), bevy::math::Vec3::Y).inverse(),
                         c.fov.to_radians(),

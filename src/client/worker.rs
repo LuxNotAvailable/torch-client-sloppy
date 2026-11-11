@@ -837,8 +837,10 @@ fn mesh_section<'c>(
                         continue;
                     }
                     let z = z_base + lz as i32;
+                    // A state the section took after `fill_occupancy` read it
+                    // (a block update mid-job): skipped, as the update
+                    // re-meshes the section.
                     let Some(rb) = cache.peek(state) else {
-                        debug_assert!(false, "{state:?} was not resolved by fill_occupancy");
                         continue;
                     };
                     if rb.is_solid && occ.enclosed(x, y, z) {
