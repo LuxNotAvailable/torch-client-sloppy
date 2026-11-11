@@ -19,6 +19,10 @@ pub struct Occupancy {
     emissive: Vec<u64>,
     fluid: Vec<u8>,
     cull_group: Vec<u32>,
+    /// Each cell's side coverage (`blocks::shape`), by table index.
+    shape: Vec<u32>,
+    /// The shape table, as of when the cells were filled.
+    shapes: std::sync::Arc<Vec<crate::blocks::shape::Sides>>,
     biome: Vec<u8>,
     /// Biomes by quart (4 blocks a side, as chunks store them) over the
     /// window and 8 blocks around it, for biome blending (`blend`).
@@ -43,6 +47,8 @@ impl Occupancy {
             emissive: Vec::new(),
             fluid: Vec::new(),
             cull_group: Vec::new(),
+            shape: Vec::new(),
+            shapes: Default::default(),
             biome: Vec::new(),
             quarts: Vec::new(),
             quart_x0: 0,
@@ -74,6 +80,8 @@ impl Occupancy {
         self.light.resize(cells, 0xF0);
         self.cull_group.clear();
         self.cull_group.resize(cells, 0);
+        self.shape.clear();
+        self.shape.resize(cells, 0);
         self.biome.clear();
         self.biome.resize(cells, u8::MAX);
         self.quart_x0 = (x_base - BLEND_REACH).div_euclid(4);
@@ -304,6 +312,34 @@ impl Occupancy {
     }
 
     #[inline]
+    pub fn set_shape(&mut self, x: i32, y: i32, z: i32, shape: u32) {
+        if shape != 0
+            && let Some(i) = self.index(x, y, z)
+        {
+            self.shape[i] = shape;
+        }
+    }
+
+    /// Takes the shape table every cell's index points into; call once
+    /// the cells are filled.
+    pub fn take_shapes(&mut self) {
+        self.shapes = crate::blocks::shape::shapes();
+    }
+
+    /// Whether the block at (x, y, z) covers `face` on its `side`: the
+    /// side facing back at the block the face belongs to.
+    pub fn side_covers(&self, x: i32, y: i32, z: i32, side: usize, face: &crate::blocks::shape::Mask) -> bool {
+        let Some(i) = self.index(x, y, z) else {
+            return false;
+        };
+        let shape = self.shape[i];
+        shape != 0
+            && self
+                .shapes
+                .get(shape as usize)
+                .is_some_and(|sides| crate::blocks::shape::covers(&sides[side], face))
+    }
+
     pub fn same_cull_group(&self, x: i32, y: i32, z: i32, group: u32) -> bool {
         if group == 0 {
             return false;

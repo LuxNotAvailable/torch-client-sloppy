@@ -11,6 +11,7 @@ pub mod facing;
 pub mod info;
 pub mod rand;
 pub mod rotation;
+pub mod shape;
 pub mod state;
 pub mod tags;
 

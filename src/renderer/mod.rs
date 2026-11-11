@@ -139,6 +139,9 @@ pub struct RenderedBlock {
     pub offset: crate::blocks::rand::ShapeOffset,
     pub state: u16,
     pub translucent: bool,
+    /// Its sides' coverage, an index into `blocks::shape::shapes`; 0 for
+    /// none.
+    pub shape: u32,
 }
 
 pub struct PendingSection {

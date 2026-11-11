@@ -663,6 +663,13 @@ fn emit_baked(
                 if occ.is_solid(nx, ny, nz) {
                     continue;
                 }
+                // Covered by the neighbour's facing side (a stair's back, a
+                // slab beside a slab).
+                if let Some(face) = crate::blocks::shape::footprint(&quad.pos, cull as usize)
+                    && occ.side_covers(nx, ny, nz, cull as usize ^ 1, &face)
+                {
+                    continue;
+                }
                 let neighbour_in_group = occ.same_cull_group(nx, ny, nz, rb.cull_group);
                 if rb.cull_group == crate::util::block_model::LEAVES_CULL_GROUP {
                     // Between two leaves one face of the pair is enough, and a face

@@ -858,3 +858,53 @@ fn translucent_blocks_mesh_into_the_translucent_layer() {
         assert!(!translucent.is_empty(), "{kind:?} drew nothing translucent");
     }
 }
+
+/// The baked sides of the first state of `name` whose properties include
+/// every pair in `want`.
+fn sides_of_state(name: &str, want: &[(&str, &str)]) -> super::shape::Sides {
+    use azalea::block::{BlockState, BlockTrait};
+    atlas_once();
+    for id in 0..=BlockState::MAX_STATE {
+        let Ok(state) = BlockState::try_from(id) else {
+            continue;
+        };
+        let block: Box<dyn BlockTrait> = Box::<dyn BlockTrait>::from(state);
+        if block.id() != name {
+            continue;
+        }
+        let map = block.property_map();
+        if want.iter().all(|(k, v)| map.get(k) == Some(v)) {
+            let baked = super::registry().baked(state.id(), name, &map);
+            return super::shape::sides_of(&baked);
+        }
+    }
+    panic!("no {name} state with {want:?}");
+}
+
+#[test]
+fn shapes_cover_what_vanilla_culls_against() {
+    use super::shape::covers;
+    const FULL: super::shape::Mask = [u64::MAX; 4];
+    // A stair's back (facing east: its back is east) and bottom are full.
+    let stair = sides_of_state(
+        "oak_stairs",
+        &[("facing", "east"), ("half", "bottom"), ("shape", "straight")],
+    );
+    assert_eq!(stair[5], FULL, "back");
+    assert_eq!(stair[0], FULL, "bottom");
+    // Its side is the lower half and the back's upper half: covered by the
+    // same side of a stair beside it, not full.
+    assert_ne!(stair[2], FULL);
+    assert!(covers(&stair[3], &stair[2]), "two stairs side by side");
+    // A bottom slab: full bottom, half sides that match a neighbour's.
+    let slab = sides_of_state("oak_slab", &[("type", "bottom")]);
+    assert_eq!(slab[0], FULL);
+    assert_eq!(slab[1], [0; 4], "its top is mid-block");
+    assert!(covers(&slab[4], &slab[5]), "slab beside slab");
+    // A path's bottom is full; its top is below the cell's.
+    let path = sides_of_state("dirt_path", &[]);
+    assert_eq!(path[0], FULL);
+    assert_eq!(path[1], [0; 4]);
+    // Glass covers nothing: a see-through face hides nothing behind it.
+    assert_eq!(sides_of_state("glass", &[]), [[0; 4]; 6]);
+}

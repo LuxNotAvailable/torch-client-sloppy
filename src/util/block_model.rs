@@ -168,6 +168,7 @@ pub fn block_visual(state: azalea::block::BlockState) -> RenderedBlock {
             offset: ShapeOffset::None,
             state: state.id(),
             translucent: false,
+            shape: 0,
         };
     }
 
@@ -199,10 +200,19 @@ pub fn block_visual(state: azalea::block::BlockState) -> RenderedBlock {
             offset: ShapeOffset::None,
             state: state.id(),
             translucent: false,
+            shape: 0,
         };
     }
 
     let baked = crate::blocks::registry().baked(state.id(), name, &props);
+    let offset = ShapeOffset::for_block(name);
+    // What its sides cover of a neighbour's faces; a block drawn off its
+    // cell (an offset flower) or in a see-through layer covers nothing.
+    let shape = if offset == ShapeOffset::None && !translucent_layer(name) {
+        crate::blocks::shape::intern(crate::blocks::shape::sides_of(&baked))
+    } else {
+        0
+    };
     let is_solid = baked.is_solid;
     let full_cube = baked.full_cube;
     let light = crate::lighting::props::of(state);
@@ -216,9 +226,10 @@ pub fn block_visual(state: azalea::block::BlockState) -> RenderedBlock {
             && (IMPLICIT_WATER.contains(&name) || bool_prop(&props, "waterlogged")),
         cull_group,
         tint_kind,
-        offset: ShapeOffset::for_block(name),
+        offset,
         state: state.id(),
         translucent: translucent_layer(name),
+        shape,
     }
 }
 
@@ -300,6 +311,8 @@ fn modded_visual(state: azalea::block::BlockState) -> RenderedBlock {
         offset: ShapeOffset::None,
         state: state.id(),
         translucent: false,
+        // A stand-in cube is solid, which culls its neighbours already.
+        shape: 0,
     }
 }
 
