@@ -243,6 +243,13 @@ pub(crate) fn allow_display_view(image: &mut Image) {
     }
 }
 
+fn native_renderer() -> bool {
+    #[cfg(feature = "vulkan")]
+    return crate::vk::live::wanted();
+    #[cfg(not(feature = "vulkan"))]
+    false
+}
+
 pub(crate) struct ShaderPackPlugin;
 
 impl Plugin for ShaderPackPlugin {
@@ -253,7 +260,8 @@ impl Plugin for ShaderPackPlugin {
                 (install::sync_compiled_pack, install::sync_pack_vertices).chain(),
                 inputs::gather_inputs
                     .after(crate::renderer::frame_view::FrameViewSystems)
-                    .run_if(resource_exists::<install::CompiledPack>),
+                    // The native renderer runs packs without the game's compile.
+                    .run_if(resource_exists::<install::CompiledPack>.or(native_renderer)),
                 sync_render_scale,
             ),
         );

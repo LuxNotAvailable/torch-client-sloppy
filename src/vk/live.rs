@@ -61,6 +61,14 @@ struct Live {
     eye: bevy::math::Vec3,
     /// The inventory's player figure, drawn offscreen for the GUI.
     figure: Figure,
+    /// The shader pack drawing the frame, when one is chosen: its name and
+    /// screen, the size it was made for.
+    pack: Option<(String, super::pack::screen::PackScreen, vk::Extent2D)>,
+    /// When the chosen pack was last looked up, and the name found.
+    pack_checked: Option<(std::time::Instant, Option<String>)>,
+    /// The frame's pack inputs (time of day, weather, the eye's light).
+    pack_inputs: Option<crate::renderer::packdraw::inputs::Inputs>,
+    started: std::time::Instant,
     frame: u64,
     size: (u32, u32),
     stale: bool,
@@ -102,6 +110,10 @@ fn setup(world: &mut World) -> Result<Live, SetupError> {
         retired: Vec::new(),
         eye: bevy::math::Vec3::ZERO,
         figure: Figure::default(),
+        pack: None,
+        pack_checked: None,
+        pack_inputs: None,
+        started: std::time::Instant::now(),
         frame: 0,
         size,
         stale: false,
@@ -156,6 +168,7 @@ fn draw_frame(world: &mut World) {
         live.eye = c.eye;
     }
     live.feed_terrain();
+    live.update_pack();
     live.figure.view = figure_view;
     live.draw(gui_frame.unwrap_or_default(), textures, camera);
     world.insert_non_send_resource(live);
@@ -246,6 +259,9 @@ impl Drop for Live {
                 scene.destroy(&self.ctx, &memory);
             }
             std::mem::take(&mut self.figure).destroy(&self.ctx, &memory);
+            if let Some((_, pack, _)) = self.pack.take() {
+                pack.destroy(&self.ctx, &memory);
+            }
             ManuallyDrop::take(&mut self.uploads).destroy(&self.ctx, &memory);
             ManuallyDrop::take(&mut self.gui).destroy(&self.ctx, &memory);
             ManuallyDrop::take(&mut self.pipelines).destroy(&self.ctx);
@@ -359,9 +375,88 @@ impl Live {
                 Err(e) => fail("figure", e),
             }
         }
+        if let Some(bytes) = dump::take_live("inputs.json")
+            && let Ok(value) = serde_json::from_slice(&bytes)
+        {
+            self.pack_inputs = Some(crate::renderer::packdraw::inputs::Inputs::from_json(&value));
+        }
+        // A pack draws the sky and hand as its own entities: renewed with
+        // the environment.
+        if let Some((_, pack, _)) = &self.pack
+            && let Err(e) = t.pack_sky(
+                ctx,
+                memory,
+                bindless,
+                pack.sun_path_rotation(),
+                self.pack_inputs.as_ref().map_or([0.0, 15.0], |i| [i.eye_light.x as f32, i.eye_light.y as f32]),
+            )
+        {
+            fail("pack sky", e.0);
+        }
         for scene in old {
             scene.release(bindless, self.frame);
             self.retired.push((scene, self.frame));
+        }
+    }
+
+    /// Keeps the pack in step with the one chosen (looked up once a
+    /// second) and the swapchain's size.
+    fn update_pack(&mut self) {
+        let now = std::time::Instant::now();
+        let stale = self
+            .pack_checked
+            .as_ref()
+            .is_none_or(|(at, _)| now.duration_since(*at).as_secs_f32() > 1.0);
+        if stale {
+            let name = crate::platform::storage::SHADER_PACK
+                .load()
+                .map(|p| p.trim().to_owned())
+                .filter(|p| !p.is_empty());
+            self.pack_checked = Some((now, name));
+        }
+        let wanted = self.pack_checked.as_ref().and_then(|(_, n)| n.clone());
+        let extent = self.swapchain.as_ref().map(|s| s.extent);
+        let current = self.pack.as_ref().map(|(n, _, e)| (n.clone(), *e));
+        if current.as_ref().map(|(n, e)| (Some(n.clone()), Some(*e))) == Some((wanted.clone(), extent))
+            || (current.is_none() && wanted.is_none())
+        {
+            return;
+        }
+        let (Some(terrain), Some(extent), Some(swapchain)) = (&self.terrain, extent, &self.swapchain) else {
+            return;
+        };
+        self.ctx.idle();
+        if let Some((_, old, _)) = self.pack.take() {
+            old.destroy(&self.ctx, &self.memory);
+        }
+        let Some(name) = wanted else { return };
+        let installed = match super::pack::load(&name, false) {
+            Ok(i) => i,
+            Err(e) => {
+                error!("native renderer: pack {name}: {e}");
+                // Don't retry every frame.
+                self.pack_checked = Some((now, None));
+                return;
+            }
+        };
+        match super::pack::screen::PackScreen::new(
+            &self.ctx,
+            &self.memory,
+            &mut self.bindless,
+            &self.pipelines,
+            installed,
+            extent,
+            swapchain.format.format,
+            Some(&terrain.pack_geometry()),
+        ) {
+            Ok(screen) => {
+                info!("native renderer: pack {name}: {}", screen.describe());
+                self.pack = Some((name, screen, extent));
+            }
+            Err(e) => {
+                error!("native renderer: pack {name}: {}", e.0);
+                self.pack_checked = Some((now, None));
+            }
         }
     }
 
@@ -447,6 +542,44 @@ impl Live {
             ) {
                 Ok(()) => drew_world = true,
                 Err(e) => error!("native renderer: terrain: {}", e.0),
+            }
+            if let Some((_, pack, _)) = &mut self.pack {
+                if let Some(inputs) = self.pack_inputs {
+                    pack.inputs = inputs;
+                }
+                let world_from_view =
+                    bevy::math::Mat4::look_to_rh(camera.eye, camera.forward(), bevy::math::Vec3::Y).inverse();
+                let pack_view = (world_from_view, camera.fov.to_radians());
+                let seconds = self.started.elapsed().as_secs_f32();
+                if let Some((light, eye)) = pack.begin_frame(pack_view, extent, seconds)
+                    && let Err(e) = terrain.record_shadow_cull(
+                        &self.ctx,
+                        &self.memory,
+                        &mut self.bindless,
+                        &self.pipelines,
+                        &mut graph,
+                        slot,
+                        self.frame,
+                        light,
+                        eye,
+                    )
+                {
+                    error!("native renderer: shadow cull: {}", e.0);
+                }
+                let geometry = terrain.pack_geometry();
+                pack.record(
+                    &self.ctx,
+                    &self.memory,
+                    &mut self.bindless,
+                    &self.pipelines,
+                    &mut graph,
+                    (image, view, extent),
+                    pack_view,
+                    self.frame,
+                    slot,
+                    seconds,
+                    Some(&geometry),
+                );
             }
         }
         let figure = match self.figure.record(
@@ -803,7 +936,11 @@ impl GuiPass {
 /// Terrain options, with stages turned off by `MC_NATIVE_TERRAIN`
 /// (comma list: `nohiz`, `novis`, `nobuckets`, `nopacked`), for bisecting.
 fn terrain_options() -> super::terrain::Options {
-    let mut o = super::terrain::Options::default();
+    // Packs read raw vertices, not the compact quad records.
+    let mut o = super::terrain::Options {
+        packed: false,
+        ..Default::default()
+    };
     let flags = std::env::var("MC_NATIVE_TERRAIN").unwrap_or_default();
     for flag in flags.split(',').map(str::trim) {
         match flag {
