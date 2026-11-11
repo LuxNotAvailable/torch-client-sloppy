@@ -88,6 +88,8 @@ pub struct EntityScene {
     /// bindless texture, blended.
     pack_draws: Vec<(u32, u32, i32, u32, bool)>,
     glint: Option<(Image, u32)>,
+    /// The textures' UNORM views' bindless indices (pack draws).
+    raw_textures: Vec<u32>,
     /// Everything staged at load, the textures' offsets in it, and the
     /// frame it was copied in.
     staging: Option<(Buffer, Vec<u64>, Option<u64>)>,
@@ -109,6 +111,12 @@ pub struct EntityScene {
 /// Vanilla's armor glint texture, as the game loads it; none if the assets
 /// lack it (the glint is then off, as in the game).
 fn load_glint() -> Option<(u32, u32, Vec<u8>)> {
+    // Read once: live scenes are rebuilt each frame.
+    static GLINT: std::sync::OnceLock<Option<(u32, u32, Vec<u8>)>> = std::sync::OnceLock::new();
+    GLINT.get_or_init(read_glint).clone()
+}
+
+fn read_glint() -> Option<(u32, u32, Vec<u8>)> {
     let file = crate::assets_root().join("textures/misc/enchanted_glint_armor.png");
     let rgba = crate::platform::assets::open_image(&file).ok()?.to_rgba8();
     Some((rgba.width(), rgba.height(), rgba.into_raw()))
@@ -126,8 +134,20 @@ impl EntityScene {
         pipelines: &Pipelines,
         color_format: vk::Format,
         snapshot: Snapshot,
+        reuse: Option<&mut EntityScene>,
     ) -> Result<EntityScene, SetupError> {
-        let module = pipelines.module(ctx, super::shaders::ENTITY)?;
+        // Take the old scene's shader and pipelines instead of building them.
+        let reused = reuse.map(|old| {
+            (
+                std::mem::replace(&mut old.module, vk::ShaderModule::null()),
+                old.pipes.take(),
+                old.pending.take(),
+            )
+        });
+        let module = match &reused {
+            Some((m, ..)) => *m,
+            None => pipelines.module(ctx, super::shaders::ENTITY)?,
+        };
         let stream = |fragment: &std::ffi::CStr, depth_write, compare, blend, additive| {
             Spec::Graphics(GraphicsSpec {
                 module,
@@ -146,7 +166,10 @@ impl EntityScene {
                 fragment_module: None,
             })
         };
-        let pending = pipelines.build_on_worker(
+        // A scene renewed each frame (live) keeps its pipelines.
+        let pending = match reused {
+            Some(_) => None,
+            None => Some(pipelines.build_on_worker(
             ctx,
             vec![
                 Spec::Compute {
@@ -172,7 +195,8 @@ impl EntityScene {
                     true,
                 ),
             ],
-        );
+        )),
+        };
 
         // One vertex and one index pool; a range per mesh (4.2).
         let mut vertex_bytes = Vec::new();
@@ -399,8 +423,11 @@ impl EntityScene {
         Ok(EntityScene {
             camera: (snapshot.camera, snapshot.fov),
             module,
-            pipes: None,
-            pending: Some(pending),
+            pipes: reused.as_ref().and_then(|r| r.1),
+            pending: match reused {
+                Some((_, _, p)) => p,
+                None => pending,
+            },
             instances,
             meshes,
             bounds: bounds_buffer,
@@ -413,6 +440,7 @@ impl EntityScene {
             readback,
             textures,
             pack_draws,
+            raw_textures: raw_indices.iter().map(|(_, r)| *r).collect(),
             glint,
             staging: Some((staging, texture_offsets, None)),
             staged_at: [
@@ -829,6 +857,29 @@ impl EntityScene {
             draws: self.pack_draws.clone(),
             blended,
             textures: self.textures.iter().map(|(i, _)| i.raw).collect(),
+        }
+    }
+
+    /// Gives the scene's bindless slots back (`frame`: when it was last
+    /// used), for a scene replaced while the set lives on.
+    pub fn release(&self, bindless: &mut Bindless, frame: u64) {
+        for (_, i) in [
+            &self.instances,
+            &self.meshes,
+            &self.bounds,
+            &self.vertices,
+            &self.parts,
+            &self.ranks,
+            &self.commands,
+            &self.counts,
+        ] {
+            bindless.remove_buffer(*i, frame);
+        }
+        for (_, i) in self.textures.iter().chain(&self.glint) {
+            bindless.remove_texture(*i, frame);
+        }
+        for i in &self.raw_textures {
+            bindless.remove_texture(*i, frame);
         }
     }
 

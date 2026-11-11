@@ -66,8 +66,20 @@ impl ParticleScene {
         pipelines: &Pipelines,
         color_format: vk::Format,
         snapshot: ParticleSnapshot,
+        reuse: Option<&mut ParticleScene>,
     ) -> Result<ParticleScene, SetupError> {
-        let module = pipelines.module(ctx, super::shaders::PARTICLE)?;
+        // Take the old scene's shader and pipelines instead of building them.
+        let reused = reuse.map(|old| {
+            (
+                std::mem::replace(&mut old.module, vk::ShaderModule::null()),
+                old.pipes.take(),
+                old.pending.take(),
+            )
+        });
+        let module = match &reused {
+            Some((m, ..)) => *m,
+            None => pipelines.module(ctx, super::shaders::PARTICLE)?,
+        };
         let stream = |fragment: &std::ffi::CStr, depth_write, compare, blend| {
             Spec::Graphics(GraphicsSpec {
                 module,
@@ -85,14 +97,18 @@ impl ParticleScene {
                 fragment_module: None,
             })
         };
-        let pending = pipelines.build_on_worker(
+        // A scene renewed each frame (live) keeps its pipelines.
+        let pending = match reused {
+            Some(_) => None,
+            None => Some(pipelines.build_on_worker(
             ctx,
             vec![
                 stream(c"particle_cutout", true, vk::CompareOp::GREATER_OR_EQUAL, false),
                 // Vanilla's translucent particles test depth and leave it.
                 stream(c"particle_blend", false, vk::CompareOp::GREATER_OR_EQUAL, true),
             ],
-        );
+        )),
+        };
 
         // Opaque sprites first, then translucent, each in the snapshot's
         // (spawn) order.
@@ -166,8 +182,11 @@ impl ParticleScene {
         };
         Ok(ParticleScene {
             module,
-            pipes: None,
-            pending: Some(pending),
+            pipes: reused.as_ref().and_then(|r| r.1),
+            pending: match reused {
+                Some((_, _, p)) => p,
+                None => pending,
+            },
             sprites: (buffer, index),
             textures,
             texture_sizes,
@@ -376,6 +395,14 @@ impl ParticleScene {
             (mode, view_index, atlas_index),
             (self.cutout, self.translucent),
         );
+    }
+
+    /// Gives the scene's bindless slots back (see `EntityScene::release`).
+    pub fn release(&self, bindless: &mut Bindless, frame: u64) {
+        bindless.remove_buffer(self.sprites.1, frame);
+        for (_, i) in &self.textures {
+            bindless.remove_texture(*i, frame);
+        }
     }
 
     pub fn destroy(mut self, ctx: &Context, memory: &Memory) {

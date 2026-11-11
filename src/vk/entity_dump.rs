@@ -648,7 +648,29 @@ fn write(
         return;
     }
     let dir = super::terrain_dump::folder();
-    let world = bevy::camera::visibility::RenderLayers::default();
+    // Out of a world (the title screen after leaving a server) the camera
+    // sits at the origin with nothing to draw: keep the last snapshot taken
+    // in the world rather than overwrite it.
+    if camera
+        .iter()
+        .next()
+        .is_none_or(|(t, _)| t.translation() == Vec3::ZERO)
+    {
+        return;
+    }
+    let world_camera = camera
+        .iter()
+        .next()
+        .map(|(t, p)| {
+            let fov = match p {
+                Projection::Perspective(p) => p.fov,
+                _ => 70f32.to_radians(),
+            };
+            (t.to_matrix(), fov)
+        })
+        .unwrap_or((Mat4::IDENTITY, 70f32.to_radians()));
+    // One snapshot of what a layer draws, seen from `(cam, fov)`.
+    let snapshot = |world: bevy::camera::visibility::RenderLayers, (cam, fov): (Mat4, f32)| -> Vec<u8> {
     let mut instances = Vec::new();
     let mut used_meshes = Vec::new();
     let mut used_images = Vec::new();
@@ -716,31 +738,10 @@ fn write(
         });
     }
 
-    // Out of a world (the title screen after leaving a server) the camera
-    // sits at the origin with nothing to draw: keep the last snapshot taken
-    // in the world rather than overwrite it.
-    if camera
-        .iter()
-        .next()
-        .is_none_or(|(t, _)| t.translation() == Vec3::ZERO)
-    {
-        return;
-    }
     let mut out = Vec::new();
     let mut put = |bytes: &[u8]| out.extend_from_slice(bytes);
     put(MAGIC);
     put(&VERSION.to_le_bytes());
-    let (cam, fov) = camera
-        .iter()
-        .next()
-        .map(|(t, p)| {
-            let fov = match p {
-                Projection::Perspective(p) => p.fov,
-                _ => 70f32.to_radians(),
-            };
-            (t.to_matrix(), fov)
-        })
-        .unwrap_or((Mat4::IDENTITY, 70f32.to_radians()));
     put(bytemuck::cast_slice(&cam.to_cols_array()));
     put(&fov.to_le_bytes());
     put(&(used_images.len() as u32).to_le_bytes());
@@ -770,6 +771,17 @@ fn write(
     put(bytemuck::cast_slice(rows));
     put(&(instances.len() as u32).to_le_bytes());
     put(bytemuck::cast_slice(&instances));
+    out
+    };
+    let out = snapshot(bevy::camera::visibility::RenderLayers::default(), world_camera);
+    // The inventory's player figure, on its own layer, for the native GUI.
+    if super::live::wanted() && crate::renderer::inventory_figure::ready() {
+        let figure = snapshot(
+            bevy::camera::visibility::RenderLayers::layer(crate::renderer::inventory_figure::FIGURE_LAYER),
+            (Mat4::IDENTITY, 0.0),
+        );
+        deliver(None, "figure.bin", figure);
+    }
 
     // The game's own frame beside it, the ground truth for vkview
     // (`frames/0000.png` is the latest; one frame late, which a still

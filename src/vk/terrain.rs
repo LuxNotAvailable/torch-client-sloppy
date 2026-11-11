@@ -127,6 +127,23 @@ struct CullView {
     env: [u32; 4],
 }
 
+/// The view data entity shaders read, for a view outside the world (the
+/// inventory figure): `view_proj`, the eye, no Hi-Z, fog or lightmap.
+pub fn plain_view(view_proj: Mat4, eye: Vec3) -> Vec<u8> {
+    let view = CullView {
+        view_proj: view_proj.to_cols_array_2d(),
+        prev_view_proj: view_proj.to_cols_array_2d(),
+        camera: [eye.x, eye.y, eye.z, 0.0],
+        hiz: [0; 4],
+        flags: [0; 4],
+        pad: [0; 4],
+        fog_color: [0.0; 4],
+        fog_ranges: [0.0, f32::MAX, 0.0, f32::MAX],
+        env: [u32::MAX, 0, 0, 0],
+    };
+    bytemuck::bytes_of(&view).to_vec()
+}
+
 /// Where `vkview --terrain` looks from: a position and a yaw and pitch in
 /// degrees, as the game's camera (yaw 0 faces +z).
 #[derive(Clone, Copy, Debug)]
@@ -757,6 +774,7 @@ impl TerrainScene {
                     pipelines,
                     color_format,
                     snapshot,
+                    None,
                 )?)
             }
             Err(_) => None,
@@ -773,6 +791,7 @@ impl TerrainScene {
                     pipelines,
                     color_format,
                     snapshot,
+                    None,
                 )?)
             }
             Err(_) => None,
@@ -897,6 +916,52 @@ impl TerrainScene {
             }
             Err(e) => {
                 self.env = old;
+                Err(e)
+            }
+        }
+    }
+
+    /// Replaces the entities with a new snapshot's, as `renew_env`.
+    pub fn renew_entities(
+        &mut self,
+        ctx: &Context,
+        memory: &Memory,
+        bindless: &mut Bindless,
+        pipelines: &Pipelines,
+        color_format: vk::Format,
+        snapshot: super::entity_dump::Snapshot,
+    ) -> Result<Option<super::entities::EntityScene>, SetupError> {
+        let mut old = self.entities.take();
+        match super::entities::EntityScene::new(ctx, memory, bindless, pipelines, color_format, snapshot, old.as_mut()) {
+            Ok(scene) => {
+                self.entities = Some(scene);
+                Ok(old)
+            }
+            Err(e) => {
+                self.entities = old;
+                Err(e)
+            }
+        }
+    }
+
+    /// Replaces the particles with a new snapshot's, as `renew_env`.
+    pub fn renew_particles(
+        &mut self,
+        ctx: &Context,
+        memory: &Memory,
+        bindless: &mut Bindless,
+        pipelines: &Pipelines,
+        color_format: vk::Format,
+        snapshot: super::entity_dump::ParticleSnapshot,
+    ) -> Result<Option<super::particles::ParticleScene>, SetupError> {
+        let mut old = self.particles.take();
+        match super::particles::ParticleScene::new(ctx, memory, bindless, pipelines, color_format, snapshot, old.as_mut()) {
+            Ok(scene) => {
+                self.particles = Some(scene);
+                Ok(old)
+            }
+            Err(e) => {
+                self.particles = old;
                 Err(e)
             }
         }
@@ -2400,6 +2465,11 @@ impl TerrainScene {
             }
             if let Some(env) = &self.env {
                 env.draw_clouds(ctx, cmd, pipelines, view_index, view_proj_cols);
+                // The hand camera's projection (`renderer::hand`: 70° fov,
+                // near 0.05, reversed depth as the world's).
+                let hand = rotation.clip
+                    * Mat4::perspective_infinite_reverse_rh(70f32.to_radians(), rotation.aspect, 0.05);
+                env.draw_hand(ctx, cmd, pipelines, view_index, hand.to_cols_array_2d(), extent);
             }
             device.cmd_end_rendering(cmd);
             if let Some(pool) = stats_pool {

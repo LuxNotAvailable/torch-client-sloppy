@@ -28,6 +28,7 @@ struct Pipes {
     sky_add: vk::Pipeline,
     clouds: vk::Pipeline,
     screen: vk::Pipeline,
+    hand: vk::Pipeline,
 }
 
 /// One part's draw: its pipeline (0 blended sky, 1 added sky, 2 clouds,
@@ -145,6 +146,15 @@ impl EnvScene {
                 ),
                 // The overlays draw in a pass of their own on the output.
                 spec(c"screen", None, false, None),
+                // The hand: over the world, on a cleared depth.
+                {
+                    let mut s = spec(c"hand", Some(vk::CompareOp::GREATER), false, Some(DEPTH_FORMAT));
+                    if let Spec::Graphics(g) = &mut s {
+                        g.depth_write = true;
+                        g.blend = true;
+                    }
+                    s
+                },
             ],
         );
         let mut scene = Self::build(ctx, memory, bindless, env, eye, atlas_index, module)?;
@@ -180,12 +190,9 @@ impl EnvScene {
             .iter()
             .enumerate()
             .filter_map(|(i, p)| {
-                // Hand parts are only for packs (`pack_hand`).
-                if p.kind == 3 {
-                    return None;
-                }
                 let (first, count, base) = *ranges.get(p.mesh as usize)?;
                 let pipe = match (p.kind, p.alpha) {
+                    (3, _) => 4,
                     (2, _) => 3,
                     (1, _) => 2,
                     (_, 3) => 1,
@@ -503,6 +510,7 @@ impl EnvScene {
                 sky_add: built[1],
                 clouds: built[2],
                 screen: built[3],
+                hand: built[4],
             });
             self.pending = None;
         }
@@ -635,7 +643,8 @@ impl EnvScene {
                     0 => pipes.sky_blend,
                     1 => pipes.sky_add,
                     2 => pipes.clouds,
-                    _ => pipes.screen,
+                    3 => pipes.screen,
+                    _ => pipes.hand,
                 };
                 device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
                 device.cmd_draw_indexed(cmd, d.count, 1, d.first, d.base, d.part);
@@ -665,6 +674,41 @@ impl EnvScene {
         view_proj: [[f32; 4]; 4],
     ) {
         self.draw(ctx, cmd, pipelines, view_index, view_proj, 1);
+    }
+
+    /// The first-person hand, last in the terrain pass: depth cleared, then
+    /// drawn with the hand camera's `projection` (clip from view).
+    pub fn draw_hand(
+        &self,
+        ctx: &Context,
+        cmd: vk::CommandBuffer,
+        pipelines: &Pipelines,
+        view_index: u32,
+        projection: [[f32; 4]; 4],
+        extent: vk::Extent2D,
+    ) {
+        if self.pipes.is_none() || !self.draws.iter().any(|d| d.pipe == 4) {
+            return;
+        }
+        // SAFETY: inside a rendering with a depth attachment of `extent`.
+        unsafe {
+            ctx.device.cmd_clear_attachments(
+                cmd,
+                &[vk::ClearAttachment {
+                    aspect_mask: vk::ImageAspectFlags::DEPTH,
+                    color_attachment: 0,
+                    clear_value: vk::ClearValue {
+                        depth_stencil: vk::ClearDepthStencilValue { depth: 0.0, stencil: 0 },
+                    },
+                }],
+                &[vk::ClearRect {
+                    rect: vk::Rect2D { offset: vk::Offset2D::default(), extent },
+                    base_array_layer: 0,
+                    layer_count: 1,
+                }],
+            );
+        }
+        self.draw(ctx, cmd, pipelines, view_index, projection, 3);
     }
 
     /// The screen overlays, in a pass of their own over the finished
@@ -745,7 +789,7 @@ impl EnvScene {
     pub fn destroy(mut self, ctx: &Context, memory: &Memory) {
         let mut pipelines: Vec<vk::Pipeline> = self
             .pipes
-            .map(|p| vec![p.sky_blend, p.sky_add, p.clouds, p.screen])
+            .map(|p| vec![p.sky_blend, p.sky_add, p.clouds, p.screen, p.hand])
             .unwrap_or_default();
         if let Some(Ok((built, _))) = self.pending.as_mut().and_then(|p| p.wait()) {
             pipelines.extend(built);

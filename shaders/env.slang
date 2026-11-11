@@ -57,9 +57,10 @@ VertexOut env_vertex(uint vertex: SV_VulkanVertexID, uint part: SV_VulkanInstanc
 
     VertexOut out;
     out.position = mul(pc.view_proj, float4(world, 1));
-    if (kind == KIND_SCREEN) {
-        // Clip from local already; no depth test draws it.
-        // view_proj holds only the display's pre-rotation here.
+    // Overlays carry clip from local; the hand (kind 3) view from local,
+    // and view_proj is the hand camera's projection.
+    if (kind == KIND_SCREEN || kind == 3) {
+        // Overlays: view_proj holds only the display's pre-rotation.
         float4x4 clip = transpose(float4x4(c0, c1, c2, c3));
         out.position = mul(pc.view_proj, mul(clip, float4(position, 1)));
     }
@@ -103,6 +104,16 @@ float4 sky_add(VertexOut in): SV_Target {
 [shader("fragment")]
 float4 screen(VertexOut in): SV_Target {
     return env_color(in);
+}
+
+// The first-person hand, unlit (the game sets its colour to the light).
+[shader("fragment")]
+float4 hand(VertexOut in): SV_Target {
+    float4 color = env_color(in);
+    if (color.a < 0.1) {
+        discard;
+    }
+    return color;
 }
 
 // The cloud layer, blended at its own depth. Its material turns fog off.
