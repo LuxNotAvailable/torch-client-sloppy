@@ -490,6 +490,18 @@ mod tests {
     fn every_installed_stage_goes_bindless() {
         let (mut stages, mut failures) = (0usize, Vec::new());
         for pack in crate::shaderpack::discover::list() {
+            if let Ok(frame) = crate::renderer::packdraw::compile::with_vulkan_terrain(|| {
+                crate::renderer::packdraw::compile::compile_frame(
+                    &pack.name,
+                    false,
+                    None,
+                    crate::renderer::dimension::Dimension::Overworld,
+                )
+            }) {
+                for note in frame.notes.iter().take(3) {
+                    println!("NOTE {}: {note}", pack.name);
+                }
+            }
             let Ok(installed) = crate::vk::pack::load(&pack.name, false) else {
                 failures.push(format!("{}: does not compile: {}", pack.name, installed_error(&pack.name)));
                 continue;

@@ -885,7 +885,14 @@ impl PackScreen {
                     }
                 }),
                 depth_write: geometry.is_some() && entity != Some(true) && sky.is_none(),
-                cull: vk::CullModeFlags::NONE,
+                // Terrain culls back faces as the game's (clockwise front, its
+                // y flipped like wgpu's: FRONT under this CCW pipeline), so
+                // water's underside doesn't fight its top.
+                cull: if geometry.is_some() && !shadow && entity.is_none() && sky.is_none() {
+                    vk::CullModeFlags::FRONT
+                } else {
+                    vk::CullModeFlags::NONE
+                },
                 topology: vk::PrimitiveTopology::TRIANGLE_LIST,
                 blend: (geometry == Some(2) && !shadow) || entity == Some(true) || sky.is_some(),
                 additive: sky.is_some_and(|(_, add)| add),
