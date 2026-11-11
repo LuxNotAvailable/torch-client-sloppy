@@ -34,6 +34,8 @@ pub(crate) struct EntityDraw {
     flags: u32,
     /// A GPU-posed rig's first part matrix (its `MeshTag`); 0 otherwise.
     part_base: u32,
+    /// The glint's UV transform (see [`EntityInstance::glint`]).
+    glint: [f32; 4],
 }
 
 impl EntityDraw {
@@ -54,12 +56,21 @@ pub(super) struct EntityInstance {
     /// Where a skinned mesh's part matrices start in the rig buffer, read
     /// only by the skinned variant of the vertex stage.
     part_base: u32,
+    /// With [`ENTITY_GLINT`]: the glint's UV transform, a rotation and
+    /// scale (x cos, y sin) then an offset (z, w), vanilla's glint texture
+    /// matrix.
+    glint: [f32; 4],
 }
 
 const ENTITY_SHADE_IN_ALPHA: u32 = 1;
+/// The draw is a glint layer: its UVs go through the instance's glint
+/// transform (the prelude's `iris_uv0`).
+pub(super) const ENTITY_GLINT: u32 = 2;
 
 pub(super) const ENTITY_INSTANCE_SIZE: u64 = std::mem::size_of::<EntityInstance>() as u64;
-const _: () = assert!(ENTITY_INSTANCE_SIZE == 100);
+const _: () = assert!(ENTITY_INSTANCE_SIZE == 116);
+/// The instance's glint transform; 16 is the skinned vertex's part.
+pub(crate) const ENTITY_GLINT_LOCATION: u32 = 17;
 
 pub(super) fn entity_instance_layout() -> bevy::mesh::VertexBufferLayout {
     use bevy::render::render_resource::{VertexAttribute, VertexFormat, VertexStepMode};
@@ -77,18 +88,24 @@ pub(super) fn entity_instance_layout() -> bevy::mesh::VertexBufferLayout {
         (VertexFormat::Uint32, 92),
         (VertexFormat::Uint32, 96),
     ];
+    let mut attributes: Vec<VertexAttribute> = attributes
+        .into_iter()
+        .zip(4..)
+        .map(|((format, offset), shader_location)| VertexAttribute {
+            format,
+            offset,
+            shader_location,
+        })
+        .collect();
+    attributes.push(VertexAttribute {
+        format: VertexFormat::Float32x4,
+        offset: 100,
+        shader_location: ENTITY_GLINT_LOCATION,
+    });
     bevy::mesh::VertexBufferLayout {
         array_stride: ENTITY_INSTANCE_SIZE,
         step_mode: VertexStepMode::Instance,
-        attributes: attributes
-            .into_iter()
-            .zip(4..)
-            .map(|((format, offset), shader_location)| VertexAttribute {
-                format,
-                offset,
-                shader_location,
-            })
-            .collect(),
+        attributes,
     }
 }
 
@@ -282,6 +299,7 @@ pub(crate) fn prepare_entity_draws(
             ids: [draw.entity_id, -1, draw.item_id, draw.stage],
             flags: draw.flags,
             part_base: draw.part_base,
+            glint: draw.glint,
         });
         let at = frame.entity_instances.len() as u32 - 1;
         match frame.entity_batches.last_mut() {

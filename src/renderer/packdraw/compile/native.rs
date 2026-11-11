@@ -418,6 +418,7 @@ const ENTITY_PRELUDE: &str = "struct IrisVertexIn {
     @location(13) render_stage: i32,
     @location(14) flags: u32,
     @location(15) part_base: u32,
+    @location(17) glint: vec4<f32>,
 {part_input}}
 fn iris_model(input: IrisVertexIn, v: vec4<f32>) -> vec3<f32> {
     return vec3<f32>(dot(input.model0, v), dot(input.model1, v), dot(input.model2, v));
@@ -426,6 +427,11 @@ fn iris_attributes(input: IrisVertexIn) -> IrisAttributes {
 {local}    var a: IrisAttributes;
     a.position = iris_model(input, vec4<f32>(local_position, 1.0));
     a.uv = input.uv;
+    if ((input.flags & 2u) != 0u) {
+        // A glint layer: vanilla's glint texture matrix (`ENTITY_GLINT`).
+        let g = input.glint;
+        a.uv = vec2<f32>(g.x * input.uv.x - g.y * input.uv.y, g.y * input.uv.x + g.x * input.uv.y) + g.zw;
+    }
     a.light = input.light;
     var color = input.color;
     if ((input.flags & 1u) != 0u) { color.a = 1.0; }

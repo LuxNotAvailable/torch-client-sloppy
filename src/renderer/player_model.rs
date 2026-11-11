@@ -993,6 +993,8 @@ struct ArmorSlotRig {
 struct HeldRig {
     node: Entity,
     material: Handle<EntityMaterial>,
+    /// Whether its material draws the glint, as the held item's own.
+    glint: bool,
 }
 
 #[cfg(feature = "skins")]
@@ -1245,6 +1247,7 @@ fn spawn_rig(
         HeldRig {
             node: entity,
             material,
+            glint: false,
         }
     });
 
@@ -2116,11 +2119,13 @@ fn apply_rig(
     update_armor(rig, &sample.armor, items, &mut queries.4);
     update_wings(rig, &sample.armor, items, &mut queries.5);
 
+    let held_glint = [right_item.glint, left_item.glint];
     let glint_changed = rig
         .armor
         .iter()
         .enumerate()
-        .any(|(i, s)| s.glint != sample.armor.glints(i));
+        .any(|(i, s)| s.glint != sample.armor.glints(i))
+        || rig.held.iter().zip(held_glint).any(|(h, g)| h.glint != g);
     if lit != rig.lit || glint_changed {
         for handle in [
             &rig.base,
@@ -2129,10 +2134,17 @@ fn apply_rig(
             &rig.stuck_materials[0],
             &rig.stuck_materials[1],
         ]
-        .into_iter()
-        .chain(rig.held.iter().map(|held| &held.material))
         {
             refresh_params(&mut *items.entity_materials, handle, lit);
+        }
+        // Held items glint as their own stacks do (vanilla's item layer).
+        for (held, glint) in rig.held.iter_mut().zip(held_glint) {
+            held.glint = glint;
+            refresh_params(
+                &mut *items.entity_materials,
+                &held.material,
+                Lit { glint, ..lit },
+            );
         }
         for (i, slot) in rig.armor.iter_mut().enumerate() {
             slot.glint = sample.armor.glints(i);

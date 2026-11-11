@@ -124,6 +124,10 @@ pub(crate) enum EntityKind {
     BeaconBeam,
     /// Rain, snow and entities' round shadows: soft layers over the world.
     Weather,
+    /// The enchantment glint over armor and held items, drawn again over
+    /// the surface it lies on (Iris's `gbuffers_armor_glint`). Last, so it
+    /// sorts after what it covers.
+    ArmorGlint,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -138,7 +142,7 @@ pub(crate) enum Segment {
 }
 
 impl EntityKind {
-    pub(crate) const COUNT: usize = 17;
+    pub(crate) const COUNT: usize = 18;
     pub(crate) const ALL: [EntityKind; EntityKind::COUNT] = [
         EntityKind::Entity,
         EntityKind::Block,
@@ -157,6 +161,7 @@ impl EntityKind {
         EntityKind::SpiderEyes,
         EntityKind::BeaconBeam,
         EntityKind::Weather,
+        EntityKind::ArmorGlint,
     ];
 
     pub(crate) fn index(self) -> usize {
@@ -247,6 +252,11 @@ impl EntityKind {
                 "gbuffers_textured",
                 "gbuffers_basic",
             ],
+            EntityKind::ArmorGlint => &[
+                "gbuffers_armor_glint",
+                "gbuffers_textured",
+                "gbuffers_basic",
+            ],
         }
     }
 
@@ -273,6 +283,8 @@ impl EntityKind {
             EntityKind::BeaconBeam => Segment::AfterTranslucent,
             // Iris draws weather after the translucent terrain.
             EntityKind::Weather => Segment::AfterTranslucent,
+            // With the entities it lies on.
+            EntityKind::ArmorGlint => Segment::World,
         }
     }
 
@@ -281,7 +293,8 @@ impl EntityKind {
             EntityKind::Entity
             | EntityKind::ShadowCaster
             | EntityKind::EntityTranslucent
-            | EntityKind::SpiderEyes => "ENTITIES",
+            | EntityKind::SpiderEyes
+            | EntityKind::ArmorGlint => "ENTITIES",
             EntityKind::DamagedBlock => "DESTROY",
             EntityKind::Line => "OUTLINE",
             EntityKind::Block | EntityKind::BlockTranslucent | EntityKind::BeaconBeam => {

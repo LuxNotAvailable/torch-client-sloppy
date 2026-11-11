@@ -630,19 +630,31 @@ impl PlanResources<'_> {
                     mask(&program.draw_buffers),
                 ),
             };
+            let mut template = self.bind_template(
+                index,
+                self.usage.kind_blocks[at]?,
+                flips,
+                drawing,
+                true,
+                0,
+            );
+            if EntityKind::ALL[at] == EntityKind::ArmorGlint {
+                // The glint scrolls across its texture: vanilla samples it
+                // linear and repeating, not as an entity skin.
+                for (binding, resource) in &mut template.entries {
+                    if let Owned::Sampler(sampler) = resource
+                        && program.texture_source(*binding - 1) == TextureSource::EntityTexture
+                    {
+                        *sampler = self.statics.repeat.clone();
+                    }
+                }
+            }
             Some(EntityPass {
                 opaque: entity.opaque,
                 blend: entity.blend,
                 skinned: entity.skinned,
                 attachments,
-                template: self.bind_template(
-                    index,
-                    self.usage.kind_blocks[at]?,
-                    flips,
-                    drawing,
-                    true,
-                    0,
-                ),
+                template,
                 groups: std::collections::HashMap::new(),
             })
         };

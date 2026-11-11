@@ -114,10 +114,13 @@ layout(location = 12) in int currentRenderedItemId;
 layout(location = 13) in int renderStage;
 layout(location = 14) in uint iris_EntityFlags;
 layout(location = 15) in uint iris_PartBase;
+layout(location = 17) in vec4 iris_GlintTransform;
 ";
 
 const _: () = assert!(
-    crate::renderer::packdraw::entities::ENTITY_PART_BASE_LOCATION == 15
+    crate::renderer::packdraw::entities::ENTITY_GLINT_LOCATION == 17
+        && crate::renderer::packdraw::entities::ENTITY_GLINT == 2
+        && crate::renderer::packdraw::entities::ENTITY_PART_BASE_LOCATION == 15
         && crate::renderer::packdraw::entities::ENTITY_PART_LOCATION == 16
         && crate::renderer::packdraw::entities::ENTITY_PARTS_SET == 1
 );
@@ -148,7 +151,12 @@ vec3 iris_local_normal() {
 
 const ENTITY_FUNCTIONS: &str = "vec3 iris_model(vec4 v) { return vec3(dot(iris_ModelRow0, v), dot(iris_ModelRow1, v), dot(iris_ModelRow2, v)); }
 vec3 iris_position() { return iris_model(vec4(iris_local_position(), 1.0)); }
-vec2 iris_uv0() { return iris_EntityUV; }
+vec2 iris_uv0() {
+        if ((iris_EntityFlags & 2u) == 0u) { return iris_EntityUV; }
+        vec4 g = iris_GlintTransform;
+        vec2 uv = iris_EntityUV;
+        return vec2(g.x * uv.x - g.y * uv.y, g.y * uv.x + g.x * uv.y) + g.zw;
+}
 vec2 iris_light() { return iris_EntityLight; }
 vec4 iris_color() {
         vec4 color = iris_EntityColor;

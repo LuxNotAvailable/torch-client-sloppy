@@ -442,6 +442,27 @@ fn entity_pass_state(kind: EntityKind, second: bool) -> EntityPassState {
             depth: Some((false, CompareFunction::LessEqual)),
             cull: None,
         },
+        // Vanilla's glint: (SRC_COLOR, ONE) added over the surface, depth
+        // equal, not written. Equal, not less-or-equal: the glint must land
+        // only where the item drew, not across the cut-out texels of an
+        // armor layer's box or a flat item's card, which the glint's own
+        // texture does not cut out.
+        EntityKind::ArmorGlint => EntityPassState {
+            blend: Some(BlendState {
+                color: BlendComponent {
+                    src_factor: BlendFactor::Src,
+                    dst_factor: BlendFactor::One,
+                    operation: BlendOperation::Add,
+                },
+                alpha: BlendComponent {
+                    src_factor: BlendFactor::Zero,
+                    dst_factor: BlendFactor::One,
+                    operation: BlendOperation::Add,
+                },
+            }),
+            depth: Some((false, CompareFunction::Equal)),
+            cull: None,
+        },
         EntityKind::SpiderEyes => EntityPassState {
             blend: Some(BlendState {
                 color: BlendComponent {

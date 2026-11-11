@@ -189,6 +189,7 @@ pub(crate) fn extract_entity_draws(
             relative: false,
             // A GPU-posed rig's first part matrix (its `MeshTag`).
             part_base: tag.map_or(0, |t| t.0),
+            glint: [0.0; 4],
             flags: if !weather
                 && [LightMode::Flat as u32, LightMode::Emissive as u32]
                     .contains(&material.params.mode)
@@ -205,10 +206,38 @@ pub(crate) fn extract_entity_draws(
                 ..draw
             });
         }
+        let glint = pass.is_some() && material.params.switches.w > 0.5;
         if let Some(pass) = pass {
             frame.entity_draws.push(EntityDraw { pass, ..draw });
         }
+        // The glint, as a second draw of the same surface.
+        if glint && let Some(glint_pass) = pass_of(EntityKind::ArmorGlint) {
+            frame.entity_draws.push(EntityDraw {
+                texture: Some(crate::renderer::entity_material::GLINT.id()),
+                tint: Vec4::ONE,
+                blend: true,
+                pass: glint_pass,
+                overlay: Vec4::ZERO,
+                stage: EntityKind::ArmorGlint.render_stage(),
+                flags: ENTITY_GLINT,
+                glint: glint_transform(),
+                ..draw
+            });
+        }
     }
+}
+
+/// Vanilla's armor glint texture matrix (`TextureTransform.ENTITY_GLINT`):
+/// translate(-f, g) * rotateZ(pi / 18) * scale(0.16), where f and g cycle
+/// every 110 s and 30 s of `millis * glintSpeed * 8` (glint speed 0.5), as
+/// the built-in entity shader's `glint`.
+fn glint_transform() -> [f32; 4] {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    let ticks = START.get_or_init(std::time::Instant::now).elapsed().as_secs_f64() * 4000.0;
+    let f = (ticks / 110_000.0).fract() as f32;
+    let g = (ticks / 30_000.0).fract() as f32;
+    let angle = std::f32::consts::PI / 18.0;
+    [angle.cos() * 0.16, angle.sin() * 0.16, -f, g]
 }
 
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
@@ -308,6 +337,7 @@ pub(crate) fn extract_standard_draws(
             relative,
             flags: 0,
             part_base: 0,
+            glint: [0.0; 4],
         });
     };
 

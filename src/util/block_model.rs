@@ -32,9 +32,17 @@ const SKIP_SAME: &[&str] = &[
 
 pub const LEAVES_CULL_GROUP: u32 = 1;
 
+/// Dirt paths and farmland: fifteen-sixteenths blocks whose sides meet
+/// exactly, so each hides the other's side (vanilla's face occlusion by
+/// shape), not only its own kind's.
+const LOW_BLOCK_CULL_GROUP: u32 = u32::MAX - 1;
+
 fn cull_group(name: &str, block: &dyn BlockTrait) -> u32 {
     if name.ends_with("_leaves") {
         return LEAVES_CULL_GROUP;
+    }
+    if name == "dirt_path" || name == "farmland" {
+        return LOW_BLOCK_CULL_GROUP;
     }
     if SKIP_SAME.contains(&name)
         || name.ends_with("_stained_glass")
