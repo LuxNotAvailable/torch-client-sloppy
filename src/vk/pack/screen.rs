@@ -3,8 +3,9 @@
 //!
 //! Flips follow `packdraw::plan`: a pass samples each target's current half
 //! (the other half for one it also draws), writes the other, then flips.
-//! Until the geometry passes come (6.3), the scene's frame stands in for
-//! what the gbuffers would write to `colortex0`. Compute steps are skipped.
+//! Terrain draws through the pack's geometry programs before deferred
+//! (solid, cutout) and after it (translucent), reusing the terrain's culled
+//! commands (6.3). Compute steps are skipped for now.
 
 use ash::vk;
 use bevy::math::{Mat4, UVec2};
@@ -79,6 +80,8 @@ struct Pass {
     /// The program's uniform block and where its slot sits in the table.
     uniform: Option<(usize, usize)>,
     extent: vk::Extent2D,
+    /// A geometry pass's slot (0 solid, 1 cutout, 2 translucent).
+    geometry: Option<usize>,
 }
 
 pub(crate) struct PackScreen {
@@ -88,6 +91,13 @@ pub(crate) struct PackScreen {
     stubs: Stubs,
     buffers: Vec<(Buffer, u32)>,
     passes: Vec<Pass>,
+    /// Before which pass `depthtex0` is copied to `depthtex1`.
+    copy_depth_at: Option<usize>,
+    /// The block atlas (`gtexture` for terrain) and the game's lightmap.
+    atlas: Option<(vk::Image, u32)>,
+    lightmap: Option<(vk::Image, u32)>,
+    /// Table words that hold the terrain's slots buffer.
+    terrain_slots: Vec<usize>,
     /// Per program with a uniform block: its bytes and a buffer per frame.
     uniforms: Vec<(UniformBytes, Vec<(Buffer, u32)>)>,
     table: Vec<u32>,
@@ -139,6 +149,7 @@ impl PackScreen {
         installed: Installed,
         size: vk::Extent2D,
         output: vk::Format,
+        terrain: Option<&crate::vk::terrain::PackGeometry>,
     ) -> Result<PackScreen, SetupError> {
         let targets = PackTargets::new(ctx, memory, &installed, size, true)?;
         let full = || failed("the bindless set is full");
@@ -237,6 +248,10 @@ impl PackScreen {
             stubs,
             buffers,
             passes: Vec::new(),
+            copy_depth_at: None,
+            atlas: terrain.map(|t| t.atlas),
+            lightmap: terrain.and_then(|t| t.lightmap),
+            terrain_slots: Vec::new(),
             uniforms: Vec::new(),
             table: Vec::new(),
             tables: Vec::new(),
@@ -250,14 +265,30 @@ impl PackScreen {
             installed,
         };
 
-        // The plan: each stage's screen steps in order, then final.
+        // The plan: begin and prepare, opaque geometry, deferred, translucent
+        // geometry, composite, then final.
         let mut flips = Flips::default();
         for stage in ScreenStage::ALL {
+            if stage == ScreenStage::Deferred {
+                for slot in [0, 1] {
+                    if let Some(index) = screen.installed.geometry[slot] {
+                        let pass = screen.pass(ctx, memory, bindless, pipelines, index, flips, None, Some(slot))?;
+                        screen.passes.push(pass);
+                    }
+                }
+                screen.copy_depth_at = Some(screen.passes.len());
+            }
+            if stage == ScreenStage::Composite
+                && let Some(index) = screen.installed.geometry[2]
+            {
+                let pass = screen.pass(ctx, memory, bindless, pipelines, index, flips, None, Some(2))?;
+                screen.passes.push(pass);
+            }
             let steps: Vec<Step> = screen.installed.stages[stage.index()].clone();
             for step in steps {
                 match step {
                     Step::Screen(index) => {
-                        let pass = screen.pass(ctx, memory, bindless, pipelines, index, flips, None)?;
+                        let pass = screen.pass(ctx, memory, bindless, pipelines, index, flips, None, None)?;
                         screen.passes.push(pass);
                         let program = &screen.installed.programs[index];
                         flips.flip(&program.draw_buffers);
@@ -272,7 +303,7 @@ impl PackScreen {
             }
         }
         if let Some(index) = screen.installed.final_pass {
-            let pass = screen.pass(ctx, memory, bindless, pipelines, index, flips, Some(output))?;
+            let pass = screen.pass(ctx, memory, bindless, pipelines, index, flips, Some(output), None)?;
             screen.passes.push(pass);
         }
 
@@ -291,7 +322,14 @@ impl PackScreen {
         Ok(screen)
     }
 
-    fn texture_index(&self, source: TextureSource, flips: Flips, drawing: u16, ty: &str) -> (u32, vk::Image) {
+    fn texture_index(
+        &self,
+        source: TextureSource,
+        flips: Flips,
+        drawing: u16,
+        ty: &str,
+        geometry: bool,
+    ) -> (u32, vk::Image) {
         let stub = |s: &(Image, u32)| (s.1, s.0.raw);
         let wants_depth = ty == "texture_depth_2d";
         let wants_uint = ty.contains("<u32>");
@@ -308,7 +346,13 @@ impl PackScreen {
                 }
                 _ => None,
             },
+            // Geometry passes draw depthtex0, so read the opaque copy.
+            TextureSource::Depth(Depth::All) if geometry => {
+                Some((self.indexed.depth_opaque, t.depth_opaque.raw))
+            }
             TextureSource::Depth(Depth::All) => Some((self.indexed.depth, t.depth.raw)),
+            TextureSource::Atlas => self.atlas.map(|(image, i)| (i, image)),
+            TextureSource::Lightmap => self.lightmap.map(|(image, i)| (i, image)),
             TextureSource::Depth(Depth::Opaque) => Some((self.indexed.depth_opaque, t.depth_opaque.raw)),
             TextureSource::DepthNoHand => t
                 .depth_no_hand
@@ -357,10 +401,14 @@ impl PackScreen {
         index: usize,
         flips: Flips,
         output: Option<vk::Format>,
+        geometry: Option<usize>,
     ) -> Result<Pass, SetupError> {
+        use crate::renderer::packdraw::compile::geometry_alpha;
+        use crate::shaderpack::programs::Geometry;
         let program: &InstalledProgram = &self.installed.programs[index];
-        let fragment = match (output, &program.fragment_linear) {
-            (Some(f), Some(linear)) if format!("{f:?}").ends_with("SRGB") => linear,
+        let fragment = match (output, &program.fragment_linear, geometry) {
+            (_, _, Some(slot)) => program.fragment_for(geometry_alpha(Geometry::ALL[slot], false)),
+            (Some(f), Some(linear), _) if format!("{f:?}").ends_with("SRGB") => linear,
             _ => &program.fragment,
         };
         // One slot list for both stages, so a shared resource keeps its index.
@@ -384,15 +432,31 @@ impl PackScreen {
         let mut uniform = None;
         for slot in &slots {
             let word = match &slot.kind {
-                SlotKind::Texture(ty) => {
-                    let source = program.texture_source(slot.binding);
-                    let (i, image) = self.texture_index(source, flips, drawing, ty);
+                // Only the pack's own set has sources; the terrain's pack
+                // quads (set 2) read zeros until the snapshot carries them.
+                SlotKind::Texture(ty) if slot.group != 0 => {
+                    let (i, image) = (self.stubs.uint.1, self.stubs.uint.0.raw);
+                    let _ = ty;
                     sampled.push(image);
                     i
                 }
+                SlotKind::Texture(ty) => {
+                    let source = program.texture_source(slot.binding);
+                    let (i, image) =
+                        self.texture_index(source, flips, drawing, ty, geometry.is_some());
+                    sampled.push(image);
+                    i
+                }
+                SlotKind::Sampler | SlotKind::Comparison if slot.group != 0 => bl::SAMPLER_NEAREST_CLAMP,
                 SlotKind::Sampler | SlotKind::Comparison => {
                     let source = program.texture_source(slot.binding.saturating_sub(1));
                     sampler_for(&self.installed, source, slot.kind == SlotKind::Comparison)
+                }
+                SlotKind::Buffer { ty, .. } if ty == "IrisVkSlots" || ty == "IrisVkPool" => {
+                    // Filled per frame from the terrain (`record`).
+                    let at = self.table.len();
+                    self.terrain_slots.push(at);
+                    0
                 }
                 SlotKind::Buffer { ty, .. } if ty.contains("IrisFrame") || ty.starts_with("Iris") && !ty.contains("Slot") => {
                     // The frame's uniform block: filled per frame.
@@ -448,10 +512,11 @@ impl PackScreen {
         let (attachments, formats, extent) = match output {
             Some(format) => (None, vec![format], self.targets.size),
             None => {
+                // Geometry draws the current halves; screen passes the other.
                 let list: Vec<(u8, usize)> = program
                     .draw_buffers
                     .iter()
-                    .map(|&n| (n, flips.other(n)))
+                    .map(|&n| (n, if geometry.is_some() { flips.current(n) } else { flips.other(n) }))
                     .collect();
                 let formats = list
                     .iter()
@@ -476,12 +541,12 @@ impl PackScreen {
                 vertex: c"main",
                 fragment: c"main",
                 color: &formats,
-                depth: None,
-                depth_test: None,
-                depth_write: false,
+                depth: geometry.map(|_| DEPTH_FORMAT),
+                depth_test: geometry.map(|_| vk::CompareOp::LESS_OR_EQUAL),
+                depth_write: geometry.is_some(),
                 cull: vk::CullModeFlags::NONE,
                 topology: vk::PrimitiveTopology::TRIANGLE_LIST,
-                blend: false,
+                blend: geometry == Some(2),
                 additive: false,
             },
         )?;
@@ -494,6 +559,7 @@ impl PackScreen {
             sampled,
             uniform,
             extent,
+            geometry,
         })
     }
 
@@ -544,6 +610,7 @@ impl PackScreen {
         frame: u64,
         slot: usize,
         seconds: f32,
+        terrain: Option<&crate::vk::terrain::PackGeometry>,
     ) {
         let device = &ctx.device;
         let images = self.all_images();
@@ -651,9 +718,12 @@ impl PackScreen {
             }
         });
 
-        // The scene's frame into colortex0, as the gbuffers would draw it:
-        // bottom row first, as pack targets are stored.
-        if let Some((pair, _)) = &self.targets.color[0] {
+        // Without terrain to draw, the scene's frame stands in for colortex0
+        // (bottom row first, as pack targets are stored).
+        let draws_terrain = terrain.is_some() && self.passes.iter().any(|p| p.geometry.is_some());
+        if !draws_terrain
+            && let Some((pair, _)) = &self.targets.color[0]
+        {
             let target = &pair[0];
             let (src, dst) = (output.2, target.extent);
             graph.pass(
@@ -717,6 +787,11 @@ impl PackScreen {
             .customs
             .evaluate(&mut self.customs, dt, &|id| values.input(id));
         let mut table = self.table.clone();
+        if let Some(t) = terrain {
+            for &at in &self.terrain_slots {
+                table[at] = t.slots.1;
+            }
+        }
         for pass in &self.passes {
             if let Some((u, at)) = pass.uniform {
                 table[at] = self.uniforms[u].1[slot].1;
@@ -732,7 +807,41 @@ impl PackScreen {
         buffers.extend(self.uniforms.iter().map(|(_, f)| (f[slot].0.raw, Use::SampledFragment)));
         buffers.extend(self.buffers.iter().map(|(b, _)| (b.raw, Use::SampledFragment)));
 
-        for pass in &self.passes {
+        for (at, pass) in self.passes.iter().enumerate() {
+            if self.copy_depth_at == Some(at) {
+                let (from, to) = (self.targets.depth.raw, self.targets.depth_opaque.raw);
+                let extent = self.targets.size;
+                graph.pass(
+                    "pack depth copy",
+                    &[(from, Use::TransferSrc), (to, Use::TransferDst)],
+                    &[],
+                    |cmd| unsafe {
+                        // SAFETY: a copy between depth images in transfer layouts.
+                        device.cmd_copy_image(
+                            cmd,
+                            from,
+                            vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                            to,
+                            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                            &[vk::ImageCopy {
+                                src_subresource: layers(vk::ImageAspectFlags::DEPTH),
+                                dst_subresource: layers(vk::ImageAspectFlags::DEPTH),
+                                extent: vk::Extent3D {
+                                    width: extent.width,
+                                    height: extent.height,
+                                    depth: 1,
+                                },
+                                ..Default::default()
+                            }],
+                        );
+                    },
+                );
+            }
+            let draw = match (pass.geometry, terrain) {
+                (Some(slot), Some(t)) => Some((slot, t)),
+                (Some(_), None) => continue,
+                (None, _) => None,
+            };
             let mut uses: Vec<(vk::Image, Use)> = pass
                 .sampled
                 .iter()
@@ -753,8 +862,26 @@ impl PackScreen {
                     vec![output.1]
                 }
             };
+            let mut pass_buffers = buffers.clone();
+            let depth_view = match draw {
+                Some((_, t)) => {
+                    uses.push((self.targets.depth.raw, Use::DepthAttachment));
+                    uses.push((t.atlas.0, Use::SampledFragment));
+                    pass_buffers.push((t.slots.0, Use::VertexRead));
+                    pass_buffers.push((t.commands, Use::IndirectRead));
+                    pass_buffers.push((t.counts, Use::IndirectRead));
+                    pass_buffers.push((t.translucent.0, Use::IndexRead));
+                    for (vertices, indices) in &t.pools {
+                        pass_buffers.push((*vertices, Use::VertexRead));
+                        pass_buffers.push((*indices, Use::IndexRead));
+                    }
+                    Some(self.targets.depth.view)
+                }
+                None => None,
+            };
             let (pipeline, base, extent) = (pass.pipeline, pass.base, pass.extent);
-            graph.pass("pack screen", &uses, &buffers, |cmd| unsafe {
+            let name = if draw.is_some() { "pack geometry" } else { "pack screen" };
+            graph.pass(name, &uses, &pass_buffers, |cmd| unsafe {
                 // SAFETY: attachments and sampled images in the layouts the
                 // graph set; the shared layout and set.
                 let colors: Vec<vk::RenderingAttachmentInfo> = views
@@ -767,16 +894,24 @@ impl PackScreen {
                             .store_op(vk::AttachmentStoreOp::STORE)
                     })
                     .collect();
-                device.cmd_begin_rendering(
-                    cmd,
-                    &vk::RenderingInfo::default()
-                        .render_area(vk::Rect2D {
-                            offset: vk::Offset2D::default(),
-                            extent,
-                        })
-                        .layer_count(1)
-                        .color_attachments(&colors),
-                );
+                let depth = depth_view.map(|view| {
+                    vk::RenderingAttachmentInfo::default()
+                        .image_view(view)
+                        .image_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
+                        .load_op(vk::AttachmentLoadOp::LOAD)
+                        .store_op(vk::AttachmentStoreOp::STORE)
+                });
+                let mut info = vk::RenderingInfo::default()
+                    .render_area(vk::Rect2D {
+                        offset: vk::Offset2D::default(),
+                        extent,
+                    })
+                    .layer_count(1)
+                    .color_attachments(&colors);
+                if let Some(depth) = depth.as_ref() {
+                    info = info.depth_attachment(depth);
+                }
+                device.cmd_begin_rendering(cmd, &info);
                 // A plain viewport, as wgpu's: the SPIR-V flips clip y.
                 device.cmd_set_viewport(
                     cmd,
@@ -818,7 +953,41 @@ impl PackScreen {
                         view_proj: [[0.0; 4]; 4],
                     },
                 );
-                device.cmd_draw(cmd, 3, 1, 0, 0);
+                match draw {
+                    // The terrain's culled commands: per pool for solid and
+                    // cutout, one far-to-near list for translucent.
+                    Some((slot, t)) if slot < 2 => {
+                        let size = crate::vk::terrain::PACK_COMMAND_SIZE;
+                        for (p, (_, indices)) in t.pools.iter().enumerate() {
+                            let list = p as u64 * 2 + slot as u64;
+                            device.cmd_bind_index_buffer(cmd, *indices, 0, vk::IndexType::UINT32);
+                            device.cmd_draw_indexed_indirect_count(
+                                cmd,
+                                t.commands,
+                                list * u64::from(t.capacity) * size,
+                                t.counts,
+                                list * 4,
+                                t.capacity,
+                                size as u32,
+                            );
+                        }
+                    }
+                    Some((_, t)) => {
+                        let (indices, start, count) = t.translucent;
+                        if count > 0 {
+                            let size = crate::vk::terrain::PACK_COMMAND_SIZE;
+                            device.cmd_bind_index_buffer(cmd, indices, 0, vk::IndexType::UINT32);
+                            device.cmd_draw_indexed_indirect(
+                                cmd,
+                                t.commands,
+                                u64::from(start) * size,
+                                count,
+                                size as u32,
+                            );
+                        }
+                    }
+                    None => device.cmd_draw(cmd, 3, 1, 0, 0),
+                }
                 device.cmd_end_rendering(cmd);
             });
         }

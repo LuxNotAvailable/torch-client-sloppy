@@ -58,7 +58,7 @@ pub struct EnvScene {
     vertices: (Buffer, u32),
     indices: Buffer,
     textures: Vec<(Image, u32, u32, u32)>,
-    lightmap: (Image, u32),
+    pub(crate) lightmap: (Image, u32),
     /// Everything staged at load: the buffer, each texture's offset, the
     /// lightmap's, the parts', the indices', and the frame it was copied in.
     staging: Option<(Buffer, Vec<u64>, [u64; 3], Option<u64>)>,

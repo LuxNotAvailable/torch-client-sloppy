@@ -118,7 +118,11 @@ fn options(args: Vec<String>) -> Options {
             "--screenshot" => options.screenshot = args.next(),
             "--terrain" => options.terrain = args.next().map(Into::into),
             "--panorama" => options.panorama = true,
-            "--pack" => options.pack = args.next(),
+            // Pack terrain pulls raw vertices, not packed quads.
+            "--pack" => {
+                options.pack = args.next();
+                options.terrain_options.packed = false;
+            }
             "--greedy" => options.greedy = true,
             "--sheet" => options.sheet = args.next(),
             "--headless" => options.headless = true,
@@ -405,6 +409,11 @@ impl Renderer {
                         height: options.size.1,
                     },
                     format,
+                    match &scene {
+                        Scene::Terrain(terrain, _) => Some(terrain.pack_geometry()),
+                        _ => None,
+                    }
+                    .as_ref(),
                 )?;
                 println!(
                     "vkview: pack {name}: {programs} programs, {} in {:.0} ms",
@@ -639,6 +648,10 @@ impl Renderer {
             eprintln!("vkview: scene failed: {e}");
         }
         if let Some(pack) = self.pack.as_mut() {
+            let geometry = match &*scene {
+                Scene::Terrain(terrain, _) => Some(terrain.pack_geometry()),
+                _ => None,
+            };
             let camera = match scene {
                 Scene::Terrain(scene, camera) => {
                     let c = camera
@@ -662,6 +675,7 @@ impl Renderer {
                 self.frame,
                 slot,
                 seconds,
+                geometry.as_ref(),
             );
         }
         if capture && self.readback.is_none() {

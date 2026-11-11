@@ -406,6 +406,25 @@ struct GrowCopy {
     size: u64,
 }
 
+/// A frame's terrain draws, for a pack's geometry passes.
+pub struct PackGeometry {
+    /// The slots buffer and its bindless index.
+    pub slots: (vk::Buffer, u32),
+    pub commands: vk::Buffer,
+    pub counts: vk::Buffer,
+    /// Commands per list; list `pool * 2 + kind` (0 solid, 1 cutout).
+    pub capacity: u32,
+    /// Each pool's vertex and index buffers.
+    pub pools: Vec<(vk::Buffer, vk::Buffer)>,
+    /// The translucent index buffer, first command and count.
+    pub translucent: (vk::Buffer, u32, u32),
+    pub atlas: (vk::Image, u32),
+    /// The game's lightmap, when the snapshot has one.
+    pub lightmap: Option<(vk::Image, u32)>,
+}
+
+pub const PACK_COMMAND_SIZE: u64 = COMMAND_SIZE;
+
 pub struct TerrainScene {
     options: Options,
     module: vk::ShaderModule,
@@ -836,6 +855,29 @@ impl TerrainScene {
             pitch: forward.y.clamp(-1.0, 1.0).asin().to_degrees(),
             fov: fov.to_degrees(),
         })
+    }
+
+    /// What a pack's geometry passes draw with: this frame's culled
+    /// commands over the same pools.
+    pub fn pack_geometry(&self) -> PackGeometry {
+        PackGeometry {
+            slots: (self.slots.buffer.raw, self.slots.index),
+            commands: self.commands.raw,
+            counts: self.counts.raw,
+            capacity: self.list_capacity,
+            pools: self
+                .pools
+                .iter()
+                .map(|p| (p.vertices.raw, p.indices.raw))
+                .collect(),
+            translucent: (
+                self.translucent.buffer.raw,
+                self.translucent_start,
+                self.translucent_count,
+            ),
+            atlas: (self.atlas.raw, self.atlas_index),
+            lightmap: self.env.as_ref().map(|e| (e.lightmap.0.raw, e.lightmap.1)),
+        }
     }
 
     /// The entity scene's numbers, when the dump has one.
