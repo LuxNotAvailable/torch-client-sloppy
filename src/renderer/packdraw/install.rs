@@ -101,7 +101,10 @@ pub(crate) struct Pending {
     task: Task<Result<Frame, String>>,
 }
 
-fn install(pack: &str, generation: u32, direct: bool, frame: Frame) -> Installed {
+/// A compiled pack ready to draw: each stage's WGSL labelled for its
+/// renderer. Device free, so the native renderer installs packs the same
+/// way (`vk::pack`).
+pub(crate) fn install(pack: &str, generation: u32, direct: bool, frame: Frame) -> Installed {
     let add = |program: &str, stage: &str, wgsl: String| Module {
         label: format!("{GPU_LABEL}/{pack}/{generation}/{program}.{stage}.wgsl"),
         wgsl,

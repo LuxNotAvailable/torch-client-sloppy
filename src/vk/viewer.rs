@@ -70,6 +70,8 @@ struct Options {
     terrain: Option<std::path::PathBuf>,
     /// Draw the title screen's panorama instead of a scene.
     panorama: bool,
+    /// A shader pack to compile and set up (phase 6).
+    pack: Option<String>,
     camera: Option<Camera>,
     terrain_options: terrain::Options,
     /// `--camera game`: the camera the game drew from (entity snapshot).
@@ -87,6 +89,7 @@ fn options(args: Vec<String>) -> Options {
     let mut options = Options {
         frames: None,
         panorama: false,
+        pack: None,
         device: None,
         vsync: false,
         size: (1280, 720),
@@ -115,6 +118,7 @@ fn options(args: Vec<String>) -> Options {
             "--screenshot" => options.screenshot = args.next(),
             "--terrain" => options.terrain = args.next().map(Into::into),
             "--panorama" => options.panorama = true,
+            "--pack" => options.pack = args.next(),
             "--greedy" => options.greedy = true,
             "--sheet" => options.sheet = args.next(),
             "--headless" => options.headless = true,
@@ -245,6 +249,8 @@ struct Renderer {
     // Everything made from the device is destroyed in `Drop`, before the
     // context.
     scene: Option<Scene>,
+    /// The `--pack` pack's targets, while its passes are being ported.
+    pack: Option<crate::vk::pack::targets::PackTargets>,
     timestamps: Option<Timestamps>,
     uploads: Option<Uploads>,
     pipelines: Option<Pipelines>,
@@ -382,8 +388,36 @@ impl Renderer {
             compile.elapsed().as_secs_f32() * 1000.0,
             if cache_had { "warm" } else { "cold" }
         );
+        let pack = match &options.pack {
+            Some(name) => {
+                let started = std::time::Instant::now();
+                let installed = crate::vk::pack::load(name, false)
+                    .map_err(|e| crate::vk::SetupError(format!("pack {name}: {e}")))?;
+                let targets = crate::vk::pack::targets::PackTargets::new(
+                    &ctx,
+                    &memory,
+                    &installed,
+                    v::Extent2D {
+                        width: options.size.0,
+                        height: options.size.1,
+                    },
+                    false,
+                )?;
+                println!(
+                    "vkview: pack {name}: {} programs in {:.0} ms",
+                    installed.programs.len(),
+                    started.elapsed().as_secs_f32() * 1000.0
+                );
+                for line in targets.describe() {
+                    println!("vkview:   {line}");
+                }
+                Some(targets)
+            }
+            None => None,
+        };
         Ok(Renderer {
             scene: Some(scene),
+            pack,
             timestamps: Some(timestamps),
             uploads: Some(uploads),
             pipelines: Some(pipelines),
@@ -1020,6 +1054,9 @@ impl Drop for Renderer {
     fn drop(&mut self) {
         self.ctx.idle();
         let memory = self.memory.take();
+        if let (Some(pack), Some(memory)) = (self.pack.take(), &memory) {
+            pack.destroy(&self.ctx, memory);
+        }
         match (self.scene.take(), &memory) {
             (Some(Scene::Test(scene)), Some(memory)) => scene.destroy(&self.ctx, memory),
             (Some(Scene::Terrain(scene, _)), Some(memory)) => (*scene).destroy(&self.ctx, memory),

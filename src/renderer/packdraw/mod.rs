@@ -14,7 +14,7 @@ mod frame;
 mod fullscreen;
 mod images;
 mod inputs;
-mod install;
+pub(crate) mod install;
 mod mipmaps;
 mod node;
 mod packatlas;
