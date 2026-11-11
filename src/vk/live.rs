@@ -73,6 +73,8 @@ struct Live {
     menu: bool,
     /// The title panorama, made the first time a menu shows.
     panorama: Option<super::panorama::PanoramaScene>,
+    /// FXAA over a pack's frame (the pack draws into its scene image).
+    pack_post: Option<super::post::PostPass>,
     /// The game's vsync option, and its anti-aliasing as the post pass's.
     vsync: bool,
     post: super::post::Settings,
@@ -132,6 +134,7 @@ fn setup(world: &mut World) -> Result<Live, SetupError> {
         readbacks: Vec::new(),
         vsync: true,
         post: Default::default(),
+        pack_post: None,
         frame: 0,
         size,
         stale: false,
@@ -209,6 +212,7 @@ fn draw_frame(world: &mut World) {
     if let Some(gui) = world.get_resource::<crate::gui::GuiState>() {
         use crate::renderer::antialias::{AaMode, SSAA_SCALES};
         let aa = gui.options.antialiasing;
+        let before = (live.post.fxaa, live.post.ssaa);
         live.post = super::post::Settings {
             fxaa: aa.mode == AaMode::Fxaa,
             ssaa: if aa.mode == AaMode::Supersample {
@@ -218,6 +222,9 @@ fn draw_frame(world: &mut World) {
             },
             effects: None,
         };
+        if (live.post.fxaa, live.post.ssaa) != before {
+            info!("native renderer: anti-aliasing {:?} -> fxaa {}, ssaa {}", aa.mode, live.post.fxaa, live.post.ssaa);
+        }
         if gui.options.vsync != live.vsync {
             live.vsync = gui.options.vsync;
             live.stale = true;
@@ -326,6 +333,9 @@ impl Drop for Live {
             }
             std::mem::take(&mut self.figure).destroy(&self.ctx, &memory);
             if let Some(p) = self.panorama.take() {
+                p.destroy(&self.ctx, &memory);
+            }
+            if let Some(p) = self.pack_post.take() {
                 p.destroy(&self.ctx, &memory);
             }
             for (b, ..) in self.readbacks.drain(..) {
@@ -705,19 +715,41 @@ impl Live {
                     error!("native renderer: shadow cull: {}", e.0);
                 }
                 let geometry = terrain.pack_geometry();
+                // With FXAA (the game's only anti-aliasing under a pack) the
+                // pack draws into the post pass's scene, which FXAA reads.
+                let mut target = (image, view);
+                if self.post.fxaa {
+                    if self.pack_post.is_none() {
+                        match super::post::PostPass::new(&self.ctx, &self.pipelines, swapchain.format.format) {
+                            Ok(p) => self.pack_post = Some(p),
+                            Err(e) => error!("native renderer: pack fxaa: {}", e.0),
+                        }
+                    }
+                    if let Some(post) = &mut self.pack_post {
+                        match post.scene(&self.ctx, &self.memory, &mut self.bindless, &mut graph, extent, self.frame) {
+                            Ok(scene) => target = scene,
+                            Err(e) => error!("native renderer: pack fxaa: {}", e.0),
+                        }
+                    }
+                }
                 pack.record(
                     &self.ctx,
                     &self.memory,
                     &mut self.bindless,
                     &self.pipelines,
                     &mut graph,
-                    (image, view, extent),
+                    (target.0, target.1, extent),
                     pack_view,
                     self.frame,
                     slot,
                     seconds,
                     Some(&geometry),
                 );
+                if target.0 != image
+                    && let Some(post) = &self.pack_post
+                {
+                    post.record(&self.ctx, &self.bindless, &self.pipelines, &mut graph, (image, view), extent, 0, true);
+                }
             }
         }
         let figure = match self.figure.record(
