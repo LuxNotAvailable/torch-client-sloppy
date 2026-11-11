@@ -224,6 +224,129 @@ fn due(since: &mut f32, dt: f32) -> bool {
     true
 }
 
+/// What a layer draws: instances naming meshes and textures by place in
+/// the two lists that follow.
+type Collected = (Vec<EntityInstance>, Vec<AssetId<Mesh>>, Vec<AssetId<Image>>);
+
+/// A frame's entities for the live renderer (`vk::live`): meshes and
+/// textures new since the last frame taken, by stable index, then this
+/// frame's instances (naming those indices) and pose rows.
+#[derive(Default)]
+pub struct LiveEntities {
+    pub meshes: Vec<(u32, Vec<EntityVertex>, Vec<u32>, bool)>,
+    pub textures: Vec<(u32, u32, u32, Vec<u8>)>,
+    pub parts: Vec<[f32; 12]>,
+    pub instances: Vec<EntityInstance>,
+}
+
+/// Stable indices for what a live channel has sent: by asset, with the
+/// address of the cached data so a modified asset is sent anew.
+#[derive(Default)]
+struct Registry {
+    /// Index, the cached data's address, and a hash of its contents.
+    meshes: HashMap<AssetId<Mesh>, (u32, usize, u64)>,
+    images: HashMap<AssetId<Image>, (u32, usize)>,
+    next_mesh: u32,
+    next_image: u32,
+}
+
+/// The live channels: the world, and the inventory figure.
+pub const LIVE_WORLD: usize = 0;
+pub const LIVE_FIGURE: usize = 1;
+static LIVE_ENTITIES: std::sync::Mutex<Vec<(Registry, Option<LiveEntities>)>> = std::sync::Mutex::new(Vec::new());
+
+/// The channel's entities since the last take, if a frame came.
+pub fn take_live_entities(channel: usize) -> Option<LiveEntities> {
+    LIVE_ENTITIES.lock().ok()?.get_mut(channel)?.1.take()
+}
+
+/// Forgets what a channel sent (its renderer was remade).
+pub fn reset_live_entities(channel: usize) {
+    if let Ok(mut live) = LIVE_ENTITIES.lock()
+        && let Some(slot) = live.get_mut(channel)
+    {
+        *slot = Default::default();
+    }
+}
+
+/// A mesh's contents, hashed: a rebuilt mesh with the same data isn't
+/// sent again.
+fn content_hash(verts: &[EntityVertex], indices: &[u32], rigged: bool) -> u64 {
+    use std::hash::Hasher;
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    h.write(bytemuck::cast_slice(verts));
+    h.write(bytemuck::cast_slice(indices));
+    h.write_u8(u8::from(rigged));
+    h.finish()
+}
+
+fn to_live(channel: usize, cache: &Cache, (mut instances, used_meshes, used_images): Collected, rows: &[[f32; 12]]) {
+    let Ok(mut live) = LIVE_ENTITIES.lock() else { return };
+    while live.len() <= channel {
+        live.push(Default::default());
+    }
+    let (registry, pending) = &mut live[channel];
+    // Frames not yet taken keep their new meshes and textures.
+    let mut frame = pending.take().unwrap_or_default();
+    let mesh_index: Vec<u32> = used_meshes
+        .iter()
+        .map(|id| {
+            let (verts, indices, rigged) = &cache.meshes[id];
+            let key = verts.as_ptr() as usize;
+            match registry.meshes.get_mut(id) {
+                Some((index, at, _)) if *at == key => *index,
+                // Rebuilt (the same asset, new data): sent again only when
+                // its contents changed, under the same index.
+                Some((index, at, hash)) => {
+                    *at = key;
+                    let new = content_hash(verts, indices, *rigged);
+                    if new != *hash {
+                        *hash = new;
+                        frame.meshes.push((*index, verts.clone(), indices.clone(), *rigged));
+                        super::live::count_new(0, verts.len());
+                    }
+                    *index
+                }
+                None => {
+                    let index = registry.next_mesh;
+                    registry.next_mesh += 1;
+                    registry.meshes.insert(*id, (index, key, content_hash(verts, indices, *rigged)));
+                    frame.meshes.push((index, verts.clone(), indices.clone(), *rigged));
+                    super::live::count_new(0, verts.len());
+                    index
+                }
+            }
+        })
+        .collect();
+    let image_index: Vec<u32> = used_images
+        .iter()
+        .map(|id| {
+            let (w, h, rgba) = &cache.images[id];
+            let key = rgba.as_ptr() as usize;
+            match registry.images.get(id) {
+                Some(&(index, at)) if at == key => index,
+                _ => {
+                    let index = registry.next_image;
+                    registry.next_image += 1;
+                    registry.images.insert(*id, (index, key));
+                    frame.textures.push((index, *w, *h, rgba.clone()));
+                    super::live::count_new(1, rgba.len());
+                    index
+                }
+            }
+        })
+        .collect();
+    for i in &mut instances {
+        i.mesh = mesh_index[i.mesh as usize];
+        if i.texture != u32::MAX {
+            i.texture = image_index[i.texture as usize];
+        }
+    }
+    frame.instances = instances;
+    frame.parts = rows.to_vec();
+    *pending = Some(frame);
+}
+
 /// Mesh and image data copied while they still sit in the main world.
 #[derive(Resource, Default)]
 struct Cache {
@@ -647,6 +770,7 @@ fn write(
     if !due(&mut since, time.delta_secs()) {
         return;
     }
+    let _timed = super::live::Timed::new(0);
     let dir = super::terrain_dump::folder();
     // Out of a world (the title screen after leaving a server) the camera
     // sits at the origin with nothing to draw: keep the last snapshot taken
@@ -670,7 +794,7 @@ fn write(
         })
         .unwrap_or((Mat4::IDENTITY, 70f32.to_radians()));
     // One snapshot of what a layer draws, seen from `(cam, fov)`.
-    let snapshot = |world: bevy::camera::visibility::RenderLayers, (cam, fov): (Mat4, f32)| -> Vec<u8> {
+    let collect = |world: bevy::camera::visibility::RenderLayers| -> Collected {
     let mut instances = Vec::new();
     let mut used_meshes = Vec::new();
     let mut used_images = Vec::new();
@@ -738,6 +862,9 @@ fn write(
         });
     }
 
+    (instances, used_meshes, used_images)
+    };
+    let snapshot = |(instances, used_meshes, used_images): Collected, (cam, fov): (Mat4, f32)| -> Vec<u8> {
     let mut out = Vec::new();
     let mut put = |bytes: &[u8]| out.extend_from_slice(bytes);
     put(MAGIC);
@@ -773,14 +900,20 @@ fn write(
     put(bytemuck::cast_slice(&instances));
     out
     };
-    let out = snapshot(bevy::camera::visibility::RenderLayers::default(), world_camera);
+    // Live, entities go straight across (`LiveEntities`): new meshes and
+    // textures once, then each frame's instances and pose rows.
+    let live = super::live::wanted();
+    let world_layer = bevy::camera::visibility::RenderLayers::default();
+    let out = if live {
+        to_live(LIVE_WORLD, &cache, collect(world_layer), bytemuck::cast_slice(parts.rows()));
+        Vec::new()
+    } else {
+        snapshot(collect(world_layer), world_camera)
+    };
     // The inventory's player figure, on its own layer, for the native GUI.
-    if super::live::wanted() && crate::renderer::inventory_figure::ready() {
-        let figure = snapshot(
-            bevy::camera::visibility::RenderLayers::layer(crate::renderer::inventory_figure::FIGURE_LAYER),
-            (Mat4::IDENTITY, 0.0),
-        );
-        deliver(None, "figure.bin", figure);
+    if live && crate::renderer::inventory_figure::ready() {
+        let figure = bevy::camera::visibility::RenderLayers::layer(crate::renderer::inventory_figure::FIGURE_LAYER);
+        to_live(LIVE_FIGURE, &cache, collect(figure), bytemuck::cast_slice(parts.rows()));
     }
 
     // The game's own frame beside it, the ground truth for vkview
@@ -810,7 +943,9 @@ fn write(
         ),
         (&hand_parts, hand_camera.iter().next().map(|c| c.to_matrix().inverse())),
     );
-    deliver(dir.as_deref(), "entities.bin", out);
+    if !live {
+        deliver(dir.as_deref(), "entities.bin", out);
+    }
 }
 
 /// A snapshot read back.
@@ -823,6 +958,20 @@ pub struct Snapshot {
     pub meshes: Vec<(Vec<EntityVertex>, Vec<u32>, bool)>,
     pub parts: Vec<[f32; 12]>,
     pub instances: Vec<EntityInstance>,
+}
+
+impl Snapshot {
+    /// Nothing to draw: a live scene's start, before its first update.
+    pub fn empty() -> Snapshot {
+        Snapshot {
+            camera: Mat4::IDENTITY,
+            fov: 1.0,
+            textures: Vec::new(),
+            meshes: Vec::new(),
+            parts: Vec::new(),
+            instances: Vec::new(),
+        }
+    }
 }
 
 /// Reads `entities.bin`.
@@ -1017,6 +1166,7 @@ fn write_particles(
     if !due(&mut since, time.delta_secs()) {
         return;
     }
+    let _timed = super::live::Timed::new(1);
     let dir = super::terrain_dump::folder();
     // Out of a world: keep the last snapshot taken in one (see `write`).
     if camera

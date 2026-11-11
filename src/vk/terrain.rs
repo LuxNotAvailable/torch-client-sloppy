@@ -625,7 +625,9 @@ impl TerrainScene {
                 // underside are two faces, and drawing both from one side
                 // stacked their alpha.
                 stream(c"terrain_solid", vk::CullModeFlags::BACK, true, false),
-                stream(c"terrain_cutout", vk::CullModeFlags::NONE, true, false),
+                // The mesher emits both sides of two-sided quads (plants), as
+                // the game's culls back faces on every layer.
+                stream(c"terrain_cutout", vk::CullModeFlags::BACK, true, false),
                 stream(c"terrain_translucent", vk::CullModeFlags::BACK, true, true),
             ],
         );
@@ -941,6 +943,34 @@ impl TerrainScene {
                 self.entities = old;
                 Err(e)
             }
+        }
+    }
+
+    /// Updates the live entities with a frame's (`EntityScene::update`),
+    /// making the scene on the first.
+    pub fn update_entities(
+        &mut self,
+        ctx: &Context,
+        memory: &Memory,
+        bindless: &mut Bindless,
+        pipelines: &Pipelines,
+        color_format: vk::Format,
+        frame: super::entity_dump::LiveEntities,
+    ) -> Result<(), SetupError> {
+        if self.entities.is_none() {
+            self.entities = Some(super::entities::EntityScene::new(
+                ctx,
+                memory,
+                bindless,
+                pipelines,
+                color_format,
+                super::entity_dump::Snapshot::empty(),
+                None,
+            )?);
+        }
+        match &mut self.entities {
+            Some(scene) => scene.update(ctx, memory, bindless, frame),
+            None => Ok(()),
         }
     }
 
@@ -1945,7 +1975,7 @@ impl TerrainScene {
             .depth
             .get(ctx, memory, bindless, graph, extent, frame)?;
         if let Some(entities) = &mut self.entities {
-            entities.prepare(ctx, memory, graph, frame, slot);
+            entities.prepare(ctx, memory, bindless, graph, frame, slot);
         }
         if let Some(particles) = &mut self.particles {
             particles.prepare(ctx, memory, graph, frame)?;

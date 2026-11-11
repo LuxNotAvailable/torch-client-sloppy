@@ -29,6 +29,70 @@ pub fn wanted() -> bool {
     *WANTED.get_or_init(|| std::env::var("MC_RENDERER").is_ok_and(|v| v.eq_ignore_ascii_case("native")))
 }
 
+/// Where the native renderer's frame goes, in nanoseconds summed since
+/// the last report (`MC_NATIVE_TIMING`): the entity and particle captures,
+/// the scene renewals, the frame's recording and submission, the whole
+/// renderer system, and frames counted.
+static TIMES: [std::sync::atomic::AtomicU64; 6] = [const { std::sync::atomic::AtomicU64::new(0) }; 6];
+const TIME_NAMES: [&str; 5] = ["capture entities+env", "capture particles", "renew scenes", "record+submit", "renderer system"];
+
+/// New meshes and textures sent since the last report, and their sizes.
+static NEW: [std::sync::atomic::AtomicU64; 4] = [const { std::sync::atomic::AtomicU64::new(0) }; 4];
+
+/// Counts a new mesh (0, `size` vertices) or texture (1, `size` bytes).
+pub fn count_new(kind: usize, size: usize) {
+    NEW[kind].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    NEW[kind + 2].fetch_add(size as u64, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Times its scope into `TIMES[slot]`.
+pub struct Timed(usize, std::time::Instant);
+
+impl Timed {
+    pub fn new(slot: usize) -> Timed {
+        Timed(slot, std::time::Instant::now())
+    }
+}
+
+impl Drop for Timed {
+    fn drop(&mut self) {
+        TIMES[self.0].fetch_add(self.1.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Logs the average milliseconds per frame of each timed part, every two
+/// seconds.
+fn report_times(last: &mut Option<std::time::Instant>) {
+    use std::sync::atomic::Ordering::Relaxed;
+    TIMES[5].fetch_add(1, Relaxed);
+    let now = std::time::Instant::now();
+    let Some(since) = *last else {
+        *last = Some(now);
+        return;
+    };
+    let secs = now.duration_since(since).as_secs_f32();
+    if secs < 2.0 {
+        return;
+    }
+    *last = Some(now);
+    let frames = TIMES[5].swap(0, Relaxed).max(1);
+    let parts: Vec<String> = TIME_NAMES
+        .iter()
+        .enumerate()
+        .map(|(i, n)| format!("{n} {:.2}", TIMES[i].swap(0, Relaxed) as f64 / 1e6 / frames as f64))
+        .collect();
+    let new: Vec<u64> = NEW.iter().map(|n| n.swap(0, Relaxed)).collect();
+    info!(
+        "native renderer: {:.0} fps, ms/frame: {}; new meshes {} ({} verts), textures {} ({} KiB)",
+        frames as f32 / secs,
+        parts.join(", "),
+        new[0],
+        new[2],
+        new[1],
+        new[3] / 1024
+    );
+}
+
 pub struct LivePlugin;
 
 impl Plugin for LivePlugin {
@@ -141,7 +205,9 @@ fn setup(world: &mut World) -> Result<Live, SetupError> {
     })
 }
 
-fn draw_frame(world: &mut World) {
+fn draw_frame(world: &mut World, mut last: Local<Option<std::time::Instant>>) {
+    report_times(&mut last);
+    let _timed = Timed::new(4);
     if world.get_non_send_resource::<Live>().is_none() {
         match setup(world) {
             Ok(live) => world.insert_non_send_resource(live),
@@ -232,7 +298,9 @@ fn draw_frame(world: &mut World) {
     }
     live.figure.view = figure_view;
     live.menu = menu;
+    let timed = Timed::new(3);
     live.draw(gui_frame.unwrap_or_default(), textures, camera);
+    drop(timed);
     let captured = live.take_captures();
     world.insert_non_send_resource(live);
     for (entity, image) in captured {
@@ -390,7 +458,9 @@ impl Live {
             }
         }
         // This frame's snapshots of what's in and around the world.
+        let timed = Timed::new(2);
         self.renew_scenes();
+        drop(timed);
         let records = super::terrain_dump::take_live();
         if let Some(t) = &mut self.terrain
             && !records.is_empty()
@@ -421,14 +491,12 @@ impl Live {
                 Err(e) => fail("env", e),
             }
         }
-        if let Some(bytes) = dump::take_live("entities.bin") {
-            match dump::read(&bytes) {
-                Ok(snapshot) => match t.renew_entities(ctx, memory, bindless, pipelines, format, snapshot) {
-                    Ok(o) => old.extend(o.map(Retired::Entities)),
-                    Err(e) => fail("entities", e.0),
-                },
-                Err(e) => fail("entities", e),
-            }
+        // Entities stay; each frame updates them (new meshes and textures,
+        // then the instances).
+        if let Some(frame) = dump::take_live_entities(dump::LIVE_WORLD)
+            && let Err(e) = t.update_entities(ctx, memory, bindless, pipelines, format, frame)
+        {
+            fail("entities", e.0);
         }
         if let Some(bytes) = dump::take_live("particles.bin") {
             match dump::read_particles(&bytes) {
@@ -439,22 +507,17 @@ impl Live {
                 Err(e) => fail("particles", e),
             }
         }
-        if let Some(bytes) = dump::take_live("figure.bin") {
-            match dump::read(&bytes) {
-                Ok(snapshot) => {
-                    let mut prev = self.figure.scene.take();
-                    match super::entities::EntityScene::new(ctx, memory, bindless, pipelines, format, snapshot, prev.as_mut()) {
-                        Ok(scene) => {
-                            self.figure.scene = Some(scene);
-                            old.extend(prev.map(Retired::Entities));
-                        }
-                        Err(e) => {
-                            self.figure.scene = prev;
-                            fail("figure", e.0);
-                        }
-                    }
+        if let Some(frame) = dump::take_live_entities(dump::LIVE_FIGURE) {
+            if self.figure.scene.is_none() {
+                match super::entities::EntityScene::new(ctx, memory, bindless, pipelines, format, dump::Snapshot::empty(), None) {
+                    Ok(scene) => self.figure.scene = Some(scene),
+                    Err(e) => fail("figure", e.0),
                 }
-                Err(e) => fail("figure", e),
+            }
+            if let Some(scene) = &mut self.figure.scene
+                && let Err(e) = scene.update(ctx, memory, bindless, frame)
+            {
+                fail("figure", e.0);
             }
         }
         if let Some(bytes) = dump::take_live("inputs.json")
@@ -1281,7 +1344,7 @@ impl Figure {
         view_buffer.write(0, &super::terrain::plain_view(view_proj, eye));
         let view_index = *view_index;
 
-        scene.prepare(ctx, memory, graph, frame, slot);
+        scene.prepare(ctx, memory, bindless, graph, frame, slot);
         scene.record_cull(ctx, bindless, pipelines, uploads, graph, view_index, None, eye, slot)?;
         let mut images = vec![(color.raw, Use::ColorAttachment), (depth.raw, Use::DepthAttachment)];
         let mut buffers = vec![(view_buffer.raw, Use::SampledFragment)];

@@ -106,6 +106,36 @@ pub struct EntityScene {
     count: u32,
     rank_of: Vec<u32>,
     pub stats: EntityStats,
+    /// The live renderer's state (`update`), for a scene kept across frames.
+    live: Option<Box<Live>>,
+}
+
+/// A live scene's geometry and what this frame must upload: meshes and
+/// textures stay, by the stable index the capture gave them; instances,
+/// pose rows and boxes are rewritten each frame.
+#[derive(Default)]
+struct Live {
+    /// Per stable mesh index: first index, index count, base vertex,
+    /// whether rigged, its unposed box.
+    meshes: Vec<Option<(u32, u32, u32, bool, Vec3, Vec3)>>,
+    /// Per stable mesh index: the vertices and indices its range holds,
+    /// so a changed mesh that still fits is rewritten in place.
+    room: Vec<(u32, u32)>,
+    vertices_used: u64,
+    indices_used: u64,
+    /// Per stable texture index: its bindless index and its UNORM view's.
+    textures: Vec<Option<(u32, u32)>>,
+    /// Waiting for `prepare`: vertex and index bytes at their offsets, new
+    /// textures (place in `textures`, size, texels), and this frame's
+    /// instance, pose-row and box bytes.
+    geometry: Vec<(u64, Vec<u8>, u64, Vec<u8>)>,
+    images: Vec<(usize, u32, u32, Vec<u8>)>,
+    frame: Option<(Vec<u8>, Vec<u8>, Vec<u8>)>,
+    table_dirty: bool,
+    /// Per frame in flight: a staging buffer, grown to fit.
+    staging: Vec<Option<Buffer>>,
+    /// Buffers and images let go, with the frame they were last used on.
+    retired: Vec<(Buffer, u64)>,
 }
 
 /// Vanilla's armor glint texture, as the game loads it; none if the assets
@@ -452,6 +482,7 @@ impl EntityScene {
             count,
             rank_of: vec![0; count as usize],
             stats,
+            live: None,
         })
     }
 
@@ -478,6 +509,7 @@ impl EntityScene {
         &mut self,
         ctx: &Context,
         memory: &Memory,
+        bindless: &mut Bindless,
         graph: &mut Graph,
         frame: u64,
         slot: usize,
@@ -485,6 +517,16 @@ impl EntityScene {
         if let Some(bytes) = self.readback[slot].mapped() {
             self.stats.solid_drawn =
                 u32::from_le_bytes(bytes[..4].try_into().unwrap_or([0; 4])).min(self.count);
+        }
+        if self.live.is_some() {
+            // The snapshot's staging held an empty scene: nothing to copy.
+            if let Some((staging, _, _)) = self.staging.take() {
+                memory.free_buffer(ctx, staging);
+            }
+            if let Err(e) = self.prepare_live(ctx, memory, bindless, graph, frame, slot) {
+                bevy::log::error!("native renderer: entities: {}", e.0);
+            }
+            return;
         }
         let copied = self.staging.as_ref().map(|(_, _, c)| *c);
         let ready_layout = match copied {
@@ -913,6 +955,10 @@ impl EntityScene {
         if let Some((staging, _, _)) = self.staging {
             buffers.push(staging);
         }
+        if let Some(live) = self.live {
+            buffers.extend(live.staging.into_iter().flatten());
+            buffers.extend(live.retired.into_iter().map(|(b, _)| b));
+        }
         for b in buffers {
             memory.free_buffer(ctx, b);
         }
@@ -921,3 +967,408 @@ impl EntityScene {
         }
     }
 }
+
+/// A box around `lo`..`hi` once moved by `world`.
+fn world_box(world: &Mat4, lo: Vec3, hi: Vec3) -> (Vec3, Vec3) {
+    let (mut a, mut b) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+    for i in 0..8 {
+        let c = Vec3::new(
+            if i & 1 == 0 { lo.x } else { hi.x },
+            if i & 2 == 0 { lo.y } else { hi.y },
+            if i & 4 == 0 { lo.z } else { hi.z },
+        );
+        let w = world.transform_point3(c);
+        a = a.min(w);
+        b = b.max(w);
+    }
+    (a, b)
+}
+
+impl EntityScene {
+    /// Takes a live frame (`entity_dump::LiveEntities`): new meshes and
+    /// textures join the scene's, and this frame's instances replace the
+    /// last's. The uploads wait for `prepare`.
+    pub fn update(
+        &mut self,
+        ctx: &Context,
+        memory: &Memory,
+        bindless: &mut Bindless,
+        frame_data: super::entity_dump::LiveEntities,
+    ) -> Result<(), SetupError> {
+        let live = self.live.get_or_insert_with(Default::default);
+        for (index, verts, indices, rigged) in frame_data.meshes {
+            let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+            for v in &verts {
+                lo = lo.min(Vec3::from(v.pos));
+                hi = hi.max(Vec3::from(v.pos));
+            }
+            if lo.x > hi.x {
+                (lo, hi) = (Vec3::ZERO, Vec3::ZERO);
+            }
+            // A posed rig moves its parts about: a block's slack each way.
+            if rigged {
+                lo -= Vec3::ONE;
+                hi += Vec3::ONE;
+            }
+            let at = index as usize;
+            if live.room.len() <= at {
+                live.room.resize(at + 1, (0, 0));
+            }
+            // In place when the mesh's old range holds the new data.
+            let (room_v, room_i) = live.room[at];
+            let in_place = live.meshes.get(at).copied().flatten().filter(|_| {
+                verts.len() as u32 <= room_v && indices.len() as u32 <= room_i
+            });
+            let (vertex_at, index_at) = match in_place {
+                Some((first, _, base, ..)) => (base as u64 * 52, first as u64 * 4),
+                None => {
+                    let place = (live.vertices_used, live.indices_used);
+                    live.vertices_used += (verts.len() * 52) as u64;
+                    live.indices_used += (indices.len() * 4) as u64;
+                    live.room[at] = (verts.len() as u32, indices.len() as u32);
+                    place
+                }
+            };
+            let entry = (
+                (index_at / 4) as u32,
+                indices.len() as u32,
+                (vertex_at / 52) as u32,
+                rigged,
+                lo,
+                hi,
+            );
+            if live.meshes.len() <= at {
+                live.meshes.resize(at + 1, None);
+            }
+            live.meshes[at] = Some(entry);
+            live.geometry.push((
+                vertex_at,
+                bytemuck::cast_slice(&verts).to_vec(),
+                index_at,
+                bytemuck::cast_slice(&indices).to_vec(),
+            ));
+            live.table_dirty = true;
+        }
+        let full = || SetupError("the bindless set is full".to_owned());
+        for (index, w, h, rgba) in frame_data.textures {
+            let image = memory.image_with_raw(
+                ctx,
+                "entity texture",
+                vk::Extent2D { width: w, height: h },
+                vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+            )?;
+            let bindless_index = bindless
+                .add_texture(ctx, image.view, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .ok_or_else(full)?;
+            let raw = bindless
+                .add_texture(ctx, image.raw_view.expect("made with a raw view"), vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .ok_or_else(full)?;
+            let at = index as usize;
+            if live.textures.len() <= at {
+                live.textures.resize(at + 1, None);
+            }
+            live.textures[at] = Some((bindless_index, raw));
+            live.images.push((self.textures.len(), w, h, rgba));
+            self.textures.push((image, bindless_index));
+            self.texture_sizes.push((w, h));
+            self.raw_textures.push(raw);
+        }
+        // The armor glint, once something glints.
+        if self.glint.is_none()
+            && frame_data.instances.iter().any(|i| i.switches[3] > 0.0)
+            && let Some((w, h, rgba)) = load_glint()
+        {
+            let image = memory.image(
+                ctx,
+                "entity glint",
+                vk::Extent2D { width: w, height: h },
+                vk::Format::R8G8B8A8_UNORM,
+                vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+                vk::ImageAspectFlags::COLOR,
+            )?;
+            let index = bindless
+                .add_texture(ctx, image.view, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .ok_or_else(full)?;
+            live.images.push((usize::MAX, w, h, rgba));
+            self.glint = Some((image, index));
+        }
+
+        // This frame's instances: textures by bindless index, boxes from
+        // their meshes' boxes.
+        let mut instances = frame_data.instances;
+        let mut bounds: Vec<[f32; 8]> = Vec::with_capacity(instances.len());
+        let mut blended = Vec::new();
+        let mut pack_draws = Vec::with_capacity(instances.len());
+        let mut rigged = 0;
+        for (i, instance) in instances.iter_mut().enumerate() {
+            let mesh = live.meshes.get(instance.mesh as usize).copied().flatten();
+            let (raw_texture, texture) = match live.textures.get(instance.texture as usize).copied().flatten() {
+                Some((t, raw)) => (raw, t),
+                None => (u32::MAX, u32::MAX),
+            };
+            instance.texture = texture;
+            let (lo, hi) = match mesh {
+                Some((.., lo, hi)) => world_box(&Mat4::from_cols_array(&instance.transform), lo, hi),
+                None => (Vec3::ZERO, Vec3::ZERO),
+            };
+            bounds.push([lo.x, lo.y, lo.z, 0.0, hi.x, hi.y, hi.z, 0.0]);
+            if instance.alpha >= 2 {
+                blended.push((i as u32, (lo + hi) / 2.0, instance.depth_bias, instance.alpha == 3));
+            }
+            let (first, count, base, is_rigged) = mesh.map_or((0, 0, 0, false), |m| (m.0, m.1, m.2, m.3));
+            if is_rigged {
+                rigged += 1;
+            }
+            pack_draws.push((first, count, base as i32, raw_texture, instance.alpha >= 2));
+        }
+        let count = instances.len() as u32;
+        live.frame = Some((
+            bytemuck::cast_slice(&instances).to_vec(),
+            bytemuck::cast_slice(&frame_data.parts).to_vec(),
+            bytemuck::cast_slice(&bounds).to_vec(),
+        ));
+        self.count = count;
+        self.rank_of = vec![0; count as usize];
+        self.stats.instances = count as usize;
+        self.stats.meshes = live.meshes.iter().flatten().count();
+        self.stats.textures = self.textures.len();
+        self.stats.rigged = rigged;
+        self.stats.blended = blended.len();
+        self.blended = blended;
+        self.pack_draws = pack_draws;
+        Ok(())
+    }
+
+    /// Grows `buffer` to hold `needed` bytes (doubling), keeping its
+    /// bindless slot's role; the old one retires. Returns the old buffer
+    /// to copy from when `keep` and it grew.
+    #[allow(clippy::too_many_arguments, reason = "a buffer's whole context")]
+    fn grow(
+        ctx: &Context,
+        memory: &Memory,
+        bindless: &mut Bindless,
+        buffer: &mut (Buffer, u32),
+        needed: u64,
+        usage: vk::BufferUsageFlags,
+        frame: u64,
+        retired: &mut Vec<(Buffer, u64)>,
+        name: &str,
+    ) -> Result<Option<(vk::Buffer, u64)>, SetupError> {
+        if buffer.0.size >= needed {
+            return Ok(None);
+        }
+        let size = needed.next_power_of_two().max(4096);
+        let new = memory.buffer(ctx, name, size, usage, MemoryLocation::GpuOnly)?;
+        let index = bindless
+            .add_buffer(ctx, new.raw)
+            .ok_or_else(|| SetupError("the bindless set is full".to_owned()))?;
+        let old = std::mem::replace(buffer, (new, index));
+        bindless.remove_buffer(old.1, frame);
+        // The scene's first buffers are empty stand-ins: nothing to keep.
+        let copy = (old.0.size > 16).then_some((old.0.raw, old.0.size));
+        retired.push((old.0, frame));
+        Ok(copy)
+    }
+
+    /// The live scene's uploads, into this frame's graph.
+    fn prepare_live(
+        &mut self,
+        ctx: &Context,
+        memory: &Memory,
+        bindless: &mut Bindless,
+        graph: &mut Graph,
+        frame: u64,
+        slot: usize,
+    ) -> Result<(), SetupError> {
+        let Some(live) = self.live.as_mut() else { return Ok(()) };
+        // Old buffers once no frame in flight reads them.
+        let (done, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut live.retired)
+            .into_iter()
+            .partition(|(_, at)| frame >= at + FRAMES_IN_FLIGHT as u64);
+        live.retired = keep;
+        for (b, _) in done {
+            memory.free_buffer(ctx, b);
+        }
+        if live.staging.is_empty() {
+            live.staging = (0..FRAMES_IN_FLIGHT).map(|_| None).collect();
+        }
+
+        // Textures already uploaded sit sampled; new ones start undefined.
+        let fresh: Vec<usize> = live.images.iter().map(|(i, ..)| *i).collect();
+        for (k, (image, _)) in self.textures.iter().enumerate() {
+            let layout = if fresh.contains(&k) {
+                vk::ImageLayout::UNDEFINED
+            } else {
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+            };
+            graph.image(image.raw, vk::ImageAspectFlags::COLOR, layout);
+        }
+        if let Some((image, _)) = &self.glint {
+            let layout = if fresh.contains(&usize::MAX) {
+                vk::ImageLayout::UNDEFINED
+            } else {
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+            };
+            graph.image(image.raw, vk::ImageAspectFlags::COLOR, layout);
+        }
+
+        // Pools grown to fit; geometry kept across a grow.
+        let storage = vk::BufferUsageFlags::STORAGE_BUFFER
+            | vk::BufferUsageFlags::TRANSFER_DST
+            | vk::BufferUsageFlags::TRANSFER_SRC;
+        let indirect = storage | vk::BufferUsageFlags::INDIRECT_BUFFER;
+        let mut copies: Vec<(vk::Buffer, vk::Buffer, u64)> = Vec::new();
+        let r = &mut live.retired;
+        if let Some((old, size)) = Self::grow(ctx, memory, bindless, &mut self.vertices, live.vertices_used, storage, frame, r, "entity vertices")? {
+            copies.push((old, self.vertices.0.raw, size));
+        }
+        // The index pool (no bindless slot) grows the same way.
+        if self.indices.size < live.indices_used {
+            let size = live.indices_used.next_power_of_two().max(4096);
+            let new = memory.buffer(
+                ctx,
+                "entity indices",
+                size,
+                vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::TRANSFER_SRC,
+                MemoryLocation::GpuOnly,
+            )?;
+            let old = std::mem::replace(&mut self.indices, new);
+            if old.size > 16 {
+                copies.push((old.raw, self.indices.raw, old.size));
+            }
+            r.push((old, frame));
+        }
+        let table_len = (live.meshes.len() * 16) as u64;
+        if let Some((old, size)) = Self::grow(ctx, memory, bindless, &mut self.meshes, table_len, storage, frame, r, "entity meshes")? {
+            copies.push((old, self.meshes.0.raw, size));
+        }
+        let (instance_bytes, part_bytes, bound_bytes) = live.frame.take().unwrap_or_default();
+        let count = self.count as u64;
+        Self::grow(ctx, memory, bindless, &mut self.instances, instance_bytes.len() as u64, storage, frame, r, "entity instances")?;
+        Self::grow(ctx, memory, bindless, &mut self.parts, part_bytes.len() as u64, storage, frame, r, "entity parts")?;
+        Self::grow(ctx, memory, bindless, &mut self.bounds, bound_bytes.len() as u64, storage, frame, r, "entity bounds")?;
+        Self::grow(ctx, memory, bindless, &mut self.ranks, count * 4, storage, frame, r, "entity ranks")?;
+        Self::grow(ctx, memory, bindless, &mut self.commands, count * 2 * COMMAND_SIZE, indirect, frame, r, "entity commands")?;
+
+        // Everything new into this slot's staging.
+        let table: Vec<u32> = if live.table_dirty {
+            live.table_dirty = false;
+            live.meshes
+                .iter()
+                .flat_map(|m| m.map_or([0, 0, 0, 0], |(f, c, b, rig, ..)| [f, c, b, u32::from(rig)]))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let mut writes: Vec<(u64, &[u8])> = Vec::new();
+        let mut total = 0u64;
+        let mut place = |len: usize| {
+            let at = total;
+            total = (total + len as u64).next_multiple_of(16);
+            at
+        };
+        let geometry = std::mem::take(&mut live.geometry);
+        let images = std::mem::take(&mut live.images);
+        let mut buffer_copies: Vec<(u64, vk::Buffer, u64, u64)> = Vec::new();
+        for (vertex_at, verts, index_at, idx) in &geometry {
+            let a = place(verts.len());
+            writes.push((a, verts));
+            buffer_copies.push((a, self.vertices.0.raw, *vertex_at, verts.len() as u64));
+            let b = place(idx.len());
+            writes.push((b, idx));
+            buffer_copies.push((b, self.indices.raw, *index_at, idx.len() as u64));
+        }
+        let table_bytes: &[u8] = bytemuck::cast_slice(&table);
+        for (bytes, target) in [
+            (table_bytes, self.meshes.0.raw),
+            (&instance_bytes[..], self.instances.0.raw),
+            (&part_bytes[..], self.parts.0.raw),
+            (&bound_bytes[..], self.bounds.0.raw),
+        ] {
+            if !bytes.is_empty() {
+                let a = place(bytes.len());
+                writes.push((a, bytes));
+                buffer_copies.push((a, target, 0, bytes.len() as u64));
+            }
+        }
+        let mut image_copies: Vec<(u64, vk::Image, u32, u32)> = Vec::new();
+        for (k, w, h, rgba) in &images {
+            let image = if *k == usize::MAX {
+                self.glint.as_ref().map(|g| g.0.raw)
+            } else {
+                self.textures.get(*k).map(|t| t.0.raw)
+            };
+            if let Some(image) = image {
+                let a = place(rgba.len());
+                writes.push((a, rgba));
+                image_copies.push((a, image, *w, *h));
+            }
+        }
+        if total == 0 && copies.is_empty() {
+            return Ok(());
+        }
+        let staging = &mut live.staging[slot];
+        if staging.as_ref().is_none_or(|b| b.size < total) {
+            if let Some(old) = staging.take() {
+                live.retired.push((old, frame));
+            }
+            *staging = Some(memory.buffer(
+                ctx,
+                "entity staging",
+                total.next_power_of_two().max(1 << 16),
+                vk::BufferUsageFlags::TRANSFER_SRC,
+                MemoryLocation::CpuToGpu,
+            )?);
+        }
+        let Some(staging) = staging.as_mut() else { return Ok(()) };
+        for (at, bytes) in writes {
+            staging.write(at as usize, bytes);
+        }
+        let source = staging.raw;
+        let device = &ctx.device;
+        if !copies.is_empty() {
+            let mut uses: Vec<(vk::Buffer, Use)> = Vec::new();
+            for (old, new, _) in &copies {
+                uses.push((*old, Use::TransferSrc));
+                uses.push((*new, Use::TransferDst));
+            }
+            graph.pass("entity grow", &[], &uses, |cmd| unsafe {
+                // SAFETY: whole-buffer copies into larger buffers.
+                for (old, new, size) in &copies {
+                    device.cmd_copy_buffer(cmd, *old, *new, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: *size }]);
+                }
+            });
+        }
+        let mut buffers: Vec<(vk::Buffer, Use)> = buffer_copies.iter().map(|(_, b, _, _)| (*b, Use::TransferDst)).collect();
+        buffers.dedup();
+        let image_uses: Vec<(vk::Image, Use)> = image_copies.iter().map(|(_, i, _, _)| (*i, Use::TransferDst)).collect();
+        graph.pass("entity upload", &image_uses, &buffers, |cmd| unsafe {
+            // SAFETY: copies from this slot's staging into the buffers and
+            // images, in the transfer states the graph set.
+            for (from, target, to, size) in &buffer_copies {
+                device.cmd_copy_buffer(cmd, source, *target, &[vk::BufferCopy { src_offset: *from, dst_offset: *to, size: *size }]);
+            }
+            for (from, image, w, h) in &image_copies {
+                device.cmd_copy_buffer_to_image(
+                    cmd,
+                    source,
+                    *image,
+                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    &[vk::BufferImageCopy {
+                        buffer_offset: *from,
+                        image_subresource: vk::ImageSubresourceLayers {
+                            aspect_mask: vk::ImageAspectFlags::COLOR,
+                            mip_level: 0,
+                            base_array_layer: 0,
+                            layer_count: 1,
+                        },
+                        image_extent: vk::Extent3D { width: *w, height: *h, depth: 1 },
+                        ..Default::default()
+                    }],
+                );
+            }
+        });
+        Ok(())
+    }
+}
+
