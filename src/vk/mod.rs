@@ -13,6 +13,7 @@ pub mod entity_dump;
 pub mod env;
 pub mod frame;
 pub mod graph;
+pub mod live;
 pub mod greedy;
 pub mod memory;
 pub mod pack;

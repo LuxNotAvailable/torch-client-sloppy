@@ -2388,6 +2388,10 @@ fn wgpu_settings() -> bevy::render::settings::WgpuSettings {
     if let Some(backends) = chosen_backends() {
         settings.backends = Some(backends);
     }
+    // The native renderer owns the window: Bevy's starts with no backend.
+    if crate::vk::live::wanted() {
+        settings.backends = None;
+    }
     settings
 }
 
@@ -2658,6 +2662,7 @@ pub fn run(
     .add_plugins(crate::renderer::clouds::CloudPlugin)
     .add_plugins(crate::renderer::post::PostPlugin)
     .add_plugins(crate::entities::EntityPlugin)
+    .add_plugins(crate::vk::live::LivePlugin)
     .add_plugins(crate::util::particles::ParticlePlugin)
     .add_plugins(crate::renderer::world_text::WorldTextPlugin)
     .insert_resource(Shared(shared))
