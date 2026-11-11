@@ -24,7 +24,7 @@ use crate::vk::bindless::{MAX_BUFFERS, MAX_SAMPLERS, MAX_TEXTURES};
 
 /// What a slot holds.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum SlotKind {
+pub(crate) enum SlotKind {
     /// A sampled image, with its WGSL type (`texture_2d<f32>`,
     /// `texture_depth_2d`, ...).
     Texture(String),
@@ -37,7 +37,7 @@ pub enum SlotKind {
 
 /// One resource the program declared, in slot-table order.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Slot {
+pub(crate) struct Slot {
     pub group: u32,
     pub binding: u32,
     pub name: String,
@@ -344,17 +344,38 @@ fn pass_slots(body: &mut String, changed: &[(String, Vec<(usize, String)>)]) {
 
 /// `source` with its declared resources on the bindless set, and the slots
 /// in table order.
-pub fn rewrite(source: &str) -> (String, Vec<Slot>) {
+#[cfg(test)]
+pub(crate) fn rewrite(source: &str) -> (String, Vec<Slot>) {
+    let mut slots = Vec::new();
+    let out = rewrite_shared(source, &mut slots);
+    (out, slots)
+}
+
+/// As `rewrite`, numbering slots in `slots`, shared between a program's
+/// stages: a resource both declare gets one index.
+pub(crate) fn rewrite_shared(source: &str, shared: &mut Vec<Slot>) -> String {
     let found = declarations(source);
     if found.is_empty() {
-        return (source.to_owned(), Vec::new());
+        return source.to_owned();
     }
     // Drop the declarations (last first, so earlier offsets hold).
     let mut body = source.to_owned();
     for d in found.iter().rev() {
         body.replace_range(d.start..d.end, "");
     }
-    let slots: Vec<Slot> = found.into_iter().map(|d| d.slot).collect();
+    let slots: Vec<(usize, Slot)> = found
+        .into_iter()
+        .map(|d| {
+            let at = shared
+                .iter()
+                .position(|s| (s.group, s.binding) == (d.slot.group, d.slot.binding))
+                .unwrap_or_else(|| {
+                    shared.push(d.slot.clone());
+                    shared.len() - 1
+                });
+            (at, d.slot)
+        })
+        .collect();
 
     let mut header = format!(
         "struct IrisBindlessPush {{ table: u32, base: u32 }}\n\
@@ -365,7 +386,7 @@ pub fn rewrite(source: &str) -> (String, Vec<Slot>) {
     );
     let mut declared: Vec<String> = Vec::new();
     let changed = slot_parameters(&mut body, &mut header, &mut declared);
-    for (k, slot) in slots.iter().enumerate() {
+    for (k, slot) in &slots {
         let index = format!("iris_slot({k}u)");
         let (array, decl, access) = match &slot.kind {
             SlotKind::Texture(ty) => {
@@ -420,7 +441,7 @@ pub fn rewrite(source: &str) -> (String, Vec<Slot>) {
         body = replace_uses(&body, &slot.name, &access);
     }
     pass_slots(&mut body, &changed);
-    (format!("{header}{body}"), slots)
+    format!("{header}{body}")
 }
 
 #[cfg(test)]

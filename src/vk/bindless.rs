@@ -19,6 +19,15 @@ const BINDING_BUFFERS: u32 = 2;
 /// The sampler slots `common.slang` names.
 pub const SAMPLER_NEAREST: u32 = 0;
 pub const SAMPLER_LINEAR: u32 = 1;
+/// Clamped, for pack targets (`packdraw::targets::Statics`).
+pub const SAMPLER_NEAREST_CLAMP: u32 = 2;
+pub const SAMPLER_LINEAR_CLAMP: u32 = 3;
+/// Shadow comparisons (less or equal), and one that always passes.
+pub const SAMPLER_COMPARE_LINEAR: u32 = 4;
+pub const SAMPLER_COMPARE_NEAREST: u32 = 5;
+pub const SAMPLER_COMPARE_ALWAYS: u32 = 6;
+/// Linear across mip levels, clamped.
+pub const SAMPLER_MIP_LINEAR: u32 = 7;
 
 pub struct Bindless {
     pub layout: vk::DescriptorSetLayout,
@@ -153,6 +162,33 @@ impl Bindless {
                         .max_lod(vk::LOD_CLAMP_NONE),
                     None,
                 )?;
+                bindless.add_sampler(ctx, sampler);
+            }
+            // The pack samplers, in the order of their constants.
+            let clamp = vk::SamplerAddressMode::CLAMP_TO_EDGE;
+            let base = |filter: vk::Filter, mip: vk::SamplerMipmapMode| {
+                vk::SamplerCreateInfo::default()
+                    .mag_filter(filter)
+                    .min_filter(filter)
+                    .mipmap_mode(mip)
+                    .address_mode_u(clamp)
+                    .address_mode_v(clamp)
+                    .address_mode_w(clamp)
+                    .max_lod(vk::LOD_CLAMP_NONE)
+            };
+            let nearest_mip = vk::SamplerMipmapMode::NEAREST;
+            let compare = |filter: vk::Filter, op: vk::CompareOp| {
+                base(filter, nearest_mip).compare_enable(true).compare_op(op)
+            };
+            for info in [
+                base(vk::Filter::NEAREST, nearest_mip),
+                base(vk::Filter::LINEAR, nearest_mip),
+                compare(vk::Filter::LINEAR, vk::CompareOp::LESS_OR_EQUAL),
+                compare(vk::Filter::NEAREST, vk::CompareOp::LESS_OR_EQUAL),
+                compare(vk::Filter::NEAREST, vk::CompareOp::ALWAYS),
+                base(vk::Filter::LINEAR, vk::SamplerMipmapMode::LINEAR),
+            ] {
+                let sampler = ctx.device.create_sampler(&info, None)?;
                 bindless.add_sampler(ctx, sampler);
             }
             Ok(bindless)

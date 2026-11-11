@@ -249,8 +249,8 @@ struct Renderer {
     // Everything made from the device is destroyed in `Drop`, before the
     // context.
     scene: Option<Scene>,
-    /// The `--pack` pack's targets, while its passes are being ported.
-    pack: Option<crate::vk::pack::targets::PackTargets>,
+    /// The `--pack` pack's screen passes, run over the scene.
+    pack: Option<crate::vk::pack::screen::PackScreen>,
     timestamps: Option<Timestamps>,
     uploads: Option<Uploads>,
     pipelines: Option<Pipelines>,
@@ -393,25 +393,25 @@ impl Renderer {
                 let started = std::time::Instant::now();
                 let installed = crate::vk::pack::load(name, false)
                     .map_err(|e| crate::vk::SetupError(format!("pack {name}: {e}")))?;
-                let targets = crate::vk::pack::targets::PackTargets::new(
+                let programs = installed.programs.len();
+                let screen = crate::vk::pack::screen::PackScreen::new(
                     &ctx,
                     &memory,
-                    &installed,
+                    &mut bindless,
+                    &pipelines,
+                    installed,
                     v::Extent2D {
                         width: options.size.0,
                         height: options.size.1,
                     },
-                    false,
+                    format,
                 )?;
                 println!(
-                    "vkview: pack {name}: {} programs in {:.0} ms",
-                    installed.programs.len(),
+                    "vkview: pack {name}: {programs} programs, {} in {:.0} ms",
+                    screen.describe(),
                     started.elapsed().as_secs_f32() * 1000.0
                 );
-                for line in targets.describe() {
-                    println!("vkview:   {line}");
-                }
-                Some(targets)
+                Some(screen)
             }
             None => None,
         };
@@ -637,6 +637,32 @@ impl Renderer {
         };
         if let Err(e) = recorded {
             eprintln!("vkview: scene failed: {e}");
+        }
+        if let Some(pack) = self.pack.as_mut() {
+            let camera = match scene {
+                Scene::Terrain(scene, camera) => {
+                    let c = camera
+                        .or_else(|| self.game_camera.then(|| scene.game_camera()).flatten())
+                        .unwrap_or_else(|| scene.default_camera(seconds));
+                    (
+                        bevy::math::Mat4::look_to_rh(c.eye, c.forward(), bevy::math::Vec3::Y).inverse(),
+                        c.fov.to_radians(),
+                    )
+                }
+                _ => (bevy::math::Mat4::IDENTITY, 70f32.to_radians()),
+            };
+            pack.record(
+                &self.ctx,
+                memory,
+                bindless,
+                pipelines,
+                &mut graph,
+                (image, image_view, extent),
+                camera,
+                self.frame,
+                slot,
+                seconds,
+            );
         }
         if capture && self.readback.is_none() {
             let bytes = extent.width as u64 * extent.height as u64 * 4;

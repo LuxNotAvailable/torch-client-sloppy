@@ -82,6 +82,7 @@ impl ParticleScene {
                 topology: vk::PrimitiveTopology::TRIANGLE_LIST,
                 blend,
                 additive: false,
+                fragment_module: None,
             })
         };
         let pending = pipelines.build_on_worker(

@@ -97,6 +97,7 @@ impl TestScene {
                 topology: vk::PrimitiveTopology::TRIANGLE_LIST,
                 blend: false,
                 additive: false,
+                fragment_module: None,
             },
         )?;
         let depth_view = DepthView::new(ctx, pipelines, color_format)?;

@@ -71,6 +71,7 @@ impl PanoramaScene {
                 topology: vk::PrimitiveTopology::TRIANGLE_LIST,
                 blend: false,
                 additive: false,
+                fragment_module: None,
             })],
         );
 

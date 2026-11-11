@@ -20,9 +20,9 @@ mod node;
 mod packatlas;
 mod pipelines;
 mod plan;
-mod sources;
+pub(crate) mod sources;
 mod targets;
-mod uniforms;
+pub(crate) mod uniforms;
 mod usage;
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};

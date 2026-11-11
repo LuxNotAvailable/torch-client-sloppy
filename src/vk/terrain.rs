@@ -156,7 +156,7 @@ impl Camera {
         })
     }
 
-    fn forward(self) -> Vec3 {
+    pub fn forward(self) -> Vec3 {
         let (yaw, pitch) = (self.yaw.to_radians(), self.pitch.to_radians());
         Vec3::new(
             -yaw.sin() * pitch.cos(),
@@ -525,6 +525,7 @@ impl TerrainScene {
                 topology: vk::PrimitiveTopology::TRIANGLE_LIST,
                 blend,
                 additive: false,
+                fragment_module: None,
             })
         };
         let pending = pipelines.build_on_worker(

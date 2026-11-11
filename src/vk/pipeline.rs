@@ -51,6 +51,8 @@ pub struct GraphicsDesc<'a> {
     /// With `blend`: add the colour (premultiplied by the shader) instead
     /// of mixing by alpha (the sun, moon and stars).
     pub additive: bool,
+    /// The fragment stage's own module (pack programs); else `module`.
+    pub fragment_module: Option<vk::ShaderModule>,
 }
 
 impl Pipelines {
@@ -150,6 +152,7 @@ impl Pipelines {
                                 topology: g.topology,
                                 blend: g.blend,
                                 additive: g.additive,
+                                fragment_module: g.fragment_module,
                             },
                         ),
                     };
@@ -205,7 +208,7 @@ fn build_graphics(
             .name(desc.vertex),
         vk::PipelineShaderStageCreateInfo::default()
             .stage(vk::ShaderStageFlags::FRAGMENT)
-            .module(desc.module)
+            .module(desc.fragment_module.unwrap_or(desc.module))
             .name(desc.fragment),
     ];
     let vertex_input = vk::PipelineVertexInputStateCreateInfo::default();
@@ -316,6 +319,8 @@ pub struct GraphicsSpec {
     /// With `blend`: add the colour (premultiplied by the shader) instead
     /// of mixing by alpha (the sun, moon and stars).
     pub additive: bool,
+    /// The fragment stage's own module (pack programs); else `module`.
+    pub fragment_module: Option<vk::ShaderModule>,
 }
 
 /// A worker's batch: its pipelines and milliseconds, or why it failed.

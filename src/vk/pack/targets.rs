@@ -20,12 +20,12 @@ use crate::shaderpack::directives::{MAX_COLOR_TARGETS, MAX_SHADOW_COLORS, Target
 use crate::vk::memory::{Image, Memory};
 use crate::vk::{Context, SetupError};
 
-pub const DEPTH_FORMAT: vk::Format = vk::Format::D32_SFLOAT;
+pub(crate) const DEPTH_FORMAT: vk::Format = vk::Format::D32_SFLOAT;
 /// Shadow maps above this many texels a side are clamped, as the game's.
 const MAX_SHADOW_MAP: u32 = 8192;
 
 /// The Vulkan format a pack's target format names.
-pub fn vk_format(format: TargetFormat) -> vk::Format {
+pub(crate) fn vk_format(format: TargetFormat) -> vk::Format {
     use TargetFormat as F;
     use vk::Format as V;
     match format {
@@ -115,7 +115,7 @@ fn fallback(format: vk::Format) -> Option<vk::Format> {
 
 /// `format` if the device can draw it (and, unless it is an integer
 /// format, blend and filter it), else the game's fallback.
-pub fn usable(ctx: &Context, format: vk::Format) -> vk::Format {
+pub(crate) fn usable(ctx: &Context, format: vk::Format) -> vk::Format {
     let mut need = vk::FormatFeatureFlags::COLOR_ATTACHMENT | vk::FormatFeatureFlags::SAMPLED_IMAGE;
     if !is_integer(format) {
         need |= vk::FormatFeatureFlags::COLOR_ATTACHMENT_BLEND
@@ -135,14 +135,14 @@ pub fn usable(ctx: &Context, format: vk::Format) -> vk::Format {
 }
 
 /// The shadow pass's targets, square at the pack's resolution.
-pub struct ShadowTargets {
+pub(crate) struct ShadowTargets {
     pub size: u32,
     pub depth: Image,
     pub depth_opaque: Image,
     pub color: [Option<Image>; MAX_SHADOW_COLORS],
 }
 
-pub struct PackTargets {
+pub(crate) struct PackTargets {
     pub size: vk::Extent2D,
     /// Each used colour target's pair, and its format.
     pub color: [Option<([Image; 2], vk::Format)>; MAX_COLOR_TARGETS],
@@ -155,7 +155,7 @@ pub struct PackTargets {
 impl PackTargets {
     /// Every target `installed` uses, for a screen of `size`; `no_hand`
     /// when a program samples `depthtex2`.
-    pub fn new(
+    pub(crate) fn new(
         ctx: &Context,
         memory: &Memory,
         installed: &crate::renderer::packdraw::install::Installed,
@@ -240,41 +240,7 @@ impl PackTargets {
         })
     }
 
-    /// One line per target, for the viewer's summary.
-    pub fn describe(&self) -> Vec<String> {
-        let mut out = Vec::new();
-        for (index, slot) in self.color.iter().enumerate() {
-            if let Some((pair, format)) = slot {
-                out.push(format!(
-                    "colortex{index}: {}x{} {format:?} (pair)",
-                    pair[0].extent.width, pair[0].extent.height
-                ));
-            }
-        }
-        out.push(format!(
-            "depthtex0/1{}: {}x{}",
-            if self.depth_no_hand.is_some() { "/2" } else { "" },
-            self.size.width,
-            self.size.height
-        ));
-        if let Some(shadow) = &self.shadow {
-            let colors: Vec<String> = shadow
-                .color
-                .iter()
-                .enumerate()
-                .filter_map(|(i, c)| c.as_ref().map(|c| format!("shadowcolor{i} {:?}", c.format)))
-                .collect();
-            out.push(format!(
-                "shadow {0}x{0}: shadowtex0/1{1}{2}",
-                shadow.size,
-                if colors.is_empty() { "" } else { ", " },
-                colors.join(", ")
-            ));
-        }
-        out
-    }
-
-    pub fn destroy(self, ctx: &Context, memory: &Memory) {
+    pub(crate) fn destroy(self, ctx: &Context, memory: &Memory) {
         let mut images = vec![self.depth, self.depth_opaque];
         images.extend(self.depth_no_hand);
         for (pair, _) in self.color.into_iter().flatten() {

@@ -64,9 +64,10 @@ pub(crate) fn unsupplied(layout: &UniformLayout, customs: &Customs) -> Vec<Strin
         .collect()
 }
 
-pub(crate) struct PackUniforms {
-    pub(crate) buffer: Buffer,
-    bytes: Vec<u8>,
+/// A pack's uniform blocks as bytes, device free: the game uploads them to
+/// one wgpu buffer (`PackUniforms`), the native renderer to its own.
+pub(crate) struct UniformBytes {
+    pub(crate) bytes: Vec<u8>,
     sources: Vec<(u32, Source)>,
     blocks: Vec<Block>,
 }
@@ -83,14 +84,14 @@ pub(crate) struct BlockSpec<'a> {
     pub(crate) render_stage: i32,
 }
 
-impl PackUniforms {
+impl UniformBytes {
+    /// Lays the blocks out one after another, each at a multiple of `align`.
     pub(crate) fn new<'a>(
-        device: &RenderDevice,
-        label: &str,
         specs: impl IntoIterator<Item = BlockSpec<'a>>,
         customs: &Customs,
-    ) -> PackUniforms {
-        let align = device.limits().min_uniform_buffer_offset_alignment.max(1);
+        align: u32,
+    ) -> UniformBytes {
+        let align = align.max(1);
         let mut blocks = Vec::new();
         let mut sources = Vec::new();
         let mut stages = Vec::new();
@@ -127,31 +128,21 @@ impl PackUniforms {
             let words = bytemuck::cast_slice::<u32, u8>(words);
             bytes[at as usize..at as usize + words.len()].copy_from_slice(words);
         }
-        let buffer = device.create_buffer(&BufferDescriptor {
-            label: Some(label),
-            size: bytes.len() as u64,
-            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        PackUniforms {
-            buffer,
+        UniformBytes {
             bytes,
             sources,
             blocks,
         }
     }
 
+    /// Block `index`'s offset and size.
     pub(crate) fn range(&self, index: usize) -> (u64, u64) {
         let block = &self.blocks[index];
         (u64::from(block.offset), u64::from(block.size))
     }
 
-    pub(crate) fn write(
-        &mut self,
-        values: &FrameValues,
-        customs: &CustomState,
-        queue: &RenderQueue,
-    ) {
+    /// Fills every block with this frame's values.
+    pub(crate) fn update(&mut self, values: &FrameValues, customs: &CustomState) {
         for block in &self.blocks {
             let head = values.head(block.set);
             let head = bytemuck::bytes_of(&head);
@@ -174,7 +165,48 @@ impl PackUniforms {
             };
             value.write(out);
         }
-        queue.write_buffer(&self.buffer, 0, &self.bytes);
+    }
+}
+
+/// `UniformBytes` in one wgpu uniform buffer.
+pub(crate) struct PackUniforms {
+    pub(crate) buffer: Buffer,
+    data: UniformBytes,
+}
+
+impl PackUniforms {
+    pub(crate) fn new<'a>(
+        device: &RenderDevice,
+        label: &str,
+        specs: impl IntoIterator<Item = BlockSpec<'a>>,
+        customs: &Customs,
+    ) -> PackUniforms {
+        let data = UniformBytes::new(
+            specs,
+            customs,
+            device.limits().min_uniform_buffer_offset_alignment,
+        );
+        let buffer = device.create_buffer(&BufferDescriptor {
+            label: Some(label),
+            size: data.bytes.len() as u64,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        PackUniforms { buffer, data }
+    }
+
+    pub(crate) fn range(&self, index: usize) -> (u64, u64) {
+        self.data.range(index)
+    }
+
+    pub(crate) fn write(
+        &mut self,
+        values: &FrameValues,
+        customs: &CustomState,
+        queue: &RenderQueue,
+    ) {
+        self.data.update(values, customs);
+        queue.write_buffer(&self.buffer, 0, &self.data.bytes);
     }
 }
 

@@ -560,6 +560,13 @@ mod tests {
                     _ => None,
                 })
                 .filter(|name| options.get(name).is_none())
+                // A name no source defines at all is the pack's own slip
+                // (Sildur's lists IRIS_END_FIX, defined nowhere); Iris
+                // leaves it off the menu too.
+                .filter(|name| {
+                    let define = format!("#define {name}");
+                    texts.iter().any(|t| t.contains(&define))
+                })
                 .collect();
             missing.sort_unstable();
             missing.dedup();

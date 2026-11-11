@@ -57,7 +57,9 @@ fn spirv_with(source: &str, flags: ValidationFlags) -> Result<Vec<u32>, String> 
         .map_err(|e| format!("the shader is not valid: {}", chain(&e)))?;
     let options = spv::Options {
         lang_version: (1, 3),
-        flags: spv::WriterFlags::empty(),
+        // As wgpu writes for Vulkan: flips clip y, so a normal viewport
+        // matches wgpu's (and the pack transform's flips hold).
+        flags: spv::WriterFlags::ADJUST_COORDINATE_SPACE,
         ..Default::default()
     };
     let mut words = spv::write_vec(&module, &info, &options, None)

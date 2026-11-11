@@ -129,17 +129,45 @@ impl FrameValues {
         constants: &Constants,
         history: &mut History,
     ) -> FrameValues {
-        let mut view_rotation = view.world_from_view.to_matrix().inverse();
+        Self::of_camera(
+            view.world_from_view.to_matrix(),
+            view.clip_from_view.y_axis.y,
+            bevy::math::UVec2::new(view.viewport.z, view.viewport.w),
+            time_counter,
+            frame_time,
+            frames,
+            far,
+            inputs,
+            constants,
+            history,
+        )
+    }
+
+    /// As `of`, from the camera's transform, its projection's y focal length
+    /// and the viewport size (the native renderer has no `ExtractedView`).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn of_camera(
+        world_from_view: Mat4,
+        focal_y: f32,
+        viewport: bevy::math::UVec2,
+        time_counter: f32,
+        frame_time: f32,
+        frames: u32,
+        far: f32,
+        inputs: Inputs,
+        constants: &Constants,
+        history: &mut History,
+    ) -> FrameValues {
+        let mut view_rotation = world_from_view.inverse();
         view_rotation.w_axis = Vec4::W;
-        let size = super::super::scaled(bevy::math::UVec2::new(view.viewport.z, view.viewport.w))
-            .as_vec2();
-        let focal = view.clip_from_view.y_axis.y.max(f32::EPSILON);
+        let size = super::super::scaled(viewport).as_vec2();
+        let focal = focal_y.max(f32::EPSILON);
         let fov = 2.0 * (1.0 / focal).atan();
         let far_plane = (far * FAR_PLANE_PER_BLOCK).max(NEAR * 2.0);
         let projection =
             Mat4::perspective_rh_gl(fov, size.x / size.y, NEAR, far_plane) * inputs.warp;
         super::super::publish_hiz_view(projection, size.as_uvec2());
-        let camera = view.world_from_view.translation();
+        let camera = world_from_view.w_axis.truncate();
 
         let (previous_view_rotation, previous_projection) =
             history.previous.unwrap_or((view_rotation, projection));

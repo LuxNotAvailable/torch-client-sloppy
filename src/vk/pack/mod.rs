@@ -11,6 +11,7 @@
 //! Passes, pipelines and bindings follow in the next steps.
 
 pub mod bindless;
+pub mod screen;
 pub mod targets;
 
 use crate::renderer::dimension::Dimension;
@@ -19,7 +20,7 @@ use crate::renderer::packdraw::install::{Installed, install};
 /// Compiles and installs the pack named `name` (a folder or zip in the
 /// shaders folder, or the built-in pack's name), as the game would for the
 /// overworld.
-pub fn load(name: &str, direct: bool) -> Result<Installed, String> {
+pub(crate) fn load(name: &str, direct: bool) -> Result<Installed, String> {
     let frame = crate::renderer::packdraw::compile::compile_frame(
         name,
         direct,
