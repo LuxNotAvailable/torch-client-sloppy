@@ -233,3 +233,11 @@ float4 entity_solid(VertexOut in, bool front: SV_IsFrontFace): SV_Target {
 float4 entity_blend(VertexOut in, bool front: SV_IsFrontFace): SV_Target {
     return entity_shade(in, front);
 }
+
+// Additive (Bevy's `AlphaMode::Add`, as the game draws beams and
+// lightning): the colour premultiplied by its alpha, added with (ONE, ONE).
+[shader("fragment")]
+float4 entity_add(VertexOut in, bool front: SV_IsFrontFace): SV_Target {
+    float4 color = entity_shade(in, front);
+    return float4(color.rgb * color.a, 0);
+}

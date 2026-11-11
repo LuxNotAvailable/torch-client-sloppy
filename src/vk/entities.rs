@@ -7,8 +7,10 @@
 //! buffer, as `rig_parts` does today. A compute pass culls every instance
 //! against the frustum and last frame's depth pyramid (4.3). Survivors
 //! become indirect commands: opaque and cutout instances in one list, drawn
-//! with one `vkCmdDrawIndexedIndirectCount`; blended ones at their rank, far
-//! to near, in one `vkCmdDrawIndexedIndirect`.
+//! with one `vkCmdDrawIndexedIndirectCount`; blended and additive ones at
+//! their rank, far to near, in one `vkCmdDrawIndexedIndirect` per run of
+//! ranks that share a pipeline. The armor glint samples vanilla's
+//! `enchanted_glint_armor` texture, loaded from the assets.
 //!
 //! For now the instances come from the game's entity snapshot
 //! (`entity_dump`); feeding them each frame comes with the game.
@@ -35,6 +37,7 @@ struct Pipes {
     cull: vk::Pipeline,
     solid: vk::Pipeline,
     blend: vk::Pipeline,
+    add: vk::Pipeline,
 }
 
 /// What the entities drew last frame, for the viewer's summary.
@@ -75,11 +78,23 @@ pub struct EntityScene {
     /// instances, part rows and bounds.
     staged_at: [u64; 6],
     texture_sizes: Vec<(u32, u32)>,
-    /// Instances that blend, and their centres for sorting.
-    blended: Vec<(u32, Vec3, i32)>,
+    /// Instances that blend, their centres for sorting, their depth bias,
+    /// and whether they add rather than mix.
+    blended: Vec<(u32, Vec3, i32, bool)>,
+    /// This frame's blended draws: runs of ranks (first, count) and whether
+    /// the run adds.
+    runs: Vec<(u32, u32, bool)>,
     count: u32,
     rank_of: Vec<u32>,
     pub stats: EntityStats,
+}
+
+/// Vanilla's armor glint texture, as the game loads it; none if the assets
+/// lack it (the glint is then off, as in the game).
+fn load_glint() -> Option<(u32, u32, Vec<u8>)> {
+    let file = crate::assets_root().join("textures/misc/enchanted_glint_armor.png");
+    let rgba = crate::platform::assets::open_image(&file).ok()?.to_rgba8();
+    Some((rgba.width(), rgba.height(), rgba.into_raw()))
 }
 
 fn full() -> SetupError {
@@ -96,7 +111,7 @@ impl EntityScene {
         snapshot: Snapshot,
     ) -> Result<EntityScene, SetupError> {
         let module = pipelines.module(ctx, super::shaders::ENTITY)?;
-        let stream = |fragment: &std::ffi::CStr, depth_write, compare, blend| {
+        let stream = |fragment: &std::ffi::CStr, depth_write, compare, blend, additive| {
             Spec::Graphics(GraphicsSpec {
                 module,
                 vertex: c"entity_vertex".to_owned(),
@@ -110,7 +125,7 @@ impl EntityScene {
                 cull: vk::CullModeFlags::NONE,
                 topology: vk::PrimitiveTopology::TRIANGLE_LIST,
                 blend,
-                additive: false,
+                additive,
             })
         };
         let pending = pipelines.build_on_worker(
@@ -120,13 +135,22 @@ impl EntityScene {
                     module,
                     entry: c"cull_entities".to_owned(),
                 },
-                stream(c"entity_solid", true, vk::CompareOp::GREATER, false),
+                stream(c"entity_solid", true, vk::CompareOp::GREATER, false, false),
                 // Blended layers lie on each other (a banner's patterns):
                 // equal depth passes, and nothing blended writes depth.
                 stream(
                     c"entity_blend",
                     false,
                     vk::CompareOp::GREATER_OR_EQUAL,
+                    true,
+                    false,
+                ),
+                // Additive layers (beams, lightning): the shader premultiplies.
+                stream(
+                    c"entity_add",
+                    false,
+                    vk::CompareOp::GREATER_OR_EQUAL,
+                    true,
                     true,
                 ),
             ],
@@ -177,7 +201,12 @@ impl EntityScene {
             }
             bounds.push([lo.x, lo.y, lo.z, 0.0, hi.x, hi.y, hi.z, 0.0]);
             if instance.alpha >= 2 {
-                blended.push((i as u32, (lo + hi) / 2.0, instance.depth_bias));
+                blended.push((
+                    i as u32,
+                    (lo + hi) / 2.0,
+                    instance.depth_bias,
+                    instance.alpha == 3,
+                ));
             }
         }
         let count = snapshot.instances.len() as u32;
@@ -206,6 +235,17 @@ impl EntityScene {
             texture_offsets.push(total);
             total = (total + rgba.len() as u64).next_multiple_of(16);
         }
+        // The armor glint, only when something glints.
+        let glint_rgba = snapshot
+            .instances
+            .iter()
+            .any(|i| i.switches[3] > 0.0)
+            .then(load_glint)
+            .flatten();
+        if let Some((_, _, rgba)) = &glint_rgba {
+            texture_offsets.push(total);
+            total = (total + rgba.len() as u64).next_multiple_of(16);
+        }
         let mut staging = memory.buffer(
             ctx,
             "entity staging",
@@ -219,6 +259,9 @@ impl EntityScene {
         staging.write(bounds_at as usize, bounds_bytes);
         for (k, (_, _, rgba)) in snapshot.textures.iter().enumerate() {
             staging.write(texture_offsets[k] as usize, rgba);
+        }
+        if let Some((_, _, rgba)) = &glint_rgba {
+            staging.write(texture_offsets[snapshot.textures.len()] as usize, rgba);
         }
 
         let storage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
@@ -278,6 +321,28 @@ impl EntityScene {
             textures.push((image, index));
             texture_sizes.push((*w, *h));
         }
+        // The glint is data, not colour (as the game's Rgba8Unorm).
+        let glint = match glint_rgba {
+            Some((w, h, _)) => {
+                let image = memory.image(
+                    ctx,
+                    "entity glint",
+                    vk::Extent2D {
+                        width: w,
+                        height: h,
+                    },
+                    vk::Format::R8G8B8A8_UNORM,
+                    vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+                    vk::ImageAspectFlags::COLOR,
+                )?;
+                let index = bindless
+                    .add_texture(ctx, image.view, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                    .ok_or_else(full)?;
+                texture_sizes.push((w, h));
+                Some((image, index))
+            }
+            None => None,
+        };
         // The instances name textures by snapshot id; the shader by
         // bindless index.
         let mut instances_cpu = snapshot.instances.clone();
@@ -316,13 +381,14 @@ impl EntityScene {
             counts,
             readback,
             textures,
-            glint: None,
+            glint,
             staging: Some((staging, texture_offsets, None)),
             staged_at: [
                 offsets[0], offsets[1], offsets[2], offsets[3], offsets[4], bounds_at,
             ],
             texture_sizes,
             blended,
+            runs: Vec::new(),
             count,
             rank_of: vec![0; count as usize],
             stats,
@@ -339,6 +405,7 @@ impl EntityScene {
                 cull: built[0],
                 solid: built[1],
                 blend: built[2],
+                add: built[3],
             });
             self.pending = None;
         }
@@ -393,6 +460,7 @@ impl EntityScene {
         let images: Vec<(vk::Image, Use)> = self
             .textures
             .iter()
+            .chain(self.glint.iter())
             .map(|(i, _)| (i.raw, Use::TransferDst))
             .collect();
         let buffers: Vec<(vk::Buffer, Use)> = regions
@@ -400,6 +468,7 @@ impl EntityScene {
             .map(|(b, _, _)| (*b, Use::TransferDst))
             .collect();
         let textures = &self.textures;
+        let glint = self.glint.iter();
         let sizes = &self.texture_sizes;
         graph.pass("entity upload", &images, &buffers, |cmd| unsafe {
             // SAFETY: copies from the staging into buffers and images in the
@@ -416,7 +485,7 @@ impl EntityScene {
                     }],
                 );
             }
-            for (k, ((image, _), (w, h))) in textures.iter().zip(sizes).enumerate() {
+            for (k, ((image, _), (w, h))) in textures.iter().chain(glint).zip(sizes).enumerate() {
                 device.cmd_copy_buffer_to_image(
                     cmd,
                     source,
@@ -463,14 +532,19 @@ impl EntityScene {
         let Some(pipes) = self.ready()? else {
             return Ok(());
         };
-        let mut order: Vec<(f32, i32, u32)> = self
+        let mut order: Vec<(f32, i32, u32, bool)> = self
             .blended
             .iter()
-            .map(|&(i, centre, bias)| (centre.distance_squared(eye), bias, i))
+            .map(|&(i, centre, bias, add)| (centre.distance_squared(eye), bias, i, add))
             .collect();
         order.sort_unstable_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
-        for (rank, (_, _, i)) in order.iter().enumerate() {
+        self.runs.clear();
+        for (rank, (_, _, i, add)) in order.iter().enumerate() {
             self.rank_of[*i as usize] = rank as u32;
+            match self.runs.last_mut() {
+                Some((_, len, run_add)) if *run_add == *add => *len += 1,
+                _ => self.runs.push((rank as u32, 1, *add)),
+            }
         }
         let device = &ctx.device;
         if let Some(staged) = uploads.stage(bytemuck::cast_slice(&self.rank_of)) {
@@ -663,8 +737,9 @@ impl EntityScene {
         }
     }
 
-    /// Draws the blended instances far to near (after the terrain's
-    /// translucent layer).
+    /// Draws the blended and additive instances far to near (after the
+    /// terrain's translucent layer), a draw per run of ranks that share a
+    /// pipeline.
     pub fn draw_blend(
         &self,
         ctx: &Context,
@@ -679,28 +754,37 @@ impl EntityScene {
         if self.blended.is_empty() {
             return;
         }
-        // SAFETY: as in `draw_solid`.
-        unsafe {
-            ctx.device
-                .cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipes.blend)
-        };
-        self.bind(ctx, cmd, pipelines, view_proj, mode, seconds, view_index);
-        // SAFETY: as above; one command per blended instance, at its rank.
-        unsafe {
-            ctx.device.cmd_draw_indexed_indirect(
-                cmd,
-                self.commands.0.raw,
-                self.count as u64 * COMMAND_SIZE,
-                self.blended.len() as u32,
-                COMMAND_SIZE as u32,
-            );
+        let mut bound = None;
+        for &(first, len, add) in &self.runs {
+            let pipeline = if add { pipes.add } else { pipes.blend };
+            if bound != Some(pipeline) {
+                // SAFETY: as in `draw_solid`.
+                unsafe {
+                    ctx.device
+                        .cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline)
+                };
+                if bound.is_none() {
+                    self.bind(ctx, cmd, pipelines, view_proj, mode, seconds, view_index);
+                }
+                bound = Some(pipeline);
+            }
+            // SAFETY: as above; one command per instance, at its rank.
+            unsafe {
+                ctx.device.cmd_draw_indexed_indirect(
+                    cmd,
+                    self.commands.0.raw,
+                    (self.count + first) as u64 * COMMAND_SIZE,
+                    len,
+                    COMMAND_SIZE as u32,
+                );
+            }
         }
     }
 
     pub fn destroy(mut self, ctx: &Context, memory: &Memory) {
         let mut pipelines: Vec<vk::Pipeline> = self
             .pipes
-            .map(|p| vec![p.cull, p.solid, p.blend])
+            .map(|p| vec![p.cull, p.solid, p.blend, p.add])
             .unwrap_or_default();
         if let Some(Ok((built, _))) = self.pending.as_mut().and_then(|p| p.wait()) {
             pipelines.extend(built);
