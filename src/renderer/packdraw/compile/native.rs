@@ -419,7 +419,104 @@ fn terrain_prelude(direct: bool) -> String {
 
 /// A native entity program's vertex prelude. `skinned` is the variant for a
 /// GPU-posed rig's mesh, as `preludes::entity_prelude` explains.
+/// The native renderer's entity input (`preludes::VK_ENTITY`'s WGSL form):
+/// the entry point keeps only the builtins, and `iris_vk_in` builds the
+/// fields the attributes held from vkview's buffers (posed meshes posed).
+const VK_ENTITY_INPUT: &str = "struct IrisVertexIn {
+    @builtin(vertex_index) vertex_index: u32,
+    @builtin(instance_index) instance_index: u32,
+}
+struct IrisVkIn {
+    vertex_index: u32,
+    instance_index: u32,
+    position: vec3<f32>,
+    normal: vec3<f32>,
+    uv: vec2<f32>,
+    color: vec4<f32>,
+    model0: vec4<f32>,
+    model1: vec4<f32>,
+    model2: vec4<f32>,
+    tint: vec4<f32>,
+    overlay: vec4<f32>,
+    light: vec2<f32>,
+    entity_id: i32,
+    block_entity_id: i32,
+    item_id: i32,
+    render_stage: i32,
+    flags: u32,
+    part_base: u32,
+    glint: vec4<f32>,
+}
+struct IrisVkInstances { w: array<u32> }
+struct IrisVkMeshes { m: array<vec4<u32>> }
+struct IrisVkVertices { w: array<u32> }
+struct IrisVkParts { p: array<vec4<f32>> }
+@group(2) @binding(10) var<storage, read> iris_vk_inst: IrisVkInstances;
+@group(2) @binding(11) var<storage, read> iris_vk_mesh: IrisVkMeshes;
+@group(2) @binding(12) var<storage, read> iris_vk_vert: IrisVkVertices;
+@group(2) @binding(13) var<storage, read> iris_vk_part: IrisVkParts;
+fn iris_vk_f4(w: u32) -> vec4<f32> {
+    return bitcast<vec4<f32>>(vec4<u32>(iris_vk_inst.w[w], iris_vk_inst.w[w + 1u], iris_vk_inst.w[w + 2u], iris_vk_inst.w[w + 3u]));
+}
+fn iris_vk_in(raw: IrisVertexIn) -> IrisVkIn {
+    let at = raw.instance_index * 46u;
+    let v = raw.vertex_index * 13u;
+    var e: IrisVkIn;
+    e.vertex_index = raw.vertex_index;
+    e.instance_index = raw.instance_index;
+    var p = bitcast<vec3<f32>>(vec3<u32>(iris_vk_vert.w[v], iris_vk_vert.w[v + 1u], iris_vk_vert.w[v + 2u]));
+    var n = bitcast<vec3<f32>>(vec3<u32>(iris_vk_vert.w[v + 3u], iris_vk_vert.w[v + 4u], iris_vk_vert.w[v + 5u]));
+    if (iris_vk_mesh.m[iris_vk_inst.w[at]].w != 0u) {
+        let row = (iris_vk_inst.w[at + 2u] + iris_vk_vert.w[v + 12u]) * 3u;
+        let r0 = iris_vk_part.p[row];
+        let r1 = iris_vk_part.p[row + 1u];
+        let r2 = iris_vk_part.p[row + 2u];
+        let h = vec4<f32>(p, 1.0);
+        p = vec3<f32>(dot(r0, h), dot(r1, h), dot(r2, h));
+        let c0 = vec3<f32>(r0.x, r1.x, r2.x);
+        let c1 = vec3<f32>(r0.y, r1.y, r2.y);
+        let c2 = vec3<f32>(r0.z, r1.z, r2.z);
+        let sn = mat3x3<f32>(cross(c1, c2), cross(c2, c0), cross(c0, c1)) * n;
+        let det = dot(c0, cross(c1, c2));
+        n = select(n, normalize(sn) * sign(det), dot(sn, sn) > 1e-12);
+    }
+    e.position = p;
+    e.normal = n;
+    e.uv = bitcast<vec2<f32>>(vec2<u32>(iris_vk_vert.w[v + 6u], iris_vk_vert.w[v + 7u]));
+    e.color = bitcast<vec4<f32>>(vec4<u32>(iris_vk_vert.w[v + 8u], iris_vk_vert.w[v + 9u], iris_vk_vert.w[v + 10u], iris_vk_vert.w[v + 11u]));
+    e.tint = iris_vk_f4(at + 6u);
+    let light0 = iris_vk_f4(at + 14u);
+    let light1 = iris_vk_f4(at + 18u);
+    e.overlay = vec4<f32>(select(vec3<f32>(1.0), vec3<f32>(1.0, 0.0, 0.0), light0.w < 0.5), clamp(1.0 - light1.w, 0.0, 1.0));
+    let mode = iris_vk_inst.w[at + 28u];
+    e.light = select(bitcast<vec2<f32>>(vec2<u32>(iris_vk_inst.w[at + 26u], iris_vk_inst.w[at + 27u])), vec2<f32>(240.0), mode == 2u);
+    e.flags = select(0u, 1u, mode == 1u || mode == 2u);
+    let c0 = iris_vk_f4(at + 30u);
+    let c1 = iris_vk_f4(at + 34u);
+    let c2 = iris_vk_f4(at + 38u);
+    let c3 = iris_vk_f4(at + 42u);
+    let eye = frame.iris_CameraPosition.xyz;
+    e.model0 = vec4<f32>(c0.x, c1.x, c2.x, c3.x - eye.x);
+    e.model1 = vec4<f32>(c0.y, c1.y, c2.y, c3.y - eye.y);
+    e.model2 = vec4<f32>(c0.z, c1.z, c2.z, c3.z - eye.z);
+    e.entity_id = -1;
+    e.block_entity_id = -1;
+    e.item_id = 0;
+    e.render_stage = 0;
+    return e;
+}
+";
+
 fn entity_prelude(skinned: bool) -> String {
+    if super::preludes::vulkan_terrain() {
+        let head_end = ENTITY_PRELUDE.find("{part_input}}\n").expect("the struct's end") + "{part_input}}\n".len();
+        return format!("{VK_ENTITY_INPUT}{}", &ENTITY_PRELUDE[head_end..])
+            .replace("fn iris_model(input: IrisVertexIn,", "fn iris_model(input: IrisVkIn,")
+            .replace(
+                "fn iris_attributes(input: IrisVertexIn) -> IrisAttributes {\n{local}",
+                &format!("fn iris_attributes(raw: IrisVertexIn) -> IrisAttributes {{\n    let input = iris_vk_in(raw);\n{ENTITY_LOCAL}"),
+            );
+    }
     if !skinned {
         return ENTITY_PRELUDE
             .replace("{part_input}", "")

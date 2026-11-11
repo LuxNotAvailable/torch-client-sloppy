@@ -364,13 +364,19 @@ fn pass_slots(body: &mut String, changed: &[(String, Vec<(usize, String)>)]) {
 #[cfg(test)]
 pub(crate) fn rewrite(source: &str) -> (String, Vec<Slot>) {
     let mut slots = Vec::new();
-    let out = rewrite_shared(source, &mut slots);
+    let out = rewrite_shared(source, &mut slots, &|_| false);
     (out, slots)
 }
 
 /// As `rewrite`, numbering slots in `slots`, shared between a program's
 /// stages: a resource both declare gets one index.
-pub(crate) fn rewrite_shared(source: &str, shared: &mut Vec<Slot>) -> String {
+/// `per_draw` marks textures each draw names in its push (an entity's own
+/// texture) rather than the slot table.
+pub(crate) fn rewrite_shared(
+    source: &str,
+    shared: &mut Vec<Slot>,
+    per_draw: &dyn Fn(&Slot) -> bool,
+) -> String {
     let found = declarations(source);
     if found.is_empty() {
         return source.to_owned();
@@ -395,7 +401,7 @@ pub(crate) fn rewrite_shared(source: &str, shared: &mut Vec<Slot>) -> String {
         .collect();
 
     let mut header = format!(
-        "struct IrisBindlessPush {{ table: u32, base: u32 }}\n\
+        "struct IrisBindlessPush {{ table: u32, base: u32, texture: u32 }}\n\
          var<push_constant> iris_bindless: IrisBindlessPush;\n\
          struct IrisBindlessSlots {{ s: array<u32> }}\n\
          @group(0) @binding(2) var<storage, read> iris_slot_tables: binding_array<IrisBindlessSlots, {MAX_BUFFERS}>;\n\
@@ -411,6 +417,11 @@ pub(crate) fn rewrite_shared(source: &str, shared: &mut Vec<Slot>) -> String {
                 let decl = format!(
                     "@group(0) @binding(0) var {array}: binding_array<{ty}, {MAX_TEXTURES}>;\n"
                 );
+                let index = if per_draw(slot) {
+                    "iris_bindless.texture".to_owned()
+                } else {
+                    index
+                };
                 (array.clone(), decl, format!("{array}[{index}]"))
             }
             SlotKind::Sampler | SlotKind::Comparison => {

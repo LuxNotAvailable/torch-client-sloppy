@@ -13,7 +13,7 @@ use gpu_allocator::MemoryLocation;
 
 use super::bindless::{Slot, SlotKind};
 use super::targets::{DEPTH_FORMAT, PackTargets};
-use crate::renderer::packdraw::compile::{ScreenStage, Step};
+use crate::renderer::packdraw::compile::{EntityKind, ScreenStage, Step};
 use crate::renderer::packdraw::install::{InstalledProgram, Installed};
 use crate::renderer::packdraw::sources::{Depth, Stub, TextureSource};
 use crate::renderer::packdraw::uniforms::{BlockSpec, FrameValues, History, UniformBytes};
@@ -84,6 +84,8 @@ struct Pass {
     geometry: Option<usize>,
     /// Draws the shadow map (shadow colours by index, shadowtex0).
     shadow: Option<Vec<u8>>,
+    /// Draws the entities: `Some(true)` the blended ones.
+    entity: Option<bool>,
 }
 
 pub(crate) struct PackScreen {
@@ -104,6 +106,11 @@ pub(crate) struct PackScreen {
     lightmap: Option<(vk::Image, u32)>,
     /// Table words that hold the terrain's slots buffer.
     terrain_slots: Vec<usize>,
+    /// Table words for the entity buffers: 0 instances, 1 meshes, 2
+    /// vertices, 3 parts.
+    entity_slots: Vec<(usize, u8)>,
+    /// While building an entity pass: whether it blends.
+    building_entity: Option<bool>,
     /// Per program with a uniform block: its bytes and a buffer per frame.
     uniforms: Vec<(UniformBytes, Vec<(Buffer, u32)>)>,
     table: Vec<u32>,
@@ -262,6 +269,8 @@ impl PackScreen {
             atlas: terrain.map(|t| t.atlas),
             lightmap: terrain.and_then(|t| t.lightmap),
             terrain_slots: Vec::new(),
+            entity_slots: Vec::new(),
+            building_entity: None,
             uniforms: Vec::new(),
             table: Vec::new(),
             tables: Vec::new(),
@@ -301,12 +310,24 @@ impl PackScreen {
                         screen.passes.push(pass);
                     }
                 }
+                if let Some(index) = screen.installed.entities[EntityKind::Entity.index()] {
+                    let mut pass = screen.pass_entity(ctx, memory, bindless, pipelines, index, flips, false)?;
+                    pass.entity = Some(false);
+                    screen.passes.push(pass);
+                }
                 screen.copy_depth_at = Some(screen.passes.len());
             }
             if stage == ScreenStage::Composite
                 && let Some(index) = screen.installed.geometry[2]
             {
                 let pass = screen.pass(ctx, memory, bindless, pipelines, index, flips, None, Some(2), false)?;
+                screen.passes.push(pass);
+            }
+            if stage == ScreenStage::Composite
+                && let Some(index) = screen.installed.entities[EntityKind::EntityTranslucent.index()]
+            {
+                let mut pass = screen.pass_entity(ctx, memory, bindless, pipelines, index, flips, true)?;
+                pass.entity = Some(true);
                 screen.passes.push(pass);
             }
             let steps: Vec<Step> = screen.installed.stages[stage.index()].clone();
@@ -416,6 +437,24 @@ impl PackScreen {
         }
     }
 
+    /// An entity pass: `pass` as geometry, drawing the entities.
+    #[allow(clippy::too_many_arguments, reason = "one pass's whole context")]
+    fn pass_entity(
+        &mut self,
+        ctx: &Context,
+        memory: &Memory,
+        bindless: &mut Bindless,
+        pipelines: &Pipelines,
+        index: usize,
+        flips: Flips,
+        translucent: bool,
+    ) -> Result<Pass, SetupError> {
+        self.building_entity = Some(translucent);
+        let pass = self.pass(ctx, memory, bindless, pipelines, index, flips, None, Some(0), false);
+        self.building_entity = None;
+        pass
+    }
+
     #[allow(clippy::too_many_arguments, reason = "one pass's whole context")]
     fn pass(
         &mut self,
@@ -432,7 +471,12 @@ impl PackScreen {
         use crate::renderer::packdraw::compile::geometry_alpha;
         use crate::shaderpack::programs::Geometry;
         let program: &InstalledProgram = &self.installed.programs[index];
+        let entity = self.building_entity;
         let fragment = match (output, &program.fragment_linear, geometry) {
+            (_, _, Some(_)) if entity.is_some() => {
+                let kind = if entity == Some(true) { EntityKind::EntityTranslucent } else { EntityKind::Entity };
+                program.fragment_for(kind.alpha_tests()[0])
+            }
             (_, _, Some(slot)) => program.fragment_for(geometry_alpha(Geometry::ALL[slot], shadow)),
             (Some(f), Some(linear), _) if format!("{f:?}").ends_with("SRGB") => linear,
             _ => &program.fragment,
@@ -441,7 +485,14 @@ impl PackScreen {
         let mut slots: Vec<Slot> = Vec::new();
         let mut modules = Vec::new();
         for module in [&program.vertex, fragment] {
-            let wgsl = super::bindless::rewrite_shared(&module.wgsl, &mut slots);
+            // An entity's own texture comes with its draw.
+            let per_draw = |slot: &Slot| {
+                entity.is_some()
+                    && slot.group == 0
+                    && matches!(slot.kind, SlotKind::Texture(_))
+                    && program.textures.iter().any(|(b, s)| *b == slot.binding && *s == TextureSource::EntityTexture)
+            };
+            let wgsl = super::bindless::rewrite_shared(&module.wgsl, &mut slots, &per_draw);
             let words = crate::shaderpack::backend::wgsl_to_spirv_aliased(&wgsl)
                 .map_err(|e| failed(format!("{}: {e}", module.label)))?;
             modules.push(pipelines.module(ctx, bytemuck::cast_slice(&words))?);
@@ -477,6 +528,15 @@ impl PackScreen {
                 SlotKind::Sampler | SlotKind::Comparison => {
                     let source = program.texture_source(slot.binding.saturating_sub(1));
                     sampler_for(&self.installed, source, slot.kind == SlotKind::Comparison)
+                }
+                SlotKind::Buffer { ty, .. } if ty.starts_with("IrisVk") && ["IrisVkInstances", "IrisVkMeshes", "IrisVkVertices", "IrisVkParts"].contains(&ty.as_str()) => {
+                    let which = ["IrisVkInstances", "IrisVkMeshes", "IrisVkVertices", "IrisVkParts"]
+                        .iter()
+                        .position(|t| *t == ty.as_str())
+                        .unwrap_or(0) as u8;
+                    let at = self.table.len();
+                    self.entity_slots.push((at, which));
+                    0
                 }
                 SlotKind::Buffer { ty, .. }
                     if ty == "IrisVkSlots" || ty == "IrisVkPool" || ty == "IrisVkQuads" =>
@@ -604,10 +664,10 @@ impl PackScreen {
                         vk::CompareOp::LESS_OR_EQUAL
                     }
                 }),
-                depth_write: geometry.is_some(),
+                depth_write: geometry.is_some() && entity != Some(true),
                 cull: vk::CullModeFlags::NONE,
                 topology: vk::PrimitiveTopology::TRIANGLE_LIST,
-                blend: geometry == Some(2) && !shadow,
+                blend: (geometry == Some(2) && !shadow) || entity == Some(true),
                 additive: false,
             },
         )?;
@@ -622,6 +682,7 @@ impl PackScreen {
             extent,
             geometry,
             shadow: shadow.then_some(shadow_colors),
+            entity: None,
         })
     }
 
@@ -878,6 +939,11 @@ impl PackScreen {
             for &at in &self.terrain_slots {
                 table[at] = t.slots.1;
             }
+            if let Some(e) = &t.entities {
+                for &(at, which) in &self.entity_slots {
+                    table[at] = [e.instances.1, e.meshes.1, e.vertices.1, e.parts.1][which as usize];
+                }
+            }
         }
         for pass in &self.passes {
             if let Some((u, at)) = pass.uniform {
@@ -956,6 +1022,7 @@ impl PackScreen {
                 );
             }
             let draw = match (pass.geometry, terrain) {
+                (Some(_), Some(t)) if pass.entity.is_some() && t.entities.is_none() => continue,
                 (Some(slot), Some(t)) => Some((slot, t)),
                 (Some(_), None) => continue,
                 (None, _) => None,
@@ -1013,11 +1080,22 @@ impl PackScreen {
                         pass_buffers.push((*indices, Use::IndexRead));
                     }
                     pass_buffers.extend(t.quads.iter().map(|q| (*q, Use::VertexRead)));
+                    if let (Some(_), Some(e)) = (pass.entity, &t.entities) {
+                        for b in [e.instances.0, e.meshes.0, e.vertices.0, e.parts.0] {
+                            pass_buffers.push((b, Use::VertexRead));
+                        }
+                        pass_buffers.push((e.indices, Use::IndexRead));
+                        for image in &e.textures {
+                            uses.retain(|u| u.0 != *image);
+                            uses.push((*image, Use::SampledFragment));
+                        }
+                    }
                     Some(depth_image_view)
                 }
                 None => None,
             };
             let (pipeline, base, extent) = (pass.pipeline, pass.base, pass.extent);
+            let entity_pass = pass.entity;
             let name = if draw.is_some() { "pack geometry" } else { "pack screen" };
             graph.pass(name, &uses, &pass_buffers, |cmd| unsafe {
                 // SAFETY: attachments and sampled images in the layouts the
@@ -1092,6 +1170,31 @@ impl PackScreen {
                     },
                 );
                 match draw {
+                    // Entities: one draw each, its texture in the push.
+                    Some((_, t)) if entity_pass.is_some() => {
+                        let Some(e) = &t.entities else { return };
+                        device.cmd_bind_index_buffer(cmd, e.indices, 0, vk::IndexType::UINT32);
+                        let order: Vec<u32> = if entity_pass == Some(true) {
+                            e.blended.clone()
+                        } else {
+                            (0..e.draws.len() as u32).filter(|&i| !e.draws[i as usize].4).collect()
+                        };
+                        for i in order {
+                            let (first, count, base_vertex, texture, _) = e.draws[i as usize];
+                            push(
+                                ctx,
+                                cmd,
+                                pipelines.layout,
+                                &Push {
+                                    ids: [table_index, base, texture, 0],
+                                    more: [0; 4],
+                                    params: [0.0; 4],
+                                    view_proj: [[0.0; 4]; 4],
+                                },
+                            );
+                            device.cmd_draw_indexed(cmd, count, 1, first, base_vertex, i);
+                        }
+                    }
                     // The terrain's culled commands: per pool for solid and
                     // cutout, one far-to-near list for translucent.
                     Some((slot, t)) if slot < 2 => {

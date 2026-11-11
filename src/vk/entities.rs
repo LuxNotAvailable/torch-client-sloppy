@@ -52,6 +52,20 @@ pub struct EntityStats {
     pub solid_drawn: u32,
 }
 
+/// A frame's entities, for a pack's entity passes.
+pub struct PackEntities {
+    pub instances: (vk::Buffer, u32),
+    pub meshes: (vk::Buffer, u32),
+    pub vertices: (vk::Buffer, u32),
+    pub parts: (vk::Buffer, u32),
+    pub indices: vk::Buffer,
+    /// Per instance: first index, count, base vertex, texture, blended.
+    pub draws: Vec<(u32, u32, i32, u32, bool)>,
+    /// Blended instances, far to near.
+    pub blended: Vec<u32>,
+    pub textures: Vec<vk::Image>,
+}
+
 pub struct EntityScene {
     /// The game's camera when it wrote the snapshot (world transform,
     /// vertical fov in radians).
@@ -70,6 +84,9 @@ pub struct EntityScene {
     counts: (Buffer, u32),
     readback: Vec<Buffer>,
     textures: Vec<(Image, u32)>,
+    /// Per instance for pack passes: first index, count, base vertex,
+    /// bindless texture, blended.
+    pack_draws: Vec<(u32, u32, i32, u32, bool)>,
     glint: Option<(Image, u32)>,
     /// Everything staged at load, the textures' offsets in it, and the
     /// frame it was copied in.
@@ -353,6 +370,14 @@ impl EntityScene {
             }
         }
         staging.write(offsets[3] as usize, bytemuck::cast_slice(&instances_cpu));
+        let pack_draws = instances_cpu
+            .iter()
+            .map(|i| {
+                let m = (i.mesh as usize) * 4;
+                let range = table.get(m..m + 4).unwrap_or(&[0, 0, 0, 0]);
+                (range[0], range[1], range[2] as i32, i.texture, i.alpha >= 2)
+            })
+            .collect();
 
         let stats = EntityStats {
             instances: count as usize,
@@ -382,6 +407,7 @@ impl EntityScene {
             counts,
             readback,
             textures,
+            pack_draws,
             glint,
             staging: Some((staging, texture_offsets, None)),
             staged_at: [
@@ -779,6 +805,25 @@ impl EntityScene {
                     COMMAND_SIZE as u32,
                 );
             }
+        }
+    }
+
+    /// What a pack's entity passes draw: the buffers (bindless) and each
+    /// instance's draw, blended ones far to near by this frame's ranks.
+    pub fn pack_entities(&self) -> PackEntities {
+        let mut blended: Vec<u32> = (0..self.pack_draws.len() as u32)
+            .filter(|&i| self.pack_draws[i as usize].4)
+            .collect();
+        blended.sort_by_key(|&i| self.rank_of[i as usize]);
+        PackEntities {
+            instances: (self.instances.0.raw, self.instances.1),
+            meshes: (self.meshes.0.raw, self.meshes.1),
+            vertices: (self.vertices.0.raw, self.vertices.1),
+            parts: (self.parts.0.raw, self.parts.1),
+            indices: self.indices.raw,
+            draws: self.pack_draws.clone(),
+            blended,
+            textures: self.textures.iter().map(|(i, _)| i.raw).collect(),
         }
     }
 

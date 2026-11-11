@@ -436,6 +436,8 @@ pub struct PackGeometry {
     pub shadow: Option<(vk::Buffer, vk::Buffer)>,
     /// The game's lightmap, when the snapshot has one.
     pub lightmap: Option<(vk::Image, u32)>,
+    /// The snapshot's entities, when it has some.
+    pub entities: Option<super::entities::PackEntities>,
 }
 
 pub const PACK_COMMAND_SIZE: u64 = COMMAND_SIZE;
@@ -901,6 +903,7 @@ impl TerrainScene {
             atlas: (self.atlas.raw, self.atlas_index),
             shadow: self.shadow.as_ref().map(|s| (s.commands.raw, s.counts.raw)),
             lightmap: self.env.as_ref().map(|e| (e.lightmap.0.raw, e.lightmap.1)),
+            entities: self.entities.as_ref().map(|e| e.pack_entities()),
         }
     }
 

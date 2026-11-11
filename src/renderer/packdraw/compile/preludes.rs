@@ -215,9 +215,11 @@ void iris_vk_entity() {
     vec4 c1 = iris_vk_f4(at + 34u);
     vec4 c2 = iris_vk_f4(at + 38u);
     vec4 c3 = iris_vk_f4(at + 42u);
-    iris_ModelRow0 = vec4(c0.x, c1.x, c2.x, c3.x);
-    iris_ModelRow1 = vec4(c0.y, c1.y, c2.y, c3.y);
-    iris_ModelRow2 = vec4(c0.z, c1.z, c2.z, c3.z);
+    // World transforms, made camera-relative as the game's draws are.
+    vec3 eye = iris_CameraPosition.xyz;
+    iris_ModelRow0 = vec4(c0.x, c1.x, c2.x, c3.x - eye.x);
+    iris_ModelRow1 = vec4(c0.y, c1.y, c2.y, c3.y - eye.y);
+    iris_ModelRow2 = vec4(c0.z, c1.z, c2.z, c3.z - eye.z);
     entityId = -1;
     blockEntityId = -1;
     currentRenderedItemId = 0;
