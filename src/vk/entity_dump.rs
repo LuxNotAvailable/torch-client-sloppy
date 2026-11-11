@@ -582,6 +582,16 @@ fn write(
         });
     }
 
+    // Out of a world (the title screen after leaving a server) the camera
+    // sits at the origin with nothing to draw: keep the last snapshot taken
+    // in the world rather than overwrite it.
+    if camera
+        .iter()
+        .next()
+        .is_none_or(|(t, _)| t.translation() == Vec3::ZERO)
+    {
+        return;
+    }
     let mut out = Vec::new();
     let mut put = |bytes: &[u8]| out.extend_from_slice(bytes);
     put(MAGIC);
