@@ -294,6 +294,31 @@ fn common_prelude(variant: Variant) -> String {
     out
 }
 
+/// The native renderer's terrain input, as `preludes::VK_TERRAIN`.
+const VK_TERRAIN: &str = "struct IrisVkSlots { s: array<vec4<u32>> }
+struct IrisVkPool { w: array<u32> }
+@group(2) @binding(7) var<storage, read> iris_vk_slots: IrisVkSlots;
+@group(2) @binding(8) var<storage, read> iris_vk_pool: IrisVkPool;
+var<private> iris_VkPool: u32;
+fn iris_origin(input: IrisVertexIn) -> vec3<i32> {
+    return bitcast<vec3<i32>>(iris_vk_slots.s[input.instance_index * 8u + 2u].xyz);
+}
+fn iris_raw(input: IrisVertexIn) -> IrisRaw {
+    iris_VkPool = iris_vk_slots.s[input.instance_index * 8u + 3u].y;
+    let v = input.vertex_index * 5u;
+    let x = iris_vk_pool.w[v];
+    let y = iris_vk_pool.w[v + 1u];
+    let z = iris_vk_pool.w[v + 2u];
+    let l = iris_vk_pool.w[v + 3u];
+    let c = iris_vk_pool.w[v + 4u];
+    let p = vec4<i32>(bitcast<i32>(x << 16u) >> 16u, bitcast<i32>(x) >> 16u, bitcast<i32>(y << 16u) >> 16u, bitcast<i32>(y) >> 16u);
+    let uv = vec2<f32>(f32(z & 65535u), f32(z >> 16u)) / 65535.0;
+    let light = vec4<f32>(f32(l & 255u), f32((l >> 8u) & 255u), f32((l >> 16u) & 255u), f32(l >> 24u)) / 255.0;
+    let color = vec4<f32>(f32(c & 255u), f32((c >> 8u) & 255u), f32((c >> 16u) & 255u), f32(c >> 24u)) / 255.0;
+    return IrisRaw(p, uv, light, color);
+}
+";
+
 fn terrain_prelude(direct: bool) -> String {
     let origin = if direct {
         format!(
@@ -311,15 +336,36 @@ fn terrain_prelude(direct: bool) -> String {
              }}\n"
         )
     };
+    let vulkan = super::preludes::vulkan_terrain();
+    let (input, origin) = if vulkan {
+        (
+            "struct IrisVertexIn {\n    \
+                 @builtin(vertex_index) vertex_index: u32,\n    \
+                 @builtin(instance_index) instance_index: u32,\n\
+             }\n"
+                .to_owned(),
+            VK_TERRAIN.to_owned(),
+        )
+    } else {
+        (
+            "struct IrisVertexIn {\n    \
+                 @builtin(vertex_index) vertex_index: u32,\n    \
+                 @builtin(instance_index) instance_index: u32,\n    \
+                 @location(0) raw_position: vec4<i32>,\n    \
+                 @location(1) raw_uv: vec2<f32>,\n    \
+                 @location(2) raw_light: vec4<f32>,\n    \
+                 @location(3) raw_color: vec4<f32>,\n\
+             }\n\
+             fn iris_raw(input: IrisVertexIn) -> IrisRaw {\n    \
+                 return IrisRaw(input.raw_position, input.raw_uv, input.raw_light, input.raw_color);\n\
+             }\n"
+                .to_owned(),
+            origin,
+        )
+    };
     format!(
-        "struct IrisVertexIn {{\n    \
-             @builtin(vertex_index) vertex_index: u32,\n    \
-             @builtin(instance_index) instance_index: u32,\n    \
-             @location(0) raw_position: vec4<i32>,\n    \
-             @location(1) raw_uv: vec2<f32>,\n    \
-             @location(2) raw_light: vec4<f32>,\n    \
-             @location(3) raw_color: vec4<f32>,\n\
-         }}\n\
+        "struct IrisRaw {{ position: vec4<i32>, uv: vec2<f32>, light: vec4<f32>, color: vec4<f32> }}\n\
+         {input}\
          {origin}\
          @group({}) @binding(0) var iris_PackQuads: texture_2d<u32>;\n\
          fn iris_snorm3(v: u32) -> vec3<f32> {{\n    \
@@ -327,15 +373,16 @@ fn terrain_prelude(direct: bool) -> String {
              return max(vec3<f32>(b) / 127.0, vec3<f32>(-1.0));\n\
          }}\n\
          fn iris_attributes(input: IrisVertexIn) -> IrisAttributes {{\n    \
+             let r = iris_raw(input);\n    \
              let quad_index = input.vertex_index >> 2u;\n    \
              let quad = textureLoad(iris_PackQuads, vec2<i32>(i32(quad_index % {}u), i32(quad_index / {}u)), 0);\n    \
              let camera_block = floor(frame.iris_CameraPosition.xyz);\n    \
-             let raw = vec3<f32>(input.raw_position.xyz) / 256.0;\n    \
+             let raw = vec3<f32>(r.position.xyz) / 256.0;\n    \
              var a: IrisAttributes;\n    \
              a.position = vec3<f32>(iris_origin(input) - vec3<i32>(camera_block)) - (frame.iris_CameraPosition.xyz - camera_block) + raw;\n    \
-             a.uv = input.raw_uv;\n    \
-             a.light = input.raw_light.xy * 255.0;\n    \
-             a.color = input.raw_color;\n    \
+             a.uv = r.uv;\n    \
+             a.light = r.light.xy * 255.0;\n    \
+             a.color = r.color;\n    \
              let n = iris_snorm3(quad.x);\n    \
              a.normal = select(vec3<f32>(0.0, 1.0, 0.0), normalize(n), dot(n, n) > 0.25);\n    \
              let id = quad.w & 65535u;\n    \

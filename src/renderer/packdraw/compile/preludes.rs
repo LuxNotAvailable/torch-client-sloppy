@@ -2,7 +2,66 @@ use super::TERRAIN_SET;
 use crate::renderer::terrain_pool::ORIGIN_ROW;
 use crate::renderer::terrain_pool::draw::SLOT_TABLE_BINDING;
 
+thread_local! {
+    static VULKAN_TERRAIN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Compiles terrain programs for the native renderer while `f` runs.
+pub(crate) fn with_vulkan_terrain<T>(f: impl FnOnce() -> T) -> T {
+    VULKAN_TERRAIN.with(|v| v.set(true));
+    let out = f();
+    VULKAN_TERRAIN.with(|v| v.set(false));
+    out
+}
+
+pub(crate) fn vulkan_terrain() -> bool {
+    VULKAN_TERRAIN.with(std::cell::Cell::get)
+}
+
+/// The native renderer's terrain input: each vertex pulled from its
+/// section's pool (`vk::terrain`, 128-byte slots: origin at word 2, pool's
+/// bindless index at word 3's y). `IrisVkPool` is indexed by `iris_VkPool`
+/// (`vk::pack::bindless`).
+const VK_TERRAIN: &str = "layout(std430, set = 2, binding = 7) readonly buffer IrisVkSlots { uvec4 iris_VkSlot[]; };
+layout(std430, set = 2, binding = 8) readonly buffer IrisVkPool { uint iris_VkWords[]; };
+uint iris_VkPool;
+ivec4 iris_RawPosition;
+vec2 iris_RawUV0;
+vec4 iris_RawLight;
+vec4 iris_RawColor;
+ivec3 iris_origin() {
+    int slot = int(gl_InstanceIndex) * 8;
+    iris_VkPool = iris_VkSlot[slot + 3].y;
+    uint v = uint(gl_VertexIndex) * 5u;
+    uint x = iris_VkWords[v];
+    uint y = iris_VkWords[v + 1u];
+    uint z = iris_VkWords[v + 2u];
+    uint w = iris_VkWords[v + 3u];
+    uint c = iris_VkWords[v + 4u];
+    iris_RawPosition = ivec4(bitfieldExtract(int(x), 0, 16), bitfieldExtract(int(x), 16, 16),
+        bitfieldExtract(int(y), 0, 16), bitfieldExtract(int(y), 16, 16));
+    iris_RawUV0 = vec2(float(z & 65535u), float(z >> 16u)) / 65535.0;
+    iris_RawLight = vec4(float(w & 255u), float((w >> 8u) & 255u), float((w >> 16u) & 255u), float(w >> 24u)) / 255.0;
+    iris_RawColor = vec4(float(c & 255u), float((c >> 8u) & 255u), float((c >> 16u) & 255u), float(c >> 24u)) / 255.0;
+    return ivec3(iris_VkSlot[slot + 2].xyz);
+}
+";
+
 pub(crate) fn terrain_prelude(direct: bool) -> String {
+    if vulkan_terrain() {
+        return format!(
+            "{VK_TERRAIN}ivec3 iris_Origin;\n\
+             vec3 iris_position() {{\n    \
+                 vec3 camera_block = floor(iris_CameraPosition.xyz);\n    \
+                 return vec3(iris_Origin - ivec3(camera_block)) - (iris_CameraPosition.xyz - camera_block)\n        \
+                     + vec3(iris_RawPosition.xyz) / 256.0;\n\
+             }}\n\
+             vec2 iris_uv0() {{ return iris_RawUV0; }}\n\
+             vec2 iris_light() {{ return iris_RawLight.xy * 255.0; }}\n\
+             vec4 iris_color() {{ return iris_RawColor; }}\n\
+             {PACK_STREAM}"
+        );
+    }
     let origin = if direct {
         format!(
             "layout(set = {TERRAIN_SET}, binding = {SLOT_TABLE_BINDING}) uniform itexture2D iris_Origins;\n\
@@ -272,10 +331,13 @@ mod tests {
                    lmcoord = (gl_TextureMatrix[1] * gl_MultiTexCoord1).xy; tint = gl_Color * mc_Entity.x;\n\
                    vec3 n = gl_NormalMatrix * gl_Normal; tint.rgb *= max(n.y, 0.5); }\n";
         let shared = transform::Shared::of(vsh, "");
-        for (prelude, geometry) in [
-            (terrain_prelude(false), true),
-            (terrain_prelude(true), true),
-            (SCREEN_PRELUDE.to_owned(), false),
+        let slots = format!("@group({TERRAIN_SET}) @binding({SLOT_TABLE_BINDING})");
+        for (prelude, geometry, binding) in [
+            (terrain_prelude(false), true, slots.as_str()),
+            (terrain_prelude(true), true, slots.as_str()),
+            // The native renderer's slots buffer instead.
+            (with_vulkan_terrain(|| terrain_prelude(false)), true, "@group(2) @binding(7)"),
+            (SCREEN_PRELUDE.to_owned(), false, ""),
         ] {
             let target = transform::Target {
                 set: PACK_SET,
@@ -288,12 +350,7 @@ mod tests {
             let wgsl = backend::to_wgsl(&out.source, backend::ShaderStage::Vertex, &[])
                 .unwrap_or_else(|e| panic!("{e}\n\n{}", out.source));
             if geometry {
-                assert!(
-                    wgsl.contains(&format!(
-                        "@group({TERRAIN_SET}) @binding({SLOT_TABLE_BINDING})"
-                    )),
-                    "{wgsl}"
-                );
+                assert!(wgsl.contains(binding), "{wgsl}");
             }
         }
     }

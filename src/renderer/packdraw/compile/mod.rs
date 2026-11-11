@@ -21,7 +21,7 @@ mod program;
 pub(crate) use kinds::*;
 use pack::Pack;
 pub(crate) use pack::program_folder;
-pub(crate) use preludes::{PACK_QUADS_SET, SCREEN_PRELUDE, terrain_prelude};
+pub(crate) use preludes::{PACK_QUADS_SET, SCREEN_PRELUDE, terrain_prelude, with_vulkan_terrain};
 use program::{compile_compute, compile_program};
 
 pub(crate) const PACK_SET: u32 = 0;

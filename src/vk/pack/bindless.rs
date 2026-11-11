@@ -115,6 +115,13 @@ fn declarations(source: &str) -> Vec<Declaration> {
     out
 }
 
+/// The private variable naga names for the prelude's `iris_VkPool`.
+fn dynamic_pool(source: &str) -> Option<String> {
+    let at = source.find("var<private> iris_VkPool")? + "var<private> ".len();
+    let end = source[at..].find(':')?;
+    Some(source[at..at + end].trim().to_owned())
+}
+
 /// A WGSL identifier-safe tag for a type.
 fn tag(ty: &str) -> String {
     ty.chars()
@@ -426,6 +433,12 @@ pub(crate) fn rewrite_shared(source: &str, shared: &mut Vec<Slot>) -> String {
                 decl.push_str(&format!(
                     "@group(0) @binding(2) var<storage, {access_mode}> {array}: binding_array<{inner}, {MAX_BUFFERS}>;\n"
                 ));
+                // The terrain pool: per section, by the index the prelude reads.
+                let index = if inner == "IrisVkPool" {
+                    dynamic_pool(source).unwrap_or(index)
+                } else {
+                    index
+                };
                 let access = if bare {
                     format!("{array}[{index}].v")
                 } else {
@@ -457,7 +470,7 @@ mod tests {
         let (mut stages, mut failures) = (0usize, Vec::new());
         for pack in crate::shaderpack::discover::list() {
             let Ok(installed) = crate::vk::pack::load(&pack.name, false) else {
-                failures.push(format!("{}: does not compile", pack.name));
+                failures.push(format!("{}: does not compile: {}", pack.name, installed_error(&pack.name)));
                 continue;
             };
             for program in &installed.programs {
@@ -492,6 +505,13 @@ mod tests {
         }
         assert!(stages > 0);
         assert!(failures.is_empty());
+    }
+
+    fn installed_error(name: &str) -> String {
+        match crate::vk::pack::load(name, false) {
+            Err(e) => e.chars().take(600).collect(),
+            Ok(_) => String::new(),
+        }
     }
 
     fn spirv_val(words: &[u32]) -> Option<String> {

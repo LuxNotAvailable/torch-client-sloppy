@@ -21,11 +21,9 @@ use crate::renderer::packdraw::install::{Installed, install};
 /// shaders folder, or the built-in pack's name), as the game would for the
 /// overworld.
 pub(crate) fn load(name: &str, direct: bool) -> Result<Installed, String> {
-    let frame = crate::renderer::packdraw::compile::compile_frame(
-        name,
-        direct,
-        None,
-        Dimension::Overworld,
-    )?;
+    // Terrain programs pull from the native renderer's pools.
+    let frame = crate::renderer::packdraw::compile::with_vulkan_terrain(|| {
+        crate::renderer::packdraw::compile::compile_frame(name, direct, None, Dimension::Overworld)
+    })?;
     Ok(install(name, 0, direct, frame))
 }
