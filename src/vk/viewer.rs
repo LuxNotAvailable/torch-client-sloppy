@@ -68,6 +68,8 @@ struct Options {
     view: View,
     screenshot: Option<String>,
     terrain: Option<std::path::PathBuf>,
+    /// Draw the title screen's panorama instead of a scene.
+    panorama: bool,
     camera: Option<Camera>,
     terrain_options: terrain::Options,
     /// `--camera game`: the camera the game drew from (entity snapshot).
@@ -84,6 +86,7 @@ struct Options {
 fn options(args: Vec<String>) -> Options {
     let mut options = Options {
         frames: None,
+        panorama: false,
         device: None,
         vsync: false,
         size: (1280, 720),
@@ -111,6 +114,7 @@ fn options(args: Vec<String>) -> Options {
             "--stress" => options.stress = true,
             "--screenshot" => options.screenshot = args.next(),
             "--terrain" => options.terrain = args.next().map(Into::into),
+            "--panorama" => options.panorama = true,
             "--greedy" => options.greedy = true,
             "--sheet" => options.sheet = args.next(),
             "--headless" => options.headless = true,
@@ -192,6 +196,7 @@ fn options(args: Vec<String>) -> Options {
 enum Scene {
     Test(TestScene),
     Terrain(Box<TerrainScene>, Option<Camera>),
+    Panorama(crate::vk::panorama::PanoramaScene),
 }
 
 /// The `--sheet` contact sheet: a shrunk copy of each sampled frame, in a
@@ -345,6 +350,13 @@ impl Renderer {
             )?),
         };
         let scene = match &options.terrain {
+            _ if options.panorama => Scene::Panorama(crate::vk::panorama::PanoramaScene::new(
+                &ctx,
+                &memory,
+                &mut bindless,
+                &pipelines,
+                format,
+            )?),
             Some(dir) => Scene::Terrain(
                 Box::new(TerrainScene::new(
                     &ctx,
@@ -555,6 +567,18 @@ impl Renderer {
                 self.frame,
                 seconds,
                 view,
+            ),
+            Scene::Panorama(scene) => scene.record(
+                &self.ctx,
+                memory,
+                bindless,
+                pipelines,
+                &mut graph,
+                (image, image_view),
+                extent,
+                rotation,
+                self.frame,
+                seconds,
             ),
             Scene::Terrain(scene, camera) => {
                 let camera = camera
@@ -999,6 +1023,7 @@ impl Drop for Renderer {
         match (self.scene.take(), &memory) {
             (Some(Scene::Test(scene)), Some(memory)) => scene.destroy(&self.ctx, memory),
             (Some(Scene::Terrain(scene, _)), Some(memory)) => (*scene).destroy(&self.ctx, memory),
+            (Some(Scene::Panorama(scene)), Some(memory)) => scene.destroy(&self.ctx, memory),
             _ => {}
         }
         if let (Some(uploads), Some(memory)) = (self.uploads.take(), &memory) {
