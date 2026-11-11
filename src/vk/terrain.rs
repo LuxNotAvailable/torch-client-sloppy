@@ -227,6 +227,9 @@ pub struct Stats {
 struct Pool {
     vertices: Buffer,
     indices: Buffer,
+    /// Pack quads, 16 bytes per vertex slot (a quad at its first vertex's
+    /// offset); made when a section brings some.
+    quads: Option<(Buffer, u32)>,
     vertex_index: u32,
     valloc: Allocator,
     ialloc: Allocator,
@@ -416,6 +419,8 @@ pub struct PackGeometry {
     pub capacity: u32,
     /// Each pool's vertex and index buffers.
     pub pools: Vec<(vk::Buffer, vk::Buffer)>,
+    /// The pools' pack-quad buffers.
+    pub quads: Vec<vk::Buffer>,
     /// The translucent index buffer, first command and count.
     pub translucent: (vk::Buffer, u32, u32),
     pub atlas: (vk::Image, u32),
@@ -870,6 +875,11 @@ impl TerrainScene {
                 .iter()
                 .map(|p| (p.vertices.raw, p.indices.raw))
                 .collect(),
+            quads: self
+                .pools
+                .iter()
+                .filter_map(|p| p.quads.as_ref().map(|(b, _)| b.raw))
+                .collect(),
             translucent: (
                 self.translucent.buffer.raw,
                 self.translucent_start,
@@ -973,6 +983,7 @@ impl TerrainScene {
         self.pools.push(Pool {
             vertices,
             indices,
+            quads: None,
             vertex_index,
             valloc: Allocator::new(POOL_VERTICES),
             ialloc: Allocator::new(POOL_INDICES),
@@ -1165,6 +1176,32 @@ impl TerrainScene {
             });
             spent += staged_v.size + staged_i.size;
             self.stats.uploaded += staged_v.size + staged_i.size;
+            // Pack quads: quad q at the section's vertex offset + q.
+            if !section.pack.is_empty() && packed.is_none() {
+                if self.pools[pool as usize].quads.is_none() {
+                    let buffer = memory.buffer(
+                        ctx,
+                        "terrain pack quads",
+                        POOL_VERTICES as u64 * 16,
+                        vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+                        MemoryLocation::GpuOnly,
+                    )?;
+                    let index = bindless.add_buffer(ctx, buffer.raw).ok_or_else(full)?;
+                    self.pools[pool as usize].quads = Some((buffer, index));
+                }
+                if let (Some(staged), Some((quads, _))) = (
+                    uploads.stage(bytemuck::cast_slice(&section.pack)),
+                    &self.pools[pool as usize].quads,
+                ) {
+                    copies.push(Copy {
+                        src: staged.buffer,
+                        from: staged.offset,
+                        to: quads.raw,
+                        at: vertices.offset as u64 * 16,
+                        size: staged.size,
+                    });
+                }
+            }
 
             let (mut min, mut max) = ([i16::MAX; 3], [i16::MIN; 3]);
             for v in &section.verts {
@@ -1197,7 +1234,11 @@ impl TerrainScene {
                     pool,
                     self.pools[pool as usize].vertex_index,
                     SLOT_LIVE | if section.water { SLOT_TRANSLUCENT } else { 0 },
-                    0,
+                    // The pool's pack quads (bindless), none: u32::MAX.
+                    match (&self.pools[pool as usize].quads, section.pack.is_empty()) {
+                        (Some((_, index)), false) => *index,
+                        _ => u32::MAX,
+                    },
                 ],
                 ranges: [
                     first,
@@ -2477,6 +2518,7 @@ impl TerrainScene {
         for pool in self.pools {
             buffers.push(pool.vertices);
             buffers.push(pool.indices);
+            buffers.extend(pool.quads.map(|(b, _)| b));
         }
         if let Some((grown, ..)) = self.pyramid {
             buffers.push(grown.buffer);
@@ -2554,6 +2596,7 @@ mod tests {
             verts,
             idx,
             cutout_idx: Vec::new(),
+            pack: Vec::new(),
         };
         let sort = Sort::new(&section, 0);
         let order = sort.back_to_front(Vec3::new(0.5, 0.5, -5.0));

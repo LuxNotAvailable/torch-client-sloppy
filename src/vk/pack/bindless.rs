@@ -115,11 +115,21 @@ fn declarations(source: &str) -> Vec<Declaration> {
     out
 }
 
-/// The private variable naga names for the prelude's `iris_VkPool`.
-fn dynamic_pool(source: &str) -> Option<String> {
-    let at = source.find("var<private> iris_VkPool")? + "var<private> ".len();
-    let end = source[at..].find(':')?;
-    Some(source[at..at + end].trim().to_owned())
+/// The private variable naga names for the prelude's `name` (a per-section
+/// buffer index).
+fn dynamic(source: &str, name: &str) -> Option<String> {
+    let mut from = 0;
+    while let Some(at) = source[from..].find("var<private> ") {
+        let start = from + at + "var<private> ".len();
+        from = start;
+        let end = source[start..].find(':')? + start;
+        let found = source[start..end].trim();
+        // naga may suffix a name (`iris_VkPool_1`); the base must match.
+        if found == name || found.strip_prefix(name).is_some_and(|r| r.starts_with('_')) {
+            return Some(found.to_owned());
+        }
+    }
+    None
 }
 
 /// A WGSL identifier-safe tag for a type.
@@ -434,10 +444,10 @@ pub(crate) fn rewrite_shared(source: &str, shared: &mut Vec<Slot>) -> String {
                     "@group(0) @binding(2) var<storage, {access_mode}> {array}: binding_array<{inner}, {MAX_BUFFERS}>;\n"
                 ));
                 // The terrain pool: per section, by the index the prelude reads.
-                let index = if inner == "IrisVkPool" {
-                    dynamic_pool(source).unwrap_or(index)
-                } else {
-                    index
+                let index = match inner.as_str() {
+                    "IrisVkPool" => dynamic(source, "iris_VkPool").unwrap_or(index),
+                    "IrisVkQuads" => dynamic(source, "iris_VkQuadPool").unwrap_or(index),
+                    _ => index,
                 };
                 let access = if bare {
                     format!("{array}[{index}].v")

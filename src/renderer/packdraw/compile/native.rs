@@ -297,9 +297,18 @@ fn common_prelude(variant: Variant) -> String {
 /// The native renderer's terrain input, as `preludes::VK_TERRAIN`.
 const VK_TERRAIN: &str = "struct IrisVkSlots { s: array<vec4<u32>> }
 struct IrisVkPool { w: array<u32> }
+struct IrisVkQuads { q: array<vec4<u32>> }
 @group(2) @binding(7) var<storage, read> iris_vk_slots: IrisVkSlots;
 @group(2) @binding(8) var<storage, read> iris_vk_pool: IrisVkPool;
+@group(2) @binding(9) var<storage, read> iris_vk_quads: IrisVkQuads;
 var<private> iris_VkPool: u32;
+var<private> iris_VkQuadPool: u32;
+fn iris_vk_quad(input: IrisVertexIn) -> vec4<u32> {
+    iris_VkQuadPool = iris_vk_slots.s[input.instance_index * 8u + 3u].w;
+    if (iris_VkQuadPool == 4294967295u) { return vec4<u32>(0u, 0u, 0u, 65535u); }
+    let base = iris_vk_slots.s[input.instance_index * 8u + 2u].w;
+    return iris_vk_quads.q[base + ((input.vertex_index - base) >> 2u)];
+}
 fn iris_origin(input: IrisVertexIn) -> vec3<i32> {
     return bitcast<vec3<i32>>(iris_vk_slots.s[input.instance_index * 8u + 2u].xyz);
 }
@@ -337,6 +346,15 @@ fn terrain_prelude(direct: bool) -> String {
         )
     };
     let vulkan = super::preludes::vulkan_terrain();
+    let row = crate::renderer::packvertex::QUAD_ROW;
+    let quad = if vulkan {
+        "let quad = iris_vk_quad(input);".to_owned()
+    } else {
+        format!(
+            "let quad_index = input.vertex_index >> 2u;\n    \
+             let quad = textureLoad(iris_PackQuads, vec2<i32>(i32(quad_index % {row}u), i32(quad_index / {row}u)), 0);"
+        )
+    };
     let (input, origin) = if vulkan {
         (
             "struct IrisVertexIn {\n    \
@@ -374,8 +392,7 @@ fn terrain_prelude(direct: bool) -> String {
          }}\n\
          fn iris_attributes(input: IrisVertexIn) -> IrisAttributes {{\n    \
              let r = iris_raw(input);\n    \
-             let quad_index = input.vertex_index >> 2u;\n    \
-             let quad = textureLoad(iris_PackQuads, vec2<i32>(i32(quad_index % {}u), i32(quad_index / {}u)), 0);\n    \
+             {quad}\n    \
              let camera_block = floor(frame.iris_CameraPosition.xyz);\n    \
              let raw = vec3<f32>(r.position.xyz) / 256.0;\n    \
              var a: IrisAttributes;\n    \
@@ -397,8 +414,6 @@ fn terrain_prelude(direct: bool) -> String {
              return a;\n\
          }}\n",
         super::PACK_QUADS_SET,
-        crate::renderer::packvertex::QUAD_ROW,
-        crate::renderer::packvertex::QUAD_ROW,
     )
 }
 

@@ -13,7 +13,7 @@ mod formats;
 mod frame;
 mod fullscreen;
 mod images;
-mod inputs;
+pub(crate) mod inputs;
 pub(crate) mod install;
 mod mipmaps;
 mod node;

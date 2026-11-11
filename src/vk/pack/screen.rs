@@ -108,6 +108,8 @@ pub(crate) struct PackScreen {
     history: History,
     frames: u32,
     last: Option<f32>,
+    /// The game's frame inputs (time of day, sky), from the snapshot.
+    pub(crate) inputs: crate::renderer::packdraw::inputs::Inputs,
     pub(crate) skipped_computes: usize,
 }
 
@@ -261,6 +263,7 @@ impl PackScreen {
             history: History::default(),
             frames: 0,
             last: None,
+            inputs: Default::default(),
             skipped_computes: 0,
             installed,
         };
@@ -452,7 +455,9 @@ impl PackScreen {
                     let source = program.texture_source(slot.binding.saturating_sub(1));
                     sampler_for(&self.installed, source, slot.kind == SlotKind::Comparison)
                 }
-                SlotKind::Buffer { ty, .. } if ty == "IrisVkSlots" || ty == "IrisVkPool" => {
+                SlotKind::Buffer { ty, .. }
+                    if ty == "IrisVkSlots" || ty == "IrisVkPool" || ty == "IrisVkQuads" =>
+                {
                     // Filled per frame from the terrain (`record`).
                     let at = self.table.len();
                     self.terrain_slots.push(at);
@@ -779,7 +784,7 @@ impl PackScreen {
             dt,
             self.frames,
             256.0,
-            Default::default(),
+            self.inputs,
             &self.installed.constants,
             &mut self.history,
         );
@@ -875,6 +880,7 @@ impl PackScreen {
                         pass_buffers.push((*vertices, Use::VertexRead));
                         pass_buffers.push((*indices, Use::IndexRead));
                     }
+                    pass_buffers.extend(t.quads.iter().map(|q| (*q, Use::VertexRead)));
                     Some(self.targets.depth.view)
                 }
                 None => None,

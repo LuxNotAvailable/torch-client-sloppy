@@ -24,7 +24,9 @@ pub(crate) fn vulkan_terrain() -> bool {
 /// (`vk::pack::bindless`).
 const VK_TERRAIN: &str = "layout(std430, set = 2, binding = 7) readonly buffer IrisVkSlots { uvec4 iris_VkSlot[]; };
 layout(std430, set = 2, binding = 8) readonly buffer IrisVkPool { uint iris_VkWords[]; };
+layout(std430, set = 2, binding = 9) readonly buffer IrisVkQuads { uvec4 iris_VkQuadWords[]; };
 uint iris_VkPool;
+uint iris_VkQuadPool;
 ivec4 iris_RawPosition;
 vec2 iris_RawUV0;
 vec4 iris_RawLight;
@@ -32,6 +34,7 @@ vec4 iris_RawColor;
 ivec3 iris_origin() {
     int slot = int(gl_InstanceIndex) * 8;
     iris_VkPool = iris_VkSlot[slot + 3].y;
+    iris_VkQuadPool = iris_VkSlot[slot + 3].w;
     uint v = uint(gl_VertexIndex) * 5u;
     uint x = iris_VkWords[v];
     uint y = iris_VkWords[v + 1u];
@@ -59,7 +62,8 @@ pub(crate) fn terrain_prelude(direct: bool) -> String {
              vec2 iris_uv0() {{ return iris_RawUV0; }}\n\
              vec2 iris_light() {{ return iris_RawLight.xy * 255.0; }}\n\
              vec4 iris_color() {{ return iris_RawColor; }}\n\
-             {PACK_STREAM}"
+             {}",
+            vk_pack_stream()
         );
     }
     let origin = if direct {
@@ -136,6 +140,21 @@ const PACK_STREAM: &str = concat!(
     "    return vec4((cell + 0.5 - vec3(iris_RawPosition.xyz) / 256.0) * 64.0, float(word >> 28u));\n",
     "}\n",
 );
+
+/// `PACK_STREAM` reading the section's pool of pack quads (a quad at its
+/// section's base vertex + its own number), none without a pack.
+fn vk_pack_stream() -> String {
+    let texture = "layout(set = 2, binding = 0) uniform utexture2D iris_PackQuads;\n";
+    let read = "    int quad = int(gl_VertexIndex) >> 2;\n    \
+                return texelFetch(iris_PackQuads, ivec2(quad % 2048, quad / 2048), 0);\n";
+    assert!(PACK_STREAM.contains(texture) && PACK_STREAM.contains(read));
+    PACK_STREAM.replace(texture, "").replace(
+        read,
+        "    if (iris_VkQuadPool == 4294967295u) { return uvec4(0u, 0u, 0u, 65535u); }\n    \
+             uint base = uint(iris_VkSlot[int(gl_InstanceIndex) * 8 + 2].w);\n    \
+             return iris_VkQuadWords[base + ((uint(gl_VertexIndex) - base) >> 2)];\n",
+    )
+}
 
 pub(super) const TERRAIN_BEGIN: &str =
     "iris_Origin = iris_origin();\n    iris_Quad = iris_pack_quad();\n    ";

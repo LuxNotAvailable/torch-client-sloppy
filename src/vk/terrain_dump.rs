@@ -20,11 +20,12 @@ use crate::renderer::mesh::{MeshBuf, PackedVertex};
 use crate::renderer::visgraph::VisibilitySet;
 
 pub const MAGIC: &[u8; 4] = b"TVKD";
-pub const VERSION: u32 = 3;
+/// 4: each record also carries its pack quads (6.3).
+pub const VERSION: u32 = 4;
 
 /// The layer byte of a record saying a column was unloaded.
 const DROPPED: u8 = 0xFF;
-const HEAD: usize = 33;
+const HEAD: usize = 37;
 
 static WRITER: Mutex<Option<std::io::BufWriter<std::fs::File>>> = Mutex::new(None);
 
@@ -89,12 +90,18 @@ fn record(origin: [i32; 3], layer: u8, vis: u64, mesh: &MeshBuf) {
     }
     write(&[layer]);
     write(&vis.to_le_bytes());
-    for n in [mesh.verts.len(), mesh.idx.len(), mesh.cutout_idx.len()] {
+    // A pack's quads only while one is on: one per four vertices, or none.
+    #[cfg(feature = "shader_support")]
+    let pack: &[u8] = bytemuck::cast_slice(&mesh.pack);
+    #[cfg(not(feature = "shader_support"))]
+    let pack: &[u8] = &[];
+    for n in [mesh.verts.len(), mesh.idx.len(), mesh.cutout_idx.len(), pack.len() / 16] {
         write(&(n as u32).to_le_bytes());
     }
     write(bytemuck::cast_slice::<PackedVertex, u8>(&mesh.verts));
     write(bytemuck::cast_slice(&mesh.idx));
     write(bytemuck::cast_slice(&mesh.cutout_idx));
+    write(pack);
     let _ = writer.flush();
 }
 
@@ -107,6 +114,9 @@ pub struct Section {
     pub verts: Vec<PackedVertex>,
     pub idx: Vec<u32>,
     pub cutout_idx: Vec<u32>,
+    /// Pack quads (`packvertex::PackQuad` words), one per four vertices;
+    /// empty when no pack was on.
+    pub pack: Vec<[u32; 4]>,
 }
 
 /// One record of a dump, in the order the game wrote them.
@@ -145,10 +155,11 @@ fn next_record(bytes: &[u8], at: &mut usize) -> Option<Record> {
     let vis = u64::from_le_bytes(head[13..21].try_into().unwrap());
     let count =
         |i: usize| u32::from_le_bytes(head[21 + i * 4..25 + i * 4].try_into().unwrap()) as usize;
-    let (verts, idx, cutout) = (count(0), count(1), count(2));
+    let (verts, idx, cutout, pack) = (count(0), count(1), count(2), count(3));
     let verts: Vec<PackedVertex> = bytemuck::pod_collect_to_vec(take(verts * 20)?);
     let idx: Vec<u32> = bytemuck::pod_collect_to_vec(take(idx * 4)?);
     let cutout_idx: Vec<u32> = bytemuck::pod_collect_to_vec(take(cutout * 4)?);
+    let pack: Vec<[u32; 4]> = bytemuck::pod_collect_to_vec(take(pack * 16)?);
     Some(if layer == DROPPED {
         Record::Dropped {
             cx: origin[0] >> 4,
@@ -162,6 +173,7 @@ fn next_record(bytes: &[u8], at: &mut usize) -> Option<Record> {
             verts,
             idx,
             cutout_idx,
+            pack,
         })
     })
 }
@@ -227,7 +239,7 @@ mod tests {
         }
         out.push(layer);
         out.extend_from_slice(&u64::MAX.to_le_bytes());
-        for n in [verts, verts, 0] {
+        for n in [verts, verts, 0, 0] {
             out.extend_from_slice(&n.to_le_bytes());
         }
         out.extend(std::iter::repeat_n(0u8, verts as usize * 20));

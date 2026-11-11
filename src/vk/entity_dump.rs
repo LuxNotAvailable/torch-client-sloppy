@@ -908,6 +908,7 @@ fn write_particles(
     atlas: Option<Res<crate::util::particles::ParticleAtlas>>,
     gui: Option<Res<crate::gui::render::GuiAssets>>,
     camera: Query<&GlobalTransform, With<crate::renderer::systems::WorldCamera>>,
+    inputs: Option<Res<crate::renderer::packdraw::inputs::Inputs>>,
 ) {
     use crate::util::particles::draw::{SpriteTexture, live_sprites};
     *since += time.delta_secs();
@@ -925,6 +926,11 @@ fn write_particles(
         .is_none_or(|t| t.translation() == Vec3::ZERO)
     {
         return;
+    }
+    // The frame's pack inputs (time of day, sky, weather), for packs.
+    if let Some(inputs) = inputs {
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::fs::write(dir.join("inputs.json"), inputs.to_json().to_string());
     }
     let (Some(live), Some(atlas)) = (live, atlas) else {
         return;
