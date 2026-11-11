@@ -31,6 +31,110 @@ pub(crate) fn to_wgsl(
         .map_err(|e| format!("the shader could not be written as WGSL: {e}"))
 }
 
+/// A compiled program stage, as WGSL (a GLSL pack's after the transform and
+/// naga, or a native WGSL pack's own), to SPIR-V for the native renderer
+/// (VULKAN_REWRITE_CHECKLIST.md 6.1). Every pack program passes through
+/// WGSL already, so this one step covers both kinds of pack.
+#[allow(dead_code, reason = "used by the native renderer's pack path as it lands")]
+pub(crate) fn wgsl_to_spirv(source: &str) -> Result<Vec<u32>, String> {
+    use naga::back::spv;
+    let module = naga::front::wgsl::parse_str(source)
+        .map_err(|e| format!("the WGSL could not be parsed: {}", e.emit_to_string(source)))?;
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
+        .validate(&module)
+        .map_err(|e| format!("the shader is not valid: {}", chain(&e)))?;
+    let options = spv::Options {
+        lang_version: (1, 3),
+        flags: spv::WriterFlags::empty(),
+        ..Default::default()
+    };
+    let mut words = spv::write_vec(&module, &info, &options, None)
+        .map_err(|e| format!("the shader could not be written as SPIR-V: {e}"))?;
+    relax_atomics(&mut words);
+    Ok(words)
+}
+
+/// naga marks every atomic relaxed with a storage-class semantics bit
+/// (UniformMemory or WorkgroupMemory), which Vulkan's SPIR-V rules refuse
+/// (VUID-StandaloneSpirv-MemorySemantics-10871): a storage-class bit needs
+/// an acquire or release order. WGSL's atomics are all relaxed, so the bit
+/// says nothing; each atomic whose semantics carry no ordering is pointed
+/// at a new constant 0 (plain relaxed) instead.
+fn relax_atomics(words: &mut Vec<u32>) {
+    const HEADER: usize = 5;
+    const OP_TYPE_INT: u32 = 21;
+    const OP_CONSTANT: u32 = 43;
+    // Acquire, Release, AcquireRelease, SequentiallyConsistent.
+    const ORDER_BITS: u32 = 0x2 | 0x4 | 0x8 | 0x10;
+    /// Each atomic's opcode and where its semantics operands sit.
+    fn semantics_at(opcode: u32) -> &'static [usize] {
+        match opcode {
+            // OpAtomicStore: pointer, scope, semantics, value.
+            228 => &[3],
+            // OpAtomicCompareExchange(Weak): two semantics.
+            230 | 231 => &[5, 6],
+            // Load, exchange, increment, decrement and the arithmetic and
+            // bitwise read-modify-writes; the float ones (EXT).
+            227 | 229 | 232..=242 | 5614 | 5615 | 6035 => &[5],
+            _ => &[],
+        }
+    }
+    if words.len() <= HEADER {
+        return;
+    }
+    // One pass to find the 32-bit unsigned type, the constants' values and
+    // the atomics.
+    let mut u32_type = None;
+    let mut values = std::collections::HashMap::new();
+    let mut atomics = Vec::new();
+    let mut at = HEADER;
+    while at < words.len() {
+        let count = (words[at] >> 16) as usize;
+        let opcode = words[at] & 0xFFFF;
+        if count == 0 || at + count > words.len() {
+            return;
+        }
+        match opcode {
+            OP_TYPE_INT if count == 4 && words[at + 2] == 32 && words[at + 3] == 0 => {
+                u32_type.get_or_insert((words[at + 1], at + count));
+            }
+            OP_CONSTANT if count == 4 => {
+                values.insert(words[at + 2], words[at + 3]);
+            }
+            _ => {
+                for &operand in semantics_at(opcode) {
+                    atomics.push(at + operand);
+                }
+            }
+        }
+        at += count;
+    }
+    let relaxed: Vec<usize> = atomics
+        .into_iter()
+        .filter(|&slot| {
+            values
+                .get(&words[slot])
+                .is_some_and(|v| *v != 0 && *v & ORDER_BITS == 0)
+        })
+        .collect();
+    let Some((type_id, after_type)) = u32_type else {
+        return;
+    };
+    if relaxed.is_empty() {
+        return;
+    }
+    // A new constant 0 just after the type, with the next free id.
+    let zero = words[3];
+    words[3] += 1;
+    for slot in relaxed {
+        words[slot] = zero;
+    }
+    words.splice(
+        after_type..after_type,
+        [(4 << 16) | OP_CONSTANT, type_id, zero, 0],
+    );
+}
+
 fn chain(error: &dyn std::error::Error) -> String {
     let mut out = error.to_string();
     let mut source = error.source();
@@ -45,6 +149,38 @@ fn chain(error: &dyn std::error::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every atomic in a module written for Vulkan carries plain relaxed
+    /// semantics (0), not naga's relaxed storage-class bit.
+    #[test]
+    fn atomics_come_out_plain_relaxed() {
+        let wgsl = "struct S { n: atomic<u32>, k: array<atomic<u32>, 4> }
+                    @group(0) @binding(0) var<storage, read_write> s: S;
+                    @compute @workgroup_size(1) fn main() {
+                    atomicStore(&s.n, 0u); let a = atomicLoad(&s.k[1]);
+                    let b = atomicAdd(&s.n, a); atomicStore(&s.k[0], b); }
+";
+        let words = wgsl_to_spirv(wgsl).expect("compiles");
+        let mut constants = std::collections::HashMap::new();
+        let mut semantics = Vec::new();
+        let mut at = 5;
+        while at < words.len() {
+            let (count, opcode) = ((words[at] >> 16) as usize, words[at] & 0xFFFF);
+            match opcode {
+                43 => {
+                    constants.insert(words[at + 2], words[at + 3]);
+                }
+                228 => semantics.push(words[at + 3]),
+                227 | 234 => semantics.push(words[at + 5]),
+                _ => {}
+            }
+            at += count;
+        }
+        assert_eq!(semantics.len(), 4, "two stores, a load and an add");
+        for id in semantics {
+            assert_eq!(constants.get(&id), Some(&0), "semantics constant {id}");
+        }
+    }
 
     #[test]
     fn which_declaration_forms_naga_accepts() {

@@ -2,7 +2,10 @@ use crate::util::pack::{Pack, Source};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn dir() -> std::path::PathBuf {
-    crate::platform::storage::dir().join("shaders")
+    match crate::platform::env::var_os("MC_SHADERS_DIR") {
+        Some(dir) => std::path::PathBuf::from(dir),
+        None => crate::platform::storage::dir().join("shaders"),
+    }
 }
 
 #[cfg(target_arch = "wasm32")]

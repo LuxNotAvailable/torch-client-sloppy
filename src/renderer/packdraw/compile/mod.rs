@@ -764,6 +764,74 @@ mod tests {
         }
     }
 
+    /// VULKAN_REWRITE_CHECKLIST.md 6.1: every stage of every installed
+    /// pack, as compiled for the game, also goes to SPIR-V.
+    #[test]
+    #[ignore = "needs a shader pack installed"]
+    fn every_installed_program_compiles_to_spirv() {
+        let mut failures = Vec::new();
+        let mut stages = 0usize;
+        for pack in discover::list() {
+            for direct in [false, true] {
+                let Ok(frame) = compile_frame(&pack.name, direct, None, Dimension::Overworld) else {
+                    continue;
+                };
+                for program in &frame.programs {
+                    let sources = std::iter::once(("vertex", &program.vertex))
+                        .chain(program.vertex_skinned.iter().map(|s| ("vertex skinned", s)))
+                        .chain(std::iter::once(("fragment", &program.fragment)))
+                        .chain(program.fragment_tests.iter().map(|(_, s)| ("fragment test", s)))
+                        .chain(program.fragment_linear.iter().map(|s| ("fragment linear", s)))
+                        .chain(program.compute.iter().map(|s| ("compute", s)))
+                        .filter(|(_, s)| !s.is_empty());
+                    for (stage, source) in sources {
+                        stages += 1;
+                        let label = format!("{} (direct={direct}) {} {stage}", pack.name, program.name);
+                        match crate::shaderpack::backend::wgsl_to_spirv(source) {
+                            Err(e) => failures
+                                .push(format!("{label}: {}", e.lines().next().unwrap_or(""))),
+                            // With `SPIRV_VAL` naming the SDK's spirv-val,
+                            // each module is also checked against Vulkan's
+                            // rules, not only naga's.
+                            Ok(words) => {
+                                if let Some(problem) = spirv_val(&words) {
+                                    failures.push(format!("{label}: spirv-val: {problem}"));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        println!("{stages} stages, {} failed", failures.len());
+        for failure in &failures {
+            println!("FAIL  {failure}");
+        }
+        assert!(stages > 0, "no pack compiled");
+        assert!(failures.is_empty(), "{} stages failed", failures.len());
+    }
+
+    /// What `SPIRV_VAL` (the Vulkan SDK's spirv-val) finds wrong with a
+    /// module for Vulkan 1.1; nothing when the variable is unset.
+    fn spirv_val(words: &[u32]) -> Option<String> {
+        let tool = std::env::var_os("SPIRV_VAL")?;
+        let path = std::env::temp_dir().join(format!("torch-spirv-{}.spv", std::process::id()));
+        std::fs::write(&path, bytemuck::cast_slice::<u32, u8>(words)).ok()?;
+        let out = std::process::Command::new(tool)
+            .args(["--target-env", "vulkan1.1"])
+            .arg(&path)
+            .output()
+            .ok()?;
+        let _ = std::fs::remove_file(&path);
+        (!out.status.success()).then(|| {
+            String::from_utf8_lossy(&out.stderr)
+                .lines()
+                .next()
+                .unwrap_or("failed")
+                .to_owned()
+        })
+    }
+
     #[test]
     #[ignore = "needs a shader pack installed"]
     fn every_installed_program_translates() {

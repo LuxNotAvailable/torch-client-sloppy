@@ -61,6 +61,12 @@ const ALL: &[Var] = &[
         enabled: true,
     },
     Var {
+        name: "MC_SHADERS_DIR",
+        what: "where shader packs are found, read only; lets the pack tests (which keep their own config folder) compile the installed packs",
+        default: "shaders in the config folder",
+        enabled: cfg!(feature = "shader_support"),
+    },
+    Var {
         name: "MC_CLIENT_CONFIG_DIR",
         what: "where options, keybinds, the server list and the accounts are written",
         default: if cfg!(target_os = "android") {
