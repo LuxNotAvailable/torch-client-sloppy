@@ -156,10 +156,17 @@ impl Default for ParticleRng {
 }
 
 #[derive(Resource, Default)]
-struct LiveParticles(Vec<Particle>);
+pub(crate) struct LiveParticles(Vec<Particle>);
 
 #[derive(Resource, Default)]
-struct ParticleAtlas(Option<Atlas>);
+pub(crate) struct ParticleAtlas(Option<Atlas>);
+
+impl ParticleAtlas {
+    /// The particle sheet's image, once it is built.
+    pub(crate) fn image(&self) -> Option<&Handle<Image>> {
+        self.0.as_ref().map(|atlas| &atlas.image)
+    }
+}
 
 pub(crate) struct Atlas {
     image: Handle<Image>,

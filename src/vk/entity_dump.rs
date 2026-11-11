@@ -30,6 +30,12 @@
 //! - textures and meshes as in `entities.bin`
 //! - parts: count, then `EnvPart` (112 bytes): the sky parts and the cloud
 //!   layer
+//!
+//! And `particles.bin` (`TVKP`, version 1), the live particles as sprites
+//! the vertex shader billboards (VULKAN_REWRITE_CHECKLIST.md 4.6); their
+//! batch meshes stay out of `entities.bin`:
+//! - textures as in `entities.bin` (the particle sheet, the item atlas)
+//! - sprites: count, then `ParticleSprite` (80 bytes), oldest first
 
 use std::collections::HashMap;
 
@@ -86,6 +92,36 @@ pub struct EntityInstance {
 
 const _: () = assert!(std::mem::size_of::<EntityInstance>() == 184);
 
+pub const PARTICLE_MAGIC: &[u8; 4] = b"TVKP";
+pub const PARTICLE_VERSION: u32 = 1;
+
+/// One live particle, billboarded in the vertex shader.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct ParticleSprite {
+    /// The world position of its centre.
+    pub centre: [f32; 3],
+    /// Half its side, in blocks.
+    pub half: f32,
+    /// Its sprite's UV rectangle: u0, v0, u1, v1.
+    pub uv: [f32; 4],
+    pub color: [f32; 4],
+    /// Its roll about the view axis (falling leaves), in radians.
+    pub roll: f32,
+    /// The texture's id, `TEXTURE_ATLAS` for the block atlas.
+    pub texture: u32,
+    /// Block and sky light levels, times 16 (as entities' `levels`).
+    pub levels: [f32; 2],
+    /// `PARTICLE_TRANSLUCENT` when it blends.
+    pub flags: u32,
+    pub pad: [u32; 3],
+}
+
+const _: () = assert!(std::mem::size_of::<ParticleSprite>() == 80);
+
+/// The sprite blends (vanilla's translucent particle layer).
+pub const PARTICLE_TRANSLUCENT: u32 = 1;
+
 pub const ENV_MAGIC: &[u8; 4] = b"TVKS";
 pub const ENV_VERSION: u32 = 2;
 
@@ -140,7 +176,7 @@ pub fn plugin(app: &mut App) {
         return;
     }
     app.init_resource::<Cache>()
-        .add_systems(PostUpdate, (capture, write).chain());
+        .add_systems(PostUpdate, (capture, write, write_particles).chain());
 }
 
 fn mesh_data(mesh: &Mesh) -> Option<(Vec<EntityVertex>, Vec<u32>, bool)> {
@@ -529,6 +565,10 @@ fn write(
         if !visible.get() || layers.is_some_and(|l| !l.intersects(&world)) {
             continue;
         }
+        // Particles go to `particles.bin`, as sprites.
+        if particle {
+            continue;
+        }
         let Some(material) = materials.get(&material.0) else {
             continue;
         };
@@ -844,4 +884,142 @@ pub fn read_env(bytes: &[u8]) -> Result<Environment, String> {
         warp,
         post,
     })
+}
+
+/// Rewrites `particles.bin` every few seconds, with `entities.bin`.
+fn write_particles(
+    time: Res<Time>,
+    mut since: Local<f32>,
+    cache: Res<Cache>,
+    live: Option<Res<crate::util::particles::LiveParticles>>,
+    atlas: Option<Res<crate::util::particles::ParticleAtlas>>,
+    gui: Option<Res<crate::gui::render::GuiAssets>>,
+    camera: Query<&GlobalTransform, With<crate::renderer::systems::WorldCamera>>,
+) {
+    use crate::util::particles::draw::{SpriteTexture, live_sprites};
+    *since += time.delta_secs();
+    if *since < EVERY {
+        return;
+    }
+    *since = 0.0;
+    let Some(dir) = super::terrain_dump::folder() else {
+        return;
+    };
+    // Out of a world: keep the last snapshot taken in one (see `write`).
+    if camera
+        .iter()
+        .next()
+        .is_none_or(|t| t.translation() == Vec3::ZERO)
+    {
+        return;
+    }
+    let (Some(live), Some(atlas)) = (live, atlas) else {
+        return;
+    };
+    let sheet = atlas.image().map(|h| h.id());
+    let items = gui.as_ref().map(|g| g.image.id());
+    let mut used_images: Vec<AssetId<Image>> = Vec::new();
+    let mut sprites = Vec::new();
+    for sprite in live_sprites(&live, &atlas) {
+        let texture = match sprite.texture {
+            SpriteTexture::Terrain => TEXTURE_ATLAS,
+            SpriteTexture::Sheet | SpriteTexture::Items => {
+                let id = if sprite.texture == SpriteTexture::Sheet {
+                    sheet
+                } else {
+                    items
+                };
+                let Some(id) = id.filter(|id| cache.images.contains_key(id)) else {
+                    continue;
+                };
+                match used_images.iter().position(|u| *u == id) {
+                    Some(at) => at as u32,
+                    None => {
+                        used_images.push(id);
+                        used_images.len() as u32 - 1
+                    }
+                }
+            }
+        };
+        let shape = &sprite.shape;
+        sprites.push(ParticleSprite {
+            centre: shape.centre.to_array(),
+            half: shape.half,
+            uv: shape.uv,
+            color: shape.color,
+            roll: shape.roll,
+            texture,
+            levels: [
+                f32::from(sprite.levels.0) * 16.0,
+                f32::from(sprite.levels.1) * 16.0,
+            ],
+            flags: if sprite.translucent {
+                PARTICLE_TRANSLUCENT
+            } else {
+                0
+            },
+            pad: [0; 3],
+        });
+    }
+    let mut out = Vec::new();
+    out.extend_from_slice(PARTICLE_MAGIC);
+    out.extend_from_slice(&PARTICLE_VERSION.to_le_bytes());
+    out.extend_from_slice(&(used_images.len() as u32).to_le_bytes());
+    for (i, id) in used_images.iter().enumerate() {
+        let (w, h, rgba) = &cache.images[id];
+        for n in [i as u32, *w, *h] {
+            out.extend_from_slice(&n.to_le_bytes());
+        }
+        out.extend_from_slice(rgba);
+    }
+    out.extend_from_slice(&(sprites.len() as u32).to_le_bytes());
+    out.extend_from_slice(bytemuck::cast_slice(&sprites));
+    let _ = std::fs::create_dir_all(&dir);
+    let tmp = dir.join("particles.bin.tmp");
+    if std::fs::write(&tmp, &out).is_ok() {
+        let _ = std::fs::rename(&tmp, dir.join("particles.bin"));
+    }
+}
+
+/// `particles.bin` as written: textures (id, width, height, RGBA8) and the
+/// sprites.
+pub struct ParticleSnapshot {
+    pub textures: Vec<(u32, u32, Vec<u8>)>,
+    pub sprites: Vec<ParticleSprite>,
+}
+
+pub fn read_particles(bytes: &[u8]) -> Result<ParticleSnapshot, String> {
+    let mut at = 0usize;
+    let mut take = |n: usize| -> Result<&[u8], String> {
+        let slice = bytes
+            .get(at..at + n)
+            .ok_or_else(|| "particles.bin ends early".to_owned())?;
+        at += n;
+        Ok(slice)
+    };
+    if take(4)? != PARTICLE_MAGIC {
+        return Err("not a particle snapshot".to_owned());
+    }
+    let u32_at = |b: &[u8]| u32::from_le_bytes(b.try_into().unwrap_or([0; 4]));
+    let version = u32_at(take(4)?);
+    if version != PARTICLE_VERSION {
+        return Err(format!("particle snapshot version {version}"));
+    }
+    let count = u32_at(take(4)?) as usize;
+    let mut textures = Vec::with_capacity(count);
+    for _ in 0..count {
+        let _id = u32_at(take(4)?);
+        let w = u32_at(take(4)?);
+        let h = u32_at(take(4)?);
+        let rgba = take((w * h * 4) as usize)?.to_vec();
+        textures.push((w, h, rgba));
+    }
+    let count = u32_at(take(4)?) as usize;
+    let size = std::mem::size_of::<ParticleSprite>();
+    let raw = take(count * size)?;
+    let sprites = raw
+        .chunks_exact(size)
+        .map(bytemuck::pod_read_unaligned::<ParticleSprite>)
+        .collect();
+    Ok(ParticleSnapshot { textures, sprites })
 }

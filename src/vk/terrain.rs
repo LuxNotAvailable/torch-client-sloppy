@@ -481,6 +481,7 @@ pub struct TerrainScene {
     /// The entity snapshot beside the terrain dump, when there is one
     /// (phase 4).
     entities: Option<super::entities::EntityScene>,
+    particles: Option<super::particles::ParticleScene>,
     env: Option<super::env::EnvScene>,
 }
 
@@ -687,6 +688,22 @@ impl TerrainScene {
             }
             Err(_) => None,
         };
+        // The live particles, as sprites.
+        let particles = match std::fs::read(dir.join("particles.bin")) {
+            Ok(bytes) => {
+                let snapshot = super::entity_dump::read_particles(&bytes)
+                    .map_err(|e| failed("bad particles.bin", &e))?;
+                Some(super::particles::ParticleScene::new(
+                    ctx,
+                    memory,
+                    bindless,
+                    pipelines,
+                    color_format,
+                    snapshot,
+                )?)
+            }
+            Err(_) => None,
+        };
         // And what surrounds the world: sky, clouds, fog, lightmap.
         let env = match std::fs::read(dir.join("env.bin")) {
             Ok(bytes) => {
@@ -765,6 +782,7 @@ impl TerrainScene {
             hi: Vec3::splat(f32::MIN),
             stats: Stats::default(),
             entities,
+            particles,
             env,
         })
     }
@@ -1537,6 +1555,9 @@ impl TerrainScene {
         if let Some(entities) = &mut self.entities {
             entities.prepare(ctx, memory, graph, frame, slot);
         }
+        if let Some(particles) = &mut self.particles {
+            particles.prepare(ctx, memory, graph, frame)?;
+        }
         if let Some(env) = &mut self.env {
             env.prepare(ctx, memory, graph, frame);
         }
@@ -1843,6 +1864,10 @@ impl TerrainScene {
         if let Some(entities) = &self.entities {
             entities.uses(&mut images, &mut buffers);
         }
+        if let Some(particles) = &self.particles {
+            particles.uses(&mut images, &mut buffers);
+        }
+        let camera_world = Mat4::look_to_rh(camera.eye, camera.forward(), Vec3::Y).inverse();
         if let Some(env) = &self.env {
             env.uses(&mut images, &mut buffers);
         }
@@ -1928,6 +1953,18 @@ impl TerrainScene {
                     );
                 }
             }
+            if let Some(particles) = &self.particles {
+                particles.draw_cutout(
+                    ctx,
+                    cmd,
+                    pipelines,
+                    view_proj_cols,
+                    camera_world,
+                    view.mode(),
+                    view_index,
+                    self.atlas_index,
+                );
+            }
             if let Some(entities) = &self.entities {
                 entities.draw_solid(
                     ctx,
@@ -1980,6 +2017,19 @@ impl TerrainScene {
                     view.mode(),
                     seconds,
                     view_index,
+                );
+            }
+            // Iris and vanilla draw particles after the translucent terrain.
+            if let Some(particles) = &self.particles {
+                particles.draw_blend(
+                    ctx,
+                    cmd,
+                    pipelines,
+                    view_proj_cols,
+                    camera_world,
+                    view.mode(),
+                    view_index,
+                    self.atlas_index,
                 );
             }
             if let Some(env) = &self.env {
@@ -2390,6 +2440,9 @@ impl TerrainScene {
         }
         if let Some(entities) = self.entities.take() {
             entities.destroy(ctx, memory);
+        }
+        if let Some(particles) = self.particles.take() {
+            particles.destroy(ctx, memory);
         }
         if let Some(env) = self.env.take() {
             env.destroy(ctx, memory);

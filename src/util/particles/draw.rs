@@ -315,51 +315,20 @@ pub(super) fn write_batch_mesh(
 
     for &i in group {
         let p = &particles[i as usize];
-        let lifetime = p.lifetime.max(1);
-        let frac = (p.tick_acc / TICK).clamp(0.0, 1.0);
+        let Some(shape) = shape(p, sheet) else {
+            continue;
+        };
         // Vanilla draws a layer's particles in one buffer, oldest first,
         // with a less-or-equal depth test, so of two at one spot the later
         // shows. Ours split into batches drawn in any order; a nudge toward
         // the camera by spawn order keeps the later one in front.
         let nudge = Vec3::from(normal) * ((p.seq % 256) as f32 * 1.0e-4);
-        let centre = p.prev.lerp(p.pos, frac) - origin + nudge;
-        let t = (p.age as f32 + frac) / lifetime as f32;
-        let scale = p.size
-            * match p.grow {
-                Grow::Fixed => 1.0,
-                Grow::In => (t * 32.0).clamp(0.0, 1.0),
-                Grow::Flame => 1.0 - t * t * 0.5,
-                Grow::Lava => 1.0 - t * t,
-                Grow::Portal => 1.0 - (1.0 - t) * (1.0 - t),
-                Grow::Flash => {
-                    let age = p.age as f32 + frac - 1.0;
-                    7.1 * (age * 0.25 * std::f32::consts::PI).sin() / p.size.max(1e-6)
-                }
-            };
-        if scale <= 0.0 {
-            continue;
-        }
-        // A twinkling spark blinks through its last two thirds.
-        if matches!(p.behavior, Behavior::Spark(s) if s.twinkle)
-            && p.age >= p.lifetime / 3
-            && (p.age + p.lifetime) / 3 % 2 != 0
-        {
-            continue;
-        }
-        let [u0, v0, u1, v1] = match p.sprite {
-            Sprite::Fixed(uv) => uv,
-            Sprite::Animated(index) => {
-                let Some(sheet) = sheet else { continue };
-                let frames = sheet.sheets[index as usize].len();
-                let frame = p.age as usize * frames.saturating_sub(1) / lifetime as usize;
-                sheet.frame_uv(index, frame)
-            }
-        };
+        let centre = shape.centre - origin + nudge;
+        let [u0, v0, u1, v1] = shape.uv;
         let base = positions.len() as u32;
-        let (mut dx, mut dy) = (right * scale, up * scale);
-        if let Behavior::Leaf(leaf) = p.behavior {
-            let roll = leaf.old_roll + (leaf.roll - leaf.old_roll) * frac;
-            let (sin, cos) = roll.sin_cos();
+        let (mut dx, mut dy) = (right * shape.half, up * shape.half);
+        if shape.roll != 0.0 {
+            let (sin, cos) = shape.roll.sin_cos();
             (dx, dy) = (dx * cos + dy * sin, dy * cos - dx * sin);
         }
         for (corner, uv) in [
@@ -371,17 +340,7 @@ pub(super) fn write_batch_mesh(
             positions.push(corner.to_array());
             normals.push(normal);
             uvs.push(uv);
-            colors.push(if p.grow == Grow::Flash {
-                let age = p.age as f32 + frac - 1.0;
-                [
-                    p.tint[0],
-                    p.tint[1],
-                    p.tint[2],
-                    (0.6 - age * 0.125).clamp(0.0, 1.0),
-                ]
-            } else {
-                p.tint
-            });
+            colors.push(shape.color);
         }
         indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
@@ -391,6 +350,126 @@ pub(super) fn write_batch_mesh(
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
     mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
     mesh.insert_indices(Indices::U32(indices));
+}
+
+/// A particle as drawn this frame: where (in the world, between its last
+/// two ticks), how big (half its side), its roll, its sprite and colour.
+pub(crate) struct Shape {
+    pub(crate) centre: Vec3,
+    pub(crate) half: f32,
+    pub(crate) roll: f32,
+    pub(crate) uv: [f32; 4],
+    pub(crate) color: [f32; 4],
+}
+
+/// What a particle looks like this frame, or `None` while it is not drawn
+/// (shrunk away, a twinkling spark between blinks, an animated sprite with
+/// no sheet).
+pub(crate) fn shape(p: &Particle, sheet: Option<&Atlas>) -> Option<Shape> {
+    let lifetime = p.lifetime.max(1);
+    let frac = (p.tick_acc / TICK).clamp(0.0, 1.0);
+    let t = (p.age as f32 + frac) / lifetime as f32;
+    let half = p.size
+        * match p.grow {
+            Grow::Fixed => 1.0,
+            Grow::In => (t * 32.0).clamp(0.0, 1.0),
+            Grow::Flame => 1.0 - t * t * 0.5,
+            Grow::Lava => 1.0 - t * t,
+            Grow::Portal => 1.0 - (1.0 - t) * (1.0 - t),
+            Grow::Flash => {
+                let age = p.age as f32 + frac - 1.0;
+                7.1 * (age * 0.25 * std::f32::consts::PI).sin() / p.size.max(1e-6)
+            }
+        };
+    if half <= 0.0 {
+        return None;
+    }
+    // A twinkling spark blinks through its last two thirds.
+    if matches!(p.behavior, Behavior::Spark(s) if s.twinkle)
+        && p.age >= p.lifetime / 3
+        && (p.age + p.lifetime) / 3 % 2 != 0
+    {
+        return None;
+    }
+    let uv = match p.sprite {
+        Sprite::Fixed(uv) => uv,
+        Sprite::Animated(index) => {
+            let sheet = sheet?;
+            let frames = sheet.sheets[index as usize].len();
+            let frame = p.age as usize * frames.saturating_sub(1) / lifetime as usize;
+            sheet.frame_uv(index, frame)
+        }
+    };
+    let roll = match p.behavior {
+        Behavior::Leaf(leaf) => leaf.old_roll + (leaf.roll - leaf.old_roll) * frac,
+        _ => 0.0,
+    };
+    let color = if p.grow == Grow::Flash {
+        let age = p.age as f32 + frac - 1.0;
+        [
+            p.tint[0],
+            p.tint[1],
+            p.tint[2],
+            (0.6 - age * 0.125).clamp(0.0, 1.0),
+        ]
+    } else {
+        p.tint
+    };
+    Some(Shape {
+        centre: p.prev.lerp(p.pos, frac),
+        half,
+        roll,
+        uv,
+        color,
+    })
+}
+
+/// Which texture a sprite samples.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SpriteTexture {
+    Terrain,
+    Items,
+    Sheet,
+}
+
+/// One live particle for a renderer that billboards in its vertex shader
+/// (the Vulkan renderer, VULKAN_REWRITE_CHECKLIST.md 4.6): its shape, its
+/// texture, its light levels and whether it blends.
+pub(crate) struct LiveSprite {
+    pub(crate) shape: Shape,
+    pub(crate) texture: SpriteTexture,
+    pub(crate) levels: (u8, u8),
+    pub(crate) translucent: bool,
+}
+
+/// Every live particle drawn this frame, oldest first (vanilla's order).
+pub(crate) fn live_sprites(live: &LiveParticles, atlas: &ParticleAtlas) -> Vec<LiveSprite> {
+    let sheet = atlas.0.as_ref();
+    live.0
+        .iter()
+        .filter(|p| p.tick_acc >= 0.0)
+        .filter_map(|p| {
+            let shape = shape(p, sheet)?;
+            let texture = if p.flags & TERRAIN != 0 {
+                SpriteTexture::Terrain
+            } else if p.flags & ITEMS != 0 {
+                SpriteTexture::Items
+            } else {
+                SpriteTexture::Sheet
+            };
+            let levels = if p.flags & FULLBRIGHT != 0 {
+                (15, 15)
+            } else {
+                crate::renderer::lightmap::levels_at([p.pos.x, p.pos.y, p.pos.z])
+            };
+            Some(LiveSprite {
+                shape,
+                texture,
+                levels,
+                translucent: p.flags & TRANSLUCENT != 0,
+            })
+        })
+        .collect()
 }
 
 pub(super) fn empty_particle_mesh() -> Mesh {

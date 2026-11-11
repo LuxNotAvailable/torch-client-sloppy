@@ -16,6 +16,7 @@ pub mod graph;
 pub mod greedy;
 pub mod memory;
 pub mod packed;
+pub mod particles;
 pub mod pipeline;
 pub mod post;
 pub mod requirements;
