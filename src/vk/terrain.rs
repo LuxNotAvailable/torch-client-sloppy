@@ -974,6 +974,29 @@ impl TerrainScene {
         }
     }
 
+    /// Updates the live particles with a frame's (`ParticleScene::update`),
+    /// making the scene on the first.
+    pub fn update_particles(
+        &mut self,
+        ctx: &Context,
+        memory: &Memory,
+        bindless: &mut Bindless,
+        pipelines: &Pipelines,
+        color_format: vk::Format,
+        frame: super::entity_dump::LiveParticles,
+    ) -> Result<(), SetupError> {
+        if self.particles.is_none() {
+            let empty = super::entity_dump::ParticleSnapshot { textures: Vec::new(), sprites: Vec::new() };
+            self.particles = Some(super::particles::ParticleScene::new(
+                ctx, memory, bindless, pipelines, color_format, empty, None,
+            )?);
+        }
+        match &mut self.particles {
+            Some(scene) => scene.update(ctx, memory, bindless, frame),
+            None => Ok(()),
+        }
+    }
+
     /// Replaces the particles with a new snapshot's, as `renew_env`.
     pub fn renew_particles(
         &mut self,
@@ -1978,7 +2001,7 @@ impl TerrainScene {
             entities.prepare(ctx, memory, bindless, graph, frame, slot);
         }
         if let Some(particles) = &mut self.particles {
-            particles.prepare(ctx, memory, graph, frame)?;
+            particles.prepare(ctx, memory, bindless, graph, frame, slot)?;
         }
         if let Some(env) = &mut self.env {
             env.prepare(ctx, memory, graph, frame);

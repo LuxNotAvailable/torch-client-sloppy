@@ -280,6 +280,57 @@ fn content_hash(verts: &[EntityVertex], indices: &[u32], rigged: bool) -> u64 {
     h.finish()
 }
 
+/// A frame's particles for the live renderer: textures new since the last
+/// frame taken (stable index, size, texels), then this frame's sprites
+/// naming those indices (or `TEXTURE_ATLAS`).
+#[derive(Default)]
+pub struct LiveParticles {
+    pub textures: Vec<(u32, u32, u32, Vec<u8>)>,
+    pub sprites: Vec<ParticleSprite>,
+}
+
+static LIVE_PARTICLES: std::sync::Mutex<Option<(Registry, Option<LiveParticles>)>> = std::sync::Mutex::new(None);
+
+/// The particles since the last take, if a frame came.
+pub fn take_live_particles() -> Option<LiveParticles> {
+    LIVE_PARTICLES.lock().ok()?.as_mut()?.1.take()
+}
+
+fn particles_to_live(cache: &Cache, mut sprites: Vec<ParticleSprite>, used_images: &[AssetId<Image>]) {
+    let Ok(mut live) = LIVE_PARTICLES.lock() else { return };
+    let (registry, pending) = live.get_or_insert_with(Default::default);
+    let mut frame = pending.take().unwrap_or_default();
+    let index: Vec<u32> = used_images
+        .iter()
+        .map(|id| {
+            let (w, h, rgba) = &cache.images[id];
+            let key = rgba.as_ptr() as usize;
+            match registry.images.get(id) {
+                Some(&(index, at)) if at == key => index,
+                _ => {
+                    let index = registry.images.get(id).map_or_else(
+                        || {
+                            registry.next_image += 1;
+                            registry.next_image - 1
+                        },
+                        |&(index, _)| index,
+                    );
+                    registry.images.insert(*id, (index, key));
+                    frame.textures.push((index, *w, *h, rgba.clone()));
+                    index
+                }
+            }
+        })
+        .collect();
+    for s in &mut sprites {
+        if s.texture != TEXTURE_ATLAS {
+            s.texture = index[s.texture as usize];
+        }
+    }
+    frame.sprites = sprites;
+    *pending = Some(frame);
+}
+
 fn to_live(channel: usize, cache: &Cache, (mut instances, used_meshes, used_images): Collected, rows: &[[f32; 12]]) {
     let Ok(mut live) = LIVE_ENTITIES.lock() else { return };
     while live.len() <= channel {
@@ -1250,6 +1301,10 @@ fn write_particles(
             },
             pad: [0; 3],
         });
+    }
+    if super::live::wanted() {
+        particles_to_live(&cache, sprites, &used_images);
+        return;
     }
     let mut out = Vec::new();
     out.extend_from_slice(PARTICLE_MAGIC);

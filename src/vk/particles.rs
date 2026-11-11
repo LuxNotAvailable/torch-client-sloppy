@@ -52,6 +52,23 @@ pub struct ParticleScene {
     cutout: u32,
     translucent: u32,
     pub stats: ParticleStats,
+    /// The live renderer's state (`update`), for a scene kept across frames.
+    live: Option<Live>,
+}
+
+/// A live scene's textures (kept, by stable index) and what this frame
+/// uploads.
+#[derive(Default)]
+struct Live {
+    /// Per stable texture index: its bindless index.
+    textures: Vec<Option<u32>>,
+    /// New textures waiting for `prepare`: place in `textures`, size, texels.
+    images: Vec<(usize, u32, u32, Vec<u8>)>,
+    /// This frame's sprite bytes.
+    sprites: Option<Vec<u8>>,
+    /// Per frame in flight: a staging buffer, grown to fit.
+    staging: Vec<Option<Buffer>>,
+    retired: Vec<(Buffer, u64)>,
 }
 
 fn full() -> SetupError {
@@ -194,6 +211,7 @@ impl ParticleScene {
             cutout,
             translucent: translucent_count,
             stats,
+            live: None,
         })
     }
 
@@ -218,10 +236,18 @@ impl ParticleScene {
         &mut self,
         ctx: &Context,
         memory: &Memory,
+        bindless: &mut Bindless,
         graph: &mut Graph,
         frame: u64,
+        slot: usize,
     ) -> Result<(), SetupError> {
         self.ready()?;
+        if self.live.is_some() {
+            if let Some((staging, _, _)) = self.staging.take() {
+                memory.free_buffer(ctx, staging);
+            }
+            return self.prepare_live(ctx, memory, bindless, graph, frame, slot);
+        }
         let copied = self.staging.as_ref().map(|(_, _, c)| *c);
         let ready_layout = match copied {
             None | Some(Some(_)) => vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
@@ -413,6 +439,11 @@ impl ParticleScene {
         if let Some(Ok((built, _))) = self.pending.as_mut().and_then(|p| p.wait()) {
             pipelines.extend(built);
         }
+        if let Some(live) = self.live.take() {
+            for b in live.staging.into_iter().flatten().chain(live.retired.into_iter().map(|(b, _)| b)) {
+                memory.free_buffer(ctx, b);
+            }
+        }
         // SAFETY: the caller idles the device first.
         unsafe {
             for p in pipelines {
@@ -427,5 +458,170 @@ impl ParticleScene {
         for (image, _) in self.textures {
             memory.free_image(ctx, image);
         }
+    }
+}
+
+impl ParticleScene {
+    /// Takes a live frame (`entity_dump::LiveParticles`): new textures join
+    /// the scene's, this frame's sprites replace the last's. The uploads
+    /// wait for `prepare`.
+    pub fn update(
+        &mut self,
+        ctx: &Context,
+        memory: &Memory,
+        bindless: &mut Bindless,
+        frame_data: super::entity_dump::LiveParticles,
+    ) -> Result<(), SetupError> {
+        let live = self.live.get_or_insert_with(Default::default);
+        for (index, w, h, rgba) in frame_data.textures {
+            let image = memory.image(
+                ctx,
+                "particle texture",
+                vk::Extent2D { width: w, height: h },
+                vk::Format::R8G8B8A8_SRGB,
+                vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+                vk::ImageAspectFlags::COLOR,
+            )?;
+            let bindless_index = bindless
+                .add_texture(ctx, image.view, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .ok_or_else(full)?;
+            let at = index as usize;
+            if live.textures.len() <= at {
+                live.textures.resize(at + 1, None);
+            }
+            live.textures[at] = Some(bindless_index);
+            live.images.push((self.textures.len(), w, h, rgba));
+            self.textures.push((image, bindless_index));
+            self.texture_sizes.push((w, h));
+        }
+        // Opaque sprites first, then translucent, each in spawn order.
+        let (mut sprites, translucent): (Vec<ParticleSprite>, Vec<ParticleSprite>) = frame_data
+            .sprites
+            .into_iter()
+            .partition(|s| s.flags & PARTICLE_TRANSLUCENT == 0);
+        self.cutout = sprites.len() as u32;
+        self.translucent = translucent.len() as u32;
+        sprites.extend(translucent);
+        for sprite in &mut sprites {
+            if sprite.texture != super::entity_dump::TEXTURE_ATLAS {
+                sprite.texture = live.textures.get(sprite.texture as usize).copied().flatten().unwrap_or(0);
+            }
+        }
+        self.stats.sprites = sprites.len();
+        self.stats.translucent = self.translucent as usize;
+        self.stats.textures = self.textures.len();
+        live.sprites = Some(bytemuck::cast_slice(&sprites).to_vec());
+        Ok(())
+    }
+
+    fn prepare_live(
+        &mut self,
+        ctx: &Context,
+        memory: &Memory,
+        bindless: &mut Bindless,
+        graph: &mut Graph,
+        frame: u64,
+        slot: usize,
+    ) -> Result<(), SetupError> {
+        let Some(live) = self.live.as_mut() else { return Ok(()) };
+        let (done, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut live.retired)
+            .into_iter()
+            .partition(|(_, at)| frame >= at + FRAMES_IN_FLIGHT as u64);
+        live.retired = keep;
+        for (b, _) in done {
+            memory.free_buffer(ctx, b);
+        }
+        if live.staging.is_empty() {
+            live.staging = (0..FRAMES_IN_FLIGHT).map(|_| None).collect();
+        }
+        let images = std::mem::take(&mut live.images);
+        for (k, (image, _)) in self.textures.iter().enumerate() {
+            let layout = if images.iter().any(|(i, ..)| *i == k) {
+                vk::ImageLayout::UNDEFINED
+            } else {
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+            };
+            graph.image(image.raw, vk::ImageAspectFlags::COLOR, layout);
+        }
+        let sprites = live.sprites.take().unwrap_or_default();
+        // The sprite buffer, grown to fit (its old contents aren't kept).
+        if self.sprites.0.size < sprites.len() as u64 {
+            let size = (sprites.len() as u64).next_power_of_two().max(4096);
+            let buffer = memory.buffer(
+                ctx,
+                "particle sprites",
+                size,
+                vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+                MemoryLocation::GpuOnly,
+            )?;
+            let index = bindless.add_buffer(ctx, buffer.raw).ok_or_else(full)?;
+            let old = std::mem::replace(&mut self.sprites, (buffer, index));
+            bindless.remove_buffer(old.1, frame);
+            live.retired.push((old.0, frame));
+        }
+        let mut total = (sprites.len() as u64).next_multiple_of(16);
+        let mut texture_at = Vec::new();
+        for (_, _, _, rgba) in &images {
+            texture_at.push(total);
+            total = (total + rgba.len() as u64).next_multiple_of(16);
+        }
+        if total == 0 {
+            return Ok(());
+        }
+        let staging = &mut live.staging[slot];
+        if staging.as_ref().is_none_or(|b| b.size < total) {
+            if let Some(old) = staging.take() {
+                live.retired.push((old, frame));
+            }
+            *staging = Some(memory.buffer(
+                ctx,
+                "particle staging",
+                total.next_power_of_two().max(1 << 16),
+                vk::BufferUsageFlags::TRANSFER_SRC,
+                MemoryLocation::CpuToGpu,
+            )?);
+        }
+        let Some(staging) = staging.as_mut() else { return Ok(()) };
+        staging.write(0, &sprites);
+        for ((.., rgba), at) in images.iter().zip(&texture_at) {
+            staging.write(*at as usize, rgba);
+        }
+        let source = staging.raw;
+        let target = self.sprites.0.raw;
+        let device = &ctx.device;
+        let copies: Vec<(vk::Image, u32, u32, u64)> = images
+            .iter()
+            .zip(&texture_at)
+            .filter_map(|((k, w, h, _), at)| Some((self.textures.get(*k)?.0.raw, *w, *h, *at)))
+            .collect();
+        let image_uses: Vec<(vk::Image, Use)> = copies.iter().map(|(i, ..)| (*i, Use::TransferDst)).collect();
+        let sprite_bytes = sprites.len() as u64;
+        graph.pass("particle upload", &image_uses, &[(target, Use::TransferDst)], |cmd| unsafe {
+            // SAFETY: copies from this slot's staging, in the transfer
+            // states the graph set.
+            if sprite_bytes > 0 {
+                device.cmd_copy_buffer(cmd, source, target, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: sprite_bytes }]);
+            }
+            for (image, w, h, at) in &copies {
+                device.cmd_copy_buffer_to_image(
+                    cmd,
+                    source,
+                    *image,
+                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    &[vk::BufferImageCopy {
+                        buffer_offset: *at,
+                        image_subresource: vk::ImageSubresourceLayers {
+                            aspect_mask: vk::ImageAspectFlags::COLOR,
+                            mip_level: 0,
+                            base_array_layer: 0,
+                            layer_count: 1,
+                        },
+                        image_extent: vk::Extent3D { width: *w, height: *h, depth: 1 },
+                        ..Default::default()
+                    }],
+                );
+            }
+        });
+        Ok(())
     }
 }

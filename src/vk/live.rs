@@ -33,8 +33,19 @@ pub fn wanted() -> bool {
 /// the last report (`MC_NATIVE_TIMING`): the entity and particle captures,
 /// the scene renewals, the frame's recording and submission, the whole
 /// renderer system, and frames counted.
-static TIMES: [std::sync::atomic::AtomicU64; 6] = [const { std::sync::atomic::AtomicU64::new(0) }; 6];
-const TIME_NAMES: [&str; 5] = ["capture entities+env", "capture particles", "renew scenes", "record+submit", "renderer system"];
+static TIMES: [std::sync::atomic::AtomicU64; 9] = [const { std::sync::atomic::AtomicU64::new(0) }; 9];
+const TIME_NAMES: [&str; 8] = [
+    "capture entities+env",
+    "capture particles",
+    "renew scenes",
+    "record+submit",
+    "renderer system",
+    "env",
+    "entities",
+    "particles",
+];
+/// The slot `report_times` counts frames in.
+const FRAMES_SLOT: usize = 8;
 
 /// New meshes and textures sent since the last report, and their sizes.
 static NEW: [std::sync::atomic::AtomicU64; 4] = [const { std::sync::atomic::AtomicU64::new(0) }; 4];
@@ -64,7 +75,7 @@ impl Drop for Timed {
 /// seconds.
 fn report_times(last: &mut Option<std::time::Instant>) {
     use std::sync::atomic::Ordering::Relaxed;
-    TIMES[5].fetch_add(1, Relaxed);
+    TIMES[FRAMES_SLOT].fetch_add(1, Relaxed);
     let now = std::time::Instant::now();
     let Some(since) = *last else {
         *last = Some(now);
@@ -75,7 +86,7 @@ fn report_times(last: &mut Option<std::time::Instant>) {
         return;
     }
     *last = Some(now);
-    let frames = TIMES[5].swap(0, Relaxed).max(1);
+    let frames = TIMES[FRAMES_SLOT].swap(0, Relaxed).max(1);
     let parts: Vec<String> = TIME_NAMES
         .iter()
         .enumerate()
@@ -482,6 +493,7 @@ impl Live {
         let bindless = &mut *self.bindless;
         let mut old: Vec<Retired> = Vec::new();
         let fail = |what: &str, e: String| error!("native renderer: {what}: {e}");
+        let timed = Timed::new(5);
         if let Some(bytes) = dump::take_live("env.bin") {
             match dump::read_env(&bytes) {
                 Ok(env) => match t.renew_env(ctx, memory, bindless, pipelines, format, env, self.eye) {
@@ -491,6 +503,8 @@ impl Live {
                 Err(e) => fail("env", e),
             }
         }
+        drop(timed);
+        let timed = Timed::new(6);
         // Entities stay; each frame updates them (new meshes and textures,
         // then the instances).
         if let Some(frame) = dump::take_live_entities(dump::LIVE_WORLD)
@@ -498,14 +512,12 @@ impl Live {
         {
             fail("entities", e.0);
         }
-        if let Some(bytes) = dump::take_live("particles.bin") {
-            match dump::read_particles(&bytes) {
-                Ok(snapshot) => match t.renew_particles(ctx, memory, bindless, pipelines, format, snapshot) {
-                    Ok(o) => old.extend(o.map(Retired::Particles)),
-                    Err(e) => fail("particles", e.0),
-                },
-                Err(e) => fail("particles", e),
-            }
+        drop(timed);
+        let _timed = Timed::new(7);
+        if let Some(frame) = dump::take_live_particles()
+            && let Err(e) = t.update_particles(ctx, memory, bindless, pipelines, format, frame)
+        {
+            fail("particles", e.0);
         }
         if let Some(frame) = dump::take_live_entities(dump::LIVE_FIGURE) {
             if self.figure.scene.is_none() {
