@@ -409,6 +409,14 @@ struct GrowCopy {
     size: u64,
 }
 
+struct ShadowCull {
+    commands: Buffer,
+    commands_index: u32,
+    counts: Buffer,
+    counts_index: u32,
+    views: Vec<(Buffer, u32)>,
+}
+
 /// A frame's terrain draws, for a pack's geometry passes.
 pub struct PackGeometry {
     /// The slots buffer and its bindless index.
@@ -424,6 +432,8 @@ pub struct PackGeometry {
     /// The translucent index buffer, first command and count.
     pub translucent: (vk::Buffer, u32, u32),
     pub atlas: (vk::Image, u32),
+    /// The shadow cull's commands and counts (same lists), when it ran.
+    pub shadow: Option<(vk::Buffer, vk::Buffer)>,
     /// The game's lightmap, when the snapshot has one.
     pub lightmap: Option<(vk::Image, u32)>,
 }
@@ -498,6 +508,8 @@ pub struct TerrainScene {
     atlas_size: (u32, u32),
     depth: DepthTarget,
     retired: Vec<(Buffer, u64)>,
+    /// A pack's shadow cull: its own commands and counts, a view per slot.
+    shadow: Option<ShadowCull>,
 
     lo: Vec3,
     hi: Vec3,
@@ -807,6 +819,7 @@ impl TerrainScene {
             atlas_size,
             depth: DepthTarget::default(),
             retired: Vec::new(),
+            shadow: None,
             lo: Vec3::splat(f32::MAX),
             hi: Vec3::splat(f32::MIN),
             stats: Stats::default(),
@@ -886,8 +899,122 @@ impl TerrainScene {
                 self.translucent_count,
             ),
             atlas: (self.atlas.raw, self.atlas_index),
+            shadow: self.shadow.as_ref().map(|s| (s.commands.raw, s.counts.raw)),
             lightmap: self.env.as_ref().map(|e| (e.lightmap.0.raw, e.lightmap.1)),
         }
+    }
+
+    /// Culls the terrain for a pack's shadow pass, from the light's
+    /// `view_proj` (world to clip, z 0..1): frustum only, since Hi-Z, cave
+    /// visibility and face buckets are the camera's.
+    #[allow(clippy::too_many_arguments, reason = "one pass's whole context")]
+    pub fn record_shadow_cull(
+        &mut self,
+        ctx: &Context,
+        memory: &Memory,
+        bindless: &mut Bindless,
+        pipelines: &Pipelines,
+        graph: &mut Graph,
+        slot: usize,
+        frame: u64,
+        view_proj: Mat4,
+        eye: Vec3,
+    ) -> Result<(), SetupError> {
+        let Some(pipes) = self.pipes else {
+            return Ok(());
+        };
+        let storage = vk::BufferUsageFlags::STORAGE_BUFFER
+            | vk::BufferUsageFlags::TRANSFER_DST
+            | vk::BufferUsageFlags::INDIRECT_BUFFER;
+        if self.shadow.is_none() {
+            let counts = memory.buffer(ctx, "shadow counts", MAX_POOLS as u64 * 2 * 4, storage, MemoryLocation::GpuOnly)?;
+            let counts_index = bindless.add_buffer(ctx, counts.raw).ok_or_else(full)?;
+            let mut views = Vec::new();
+            for _ in 0..FRAMES_IN_FLIGHT {
+                let view = memory.buffer(
+                    ctx,
+                    "shadow view",
+                    std::mem::size_of::<CullView>() as u64,
+                    vk::BufferUsageFlags::STORAGE_BUFFER,
+                    MemoryLocation::CpuToGpu,
+                )?;
+                let index = bindless.add_buffer(ctx, view.raw).ok_or_else(full)?;
+                views.push((view, index));
+            }
+            let commands = memory.buffer(ctx, "shadow commands", 16, storage, MemoryLocation::GpuOnly)?;
+            let commands_index = bindless.add_buffer(ctx, commands.raw).ok_or_else(full)?;
+            self.shadow = Some(ShadowCull {
+                commands,
+                commands_index,
+                counts,
+                counts_index,
+                views,
+            });
+        }
+        let shadow = self.shadow.as_mut().expect("made above");
+        // As big as the camera's commands, which `ensure_commands` sizes.
+        if shadow.commands.size < self.commands.size {
+            let buffer = memory.buffer(ctx, "shadow commands", self.commands.size, storage, MemoryLocation::GpuOnly)?;
+            let index = bindless.add_buffer(ctx, buffer.raw).ok_or_else(full)?;
+            bindless.remove_buffer(shadow.commands_index, frame);
+            let old = std::mem::replace(&mut shadow.commands, buffer);
+            self.retired.push((old, frame));
+            shadow.commands_index = index;
+        }
+        let cull_view = CullView {
+            view_proj: view_proj.to_cols_array_2d(),
+            prev_view_proj: view_proj.to_cols_array_2d(),
+            camera: [eye.x, eye.y, eye.z, 0.0],
+            hiz: [0; 4],
+            flags: [CULL_FRUSTUM, 0, 0, 0],
+            pad: [0; 4],
+            fog_color: [0.0; 4],
+            fog_ranges: [0.0, f32::MAX, 0.0, f32::MAX],
+            env: [u32::MAX, 0, 0, 0],
+        };
+        shadow.views[slot].0.write(0, bytemuck::bytes_of(&cull_view));
+        let device = &ctx.device;
+        let (counts, commands) = (shadow.counts.raw, shadow.commands.raw);
+        graph.pass("shadow reset counts", &[], &[(counts, Use::TransferDst)], |cmd| unsafe {
+            // SAFETY: a fill of a buffer this pass owns.
+            device.cmd_fill_buffer(cmd, counts, 0, vk::WHOLE_SIZE, 0);
+        });
+        let buffers = [
+            (self.slots.buffer.raw, Use::ComputeRead),
+            (self.visible.buffer.raw, Use::ComputeRead),
+            (self.ranks.buffer.raw, Use::ComputeRead),
+            (commands, Use::ComputeWrite),
+            (counts, Use::ComputeWrite),
+        ];
+        let ids = [self.slots.index, self.visible.index, shadow.commands_index, shadow.counts_index];
+        let more = [self.slot_high, self.list_capacity, shadow.views[slot].1, self.translucent_start];
+        let ranks = self.ranks.index;
+        let slot_count = self.slot_high;
+        graph.pass("shadow cull", &[], &buffers, |cmd| unsafe {
+            // SAFETY: the terrain's cull pipeline with the shared layout and set.
+            device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipes.cull);
+            device.cmd_bind_descriptor_sets(
+                cmd,
+                vk::PipelineBindPoint::COMPUTE,
+                pipelines.layout,
+                0,
+                &[bindless.set],
+                &[],
+            );
+            push(
+                ctx,
+                cmd,
+                pipelines.layout,
+                &Push {
+                    ids,
+                    more,
+                    params: [f32::from_bits(ranks), 0.0, 0.0, 0.0],
+                    view_proj: [[0.0; 4]; 4],
+                },
+            );
+            device.cmd_dispatch(cmd, slot_count.div_ceil(64).max(1), 1, 1);
+        });
+        Ok(())
     }
 
     /// The entity scene's numbers, when the dump has one.
@@ -2515,6 +2642,11 @@ impl TerrainScene {
         buffers.extend(self.readback);
         buffers.extend(self.views);
         buffers.extend(self.retired.into_iter().map(|(b, _)| b));
+        if let Some(s) = self.shadow {
+            buffers.push(s.commands);
+            buffers.push(s.counts);
+            buffers.extend(s.views.into_iter().map(|(b, _)| b));
+        }
         for pool in self.pools {
             buffers.push(pool.vertices);
             buffers.push(pool.indices);

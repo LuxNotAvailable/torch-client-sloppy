@@ -296,6 +296,20 @@ impl FrameValues {
         self.camera
     }
 
+    /// The light's world-to-clip, depth 0..1, for culling the shadow pass.
+    pub(crate) fn shadow_world_clip(&self) -> Mat4 {
+        let gl_to_zero_one = Mat4::from_cols(
+            Vec4::X,
+            Vec4::Y,
+            Vec4::new(0.0, 0.0, 0.5, 0.0),
+            Vec4::new(0.0, 0.0, 0.5, 1.0),
+        );
+        gl_to_zero_one
+            * self.shadow_projection
+            * self.shadow_model_view
+            * Mat4::from_translation(-self.camera)
+    }
+
     pub(crate) fn get(&self, builtin: Builtin) -> Value {
         use Builtin as B;
         let inputs = &self.inputs;

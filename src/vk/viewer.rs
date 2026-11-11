@@ -657,6 +657,35 @@ impl Renderer {
             eprintln!("vkview: scene failed: {e}");
         }
         if let Some(pack) = self.pack.as_mut() {
+            // The pack's values first: its light view drives the shadow cull.
+            let pack_camera = match &*scene {
+                Scene::Terrain(terrain, camera) => {
+                    let c = camera
+                        .or_else(|| self.game_camera.then(|| terrain.game_camera()).flatten())
+                        .unwrap_or_else(|| terrain.default_camera(seconds));
+                    (
+                        bevy::math::Mat4::look_to_rh(c.eye, c.forward(), bevy::math::Vec3::Y).inverse(),
+                        c.fov.to_radians(),
+                    )
+                }
+                _ => (bevy::math::Mat4::IDENTITY, 70f32.to_radians()),
+            };
+            let light = pack.begin_frame(pack_camera, extent, seconds);
+            if let (Some((view_proj, eye)), Scene::Terrain(terrain, _)) = (light, &mut *scene)
+                && let Err(e) = terrain.record_shadow_cull(
+                    &self.ctx,
+                    memory,
+                    bindless,
+                    pipelines,
+                    &mut graph,
+                    slot,
+                    self.frame,
+                    view_proj,
+                    eye,
+                )
+            {
+                eprintln!("vkview: shadow cull failed: {e}");
+            }
             let geometry = match &*scene {
                 Scene::Terrain(terrain, _) => Some(terrain.pack_geometry()),
                 _ => None,

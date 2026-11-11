@@ -82,6 +82,8 @@ struct Pass {
     extent: vk::Extent2D,
     /// A geometry pass's slot (0 solid, 1 cutout, 2 translucent).
     geometry: Option<usize>,
+    /// Draws the shadow map (shadow colours by index, shadowtex0).
+    shadow: Option<Vec<u8>>,
 }
 
 pub(crate) struct PackScreen {
@@ -93,6 +95,10 @@ pub(crate) struct PackScreen {
     passes: Vec<Pass>,
     /// Before which pass `depthtex0` is copied to `depthtex1`.
     copy_depth_at: Option<usize>,
+    /// Before which pass `shadowtex0` is copied to `shadowtex1`.
+    copy_shadow_at: Option<usize>,
+    /// This frame's values, from `begin_frame`.
+    values: Option<FrameValues>,
     /// The block atlas (`gtexture` for terrain) and the game's lightmap.
     atlas: Option<(vk::Image, u32)>,
     lightmap: Option<(vk::Image, u32)>,
@@ -251,6 +257,8 @@ impl PackScreen {
             buffers,
             passes: Vec::new(),
             copy_depth_at: None,
+            copy_shadow_at: None,
+            values: None,
             atlas: terrain.map(|t| t.atlas),
             lightmap: terrain.and_then(|t| t.lightmap),
             terrain_slots: Vec::new(),
@@ -272,10 +280,24 @@ impl PackScreen {
         // geometry, composite, then final.
         let mut flips = Flips::default();
         for stage in ScreenStage::ALL {
+            if stage == ScreenStage::Prepare
+                && screen.installed.shadow.is_some()
+                && screen.targets.shadow.is_some()
+            {
+                for slot in [0, 1, 2] {
+                    if slot == 2 {
+                        screen.copy_shadow_at = Some(screen.passes.len());
+                    }
+                    if let Some(index) = screen.installed.shadow_streams[slot] {
+                        let pass = screen.pass(ctx, memory, bindless, pipelines, index, flips, None, Some(slot), true)?;
+                        screen.passes.push(pass);
+                    }
+                }
+            }
             if stage == ScreenStage::Deferred {
                 for slot in [0, 1] {
                     if let Some(index) = screen.installed.geometry[slot] {
-                        let pass = screen.pass(ctx, memory, bindless, pipelines, index, flips, None, Some(slot))?;
+                        let pass = screen.pass(ctx, memory, bindless, pipelines, index, flips, None, Some(slot), false)?;
                         screen.passes.push(pass);
                     }
                 }
@@ -284,14 +306,14 @@ impl PackScreen {
             if stage == ScreenStage::Composite
                 && let Some(index) = screen.installed.geometry[2]
             {
-                let pass = screen.pass(ctx, memory, bindless, pipelines, index, flips, None, Some(2))?;
+                let pass = screen.pass(ctx, memory, bindless, pipelines, index, flips, None, Some(2), false)?;
                 screen.passes.push(pass);
             }
             let steps: Vec<Step> = screen.installed.stages[stage.index()].clone();
             for step in steps {
                 match step {
                     Step::Screen(index) => {
-                        let pass = screen.pass(ctx, memory, bindless, pipelines, index, flips, None, None)?;
+                        let pass = screen.pass(ctx, memory, bindless, pipelines, index, flips, None, None, false)?;
                         screen.passes.push(pass);
                         let program = &screen.installed.programs[index];
                         flips.flip(&program.draw_buffers);
@@ -306,7 +328,7 @@ impl PackScreen {
             }
         }
         if let Some(index) = screen.installed.final_pass {
-            let pass = screen.pass(ctx, memory, bindless, pipelines, index, flips, Some(output), None)?;
+            let pass = screen.pass(ctx, memory, bindless, pipelines, index, flips, Some(output), None, false)?;
             screen.passes.push(pass);
         }
 
@@ -405,12 +427,13 @@ impl PackScreen {
         flips: Flips,
         output: Option<vk::Format>,
         geometry: Option<usize>,
+        shadow: bool,
     ) -> Result<Pass, SetupError> {
         use crate::renderer::packdraw::compile::geometry_alpha;
         use crate::shaderpack::programs::Geometry;
         let program: &InstalledProgram = &self.installed.programs[index];
         let fragment = match (output, &program.fragment_linear, geometry) {
-            (_, _, Some(slot)) => program.fragment_for(geometry_alpha(Geometry::ALL[slot], false)),
+            (_, _, Some(slot)) => program.fragment_for(geometry_alpha(Geometry::ALL[slot], shadow)),
             (Some(f), Some(linear), _) if format!("{f:?}").ends_with("SRGB") => linear,
             _ => &program.fragment,
         };
@@ -514,7 +537,34 @@ impl PackScreen {
             self.table.push(word);
         }
 
+        let shadow_side = self.targets.shadow.as_ref().map_or(1, |s| s.size);
+        let shadow_colors: Vec<u8> = if shadow {
+            program
+                .draw_buffers
+                .iter()
+                .copied()
+                .filter(|n| {
+                    self.targets
+                        .shadow
+                        .as_ref()
+                        .is_some_and(|s| s.color.get(*n as usize).is_some_and(Option::is_some))
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         let (attachments, formats, extent) = match output {
+            _ if shadow => (
+                Some(Vec::new()),
+                shadow_colors
+                    .iter()
+                    .filter_map(|n| self.targets.shadow.as_ref()?.color[*n as usize].as_ref().map(|c| c.format))
+                    .collect(),
+                vk::Extent2D {
+                    width: shadow_side,
+                    height: shadow_side,
+                },
+            ),
             Some(format) => (None, vec![format], self.targets.size),
             None => {
                 // Geometry draws the current halves; screen passes the other.
@@ -547,11 +597,17 @@ impl PackScreen {
                 fragment: c"main",
                 color: &formats,
                 depth: geometry.map(|_| DEPTH_FORMAT),
-                depth_test: geometry.map(|_| vk::CompareOp::LESS_OR_EQUAL),
+                depth_test: geometry.map(|_| {
+                    if shadow {
+                        vk::CompareOp::LESS
+                    } else {
+                        vk::CompareOp::LESS_OR_EQUAL
+                    }
+                }),
                 depth_write: geometry.is_some(),
                 cull: vk::CullModeFlags::NONE,
                 topology: vk::PrimitiveTopology::TRIANGLE_LIST,
-                blend: geometry == Some(2),
+                blend: geometry == Some(2) && !shadow,
                 additive: false,
             },
         )?;
@@ -565,6 +621,7 @@ impl PackScreen {
             uniform,
             extent,
             geometry,
+            shadow: shadow.then_some(shadow_colors),
         })
     }
 
@@ -598,6 +655,42 @@ impl PackScreen {
             out.push((image.raw, aspect));
         }
         out
+    }
+
+    /// This frame's uniform values; the light's world-to-clip when the pack
+    /// draws a shadow map (for the terrain's shadow cull).
+    pub(crate) fn begin_frame(
+        &mut self,
+        camera: (Mat4, f32),
+        extent: vk::Extent2D,
+        seconds: f32,
+    ) -> Option<(Mat4, bevy::math::Vec3)> {
+        let dt = self.last.map_or(1.0 / 60.0, |l| (seconds - l).max(0.0));
+        self.last = Some(seconds);
+        self.frames += 1;
+        let (world_from_view, fov) = camera;
+        let values = FrameValues::of_camera(
+            world_from_view,
+            1.0 / (fov * 0.5).tan(),
+            UVec2::new(extent.width, extent.height),
+            seconds,
+            dt,
+            self.frames,
+            256.0,
+            self.inputs,
+            &self.installed.constants,
+            &mut self.history,
+        );
+        self.installed
+            .customs
+            .evaluate(&mut self.customs, dt, &|id| values.input(id));
+        let shadow = self
+            .passes
+            .iter()
+            .any(|p| p.shadow.is_some())
+            .then(|| (values.shadow_world_clip(), values.camera()));
+        self.values = Some(values);
+        shadow
     }
 
     /// Runs the chain over `output` (holding the scene's frame) and draws
@@ -699,6 +792,7 @@ impl PackScreen {
         if let Some(s) = &t.shadow {
             clears.push((s.depth.raw, None));
             clears.push((s.depth_opaque.raw, None));
+            clears.extend(s.color.iter().flatten().map(|c| (c.raw, Some([1.0; 4]))));
         }
         let uses: Vec<_> = clears.iter().map(|c| (c.0, Use::TransferDst)).collect();
         graph.pass("pack clears", &uses, &[], |cmd| unsafe {
@@ -772,25 +866,12 @@ impl PackScreen {
         }
 
         // This frame's uniforms and slot table.
-        let dt = self.last.map_or(1.0 / 60.0, |l| (seconds - l).max(0.0));
-        self.last = Some(seconds);
-        self.frames += 1;
-        let (world_from_view, fov) = camera;
-        let values = FrameValues::of_camera(
-            world_from_view,
-            1.0 / (fov * 0.5).tan(),
-            UVec2::new(output.2.width, output.2.height),
-            seconds,
-            dt,
-            self.frames,
-            256.0,
-            self.inputs,
-            &self.installed.constants,
-            &mut self.history,
-        );
-        self.installed
-            .customs
-            .evaluate(&mut self.customs, dt, &|id| values.input(id));
+        if self.values.is_none() {
+            self.begin_frame(camera, output.2, seconds);
+        }
+        let Some(values) = self.values.take() else {
+            return;
+        };
         let mut table = self.table.clone();
         if let Some(t) = terrain {
             for &at in &self.terrain_slots {
@@ -842,6 +923,36 @@ impl PackScreen {
                     },
                 );
             }
+            if self.copy_shadow_at == Some(at)
+                && let Some(s) = &self.targets.shadow
+            {
+                let (from, to, side) = (s.depth.raw, s.depth_opaque.raw, s.size);
+                graph.pass(
+                    "pack shadow depth copy",
+                    &[(from, Use::TransferSrc), (to, Use::TransferDst)],
+                    &[],
+                    |cmd| unsafe {
+                        // SAFETY: a copy between depth images in transfer layouts.
+                        device.cmd_copy_image(
+                            cmd,
+                            from,
+                            vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                            to,
+                            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                            &[vk::ImageCopy {
+                                src_subresource: layers(vk::ImageAspectFlags::DEPTH),
+                                dst_subresource: layers(vk::ImageAspectFlags::DEPTH),
+                                extent: vk::Extent3D {
+                                    width: side,
+                                    height: side,
+                                    depth: 1,
+                                },
+                                ..Default::default()
+                            }],
+                        );
+                    },
+                );
+            }
             let draw = match (pass.geometry, terrain) {
                 (Some(slot), Some(t)) => Some((slot, t)),
                 (Some(_), None) => continue,
@@ -852,8 +963,17 @@ impl PackScreen {
                 .iter()
                 .map(|i| (*i, Use::SampledFragment))
                 .collect();
-            let views: Vec<vk::ImageView> = match &pass.attachments {
-                Some(list) => list
+            let views: Vec<vk::ImageView> = match (&pass.shadow, &pass.attachments) {
+                (Some(colors), _) => colors
+                    .iter()
+                    .filter_map(|n| self.targets.shadow.as_ref()?.color[*n as usize].as_ref())
+                    .map(|image| {
+                        uses.retain(|u| u.0 != image.raw);
+                        uses.push((image.raw, Use::ColorAttachment));
+                        image.view
+                    })
+                    .collect(),
+                (None, Some(list)) => list
                     .iter()
                     .filter_map(|(n, h)| self.targets.color[*n as usize].as_ref().map(|(p, _)| &p[*h]))
                     .map(|image| {
@@ -862,26 +982,36 @@ impl PackScreen {
                         image.view
                     })
                     .collect(),
-                None => {
+                (None, None) => {
                     uses.push((output.0, Use::ColorAttachment));
                     vec![output.1]
                 }
             };
             let mut pass_buffers = buffers.clone();
+            // The shadow pass draws from the shadow cull, into the shadow map.
+            let (depth_image, depth_image_view, commands) = match (&pass.shadow, &self.targets.shadow, draw) {
+                (Some(_), Some(s), Some((_, t))) => match t.shadow {
+                    Some(c) => (s.depth.raw, s.depth.view, c),
+                    None => continue,
+                },
+                (_, _, Some((_, t))) => (self.targets.depth.raw, self.targets.depth.view, (t.commands, t.counts)),
+                _ => (self.targets.depth.raw, self.targets.depth.view, (vk::Buffer::null(), vk::Buffer::null())),
+            };
+            uses.retain(|u| u.0 != depth_image);
             let depth_view = match draw {
                 Some((_, t)) => {
-                    uses.push((self.targets.depth.raw, Use::DepthAttachment));
+                    uses.push((depth_image, Use::DepthAttachment));
                     uses.push((t.atlas.0, Use::SampledFragment));
                     pass_buffers.push((t.slots.0, Use::VertexRead));
-                    pass_buffers.push((t.commands, Use::IndirectRead));
-                    pass_buffers.push((t.counts, Use::IndirectRead));
+                    pass_buffers.push((commands.0, Use::IndirectRead));
+                    pass_buffers.push((commands.1, Use::IndirectRead));
                     pass_buffers.push((t.translucent.0, Use::IndexRead));
                     for (vertices, indices) in &t.pools {
                         pass_buffers.push((*vertices, Use::VertexRead));
                         pass_buffers.push((*indices, Use::IndexRead));
                     }
                     pass_buffers.extend(t.quads.iter().map(|q| (*q, Use::VertexRead)));
-                    Some(self.targets.depth.view)
+                    Some(depth_image_view)
                 }
                 None => None,
             };
@@ -969,9 +1099,9 @@ impl PackScreen {
                             device.cmd_bind_index_buffer(cmd, *indices, 0, vk::IndexType::UINT32);
                             device.cmd_draw_indexed_indirect_count(
                                 cmd,
-                                t.commands,
+                                commands.0,
                                 list * u64::from(t.capacity) * size,
-                                t.counts,
+                                commands.1,
                                 list * 4,
                                 t.capacity,
                                 size as u32,
@@ -985,7 +1115,7 @@ impl PackScreen {
                             device.cmd_bind_index_buffer(cmd, indices, 0, vk::IndexType::UINT32);
                             device.cmd_draw_indexed_indirect(
                                 cmd,
-                                t.commands,
+                                commands.0,
                                 u64::from(start) * size,
                                 count,
                                 size as u32,
@@ -996,6 +1126,40 @@ impl PackScreen {
                 }
                 device.cmd_end_rendering(cmd);
             });
+        }
+
+        // Debug: MC_PACK_SHOW=shadowcolor0 shows the light's view instead.
+        if std::env::var("MC_PACK_SHOW").is_ok_and(|v| v == "shadowcolor0")
+            && let Some(image) = self.targets.shadow.as_ref().and_then(|s| s.color[0].as_ref())
+        {
+            let (src, dst) = (image.extent, output.2);
+            graph.pass(
+                "pack show",
+                &[(image.raw, Use::TransferSrc), (output.0, Use::TransferDst)],
+                &[],
+                |cmd| unsafe {
+                    // SAFETY: a blit between images in transfer layouts.
+                    let corner = |e: vk::Extent2D| vk::Offset3D {
+                        x: e.width as i32,
+                        y: e.height as i32,
+                        z: 1,
+                    };
+                    device.cmd_blit_image(
+                        cmd,
+                        image.raw,
+                        vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                        output.0,
+                        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                        &[vk::ImageBlit {
+                            src_subresource: layers(vk::ImageAspectFlags::COLOR),
+                            src_offsets: [vk::Offset3D::default(), corner(src)],
+                            dst_subresource: layers(vk::ImageAspectFlags::COLOR),
+                            dst_offsets: [vk::Offset3D::default(), corner(dst)],
+                        }],
+                        vk::Filter::LINEAR,
+                    );
+                },
+            );
         }
 
         // Leave every pack image sampled-ready for the next frame.
