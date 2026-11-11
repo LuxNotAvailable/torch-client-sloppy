@@ -11,8 +11,8 @@
 //!
 //! A format the device cannot draw, blend and filter falls back as the
 //! game's does (a snorm or 16-bit unorm to a half float, R11G11B10 to
-//! RGBA16F). Mipmapped targets get one level for now; their chains come
-//! with the mipmap pass (step 4).
+//! RGBA16F). Targets a screen pass samples by mip (`usage::mip_targets`)
+//! get full chains, rebuilt before those passes (`PackScreen::record`).
 
 use ash::vk;
 
@@ -150,6 +150,8 @@ pub(crate) struct PackTargets {
     pub depth_opaque: Image,
     pub depth_no_hand: Option<Image>,
     pub shadow: Option<ShadowTargets>,
+    /// Colour targets with mip chains, by bit.
+    pub mipmapped: u16,
 }
 
 impl PackTargets {
@@ -166,6 +168,7 @@ impl PackTargets {
             | vk::ImageUsageFlags::SAMPLED
             | vk::ImageUsageFlags::TRANSFER_SRC
             | vk::ImageUsageFlags::TRANSFER_DST;
+        let mipmapped = crate::renderer::packdraw::usage::mip_targets(installed);
         let depth_usage = vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT
             | vk::ImageUsageFlags::SAMPLED
             | vk::ImageUsageFlags::TRANSFER_SRC
@@ -183,14 +186,12 @@ impl PackTargets {
                 height: height.max(1),
             };
             let half = |n: usize| {
-                memory.image(
-                    ctx,
-                    &format!("colortex{index}.{n}"),
-                    extent,
-                    format,
-                    color_usage,
-                    vk::ImageAspectFlags::COLOR,
-                )
+                let name = format!("colortex{index}.{n}");
+                if mipmapped & (1 << index) != 0 {
+                    memory.image_mipmapped(ctx, &name, extent, format, color_usage)
+                } else {
+                    memory.image(ctx, &name, extent, format, color_usage, vk::ImageAspectFlags::COLOR)
+                }
             };
             *slot = Some(([half(0)?, half(1)?], format));
         }
@@ -237,6 +238,7 @@ impl PackTargets {
                 None
             },
             shadow,
+            mipmapped,
         })
     }
 

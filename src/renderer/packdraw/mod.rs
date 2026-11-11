@@ -23,7 +23,7 @@ mod plan;
 pub(crate) mod sources;
 mod targets;
 pub(crate) mod uniforms;
-mod usage;
+pub(crate) mod usage;
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};

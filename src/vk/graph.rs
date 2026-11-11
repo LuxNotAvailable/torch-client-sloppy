@@ -247,7 +247,10 @@ impl<'a> Graph<'a> {
                         .old_layout(old_layout)
                         .new_layout(layout)
                         .image(image)
-                        .subresource_range(super::memory::range(entry.aspect)),
+                        .subresource_range(vk::ImageSubresourceRange {
+                            level_count: vk::REMAINING_MIP_LEVELS,
+                            ..super::memory::range(entry.aspect)
+                        }),
                 );
             }
         }

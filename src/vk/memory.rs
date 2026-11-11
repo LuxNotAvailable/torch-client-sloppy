@@ -32,6 +32,9 @@ pub struct Image {
     /// An sRGB image's UNORM view (`image_with_raw`): the texels as
     /// stored, as packs sample them.
     pub raw_view: Option<vk::ImageView>,
+    /// Mip levels; `view` shows level 0, `mip_view` all of them.
+    pub levels: u32,
+    pub mip_view: Option<vk::ImageView>,
     allocation: Option<Allocation>,
 }
 
@@ -88,7 +91,20 @@ impl Memory {
         usage: vk::ImageUsageFlags,
         aspect: vk::ImageAspectFlags,
     ) -> Result<Image, SetupError> {
-        self.image_inner(ctx, name, extent, format, usage, aspect, None)
+        self.image_inner(ctx, name, extent, format, usage, aspect, None, 1)
+    }
+
+    /// A colour image with a full mip chain (`mip_view` sees it all).
+    pub fn image_mipmapped(
+        &self,
+        ctx: &Context,
+        name: &str,
+        extent: vk::Extent2D,
+        format: vk::Format,
+        usage: vk::ImageUsageFlags,
+    ) -> Result<Image, SetupError> {
+        let levels = 32 - extent.width.max(extent.height).max(1).leading_zeros();
+        self.image_inner(ctx, name, extent, format, usage, vk::ImageAspectFlags::COLOR, None, levels)
     }
 
     /// An `R8G8B8A8_SRGB` image that also has a UNORM view (`raw_view`).
@@ -107,6 +123,7 @@ impl Memory {
             usage,
             vk::ImageAspectFlags::COLOR,
             Some(vk::Format::R8G8B8A8_UNORM),
+            1,
         )
     }
 
@@ -120,6 +137,7 @@ impl Memory {
         usage: vk::ImageUsageFlags,
         aspect: vk::ImageAspectFlags,
         raw_format: Option<vk::Format>,
+        levels: u32,
     ) -> Result<Image, SetupError> {
         let flags = if raw_format.is_some() {
             vk::ImageCreateFlags::MUTABLE_FORMAT
@@ -135,7 +153,7 @@ impl Memory {
                 height: extent.height,
                 depth: 1,
             })
-            .mip_levels(1)
+            .mip_levels(levels)
             .array_layers(1)
             .samples(vk::SampleCountFlags::TYPE_1)
             .tiling(vk::ImageTiling::OPTIMAL)
@@ -167,6 +185,21 @@ impl Memory {
                 )?),
                 None => None,
             };
+            let mip_view = if levels > 1 {
+                Some(ctx.device.create_image_view(
+                    &vk::ImageViewCreateInfo::default()
+                        .image(raw)
+                        .view_type(vk::ImageViewType::TYPE_2D)
+                        .format(format)
+                        .subresource_range(vk::ImageSubresourceRange {
+                            level_count: levels,
+                            ..range(aspect)
+                        }),
+                    None,
+                )?)
+            } else {
+                None
+            };
             Ok(Image {
                 raw,
                 view,
@@ -174,6 +207,8 @@ impl Memory {
                 extent,
                 aspect,
                 raw_view,
+                levels,
+                mip_view,
                 allocation: Some(allocation),
             })
         }
@@ -213,7 +248,7 @@ impl Memory {
         // SAFETY: as above.
         unsafe {
             ctx.device.destroy_image_view(image.view, None);
-            if let Some(v) = image.raw_view {
+            for v in [image.raw_view, image.mip_view].into_iter().flatten() {
                 ctx.device.destroy_image_view(v, None);
             }
             ctx.device.destroy_image(image.raw, None);

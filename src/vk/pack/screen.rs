@@ -62,6 +62,8 @@ struct Stubs {
 struct Indexed {
     /// Per colour target, its halves.
     color: [Option<[u32; 2]>; MAX_COLOR_TARGETS],
+    /// Mipmapped targets' halves, all levels.
+    color_mip: [Option<[u32; 2]>; MAX_COLOR_TARGETS],
     depth: u32,
     depth_opaque: u32,
     depth_no_hand: Option<u32>,
@@ -90,6 +92,8 @@ struct Pass {
     compute: Option<[u32; 3]>,
     /// Draws the sky pieces: (textured kind, added ones).
     sky: Option<(bool, bool)>,
+    /// Mip chains to rebuild first: (target, half).
+    mipmaps: Vec<(u8, usize)>,
 }
 
 pub(crate) struct PackScreen {
@@ -101,6 +105,9 @@ pub(crate) struct PackScreen {
     passes: Vec<Pass>,
     /// Before which pass `depthtex0` is copied to `depthtex1`.
     copy_depth_at: Option<usize>,
+    /// The plans frames alternate between (the game's two when a frame
+    /// ends flipped, so history carries over): pass range, start flips.
+    plans: Vec<(std::ops::Range<usize>, Flips)>,
     /// Before which pass `shadowtex0` is copied to `shadowtex1`.
     copy_shadow_at: Option<usize>,
     /// This frame's values, from `begin_frame`.
@@ -183,9 +190,16 @@ impl PackScreen {
         };
 
         let mut color = [None; MAX_COLOR_TARGETS];
+        let mut color_mip = [None; MAX_COLOR_TARGETS];
         for (n, slot) in targets.color.iter().enumerate() {
             if let Some((pair, _)) = slot {
                 color[n] = Some([texture(bindless, &pair[0])?, texture(bindless, &pair[1])?]);
+                if let (Some(a), Some(b)) = (pair[0].mip_view, pair[1].mip_view) {
+                    let add = |bindless: &mut Bindless, v| {
+                        bindless.add_texture(ctx, v, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL).ok_or_else(full)
+                    };
+                    color_mip[n] = Some([add(bindless, a)?, add(bindless, b)?]);
+                }
             }
         }
         let (shadow_depth, shadow_color) = match &targets.shadow {
@@ -200,6 +214,7 @@ impl PackScreen {
         };
         let indexed = Indexed {
             color,
+            color_mip,
             depth: texture(bindless, &targets.depth)?,
             depth_opaque: texture(bindless, &targets.depth_opaque)?,
             depth_no_hand: targets
@@ -272,6 +287,7 @@ impl PackScreen {
             buffers,
             passes: Vec::new(),
             copy_depth_at: None,
+            plans: Vec::new(),
             copy_shadow_at: None,
             values: None,
             atlas: terrain.map(|t| t.atlas),
@@ -297,7 +313,10 @@ impl PackScreen {
 
         // The plan: begin and prepare, opaque geometry, deferred, translucent
         // geometry, composite, then final.
-        let mut flips = Flips::default();
+        let mut start = Flips::default();
+        loop {
+        let first = screen.passes.len();
+        let mut flips = start;
         for stage in ScreenStage::ALL {
             if stage == ScreenStage::Prepare
                 && screen.installed.shadow.is_some()
@@ -305,7 +324,7 @@ impl PackScreen {
             {
                 for slot in [0, 1, 2] {
                     if slot == 2 {
-                        screen.copy_shadow_at = Some(screen.passes.len());
+                        screen.copy_shadow_at = Some(screen.passes.len() - first);
                     }
                     if let Some(index) = screen.installed.shadow_streams[slot] {
                         let pass = screen.pass(ctx, memory, bindless, pipelines, index, flips, None, Some(slot), true)?;
@@ -338,7 +357,7 @@ impl PackScreen {
                     pass.entity = Some(false);
                     screen.passes.push(pass);
                 }
-                screen.copy_depth_at = Some(screen.passes.len());
+                screen.copy_depth_at = Some(screen.passes.len() - first);
             }
             if stage == ScreenStage::Composite
                 && let Some(index) = screen.installed.geometry[2]
@@ -383,6 +402,13 @@ impl PackScreen {
         if let Some(index) = screen.installed.final_pass {
             let pass = screen.pass(ctx, memory, bindless, pipelines, index, flips, Some(output), None, false)?;
             screen.passes.push(pass);
+        }
+        screen.plans.push((first..screen.passes.len(), start));
+        // A frame that ends flipped gets a second plan from there.
+        if screen.plans.len() == 2 || flips.0 == start.0 {
+            break;
+        }
+        start = flips;
         }
 
         // One slot table per frame in flight; their uniform slots differ.
@@ -589,6 +615,17 @@ impl PackScreen {
         } else {
             program.draw_buffers.iter().fold(0, |m, b| m | 1 << b)
         };
+        // Screen passes sample mipmapped targets by mip: their current
+        // halves' chains, rebuilt first (the game's `rebuilt`).
+        let mip_mask = if geometry.is_none() && !shadow {
+            program.mipmapped & self.targets.mipmapped
+        } else {
+            0
+        };
+        let mipmaps: Vec<(u8, usize)> = (0..MAX_COLOR_TARGETS as u8)
+            .filter(|n| mip_mask & (1 << n) != 0)
+            .map(|n| (n, flips.current(n)))
+            .collect();
         let base = self.table.len() as u32;
         let mut sampled = Vec::new();
         let mut uniform = None;
@@ -604,15 +641,27 @@ impl PackScreen {
                 }
                 SlotKind::Texture(ty) => {
                     let source = program.texture_source(slot.binding);
-                    let (i, image) =
-                        self.texture_index(source, flips, drawing, ty, geometry.is_some());
+                    let (i, image) = match source {
+                        TextureSource::Color(n) if mip_mask & drawing & (1 << n) == 0 && mip_mask & (1 << n) != 0 => {
+                            let h = flips.current(n);
+                            let pair = self.targets.color[n as usize].as_ref().map(|(p, _)| p[h].raw);
+                            match (self.indexed.color_mip[n as usize], pair) {
+                                (Some(idx), Some(raw)) => (idx[h], raw),
+                                _ => self.texture_index(source, flips, drawing, ty, geometry.is_some()),
+                            }
+                        }
+                        _ => self.texture_index(source, flips, drawing, ty, geometry.is_some()),
+                    };
                     sampled.push(image);
                     i
                 }
                 SlotKind::Sampler | SlotKind::Comparison if slot.group != 0 => bl::SAMPLER_NEAREST_CLAMP,
                 SlotKind::Sampler | SlotKind::Comparison => {
                     let source = program.texture_source(slot.binding.saturating_sub(1));
-                    sampler_for(&self.installed, source, slot.kind == SlotKind::Comparison)
+                    match source {
+                        TextureSource::Color(n) if mip_mask & (1 << n) != 0 => bl::SAMPLER_MIP_LINEAR,
+                        _ => sampler_for(&self.installed, source, slot.kind == SlotKind::Comparison),
+                    }
                 }
                 SlotKind::Buffer { ty, .. } if ty.starts_with("IrisVk") && ["IrisVkInstances", "IrisVkMeshes", "IrisVkVertices", "IrisVkParts"].contains(&ty.as_str()) => {
                     let which = ["IrisVkInstances", "IrisVkMeshes", "IrisVkVertices", "IrisVkParts"]
@@ -749,6 +798,7 @@ impl PackScreen {
                 entity: None,
                 compute: Some(program.dispatch.groups([self.targets.size.width, self.targets.size.height])),
                 sky: None,
+            mipmaps: mipmaps.clone(),
             });
         }
         let pipeline = pipelines.graphics(
@@ -788,6 +838,7 @@ impl PackScreen {
             entity: None,
             compute: None,
             sky: None,
+            mipmaps: mipmaps.clone(),
         })
     }
 
@@ -940,13 +991,24 @@ impl PackScreen {
         }
 
         // Clears: cleared colour targets' read halves, and every depth.
-        let fog = [0.0, 0.0, 0.0, 1.0];
+        let f = self.inputs.fog_color;
+        let fog = [f.x, f.y, f.z, 1.0];
         let mut clears: Vec<(vk::Image, Option<[f32; 4]>)> = Vec::new();
         for (n, slot) in self.targets.color.iter().enumerate() {
             if let Some((pair, _)) = slot {
                 let settings = &self.installed.targets.settings[n];
                 if settings.clear {
-                    clears.push((pair[0].raw, Some(settings.clear_color(n, fog))));
+                    let start = self.plans[self.frames as usize % self.plans.len()].1;
+                    clears.push((pair[start.current(n as u8)].raw, Some(settings.clear_color(n, fog))));
+                }
+                // First frame: zero what's never cleared, as wgpu's new
+                // textures (a pack's history starts from 0, not garbage).
+                if !self.settled {
+                    for (h, image) in pair.iter().enumerate() {
+                        if !settings.clear || h != self.plans[self.frames as usize % self.plans.len()].1.current(n as u8) {
+                            clears.push((image.raw, Some([0.0; 4])));
+                        }
+                    }
                 }
             }
         }
@@ -1065,7 +1127,8 @@ impl PackScreen {
         buffers.extend(self.uniforms.iter().map(|(_, f)| (f[slot].0.raw, Use::SampledFragment)));
         buffers.extend(self.buffers.iter().map(|(b, _)| (b.raw, Use::SampledFragment)));
 
-        for (at, pass) in self.passes.iter().enumerate() {
+        let (range, _) = self.plans[self.frames as usize % self.plans.len()].clone();
+        for (at, pass) in self.passes[range].iter().enumerate() {
             if self.copy_depth_at == Some(at) {
                 // depthtex1 (before translucents) and depthtex2 (before the
                 // hand, which isn't drawn yet) both take depthtex0.
@@ -1125,6 +1188,11 @@ impl PackScreen {
                         );
                     },
                 );
+            }
+            for &(n, h) in &pass.mipmaps {
+                if let Some((pair, _)) = &self.targets.color[n as usize] {
+                    record_mipmaps(device, graph, &pair[h]);
+                }
             }
             if let Some(groups) = pass.compute {
                 let uses: Vec<(vk::Image, Use)> = pass.sampled.iter().map(|i| (*i, Use::ComputeRead)).collect();
@@ -1441,14 +1509,14 @@ impl PackScreen {
     }
 
     pub(crate) fn describe(&self) -> String {
-        let names: Vec<&str> = self
-            .passes
+        let names: Vec<&str> = self.passes[self.plans[0].0.clone()]
             .iter()
             .map(|p| self.installed.programs[p.program].name.as_str())
             .collect();
         format!(
-            "{} passes ({}), {} compute steps skipped",
-            self.passes.len(),
+            "{} plan(s) of {} passes ({}), {} compute steps skipped",
+            self.plans.len(),
+            self.plans[0].0.len(),
             names.join(" "),
             self.skipped_computes
         )
@@ -1512,4 +1580,66 @@ fn sampled_layout(depth: bool) -> vk::ImageLayout {
     } else {
         vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
     }
+}
+
+/// Rebuilds `image`'s mip chain from level 0, each level blitted from the
+/// one above; the graph sees it end in TRANSFER_DST.
+fn record_mipmaps(device: &ash::Device, graph: &mut Graph, image: &crate::vk::memory::Image) {
+    let (raw, levels, extent) = (image.raw, image.levels, image.extent);
+    graph.pass("pack mipmaps", &[(raw, Use::TransferDst)], &[], |cmd| unsafe {
+        // SAFETY: level barriers and blits within one image the graph put
+        // in TRANSFER_DST; every level is back in TRANSFER_DST at the end.
+        let level = |l: u32| vk::ImageSubresourceRange {
+            aspect_mask: vk::ImageAspectFlags::COLOR,
+            base_mip_level: l,
+            level_count: 1,
+            base_array_layer: 0,
+            layer_count: 1,
+        };
+        let barrier = |l: u32, from: vk::ImageLayout, to: vk::ImageLayout| {
+            vk::ImageMemoryBarrier2::default()
+                .src_stage_mask(vk::PipelineStageFlags2::ALL_TRANSFER)
+                .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE | vk::AccessFlags2::TRANSFER_READ)
+                .dst_stage_mask(vk::PipelineStageFlags2::ALL_TRANSFER)
+                .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE | vk::AccessFlags2::TRANSFER_READ)
+                .old_layout(from)
+                .new_layout(to)
+                .image(raw)
+                .subresource_range(level(l))
+        };
+        let size = |l: u32| vk::Offset3D {
+            x: (extent.width >> l).max(1) as i32,
+            y: (extent.height >> l).max(1) as i32,
+            z: 1,
+        };
+        let layers = |l: u32| vk::ImageSubresourceLayers {
+            aspect_mask: vk::ImageAspectFlags::COLOR,
+            mip_level: l,
+            base_array_layer: 0,
+            layer_count: 1,
+        };
+        let (src, dst) = (vk::ImageLayout::TRANSFER_SRC_OPTIMAL, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
+        for l in 1..levels {
+            let b = [barrier(l - 1, dst, src)];
+            device.cmd_pipeline_barrier2(cmd, &vk::DependencyInfo::default().image_memory_barriers(&b));
+            device.cmd_blit_image(
+                cmd,
+                raw,
+                src,
+                raw,
+                dst,
+                &[vk::ImageBlit {
+                    src_subresource: layers(l - 1),
+                    src_offsets: [vk::Offset3D::default(), size(l - 1)],
+                    dst_subresource: layers(l),
+                    dst_offsets: [vk::Offset3D::default(), size(l)],
+                }],
+                vk::Filter::LINEAR,
+            );
+        }
+        let back: Vec<_> = (0..levels.saturating_sub(1)).map(|l| barrier(l, src, dst)).collect();
+        if !back.is_empty() {
+            device.cmd_pipeline_barrier2(cmd, &vk::DependencyInfo::default().image_memory_barriers(&back));
+        }
+    });
 }

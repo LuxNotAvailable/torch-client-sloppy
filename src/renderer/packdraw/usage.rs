@@ -163,7 +163,7 @@ fn writes_images_from_vertex(program: &InstalledProgram) -> bool {
     })
 }
 
-fn mip_targets(installed: &Installed) -> u16 {
+pub(crate) fn mip_targets(installed: &Installed) -> u16 {
     let screen = installed
         .stages
         .iter()
