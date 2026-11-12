@@ -33,6 +33,7 @@ const ZOOM_DEFAULT_SLIDER_ID: u32 = 50;
 const CHAT_SLIDER_ID_BASE: u32 = 60;
 const ENTITY_SHADOWS: &str = "Entity Shadows";
 const ENTITY_CULLING: &str = "Entity Culling";
+const SMOOTH_GUI_MODEL: &str = "Smooth Player Model";
 const SIGN_GLOW_OUTLINE: &str = "Glowing Sign Outline";
 const SHADOW_OPACITY: &str = "Shadow Opacity";
 const OUTLINE_SETTINGS: &str = "Block Outline...";
@@ -1107,6 +1108,7 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         }
         // Beside the renderer, filling its row.
         f.toggle(ENTITY_CULLING, &mut o.entity_culling);
+        f.toggle(SMOOTH_GUI_MODEL, &mut o.smooth_gui_model);
 
         f.header(QUALITY_HEADER);
         // Steps through the presets; from settings that match none, the

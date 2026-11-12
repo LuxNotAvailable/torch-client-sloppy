@@ -376,6 +376,7 @@ fn draw_frame(world: &mut World, mut last: Local<Option<std::time::Instant>>) {
                 },
                 effects: None,
             };
+            SMOOTH_FIGURE.store(gui.options.smooth_gui_model, std::sync::atomic::Ordering::Relaxed);
             (post, gui.options.vsync)
         }
         None => (Default::default(), true),
@@ -453,6 +454,9 @@ impl Live {
         self.shots.extend(f.shots);
         if (self.post.fxaa, self.post.ssaa) != (f.post.fxaa, f.post.ssaa) {
             info!("native renderer: anti-aliasing -> fxaa {}, ssaa {}", f.post.fxaa, f.post.ssaa);
+            // The post pass frees its targets on change; let the GPU finish with them.
+            // SAFETY: only waits.
+            let _ = unsafe { self.ctx.device.device_wait_idle() };
         }
         self.post = f.post;
         if f.vsync != self.vsync {
@@ -800,6 +804,11 @@ impl Live {
             .into_iter()
             .partition(|r| now >= r.4 + FRAMES_IN_FLIGHT as u64);
         self.readbacks = keep;
+        // Screenshots are rare: wait out the copy rather than trust frame counts.
+        if !done.is_empty() {
+            // SAFETY: only waits.
+            let _ = unsafe { self.ctx.device.device_wait_idle() };
+        }
         let mut out = Vec::new();
         for (mut buffer, extent, format, entities, _) in done {
             if let Some(bytes) = buffer.mapped() {
@@ -1464,6 +1473,9 @@ impl Retired {
 
 /// The inventory's player figure: its entity scene, drawn from the figure
 /// camera into a texture the GUI samples.
+/// Whether the inventory figure is drawn at 2x (the game's option).
+static SMOOTH_FIGURE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
 #[derive(Default)]
 struct Figure {
     scene: Option<super::entities::EntityScene>,
@@ -1501,6 +1513,10 @@ impl Figure {
         let (Some((view_proj, eye, extent)), Some(scene)) = (self.view, self.scene.as_mut()) else {
             return Ok(None);
         };
+        // Smoothed: drawn at twice the size; the GUI's linear sample
+        // averages it down (at 1x the same sample is a plain copy).
+        let scale = if SMOOTH_FIGURE.load(std::sync::atomic::Ordering::Relaxed) { 2 } else { 1 };
+        let extent = vk::Extent2D { width: extent.width * scale, height: extent.height * scale };
         let full = || SetupError("the bindless set is full".into());
         if self.views.is_empty() {
             for _ in 0..FRAMES_IN_FLIGHT {

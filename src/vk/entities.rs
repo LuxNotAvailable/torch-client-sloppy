@@ -1334,7 +1334,7 @@ impl EntityScene {
             }
             graph.pass("entity grow", &[], &uses, |cmd| unsafe {
                 // SAFETY: whole-buffer copies into larger buffers.
-                for (old, new, size) in &copies {
+                for (old, new, size) in copies.iter().filter(|c| c.2 > 0) {
                     device.cmd_copy_buffer(cmd, *old, *new, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: *size }]);
                 }
             });
@@ -1345,7 +1345,7 @@ impl EntityScene {
         graph.pass("entity upload", &image_uses, &buffers, |cmd| unsafe {
             // SAFETY: copies from this slot's staging into the buffers and
             // images, in the transfer states the graph set.
-            for (from, target, to, size) in &buffer_copies {
+            for (from, target, to, size) in buffer_copies.iter().filter(|c| c.3 > 0) {
                 device.cmd_copy_buffer(cmd, source, *target, &[vk::BufferCopy { src_offset: *from, dst_offset: *to, size: *size }]);
             }
             for (from, image, w, h) in &image_copies {

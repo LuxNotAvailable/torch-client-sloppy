@@ -59,7 +59,8 @@ float4 gui_fragment(GuiOut i) : SV_Target {
     SamplerState nearest = g_samplers[SAMPLER_NEAREST];
     if (i.uv.x < FIGURE_UV_TEST) {
         float2 uv = float2(i.uv.x + FIGURE_UV_BIAS, i.uv.y);
-        return i.color * texture_at(pc.more.w).SampleLevel(nearest, uv, 0);
+        // The figure is drawn at 2x: a linear sample averages 2x2 texels.
+        return i.color * texture_at(pc.more.w).SampleLevel(g_samplers[SAMPLER_LINEAR], uv, 0);
     }
     if (i.uv.y >= GLINT_UV_TEST) {
         float2 uv = float2(i.uv.x, i.uv.y - GLINT_UV_BIAS);
