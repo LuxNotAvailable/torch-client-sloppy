@@ -28,6 +28,68 @@ pub fn set_biome_blend(radius: u8) {
     BIOME_BLEND.store(radius.min(7), Ordering::Relaxed);
 }
 
+/// Leaf Culling: 0 off (vanilla Fancy, both faces between leaves), 1 smart
+/// (one face of a pair, none when buried), 2 full (none between leaves).
+static LEAF_CULLING: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(2);
+
+pub fn leaf_culling() -> u8 {
+    LEAF_CULLING.load(Ordering::Relaxed)
+}
+
+pub fn set_leaf_culling(mode: u8) {
+    LEAF_CULLING.store(mode.min(2), Ordering::Relaxed);
+}
+
+/// Leaves: 0 fancy (see-through), 1 fast (opaque, culling as solid),
+/// 2 hybrid (fast beyond `LEAF_DISTANCE` chunks of the camera's chunk).
+static LEAF_MODE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+static LEAF_DISTANCE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(4);
+/// See-through leaves also draw their faces' inner side.
+static LEAF_BACKS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// The camera's chunk, packed (x high, z low), for hybrid leaves.
+static CAMERA_CHUNK: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+/// The leaf options as a tuple: mode, distance, backs, camera chunk.
+pub fn leaf_options() -> (u8, u8, bool, (i32, i32)) {
+    let c = CAMERA_CHUNK.load(Ordering::Relaxed);
+    (
+        LEAF_MODE.load(Ordering::Relaxed),
+        LEAF_DISTANCE.load(Ordering::Relaxed),
+        LEAF_BACKS.load(Ordering::Relaxed),
+        ((c >> 32) as i32, c as i32),
+    )
+}
+
+pub fn set_leaf_options(mode: u8, distance: u8, backs: bool, camera: (i32, i32)) {
+    LEAF_MODE.store(mode.min(2), Ordering::Relaxed);
+    LEAF_DISTANCE.store(distance, Ordering::Relaxed);
+    LEAF_BACKS.store(backs, Ordering::Relaxed);
+    CAMERA_CHUNK.store(((camera.0 as i64) << 32) | (camera.1 as u32 as i64), Ordering::Relaxed);
+}
+
+/// Whether chunk `(cx, cz)` meshes fast leaves, with the camera at `camera`.
+pub fn fast_leaves_for(cx: i32, cz: i32, camera: (i32, i32)) -> bool {
+    match LEAF_MODE.load(Ordering::Relaxed) {
+        1 => true,
+        2 => (cx - camera.0).abs().max((cz - camera.1).abs()) > i32::from(LEAF_DISTANCE.load(Ordering::Relaxed)),
+        _ => false,
+    }
+}
+
+thread_local! {
+    /// The chunk being meshed on this thread meshes fast leaves.
+    static FAST_LEAVES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Set per chunk job (`worker::process_job`).
+pub fn set_fast_leaves(fast: bool) {
+    FAST_LEAVES.with(|f| f.set(fast));
+}
+
+pub fn fast_leaves() -> bool {
+    FAST_LEAVES.with(std::cell::Cell::get)
+}
+
 static LIGHTING_ENABLED: AtomicBool = AtomicBool::new(true);
 
 pub fn lighting_enabled() -> bool {
@@ -643,7 +705,7 @@ fn emit_baked(
     let sways = false;
     let material = if rb.emission > 0 {
         MATERIAL_EMISSIVE_BASE + rb.emission.min(15)
-    } else if rb.tint_kind == super::TintKind::Foliage && !rb.is_solid && rb.full_cube {
+    } else if rb.cull_group == crate::util::block_model::LEAVES_CULL_GROUP && !rb.is_solid {
         MATERIAL_LEAF
     } else if sways {
         MATERIAL_PLANT
@@ -672,12 +734,15 @@ fn emit_baked(
                 }
                 let neighbour_in_group = occ.same_cull_group(nx, ny, nz, rb.cull_group);
                 if rb.cull_group == crate::util::block_model::LEAVES_CULL_GROUP {
-                    // Between two leaves one face of the pair is enough, and a face
-                    // with a second leaf or solid block behind its neighbour is
-                    // buried: no gap in the canopy shows it (MoreCulling's depth 2).
-                    if neighbour_in_group
-                        && (cull % 2 == 0 || leaf_buried(occ, (nx, ny, nz), (dx, dy, dz)))
-                    {
+                    // Smart: one face of a pair is enough, and a face with a
+                    // second leaf or solid block behind its neighbour is buried
+                    // (MoreCulling's depth 2). Full: none; off: both.
+                    let culled = match leaf_culling() {
+                        0 => false,
+                        1 => cull % 2 == 0 || leaf_buried(occ, (nx, ny, nz), (dx, dy, dz)),
+                        _ => true,
+                    };
+                    if neighbour_in_group && culled {
                         continue;
                     }
                 } else if neighbour_in_group {
@@ -707,7 +772,20 @@ fn emit_baked(
             } else {
                 crate::util::biome_color::NEUTRAL
             };
+            if material == MATERIAL_LEAF && fast_leaves() {
+                // Fast leaves cull as solid; the shader fills their holes.
+                buf.push_baked(quad, wx, wy, wz, &lit, quad_tint, material);
+                continue;
+            }
             buf.push_baked(quad, wx, wy, wz, &lit, quad_tint, material);
+            if material == MATERIAL_LEAF && !quad.opaque && LEAF_BACKS.load(Ordering::Relaxed) {
+                // The face's inner side: the same corners, wound the other way.
+                let n = buf.cutout_idx.len();
+                if n >= 6 {
+                    let b = buf.cutout_idx[n - 6];
+                    buf.cutout_idx.extend_from_slice(&[b, b + 2, b + 1, b, b + 3, b + 2]);
+                }
+            }
         }
     }
 }

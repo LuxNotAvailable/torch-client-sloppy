@@ -127,6 +127,8 @@ struct VertexOut {
     float4 color;
     float3 world;
     nointerpolation uint slot;
+    // A leaves face (the mesher's leaf material).
+    nointerpolation uint leaf;
 };
 
 int sign16(uint bits) {
@@ -144,6 +146,7 @@ struct Corner {
     float2 uv;
     float2 light;
     float4 color;
+    uint leaf;
 };
 
 uint tinted(uint tint, uint grey) {
@@ -157,6 +160,7 @@ Corner packed_corner(ByteAddressBuffer pool, uint record_at, uint corner) {
     uint3 block = uint3(w0 & 31, (w0 >> 5) & 31, (w0 >> 10) & 31);
     uint axis = (w0 >> 15) & 3;
     uint steps = (w0 >> (17 + 2 * corner)) & 3;
+    uint leaf = (w0 >> 25) & 1;
     int3 pos = int3(block) * 256;
     uint b = (axis + 1) % 3;
     uint c = (axis + 2) % 3;
@@ -174,6 +178,7 @@ Corner packed_corner(ByteAddressBuffer pool, uint record_at, uint corner) {
     out.uv = float2(u, v) / 65535.0;
     out.light = float2(light & 0xFF, light >> 8);
     out.color = float4(tinted(tint.x, grey), tinted(tint.y, grey), tinted(tint.z, grey), alpha) / 255.0;
+    out.leaf = leaf;
     return out;
 }
 
@@ -189,6 +194,7 @@ VertexOut terrain_vertex(uint vertex: SV_VulkanVertexID, uint instance: SV_Vulka
     float2 uv;
     float2 light;
     float4 color;
+    uint leaf = 0;
     // The draw adds the base vertex to every index; a packed one is
     // recognised past it.
     uint named = vertex - uint(origin_base.w);
@@ -200,12 +206,14 @@ VertexOut terrain_vertex(uint vertex: SV_VulkanVertexID, uint instance: SV_Vulka
         uv = corner.uv;
         light = corner.light;
         color = corner.color;
+        leaf = corner.leaf;
     } else {
         uint4 raw = pool.Load4(vertex * 20);
         uint tail = pool.Load(vertex * 20 + 16);
         local = int3(sign16(raw.x & 0xFFFF), sign16(raw.x >> 16), sign16(raw.y & 0xFFFF));
         uv = float2(raw.z & 0xFFFF, raw.z >> 16) / 65535.0;
         light = float2(raw.w & 0xFF, (raw.w >> 8) & 0xFF);
+        leaf = ((raw.w >> 16) & 0xFF) == 1 ? 1 : 0;
         color = float4(tail & 0xFF, (tail >> 8) & 0xFF, (tail >> 16) & 0xFF, tail >> 24) / 255.0;
     }
 
@@ -221,7 +229,25 @@ VertexOut terrain_vertex(uint vertex: SV_VulkanVertexID, uint instance: SV_Vulka
     out.color = float4(color.rgb * color.a * lit, 1);
     out.world = world;
     out.slot = instance;
+    out.leaf = leaf;
     return out;
+}
+
+// Hybrid leaves fade to fast over the last chunk before the line
+// (params.x the distance in chunks, 0 for none; params.yz the camera's
+// chunk): a dithered share of the see-through texels drawn filled.
+// Fast leaves (params.x < 0) fill every hole.
+bool leaf_filled(VertexOut in) {
+    if (in.leaf == 0 || pc.params.x == 0.0) {
+        return false;
+    }
+    float2 centre = pc.params.yz * 16.0 + 8.0;
+    float2 d = abs(in.world.xz - centre);
+    float reach = pc.params.x * 16.0 + 8.0;
+    float t = pc.params.x < 0.0 ? 1.0 : saturate((max(d.x, d.y) - (reach - 16.0)) / 16.0);
+    // Interleaved gradient noise on the pixel.
+    float noise = frac(52.9829189 * frac(dot(in.position.xy, float2(0.06711056, 0.00583715))));
+    return noise < t;
 }
 
 float4 terrain_shade(VertexOut in, bool cutout) {
@@ -235,7 +261,12 @@ float4 terrain_shade(VertexOut in, bool cutout) {
     }
     float4 texel = texture_at(pc.more.x).Sample(g_samplers[SAMPLER_NEAREST], in.uv);
     if (cutout && texel.a < 0.1) {
-        discard;
+        if (!leaf_filled(in)) {
+            discard;
+        }
+        // A hole filled with the leaf's average colour (a small mip),
+        // halfway to black: the shade of a leaf's shadowed inside.
+        texel = float4(texture_at(pc.more.x).SampleLevel(g_samplers[SAMPLER_LINEAR], in.uv, 4).rgb * 0.5, 1);
     }
     RWByteAddressBuffer view = buffer_at(pc.ids.y);
     float3 camera = asfloat(view.Load3(VIEW_CAMERA));

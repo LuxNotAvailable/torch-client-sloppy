@@ -34,6 +34,42 @@ const CHAT_SLIDER_ID_BASE: u32 = 60;
 const ENTITY_SHADOWS: &str = "Entity Shadows";
 const ENTITY_CULLING: &str = "Entity Culling";
 const SMOOTH_GUI_MODEL: &str = "Smooth Player Model";
+const LEAF_CULLING: &str = "Leaf Culling";
+const LEAF_CULLING_MODES: [&str; 3] = ["Off", "Smart", "Full"];
+const LEAF_SETTINGS: &str = "Leaves...";
+const LEAVES_TITLE: &str = "Leaves";
+const LEAVES_MODES: [&str; 3] = ["Fancy", "Fast", "Hybrid"];
+const LEAF_BACKS: &str = "Leaf Inner Faces";
+const LEAF_SLIDER_ID: u32 = 70;
+
+fn leaf_distance_label(value: i32) -> String {
+    format!("Hybrid Distance: {value} {CHUNKS}")
+}
+
+/// Leaves: fancy, fast or hybrid, the hybrid distance, inner faces and
+/// culling between leaves.
+pub fn draw_leaves(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
+    let mut form = crate::gui::form::Form::new(p, ctx, LEAVES_TITLE, 3, LEAF_SLIDER_ID);
+    let o = &mut state.options;
+    let mode = LEAVES_MODES[o.leaves.min(2) as usize];
+    if form.button(&format!("{LEAVES_TITLE}: {mode}")) {
+        o.leaves = (o.leaves + 1) % 3;
+        form.mark_changed();
+    }
+    form.slider(&mut o.leaf_distance, 1, 32, leaf_distance_label);
+    form.toggle(LEAF_BACKS, &mut o.leaf_backs);
+    let culling = LEAF_CULLING_MODES[o.leaf_culling.min(2) as usize];
+    if form.button(&format!("{LEAF_CULLING}: {culling}")) {
+        o.leaf_culling = (o.leaf_culling + 1) % 3;
+        form.mark_changed();
+    }
+    if form.finish() {
+        crate::gui::save_options(&state.options);
+    }
+    if draw_done(p, ctx) {
+        state.nav = Some(Screen::VideoSettings);
+    }
+}
 const SIGN_GLOW_OUTLINE: &str = "Glowing Sign Outline";
 const SHADOW_OPACITY: &str = "Shadow Opacity";
 const OUTLINE_SETTINGS: &str = "Block Outline...";
@@ -1188,6 +1224,9 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         if f.button(&format!("{PARTICLES}: {}", o.particles.caption())) {
             o.particles = o.particles.next();
             f.mark_changed();
+        }
+        if f.button(LEAF_SETTINGS) {
+            state.nav = Some(Screen::LeafSettings);
         }
         f.new_row();
         f.toggle(ENTITY_SHADOWS, &mut o.entity_shadows);

@@ -66,7 +66,7 @@ mod seam {
         false
     }
 
-    pub(crate) fn sync_options(_lighting: bool, _smooth: bool, _biome_blend: u8) {}
+    pub(crate) fn sync_options(_lighting: bool, _smooth: bool, _biome_blend: u8, _leaf_culling: u8) {}
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -305,7 +305,7 @@ mod seam {
         RECEIVED.with(|r| r.set(r.get().wrapping_add(n as u32)));
     }
 
-    pub(crate) fn sync_options(lighting: bool, smooth: bool, biome_blend: u8) {
+    pub(crate) fn sync_options(lighting: bool, smooth: bool, biome_blend: u8, leaf_culling: u8) {
         if !active() {
             return;
         }
@@ -313,6 +313,8 @@ mod seam {
             lighting,
             smooth,
             biome_blend,
+            leaf_culling,
+            leaves: crate::renderer::mesh::leaf_options(),
         });
     }
 }

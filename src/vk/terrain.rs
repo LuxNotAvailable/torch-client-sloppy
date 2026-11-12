@@ -2485,7 +2485,7 @@ impl TerrainScene {
                 &Push {
                     ids: [self.slots.index, view_index, 0, 0],
                     more: [self.atlas_index, view.mode(), 0, 0],
-                    params: [0.0, 0.0, 0.0, water_alpha],
+                    params: leaf_fade(water_alpha),
                     view_proj: view_proj_cols,
                 },
             );
@@ -2588,7 +2588,7 @@ impl TerrainScene {
                 &Push {
                     ids: [self.slots.index, view_index, 0, 0],
                     more: [self.atlas_index, view.mode(), 0, 0],
-                    params: [0.0, 0.0, 0.0, water_alpha],
+                    params: leaf_fade(water_alpha),
                     view_proj: view_proj_cols,
                 },
             );
@@ -3112,4 +3112,17 @@ mod tests {
         assert_eq!(order[0], 8, "the farthest quad (z = 2) first");
         assert_eq!(order[12], 0, "the nearest quad (z = 0) last");
     }
+}
+
+/// Terrain push params: hybrid leaves' fade (distance in chunks, 0 for
+/// none; the camera's chunk) and the water alpha.
+fn leaf_fade(water_alpha: f32) -> [f32; 4] {
+    let (mode, distance, _, (cx, cz)) = crate::renderer::mesh::leaf_options();
+    // Fast: -1 (every leaf filled); hybrid: the distance; fancy: 0.
+    let d = match mode {
+        1 => -1.0,
+        2 => f32::from(distance),
+        _ => 0.0,
+    };
+    [d, cx as f32, cz as f32, water_alpha]
 }

@@ -162,7 +162,8 @@ fn record_of(verts: &[PackedVertex], quad: &[u32]) -> Option<(Record, [u32; 4])>
             | ((block[1] as u32) << 5)
             | ((block[2] as u32) << 10)
             | ((axis as u32) << 15)
-            | (steps << 17),
+            | (steps << 17)
+            | (u32::from(vs[0].light[2] == crate::renderer::mesh::MATERIAL_LEAF) << 25),
         u32::from(u0) | (u32::from(u1) << 16),
         u32::from(v0) | (u32::from(v1) << 16),
         light(0) | (light(1) << 16),
@@ -220,7 +221,7 @@ pub fn unpack(record: &Record, corner: u32) -> PackedVertex {
     PackedVertex {
         pos: [pos[0], pos[1], pos[2], 0],
         uv: [u as u16, v as u16],
-        light: [light as u8, (light >> 8) as u8, 0, 0],
+        light: [light as u8, (light >> 8) as u8, ((w0 >> 25) & 1) as u8 * crate::renderer::mesh::MATERIAL_LEAF, 0],
         color: [
             tinted(tint[0], grey) as u8,
             tinted(tint[1], grey) as u8,
@@ -232,7 +233,7 @@ pub fn unpack(record: &Record, corner: u32) -> PackedVertex {
 
 /// Whether two vertices draw the same: every field the terrain shader reads.
 fn same_drawn(a: &PackedVertex, b: &PackedVertex) -> bool {
-    a.pos[..3] == b.pos[..3] && a.uv == b.uv && a.light[..2] == b.light[..2] && a.color == b.color
+    a.pos[..3] == b.pos[..3] && a.uv == b.uv && a.light[..3] == b.light[..3] && a.color == b.color
 }
 
 #[cfg(test)]

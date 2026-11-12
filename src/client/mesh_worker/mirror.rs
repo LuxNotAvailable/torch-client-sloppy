@@ -174,7 +174,11 @@ impl Mirror {
                 lighting,
                 smooth,
                 biome_blend,
+                leaf_culling,
+                leaves,
             } => {
+                crate::renderer::mesh::set_leaf_culling(leaf_culling);
+                crate::renderer::mesh::set_leaf_options(leaves.0, leaves.1, leaves.2, leaves.3);
                 crate::renderer::set_lighting_enabled(lighting);
                 crate::renderer::set_smooth_lighting(smooth);
                 crate::renderer::set_biome_blend(biome_blend);

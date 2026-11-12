@@ -2146,7 +2146,57 @@ fn forward_lighting_options() {
         crate::renderer::lighting_enabled(),
         crate::renderer::smooth_lighting_enabled(),
         crate::renderer::biome_blend() as u8,
+        crate::renderer::mesh::leaf_culling(),
     );
+}
+
+/// Video Settings > Leaves: options re-mesh everything; under hybrid, the
+/// camera crossing a chunk re-meshes the chunks that change sides.
+fn sync_leaf_options(
+    state: Res<crate::gui::GuiState>,
+    camera: Query<&GlobalTransform, With<WorldCamera>>,
+    mut last: Local<Option<(u32, u32, bool)>>,
+) {
+    use crate::renderer::mesh as m;
+    let o = &state.options;
+    let wanted = (o.leaves, o.leaf_distance, o.leaf_backs);
+    let (mode, distance, backs, old_camera) = m::leaf_options();
+    let camera_chunk = camera.iter().next().map_or(old_camera, |t| {
+        let p = t.translation();
+        ((p.x.floor() as i32) >> 4, (p.z.floor() as i32) >> 4)
+    });
+    if *last != Some(wanted) {
+        let had_previous_value = last.is_some();
+        *last = Some(wanted);
+        m::set_leaf_options(wanted.0 as u8, wanted.1 as u8, wanted.2, camera_chunk);
+        forward_lighting_options();
+        if had_previous_value {
+            crate::client::bus::request(crate::client::bus::ClientRequest::ReloadChunks);
+        }
+        return;
+    }
+    if mode == 2 && camera_chunk != old_camera {
+        m::set_leaf_options(mode, distance, backs, camera_chunk);
+        forward_lighting_options();
+        crate::client::worldsync::remesh_chunks(|x, z| {
+            m::fast_leaves_for(x, z, old_camera) != m::fast_leaves_for(x, z, camera_chunk)
+        });
+    }
+}
+
+/// Video Settings > Leaf Culling: every chunk meshed again.
+fn sync_leaf_culling(state: Res<crate::gui::GuiState>, mut last: Local<Option<u32>>) {
+    let wanted = state.options.leaf_culling;
+    if *last == Some(wanted) {
+        return;
+    }
+    let had_previous_value = last.is_some();
+    *last = Some(wanted);
+    crate::renderer::mesh::set_leaf_culling(wanted as u8);
+    forward_lighting_options();
+    if had_previous_value {
+        crate::client::bus::request(crate::client::bus::ClientRequest::ReloadChunks);
+    }
 }
 
 /// Video Settings > Biome Blend: every chunk is meshed again with the new
@@ -2712,7 +2762,7 @@ pub fn run(
     #[cfg(not(target_arch = "wasm32"))]
     app.add_systems(Update, sync_vsync);
     app.add_systems(Last, trace_reextracted_meshes)
-        .add_systems(Update, (sync_smooth_lighting, sync_biome_blend))
+        .add_systems(Update, (sync_smooth_lighting, sync_biome_blend, sync_leaf_culling, sync_leaf_options))
         .add_systems(Update, sync_lighting_enabled)
         .add_systems(Update, toggle_screen.after(apply_gui_nav))
         .add_systems(

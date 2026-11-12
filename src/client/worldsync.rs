@@ -138,6 +138,17 @@ pub(crate) fn remesh_block(pos: [i32; 3]) {
     }
 }
 
+/// Re-meshes chunk `(cx, cz)` if meshed, for each where `changed` says so.
+pub(crate) fn remesh_chunks(changed: impl Fn(i32, i32) -> bool) {
+    let (Some(world), Some(q)) = (current_world().lock().unwrap().clone(), CHUNK_Q.get()) else {
+        return;
+    };
+    let chunks: Vec<(i32, i32)> = meshed_chunks().lock().unwrap().iter().copied().filter(|&(x, z)| changed(x, z)).collect();
+    for (cx, cz) in chunks {
+        q.push(world.clone(), cx, cz, JobScope::Column);
+    }
+}
+
 pub(crate) fn remesh_jobs(pos: AzBlockPos) -> Vec<(i32, i32, JobScope)> {
     let (cx, cz, sy) = (pos.x >> 4, pos.z >> 4, pos.y >> 4);
     let mut v = vec![(cx, cz, JobScope::Section(sy))];

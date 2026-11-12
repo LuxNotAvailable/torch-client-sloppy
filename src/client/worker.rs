@@ -616,6 +616,11 @@ fn process_job(
         return None;
     }
 
+    renderer::mesh::set_fast_leaves(renderer::mesh::fast_leaves_for(
+        job.chunk_x,
+        job.chunk_z,
+        renderer::mesh::leaf_options().3,
+    ));
     let (min_y, height, chunk_arc, neighbors, biomes) = {
         let world = LockWaits::take(timing, &mut waits.world, || job.world.read());
         let min_y = world.chunks.min_y();
@@ -1053,7 +1058,10 @@ fn fill_occupancy(
                     if rb.emissive {
                         occ.set_emissive(x, y, z);
                     }
-                    if rb.is_solid {
+                    if rb.is_solid
+                        || (rb.cull_group == crate::util::block_model::LEAVES_CULL_GROUP
+                            && renderer::mesh::fast_leaves())
+                    {
                         occ.set_solid(x, y, z);
                     } else if let renderer::BlockGeom::Fluid { amount, lava, .. } = rb.geom {
                         occ.set_fluid(x, y, z, amount, lava);

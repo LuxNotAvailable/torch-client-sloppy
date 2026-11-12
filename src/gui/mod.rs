@@ -112,6 +112,7 @@ pub enum Screen {
     /// The zoom key's settings, under Features.
     ZoomSettings,
     BlockOutlineSettings,
+    LeafSettings,
     /// Inventory sorting's settings, under Features.
     InventorySortSettings,
     /// The end poem and credits, after leaving the End.
@@ -206,6 +207,7 @@ settings_tree! {
     Language | AccessibilitySettings | OnlineSettings | DebugOptions => Options,
     MouseSettings => Controls,
     BlockOutlineSettings => VideoSettings,
+    LeafSettings => VideoSettings,
     ZoomSettings | BlockInfoSettings | InventorySortSettings | AppleSkinSettings => Features,
     FontSettings => Language,
     #[cfg(audio)]
@@ -539,6 +541,14 @@ crate::options! {
         /// Vanilla's Biome Blend: how far grass, foliage and water colours
         /// average, in blocks (0 to 7).
         pub biome_blend: u32 = 2 => key("biomeBlendRadius").clamp(0, 7),
+        /// Faces between leaves: 0 off (vanilla), 1 smart, 2 full.
+        pub leaf_culling: u32 = 2 => key("torchLeafCulling").clamp(0, 2),
+        /// Leaves: 0 fancy, 1 fast, 2 hybrid.
+        pub leaves: u32 = 0 => key("torchLeaves").clamp(0, 2),
+        /// Hybrid leaves: fancy within this many chunks.
+        pub leaf_distance: u32 = 4 => key("torchLeafDistance").clamp(1, 32),
+        /// See-through leaves draw their faces' inner side too.
+        pub leaf_backs: bool = true => key("torchLeafBacks"),
         pub lighting_enabled: bool = LIGHTING_ENABLED_DEFAULT => key("lightingEnabled"),
         /// The window size chosen in Video Settings, in physical pixels; 0
         /// for the default size.

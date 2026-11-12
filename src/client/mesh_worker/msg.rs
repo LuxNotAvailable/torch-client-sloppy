@@ -107,6 +107,9 @@ pub enum ToWorker {
         lighting: bool,
         smooth: bool,
         biome_blend: u8,
+        leaf_culling: u8,
+        /// Leaf mode, hybrid distance, inner faces, camera chunk.
+        leaves: (u8, u8, bool, (i32, i32)),
     },
     Level {
         dim: u8,
@@ -160,11 +163,19 @@ impl ToWorker {
                 lighting,
                 smooth,
                 biome_blend,
+                leaf_culling,
+                leaves,
             } => {
                 let mut w = Writer::new(TO_OPTIONS);
                 w.bool(*lighting);
                 w.bool(*smooth);
                 w.u8(*biome_blend);
+                w.u8(*leaf_culling);
+                w.u8(leaves.0);
+                w.u8(leaves.1);
+                w.bool(leaves.2);
+                w.i32(leaves.3.0);
+                w.i32(leaves.3.1);
                 w.finish()
             }
             ToWorker::Level { dim, min_y, height } => {
@@ -238,6 +249,8 @@ impl ToWorker {
                 lighting: r.bool()?,
                 smooth: r.bool()?,
                 biome_blend: r.u8()?,
+                leaf_culling: r.u8()?,
+                leaves: (r.u8()?, r.u8()?, r.bool()?, (r.i32()?, r.i32()?)),
             },
             TO_LEVEL => ToWorker::Level {
                 dim: r.u8()?,
