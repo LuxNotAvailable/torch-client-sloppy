@@ -387,6 +387,7 @@ struct Pipes {
     solid: vk::Pipeline,
     cutout: vk::Pipeline,
     translucent: vk::Pipeline,
+    anim_blend: vk::Pipeline,
 }
 
 impl Pipes {
@@ -397,16 +398,18 @@ impl Pipes {
             solid: built[2],
             cutout: built[3],
             translucent: built[4],
+            anim_blend: built[5],
         }
     }
 
-    fn all(self) -> [vk::Pipeline; 5] {
+    fn all(self) -> [vk::Pipeline; 6] {
         [
             self.cull,
             self.hiz_reduce,
             self.solid,
             self.cutout,
             self.translucent,
+            self.anim_blend,
         ]
     }
 }
@@ -446,6 +449,8 @@ struct ShadowCull {
 pub struct PackGeometry {
     /// The slots buffer and its bindless index.
     pub slots: (vk::Buffer, u32),
+    /// The animation table's bindless index plus one (0: none).
+    pub anim: u32,
     pub commands: vk::Buffer,
     pub counts: vk::Buffer,
     /// Commands per list; list `pool * 2 + kind` (0 solid, 1 cutout).
@@ -535,6 +540,15 @@ pub struct TerrainScene {
 
     atlas: Image,
     atlas_index: u32,
+    /// Per frame in flight: the animation table (`block_anim`), host
+    /// written each frame, and its bindless index.
+    anim: Vec<Option<(Buffer, u32)>>,
+    /// The table written this frame (bindless index plus one), for packs.
+    anim_current: u32,
+    /// The blends' scratch (GPU) and its bindless index; the tick last
+    /// blended.
+    anim_blends: Option<(Buffer, u32)>,
+    anim_tick: u64,
     /// The atlas's UNORM view, for packs.
     atlas_raw_index: u32,
     atlas_staging: Option<(Buffer, Option<u64>)>,
@@ -631,6 +645,10 @@ impl TerrainScene {
                 // the game's culls back faces on every layer.
                 stream(c"terrain_cutout", vk::CullModeFlags::BACK, true, false),
                 stream(c"terrain_translucent", vk::CullModeFlags::BACK, true, true),
+                Spec::Compute {
+                    module,
+                    entry: c"anim_blend".to_owned(),
+                },
             ],
         );
         let depth_view = DepthView::new(ctx, pipelines, color_format)?;
@@ -871,6 +889,10 @@ impl TerrainScene {
             stats_pools,
             atlas: atlas_image,
             atlas_index,
+            anim: Vec::new(),
+            anim_current: 0,
+            anim_blends: None,
+            anim_tick: u64::MAX,
             atlas_raw_index,
             atlas_staging: Some((atlas_staging, None)),
             atlas_size,
@@ -1178,6 +1200,7 @@ impl TerrainScene {
     pub fn pack_geometry(&self) -> PackGeometry {
         PackGeometry {
             slots: (self.slots.buffer.raw, self.slots.index),
+            anim: self.anim_current,
             commands: self.commands.raw,
             counts: self.counts.raw,
             capacity: self.list_capacity,
@@ -2003,6 +2026,7 @@ impl TerrainScene {
         camera: Camera,
         view: View,
     ) -> Result<(), SetupError> {
+        self.write_anim(ctx, memory, bindless, frame, slot)?;
         // The scene goes through the post pass when it has anything to do
         // (and never under a debug view, which reads the depth 1:1).
         let settings = self.options.post;
@@ -2182,6 +2206,10 @@ impl TerrainScene {
                 vk::ImageLayout::UNDEFINED
             },
         );
+        // Interpolated strips' blends, once the atlas is in.
+        if atlas_ready {
+            self.blend_anim(ctx, memory, bindless, pipelines, graph, frame, slot)?;
+        }
         if let Some((_, Some(copied))) = &self.atlas_staging
             && frame >= copied + FRAMES_IN_FLIGHT as u64
             && let Some((staging, _)) = self.atlas_staging.take()
@@ -2484,7 +2512,7 @@ impl TerrainScene {
                 pipelines.layout,
                 &Push {
                     ids: [self.slots.index, view_index, 0, 0],
-                    more: [self.atlas_index, view.mode(), 0, 0],
+                    more: [self.atlas_index, view.mode(), self.anim_index(slot), 0],
                     params: leaf_fade(water_alpha),
                     view_proj: view_proj_cols,
                 },
@@ -2587,7 +2615,7 @@ impl TerrainScene {
                 pipelines.layout,
                 &Push {
                     ids: [self.slots.index, view_index, 0, 0],
-                    more: [self.atlas_index, view.mode(), 0, 0],
+                    more: [self.atlas_index, view.mode(), self.anim_index(slot), 0],
                     params: leaf_fade(water_alpha),
                     view_proj: view_proj_cols,
                 },
@@ -3048,6 +3076,9 @@ impl TerrainScene {
             env.destroy(ctx, memory);
         }
         memory.free_image(ctx, self.atlas);
+        for (buffer, _) in self.anim.into_iter().flatten().chain(self.anim_blends) {
+            memory.free_buffer(ctx, buffer);
+        }
         self.depth.destroy(ctx, memory);
     }
 }
@@ -3125,4 +3156,152 @@ fn leaf_fade(water_alpha: f32) -> [f32; 4] {
         _ => 0.0,
     };
     [d, cx as f32, cz as f32, water_alpha]
+}
+
+impl TerrainScene {
+    /// This slot's animation table, rewritten for this tick.
+    fn write_anim(&mut self, ctx: &Context, memory: &Memory, bindless: &mut Bindless, frame: u64, slot: usize) -> Result<(), SetupError> {
+        let rows = self.atlas.extent.height * crate::renderer::ATLAS_COLS / self.atlas.extent.width.max(1);
+        // Nothing animating yet: the header alone (no shift).
+        let table = crate::renderer::block_anim::current()
+            .map_or_else(|| vec![rows, 0], |set| set.table(crate::renderer::block_anim::tick_now(), rows));
+        let bytes = (table.len() * 4) as u64;
+        if self.anim.len() <= slot {
+            self.anim.resize_with(slot + 1, || None);
+        }
+        if self.anim[slot].as_ref().is_none_or(|(b, _)| b.size < bytes) {
+            if let Some((old, index)) = self.anim[slot].take() {
+                bindless.remove_buffer(index, frame);
+                // Unused once this slot's fence passed (it has).
+                memory.free_buffer(ctx, old);
+            }
+            let buffer = memory.buffer(
+                ctx,
+                "block animations",
+                bytes.max(16),
+                vk::BufferUsageFlags::STORAGE_BUFFER,
+                MemoryLocation::CpuToGpu,
+            )?;
+            let index = bindless.add_buffer(ctx, buffer.raw).ok_or_else(|| SetupError("the bindless set is full".into()))?;
+            self.anim[slot] = Some((buffer, index));
+        }
+        if let Some((buffer, index)) = &mut self.anim[slot] {
+            buffer.write(0, bytemuck::cast_slice(&table));
+            self.anim_current = *index + 1;
+        }
+        Ok(())
+    }
+
+    /// The table's bindless index plus one (0: none, unanimated).
+    fn anim_index(&self, slot: usize) -> u32 {
+        self.anim.get(slot).and_then(Option::as_ref).map_or(0, |(_, i)| i + 1)
+    }
+}
+
+impl TerrainScene {
+    /// Interpolated strips: once a tick, each blend written into its spare
+    /// tile (`anim_blend`, then a copy into the atlas).
+    #[allow(clippy::too_many_arguments, reason = "one pass's whole context")]
+    fn blend_anim(
+        &mut self,
+        ctx: &Context,
+        memory: &Memory,
+        bindless: &mut Bindless,
+        pipelines: &Pipelines,
+        graph: &mut Graph,
+        frame: u64,
+        slot: usize,
+    ) -> Result<(), SetupError> {
+        let tick = crate::renderer::block_anim::tick_now();
+        let (Some(pipes), Some(Some((_, table_index)))) = (self.pipes, self.anim.get(slot)) else {
+            return Ok(());
+        };
+        if tick == self.anim_tick {
+            return Ok(());
+        }
+        let Some(set) = crate::renderer::block_anim::current() else { return Ok(()) };
+        let list_at = 2 + set.tile_count() * 2;
+        // The same list `write_anim` wrote this frame.
+        let words = set.table(tick, 0);
+        let count = words.get(list_at as usize).copied().unwrap_or(0);
+        if count == 0 {
+            return Ok(());
+        }
+        self.anim_tick = tick;
+        let px = self.atlas.extent.width / crate::renderer::ATLAS_COLS;
+        let bytes = u64::from(count * px * px * 4);
+        if self.anim_blends.as_ref().is_none_or(|(b, _)| b.size < bytes) {
+            if let Some((old, index)) = self.anim_blends.take() {
+                bindless.remove_buffer(index, frame);
+                memory.free_buffer(ctx, old);
+            }
+            let buffer = memory.buffer(
+                ctx,
+                "block animation blends",
+                bytes,
+                vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_SRC,
+                MemoryLocation::GpuOnly,
+            )?;
+            let index = bindless.add_buffer(ctx, buffer.raw).ok_or_else(|| SetupError("the bindless set is full".into()))?;
+            self.anim_blends = Some((buffer, index));
+        }
+        let Some((blends, blends_index)) = &self.anim_blends else { return Ok(()) };
+        let spares: Vec<u32> = (0..count as usize).map(|k| words[list_at as usize + 1 + k * 4 + 3]).collect();
+        let (out, out_index, table_index, atlas) = (blends.raw, *blends_index, *table_index, self.atlas.raw);
+        let raw_index = self.atlas_raw_index;
+        let device = &ctx.device;
+        graph.pass(
+            "block animation blend",
+            &[(atlas, Use::ComputeRead)],
+            &[(out, Use::ComputeWrite)],
+            |cmd| unsafe {
+                // SAFETY: the shared layout and set; the atlas read-only.
+                device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipes.anim_blend);
+                device.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::COMPUTE, pipelines.layout, 0, &[bindless.set], &[]);
+                push(
+                    ctx,
+                    cmd,
+                    pipelines.layout,
+                    &Push {
+                        ids: [table_index, out_index, 0, 0],
+                        more: [raw_index, list_at, px, 0],
+                        params: [0.0; 4],
+                        view_proj: [[0.0; 4]; 4],
+                    },
+                );
+                device.cmd_dispatch(cmd, px.div_ceil(8), px.div_ceil(8), count);
+            },
+        );
+        graph.pass(
+            "block animation copy",
+            &[(atlas, Use::TransferDst)],
+            &[(out, Use::TransferSrc)],
+            |cmd| unsafe {
+                // SAFETY: tiles of the blends into the atlas, in the
+                // transfer layouts the graph set.
+                let regions: Vec<vk::BufferImageCopy> = spares
+                    .iter()
+                    .enumerate()
+                    .map(|(k, &spare)| vk::BufferImageCopy {
+                        buffer_offset: k as u64 * u64::from(px * px * 4),
+                        image_subresource: vk::ImageSubresourceLayers {
+                            aspect_mask: vk::ImageAspectFlags::COLOR,
+                            mip_level: 0,
+                            base_array_layer: 0,
+                            layer_count: 1,
+                        },
+                        image_offset: vk::Offset3D {
+                            x: ((spare % crate::renderer::ATLAS_COLS) * px) as i32,
+                            y: ((spare / crate::renderer::ATLAS_COLS) * px) as i32,
+                            z: 0,
+                        },
+                        image_extent: vk::Extent3D { width: px, height: px, depth: 1 },
+                        ..Default::default()
+                    })
+                    .collect();
+                device.cmd_copy_buffer_to_image(cmd, out, atlas, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &regions);
+            },
+        );
+        Ok(())
+    }
 }

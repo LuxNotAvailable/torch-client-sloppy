@@ -24,6 +24,8 @@ pub(crate) struct BlockAnimation {
     /// Atlas tile and how many ticks it shows, in play order.
     pub frames: Box<[(u16, u32)]>,
     pub interpolate: bool,
+    /// The native renderer's blend tile, for interpolated strips.
+    pub spare: Option<u16>,
 }
 
 impl BlockAnimation {
@@ -82,6 +84,42 @@ impl AnimationSet {
 }
 
 /// The game tick now, on the clock the block animations run by.
+impl AnimationSet {
+    pub(crate) fn tile_count(&self) -> u32 {
+        self.tile_count
+    }
+
+    /// The table for `tick`, as the native renderer reads it: per tile, the
+    /// frame tile and the next (16 bits each), then the blend.
+    /// Words 0 and 1: the atlas's rows of tiles (`rows`), the tile count;
+    /// then per tile its entry; then the blend list: a count, and per
+    /// interpolated strip (frame, next frame, blend, spare tile). Those
+    /// strips name their spare tile, which the GPU fills with the blend.
+    pub(crate) fn table(&self, tick: u64, rows: u32) -> Vec<u32> {
+        let mut out: Vec<u32> = vec![rows, self.tile_count];
+        out.extend((0..self.tile_count).flat_map(|t| [t | (t << 16), 0]));
+        let mut blends = Vec::new();
+        for animation in &self.animations {
+            let (a, b, blend) = animation.at(tick);
+            let at = 2 + usize::from(animation.base) * 2;
+            if at + 1 >= out.len() {
+                continue;
+            }
+            if let Some(spare) = animation.spare {
+                out[at] = u32::from(spare) | (u32::from(spare) << 16);
+                out[at + 1] = 0;
+                blends.extend([u32::from(a), u32::from(b), u32::from(blend), u32::from(spare)]);
+            } else {
+                out[at] = u32::from(a) | (u32::from(b) << 16);
+                out[at + 1] = u32::from(blend);
+            }
+        }
+        out.push((blends.len() / 4) as u32);
+        out.extend(blends);
+        out
+    }
+}
+
 pub(crate) fn tick_now() -> u64 {
     static START: std::sync::OnceLock<crate::platform::time::Instant> = std::sync::OnceLock::new();
     let start = START.get_or_init(crate::platform::time::Instant::now);
@@ -213,6 +251,7 @@ mod tests {
             base: frames[0].0,
             frames: frames.into(),
             interpolate,
+            spare: None,
         }
     }
 

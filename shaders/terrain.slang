@@ -250,6 +250,65 @@ bool leaf_filled(VertexOut in) {
     return noise < t;
 }
 
+// The interpolated strips' blends (the table's blend list from word
+// more.y): frame and next frame read from the atlas's raw texels (more.x),
+// mixed, written as bytes to the out buffer (ids.y), a tile each (more.z
+// texels a side) by z.
+[shader("compute")]
+[numthreads(8, 8, 1)]
+void anim_blend(uint3 id: SV_DispatchThreadID) {
+    uint px = pc.more.z;
+    if (id.x >= px || id.y >= px) {
+        return;
+    }
+    ByteAddressBuffer table = buffer_ro(pc.ids.x);
+    uint4 e = table.Load4((pc.more.y + 1 + id.z * 4) * 4);
+    Texture2D atlas = texture_at(pc.more.x);
+    int2 pa = int2((e.x % ATLAS_COLS) * px + id.x, (e.x / ATLAS_COLS) * px + id.y);
+    int2 pb = int2((e.y % ATLAS_COLS) * px + id.x, (e.y / ATLAS_COLS) * px + id.y);
+    float4 c = lerp(atlas.Load(int3(pa, 0)), atlas.Load(int3(pb, 0)), float(e.z) / 65535.0);
+    uint4 b = uint4(round(saturate(c) * 255.0));
+    buffer_at(pc.ids.y).Store((id.z * px * px + id.y * px + id.x) * 4, b.x | (b.y << 8) | (b.z << 16) | (b.w << 24));
+}
+
+// The atlas through the animation table (more.z, its bindless index plus
+// one): the tile a mesh names swapped for the frame showing, blended into
+// the next for interpolated textures, as terrain.wgsl's `sample_atlas`.
+static const uint ATLAS_COLS = 16;
+
+float4 sample_atlas(float2 uv) {
+    Texture2D atlas = texture_at(pc.more.x);
+    SamplerState s = g_samplers[SAMPLER_NEAREST];
+    if (pc.more.z == 0) {
+        return atlas.Sample(s, uv);
+    }
+    uint w, h, levels;
+    atlas.GetDimensions(0, w, h, levels);
+    float2 tiles = float2(ATLAS_COLS, float(h) * ATLAS_COLS / float(w));
+    float2 grid = uv * tiles;
+    float2 cell = clamp(floor(grid), 0, tiles - 1);
+    float2 local = grid - cell;
+    float2 gx = ddx(uv);
+    float2 gy = ddy(uv);
+    uint tile = uint(cell.y) * ATLAS_COLS + uint(cell.x);
+    ByteAddressBuffer table = buffer_ro(pc.more.z - 1);
+    // Tiles past the table's (block entity textures) are their own.
+    if (tile >= table.Load(4)) {
+        return atlas.SampleGrad(s, uv, gx, gy);
+    }
+    uint2 entry = table.Load2(8 + tile * 8);
+    uint a = entry.x & 0xFFFF;
+    uint b = entry.x >> 16;
+    float2 ca = float2(a % ATLAS_COLS, a / ATLAS_COLS);
+    float4 ta = atlas.SampleGrad(s, (ca + local) / tiles, gx, gy);
+    if (entry.y == 0) {
+        return ta;
+    }
+    float2 cb = float2(b % ATLAS_COLS, b / ATLAS_COLS);
+    float4 tb = atlas.SampleGrad(s, (cb + local) / tiles, gx, gy);
+    return lerp(ta, tb, float(entry.y) / 65535.0);
+}
+
 float4 terrain_shade(VertexOut in, bool cutout) {
     if (pc.more.y == VIEW_NORMALS) {
         float3 n = normalize(cross(ddx(in.world), ddy(in.world)));
@@ -259,7 +318,7 @@ float4 terrain_shade(VertexOut in, bool cutout) {
         uint i = in.slot * 2654435761u;
         return float4(float3(i & 255, (i >> 8) & 255, (i >> 16) & 255) / 255.0 * 0.8 + 0.2, 1);
     }
-    float4 texel = texture_at(pc.more.x).Sample(g_samplers[SAMPLER_NEAREST], in.uv);
+    float4 texel = sample_atlas(in.uv);
     if (cutout && texel.a < 0.1) {
         if (!leaf_filled(in)) {
             discard;

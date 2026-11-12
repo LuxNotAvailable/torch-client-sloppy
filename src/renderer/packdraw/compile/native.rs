@@ -301,6 +301,22 @@ struct IrisVkQuads { q: array<vec4<u32>> }
 @group(2) @binding(7) var<storage, read> iris_vk_slots: IrisVkSlots;
 @group(2) @binding(8) var<storage, read> iris_vk_pool: IrisVkPool;
 @group(2) @binding(9) var<storage, read> iris_vk_quads: IrisVkQuads;
+struct IrisVkAnim { w: array<u32> }
+@group(2) @binding(12) var<storage, read> iris_vk_anim: IrisVkAnim;
+// The block animation table (`block_anim`): the shift from the tile a quad
+// names (by its mid UV) to the frame showing.
+fn iris_anim_shift(quad: vec4<u32>) -> vec2<f32> {
+    let rows = iris_vk_anim.w[0];
+    let count = iris_vk_anim.w[1];
+    if (rows == 0u) { return vec2<f32>(0.0); }
+    let tiles = vec2<f32>(16.0, f32(rows));
+    let mid = vec2<f32>(f32(quad.z & 65535u), f32(quad.z >> 16u)) / 65535.0;
+    let cell = floor(mid * tiles);
+    let tile = u32(cell.y) * 16u + u32(cell.x);
+    if (tile >= count) { return vec2<f32>(0.0); }
+    let a = iris_vk_anim.w[2u + tile * 2u] & 65535u;
+    return (vec2<f32>(f32(a % 16u), f32(a / 16u)) - cell) / tiles;
+}
 var<private> iris_VkPool: u32;
 var<private> iris_VkQuadPool: u32;
 fn iris_vk_quad(input: IrisVertexIn) -> vec4<u32> {
@@ -347,6 +363,7 @@ fn terrain_prelude(direct: bool) -> String {
     };
     let vulkan = super::preludes::vulkan_terrain();
     let row = crate::renderer::packvertex::QUAD_ROW;
+    let shift = if vulkan { " + iris_anim_shift(quad)" } else { "" };
     let quad = if vulkan {
         "let quad = iris_vk_quad(input);".to_owned()
     } else {
@@ -397,7 +414,7 @@ fn terrain_prelude(direct: bool) -> String {
              let raw = vec3<f32>(r.position.xyz) / 256.0;\n    \
              var a: IrisAttributes;\n    \
              a.position = vec3<f32>(iris_origin(input) - vec3<i32>(camera_block)) - (frame.iris_CameraPosition.xyz - camera_block) + raw;\n    \
-             a.uv = r.uv;\n    \
+             a.uv = r.uv{shift};\n    \
              a.light = r.light.xy * 255.0;\n    \
              a.color = r.color;\n    \
              let n = iris_snorm3(quad.x);\n    \

@@ -750,7 +750,8 @@ fn emit_baked(
                 }
             }
             let face_shade = quad.shade(cardinal);
-            let lit = if smooth {
+            // No ambient occlusion on light sources (vanilla's `useAmbientOcclusion`).
+            let lit = if smooth && rb.emission == 0 {
                 lighter::ambient_occlusion(
                     occ,
                     (bx, by, bz),

@@ -308,6 +308,15 @@ fn animation_frames(
                 image,
             });
         }
+        // Interpolated strips get a spare tile the native renderer writes
+        // each tick's blend into (frame 0's texels until then).
+        if meta.interpolate {
+            frames.push(AnimationFrame {
+                name: format!("{stem}#spare"),
+                stem: (*stem).to_owned(),
+                image: image::imageops::crop_imm(*rgba, 0, 0, side, side).to_image(),
+            });
+        }
         strips.push(AnimatedStrip {
             stem: (*stem).to_owned(),
             meta,
@@ -325,7 +334,14 @@ fn publish_animations(
     tile_count: usize,
 ) {
     let mut frame_tiles: HashMap<(&str, u32), u32> = HashMap::new();
+    let mut spares: HashMap<&str, u32> = HashMap::new();
     for frame in frames {
+        if frame.name.ends_with("#spare") {
+            if let Some(tile) = tiles.remove(&frame.name) {
+                spares.insert(frame.stem.as_str(), tile);
+            }
+            continue;
+        }
         if let Some(tile) = tiles.remove(&frame.name) {
             let index = frame
                 .name
@@ -361,6 +377,7 @@ fn publish_animations(
             base,
             frames: frames.into_boxed_slice(),
             interpolate: strip.meta.interpolate,
+            spare: spares.get(strip.stem.as_str()).and_then(|&t| u16::try_from(t).ok()),
         });
     }
     let total = tile_count + frames.len();

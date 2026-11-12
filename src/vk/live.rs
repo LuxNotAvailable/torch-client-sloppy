@@ -710,7 +710,7 @@ impl Live {
         }
         if let Some(frame) = dump::take_live_entities(dump::LIVE_FIGURE) {
             if self.figure.scene.is_none() {
-                match super::entities::EntityScene::new(ctx, memory, bindless, pipelines, format, dump::Snapshot::empty(), None) {
+                match super::entities::EntityScene::new(ctx, memory, bindless, pipelines, vk::Format::R8G8B8A8_SRGB, dump::Snapshot::empty(), None) {
                     Ok(scene) => self.figure.scene = Some(scene),
                     Err(e) => fail("figure", e.0),
                 }

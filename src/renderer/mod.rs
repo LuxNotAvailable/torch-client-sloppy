@@ -1,7 +1,7 @@
 pub mod anim;
 pub mod antialias;
 pub(crate) mod atlas;
-mod block_anim;
+pub(crate) mod block_anim;
 pub mod clouds;
 pub mod dimension;
 pub mod entity_material;

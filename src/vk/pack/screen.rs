@@ -129,6 +129,8 @@ pub(crate) struct PackScreen {
     lightmap: Option<(vk::Image, u32)>,
     /// Table words that hold the terrain's slots buffer.
     terrain_slots: Vec<usize>,
+    /// Table entries for the block animation table.
+    anim_slots: Vec<usize>,
     /// Table words for the entity buffers: 0 instances, 1 meshes, 2
     /// vertices, 3 parts.
     entity_slots: Vec<(usize, u8, Source)>,
@@ -308,6 +310,7 @@ impl PackScreen {
             atlas: terrain.map(|t| t.atlas),
             lightmap: terrain.and_then(|t| t.lightmap),
             terrain_slots: Vec::new(),
+            anim_slots: Vec::new(),
             entity_slots: Vec::new(),
             building_entity: None,
             building_hand: false,
@@ -731,6 +734,12 @@ impl PackScreen {
                         Source::Entities
                     };
                     self.entity_slots.push((at, which, source));
+                    0
+                }
+                SlotKind::Buffer { ty, .. } if ty == "IrisVkAnim" => {
+                    // The animation table: filled per frame (`record`).
+                    let at = self.table.len();
+                    self.anim_slots.push(at);
                     0
                 }
                 SlotKind::Buffer { ty, .. }
@@ -1181,6 +1190,12 @@ impl PackScreen {
         if let Some(t) = terrain {
             for &at in &self.terrain_slots {
                 table[at] = t.slots.1;
+            }
+            // The terrain writes a table every frame before the pack draws.
+            static LOGGED: std::sync::Once = std::sync::Once::new();
+            LOGGED.call_once(|| bevy::log::info!("pack anim: {} slots, table {}", self.anim_slots.len(), t.anim));
+            for &at in &self.anim_slots {
+                table[at] = if t.anim > 0 { t.anim - 1 } else { t.slots.1 };
             }
             for &(at, which, source) in &self.entity_slots {
                 let set = match source {

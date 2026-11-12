@@ -25,6 +25,7 @@ pub(crate) fn vulkan_terrain() -> bool {
 const VK_TERRAIN: &str = "layout(std430, set = 2, binding = 7) readonly buffer IrisVkSlots { uvec4 iris_VkSlot[]; };
 layout(std430, set = 2, binding = 8) readonly buffer IrisVkPool { uint iris_VkWords[]; };
 layout(std430, set = 2, binding = 9) readonly buffer IrisVkQuads { uvec4 iris_VkQuadWords[]; };
+layout(std430, set = 2, binding = 12) readonly buffer IrisVkAnim { uint iris_VkAnimWords[]; };
 uint iris_VkPool;
 uint iris_VkQuadPool;
 ivec4 iris_RawPosition;
@@ -59,11 +60,12 @@ pub(crate) fn terrain_prelude(direct: bool) -> String {
                  return vec3(iris_Origin - ivec3(camera_block)) - (iris_CameraPosition.xyz - camera_block)\n        \
                      + vec3(iris_RawPosition.xyz) / 256.0;\n\
              }}\n\
-             vec2 iris_uv0() {{ return iris_RawUV0; }}\n\
              vec2 iris_light() {{ return iris_RawLight.xy * 255.0; }}\n\
              vec4 iris_color() {{ return iris_RawColor; }}\n\
-             {}",
-            vk_pack_stream()
+             {}{VK_ANIM}\
+             vec4 iris_mid_uv() {{ return iris_mid_uv_raw() + vec4(iris_anim_shift(), 0.0, 0.0); }}\n\
+             vec2 iris_uv0() {{ return iris_RawUV0 + iris_anim_shift(); }}\n",
+            vk_pack_stream().replace("vec4 iris_mid_uv() {\n", "vec4 iris_mid_uv_raw() {\n")
         );
     }
     let origin = if direct {
@@ -155,6 +157,21 @@ fn vk_pack_stream() -> String {
              return iris_VkQuadWords[base + ((uint(gl_VertexIndex) - base) >> 2)];\n",
     )
 }
+
+/// The block animation table (`block_anim`): the shift from the tile a
+/// quad names to the frame showing, by the quad's mid UV.
+const VK_ANIM: &str = "vec2 iris_anim_shift() {
+    uint rows = iris_VkAnimWords[0];
+    uint count = iris_VkAnimWords[1];
+    if (rows == 0u) { return vec2(0.0); }
+    vec2 tiles = vec2(16.0, float(rows));
+    vec2 cell = floor(iris_mid_uv_raw().xy * tiles);
+    uint tile = uint(cell.y) * 16u + uint(cell.x);
+    if (tile >= count) { return vec2(0.0); }
+    uint a = iris_VkAnimWords[2u + tile * 2u] & 65535u;
+    return (vec2(float(a % 16u), float(a / 16u)) - cell) / tiles;
+}
+";
 
 pub(super) const TERRAIN_BEGIN: &str =
     "iris_Origin = iris_origin();\n    iris_Quad = iris_pack_quad();\n    ";
