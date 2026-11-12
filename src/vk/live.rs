@@ -367,7 +367,8 @@ fn draw_frame(world: &mut World, mut last: Local<Option<std::time::Instant>>) {
             use crate::renderer::antialias::{AaMode, SSAA_SCALES};
             let aa = gui.options.antialiasing;
             let post = super::post::Settings {
-                fxaa: aa.mode == AaMode::Fxaa,
+                // MSAA has no native path: FXAA stands in.
+                fxaa: matches!(aa.mode, AaMode::Fxaa | AaMode::Msaa),
                 ssaa: if aa.mode == AaMode::Supersample {
                     SSAA_SCALES.get(aa.ssaa).copied().unwrap_or(1.0)
                 } else {
