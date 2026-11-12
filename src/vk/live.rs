@@ -33,8 +33,8 @@ pub fn wanted() -> bool {
 /// the last report (`MC_NATIVE_TIMING`): the entity and particle captures,
 /// the scene renewals, the frame's recording and submission, the whole
 /// renderer system, and frames counted.
-static TIMES: [std::sync::atomic::AtomicU64; 9] = [const { std::sync::atomic::AtomicU64::new(0) }; 9];
-const TIME_NAMES: [&str; 8] = [
+static TIMES: [std::sync::atomic::AtomicU64; 13] = [const { std::sync::atomic::AtomicU64::new(0) }; 13];
+const TIME_NAMES: [&str; 12] = [
     "capture entities+env",
     "capture particles",
     "renew scenes",
@@ -43,9 +43,13 @@ const TIME_NAMES: [&str; 8] = [
     "env",
     "entities",
     "particles",
+    "acquire (fence)",
+    "terrain record",
+    "gui record",
+    "submit+present",
 ];
 /// The slot `report_times` counts frames in.
-const FRAMES_SLOT: usize = 8;
+const FRAMES_SLOT: usize = 12;
 
 /// New meshes and textures sent since the last report, and their sizes.
 static NEW: [std::sync::atomic::AtomicU64; 4] = [const { std::sync::atomic::AtomicU64::new(0) }; 4];
@@ -385,11 +389,18 @@ fn draw_frame(world: &mut World, mut last: Local<Option<std::time::Instant>>) {
     // Pipelined (a frame behind) only while frames are quick; below about
     // 200 fps the frame is drawn in step, so input shows a frame sooner.
     thread.frame_time = thread.frame_time * 0.9 + dt * 0.1;
-    thread.in_step = if thread.in_step {
+    // `MC_NATIVE_PIPELINE=always` or `never` overrides, for comparing.
+    static FORCED: OnceLock<Option<bool>> = OnceLock::new();
+    let forced = *FORCED.get_or_init(|| match std::env::var("MC_NATIVE_PIPELINE").as_deref() {
+        Ok("always") => Some(false),
+        Ok("never") => Some(true),
+        _ => None,
+    });
+    thread.in_step = forced.unwrap_or(if thread.in_step {
         thread.frame_time > 1.0 / 220.0
     } else {
         thread.frame_time > 1.0 / 180.0
-    };
+    });
     // Waits only while the renderer is still on the frame before last.
     if thread.input.as_ref().is_none_or(|i| i.send(input).is_err()) {
         error!("native renderer: the render thread stopped");
@@ -833,7 +844,10 @@ impl Live {
         let Some(swapchain) = &self.swapchain else {
             return;
         };
-        let recording = match self.frames.begin(&self.ctx, swapchain) {
+        let timed = Timed::new(8);
+        let begun = self.frames.begin(&self.ctx, swapchain);
+        drop(timed);
+        let recording = match begun {
             Ok(r) => r,
             Err(FrameError::OutOfDate) => {
                 self.stale = true;
@@ -899,6 +913,7 @@ impl Live {
             terrain.set_post(self.post);
             // Under a pack the terrain only culls; the pack draws.
             terrain.set_cull_only(self.pack.is_some());
+            let _timed = Timed::new(9);
             match terrain.record(
                 &self.ctx,
                 &self.memory,
@@ -994,7 +1009,8 @@ impl Live {
                 None
             }
         };
-        if let Err(e) = self.gui.record(
+        let timed = Timed::new(10);
+        let gui_result = self.gui.record(
             &self.ctx,
             &self.memory,
             &mut self.bindless,
@@ -1006,7 +1022,9 @@ impl Live {
             textures,
             !drew_world,
             figure,
-        ) {
+        );
+        drop(timed);
+        if let Err(e) = gui_result {
             error!("native renderer: gui: {}", e.0);
         }
         // A screenshot: the finished frame copied back.
@@ -1052,7 +1070,10 @@ impl Live {
         }
         graph.pass("present", &[(image, Use::Present)], &[], |_| {});
         drop(graph);
-        match self.frames.end(&self.ctx, swapchain, recording) {
+        let timed = Timed::new(11);
+        let ended = self.frames.end(&self.ctx, swapchain, recording);
+        drop(timed);
+        match ended {
             Ok(()) => {}
             Err(FrameError::OutOfDate) => self.stale = true,
             Err(FrameError::Failed(e)) => error!("native renderer: present failed: {e:?}"),
