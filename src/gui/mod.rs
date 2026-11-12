@@ -326,37 +326,41 @@ impl Screen {
     }
 }
 
-/// The graphics API the renderer starts on. Read once at startup, so a change
+/// Which renderer the game starts on. Read once at startup, so a change
 /// applies on the next launch.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum RenderBackend {
-    /// wgpu's own pick (or `WGPU_BACKEND`), as before the setting existed.
+    /// The native Vulkan renderer (`vk::live`).
     #[default]
-    Auto,
-    Vulkan,
+    Native,
+    /// The old wgpu renderer: an unsupported fallback.
+    Legacy,
 }
 
 impl RenderBackend {
-    pub const ALL: [RenderBackend; 2] = [RenderBackend::Auto, RenderBackend::Vulkan];
+    pub const ALL: [RenderBackend; 2] = [RenderBackend::Native, RenderBackend::Legacy];
 
     pub fn caption(self) -> &'static str {
         match self {
-            RenderBackend::Auto => "Auto",
-            RenderBackend::Vulkan => "Vulkan",
+            RenderBackend::Native => "Native",
+            RenderBackend::Legacy => "Legacy",
         }
     }
 
     pub fn serialized_name(self) -> &'static str {
         match self {
-            RenderBackend::Auto => "auto",
-            RenderBackend::Vulkan => "vulkan",
+            RenderBackend::Native => "native",
+            RenderBackend::Legacy => "legacy",
         }
     }
 
     pub fn from_serialized_name(name: &str) -> Option<RenderBackend> {
-        RenderBackend::ALL
-            .into_iter()
-            .find(|b| b.serialized_name() == name)
+        match name {
+            // The old wgpu backend choices predate the native renderer.
+            "native" | "auto" | "vulkan" => Some(RenderBackend::Native),
+            "legacy" => Some(RenderBackend::Legacy),
+            _ => None,
+        }
     }
 
     pub fn next(self) -> RenderBackend {

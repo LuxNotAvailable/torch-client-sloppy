@@ -30,7 +30,11 @@ pub fn wanted() -> bool {
     *WANTED.get_or_init(|| match std::env::var("MC_RENDERER") {
         Ok(v) if v.eq_ignore_ascii_case("native") => true,
         Ok(v) if v.eq_ignore_ascii_case("wgpu") || v.eq_ignore_ascii_case("legacy") => false,
-        _ => cfg!(not(any(target_os = "android", target_arch = "wasm32"))),
+        // Else the Renderer setting, on desktop.
+        _ => {
+            cfg!(not(any(target_os = "android", target_arch = "wasm32")))
+                && crate::gui::RenderBackend::stored() == crate::gui::RenderBackend::Native
+        }
     })
 }
 

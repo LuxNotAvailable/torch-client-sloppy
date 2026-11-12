@@ -2420,38 +2420,11 @@ fn resolve_backend() -> (
     Option<bevy::render::settings::Backends>,
 ) {
     use crate::gui::RenderBackend;
-    use bevy::render::settings::Backends;
 
-    let wanted = RenderBackend::stored();
-    let backends = match wanted {
-        RenderBackend::Auto => return (RenderBackend::Auto, None),
-        RenderBackend::Vulkan => Backends::VULKAN,
-    };
-    if !has_adapter(backends) {
-        crate::log_warn!(
-            "render",
-            "no {} adapter on this machine; starting on the automatic renderer",
-            wanted.caption()
-        );
-        return (RenderBackend::Auto, None);
-    }
-    crate::log_info!("render", "renderer: {}", wanted.caption());
-    (wanted, Some(backends))
-}
-
-#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
-fn has_adapter(backends: bevy::render::settings::Backends) -> bool {
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-        backends,
-        ..default()
-    });
-    !instance.enumerate_adapters(backends).is_empty()
-}
-
-/// The setting is desktop-only; elsewhere the platform's renderer stands.
-#[cfg(any(target_arch = "wasm32", target_os = "android"))]
-fn has_adapter(_backends: bevy::render::settings::Backends) -> bool {
-    false
+    // Legacy is the only wgpu path left: wgpu's own backend pick.
+    let started = if crate::vk::live::wanted() { RenderBackend::Native } else { RenderBackend::Legacy };
+    crate::log_info!("render", "renderer: {}", started.caption());
+    (started, None)
 }
 
 /// Render-graph passes from Bevy's render diagnostics: smoothed GPU time

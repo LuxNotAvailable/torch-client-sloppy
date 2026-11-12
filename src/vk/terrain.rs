@@ -1054,7 +1054,7 @@ impl TerrainScene {
     }
 
     /// The world's lines and cracks into a pack's targets.
-    pub fn record_pack_overlays(
+    pub(crate) fn record_pack_overlays(
         &mut self,
         ctx: &Context,
         bindless: vk::DescriptorSet,
