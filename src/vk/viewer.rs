@@ -736,6 +736,7 @@ impl Renderer {
                 slot,
                 seconds,
                 geometry.as_ref(),
+                None,
             );
         }
         if capture && self.readback.is_none() {

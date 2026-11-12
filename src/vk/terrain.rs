@@ -1023,6 +1023,96 @@ impl TerrainScene {
         }
     }
 
+    /// The screen overlays (pumpkin, fire, underwater, vignette) over
+    /// `output`: after a shader pack's frame, which `record` leaves them out
+    /// of while it only culls.
+    #[allow(clippy::too_many_arguments, reason = "one pass's whole context")]
+    pub fn record_overlays(
+        &self,
+        ctx: &Context,
+        bindless: &Bindless,
+        pipelines: &Pipelines,
+        graph: &mut Graph,
+        output: (vk::Image, vk::ImageView),
+        extent: vk::Extent2D,
+        rotation: super::swapchain::PreRotation,
+        slot: usize,
+    ) {
+        if let Some(env) = &self.env {
+            env.record_screen(
+                ctx,
+                bindless,
+                pipelines,
+                graph,
+                output,
+                extent,
+                rotation.clip,
+                self.atlas.raw,
+                self.view_indices[slot],
+            );
+        }
+    }
+
+    /// The world's lines and cracks into a pack's targets.
+    pub fn record_pack_overlays(
+        &mut self,
+        ctx: &Context,
+        bindless: vk::DescriptorSet,
+        pipelines: &Pipelines,
+        graph: &mut Graph,
+        o: super::pack::screen::Overlay,
+        slot: usize,
+    ) {
+        let set = bindless;
+        let view_index = self.view_indices[slot];
+        let Some(env) = self.env.as_mut() else { return };
+        if !env.has_world_overlays() {
+            return;
+        }
+        let Some(pipes) = env.pack_overlay_pipes(ctx, pipelines, o.color.2) else { return };
+        let env = &*env;
+        let mut images = vec![(o.color.0, Use::ColorAttachment), (o.depth.0, Use::DepthAttachment)];
+        let mut buffers = Vec::new();
+        env.uses(&mut images, &mut buffers);
+        let device = &ctx.device;
+        let (extent, view_proj) = (o.extent, o.view_proj.to_cols_array_2d());
+        graph.pass("pack world overlays", &images, &buffers, |cmd| unsafe {
+            // SAFETY: the targets in attachment layouts the graph set.
+            let colors = [vk::RenderingAttachmentInfo::default()
+                .image_view(o.color.1)
+                .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                .load_op(vk::AttachmentLoadOp::LOAD)
+                .store_op(vk::AttachmentStoreOp::STORE)];
+            let depth = vk::RenderingAttachmentInfo::default()
+                .image_view(o.depth.1)
+                .image_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
+                .load_op(vk::AttachmentLoadOp::LOAD)
+                .store_op(vk::AttachmentStoreOp::STORE);
+            let info = vk::RenderingInfo::default()
+                .render_area(vk::Rect2D { offset: vk::Offset2D::default(), extent })
+                .layer_count(1)
+                .color_attachments(&colors)
+                .depth_attachment(&depth);
+            device.cmd_begin_rendering(cmd, &info);
+            device.cmd_set_viewport(
+                cmd,
+                0,
+                &[vk::Viewport {
+                    x: 0.0,
+                    y: 0.0,
+                    width: extent.width as f32,
+                    height: extent.height as f32,
+                    min_depth: 0.0,
+                    max_depth: 1.0,
+                }],
+            );
+            device.cmd_set_scissor(cmd, 0, &[vk::Rect2D { offset: vk::Offset2D::default(), extent }]);
+            device.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::GRAPHICS, pipelines.layout, 0, &[set], &[]);
+            env.draw_pack_overlays(ctx, cmd, pipelines, view_index, view_proj, extent, pipes);
+            device.cmd_end_rendering(cmd);
+        });
+    }
+
     /// Whether `record` only culls (a shader pack draws the world).
     pub fn set_cull_only(&mut self, cull_only: bool) {
         self.cull_only = cull_only;
@@ -2545,6 +2635,7 @@ impl TerrainScene {
             }
             if let Some(env) = &self.env {
                 env.draw_clouds(ctx, cmd, pipelines, view_index, view_proj_cols);
+                env.draw_world_overlays(ctx, cmd, pipelines, view_index, view_proj_cols, extent);
                 // The hand camera's projection (`renderer::hand`: 70° fov,
                 // near 0.05, reversed depth as the world's).
                 let hand = rotation.clip

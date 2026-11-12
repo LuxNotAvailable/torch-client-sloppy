@@ -845,7 +845,7 @@ struct HandMapNode;
 
 /// The shimmer drawn over hand `.0`'s item when it is enchanted.
 #[derive(Component)]
-struct HandGlint(usize);
+pub(crate) struct HandGlint(usize);
 
 struct HandEntities {
     pose: Entity,

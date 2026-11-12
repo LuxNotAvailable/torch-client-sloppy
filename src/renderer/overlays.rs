@@ -11,11 +11,48 @@ use crate::session::{BreakingBlock, TargetedBlock};
 pub(super) struct BlockOutline {
     pub(super) entity: Entity,
     pub(super) mesh: Handle<Mesh>,
+    pub(super) material: Handle<StandardMaterial>,
+    /// The (width, colour, opacity) options last applied.
+    pub(super) style: Option<(u32, u32, u32)>,
     pub(super) shown: Option<TargetedBlock>,
 }
 
 #[derive(Component)]
 pub(crate) struct BlockOutlineMarker;
+
+/// Block outline colours: name, sRGB. Black is vanilla's.
+pub(crate) const OUTLINE_COLORS: [(&str, [f32; 3]); 8] = [
+    ("Black", [0.0, 0.0, 0.0]),
+    ("White", [1.0, 1.0, 1.0]),
+    ("Red", [1.0, 0.2, 0.2]),
+    ("Green", [0.3, 1.0, 0.3]),
+    ("Blue", [0.3, 0.5, 1.0]),
+    ("Yellow", [1.0, 0.9, 0.2]),
+    ("Cyan", [0.2, 1.0, 1.0]),
+    ("Magenta", [1.0, 0.3, 1.0]),
+];
+
+/// Block outline width, times vanilla's (native renderer).
+pub(crate) static OUTLINE_WIDTH: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+
+/// Applies the outline width and colour options.
+pub(super) fn update_outline_style(
+    state: Res<crate::gui::GuiState>,
+    mut outline: ResMut<BlockOutline>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let o = &state.options;
+    let style = (o.outline_width, o.outline_color, o.outline_opacity);
+    if outline.style == Some(style) {
+        return;
+    }
+    outline.style = Some(style);
+    OUTLINE_WIDTH.store(style.0.max(1), std::sync::atomic::Ordering::Relaxed);
+    let [r, g, b] = OUTLINE_COLORS[(style.1 as usize).min(OUTLINE_COLORS.len() - 1)].1;
+    if let Some(m) = materials.get_mut(&outline.material) {
+        m.base_color = Color::srgba(r, g, b, style.2 as f32 / 100.0);
+    }
+}
 
 #[derive(Resource)]
 pub struct BreakOverlay {
@@ -36,7 +73,7 @@ pub(super) struct ChunkBorderOverlay {
 }
 
 #[derive(Component)]
-pub(super) struct ChunkBorderMarker;
+pub(crate) struct ChunkBorderMarker;
 
 #[derive(Resource, Clone)]
 pub(crate) struct LineMaterial(pub(crate) Handle<StandardMaterial>);
@@ -51,7 +88,7 @@ pub(super) struct EspOverlay {
 
 #[cfg(feature = "click_gui")]
 #[derive(Component)]
-pub(super) struct EspMarker;
+pub(crate) struct EspMarker;
 
 pub(super) const OUTLINE_INFLATE: f32 = 0.002;
 
@@ -542,7 +579,7 @@ pub(super) struct HitboxOverlay {
 }
 
 #[derive(Component)]
-pub(super) struct HitboxMarker;
+pub(crate) struct HitboxMarker;
 
 /// A modded entity's placeholder: the 0.6 × 1.8 box vanilla gives a
 /// player-sized mob, in magenta, since the server never says how big a type

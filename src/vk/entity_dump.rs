@@ -141,7 +141,9 @@ pub struct EnvPart {
     /// 0 a sky part (pinned to the far plane), 1 the clouds (at their
     /// depth), 2 a screen overlay (its transform straight to clip space,
     /// drawn over everything), 3 a first-person hand part (its transform
-    /// in the hand camera's view space).
+    /// in the hand camera's view space), 4 world lines (block outline,
+    /// hitboxes, chunk borders: a line list), 5 the block-breaking cracks
+    /// (multiplied over the block).
     pub kind: u32,
     /// Drawing order among the parts, lowest first.
     pub bias: f32,
@@ -168,6 +170,39 @@ type ScreenDrawn<'a> = (
     &'a Mesh3d,
     &'a MeshMaterial3d<StandardMaterial>,
     &'a Transform,
+    &'a InheritedVisibility,
+);
+
+/// World overlays (`renderer::overlays`): lines, and the breaking cracks.
+type OverlayDrawn<'a> = (
+    &'a Mesh3d,
+    &'a MeshMaterial3d<StandardMaterial>,
+    &'a GlobalTransform,
+    &'a InheritedVisibility,
+    Has<crate::renderer::overlays::BreakOverlayMarker>,
+    Has<crate::renderer::overlays::BlockOutlineMarker>,
+);
+#[cfg(feature = "click_gui")]
+type OverlayFilter = Or<(
+    With<crate::renderer::overlays::BlockOutlineMarker>,
+    With<crate::renderer::overlays::BreakOverlayMarker>,
+    With<crate::renderer::overlays::HitboxMarker>,
+    With<crate::renderer::overlays::ChunkBorderMarker>,
+    With<crate::renderer::overlays::EspMarker>,
+)>;
+#[cfg(not(feature = "click_gui"))]
+type OverlayFilter = Or<(
+    With<crate::renderer::overlays::BlockOutlineMarker>,
+    With<crate::renderer::overlays::BreakOverlayMarker>,
+    With<crate::renderer::overlays::HitboxMarker>,
+    With<crate::renderer::overlays::ChunkBorderMarker>,
+)>;
+
+/// A held item's glint (`renderer::hand::HandGlint`).
+type HandGlintDrawn<'a> = (
+    &'a Mesh3d,
+    &'a MeshMaterial3d<crate::renderer::glint::GlintMaterial>,
+    &'a GlobalTransform,
     &'a InheritedVisibility,
 );
 
@@ -597,9 +632,12 @@ fn write_env(
         Mat4,
         f32,
     ),
-    (hand_parts, hand_view): (
+    (hand_parts, hand_view, hand_glints, glint_materials, world_overlays): (
         &Query<HandDrawn, Without<crate::renderer::screen_effects::Overlay>>,
         Option<Mat4>,
+        &Query<HandGlintDrawn, With<crate::renderer::hand::HandGlint>>,
+        &Assets<crate::renderer::glint::GlintMaterial>,
+        &Query<OverlayDrawn, OverlayFilter>,
     ),
 ) {
     let mut parts = Vec::new();
@@ -613,9 +651,10 @@ fn write_env(
                    kind: u32,
                    uv: [f32; 4],
                    transform: Mat4,
-                   piece: f32| {
+                   piece: f32|
+     -> bool {
         if !cache.meshes.contains_key(&mesh) {
-            return;
+            return false;
         }
         let next = mesh_ids.len() as u32;
         let mesh_id = *mesh_ids.entry(mesh).or_insert_with(|| {
@@ -646,6 +685,7 @@ fn write_env(
             tint: tint.to_array(),
             transform: transform.to_cols_array(),
         });
+        true
     };
     for (mesh, material, transform, visible, piece) in sky {
         if !visible.get() {
@@ -733,6 +773,66 @@ fn write_env(
                     0.0,
                 );
             }
+        }
+    }
+    // The world's overlays: outline, hitboxes and borders as lines, the
+    // breaking cracks as faces.
+    let outline_width = crate::renderer::overlays::OUTLINE_WIDTH.load(std::sync::atomic::Ordering::Relaxed) as f32;
+    for (mesh, material, transform, visible, cracks, outline) in world_overlays {
+        if !visible.get() {
+            continue;
+        }
+        if let Some(m) = standard.get(&material.0) {
+            add(
+                mesh.0.id(),
+                m.base_color_texture.as_ref().map(Handle::id),
+                m.base_color.to_linear().to_vec4(),
+                m.alpha_mode,
+                0.0,
+                if cracks { 5 } else { 4 },
+                [1.0, 1.0, 0.0, 0.0],
+                transform.to_matrix(),
+                // Lines: pad[0] scales the width.
+                if outline { outline_width } else { 1.0 },
+            );
+        }
+    }
+    // The held items' glint: their own texture as the mask, added over
+    // them (`renderer::glint`); the glint texture's place in pad[2].
+    let mut glints = 0;
+    if let Some(view) = hand_view {
+        for (mesh, material, transform, visible) in hand_glints {
+            if !visible.get() {
+                continue;
+            }
+            if let Some(m) = glint_materials.get(&material.0)
+                && add(
+                    mesh.0.id(),
+                    Some(m.mask.id()),
+                    Vec4::ONE,
+                    AlphaMode::Add,
+                    0.0,
+                    3,
+                    [1.0, 1.0, 0.0, 0.0],
+                    view * transform.to_matrix(),
+                    0.0,
+                )
+            {
+                glints += 1;
+            }
+        }
+    }
+    let glint_id = crate::renderer::entity_material::GLINT_ITEM.id();
+    if glints > 0 && cache.images.contains_key(&glint_id) {
+        let next = image_ids.len() as u32;
+        let index = *image_ids.entry(glint_id).or_insert_with(|| {
+            used_images.push(glint_id);
+            next
+        });
+        let start = parts.len() - glints;
+        for part in &mut parts[start..] {
+            part.pad[1] = 1.0;
+            part.pad[2] = index as f32;
         }
     }
 
@@ -832,9 +932,12 @@ fn write(
         Res<crate::renderer::frame_view::FrameView>,
         Option<Res<crate::renderer::terrain_pool::TerrainParams>>,
     ),
-    (hand_parts, hand_camera): (
+    (hand_parts, hand_camera, hand_glints, glint_materials, world_overlays): (
         Query<HandDrawn, Without<crate::renderer::screen_effects::Overlay>>,
         Query<&GlobalTransform, With<crate::renderer::hand::HandCamera>>,
+        Query<HandGlintDrawn, With<crate::renderer::hand::HandGlint>>,
+        Res<Assets<crate::renderer::glint::GlintMaterial>>,
+        Query<OverlayDrawn, OverlayFilter>,
     ),
 ) {
     if !due(&mut since, time.delta_secs()) {
@@ -1015,7 +1118,13 @@ fn write(
             crate::renderer::view_bob::current_warp(&frame_view),
             terrain_params.as_ref().map_or(1.0, |p| p.water_alpha),
         ),
-        (&hand_parts, hand_camera.iter().next().map(|c| c.to_matrix().inverse())),
+        (
+            &hand_parts,
+            hand_camera.iter().next().map(|c| c.to_matrix().inverse()),
+            &hand_glints,
+            &glint_materials,
+            &world_overlays,
+        ),
     );
     if !live {
         deliver(dir.as_deref(), "entities.bin", out);

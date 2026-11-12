@@ -111,6 +111,7 @@ pub enum Screen {
     Features,
     /// The zoom key's settings, under Features.
     ZoomSettings,
+    BlockOutlineSettings,
     /// Inventory sorting's settings, under Features.
     InventorySortSettings,
     /// The end poem and credits, after leaving the End.
@@ -204,6 +205,7 @@ settings_tree! {
     VideoSettings | Controls | ChatSettings | SkinCustomisation | ManageStorage | Features => Options,
     Language | AccessibilitySettings | OnlineSettings | DebugOptions => Options,
     MouseSettings => Controls,
+    BlockOutlineSettings => VideoSettings,
     ZoomSettings | BlockInfoSettings | InventorySortSettings | AppleSkinSettings => Features,
     FontSettings => Language,
     #[cfg(audio)]
@@ -522,6 +524,12 @@ crate::options! {
         pub entity_culling: bool = true => key("torchEntityCulling"),
         /// How glowing sign text is outlined: 0 vanilla, 1 a shadow, 2 none.
         pub sign_glow_outline: u32 = 0 => key("torchSignGlowOutline").clamp(0, 2),
+        /// Block outline width, times vanilla's (native renderer only).
+        pub outline_width: u32 = 1 => key("torchOutlineWidth").clamp(1, 10),
+        /// Block outline colour (`overlays::OUTLINE_COLORS` index).
+        pub outline_color: u32 = 0 => key("torchOutlineColor").clamp(0, 7),
+        /// Block outline opacity, percent (vanilla's is 40).
+        pub outline_opacity: u32 = 40 => key("torchOutlineOpacity").clamp(0, 100),
         /// Vanilla's Biome Blend: how far grass, foliage and water colours
         /// average, in blocks (0 to 7).
         pub biome_blend: u32 = 2 => key("biomeBlendRadius").clamp(0, 7),

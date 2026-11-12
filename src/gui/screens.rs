@@ -1739,6 +1739,7 @@ settings_screens! {
     Controls => options::draw_controls,
     MouseSettings => options::draw_mouse,
     ZoomSettings => options::draw_zoom,
+    BlockOutlineSettings => options::draw_block_outline,
     Features => options::draw_features,
     InventorySortSettings => options::draw_inventory_sort,
     AppleSkinSettings => options::draw_appleskin,

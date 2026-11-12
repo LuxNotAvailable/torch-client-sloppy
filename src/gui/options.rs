@@ -35,6 +35,13 @@ const ENTITY_SHADOWS: &str = "Entity Shadows";
 const ENTITY_CULLING: &str = "Entity Culling";
 const SIGN_GLOW_OUTLINE: &str = "Glowing Sign Outline";
 const SHADOW_OPACITY: &str = "Shadow Opacity";
+const OUTLINE_SETTINGS: &str = "Block Outline...";
+const OUTLINE_TITLE: &str = "Block Outline";
+const OUTLINE_WIDTH: &str = "Width";
+const OUTLINE_COLOR: &str = "Color";
+const OUTLINE_OPACITY: &str = "Opacity";
+const RESET_OUTLINE: &str = "Reset Block Outline";
+const OUTLINE_SLIDER_ID: u32 = 60;
 const ZOOM_TITLE: &str = "Zoom Settings";
 const ZOOM_SETTINGS: &str = "Zoom...";
 const FEATURES: &str = "Features...";
@@ -441,6 +448,45 @@ fn fov_effects_label(value: i32) -> String {
     }
 }
 
+fn outline_width_label(value: i32) -> String {
+    format!("{OUTLINE_WIDTH}: {value}x")
+}
+
+fn outline_opacity_label(value: i32) -> String {
+    format!("{OUTLINE_OPACITY}: {value}%")
+}
+
+/// The block outline's width, colour and opacity.
+pub fn draw_block_outline(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
+    let mut form = crate::gui::form::Form::new(p, ctx, OUTLINE_TITLE, 3, OUTLINE_SLIDER_ID);
+    let o = &mut state.options;
+    form.slider(&mut o.outline_width, 1, 10, outline_width_label);
+    let colors = crate::renderer::overlays::OUTLINE_COLORS;
+    let color = colors[(o.outline_color as usize).min(colors.len() - 1)].0;
+    if form.button(&format!("{OUTLINE_COLOR}: {color}")) {
+        o.outline_color = (o.outline_color + 1) % colors.len() as u32;
+        form.mark_changed();
+    }
+    form.slider(&mut o.outline_opacity, 0, 100, outline_opacity_label);
+    form.new_row();
+    if form.wide_button(RESET_OUTLINE) {
+        reset_outline(o);
+        form.mark_changed();
+    }
+    if form.finish() {
+        crate::gui::save_options(&state.options);
+    }
+    if draw_done(p, ctx) {
+        state.nav = Some(Screen::VideoSettings);
+    }
+}
+
+fn reset_outline(o: &mut crate::gui::GuiOptions) {
+    o.outline_width = 1;
+    o.outline_color = 0;
+    o.outline_opacity = 40;
+}
+
 fn shadow_opacity_label(value: i32) -> String {
     format!("{SHADOW_OPACITY}: {value}%")
 }
@@ -730,6 +776,7 @@ fn reset_video_options(o: &mut crate::gui::GuiOptions) {
     o.view_bobbing = true;
     o.entity_shadows = true;
     o.shadow_opacity = 50;
+    reset_outline(o);
     o.clouds = if cfg!(feature = "mobile_ui") {
         crate::renderer::clouds::CloudStatus::Fast
     } else {
@@ -1147,6 +1194,9 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         if f.button(&format!("{SIGN_GLOW_OUTLINE}: {}", outline.caption())) {
             o.sign_glow_outline = (o.sign_glow_outline + 1) % 3;
             f.mark_changed();
+        }
+        if f.button(OUTLINE_SETTINGS) {
+            state.nav = Some(Screen::BlockOutlineSettings);
         }
         #[cfg(feature = "shader_support")]
         if f.wide_button(crate::gui::shaderpacks::SHADER_PACKS) {

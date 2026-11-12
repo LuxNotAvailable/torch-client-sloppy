@@ -154,6 +154,9 @@ struct Live {
     panorama: Option<super::panorama::PanoramaScene>,
     /// FXAA over a pack's frame (the pack draws into its scene image).
     pack_post: Option<super::post::PostPass>,
+    /// The shader render scale (percent): packs draw at that share of the
+    /// window, final scaling up.
+    pack_scale: u32,
     /// The game's vsync option, and its anti-aliasing as the post pass's.
     vsync: bool,
     post: super::post::Settings,
@@ -212,6 +215,7 @@ fn setup(world: &mut World) -> Result<Live, SetupError> {
         shots: Vec::new(),
         readbacks: Vec::new(),
         vsync: true,
+        pack_scale: 100,
         post: Default::default(),
         pack_post: None,
         frame: 0,
@@ -231,6 +235,7 @@ struct FrameInput {
     shots: Vec<Entity>,
     post: super::post::Settings,
     vsync: bool,
+    pack_scale: u32,
 }
 
 /// The render thread (8.5): it owns the renderer and draws frame N while
@@ -354,6 +359,9 @@ fn draw_frame(world: &mut World, mut last: Local<Option<std::time::Instant>>) {
         world.entity_mut(e).insert(NativeCapture);
     }
     // The game's video options.
+    let pack_scale = world
+        .get_resource::<crate::gui::GuiState>()
+        .map_or(100, |g| g.options.pack_render_scale);
     let (post, vsync) = match world.get_resource::<crate::gui::GuiState>() {
         Some(gui) => {
             use crate::renderer::antialias::{AaMode, SSAA_SCALES};
@@ -381,6 +389,7 @@ fn draw_frame(world: &mut World, mut last: Local<Option<std::time::Instant>>) {
         shots,
         post,
         vsync,
+        pack_scale,
     };
     let dt = world.get_resource::<Time>().map_or(0.0, |t| t.delta_secs());
     let Some(mut thread) = world.get_non_send_resource_mut::<RenderThread>() else {
@@ -449,6 +458,7 @@ impl Live {
             self.vsync = f.vsync;
             self.stale = true;
         }
+        self.pack_scale = f.pack_scale;
         self.figure.view = f.figure_view;
         self.menu = f.menu;
         let timed = Timed::new(3);
@@ -725,7 +735,12 @@ impl Live {
             self.pack_checked = Some((now, name));
         }
         let wanted = self.pack_checked.as_ref().and_then(|(_, n)| n.clone());
-        let extent = self.swapchain.as_ref().map(|s| s.extent);
+        // The pack's targets at the render scale; final fills the window.
+        let scale = self.pack_scale.clamp(1, 100);
+        let extent = self.swapchain.as_ref().map(|s| vk::Extent2D {
+            width: (s.extent.width * scale / 100).max(1),
+            height: (s.extent.height * scale / 100).max(1),
+        });
         let current = self.pack.as_ref().map(|(n, _, e)| (n.clone(), *e));
         if current.as_ref().map(|(n, e)| (Some(n.clone()), Some(*e))) == Some((wanted.clone(), extent))
             || (current.is_none() && wanted.is_none())
@@ -932,7 +947,8 @@ impl Live {
                 Ok(()) => drew_world = true,
                 Err(e) => error!("native renderer: terrain: {}", e.0),
             }
-            if let Some((_, pack, _)) = &mut self.pack {
+            if let Some((_, pack, pack_extent)) = &mut self.pack {
+                let pack_extent = *pack_extent;
                 if let Some(inputs) = self.pack_inputs {
                     pack.inputs = inputs;
                 }
@@ -940,7 +956,7 @@ impl Live {
                     bevy::math::Mat4::look_to_rh(camera.eye, camera.forward(), bevy::math::Vec3::Y).inverse();
                 let pack_view = (world_from_view, camera.fov.to_radians());
                 let seconds = self.started.elapsed().as_secs_f32();
-                if let Some((light, eye)) = pack.begin_frame(pack_view, extent, seconds)
+                if let Some((light, eye)) = pack.begin_frame(pack_view, pack_extent, seconds)
                     && let Err(e) = terrain.record_shadow_cull(
                         &self.ctx,
                         &self.memory,
@@ -956,6 +972,7 @@ impl Live {
                     error!("native renderer: shadow cull: {}", e.0);
                 }
                 let geometry = terrain.pack_geometry();
+                let set = self.bindless.set;
                 // With FXAA (the game's only anti-aliasing under a pack) the
                 // pack draws into the post pass's scene, which FXAA reads.
                 let mut target = (image, view);
@@ -985,12 +1002,17 @@ impl Live {
                     slot,
                     seconds,
                     Some(&geometry),
+                    Some(&mut |graph: &mut super::graph::Graph, o: super::pack::screen::Overlay| {
+                        terrain.record_pack_overlays(&self.ctx, set, &self.pipelines, graph, o, slot);
+                    }),
                 );
                 if target.0 != image
                     && let Some(post) = &self.pack_post
                 {
                     post.record(&self.ctx, &self.bindless, &self.pipelines, &mut graph, (image, view), extent, 0, true);
                 }
+                // The screen overlays over the pack's frame, as without one.
+                terrain.record_overlays(&self.ctx, &self.bindless, &self.pipelines, &mut graph, (image, view), extent, rotation, slot);
             }
         }
         let figure = match self.figure.record(

@@ -444,12 +444,14 @@ fn setup(
         &mut commands,
         &mut meshes,
         outline_mesh(&[[0.0, 0.0, 0.0, 1.0, 1.0, 1.0]]),
-        outline_mat,
+        outline_mat.clone(),
         BlockOutlineMarker,
     );
     commands.insert_resource(BlockOutline {
         entity,
         mesh,
+        material: outline_mat,
+        style: None,
         shown: None,
     });
 
@@ -2879,6 +2881,7 @@ pub fn run(
             Update,
             (
                 update_block_outline,
+                super::overlays::update_outline_style,
                 update_chunk_borders,
                 super::overlays::update_hitboxes,
                 update_break_overlay,

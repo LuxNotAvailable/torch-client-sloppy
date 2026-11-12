@@ -29,6 +29,9 @@ struct Pipes {
     clouds: vk::Pipeline,
     screen: vk::Pipeline,
     hand: vk::Pipeline,
+    hand_glint: vk::Pipeline,
+    lines: vk::Pipeline,
+    cracks: vk::Pipeline,
 }
 
 /// One part's draw: its pipeline (0 blended sky, 1 added sky, 2 clouds,
@@ -55,6 +58,10 @@ pub struct EnvScene {
     module: vk::ShaderModule,
     pipes: Option<Pipes>,
     pending: Option<Pending>,
+    /// Lines and cracks for a pack's targets: format, building, built.
+    pack_pipes: Option<(vk::Format, Option<Pending>, Option<[vk::Pipeline; 2]>)>,
+    /// Pack pipelines of an old format, freed with the scene.
+    stale_pipes: Vec<vk::Pipeline>,
     parts: (Buffer, u32),
     vertices: (Buffer, u32),
     indices: Buffer,
@@ -114,6 +121,8 @@ impl EnvScene {
             let mut scene = Self::build(ctx, memory, bindless, env, eye, atlas_index, module)?;
             scene.pipes = pipes;
             scene.pending = pending;
+            scene.pack_pipes = old.pack_pipes.take();
+            scene.stale_pipes = std::mem::take(&mut old.stale_pipes);
             return Ok(scene);
         }
         let module = pipelines.module(ctx, super::shaders::ENV)?;
@@ -155,6 +164,12 @@ impl EnvScene {
                     }
                     s
                 },
+                // Held items' glint: added over the hand, at its depth.
+                spec(c"hand_glint", Some(vk::CompareOp::GREATER_OR_EQUAL), true, Some(DEPTH_FORMAT)),
+                // World lines (outline, hitboxes, borders), as quads.
+                spec(c"world_lines", Some(vk::CompareOp::GREATER_OR_EQUAL), false, Some(DEPTH_FORMAT)),
+                // The breaking cracks, darkening the block they lie on.
+                spec(c"world_cracks", Some(vk::CompareOp::GREATER_OR_EQUAL), false, Some(DEPTH_FORMAT)),
             ],
         );
         let mut scene = Self::build(ctx, memory, bindless, env, eye, atlas_index, module)?;
@@ -178,7 +193,16 @@ impl EnvScene {
         let mut index_bytes = Vec::new();
         let mut ranges = Vec::new();
         let (mut base, mut first) = (0u32, 0u32);
-        for (verts, indices, _) in &env.meshes {
+        let lines: std::collections::HashSet<u32> =
+            env.parts.iter().filter(|p| p.kind == 4).map(|p| p.mesh).collect();
+        for (k, (verts, indices, _)) in env.meshes.iter().enumerate() {
+            let quads;
+            let (verts, indices) = if lines.contains(&(k as u32)) {
+                quads = line_quads(verts, indices);
+                (&quads.0, &quads.1)
+            } else {
+                (verts, indices)
+            };
             ranges.push((first, indices.len() as u32, base));
             vertex_bytes.extend_from_slice(bytemuck::cast_slice(verts));
             index_bytes.extend_from_slice(bytemuck::cast_slice(indices));
@@ -192,6 +216,9 @@ impl EnvScene {
             .filter_map(|(i, p)| {
                 let (first, count, base) = *ranges.get(p.mesh as usize)?;
                 let pipe = match (p.kind, p.alpha) {
+                    (4, _) => 6,
+                    (5, _) => 7,
+                    (3, _) if p.pad[1] > 0.5 => 5,
                     (3, _) => 4,
                     (2, _) => 3,
                     (1, _) => 2,
@@ -266,6 +293,13 @@ impl EnvScene {
                     *t -= e;
                 }
             }
+            // A glint part names its glint texture in pad[2]: as the bindless
+            // index's bits for the shader.
+            if part.pad[1] > 0.5
+                && let Some((_, index, _, _)) = textures.get(part.pad[2] as usize)
+            {
+                part.pad[2] = f32::from_bits(*index);
+            }
             if part.texture == super::entity_dump::TEXTURE_ATLAS {
                 part.texture = atlas_index;
             } else if let Some((_, index, _, _)) = textures.get(part.texture as usize) {
@@ -277,9 +311,10 @@ impl EnvScene {
             .filter(|p| p.kind == 0 && p.pad[0] > 0.0)
             .filter_map(|p| Some((*p, *ranges.get(p.mesh as usize)?)))
             .collect();
+        // A pack draws the hand itself; the glint parts are the native draw's.
         let hand = parts
             .iter()
-            .filter(|p| p.kind == 3)
+            .filter(|p| p.kind == 3 && p.pad[1] < 0.5)
             .filter_map(|p| Some((*p, *ranges.get(p.mesh as usize)?)))
             .collect();
         let parts_bytes: &[u8] = bytemuck::cast_slice(&parts);
@@ -340,6 +375,8 @@ impl EnvScene {
             module,
             pipes: None,
             pending: None,
+            pack_pipes: None,
+            stale_pipes: Vec::new(),
             parts: parts_buffer,
             vertices,
             indices,
@@ -511,6 +548,9 @@ impl EnvScene {
                 clouds: built[2],
                 screen: built[3],
                 hand: built[4],
+                hand_glint: built[5],
+                lines: built[6],
+                cracks: built[7],
             });
             self.pending = None;
         }
@@ -621,7 +661,28 @@ impl EnvScene {
         view_proj: [[f32; 4]; 4],
         stage: u8,
     ) {
-        let Some(pipes) = self.pipes else { return };
+        self.draw_with(ctx, cmd, pipelines, view_index, view_proj, stage, None, [0.0; 2]);
+    }
+
+    /// `draw`, with the lines and cracks swapped for `overlay` (a pack's)
+    /// and `size` the viewport (for line widths).
+    #[allow(clippy::too_many_arguments, reason = "one draw's whole context")]
+    fn draw_with(
+        &self,
+        ctx: &Context,
+        cmd: vk::CommandBuffer,
+        pipelines: &Pipelines,
+        view_index: u32,
+        view_proj: [[f32; 4]; 4],
+        stage: u8,
+        overlay: Option<[vk::Pipeline; 2]>,
+        size: [f32; 2],
+    ) {
+        let Some(mut pipes) = self.pipes else { return };
+        if let Some([lines, cracks]) = overlay {
+            pipes.lines = lines;
+            pipes.cracks = cracks;
+        }
         let device = &ctx.device;
         push(
             ctx,
@@ -630,7 +691,8 @@ impl EnvScene {
             &Push {
                 ids: [self.parts.1, 0, self.vertices.1, 0],
                 more: [view_index, 0, 0, 0],
-                params: [0.0; 4],
+                // Seconds since start, for the glint's scroll.
+                params: [started().elapsed().as_secs_f32(), size[0], size[1], 0.0],
                 view_proj,
             },
         );
@@ -644,7 +706,10 @@ impl EnvScene {
                     1 => pipes.sky_add,
                     2 => pipes.clouds,
                     3 => pipes.screen,
-                    _ => pipes.hand,
+                    4 => pipes.hand,
+                    5 => pipes.hand_glint,
+                    6 => pipes.lines,
+                    _ => pipes.cracks,
                 };
                 device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
                 device.cmd_draw_indexed(cmd, d.count, 1, d.first, d.base, d.part);
@@ -676,6 +741,85 @@ impl EnvScene {
         self.draw(ctx, cmd, pipelines, view_index, view_proj, 1);
     }
 
+    /// The world's lines and breaking cracks, after the translucent layer
+    /// and the clouds, before the hand.
+    pub fn draw_world_overlays(
+        &self,
+        ctx: &Context,
+        cmd: vk::CommandBuffer,
+        pipelines: &Pipelines,
+        view_index: u32,
+        view_proj: [[f32; 4]; 4],
+        extent: vk::Extent2D,
+    ) {
+        let size = [extent.width as f32, extent.height as f32];
+        self.draw_with(ctx, cmd, pipelines, view_index, view_proj, 5, None, size);
+        self.draw_with(ctx, cmd, pipelines, view_index, view_proj, 6, None, size);
+    }
+
+    /// Whether there are lines or cracks to draw.
+    pub fn has_world_overlays(&self) -> bool {
+        self.draws.iter().any(|d| d.pipe >= 6)
+    }
+
+    /// Lines and cracks for a pack's `color` format (standard depth), once
+    /// built; starts building them on first ask.
+    pub fn pack_overlay_pipes(&mut self, ctx: &Context, pipelines: &Pipelines, color: vk::Format) -> Option<[vk::Pipeline; 2]> {
+        if self.pack_pipes.as_ref().is_some_and(|(f, ..)| *f != color)
+            && let Some((_, pending, built)) = self.pack_pipes.take()
+        {
+            self.stale_pipes.extend(built.into_iter().flatten());
+            if let Some(Ok((b, _))) = pending.and_then(|mut p| p.wait()) {
+                self.stale_pipes.extend(b);
+            }
+        }
+        if self.pack_pipes.is_none() {
+            let spec = |fragment: &std::ffi::CStr| {
+                Spec::Graphics(GraphicsSpec {
+                    module: self.module,
+                    vertex: c"env_vertex".to_owned(),
+                    fragment: fragment.to_owned(),
+                    color: vec![color],
+                    depth: Some(super::pack::targets::DEPTH_FORMAT),
+                    depth_test: Some(vk::CompareOp::LESS_OR_EQUAL),
+                    depth_write: false,
+                    cull: vk::CullModeFlags::NONE,
+                    topology: vk::PrimitiveTopology::TRIANGLE_LIST,
+                    blend: true,
+                    additive: false,
+                    fragment_module: None,
+                })
+            };
+            let pending = pipelines.build_on_worker(ctx, vec![spec(c"world_lines"), spec(c"world_cracks")]);
+            self.pack_pipes = Some((color, Some(pending), None));
+        }
+        let (_, pending, built) = self.pack_pipes.as_mut()?;
+        if built.is_none()
+            && let Some(Ok((b, _))) = pending.as_mut().and_then(|p| p.take())
+        {
+            *built = Some([b[0], b[1]]);
+            *pending = None;
+        }
+        *built
+    }
+
+    /// Lines and cracks into a pack's targets (`pack_overlay_pipes`).
+    #[allow(clippy::too_many_arguments, reason = "one draw's whole context")]
+    pub fn draw_pack_overlays(
+        &self,
+        ctx: &Context,
+        cmd: vk::CommandBuffer,
+        pipelines: &Pipelines,
+        view_index: u32,
+        view_proj: [[f32; 4]; 4],
+        extent: vk::Extent2D,
+        pipes: [vk::Pipeline; 2],
+    ) {
+        let size = [extent.width as f32, extent.height as f32];
+        self.draw_with(ctx, cmd, pipelines, view_index, view_proj, 5, Some(pipes), size);
+        self.draw_with(ctx, cmd, pipelines, view_index, view_proj, 6, Some(pipes), size);
+    }
+
     /// The first-person hand, last in the terrain pass: depth cleared, then
     /// drawn with the hand camera's `projection` (clip from view).
     pub fn draw_hand(
@@ -687,7 +831,7 @@ impl EnvScene {
         projection: [[f32; 4]; 4],
         extent: vk::Extent2D,
     ) {
-        if self.pipes.is_none() || !self.draws.iter().any(|d| d.pipe == 4) {
+        if self.pipes.is_none() || !self.draws.iter().any(|d| d.pipe >= 4) {
             return;
         }
         // SAFETY: inside a rendering with a depth attachment of `extent`.
@@ -709,6 +853,7 @@ impl EnvScene {
             );
         }
         self.draw(ctx, cmd, pipelines, view_index, projection, 3);
+        self.draw(ctx, cmd, pipelines, view_index, projection, 4);
     }
 
     /// The screen overlays, in a pass of their own over the finished
@@ -789,10 +934,17 @@ impl EnvScene {
     pub fn destroy(mut self, ctx: &Context, memory: &Memory) {
         let mut pipelines: Vec<vk::Pipeline> = self
             .pipes
-            .map(|p| vec![p.sky_blend, p.sky_add, p.clouds, p.screen, p.hand])
+            .map(|p| vec![p.sky_blend, p.sky_add, p.clouds, p.screen, p.hand, p.hand_glint, p.lines, p.cracks])
             .unwrap_or_default();
         if let Some(Ok((built, _))) = self.pending.as_mut().and_then(|p| p.wait()) {
             pipelines.extend(built);
+        }
+        pipelines.append(&mut self.stale_pipes);
+        if let Some((_, pending, built)) = self.pack_pipes.take() {
+            pipelines.extend(built.into_iter().flatten());
+            if let Some(Ok((b, _))) = pending.and_then(|mut p| p.wait()) {
+                pipelines.extend(b);
+            }
         }
         // SAFETY: the caller idles the device first.
         unsafe {
@@ -836,4 +988,35 @@ fn upload(
     buffer.write(0, bytes);
     let index = bindless.add_buffer(ctx, buffer.raw).ok_or_else(full)?;
     Ok((buffer, index))
+}
+
+/// When the scenes started: the glint's clock.
+fn started() -> std::time::Instant {
+    static STARTED: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    *STARTED.get_or_init(std::time::Instant::now)
+}
+
+/// A line list as quads the vertex shader widens: per segment four corners,
+/// each with the other end in `normal` and its side in `uv.x`.
+fn line_quads(
+    verts: &[super::entity_dump::EntityVertex],
+    indices: &[u32],
+) -> (Vec<super::entity_dump::EntityVertex>, Vec<u32>) {
+    let mut out = Vec::with_capacity(indices.len() * 2);
+    let mut quads = Vec::with_capacity(indices.len() * 3);
+    for pair in indices.chunks_exact(2) {
+        let (Some(a), Some(b)) = (verts.get(pair[0] as usize), verts.get(pair[1] as usize)) else {
+            continue;
+        };
+        let at = out.len() as u32;
+        // Sides flip with the direction, so b's -1 lies by a's +1.
+        for (v, other, side) in [(a, b, 1.0), (a, b, -1.0), (b, a, -1.0), (b, a, 1.0)] {
+            let mut c = *v;
+            c.normal = other.pos;
+            c.uv = [side, 0.0];
+            out.push(c);
+        }
+        quads.extend([at, at + 1, at + 2, at + 2, at + 1, at + 3]);
+    }
+    (out, quads)
 }

@@ -1002,6 +1002,7 @@ impl PackScreen {
         slot: usize,
         seconds: f32,
         terrain: Option<&crate::vk::terrain::PackGeometry>,
+        mut overlay: Option<&mut dyn FnMut(&mut Graph, Overlay)>,
     ) {
         let device = &ctx.device;
         let images = self.all_images();
@@ -1280,6 +1281,33 @@ impl PackScreen {
                     },
                 );
             }
+            // The world's lines and cracks, into the colortex0 the final
+            // pass reads, against depthtex0.
+            if pass.attachments.is_none()
+                && pass.compute.is_none()
+                && let Some(draw) = overlay.take()
+                && let Some((pair, format)) = &self.targets.color[0]
+                && let Some(color) = pair.iter().find(|i| pass.sampled.contains(&i.raw))
+            {
+                // Pack clip: depth 0..1, eye-relative (targets are stored
+                // GL-style, bottom row first).
+                let fix = Mat4::from_cols(
+                    bevy::math::Vec4::new(1.0, 0.0, 0.0, 0.0),
+                    bevy::math::Vec4::new(0.0, 1.0, 0.0, 0.0),
+                    bevy::math::Vec4::new(0.0, 0.0, 0.5, 0.0),
+                    bevy::math::Vec4::new(0.0, 0.0, 0.5, 1.0),
+                );
+                let view_proj = fix * values.camera_clip() * Mat4::from_translation(-values.camera());
+                draw(
+                    graph,
+                    Overlay {
+                        color: (color.raw, color.view, *format),
+                        depth: (self.targets.depth.raw, self.targets.depth.view),
+                        extent: self.targets.size,
+                        view_proj,
+                    },
+                );
+            }
             for &(n, h) in &pass.mipmaps {
                 if let Some((pair, _)) = &self.targets.color[n as usize] {
                     record_mipmaps(device, graph, &pair[h]);
@@ -1393,7 +1421,10 @@ impl PackScreen {
                 }
                 None => None,
             };
-            let (pipeline, base, extent) = (pass.pipeline, pass.base, pass.extent);
+            // Final draws the whole output, whatever size the pack's targets
+            // are (its render scale): it samples them by coordinate.
+            let extent = if pass.attachments.is_none() { output.2 } else { pass.extent };
+            let (pipeline, base) = (pass.pipeline, pass.base);
             let entity_pass = pass.entity;
             let hand_pass = pass.hand;
             let sky_pass = pass.sky;
@@ -1658,6 +1689,14 @@ impl PackScreen {
         }
         self.targets.destroy(ctx, memory);
     }
+}
+
+/// Where the world's lines and cracks go under a pack.
+pub(crate) struct Overlay {
+    pub color: (vk::Image, vk::ImageView, vk::Format),
+    pub depth: (vk::Image, vk::ImageView),
+    pub extent: vk::Extent2D,
+    pub view_proj: Mat4,
 }
 
 fn layers(aspect: vk::ImageAspectFlags) -> vk::ImageSubresourceLayers {
