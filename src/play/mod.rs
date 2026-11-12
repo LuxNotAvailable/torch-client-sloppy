@@ -13,6 +13,7 @@ pub(crate) mod inventory_sort;
 #[cfg(audio)]
 pub(crate) mod landing;
 pub(crate) mod looking;
+pub(crate) mod minecart;
 pub(crate) mod mob_effects;
 #[cfg(audio)]
 pub(crate) mod movement_sounds;

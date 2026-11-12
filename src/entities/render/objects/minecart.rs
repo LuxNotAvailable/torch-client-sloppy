@@ -32,7 +32,14 @@ fn texture(_st: &EntityState) -> TexturePath {
 fn root(st: &EntityState) -> RootPose {
     let [jitter_x, jitter_y, jitter_z] = jitter(st.id);
 
-    let mut extra_rotation = Quat::from_rotation_z((-st.x_rot).to_radians());
+    // `oldRender`: sat on the rail, turned and tilted along it.
+    let (on_rail, yaw, pitch) = match on_rail(st) {
+        Some((offset, yaw, pitch)) if !yaw.is_nan() => (offset, yaw, pitch),
+        Some((offset, ..)) => (offset, st.body_rot, st.x_rot),
+        None => (Vec3::ZERO, st.body_rot, st.x_rot),
+    };
+
+    let mut extra_rotation = Quat::from_rotation_z((-pitch).to_radians());
     let hurt = st.extras.hurt_time;
     if hurt > 0.0 {
         let degrees = hurt.sin() * hurt * st.extras.damage / 10.0 * st.extras.hurt_dir;
@@ -40,13 +47,22 @@ fn root(st: &EntityState) -> RootPose {
     }
 
     RootPose {
-        world_offset: Vec3::new(jitter_x, jitter_y + 0.375, jitter_z),
-        rotation: Quat::from_rotation_y((180.0 - st.body_rot).to_radians()),
+        world_offset: on_rail + Vec3::new(jitter_x, jitter_y + 0.375, jitter_z),
+        rotation: Quat::from_rotation_y((180.0 - yaw).to_radians()),
         scale: 1.0,
         extra_rotation,
         extra_offset: Vec3::ZERO,
         hook: hook_for(mirror()),
     }
+}
+
+/// The rail under the cart's drawn position: offset onto it, yaw, pitch.
+fn on_rail(st: &EntityState) -> Option<(Vec3, f32, f32)> {
+    let slot = crate::client::tracking::current_world().try_lock().ok()?;
+    let world = crate::client::tracking::read_world(slot.as_ref()?);
+    let [x, y, z] = st.pos.map(f64::from);
+    let (offset, yaw, pitch) = crate::play::minecart::rail_render_pose(&world, x, y, z)?;
+    Some((Vec3::new(offset.x as f32, offset.y as f32, offset.z as f32), yaw, pitch))
 }
 
 fn jitter(id: i32) -> [f32; 3] {

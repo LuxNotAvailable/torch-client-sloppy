@@ -397,6 +397,13 @@ fn nearby_entities(bot: &Client, origin: AzVec3, cap: usize) -> Vec<(AzEntity, A
     all
 }
 
+/// The boat, mount or minecart this player moves, as the client has it.
+fn driven_pose(id: i32) -> Option<(AzVec3, f32)> {
+    crate::play::boat::driven_pose(id)
+        .or_else(|| crate::play::riding::driven_pose(id))
+        .or_else(|| crate::play::minecart::predicted_pose(id))
+}
+
 fn is_bare_object(kind: azalea_registry::builtin::EntityKind) -> bool {
     use azalea_registry::builtin::EntityKind;
     matches!(
@@ -534,6 +541,13 @@ pub(crate) fn collect_entities(
             );
             input.y_rot = y_rot;
             input.x_rot = x_rot;
+            // As below: a driven or predicted vehicle goes where the client has it.
+            let driven = driven_pose(id);
+            if let Some((p, yaw)) = driven {
+                input.pos = [p.x, p.y, p.z];
+                input.y_rot = yaw;
+            }
+            input.local_authority = driven.is_some();
             input.head_rot = heads.get(&id).copied();
             input.velocity = velocity_map.get(&id).copied();
             input.on_ground = grounded.get(&id).copied().unwrap_or(false);
@@ -1057,8 +1071,7 @@ pub(crate) fn collect_entities(
         let playing_dead = living && flag::<metadata::PlayingDead>(eref);
 
         // The boat or mount this player steers goes where the client moved it.
-        let driven =
-            crate::play::boat::driven_pose(id).or_else(|| crate::play::riding::driven_pose(id));
+        let driven = driven_pose(id);
         let (now_pos, y_rot) = match driven {
             Some((pos, yaw)) => ([pos.x, pos.y, pos.z], yaw),
             None => (now_pos, y_rot),

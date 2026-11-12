@@ -133,6 +133,7 @@ pub(crate) fn reset(blocking: bool) {
         }
     }
     crate::play::boat::reset();
+    crate::play::minecart::reset();
     crate::client::tracking::LOCAL_VEHICLE_ID.store(-1, Ordering::Relaxed);
 }
 
@@ -293,6 +294,7 @@ impl Plugin for RidingPlugin {
                     .in_set(PhysicsSystems)
                     .after(azalea::physics::ai_step)
                     .before(travel),
+                crate::play::minecart::predict.after(PhysicsSystems).before(ride_post_travel),
                 ride_post_travel
                     .after(PhysicsSystems)
                     .before(azalea::movement::send_position),
@@ -590,8 +592,10 @@ fn ride_post_travel(
         return;
     };
 
-    let seat_pos =
-        **mount_position + passenger_attachment(**kind, mount_direction.y_rot(), index, riders);
+    // A predicted minecart seats its rider where it's shown.
+    let (mount_pos, mount_yaw) = crate::play::minecart::predicted_pose(vehicle_id)
+        .unwrap_or((**mount_position, mount_direction.y_rot()));
+    let seat_pos = mount_pos + passenger_attachment(**kind, mount_yaw, index, riders);
     physics.velocity = Vec3::ZERO;
     **position = Vec3 {
         x: seat_pos.x,
