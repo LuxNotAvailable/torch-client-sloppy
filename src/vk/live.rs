@@ -385,6 +385,13 @@ fn draw_frame(world: &mut World, mut last: Local<Option<std::time::Instant>>) {
         (false, false) => (None, None),
         _ => gui_textures(world),
     };
+    // GUI atlas writes (server icons, banner patterns), for the GUI pass.
+    if let Some(mut writes) = world.get_resource_mut::<crate::gui::atlas_writes::AtlasWrites>()
+        && !writes.pending.is_empty()
+    {
+        let taken = std::mem::take(&mut writes.pending);
+        GUI_ATLAS_WRITES.lock().unwrap().extend(taken);
+    }
     // Bevy's render world would take these; nothing does now.
     if let Some(ops) = world.get_resource::<crate::renderer::terrain_pool::TerrainOps>() {
         ops.0.lock().clear();
@@ -607,6 +614,10 @@ fn world_camera(world: &mut World) -> Option<Camera> {
 }
 
 type TextureData = (u32, u32, vk::Format, Vec<u8>);
+
+/// Atlas regions written after its upload, copied in once the atlas exists.
+static GUI_ATLAS_WRITES: std::sync::Mutex<Vec<crate::gui::atlas_writes::AtlasWrite>> =
+    std::sync::Mutex::new(Vec::new());
 
 /// The GUI's textures as the main world holds them: atlas and unihex font,
 /// then the item glint (the game assets' `GLINT_ITEM`) once it has loaded.
@@ -1435,6 +1446,8 @@ impl GuiPass {
         let device = &ctx.device;
         // Uploads: the white texel once, the GUI textures once they exist.
         let mut uploads: Vec<(Buffer, vk::Image, vk::Extent2D)> = Vec::new();
+        // Region writes into the atlas, after any whole-image upload.
+        let mut patches: Vec<(Buffer, vk::Image, vk::Offset2D, vk::Extent2D)> = Vec::new();
         // Textures already uploaded sit sampled since their first frame.
         let sampled = vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
         if self.white_pending.is_none() {
@@ -1533,15 +1546,48 @@ impl GuiPass {
             uploads.push((staging, image.raw, extent));
             self.glint = Some((image, index));
         }
+        if let Some([(atlas, _), _]) = &self.textures {
+            let writes = std::mem::take(&mut *GUI_ATLAS_WRITES.lock().unwrap());
+            for w in writes {
+                let mut staging = memory.buffer(
+                    ctx,
+                    "gui atlas write",
+                    w.pixels.len() as u64,
+                    vk::BufferUsageFlags::TRANSFER_SRC,
+                    MemoryLocation::CpuToGpu,
+                )?;
+                staging.write(0, &w.pixels);
+                patches.push((
+                    staging,
+                    atlas.raw,
+                    vk::Offset2D {
+                        x: w.region.x as i32,
+                        y: w.region.y as i32,
+                    },
+                    vk::Extent2D {
+                        width: w.region.w,
+                        height: w.region.h,
+                    },
+                ));
+            }
+        }
+        // Whole images at the origin, then the patches over them.
+        let uploads: Vec<(Buffer, vk::Image, vk::Offset2D, vk::Extent2D)> = uploads
+            .into_iter()
+            .map(|(b, i, e)| (b, i, vk::Offset2D::default(), e))
+            .chain(patches)
+            .collect();
         if !uploads.is_empty() {
-            let uses: Vec<_> = uploads
-                .iter()
-                .map(|(_, i, _)| (*i, Use::TransferDst))
-                .collect();
+            let mut uses: Vec<(vk::Image, Use)> = Vec::new();
+            for (_, image, ..) in &uploads {
+                if !uses.iter().any(|(i, _)| i == image) {
+                    uses.push((*image, Use::TransferDst));
+                }
+            }
             graph.pass("gui uploads", &uses, &[], |cmd| unsafe {
                 // SAFETY: copies into images in TRANSFER_DST, each staging
                 // buffer sized for its image.
-                for (staging, image, extent) in &uploads {
+                for (staging, image, offset, extent) in &uploads {
                     device.cmd_copy_buffer_to_image(
                         cmd,
                         staging.raw,
@@ -1553,6 +1599,11 @@ impl GuiPass {
                                 mip_level: 0,
                                 base_array_layer: 0,
                                 layer_count: 1,
+                            },
+                            image_offset: vk::Offset3D {
+                                x: offset.x,
+                                y: offset.y,
+                                z: 0,
                             },
                             image_extent: vk::Extent3D {
                                 width: extent.width,

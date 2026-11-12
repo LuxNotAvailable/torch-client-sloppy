@@ -790,6 +790,22 @@ impl EntityAnim {
         self.is_living
     }
 
+    /// Last tick's and this tick's position, and the yaw.
+    pub(crate) fn pose_pair(&self) -> ([f64; 3], [f64; 3], f32) {
+        (self.pos_old, self.pos, self.y_rot)
+    }
+
+    pub(crate) fn is_baby(&self) -> bool {
+        self.sampled.shared.is_baby
+    }
+
+    /// `positionRider`: seated `offset` from its vehicle's old and new spot.
+    pub(crate) fn seat(&mut self, vehicle_old: [f64; 3], vehicle: [f64; 3], offset: [f64; 3]) {
+        let add = |p: [f64; 3]| [p[0] + offset[0], p[1] + offset[1], p[2] + offset[2]];
+        self.pos_old = add(vehicle_old);
+        self.pos = add(vehicle);
+    }
+
     pub fn set_vehicle_body_rot(&mut self, pair: Option<(f32, f32)>) {
         self.vehicle_body_rot = pair;
     }

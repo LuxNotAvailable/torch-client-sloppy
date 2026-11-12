@@ -397,6 +397,70 @@ fn nearby_entities(bot: &Client, origin: AzVec3, cap: usize) -> Vec<(AzEntity, A
     all
 }
 
+/// `Entity.positionRider` for fed riders on fed vehicles: the vehicle's
+/// seat point (turned with it) less the rider's own attachment. Riders on
+/// riders go after their vehicle, so jockey stacks line up.
+fn seat_riders(
+    anims: &mut bevy::platform::collections::HashMap<i32, crate::entities::feed::EntityAnim>,
+    mounts: &HashMap<i32, i32>,
+) {
+    use crate::entities::attachments::{passenger_points, riding_offset};
+    if mounts.is_empty() {
+        return;
+    }
+    let passengers = passengers().lock().unwrap();
+    let local = crate::client::tracking::local_entity_id();
+    let depth = |mut id: i32| {
+        let mut d = 0;
+        while let Some(v) = mounts.get(&id).filter(|_| d < 8) {
+            id = *v;
+            d += 1;
+        }
+        d
+    };
+    let mut order: Vec<(i32, i32)> = mounts
+        .iter()
+        .filter(|(rider, _)| **rider != local)
+        .map(|(r, v)| (*r, *v))
+        .collect();
+    order.sort_by_key(|(r, _)| depth(*r));
+    for (rider, vehicle) in order {
+        let Some(v) = anims.get(&vehicle) else {
+            continue;
+        };
+        let (old, now, yaw) = v.pose_pair();
+        let scale = if v.is_baby() { 0.5 } else { 1.0 };
+        let index = passengers
+            .get(&vehicle)
+            .and_then(|list| list.iter().position(|id| *id == rider))
+            .unwrap_or(0);
+        let point = match passenger_points(v.kind) {
+            Some(points) => points[index.min(points.len() - 1)],
+            None => [
+                0.0,
+                azalea::entity::dimensions::EntityDimensions::from(v.kind).height as f64,
+                0.0,
+            ],
+        };
+        // `getClamped`: turned by the vehicle's yaw, scaled with it.
+        let (sin, cos) = (
+            (-yaw).to_radians().sin() as f64,
+            (-yaw).to_radians().cos() as f64,
+        );
+        let seat = [
+            (point[0] * cos + point[2] * sin) * scale,
+            point[1] * scale,
+            (point[2] * cos - point[0] * sin) * scale,
+        ];
+        let Some(r) = anims.get_mut(&rider) else {
+            continue;
+        };
+        let rider_scale = if r.is_baby() { 0.5 } else { 1.0 };
+        let lift = -riding_offset(r.kind) * rider_scale;
+        r.seat(old, now, [seat[0], seat[1] - lift, seat[2]]);
+    }
+}
+
 /// The boat, mount or minecart this player moves, as the client has it.
 fn driven_pose(id: i32) -> Option<(AzVec3, f32)> {
     crate::play::boat::driven_pose(id)
@@ -1396,6 +1460,7 @@ pub(crate) fn collect_entities(
             anim.set_vehicle_body_rot(pairs.get(id).copied());
         }
     }
+    seat_riders(&mut anims, &mounts);
     let live: Vec<&EntityAnim> = ticked.iter().filter_map(|id| anims.get(id)).collect();
     let out = std::sync::Arc::new(par_map(&live, |anim| (*anim).clone()));
 

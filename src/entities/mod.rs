@@ -1,3 +1,4 @@
+pub mod attachments;
 pub mod bake;
 pub mod blockmodel;
 pub mod cull;
