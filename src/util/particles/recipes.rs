@@ -315,6 +315,18 @@ fn ported_classes(
         P::CherryLeaves => (|| -> Option<Recipe> {
             leaf_recipe(atlas, name, rng, 0.25, 2.0, false, true, 1.0, 0.0)
         })(),
+        // `TintedLeavesProvider`: the falling leaf, coloured by its block.
+        P::TintedLeaves(c) => (|| -> Option<Recipe> {
+            let mut r = leaf_recipe(atlas, name, rng, 0.07, 10.0, true, false, 2.0, 0.021)?;
+            let ch = |v: u8| v as f32 / 255.0;
+            r.tint = [
+                ch(c.color.red()),
+                ch(c.color.green()),
+                ch(c.color.blue()),
+                1.0,
+            ];
+            Some(r)
+        })(),
         P::PaleOakLeaves | P::RedPoplarLeaves | P::OrangePoplarLeaves | P::YellowPoplarLeaves => {
             (|| -> Option<Recipe> {
                 leaf_recipe(atlas, name, rng, 0.07, 10.0, true, false, 2.0, 0.021)

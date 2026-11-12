@@ -847,6 +847,27 @@ fn magic_and_portals(
 
 /// Leaves, spores, mycelium and fireflies.
 #[allow(unused_variables, unused_imports)]
+/// `ClientLevel.getClientLeafTintColor`: the leaves' block colour, fixed
+/// for spruce, birch and azalea, else the biome's foliage.
+fn leaf_tint(
+    leaf: crate::blocks::ambient::Leaf,
+    state: azalea::block::BlockState,
+    cell: [i32; 3],
+    world: &azalea_world::World,
+) -> [u8; 3] {
+    if leaf == crate::blocks::ambient::Leaf::AzaleaTint {
+        return [0x70, 0x92, 0x2D];
+    }
+    match crate::blocks::info::info(state).id {
+        "spruce_leaves" => return [0x61, 0x99, 0x61],
+        "birch_leaves" => return [0x80, 0xA7, 0x55],
+        _ => {}
+    }
+    let base = crate::util::biome_color::plains_foliage();
+    let ratio = super::draw::tint_ratio(state, cell, Some(world));
+    std::array::from_fn(|i| (base[i] as f32 * ratio[i]).round().clamp(0.0, 255.0) as u8)
+}
+
 fn plants(
     ambient: crate::blocks::ambient::Ambient,
     state: azalea::block::BlockState,
@@ -880,7 +901,10 @@ fn plants(
             if ctx.f32() < chance && open {
                 let particle = match leaf {
                     Leaf::BiomeTinted | Leaf::AzaleaTint => {
-                        P::TintedLeaves(azalea::entity::particle::ColorParticle::default())
+                        let [r, g, b] = leaf_tint(leaf, state, cell, ctx.world);
+                        P::TintedLeaves(azalea::entity::particle::ColorParticle {
+                            color: azalea_core::color::RgbColor::new(r, g, b),
+                        })
                     }
                     Leaf::Cherry => P::CherryLeaves,
                     Leaf::PaleOak => P::PaleOakLeaves,
