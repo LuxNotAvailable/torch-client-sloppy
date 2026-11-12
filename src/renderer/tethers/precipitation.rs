@@ -5,6 +5,9 @@ use super::*;
 
 pub(super) fn draw_precipitation(view: Res<FrameView>, camera: CameraQuery, mut out: LayerOut) {
     let (mut rain, mut snow) = (Geo::default(), Geo::default());
+    // The native renderer builds the sheets on the GPU (no pack).
+    let native = crate::renderer::weather::NATIVE.load(std::sync::atomic::Ordering::Relaxed);
+    let mut sheets = Vec::new();
     let level = crate::client::tracking::current_world()
         .lock()
         .unwrap()
@@ -73,11 +76,16 @@ pub(super) fn draw_precipitation(view: Res<FrameView>, camera: CameraQuery, mut 
                 Fall::Rain => &mut rain,
                 Fall::Snow => &mut snow,
             };
+            if native {
+                sheets.push(crate::renderer::weather::native_sheet(column, cam_pos, intensity, shade));
+                continue;
+            }
             for corners in crate::renderer::weather::sheet_pieces(column, cam_pos, intensity) {
                 target.quad(corners.map(|(p, uv, a)| (cam_pos + p, uv, [shade, shade, shade, a])));
             }
         }
     }
+    *crate::renderer::weather::SHEETS.lock().unwrap_or_else(|e| e.into_inner()) = sheets;
     out.put(Kind::Rain, rain);
     out.put(Kind::Snow, snow);
 }

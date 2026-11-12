@@ -170,6 +170,18 @@ float4 hand_glint(VertexOut in): SV_Target {
     return float4(lifted - base, 0);
 }
 
+// Rain and snow sheets (kind 6): the texture (repeating) by the shade and
+// alpha, fogged as the world.
+[shader("fragment")]
+float4 weather(VertexOut in): SV_Target {
+    float4 color = env_color(in);
+    if (color.a < 1.0 / 255.0) {
+        discard;
+    }
+    RWByteAddressBuffer view = buffer_at(pc.more.x);
+    return vanilla_fog(view, color, in.world - asfloat(view.Load3(VIEW_CAMERA)));
+}
+
 // World lines (block outline, hitboxes, chunk borders): their colour.
 [shader("fragment")]
 float4 world_lines(VertexOut in): SV_Target {

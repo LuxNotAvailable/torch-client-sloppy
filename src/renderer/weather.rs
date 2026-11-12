@@ -137,6 +137,46 @@ pub fn sheet(column: &Column, cam: Vec3, intensity: f32) -> [Corner; 4] {
     ]
 }
 
+/// A sheet for the native renderer, which builds it from a unit quad:
+/// top-left corner, the edges across and down (world space), uv scale and
+/// offset, tint (shade and alpha), and whether it is snow.
+#[derive(Clone, Copy, Debug)]
+pub struct NativeSheet {
+    pub origin: Vec3,
+    pub across: Vec3,
+    pub down: Vec3,
+    pub uv: [f32; 4],
+    pub tint: [f32; 4],
+    pub snow: bool,
+}
+
+/// The native renderer draws weather itself (no shader pack): set by it,
+/// read by the precipitation layer to skip its CPU mesh.
+pub static NATIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// This frame's sheets, when `NATIVE`.
+pub static SHEETS: std::sync::Mutex<Vec<NativeSheet>> = std::sync::Mutex::new(Vec::new());
+
+/// The unit quad and the rain and snow textures the native sheets use.
+pub static ASSETS: std::sync::OnceLock<(
+    bevy::asset::Handle<bevy::mesh::Mesh>,
+    Option<bevy::asset::Handle<bevy::image::Image>>,
+    Option<bevy::asset::Handle<bevy::image::Image>>,
+)> = std::sync::OnceLock::new();
+
+/// `sheet` as a `NativeSheet`, at world position `cam`.
+pub fn native_sheet(column: &Column, cam: Vec3, intensity: f32, shade: f32) -> NativeSheet {
+    let [tl, tr, _br, bl] = sheet(column, cam, intensity);
+    NativeSheet {
+        origin: cam + tl.0,
+        across: tr.0 - tl.0,
+        down: bl.0 - tl.0,
+        uv: [1.0, bl.1[1] - tl.1[1], tl.1[0], tl.1[1]],
+        tint: [shade, shade, shade, tl.2],
+        snow: column.fall == Fall::Snow,
+    }
+}
+
 /// `sheet` cut wherever its texture repeats, each piece's uv brought into
 /// 0 to 1: a sampler that clamps (a shader pack's) then draws it the same as
 /// one that wraps.

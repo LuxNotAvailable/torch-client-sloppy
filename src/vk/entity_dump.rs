@@ -775,6 +775,25 @@ fn write_env(
             }
         }
     }
+    // Weather sheets (native, no pack): kind 6, a unit quad stretched by
+    // the transform; uv scale and offset scroll the texture.
+    if let Some((quad, rain, snow)) = crate::renderer::weather::ASSETS.get() {
+        let sheets = std::mem::take(&mut *crate::renderer::weather::SHEETS.lock().unwrap_or_else(|e| e.into_inner()));
+        for s in sheets {
+            let texture = if s.snow { snow } else { rain };
+            add(
+                quad.id(),
+                texture.as_ref().map(Handle::id),
+                Vec4::from_array(s.tint),
+                AlphaMode::Blend,
+                0.0,
+                6,
+                s.uv,
+                Mat4::from_cols(s.across.extend(0.0), s.down.extend(0.0), Vec4::ZERO, s.origin.extend(1.0)),
+                0.0,
+            );
+        }
+    }
     // The world's overlays: outline, hitboxes and borders as lines, the
     // breaking cracks as faces.
     let outline_width = crate::renderer::overlays::OUTLINE_WIDTH.load(std::sync::atomic::Ordering::Relaxed) as f32;

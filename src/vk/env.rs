@@ -32,6 +32,7 @@ struct Pipes {
     hand_glint: vk::Pipeline,
     lines: vk::Pipeline,
     cracks: vk::Pipeline,
+    weather: vk::Pipeline,
 }
 
 /// One part's draw: its pipeline (0 blended sky, 1 added sky, 2 clouds,
@@ -170,6 +171,8 @@ impl EnvScene {
                 spec(c"world_lines", Some(vk::CompareOp::GREATER_OR_EQUAL), false, Some(DEPTH_FORMAT)),
                 // The breaking cracks, darkening the block they lie on.
                 spec(c"world_cracks", Some(vk::CompareOp::GREATER_OR_EQUAL), false, Some(DEPTH_FORMAT)),
+                // Rain and snow sheets, blended at their depth.
+                spec(c"weather", Some(vk::CompareOp::GREATER_OR_EQUAL), false, Some(DEPTH_FORMAT)),
             ],
         );
         let mut scene = Self::build(ctx, memory, bindless, env, eye, atlas_index, module)?;
@@ -218,6 +221,7 @@ impl EnvScene {
                 let pipe = match (p.kind, p.alpha) {
                     (4, _) => 6,
                     (5, _) => 7,
+                    (6, _) => 8,
                     (3, _) if p.pad[1] > 0.5 => 5,
                     (3, _) => 4,
                     (2, _) => 3,
@@ -551,6 +555,7 @@ impl EnvScene {
                 hand_glint: built[5],
                 lines: built[6],
                 cracks: built[7],
+                weather: built[8],
             });
             self.pending = None;
         }
@@ -709,7 +714,8 @@ impl EnvScene {
                     4 => pipes.hand,
                     5 => pipes.hand_glint,
                     6 => pipes.lines,
-                    _ => pipes.cracks,
+                    7 => pipes.cracks,
+                    _ => pipes.weather,
                 };
                 device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
                 device.cmd_draw_indexed(cmd, d.count, 1, d.first, d.base, d.part);
@@ -753,13 +759,15 @@ impl EnvScene {
         extent: vk::Extent2D,
     ) {
         let size = [extent.width as f32, extent.height as f32];
+        // Weather first, as vanilla: lines and cracks over it.
+        self.draw_with(ctx, cmd, pipelines, view_index, view_proj, 7, None, size);
         self.draw_with(ctx, cmd, pipelines, view_index, view_proj, 5, None, size);
         self.draw_with(ctx, cmd, pipelines, view_index, view_proj, 6, None, size);
     }
 
     /// Whether there are lines or cracks to draw.
     pub fn has_world_overlays(&self) -> bool {
-        self.draws.iter().any(|d| d.pipe >= 6)
+        self.draws.iter().any(|d| d.pipe == 6 || d.pipe == 7)
     }
 
     /// Lines and cracks for a pack's `color` format (standard depth), once
@@ -934,7 +942,7 @@ impl EnvScene {
     pub fn destroy(mut self, ctx: &Context, memory: &Memory) {
         let mut pipelines: Vec<vk::Pipeline> = self
             .pipes
-            .map(|p| vec![p.sky_blend, p.sky_add, p.clouds, p.screen, p.hand, p.hand_glint, p.lines, p.cracks])
+            .map(|p| vec![p.sky_blend, p.sky_add, p.clouds, p.screen, p.hand, p.hand_glint, p.lines, p.cracks, p.weather])
             .unwrap_or_default();
         if let Some(Ok((built, _))) = self.pending.as_mut().and_then(|p| p.wait()) {
             pipelines.extend(built);

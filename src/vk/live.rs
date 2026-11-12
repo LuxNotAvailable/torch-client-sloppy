@@ -464,6 +464,7 @@ impl Live {
         }
         self.feed_terrain();
         self.update_pack();
+        crate::renderer::weather::NATIVE.store(self.pack.is_none(), std::sync::atomic::Ordering::Relaxed);
         self.shots.extend(f.shots);
         if (self.post.fxaa, self.post.ssaa) != (f.post.fxaa, f.post.ssaa) {
             info!("native renderer: anti-aliasing -> fxaa {}, ssaa {}", f.post.fxaa, f.post.ssaa);

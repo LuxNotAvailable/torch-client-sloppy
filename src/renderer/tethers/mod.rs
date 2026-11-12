@@ -228,6 +228,21 @@ fn setup(
 ) {
     let lit = Lit::full_bright();
     let mut layers = HashMap::new();
+    // The native renderer's weather: a unit quad (x across, y down).
+    {
+        let mut quad = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+        let corners = [[0.0f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]];
+        quad.insert_attribute(Mesh::ATTRIBUTE_POSITION, corners.to_vec());
+        quad.insert_attribute(Mesh::ATTRIBUTE_UV_0, corners.iter().map(|c| [c[0], c[1]]).collect::<Vec<_>>());
+        quad.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0f32, 0.0, 1.0]; 4]);
+        quad.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![[1.0f32; 4]; 4]);
+        quad.insert_indices(bevy::mesh::Indices::U32(vec![0, 1, 2, 2, 1, 3]));
+        let _ = crate::renderer::weather::ASSETS.set((
+            meshes.add(quad),
+            tiled("environment/rain", &mut images),
+            tiled("environment/snow", &mut images),
+        ));
+    }
     for kind in KINDS {
         let (texture, mode, alpha) = match kind {
             Kind::Leash | Kind::Line => (None, LightMode::Flat, AlphaMode::Opaque),
