@@ -21,8 +21,23 @@ pub(crate) fn dir() -> PathBuf {
     storage::dir().join("resourcepacks")
 }
 
+/// The pack built into the client: Torch's own visual tweaks (connected
+/// glass so far, `renderer::ctm`). It has no files: selecting it switches
+/// the tweaks on. See `TORCH_DEFAULT_PACK.md` beside this file.
+pub(crate) const BUILTIN: &str = "Torch Default (built-in)";
+
+/// Whether the built-in pack is selected.
+pub(crate) fn builtin_enabled() -> bool {
+    selected().iter().any(|name| name == BUILTIN)
+}
+
+/// The installed packs, the built-in one first.
 pub(crate) fn list() -> Vec<Pack> {
-    crate::util::pack::scan(&dir())
+    let mut packs = vec![Pack {
+        name: BUILTIN.to_owned(),
+    }];
+    packs.extend(crate::util::pack::scan(&dir()));
+    packs
 }
 
 #[cfg(explore_modrinth)]
@@ -42,11 +57,13 @@ pub(crate) fn size(name: &str) -> u64 {
     std::fs::metadata(&path).map_or(0, |meta| walk(&path, meta))
 }
 
+/// The selected packs, highest priority first. A fresh install starts with
+/// the built-in pack on.
 pub(crate) fn selected() -> Vec<String> {
     storage::RESOURCE_PACKS
         .load()
         .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default()
+        .unwrap_or_else(|| vec![BUILTIN.to_owned()])
 }
 
 pub(crate) fn save_selected(names: &[String]) {
@@ -82,6 +99,13 @@ pub(crate) struct Info {
 }
 
 pub(crate) fn info(pack: &Pack) -> Info {
+    if pack.name == BUILTIN {
+        return Info {
+            description: crate::text::parse_formatted("Torch's own visual tweaks, built in"),
+            compat: Compat::Compatible,
+            icon: icon_pixels(include_bytes!("../../logo.png")),
+        };
+    }
     let source = match Source::open(&dir().join(&pack.name), ROOT) {
         Ok(source) => source,
         Err(e) => {
@@ -135,7 +159,15 @@ fn overlay_range(entry: &Value) -> Option<(Format, Format)> {
 fn explicit_range(v: &Value) -> Option<Option<(Format, Format)>> {
     let bound = |field: &Value, default_minor: u32| -> Option<Format> {
         match field {
-            Value::Number(n) => Some((n.as_u64()? as u32, default_minor)),
+            // Some packs write `97.1` for major 97, minor 1.
+            Value::Number(n) => match n.as_u64() {
+                Some(major) => Some((major as u32, default_minor)),
+                None => {
+                    let text = n.to_string();
+                    let (major, minor) = text.split_once('.')?;
+                    Some((major.parse().ok()?, minor.parse().ok()?))
+                }
+            },
             Value::Array(parts) => {
                 let major = parts.first()?.as_u64()? as u32;
                 let minor = parts
@@ -190,7 +222,7 @@ fn overlays(meta: &Value) -> Vec<String> {
 pub(crate) fn mount() {
     let started = crate::platform::time::Instant::now();
     let mut layers = Vec::new();
-    for name in selected() {
+    for name in selected().into_iter().filter(|name| name != BUILTIN) {
         match layer(&dir().join(&name)) {
             Ok(layer) => {
                 crate::log_info!("resourcepacks", "{name}: {} files", layer.len());
@@ -292,6 +324,14 @@ mod tests {
         assert_eq!(
             range(r#"{"min_format": [80, 1], "max_format": [84, 0]}"#),
             Some(((80, 1), (84, 0)))
+        );
+    }
+
+    #[test]
+    fn a_decimal_format_is_major_dot_minor() {
+        assert_eq!(
+            range(r#"{"min_format": 97.1, "max_format": 97.1}"#),
+            Some(((97, 1), (97, 1)))
         );
     }
 

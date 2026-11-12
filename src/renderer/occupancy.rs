@@ -19,6 +19,8 @@ pub struct Occupancy {
     emissive: Vec<u64>,
     fluid: Vec<u8>,
     cull_group: Vec<u32>,
+    /// Each cell's block state, when connected textures need it.
+    states: Vec<u16>,
     /// Each cell's side coverage (`blocks::shape`), by table index.
     shape: Vec<u32>,
     /// The shape table, as of when the cells were filled.
@@ -47,6 +49,7 @@ impl Occupancy {
             emissive: Vec::new(),
             fluid: Vec::new(),
             cull_group: Vec::new(),
+            states: Vec::new(),
             shape: Vec::new(),
             shapes: Default::default(),
             biome: Vec::new(),
@@ -80,6 +83,10 @@ impl Occupancy {
         self.light.resize(cells, 0xF0);
         self.cull_group.clear();
         self.cull_group.resize(cells, 0);
+        self.states.clear();
+        if super::ctm::tracks_kinds() {
+            self.states.resize(cells, 0);
+        }
         self.shape.clear();
         self.shape.resize(cells, 0);
         self.biome.clear();
@@ -213,6 +220,21 @@ impl Occupancy {
     }
 
     #[inline]
+    pub fn set_state(&mut self, x: i32, y: i32, z: i32, state: u16) {
+        if let Some(i) = self.index(x, y, z)
+            && let Some(s) = self.states.get_mut(i)
+        {
+            *s = state;
+        }
+    }
+
+    /// A cell's block kind (0, air, outside or untracked).
+    pub fn kind_at(&self, x: i32, y: i32, z: i32) -> u32 {
+        self.index(x, y, z)
+            .and_then(|i| self.states.get(i))
+            .map_or(0, |&s| super::ctm::kind_of(s))
+    }
+
     pub fn set_cull_group(&mut self, x: i32, y: i32, z: i32, group: u32) {
         if let Some(i) = self.index(x, y, z) {
             self.cull_group[i] = group;
@@ -328,7 +350,14 @@ impl Occupancy {
 
     /// Whether the block at (x, y, z) covers `face` on its `side`: the
     /// side facing back at the block the face belongs to.
-    pub fn side_covers(&self, x: i32, y: i32, z: i32, side: usize, face: &crate::blocks::shape::Mask) -> bool {
+    pub fn side_covers(
+        &self,
+        x: i32,
+        y: i32,
+        z: i32,
+        side: usize,
+        face: &crate::blocks::shape::Mask,
+    ) -> bool {
         let Some(i) = self.index(x, y, z) else {
             return false;
         };

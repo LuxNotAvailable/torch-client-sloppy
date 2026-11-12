@@ -1032,6 +1032,7 @@ fn fill_occupancy(
                     let rb = cache.get(state);
                     let z = oz + lz as i32;
                     occ.set_cull_group(x, y, z, rb.cull_group);
+                    occ.set_state(x, y, z, rb.state);
                     occ.set_shape(x, y, z, rb.shape);
                     let biome = if whole {
                         section_biomes[((ly as usize >> 2) << 4)
@@ -1071,7 +1072,7 @@ fn fill_occupancy(
                 }
             }
         }
-    }    // The cells' shapes were interned while resolving them.
+    } // The cells' shapes were interned while resolving them.
     occ.take_shapes();
 }
 

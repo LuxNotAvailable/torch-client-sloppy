@@ -64,14 +64,20 @@ pub fn set_leaf_options(mode: u8, distance: u8, backs: bool, camera: (i32, i32))
     LEAF_MODE.store(mode.min(2), Ordering::Relaxed);
     LEAF_DISTANCE.store(distance, Ordering::Relaxed);
     LEAF_BACKS.store(backs, Ordering::Relaxed);
-    CAMERA_CHUNK.store(((camera.0 as i64) << 32) | (camera.1 as u32 as i64), Ordering::Relaxed);
+    CAMERA_CHUNK.store(
+        ((camera.0 as i64) << 32) | (camera.1 as u32 as i64),
+        Ordering::Relaxed,
+    );
 }
 
 /// Whether chunk `(cx, cz)` meshes fast leaves, with the camera at `camera`.
 pub fn fast_leaves_for(cx: i32, cz: i32, camera: (i32, i32)) -> bool {
     match LEAF_MODE.load(Ordering::Relaxed) {
         1 => true,
-        2 => (cx - camera.0).abs().max((cz - camera.1).abs()) > i32::from(LEAF_DISTANCE.load(Ordering::Relaxed)),
+        2 => {
+            (cx - camera.0).abs().max((cz - camera.1).abs())
+                > i32::from(LEAF_DISTANCE.load(Ordering::Relaxed))
+        }
         _ => false,
     }
 }
@@ -719,6 +725,19 @@ fn emit_baked(
             _ => &part.choices[0],
         };
         for quad in &model.quads {
+            // Vanilla panes leave their top and bottom edges without a
+            // cullface, so stacked panes show a line between them. A face
+            // flush with the block's side hides against its own kind.
+            if quad.cull.is_none()
+                && rb.cull_group != 0
+                && rb.cull_group != crate::util::block_model::LEAVES_CULL_GROUP
+                && flush_side(quad).is_some_and(|side| {
+                    let (dx, dy, dz) = CULL_NBR[side];
+                    occ.same_cull_group(bx + dx, by + dy, bz + dz, rb.cull_group)
+                })
+            {
+                continue;
+            }
             if let Some(cull) = quad.cull {
                 let (dx, dy, dz) = CULL_NBR[cull as usize];
                 let (nx, ny, nz) = (bx + dx, by + dy, bz + dz);
@@ -778,13 +797,23 @@ fn emit_baked(
                 buf.push_baked(quad, wx, wy, wz, &lit, quad_tint, material);
                 continue;
             }
+            // Connected textures: the quad moved onto the rule's tile.
+            let swapped;
+            let quad = match ctm_tile(quad, model.particle_uv, rb, occ, (bx, by, bz)) {
+                Some(q) => {
+                    swapped = q;
+                    &swapped
+                }
+                None => quad,
+            };
             buf.push_baked(quad, wx, wy, wz, &lit, quad_tint, material);
             if material == MATERIAL_LEAF && !quad.opaque && LEAF_BACKS.load(Ordering::Relaxed) {
                 // The face's inner side: the same corners, wound the other way.
                 let n = buf.cutout_idx.len();
                 if n >= 6 {
                     let b = buf.cutout_idx[n - 6];
-                    buf.cutout_idx.extend_from_slice(&[b, b + 2, b + 1, b, b + 3, b + 2]);
+                    buf.cutout_idx
+                        .extend_from_slice(&[b, b + 2, b + 1, b, b + 3, b + 2]);
                 }
             }
         }
@@ -817,6 +846,172 @@ fn emit_block_entity(
             MATERIAL_SOLID,
         );
     }
+}
+
+/// `quad` on the tile a connected-texture rule picks for it, if any.
+fn ctm_tile(
+    quad: &crate::blocks::BakedQuad,
+    particle_uv: Option<[f32; 4]>,
+    rb: &RenderedBlock,
+    occ: &Occupancy,
+    pos: (i32, i32, i32),
+) -> Option<crate::blocks::BakedQuad> {
+    if !super::ctm::tracks_kinds() {
+        return None;
+    }
+    let rows = *crate::ATLAS_ROWS.get()? as f32;
+    let cols = super::ATLAS_COLS as f32;
+    let tile_at =
+        |u: f32, v: f32| (v * rows).floor() as u32 * super::ATLAS_COLS + (u * cols).floor() as u32;
+    let mid = quad
+        .uv
+        .iter()
+        .fold([0.0f32; 2], |a, u| [a[0] + u[0] / 4.0, a[1] + u[1] / 4.0]);
+    let cell = [(mid[0] * cols).floor(), (mid[1] * rows).floor()];
+    let tile = tile_at(mid[0], mid[1]);
+    let main = particle_uv.map(|r| tile_at((r[0] + r[2]) / 2.0, (r[1] + r[3]) / 2.0));
+    let kind = super::ctm::kind_of(rb.state);
+    let to = super::ctm::tile_for(
+        kind,
+        tile,
+        main,
+        quad.face,
+        uv_dirs(quad),
+        pos,
+        flush_side(quad).is_some(),
+        |(x, y, z)| occ.kind_at(x, y, z),
+    )?;
+    if to == tile {
+        return None;
+    }
+    let shift = [
+        ((to % super::ATLAS_COLS) as f32 - cell[0]) / cols,
+        ((to / super::ATLAS_COLS) as f32 - cell[1]) / rows,
+    ];
+    let mut q = quad.clone();
+    for uv in &mut q.uv {
+        uv[0] += shift[0];
+        uv[1] += shift[1];
+    }
+    // The pane's edge texture: the post's top face shows it.
+    let edge = match &rb.geom {
+        BlockGeom::Model(baked) => baked
+            .parts
+            .iter()
+            .flat_map(|p| p.choices.iter())
+            .flat_map(|m| m.quads.iter())
+            .filter(|e| e.face == 1)
+            .map(|e| {
+                let m =
+                    e.uv.iter()
+                        .fold([0.0f32; 2], |a, u| [a[0] + u[0] / 4.0, a[1] + u[1] / 4.0]);
+                tile_at(m[0], m[1])
+            })
+            .find(|&t| Some(t) != main && t != tile),
+        _ => None,
+    };
+    pane_end_strip(&mut q, quad, kind, pos, occ, [cols, rows], cell, to, edge);
+    Some(q)
+}
+
+/// A pane's middle strip (`glass_pane_noside`, texels 7 to 9) at a row's
+/// open end samples the frame column on that side instead, so the row ends
+/// in an edge; vanilla's half pane never reaches the frame otherwise. A
+/// strip open on both sides is the row's end cap, and takes the pane's
+/// `edge` texture like its other edges.
+#[allow(clippy::too_many_arguments, reason = "the quad's atlas context")]
+fn pane_end_strip(
+    q: &mut crate::blocks::BakedQuad,
+    quad: &crate::blocks::BakedQuad,
+    kind: u32,
+    pos: (i32, i32, i32),
+    occ: &Occupancy,
+    [cols, rows]: [f32; 2],
+    cell: [f32; 2],
+    to: u32,
+    edge: Option<u32>,
+) {
+    let local: Vec<f32> = quad.uv.iter().map(|uv| (uv[0] * cols).fract()).collect();
+    let (lo, hi) = local
+        .iter()
+        .fold((1.0f32, 0.0f32), |(a, b), &u| (a.min(u), b.max(u)));
+    let width = hi - lo;
+    if width > 2.5 / 16.0 || ((lo + hi) / 2.0 - 0.5).abs() > 0.05 {
+        return;
+    }
+    let Some(dirs) = uv_dirs(quad) else { return };
+    let [left, right] = super::ctm::open_sides(kind, dirs, pos, |(x, y, z)| occ.kind_at(x, y, z));
+    let start = match (left, right) {
+        (true, false) => 0.0,
+        (false, true) => 1.0 - width,
+        (true, true) => {
+            if let Some(edge) = edge {
+                let shift = [
+                    ((edge % super::ATLAS_COLS) as f32 - cell[0]) / cols,
+                    ((edge / super::ATLAS_COLS) as f32 - cell[1]) / rows,
+                ];
+                for (uv, from) in q.uv.iter_mut().zip(quad.uv) {
+                    *uv = [from[0] + shift[0], from[1] + shift[1]];
+                }
+            }
+            return;
+        }
+        (false, false) => return,
+    };
+    // Kept off the tile's very edge, as `tile_uv_rect` does.
+    let inset = 0.02 / 16.0;
+    let col = (to % super::ATLAS_COLS) as f32;
+    for (uv, u) in q.uv.iter_mut().zip(local) {
+        let moved = (start + (u - lo)).clamp(inset, 1.0 - inset);
+        uv[0] = (col + moved) / cols;
+    }
+}
+
+/// The side (`CULL_NBR` index) `quad` lies flush on, if any.
+fn flush_side(quad: &crate::blocks::BakedQuad) -> Option<usize> {
+    let face = usize::from(quad.face);
+    let (axis, at) = match face {
+        0 => (1, 0.0),
+        1 => (1, 1.0),
+        2 => (2, 0.0),
+        3 => (2, 1.0),
+        4 => (0, 0.0),
+        5 => (0, 1.0),
+        _ => return None,
+    };
+    quad.pos
+        .iter()
+        .all(|p| (p[axis] - at).abs() < 1e-4)
+        .then_some(face)
+}
+
+/// The world axes along which `quad`'s texture runs left, down, right and
+/// up, from its corner uvs. `None` when an edge is too short to tell.
+fn uv_dirs(quad: &crate::blocks::BakedQuad) -> Option<super::ctm::Dirs> {
+    // The unit world axis along which uv component `c` grows.
+    let axis = |c: usize| -> Option<(i32, i32, i32)> {
+        let (dp, du) = (0..4)
+            .map(|i| {
+                let (a, b) = (quad.pos[i], quad.pos[(i + 1) % 4]);
+                (
+                    [b[0] - a[0], b[1] - a[1], b[2] - a[2]],
+                    quad.uv[(i + 1) % 4][c] - quad.uv[i][c],
+                )
+            })
+            .max_by(|x, y| x.1.abs().total_cmp(&y.1.abs()))?;
+        if du.abs() < 1e-6 {
+            return None;
+        }
+        let k = (0..3).max_by(|&x, &y| dp[x].abs().total_cmp(&dp[y].abs()))?;
+        let s = if (dp[k] > 0.0) == (du > 0.0) { 1 } else { -1 };
+        let mut v = [0; 3];
+        v[k] = s;
+        Some((v[0], v[1], v[2]))
+    };
+    let (u, v) = (axis(0)?, axis(1)?);
+    let neg = |(x, y, z): (i32, i32, i32)| (-x, -y, -z);
+    // Texture v grows downwards.
+    Some([neg(u), v, u, neg(v)])
 }
 
 fn leaf_buried(occ: &Occupancy, (x, y, z): (i32, i32, i32), (dx, dy, dz): (i32, i32, i32)) -> bool {
@@ -1215,5 +1410,118 @@ mod tests {
             !rim.verts.is_empty(),
             "the canopy's outer face went missing"
         );
+    }
+}
+
+#[cfg(test)]
+mod ctm_tests {
+    use super::*;
+
+    #[test]
+    fn a_cube_faces_uvs_give_the_usual_directions() {
+        crate::blocks::tests::atlas_once();
+        let glass = crate::util::block_model::block_visual(azalea::block::BlockState::from(
+            azalea::registry::builtin::BlockKind::Glass,
+        ));
+        let BlockGeom::Model(baked) = &glass.geom else {
+            panic!("glass has a model");
+        };
+        let quads = &baked.parts[0].choices[0].quads;
+        assert_eq!(quads.len(), 6);
+        for quad in quads {
+            assert_eq!(
+                uv_dirs(quad),
+                Some(super::super::ctm::DIRS[quad.face as usize]),
+                "face {}",
+                quad.face
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod pane_tests {
+    use super::*;
+
+    fn pane(props: &[(&str, &str)]) -> RenderedBlock {
+        let kind = azalea::registry::builtin::BlockKind::GlassPane as u32;
+        for id in 0..=azalea::block::BlockState::MAX_STATE {
+            let Ok(s) = azalea::block::BlockState::try_from(id) else {
+                continue;
+            };
+            if super::super::ctm::kind_of(s.id()) != kind {
+                continue;
+            }
+            let b: Box<dyn azalea::block::BlockTrait> =
+                Box::<dyn azalea::block::BlockTrait>::from(s);
+            let map = b.property_map();
+            if props
+                .iter()
+                .all(|(k, v)| map.get(*k).map(|x| x.to_string()).as_deref() == Some(*v))
+            {
+                return crate::util::block_model::block_visual(s);
+            }
+        }
+        panic!("no pane state");
+    }
+
+    #[test]
+    fn stacked_panes_hide_the_edges_between_them() {
+        crate::blocks::tests::atlas_once();
+        let ew = pane(&[
+            ("north", "false"),
+            ("south", "false"),
+            ("east", "true"),
+            ("west", "true"),
+            ("waterlogged", "false"),
+        ]);
+        let caps = |stacked: bool| {
+            let mut occ = Occupancy::new(0, 0, -1, 18);
+            let ys: &[i32] = if stacked { &[3, 4, 5] } else { &[4] };
+            for &y in ys {
+                occ.set_cull_group(4, y, 4, ew.cull_group);
+            }
+            let (o, w) = build_section_mesh(&[(4, 4, 4, &ew)], 0, 0, 0, 16, &occ);
+            o.verts
+                .chunks(4)
+                .chain(w.verts.chunks(4))
+                .filter(|q| q.iter().all(|v| v.pos[1] == q[0].pos[1]))
+                .count()
+        };
+        assert_eq!(
+            caps(false),
+            6,
+            "a lone row pane shows its top and bottom edges"
+        );
+        assert_eq!(caps(true), 0, "panes above and below hide them");
+    }
+
+    #[test]
+    fn stacked_corner_panes_hide_the_edges_between_them() {
+        crate::blocks::tests::atlas_once();
+        let corner = pane(&[
+            ("north", "true"),
+            ("south", "false"),
+            ("east", "true"),
+            ("west", "false"),
+            ("waterlogged", "false"),
+        ]);
+        let mut occ = Occupancy::new(0, 0, -1, 18);
+        for y in [3, 4, 5] {
+            occ.set_cull_group(4, y, 4, corner.cull_group);
+        }
+        let (o, w) = build_section_mesh(&[(4, 4, 4, &corner)], 0, 0, 0, 16, &occ);
+        for q in o.verts.chunks(4).chain(w.verts.chunks(4)) {
+            if q.iter().all(|v| v.pos[1] == q[0].pos[1]) {
+                println!("cap {:?}", q.iter().map(|v| v.pos).collect::<Vec<_>>());
+            }
+        }
+        let caps = o
+            .verts
+            .chunks(4)
+            .chain(w.verts.chunks(4))
+            .filter(|q| q.iter().all(|v| v.pos[1] == q[0].pos[1]))
+            .count();
+        assert_eq!(caps, 0);
     }
 }

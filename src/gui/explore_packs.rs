@@ -212,6 +212,7 @@ impl State {
             let downloaded = modrinth::downloaded();
             let packs = resourcepacks::list()
                 .into_iter()
+                .filter(|pack| pack.name != resourcepacks::BUILTIN)
                 .map(|pack| LocalPack {
                     info: resourcepacks::info(&pack),
                     size: resourcepacks::size(&pack.name),

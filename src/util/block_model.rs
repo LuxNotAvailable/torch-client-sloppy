@@ -47,6 +47,10 @@ fn cull_group(name: &str, block: &dyn BlockTrait) -> u32 {
     if SKIP_SAME.contains(&name)
         || name.ends_with("_stained_glass")
         || name.ends_with("copper_grate")
+        // Panes and bars (`IronBarsBlock.skipRendering`): same-kind
+        // neighbours always connect, so their facing faces hide.
+        || name.ends_with("glass_pane")
+        || name.ends_with("_bars")
     {
         return block.as_block_kind() as u32 + 2;
     }

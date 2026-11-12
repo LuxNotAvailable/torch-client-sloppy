@@ -39,6 +39,9 @@ pub struct Textures {
 impl Textures {
     pub fn blocks(textures_dir: &str) -> Textures {
         let mut block = decode_dir(&format!("{textures_dir}/block"));
+        // Resource packs' connected-texture tiles.
+        let tiles = super::ctm::tile_images(&block);
+        block.extend(tiles);
         if !block.is_empty() {
             block
                 .entry(MISSING_TEXTURE.to_owned())
@@ -235,7 +238,13 @@ pub fn build_block_atlas(textures: &Textures, textures_dir: &str) -> (Image, Has
         atlas_data
     };
     #[cfg(feature = "shader_support")]
-    publish_untinted(&untinted_entries, &biome_tinted, &tex_to_tile, n_mips, &biases);
+    publish_untinted(
+        &untinted_entries,
+        &biome_tinted,
+        &tex_to_tile,
+        n_mips,
+        &biases,
+    );
 
     let mut image = Image::new_uninit(
         Extent3d {
@@ -377,7 +386,9 @@ fn publish_animations(
             base,
             frames: frames.into_boxed_slice(),
             interpolate: strip.meta.interpolate,
-            spare: spares.get(strip.stem.as_str()).and_then(|&t| u16::try_from(t).ok()),
+            spare: spares
+                .get(strip.stem.as_str())
+                .and_then(|&t| u16::try_from(t).ok()),
         });
     }
     let total = tile_count + frames.len();
@@ -453,8 +464,15 @@ fn alpha_coverage(alpha: &[f32], side: usize, alpha_ref: f32, scale: f32) -> f32
 /// search) that keeps `desired` coverage at `alpha_ref`, then scales alpha by
 /// it and adds `bias`, so a cutout texture keeps its shape at a distance
 /// rather than thinning away mip by mip.
-fn scale_alpha_to_coverage(alpha: &mut [f32], side: usize, desired: f32, alpha_ref: f32, bias: f32) {
-    let (mut lo, mut hi, mut scale, mut best, mut best_error) = (0.0f32, 4.0f32, 1.0f32, 1.0f32, f32::MAX);
+fn scale_alpha_to_coverage(
+    alpha: &mut [f32],
+    side: usize,
+    desired: f32,
+    alpha_ref: f32,
+    bias: f32,
+) {
+    let (mut lo, mut hi, mut scale, mut best, mut best_error) =
+        (0.0f32, 4.0f32, 1.0f32, 1.0f32, f32::MAX);
     for _ in 0..5 {
         let coverage = alpha_coverage(alpha, side, alpha_ref, scale);
         let error = (coverage - desired).abs();

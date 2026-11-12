@@ -3,6 +3,7 @@ pub mod antialias;
 pub(crate) mod atlas;
 pub(crate) mod block_anim;
 pub mod clouds;
+pub(crate) mod ctm;
 pub mod dimension;
 pub mod entity_material;
 pub mod environment;
