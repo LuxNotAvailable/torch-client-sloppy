@@ -533,6 +533,8 @@ crate::options! {
         pub entity_culling: bool = true => key("torchEntityCulling"),
         /// The inventory player model drawn at 2x and averaged (native).
         pub smooth_gui_model: bool = true => key("torchSmoothGuiModel"),
+        /// Entity back faces aren't drawn (native): for weak GPUs.
+        pub entity_backface_culling: bool = false => key("torchEntityBackfaceCulling"),
         /// How glowing sign text is outlined: 0 vanilla, 1 a shadow, 2 none.
         pub sign_glow_outline: u32 = 0 => key("torchSignGlowOutline").clamp(0, 2),
         /// Block outline width, times vanilla's (native renderer only).

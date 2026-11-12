@@ -36,6 +36,7 @@ const CHAT_SLIDER_ID_BASE: u32 = 60;
 const ENTITY_SHADOWS: &str = "Entity Shadows";
 const ENTITY_CULLING: &str = "Entity Culling";
 const INVENTORY_MODEL: &str = "Inventory Model";
+const ENTITY_BACK_FACES: &str = "Entity Back Faces";
 const LEAF_CULLING: &str = "Leaf Culling";
 const LEAF_CULLING_MODES: [&str; 3] = ["Off", "Smart", "Full"];
 const LEAF_SETTINGS: &str = "Leaves...";
@@ -699,8 +700,11 @@ struct QualityPreset {
     /// Torch Vibrant's shadow map resolution and shadow distance, set when a
     /// preset is chosen (not part of matching one: they are the pack's).
     pack_shadow: (&'static str, &'static str),
+    /// Torch Vibrant's Foliage Shading: 0 Fancy, 1 Fast, 2 Potato.
+    pack_foliage: &'static str,
     max_fps: u32,
     entity_culling: bool,
+    entity_backface_culling: bool,
     /// The inventory player model at 2x.
     smooth_gui_model: bool,
     /// Leaves: mode (fancy, fast, hybrid), hybrid distance, inner faces,
@@ -726,8 +730,10 @@ const QUALITY_PRESETS: [QualityPreset; 6] = {
             lighting: false,
             shadow_update: 2,
             pack_shadow: ("1024", "64.0"),
+            pack_foliage: "2",
             max_fps: 60,
             entity_culling: true,
+            entity_backface_culling: true,
             smooth_gui_model: false,
             leaves: (1, 4, false, 2),
         },
@@ -744,8 +750,10 @@ const QUALITY_PRESETS: [QualityPreset; 6] = {
             lighting: true,
             shadow_update: 2,
             pack_shadow: ("1024", "96.0"),
+            pack_foliage: "1",
             max_fps: 60,
             entity_culling: true,
+            entity_backface_culling: false,
             smooth_gui_model: false,
             leaves: (2, 2, false, 2),
         },
@@ -762,8 +770,10 @@ const QUALITY_PRESETS: [QualityPreset; 6] = {
             lighting: true,
             shadow_update: 1,
             pack_shadow: ("2048", "128.0"),
+            pack_foliage: "0",
             max_fps: 120,
             entity_culling: true,
+            entity_backface_culling: false,
             smooth_gui_model: true,
             leaves: (2, 4, true, 2),
         },
@@ -780,8 +790,10 @@ const QUALITY_PRESETS: [QualityPreset; 6] = {
             lighting: true,
             shadow_update: 1,
             pack_shadow: ("2048", "128.0"),
+            pack_foliage: "0",
             max_fps: 144,
             entity_culling: true,
+            entity_backface_culling: false,
             smooth_gui_model: true,
             leaves: (0, 4, true, 1),
         },
@@ -798,8 +810,10 @@ const QUALITY_PRESETS: [QualityPreset; 6] = {
             lighting: true,
             shadow_update: 1,
             pack_shadow: ("4096", "192.0"),
+            pack_foliage: "0",
             max_fps: crate::gui::MAX_FPS_UNLIMITED,
             entity_culling: true,
+            entity_backface_culling: false,
             smooth_gui_model: true,
             leaves: (0, 4, true, 1),
         },
@@ -816,8 +830,10 @@ const QUALITY_PRESETS: [QualityPreset; 6] = {
             lighting: true,
             shadow_update: 1,
             pack_shadow: ("2048", "128.0"),
+            pack_foliage: "0",
             max_fps: crate::gui::MAX_FPS_UNLIMITED,
             entity_culling: true,
+            entity_backface_culling: false,
             smooth_gui_model: true,
             leaves: (0, 4, true, 2),
         },
@@ -838,6 +854,7 @@ impl QualityPreset {
             && o.shadow_update == self.shadow_update
             && o.max_fps == self.max_fps
             && o.entity_culling == self.entity_culling
+            && o.entity_backface_culling == self.entity_backface_culling
             && o.smooth_gui_model == self.smooth_gui_model
             && (o.leaves, o.leaf_distance, o.leaf_backs, o.leaf_culling) == self.leaves
     }
@@ -855,6 +872,7 @@ impl QualityPreset {
         o.shadow_update = self.shadow_update;
         o.max_fps = self.max_fps;
         o.entity_culling = self.entity_culling;
+        o.entity_backface_culling = self.entity_backface_culling;
         o.smooth_gui_model = self.smooth_gui_model;
         (o.leaves, o.leaf_distance, o.leaf_backs, o.leaf_culling) = self.leaves;
     }
@@ -891,6 +909,7 @@ fn reset_video_options(o: &mut crate::gui::GuiOptions) {
     o.vsync = crate::gui::VSYNC_DEFAULT;
     o.fps_counter = crate::gui::FPS_COUNTER_DEFAULT;
     o.entity_culling = true;
+    o.entity_backface_culling = false;
     o.smooth_gui_model = true;
     o.biome_blend = 2;
     o.water_clarity = crate::gui::WATER_CLARITY_DEFAULT;
@@ -1230,6 +1249,16 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         f.tip(&tips::RENDER_DISTANCE);
         f.toggle(ENTITY_CULLING, &mut o.entity_culling);
         f.tip(&tips::ENTITY_CULLING);
+        let backs = if o.entity_backface_culling {
+            "Hidden"
+        } else {
+            "Drawn"
+        };
+        if f.button(&format!("{ENTITY_BACK_FACES}: {backs}")) {
+            o.entity_backface_culling = !o.entity_backface_culling;
+            f.mark_changed();
+        }
+        f.tip(&tips::ENTITY_BACK_FACES);
         let lighting = if o.lighting_enabled {
             ON
         } else {
@@ -1367,6 +1396,7 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
             &[
                 ("shadowMapResolution", resolution),
                 ("shadowDistance", distance),
+                ("FOLIAGE_SHADING", QUALITY_PRESETS[at].pack_foliage),
             ],
         );
     }

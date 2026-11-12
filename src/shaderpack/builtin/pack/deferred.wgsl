@@ -74,14 +74,30 @@ fn fragment(v: Varyings) -> @location(0) vec4<f32> {
     let n = face_normal(surface.face);
     let material = surface.material;
 
-#ifdef MC_OS_ANDROID
-    let centre = texel_centre(texel.xyz, n) - frame.cameraPositionFract;
-    let vis = texel_visibility(centre, n, cell_res(texel.xyz), 8u);
-#else
     var vis = -1.0;
-    let key = cache_key(texel.xyz, f32(surface.face));
-    if (key != CACHE_EMPTY) {
-        vis = cached(key);
+    let diagonal = surface.face == FACE_DIAGONAL;
+#if FOLIAGE_SHADING == 1
+    if (diagonal) {
+        vis = texel.x;
+    }
+#endif
+#ifdef MC_OS_ANDROID
+    if (diagonal && vis < 0.0) {
+        vis = foliage_visibility(texel_centre(texel.xyz, n) - frame.cameraPositionFract, 4u);
+    }
+    if (vis < 0.0) {
+        let centre = texel_centre(texel.xyz, n) - frame.cameraPositionFract;
+        vis = texel_visibility(centre, n, cell_res(texel.xyz), 8u);
+    }
+#else
+    if (vis < 0.0) {
+        let key = cache_key(texel.xyz, f32(surface.face));
+        if (key != CACHE_EMPTY) {
+            vis = cached(key);
+        }
+    }
+    if (diagonal && vis < 0.0) {
+        vis = foliage_visibility(texel_centre(texel.xyz, n) - frame.cameraPositionFract, 2u);
     }
     if (vis < 0.0) {
         let centre = texel_centre(texel.xyz, n) - frame.cameraPositionFract;

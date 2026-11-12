@@ -110,6 +110,13 @@ fn texel_visibility(centre: vec3<f32>, n: vec3<f32>, res: f32, taps: u32) -> f32
     return lit / f32(points);
 }
 
+/// A plant's shade at `p`: leaning toward the light, so its own plane never
+/// shadows it.
+fn foliage_visibility(p: vec3<f32>, taps: u32) -> f32 {
+    let l = light_dir();
+    return shadow_visibility(p + l * 0.04, l, taps);
+}
+
 /// One hardware-filtered lookup at a point already in the shadow map's clip
 /// space (before the warp); 1 outside the map.
 fn shadow_at(clip: vec3<f32>) -> f32 {

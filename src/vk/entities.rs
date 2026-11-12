@@ -38,6 +38,22 @@ struct Pipes {
     solid: vk::Pipeline,
     blend: vk::Pipeline,
     add: vk::Pipeline,
+    /// `solid` and `blend` with back faces culled, for the option.
+    solid_culled: vk::Pipeline,
+    blend_culled: vk::Pipeline,
+}
+
+/// Entity Backface Culling: entity back faces aren't drawn. Faster on weak
+/// GPUs; single planes (capes, wings) vanish from behind. Additive beams
+/// stay two-sided.
+static BACKFACE_CULLING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_backface_culling(on: bool) {
+    BACKFACE_CULLING.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn backface_culling() -> bool {
+    BACKFACE_CULLING.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// What the entities drew last frame, for the viewer's summary.
@@ -178,7 +194,12 @@ impl EntityScene {
             Some((m, ..)) => *m,
             None => pipelines.module(ctx, super::shaders::ENTITY)?,
         };
-        let stream = |fragment: &std::ffi::CStr, depth_write, compare, blend, additive| {
+        let stream_with = |fragment: &std::ffi::CStr,
+                           depth_write,
+                           compare,
+                           blend,
+                           additive,
+                           cull: vk::CullModeFlags| {
             Spec::Graphics(GraphicsSpec {
                 module,
                 vertex: c"entity_vertex".to_owned(),
@@ -188,13 +209,23 @@ impl EntityScene {
                 depth_test: Some(compare),
                 depth_write,
                 // Entity faces draw both sides and shade the back by the
-                // opposite light, as entity.wgsl.
-                cull: vk::CullModeFlags::NONE,
+                // opposite light, as entity.wgsl, unless the option culls.
+                cull,
                 topology: vk::PrimitiveTopology::TRIANGLE_LIST,
                 blend,
                 additive,
                 fragment_module: None,
             })
+        };
+        let stream = |fragment: &std::ffi::CStr, depth_write, compare, blend, additive| {
+            stream_with(
+                fragment,
+                depth_write,
+                compare,
+                blend,
+                additive,
+                vk::CullModeFlags::NONE,
+            )
         };
         // A scene renewed each frame (live) keeps its pipelines.
         let pending = match reused {
@@ -223,6 +254,22 @@ impl EntityScene {
                         vk::CompareOp::GREATER_OR_EQUAL,
                         true,
                         true,
+                    ),
+                    stream_with(
+                        c"entity_solid",
+                        true,
+                        vk::CompareOp::GREATER,
+                        false,
+                        false,
+                        vk::CullModeFlags::BACK,
+                    ),
+                    stream_with(
+                        c"entity_blend",
+                        false,
+                        vk::CompareOp::GREATER_OR_EQUAL,
+                        true,
+                        false,
+                        vk::CullModeFlags::BACK,
                     ),
                 ],
             )),
@@ -504,6 +551,8 @@ impl EntityScene {
                 solid: built[1],
                 blend: built[2],
                 add: built[3],
+                solid_culled: built[4],
+                blend_culled: built[5],
             });
             self.pending = None;
         }
@@ -828,8 +877,15 @@ impl EntityScene {
         // SAFETY: inside the terrain pass, with the shared layout and set
         // bound by the caller.
         unsafe {
-            ctx.device
-                .cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipes.solid)
+            ctx.device.cmd_bind_pipeline(
+                cmd,
+                vk::PipelineBindPoint::GRAPHICS,
+                if backface_culling() {
+                    pipes.solid_culled
+                } else {
+                    pipes.solid
+                },
+            )
         };
         self.bind(ctx, cmd, pipelines, view_proj, mode, seconds, view_index);
         // SAFETY: as above; the commands and count the cull wrote.
@@ -865,7 +921,13 @@ impl EntityScene {
         }
         let mut bound = None;
         for &(first, len, add) in &self.runs {
-            let pipeline = if add { pipes.add } else { pipes.blend };
+            let pipeline = if add {
+                pipes.add
+            } else if backface_culling() {
+                pipes.blend_culled
+            } else {
+                pipes.blend
+            };
             if bound != Some(pipeline) {
                 // SAFETY: as in `draw_solid`.
                 unsafe {
@@ -935,7 +997,16 @@ impl EntityScene {
     pub fn destroy(mut self, ctx: &Context, memory: &Memory) {
         let mut pipelines: Vec<vk::Pipeline> = self
             .pipes
-            .map(|p| vec![p.cull, p.solid, p.blend, p.add])
+            .map(|p| {
+                vec![
+                    p.cull,
+                    p.solid,
+                    p.blend,
+                    p.add,
+                    p.solid_culled,
+                    p.blend_culled,
+                ]
+            })
             .unwrap_or_default();
         if let Some(Ok((built, _))) = self.pending.as_mut().and_then(|p| p.wait()) {
             pipelines.extend(built);

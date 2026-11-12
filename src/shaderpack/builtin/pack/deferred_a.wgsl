@@ -20,8 +20,10 @@ fn compute(@builtin(global_invocation_id) id: vec3<u32>) {
     if (texel.w < 0.0) {
         return;
     }
-    let key = cache_key(texel.xyz, f32(unpack_surface(texel.w).face));
-    if (key == CACHE_EMPTY) {
+    let face = unpack_surface(texel.w).face;
+    let key = cache_key(texel.xyz, f32(face));
+    // Fast foliage keeps its shade, not a cell, in the texel.
+    if (key == CACHE_EMPTY || (face == FACE_DIAGONAL && FOLIAGE_SHADING == 1)) {
         return;
     }
     var slot = cache_hash(key);

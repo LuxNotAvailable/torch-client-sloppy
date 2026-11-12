@@ -84,7 +84,9 @@ fn compute(@builtin(global_invocation_id) id: vec3<u32>) {
     let centre = texel_centre(cell, n) - frame.cameraPositionFract;
     let res = cell_res(cell);
     var vis: f32;
-    if (temporal_texel(res)) {
+    if (cache_face(key) == FACE_DIAGONAL) {
+        vis = foliage_visibility(centre, 8u);
+    } else if (temporal_texel(res)) {
         let now = u32(frame.frameCounter);
         let fresh = texel_visibility_scattered(centre, n, res, 8u, now);
         vis = temporal(history_tag(cell, cache_face(key)), fresh, temporal_window(res), now);

@@ -153,6 +153,35 @@ SCALED_RESOLVE=1
     }
 
     #[test]
+    fn every_foliage_shading_mode_compiles() {
+        let source = crate::shaderpack::discover::open(super::NAME).expect("embedded");
+        let texts = crate::shaderpack::include::option_texts(&source);
+        let declared = crate::shaderpack::options::discover(texts.iter().map(String::as_str));
+        for mode in ["0", "1", "2"] {
+            assert!(
+                declared
+                    .get("FOLIAGE_SHADING")
+                    .expect("declared")
+                    .accepts(mode)
+            );
+            let values = crate::shaderpack::options::Values::load(
+                &format!(
+                    "FOLIAGE_SHADING={mode}
+"
+                ),
+                &declared,
+            );
+            let frame = compile_frame(super::NAME, false, Some(values), Dimension::Overworld)
+                .unwrap_or_else(|e| panic!("mode {mode}: {e}"));
+            assert!(
+                frame.notes.iter().all(|n| !n.contains("did not compile")),
+                "mode {mode}: {:?}",
+                frame.notes
+            );
+        }
+    }
+
+    #[test]
     fn on_android_the_pack_drops_the_shadow_cache_and_still_compiles() {
         crate::shaderpack::features::OS_OVERRIDE.set(Some("MC_OS_ANDROID"));
         let frame = compile_frame(super::NAME, false, None, Dimension::Overworld);

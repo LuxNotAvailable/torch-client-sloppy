@@ -74,7 +74,40 @@ fn face_of(n: vec3<f32>) -> f32 {
     return select(4.0, 5.0, n.z < 0.0);
 }
 
+// How plants off the block grid (cross plants, sugar cane) are shadowed:
+// 0 Fancy, texels on the plant's own plane through the texel cache; 1 Fast,
+// a lookup per vertex; 2 Potato, one shade per plant block.
+#define FOLIAGE_SHADING 0 // [0 1 2]
+
+/// The face code of a surface off the block grid. Its texel holds the cell
+/// of the texture pixel's middle (Fancy), its shade (Fast) or its block's
+/// top middle (Potato).
+const FACE_DIAGONAL: u32 = 6u;
+
+/// Fancy: the texel cell, on the plane through `local` with normal `n`, at
+/// 1/16 steps across x and up, so its middle lies on the plant.
+fn plane_cell(local: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
+    let block = floor(local);
+    let q = local - block;
+    let s = clamp(floor(q.x * 16.0), 0.0, 15.0);
+    let t = clamp(floor(q.y * 16.0), 0.0, 15.0);
+    let x = block.x + (s + 0.5) / 16.0;
+    let h = normalize(n.xz);
+    let z = local.z - h.x * (x - local.x) / select(h.y, 1e-4, abs(h.y) < 1e-4);
+    return floor(vec3<f32>(x, block.y + (t + 0.5) / 16.0, z) * 16.0);
+}
+
+/// Whether a normal is off the block grid.
+fn is_diagonal(n: vec3<f32>) -> bool {
+    let a = abs(n);
+    return max(a.x, max(a.y, a.z)) < 0.9;
+}
+
 fn face_normal(face: u32) -> vec3<f32> {
+    // Diagonal surfaces light as if facing up, as foliage does.
+    if (face == FACE_DIAGONAL) {
+        return vec3<f32>(0.0, 1.0, 0.0);
+    }
     let sign = select(1.0, -1.0, (face & 1u) == 1u);
     let axis = face >> 1u;
     return vec3<f32>(

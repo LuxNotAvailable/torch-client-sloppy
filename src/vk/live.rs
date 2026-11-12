@@ -28,6 +28,10 @@ use super::{Context, SetupError, Swapchain};
 /// re-reads `shaderpack.txt` once.
 static PACK_CHANGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
+/// The pack options' revision (`ShaderPacks::revision`), published once
+/// the options screen closes so a slider drag doesn't recompile each step.
+static PACK_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// The chosen pack changed (`shaderpack.txt` written).
 pub fn pack_changed() {
     PACK_CHANGED.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -170,6 +174,8 @@ struct Live {
     /// The shader pack drawing the frame, when one is chosen: its name and
     /// screen, the size it was made for.
     pack: Option<(String, super::pack::screen::PackScreen, vk::Extent2D)>,
+    /// The options revision the pack was built with.
+    pack_revision: u64,
     /// When the chosen pack was last looked up, and the name found.
     pack_checked: Option<(std::time::Instant, Option<String>)>,
     /// The frame's pack inputs (time of day, weather, the eye's light).
@@ -244,6 +250,7 @@ fn setup(world: &mut World) -> Result<Live, SetupError> {
         eye: bevy::math::Vec3::ZERO,
         figure: Figure::default(),
         pack: None,
+        pack_revision: 0,
         pack_checked: None,
         pack_inputs: None,
         started: std::time::Instant::now(),
@@ -423,6 +430,12 @@ fn draw_frame(world: &mut World, mut last: Local<Option<std::time::Instant>>) {
                 gui.options.smooth_gui_model,
                 std::sync::atomic::Ordering::Relaxed,
             );
+            if gui.screen != crate::gui::Screen::ShaderOptions {
+                PACK_REVISION.store(
+                    gui.shaderpacks.revision(),
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+            }
             (post, gui.options.vsync)
         }
         None => (Default::default(), true),
@@ -825,9 +838,12 @@ impl Live {
             width: (s.extent.width * scale / 100).max(1),
             height: (s.extent.height * scale / 100).max(1),
         });
+        let revision = PACK_REVISION.load(std::sync::atomic::Ordering::Relaxed);
         let current = self.pack.as_ref().map(|(n, _, e)| (n.clone(), *e));
+        // Changed options rebuild the pack, as a new pack would.
         if current.as_ref().map(|(n, e)| (Some(n.clone()), Some(*e)))
             == Some((wanted.clone(), extent))
+            && revision == self.pack_revision
             || (current.is_none() && wanted.is_none())
         {
             return;
@@ -871,6 +887,7 @@ impl Live {
                 // as the game's own compile would publish them.
                 publish_block_ids(screen.block_ids());
                 self.pack = Some((name, screen, extent));
+                self.pack_revision = revision;
             }
             Err(e) => {
                 error!("native renderer: pack {name}: {}", e.0);

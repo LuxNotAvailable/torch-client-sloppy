@@ -20,6 +20,9 @@ const bool colortex5Clear = false;
 /* RENDERTARGETS: 0,2 */
 
 #include "/lib/common.wgsl"
+#if FOLIAGE_SHADING == 1
+#include "/lib/shadow.wgsl"
+#endif
 
 struct Varyings {
     @builtin(position) clip: vec4<f32>,
@@ -29,6 +32,8 @@ struct Varyings {
     @location(3) player: vec3<f32>,
     @location(4) @interpolate(flat) normal: vec3<f32>,
     @location(5) @interpolate(flat) material: f32,
+    /// Fast foliage shading: the shade at the vertex.
+    @location(6) foliage: f32,
 }
 
 struct Gbuffer {
@@ -47,6 +52,12 @@ fn vertex(input: IrisVertexIn) -> Varyings {
     out.player = a.position;
     out.normal = a.normal;
     out.material = material_of(a.entity.x);
+    out.foliage = 1.0;
+#if FOLIAGE_SHADING == 1
+    if (is_diagonal(a.normal)) {
+        out.foliage = foliage_visibility(a.position, 1u);
+    }
+#endif
     return out;
 }
 
@@ -59,13 +70,43 @@ fn fragment(v: Varyings) -> Gbuffer {
     let dly = dpdy(v.light);
     let dcx = dpdx(v.color.rgb);
     let dcy = dpdy(v.color.rgb);
+    let dux = dpdx(v.uv);
+    let duy = dpdy(v.uv);
     if (!iris_alpha_pass(tex.a * v.color.a)) {
         discard;
     }
 
+    let local = v.player + frame.cameraPositionFract;
+    if (is_diagonal(v.normal)) {
+        var out: Gbuffer;
+        out.albedo = vec4<f32>(to_linear(tex.rgb * v.color.rgb), 1.0);
+#if FOLIAGE_SHADING == 0
+        // The middle of the texture pixel drawn here, found on the plant
+        // by stepping across the screen, so texels follow the texture at
+        // any angle and offset.
+        let atlas = vec2<f32>(textureDimensions(gtexture));
+        let want = (floor(v.uv * atlas) + 0.5) / atlas - v.uv;
+        let det_uv = dux.x * duy.y - dux.y * duy.x;
+        var cell = plane_cell(local, v.normal);
+        if (abs(det_uv) > 1e-14) {
+            let a = (want.x * duy.y - want.y * duy.x) / det_uv;
+            let b = (dux.x * want.y - dux.y * want.x) / det_uv;
+            let mid = v.player + a * dpx + b * dpy + frame.cameraPositionFract;
+            cell = floor(mid * 16.0);
+        }
+        out.texel = vec4<f32>(cell, pack_surface(f32(FACE_DIAGONAL), v.material, v.light));
+#elif FOLIAGE_SHADING == 1
+        out.texel = vec4<f32>(v.foliage, 0.0, 0.0, pack_surface(f32(FACE_DIAGONAL), v.material, v.light));
+#else
+        // One shade per plant block, taken just above its top middle, where
+        // its own blades can't shadow it.
+        let cell = floor(local) * 16.0 + vec3<f32>(8.0, 16.0, 8.0);
+        out.texel = vec4<f32>(cell, pack_surface(f32(FACE_DIAGONAL), v.material, v.light));
+#endif
+        return out;
+    }
     let face = face_of(v.normal);
     let n = face_normal(u32(face));
-    let local = v.player + frame.cameraPositionFract;
     // The ring by the block's distance, not the pixel's, so a whole face
     // changes resolution at once.
     let fine = floor(local * 16.0 - n * 0.5);

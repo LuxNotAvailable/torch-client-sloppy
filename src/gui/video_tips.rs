@@ -36,6 +36,10 @@ pub const ENTITY_CULLING: Tip = Tip::new(
     "Skips drawing mobs, items and block entities hidden behind solid blocks. Turning it off costs frames in busy areas; only do so if something vanishes when it shouldn't.",
     Impact::Medium,
 );
+pub const ENTITY_BACK_FACES: Tip = Tip::new(
+    "Hidden skips the inward-facing sides of mob, item and block entity models, saving GPU work on very weak systems. Thin parts such as capes, wings and banners can vanish when seen from behind. Native renderer only.",
+    Impact::Low,
+);
 pub const LIGHTING_ENGINE: Tip = Tip::new(
     "Works out block and sky light. Off is fullbright: everything is evenly lit, a large saving on weak PCs.",
     Impact::Medium,
