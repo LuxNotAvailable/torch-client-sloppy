@@ -664,6 +664,29 @@ pub struct SlotStack {
     /// What the item model reads beyond the fields above: custom model
     /// data, trim, charge, bundle fill, lodestone, `item_model`.
     pub model_data: Option<Box<crate::items::dispatch::ModelData>>,
+    /// `bundle_contents`, when the item has it.
+    pub bundle: Option<Box<BundleView>>,
+}
+
+/// A bundle's contents, newest first, and `BundleContents.weight`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BundleView {
+    pub items: Box<[SlotStack]>,
+    pub weight: f64,
+}
+
+impl BundleView {
+    /// Slack for weights like 1/3 that f64 can't hold exactly.
+    const EPS: f64 = 1e-9;
+
+    pub fn is_full(&self) -> bool {
+        self.weight >= 1.0 - Self::EPS
+    }
+
+    /// `Mth.mulAndTruncate(weight, n)`.
+    pub fn scaled(&self, n: f64) -> i32 {
+        (self.weight * n + Self::EPS).floor() as i32
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]

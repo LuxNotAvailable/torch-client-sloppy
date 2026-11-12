@@ -1574,6 +1574,14 @@ pub fn draw_stack(p: &mut Painter, stack: &SlotStack, x: f32, y: f32) {
     } else {
         p.item_icon(&stack.model_key(), x, y);
     }
+    if let Some(bundle) = &stack.bundle
+        && bundle.weight > 0.0
+    {
+        // `BundleItem.getBarWidth` and `getBarColor`.
+        let width = (1 + bundle.scaled(12.0)).min(13) as f32;
+        let rgb = if bundle.is_full() { 0xFF5454 } else { 0x7087FF };
+        p.item_bar(x, y, width, rgb);
+    }
     p.item_decorations(x, y, stack.count, stack.damage, stack.max_damage);
     p.item_cooldown(x, y, stack.cooldown);
 }
@@ -2656,6 +2664,87 @@ mod tests {
         let slots = inv.inventory_menu.slots();
         assert_eq!((slots[9].count(), slots[10].count()), (2, 2));
         assert!(inv.carried.is_empty());
+    }
+
+    fn bundle_items(stack: &ItemStack) -> Vec<(ItemKind, i32)> {
+        stack
+            .get_component::<azalea_inventory::components::BundleContents>()
+            .map(|b| b.items.iter().map(|s| (s.kind(), s.count())).collect())
+            .unwrap_or_default()
+    }
+
+    fn click(inv: &mut Inventory, slot: u16, left: bool) {
+        let op = if left {
+            PickupClick::Left { slot: Some(slot) }
+        } else {
+            PickupClick::Right { slot: Some(slot) }
+        };
+        inv.simulate_click(&ClickOperation::Pickup(op), &PlayerAbilities::default());
+    }
+
+    #[test]
+    fn azalea_packs_the_cursor_into_a_bundle_slot() {
+        let mut inv = Inventory::default();
+        *inv.inventory_menu.slot_mut(9).unwrap() = az_stack(ItemKind::Bundle, 1);
+        inv.carried = az_stack(ItemKind::Stone, 40);
+        click(&mut inv, 9, true);
+        assert!(inv.carried.is_empty(), "the stone went in");
+        let bundle = &inv.inventory_menu.slots()[9];
+        assert_eq!(bundle.kind(), ItemKind::Bundle, "the bundle stays put");
+        assert_eq!(bundle_items(bundle), vec![(ItemKind::Stone, 40)]);
+
+        // Only 24 more fit.
+        inv.carried = az_stack(ItemKind::Stone, 40);
+        click(&mut inv, 9, true);
+        assert_eq!(inv.carried.count(), 16);
+        assert_eq!(
+            bundle_items(&inv.inventory_menu.slots()[9]),
+            vec![(ItemKind::Stone, 64)]
+        );
+
+        // A right click with an empty cursor takes the newest stack out.
+        inv.carried = ItemStack::Empty;
+        click(&mut inv, 9, false);
+        assert_eq!(
+            (inv.carried.kind(), inv.carried.count()),
+            (ItemKind::Stone, 64)
+        );
+        let bundle = &inv.inventory_menu.slots()[9];
+        assert!(bundle_items(bundle).is_empty());
+        assert_eq!(
+            bundle,
+            &az_stack(ItemKind::Bundle, 1),
+            "an emptied bundle matches a fresh one, as the server sends it"
+        );
+    }
+
+    #[test]
+    fn azalea_carried_bundle_takes_from_and_gives_to_slots() {
+        let mut inv = Inventory::default();
+        *inv.inventory_menu.slot_mut(9).unwrap() = az_stack(ItemKind::EnderPearl, 16);
+        *inv.inventory_menu.slot_mut(10).unwrap() = az_stack(ItemKind::Stone, 5);
+        inv.carried = az_stack(ItemKind::Bundle, 1);
+
+        click(&mut inv, 9, true);
+        assert!(
+            inv.inventory_menu.slots()[9].is_empty(),
+            "16 pearls fill it"
+        );
+        click(&mut inv, 10, true);
+        assert_eq!(
+            inv.inventory_menu.slots()[10].count(),
+            5,
+            "a full bundle takes none"
+        );
+        assert_eq!(inv.carried.kind(), ItemKind::Bundle);
+
+        click(&mut inv, 11, false);
+        assert_eq!(
+            inv.inventory_menu.slots()[11].count(),
+            16,
+            "right click drops a stack"
+        );
+        assert!(bundle_items(&inv.carried).is_empty());
     }
 
     #[test]

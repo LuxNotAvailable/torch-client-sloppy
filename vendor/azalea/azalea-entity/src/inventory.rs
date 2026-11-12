@@ -288,13 +288,12 @@ impl Inventory {
                 | PickupClick::Right { slot: Some(slot) }),
             ) => {
                 let slot = slot as usize;
-                let Some(slot_item) = self.menu().slot(slot) else {
-                    return;
-                };
-
-                if self.try_item_click_behavior_override(operation, slot) {
+                if self.menu().slot(slot).is_none()
+                    || self.try_item_click_behavior_override(operation, slot)
+                {
                     return;
                 }
+                let slot_item = self.menu().slot(slot).unwrap();
 
                 let is_left_click = matches!(pickup, PickupClick::Left { .. });
 
@@ -540,12 +539,65 @@ impl Inventory {
             .expect("The main hand item should always be present")
     }
 
+    /// `tryItemClickBehaviourOverride`: a carried bundle acts on the slot
+    /// (`overrideStackedOnOther`), else a bundle in the slot acts on the
+    /// carried item (`overrideOtherStackedOnMe`).
     fn try_item_click_behavior_override(
-        &self,
-        _operation: &ClickOperation,
-        _slot_item_index: usize,
+        &mut self,
+        operation: &ClickOperation,
+        slot: usize,
     ) -> bool {
-        false
+        let primary = matches!(operation, ClickOperation::Pickup(PickupClick::Left { .. }));
+        let Some(slot_item) = self.menu().slot(slot).cloned() else {
+            return false;
+        };
+
+        if let Some(mut contents) = bundle::items(&self.carried) {
+            if primary && slot_item.is_present() {
+                if bundle::fits(&slot_item) {
+                    let max = bundle::max_to_add(&contents, &slot_item);
+                    if let Some(taken) = self.try_remove(slot, slot_item.count(), max) {
+                        let rest = bundle::try_insert(&mut contents, taken);
+                        debug_assert!(rest.is_empty());
+                    }
+                }
+                bundle::store(&mut self.carried, contents);
+                return true;
+            }
+            if !primary && slot_item.is_empty() {
+                if !contents.is_empty() {
+                    let removed = contents.remove(0);
+                    let count = removed.count();
+                    let rest = self.safe_insert(slot, removed, count);
+                    if rest.is_present() {
+                        let _ = bundle::try_insert(&mut contents, rest);
+                    }
+                }
+                bundle::store(&mut self.carried, contents);
+                return true;
+            }
+            return false;
+        }
+
+        let Some(mut contents) = bundle::items(&slot_item) else {
+            return false;
+        };
+        let carried = self.carried.clone();
+        if primary && carried.is_present() {
+            if self.menu().allow_modification(slot) {
+                self.carried = bundle::try_insert(&mut contents, carried);
+            }
+        } else if !primary && carried.is_empty() {
+            if self.menu().allow_modification(slot) && !contents.is_empty() {
+                self.carried = contents.remove(0);
+            }
+        } else {
+            return false;
+        }
+        let mut bundle_stack = slot_item;
+        bundle::store(&mut bundle_stack, contents);
+        *self.menu_mut().slot_mut(slot).unwrap() = bundle_stack;
+        true
     }
 
     fn safe_insert(&mut self, slot: usize, src_item: ItemStack, take_count: i32) -> ItemStack {
@@ -719,5 +771,91 @@ mod tests {
             &new_slots[*Menu::CRAFTING_PLAYER_SLOTS.start()],
             &spruce_planks
         );
+    }
+}
+
+/// `BundleContents` maths for click prediction. Weights are f64 with slack
+/// for thirds and the like.
+mod bundle {
+    use azalea_inventory::{ItemStack, components::{BundleContents, MaxStackSize}};
+
+    const EPS: f64 = 1e-9;
+
+    pub fn items(stack: &ItemStack) -> Option<Vec<ItemStack>> {
+        stack.get_component::<BundleContents>().map(|b| b.items.clone())
+    }
+
+    /// Writes the contents back; empty drops to the bundle's empty default.
+    pub fn store(stack: &mut ItemStack, contents: Vec<ItemStack>) {
+        if contents.is_empty() {
+            if let Some(data) = stack.as_present_mut() {
+                data.component_patch
+                    .remove_kind(<BundleContents as azalea_inventory::components::DataComponentTrait>::KIND);
+            }
+        } else {
+            *stack = std::mem::take(stack).with_component(BundleContents { items: contents });
+        }
+    }
+
+    fn max_stack(stack: &ItemStack) -> i32 {
+        stack
+            .get_component::<MaxStackSize>()
+            .map(|m| m.count)
+            .unwrap_or(64)
+            .max(1)
+    }
+
+    /// `BundleContents.getWeight` for one item.
+    pub fn weight_of(stack: &ItemStack) -> f64 {
+        match items(stack) {
+            Some(inner) => 1.0 / 16.0 + total(&inner),
+            None => 1.0 / max_stack(stack) as f64,
+        }
+    }
+
+    pub fn total(items: &[ItemStack]) -> f64 {
+        items.iter().map(|s| weight_of(s) * s.count() as f64).sum()
+    }
+
+    /// `canItemBeInBundle`: shulker boxes stay out.
+    pub fn fits(stack: &ItemStack) -> bool {
+        stack.is_present() && !stack.kind().to_str().ends_with("shulker_box")
+    }
+
+    /// `getMaxAmountToAdd`.
+    pub fn max_to_add(items: &[ItemStack], stack: &ItemStack) -> i32 {
+        (((1.0 - total(items)) / weight_of(stack)) + EPS).floor().max(0.0) as i32
+    }
+
+    /// `tryInsert`: returns what didn't fit.
+    pub fn try_insert(items: &mut Vec<ItemStack>, mut stack: ItemStack) -> ItemStack {
+        if !fits(&stack) {
+            return stack;
+        }
+        let amount = stack.count().min(max_to_add(items, &stack));
+        if amount <= 0 {
+            return stack;
+        }
+        let stackable = max_stack(&stack) > 1;
+        let same = stackable
+            .then(|| {
+                items.iter().position(|s| match (s.as_present(), stack.as_present()) {
+                    (Some(a), Some(b)) => a.is_same_item_and_components(b),
+                    _ => false,
+                })
+            })
+            .flatten();
+        let moved = stack.split(amount as u32);
+        match same {
+            Some(i) => {
+                let mut merged = items.remove(i);
+                if let Some(d) = merged.as_present_mut() {
+                    d.count += amount;
+                }
+                items.insert(0, merged);
+            }
+            None => items.insert(0, moved),
+        }
+        stack
     }
 }

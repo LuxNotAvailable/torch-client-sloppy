@@ -8,6 +8,7 @@ pub mod atlas_writes;
 pub mod banner_icons;
 pub mod block_info;
 pub mod book;
+pub mod bundle_tooltip;
 pub mod chat;
 pub mod clickevent;
 #[cfg(feature = "click_gui")]

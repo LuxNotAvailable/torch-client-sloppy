@@ -607,9 +607,22 @@ pub fn draw(
                         crate::gui::appleskin::draw_tooltip_row(p, food, x, y - 1.0);
                     }
                 }
-                None => {
-                    draw_lines(p, &c.lines, mx, my, vw, vh);
-                }
+                None => match &stack.bundle {
+                    Some(bundle) => {
+                        let image = (
+                            crate::gui::bundle_tooltip::WIDTH,
+                            crate::gui::bundle_tooltip::height(p, bundle),
+                        );
+                        if let Some((x, y, w)) =
+                            draw_with_image(p, &c.lines, Some(image), mx, my, vw, vh)
+                        {
+                            crate::gui::bundle_tooltip::draw(p, bundle, x, y, w);
+                        }
+                    }
+                    None => {
+                        draw_lines(p, &c.lines, mx, my, vw, vh);
+                    }
+                },
             }
         }
     });
@@ -624,15 +637,54 @@ pub(crate) fn draw_lines(
     vw: f32,
     vh: f32,
 ) -> Option<(f32, f32)> {
+    let mut last = None;
+    draw_lines_inner(p, lines, None, mx, my, vw, vh, &mut last);
+    last
+}
+
+/// A tooltip with an image (width, height) under the title, like vanilla's
+/// tooltip components; returns the image's left, top and the box width.
+fn draw_with_image(
+    p: &mut Painter,
+    lines: &[Vec<Span>],
+    image: Option<(f32, f32)>,
+    mx: f32,
+    my: f32,
+    vw: f32,
+    vh: f32,
+) -> Option<(f32, f32, f32)> {
+    let mut last = None;
+    draw_lines_inner(p, lines, image, mx, my, vw, vh, &mut last)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_lines_inner(
+    p: &mut Painter,
+    lines: &[Vec<Span>],
+    image: Option<(f32, f32)>,
+    mx: f32,
+    my: f32,
+    vw: f32,
+    vh: f32,
+    last_out: &mut Option<(f32, f32)>,
+) -> Option<(f32, f32, f32)> {
     if lines.is_empty() {
         return None;
     }
 
+    let (image_w, image_h) = image.unwrap_or((0.0, 0.0));
     let w = lines
         .iter()
         .map(|l| p.atlas.font.width(l).ceil())
-        .fold(0.0f32, f32::max);
-    let h = box_height(lines.len());
+        .fold(image_w, f32::max);
+    // The image counts as a component: the title gap stays.
+    let rows = lines.len() + usize::from(image.is_some());
+    let h = box_height(rows)
+        - if image.is_some() {
+            ROW_HEIGHT - image_h
+        } else {
+            0.0
+        };
     let (x, y) = position(mx, my, vw, vh, w, h);
 
     let (bx, by) = (x - PADDING - MARGIN, y - PADDING - MARGIN);
@@ -642,12 +694,18 @@ pub(crate) fn draw_lines(
 
     let mut row_y = y;
     let mut last = (x, y);
+    let mut image_at = None;
     for (i, line) in lines.iter().enumerate() {
         p.text(line, x, row_y, true);
         last = (x, row_y);
         row_y += ROW_HEIGHT + if i == 0 { TITLE_GAP } else { 0.0 };
+        if i == 0 && image.is_some() {
+            image_at = Some((x, row_y, w));
+            row_y += image_h;
+        }
     }
-    Some(last)
+    *last_out = Some(last);
+    image_at
 }
 
 #[cfg(test)]

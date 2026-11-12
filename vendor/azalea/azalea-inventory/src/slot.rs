@@ -370,6 +370,13 @@ impl DataComponentPatch {
             )
         })
     }
+    /// Drops a component from the patch, back to the item's default.
+    pub fn remove_kind(&mut self, kind: DataComponentKind) {
+        if let Some(Some(mut existing)) = self.components.shift_remove(&kind) {
+            unsafe { existing.drop_as(kind) };
+        }
+    }
+
     pub unsafe fn unchecked_insert_component(
         &mut self,
         kind: DataComponentKind,

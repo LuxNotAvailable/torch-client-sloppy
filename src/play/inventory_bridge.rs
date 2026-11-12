@@ -197,6 +197,16 @@ pub(crate) fn slot_stack(
         book: book(data).map(Box::new),
         glint: has_glint(data),
         model_data: model_data(data, registries).map(Box::new),
+        bundle: data.get_component::<comp::BundleContents>().map(|b| {
+            Box::new(crate::session::BundleView {
+                items: b
+                    .items
+                    .iter()
+                    .map(|s| slot_stack(s, registries, false))
+                    .collect(),
+                weight: b.items.iter().map(stack_weight).sum(),
+            })
+        }),
     }
 }
 
@@ -254,24 +264,8 @@ fn model_data(
         });
     }
     if let Some(bundle) = data.get_component::<azalea_inventory::components::BundleContents>() {
-        // `BundleContents.weight`: each item takes 1/64 of the bundle, or
-        // 1/16 when it stacks to 16, or the whole of it when it can't stack.
-        let weight: f32 = bundle
-            .items
-            .iter()
-            .map(|stack| {
-                let max = stack
-                    .as_present()
-                    .and_then(|d| {
-                        d.get_component::<azalea_inventory::components::MaxStackSize>()
-                            .map(|m| m.count)
-                    })
-                    .unwrap_or(64)
-                    .max(1);
-                stack.count() as f32 / max as f32
-            })
-            .sum();
-        out.bundle_fullness = weight.clamp(0.0, 1.0);
+        let weight: f64 = bundle.items.iter().map(stack_weight).sum();
+        out.bundle_fullness = weight.clamp(0.0, 1.0) as f32;
     }
     if let Some(tracker) = data.get_component::<comp::LodestoneTracker>()
         && let Some(target) = &tracker.target
@@ -587,15 +581,13 @@ fn creative_stack(
 }
 
 /// `BundleContents.weight`: a stack takes count / max stack of the bundle.
-#[cfg(audio)]
-fn bundle_weight(stack: &ItemStack) -> f32 {
+fn bundle_weight(stack: &ItemStack) -> f64 {
     stack
         .get_component::<azalea_inventory::components::BundleContents>()
         .map_or(0.0, |bundle| bundle.items.iter().map(stack_weight).sum())
 }
 
-#[cfg(audio)]
-fn stack_weight(stack: &ItemStack) -> f32 {
+fn stack_weight(stack: &ItemStack) -> f64 {
     let max = stack
         .as_present()
         .and_then(|d| {
@@ -611,9 +603,9 @@ fn stack_weight(stack: &ItemStack) -> f32 {
     {
         1.0 / 16.0 + bundle_weight(stack)
     } else {
-        1.0 / max as f32
+        1.0 / max as f64
     };
-    own * stack.count() as f32
+    own * stack.count() as f64
 }
 
 /// `BundleItem.overrideStackedOnOther` and `overrideOtherStackedOnMe`: the
@@ -656,7 +648,7 @@ fn bundle_click_sound(bot: &Client, operation: &azalea_inventory::operations::Cl
         let fits = !is_bundle(other) || bundle_weight(other) == 0.0;
         let room = 1.0 - bundle_weight(bundle);
         // `tryInsert`: at least one item has to fit.
-        let one = stack_weight(other) / other.count().max(1) as f32;
+        let one = stack_weight(other) / other.count().max(1) as f64;
         if fits && one <= room + 1e-6 {
             Some(("item.bundle.insert", 0.8, pitch()))
         } else {

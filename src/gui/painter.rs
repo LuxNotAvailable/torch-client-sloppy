@@ -863,10 +863,7 @@ impl<'a> Painter<'a> {
         if max_damage > 0 && damage > 0 {
             let frac = 1.0 - (damage as f32 / max_damage as f32).clamp(0.0, 1.0);
             let bar = (frac * 13.0).round().max(0.0);
-            let hue = frac / 3.0;
-            let rgb = hsv_to_rgb(hue, 1.0, 1.0);
-            self.fill(x + 2.0, y + 13.0, 13.0, 2.0, 0xFF00_0000);
-            self.fill(x + 2.0, y + 13.0, bar, 1.0, 0xFF00_0000 | rgb);
+            self.item_bar(x, y, bar, hsv_to_rgb(frac / 3.0, 1.0, 1.0));
         }
         if count > 1 {
             let digits = Digits::new(count as u32);
@@ -874,6 +871,12 @@ impl<'a> Painter<'a> {
             let w = self.atlas.font.width_str(s);
             self.text_str(s, x + 17.0 - w, y + 9.0, count_color, true);
         }
+    }
+
+    /// `GuiGraphics.itemBar`: a black strip and a coloured fill.
+    pub fn item_bar(&mut self, x: f32, y: f32, width: f32, rgb: u32) {
+        self.fill(x + 2.0, y + 13.0, 13.0, 2.0, 0xFF00_0000);
+        self.fill(x + 2.0, y + 13.0, width, 1.0, 0xFF00_0000 | rgb);
     }
 
     pub fn item_cooldown(&mut self, x: f32, y: f32, frac: u8) {
