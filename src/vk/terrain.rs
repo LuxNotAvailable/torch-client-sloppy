@@ -551,6 +551,8 @@ pub struct TerrainScene {
     /// (phase 4).
     entities: Option<super::entities::EntityScene>,
     particles: Option<super::particles::ParticleScene>,
+    /// `record` only culls: a shader pack draws the world.
+    cull_only: bool,
     env: Option<super::env::EnvScene>,
 }
 
@@ -879,6 +881,7 @@ impl TerrainScene {
             hi: Vec3::splat(f32::MIN),
             stats: Stats::default(),
             entities,
+            cull_only: false,
             particles,
             env,
         })
@@ -1018,6 +1021,11 @@ impl TerrainScene {
                 Err(e)
             }
         }
+    }
+
+    /// Whether `record` only culls (a shader pack draws the world).
+    pub fn set_cull_only(&mut self, cull_only: bool) {
+        self.cull_only = cull_only;
     }
 
     /// The anti-aliasing and post settings, as the game's options change.
@@ -1911,7 +1919,8 @@ impl TerrainScene {
         let effects = settings
             .effects
             .unwrap_or_else(|| self.env.as_ref().map_or(0, |e| e.post));
-        let post = !matches!(view, View::Depth | View::Pyramid)
+        let post = !self.cull_only
+            && !matches!(view, View::Depth | View::Pyramid)
             && (settings.fxaa || settings.ssaa != 1.0 || effects != 0);
         if post {
             let scene_extent = settings.scene_extent(extent);
@@ -1949,7 +1958,7 @@ impl TerrainScene {
                 slot, camera, view,
             )?;
         }
-        if let Some(env) = &self.env {
+        if let Some(env) = self.env.as_ref().filter(|_| !self.cull_only) {
             env.record_screen(
                 ctx,
                 bindless,
@@ -2286,6 +2295,11 @@ impl TerrainScene {
             );
         }
 
+        // A shader pack draws the world itself: only the culls are wanted.
+        if self.cull_only {
+            self.pyramid_view = None;
+            return Ok(());
+        }
         let mut buffers = vec![
             (self.slots.buffer.raw, Use::VertexRead),
             (self.commands.raw, Use::IndirectRead),

@@ -1607,6 +1607,11 @@ impl PackScreen {
         self.settled = true;
     }
 
+    /// The pack's block ids, for the mesher's pack quads.
+    pub(crate) fn block_ids(&self) -> Option<std::sync::Arc<crate::renderer::packvertex::BlockIds>> {
+        self.installed.block_ids.clone()
+    }
+
     /// The pack's `sunPathRotation`, in degrees.
     pub(crate) fn sun_path_rotation(&self) -> f32 {
         self.installed.constants.sun_path_rotation

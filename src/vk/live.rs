@@ -216,12 +216,90 @@ fn setup(world: &mut World) -> Result<Live, SetupError> {
     })
 }
 
+/// What the main thread hands the render thread each frame.
+struct FrameInput {
+    size: Option<(u32, u32)>,
+    gui: crate::gui::pool::GuiFrame,
+    textures: (Option<[TextureData; 2]>, Option<TextureData>),
+    camera: Option<Camera>,
+    figure_view: Option<(bevy::math::Mat4, bevy::math::Vec3, vk::Extent2D)>,
+    menu: bool,
+    shots: Vec<Entity>,
+    post: super::post::Settings,
+    vsync: bool,
+}
+
+/// The render thread (8.5): it owns the renderer and draws frame N while
+/// the main thread runs frame N + 1, as Bevy's pipelined rendering did.
+struct RenderThread {
+    input: Option<std::sync::mpsc::SyncSender<FrameInput>>,
+    captures: std::sync::mpsc::Receiver<Vec<(Entity, bevy::image::Image)>>,
+    /// Whether the GUI pass still wants its atlas and its glint.
+    wants: std::sync::Arc<[std::sync::atomic::AtomicBool; 2]>,
+    /// One message per frame the render thread finished.
+    done: std::sync::mpsc::Receiver<()>,
+    /// Frames drawn in step with the main thread (low frame rates), and
+    /// the smoothed frame time that decides it.
+    in_step: bool,
+    frame_time: f32,
+    /// Frames sent and not yet finished.
+    outstanding: u32,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Drop for RenderThread {
+    fn drop(&mut self) {
+        // Closing the channel ends the loop; the renderer frees itself there.
+        self.input.take();
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+    }
+}
+
+fn spawn(mut live: Live) -> RenderThread {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    // One frame in flight between the threads: the main thread runs at most
+    // one frame ahead.
+    let (input, frames) = std::sync::mpsc::sync_channel::<FrameInput>(1);
+    let (send_captures, captures) = std::sync::mpsc::channel();
+    let (send_done, done) = std::sync::mpsc::channel();
+    let wants = std::sync::Arc::new([AtomicBool::new(true), AtomicBool::new(true)]);
+    let flags = wants.clone();
+    let handle = std::thread::Builder::new()
+        .name("native renderer".into())
+        .spawn(move || {
+            while let Ok(f) = frames.recv() {
+                live.frame(f);
+                flags[0].store(live.gui.textures.is_none(), Ordering::Relaxed);
+                flags[1].store(live.gui.glint.is_none(), Ordering::Relaxed);
+                let captured = live.take_captures();
+                if !captured.is_empty() {
+                    let _ = send_captures.send(captured);
+                }
+                let _ = send_done.send(());
+            }
+        })
+        .expect("the render thread starts");
+    RenderThread {
+        input: Some(input),
+        captures,
+        wants,
+        done,
+        in_step: false,
+        frame_time: 0.0,
+        outstanding: 0,
+        handle: Some(handle),
+    }
+}
+
 fn draw_frame(world: &mut World, mut last: Local<Option<std::time::Instant>>) {
+    use std::sync::atomic::Ordering;
     report_times(&mut last);
     let _timed = Timed::new(4);
-    if world.get_non_send_resource::<Live>().is_none() {
+    if world.get_non_send_resource::<RenderThread>().is_none() {
         match setup(world) {
-            Ok(live) => world.insert_non_send_resource(live),
+            Ok(live) => world.insert_non_send_resource(spawn(live)),
             Err(e) => {
                 // No window yet is normal on the first frames; the rest is fatal.
                 if e.0 != "no window yet" {
@@ -237,12 +315,13 @@ fn draw_frame(world: &mut World, mut last: Local<Option<std::time::Instant>>) {
         .iter(world)
         .next()
         .map(|w| (w.physical_width(), w.physical_height()));
-    let gui_frame = world
+    let gui = world
         .get_resource::<crate::gui::pool::GuiFrames>()
-        .map(|f| std::mem::take(&mut *f.0.lock()));
+        .map(|f| std::mem::take(&mut *f.0.lock()))
+        .unwrap_or_default();
     let wanted = world
-        .get_non_send_resource::<Live>()
-        .map_or((true, true), |l| (l.gui.textures.is_none(), l.gui.glint.is_none()));
+        .get_non_send_resource::<RenderThread>()
+        .map_or((true, true), |t| (t.wants[0].load(Ordering::Relaxed), t.wants[1].load(Ordering::Relaxed)));
     let textures = match wanted {
         (false, false) => (None, None),
         _ => gui_textures(world),
@@ -260,22 +339,8 @@ fn draw_frame(world: &mut World, mut last: Local<Option<std::time::Instant>>) {
         .is_some_and(|c| c.is_active);
     let camera = if menu { None } else { world_camera(world) };
     let figure_view = figure_view(world);
-    let Some(mut live) = world.remove_non_send_resource::<Live>() else {
-        return;
-    };
-    if let Some(size) = size
-        && size != live.size
-    {
-        live.size = size;
-        live.stale = true;
-    }
-    if let Some(c) = camera {
-        live.eye = c.eye;
-    }
-    live.feed_terrain();
-    live.update_pack();
-    // Screenshots the game asked for (`renderer::screenshot`): captured
-    // here, answered with the event Bevy's renderer would send.
+    // Screenshots the game asked for (`renderer::screenshot`): captured by
+    // the renderer, answered with the event Bevy's renderer would send.
     let mut requests = world.query_filtered::<Entity, (
         With<bevy::render::view::screenshot::Screenshot>,
         Without<NativeCapture>,
@@ -284,36 +349,64 @@ fn draw_frame(world: &mut World, mut last: Local<Option<std::time::Instant>>) {
     for &e in &shots {
         world.entity_mut(e).insert(NativeCapture);
     }
-    live.shots = shots;
     // The game's video options.
-    if let Some(gui) = world.get_resource::<crate::gui::GuiState>() {
-        use crate::renderer::antialias::{AaMode, SSAA_SCALES};
-        let aa = gui.options.antialiasing;
-        let before = (live.post.fxaa, live.post.ssaa);
-        live.post = super::post::Settings {
-            fxaa: aa.mode == AaMode::Fxaa,
-            ssaa: if aa.mode == AaMode::Supersample {
-                SSAA_SCALES.get(aa.ssaa).copied().unwrap_or(1.0)
-            } else {
-                1.0
-            },
-            effects: None,
-        };
-        if (live.post.fxaa, live.post.ssaa) != before {
-            info!("native renderer: anti-aliasing {:?} -> fxaa {}, ssaa {}", aa.mode, live.post.fxaa, live.post.ssaa);
+    let (post, vsync) = match world.get_resource::<crate::gui::GuiState>() {
+        Some(gui) => {
+            use crate::renderer::antialias::{AaMode, SSAA_SCALES};
+            let aa = gui.options.antialiasing;
+            let post = super::post::Settings {
+                fxaa: aa.mode == AaMode::Fxaa,
+                ssaa: if aa.mode == AaMode::Supersample {
+                    SSAA_SCALES.get(aa.ssaa).copied().unwrap_or(1.0)
+                } else {
+                    1.0
+                },
+                effects: None,
+            };
+            (post, gui.options.vsync)
         }
-        if gui.options.vsync != live.vsync {
-            live.vsync = gui.options.vsync;
-            live.stale = true;
-        }
+        None => (Default::default(), true),
+    };
+    let input = FrameInput {
+        size,
+        gui,
+        textures,
+        camera,
+        figure_view,
+        menu,
+        shots,
+        post,
+        vsync,
+    };
+    let dt = world.get_resource::<Time>().map_or(0.0, |t| t.delta_secs());
+    let Some(mut thread) = world.get_non_send_resource_mut::<RenderThread>() else {
+        return;
+    };
+    // Pipelined (a frame behind) only while frames are quick; below about
+    // 200 fps the frame is drawn in step, so input shows a frame sooner.
+    thread.frame_time = thread.frame_time * 0.9 + dt * 0.1;
+    thread.in_step = if thread.in_step {
+        thread.frame_time > 1.0 / 220.0
+    } else {
+        thread.frame_time > 1.0 / 180.0
+    };
+    // Waits only while the renderer is still on the frame before last.
+    if thread.input.as_ref().is_none_or(|i| i.send(input).is_err()) {
+        error!("native renderer: the render thread stopped");
+        std::process::exit(3);
     }
-    live.figure.view = figure_view;
-    live.menu = menu;
-    let timed = Timed::new(3);
-    live.draw(gui_frame.unwrap_or_default(), textures, camera);
-    drop(timed);
-    let captured = live.take_captures();
-    world.insert_non_send_resource(live);
+    thread.outstanding += 1;
+    while thread.done.try_recv().is_ok() {
+        thread.outstanding -= 1;
+    }
+    // In step: this frame is drawn before the main thread goes on.
+    while thread.in_step && thread.outstanding > 0 {
+        if thread.done.recv().is_err() {
+            break;
+        }
+        thread.outstanding -= 1;
+    }
+    let captured: Vec<_> = thread.captures.try_iter().flatten().collect();
     for (entity, image) in captured {
         world.trigger(bevy::render::view::screenshot::ScreenshotCaptured { entity, image });
         if let Ok(e) = world.get_entity_mut(entity) {
@@ -322,9 +415,52 @@ fn draw_frame(world: &mut World, mut last: Local<Option<std::time::Instant>>) {
     }
 }
 
+impl Live {
+    /// One frame on the render thread, from what the main thread gathered.
+    fn frame(&mut self, f: FrameInput) {
+        if let Some(size) = f.size
+            && size != self.size
+        {
+            self.size = size;
+            self.stale = true;
+        }
+        if let Some(c) = f.camera {
+            self.eye = c.eye;
+        }
+        self.feed_terrain();
+        self.update_pack();
+        self.shots.extend(f.shots);
+        if (self.post.fxaa, self.post.ssaa) != (f.post.fxaa, f.post.ssaa) {
+            info!("native renderer: anti-aliasing -> fxaa {}, ssaa {}", f.post.fxaa, f.post.ssaa);
+        }
+        self.post = f.post;
+        if f.vsync != self.vsync {
+            self.vsync = f.vsync;
+            self.stale = true;
+        }
+        self.figure.view = f.figure_view;
+        self.menu = f.menu;
+        let timed = Timed::new(3);
+        self.draw(f.gui, f.textures, f.camera);
+        drop(timed);
+    }
+}
+
 /// A screenshot request the native renderer has taken on.
 #[derive(Component)]
 struct NativeCapture;
+
+/// Hands the mesher a pack's block ids and has the chunks re-meshed with
+/// its pack quads (`packdraw::install::sync_pack_vertices` does this for
+/// the game's own compile, which the native renderer doesn't make).
+fn publish_block_ids(ids: Option<std::sync::Arc<crate::renderer::packvertex::BlockIds>>) {
+    let old = crate::renderer::packvertex::current();
+    if old.as_deref() == ids.as_deref() {
+        return;
+    }
+    crate::renderer::packvertex::set_current(ids);
+    crate::client::bus::request(crate::client::bus::ClientRequest::ReloadChunks);
+}
 
 /// The figure camera's view-projection, eye and the texture size the GUI
 /// wants, while the inventory shows the figure.
@@ -494,10 +630,14 @@ impl Live {
         let mut old: Vec<Retired> = Vec::new();
         let fail = |what: &str, e: String| error!("native renderer: {what}: {e}");
         let timed = Timed::new(5);
+        let mut env_renewed = false;
         if let Some(bytes) = dump::take_live("env.bin") {
             match dump::read_env(&bytes) {
                 Ok(env) => match t.renew_env(ctx, memory, bindless, pipelines, format, env, self.eye) {
-                    Ok(o) => old.extend(o.map(Retired::Env)),
+                    Ok(o) => {
+                        old.extend(o.map(Retired::Env));
+                        env_renewed = true;
+                    }
                     Err(e) => fail("env", e.0),
                 },
                 Err(e) => fail("env", e),
@@ -539,7 +679,9 @@ impl Live {
         }
         // A pack draws the sky and hand as its own entities: renewed with
         // the environment.
+        // Only on a renewed environment: its release frees the last ones.
         if let Some((_, pack, _)) = &self.pack
+            && env_renewed
             && let Err(e) = t.pack_sky(
                 ctx,
                 memory,
@@ -586,7 +728,11 @@ impl Live {
         if let Some((_, old, _)) = self.pack.take() {
             old.destroy(&self.ctx, &self.memory);
         }
-        let Some(name) = wanted else { return };
+        let Some(name) = wanted else {
+            // No pack: the mesher drops its pack quads.
+            publish_block_ids(None);
+            return;
+        };
         let installed = match super::pack::load(&name, false) {
             Ok(i) => i,
             Err(e) => {
@@ -608,6 +754,9 @@ impl Live {
         ) {
             Ok(screen) => {
                 info!("native renderer: pack {name}: {}", screen.describe());
+                // The mesher's pack quads (normals, block ids) for this pack,
+                // as the game's own compile would publish them.
+                publish_block_ids(screen.block_ids());
                 self.pack = Some((name, screen, extent));
             }
             Err(e) => {
@@ -748,6 +897,8 @@ impl Live {
         }
         if let (Some(terrain), Some(camera)) = (&mut self.terrain, camera) {
             terrain.set_post(self.post);
+            // Under a pack the terrain only culls; the pack draws.
+            terrain.set_cull_only(self.pack.is_some());
             match terrain.record(
                 &self.ctx,
                 &self.memory,
