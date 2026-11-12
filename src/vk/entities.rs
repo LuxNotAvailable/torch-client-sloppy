@@ -80,6 +80,8 @@ pub struct PackEntities {
     /// Blended instances, far to near.
     pub blended: Vec<u32>,
     pub textures: Vec<vk::Image>,
+    /// Per instance: drawn only into the shadow map (the hidden local player).
+    pub shadow_only: Vec<bool>,
 }
 
 pub struct EntityScene {
@@ -103,6 +105,8 @@ pub struct EntityScene {
     /// Per instance for pack passes: first index, count, base vertex,
     /// bindless texture, blended.
     pack_draws: Vec<(u32, u32, i32, u32, bool)>,
+    /// Per instance: only a pack's shadow pass draws it.
+    pack_shadow_only: Vec<bool>,
     glint: Option<(Image, u32)>,
     /// The textures' UNORM views' bindless indices (pack draws).
     raw_textures: Vec<u32>,
@@ -524,6 +528,7 @@ impl EntityScene {
             readback,
             textures,
             pack_draws,
+            pack_shadow_only: Vec::new(),
             raw_textures: raw_indices.iter().map(|(_, r)| *r).collect(),
             glint,
             staging: Some((staging, texture_offsets, None)),
@@ -956,7 +961,14 @@ impl EntityScene {
     /// instance's draw, blended ones far to near by this frame's ranks.
     pub fn pack_entities(&self) -> PackEntities {
         let mut blended: Vec<u32> = (0..self.pack_draws.len() as u32)
-            .filter(|&i| self.pack_draws[i as usize].4)
+            .filter(|&i| {
+                self.pack_draws[i as usize].4
+                    && !self
+                        .pack_shadow_only
+                        .get(i as usize)
+                        .copied()
+                        .unwrap_or(false)
+            })
             .collect();
         blended.sort_by_key(|&i| self.rank_of[i as usize]);
         PackEntities {
@@ -968,6 +980,7 @@ impl EntityScene {
             draws: self.pack_draws.clone(),
             blended,
             textures: self.textures.iter().map(|(i, _)| i.raw).collect(),
+            shadow_only: self.pack_shadow_only.clone(),
         }
     }
 
@@ -1190,6 +1203,7 @@ impl EntityScene {
         let mut bounds: Vec<[f32; 8]> = Vec::with_capacity(instances.len());
         let mut blended = Vec::new();
         let mut pack_draws = Vec::with_capacity(instances.len());
+        let mut pack_shadow_only = Vec::with_capacity(instances.len());
         let mut rigged = 0;
         for (i, instance) in instances.iter_mut().enumerate() {
             let mesh = live.meshes.get(instance.mesh as usize).copied().flatten();
@@ -1209,8 +1223,16 @@ impl EntityScene {
                 }
                 None => (Vec3::ZERO, Vec3::ZERO),
             };
+            let shadow_only = instance.kind & super::entity_dump::KIND_SHADOW_ONLY != 0;
+            // Shadow-only instances: a box out of every view, so the
+            // world's own cull drops them.
+            let (lo, hi) = if shadow_only {
+                (Vec3::splat(1e30), Vec3::splat(1e30))
+            } else {
+                (lo, hi)
+            };
             bounds.push([lo.x, lo.y, lo.z, 0.0, hi.x, hi.y, hi.z, 0.0]);
-            if instance.alpha >= 2 {
+            if instance.alpha >= 2 && !shadow_only {
                 blended.push((
                     i as u32,
                     (lo + hi) / 2.0,
@@ -1224,6 +1246,7 @@ impl EntityScene {
                 rigged += 1;
             }
             pack_draws.push((first, count, base as i32, raw_texture, instance.alpha >= 2));
+            pack_shadow_only.push(shadow_only);
         }
         let count = instances.len() as u32;
         live.frame = Some((
@@ -1240,6 +1263,7 @@ impl EntityScene {
         self.stats.blended = blended.len();
         self.blended = blended;
         self.pack_draws = pack_draws;
+        self.pack_shadow_only = pack_shadow_only;
         Ok(())
     }
 

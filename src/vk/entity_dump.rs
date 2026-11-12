@@ -465,6 +465,9 @@ struct Cache {
 
 /// Set in an instance's `kind` when its texture repeats.
 pub const KIND_REPEAT: u32 = 1 << 31;
+/// Set in an instance's `kind` when only a pack's shadow pass draws it (the
+/// local player in first person).
+pub const KIND_SHADOW_ONLY: u32 = 1 << 30;
 
 fn repeats(image: &Image) -> bool {
     match &image.sampler {
@@ -598,6 +601,7 @@ fn capture(
 }
 
 type Drawn<'a> = (
+    Entity,
     &'a Mesh3d,
     &'a MeshMaterial3d<EntityMaterial>,
     &'a GlobalTransform,
@@ -992,6 +996,10 @@ fn write(
         Res<Assets<crate::renderer::glint::GlintMaterial>>,
         Query<OverlayDrawn, OverlayFilter>,
     ),
+    (ancestors, local_roots): (
+        Query<&ChildOf>,
+        Query<(), With<crate::renderer::player_model::LocalRigRoot>>,
+    ),
 ) {
     if !due(&mut since, time.delta_secs()) {
         return;
@@ -1019,16 +1027,43 @@ fn write(
             (t.to_matrix(), fov)
         })
         .unwrap_or((Mat4::IDENTITY, 70f32.to_radians()));
+    let player_shadow = crate::renderer::packvertex::player_shadow();
+    // Whether a mesh sits in the local player's rig.
+    let under_local_rig = |mut at: Entity| {
+        for _ in 0..8 {
+            if local_roots.contains(at) {
+                return true;
+            }
+            match ancestors.get(at) {
+                Ok(parent) => at = parent.parent(),
+                Err(_) => return false,
+            }
+        }
+        false
+    };
     // One snapshot of what a layer draws, seen from `(cam, fov)`.
     let collect = |world: bevy::camera::visibility::RenderLayers| -> Collected {
         let mut instances = Vec::new();
         let mut used_meshes = Vec::new();
         let mut used_images = Vec::new();
         let (mut mesh_ids, mut image_ids) = (HashMap::new(), HashMap::new());
-        for (mesh, material, transform, visible, layers, tag, (block, particle, beam, weather)) in
-            &drawn
+        for (
+            entity,
+            mesh,
+            material,
+            transform,
+            visible,
+            layers,
+            tag,
+            (block, particle, beam, weather),
+        ) in &drawn
         {
-            if !visible.get() || layers.is_some_and(|l| !l.intersects(&world)) {
+            if layers.is_some_and(|l| !l.intersects(&world)) {
+                continue;
+            }
+            // The hidden local player still casts a pack's shadow.
+            let shadow_only = !visible.get();
+            if shadow_only && !(player_shadow && under_local_rig(entity)) {
                 continue;
             }
             // Particles go to `particles.bin`, as sprites.
@@ -1083,7 +1118,7 @@ fn write(
                     KIND_REPEAT
                 } else {
                     0
-                },
+                } | if shadow_only { KIND_SHADOW_ONLY } else { 0 },
                 tint: p.tint.to_array(),
                 light: p.light.to_array(),
                 light0: p.light0.to_array(),

@@ -96,8 +96,15 @@ pub fn active() -> bool {
 
 static PLAYER_SHADOW: AtomicBool = AtomicBool::new(false);
 
+/// The native renderer's pack, which `sync_pack_vertices` never sees.
+static NATIVE_PLAYER_SHADOW: AtomicBool = AtomicBool::new(false);
+
 pub fn player_shadow() -> bool {
-    PLAYER_SHADOW.load(Ordering::Relaxed)
+    PLAYER_SHADOW.load(Ordering::Relaxed) || NATIVE_PLAYER_SHADOW.load(Ordering::Relaxed)
+}
+
+pub fn set_native_player_shadow(on: bool) {
+    NATIVE_PLAYER_SHADOW.store(on, Ordering::Relaxed);
 }
 
 pub fn set_player_shadow(on: bool) {

@@ -857,6 +857,7 @@ impl Live {
         if let Some((_, old, _)) = self.pack.take() {
             old.destroy(&self.ctx, &self.memory);
         }
+        crate::renderer::packvertex::set_native_player_shadow(false);
         let Some(name) = wanted else {
             // No pack: the mesher drops its pack quads.
             publish_block_ids(None);
@@ -886,6 +887,7 @@ impl Live {
                 // The mesher's pack quads (normals, block ids) for this pack,
                 // as the game's own compile would publish them.
                 publish_block_ids(screen.block_ids());
+                crate::renderer::packvertex::set_native_player_shadow(screen.casts_player_shadow());
                 self.pack = Some((name, screen, extent));
                 self.pack_revision = revision;
             }

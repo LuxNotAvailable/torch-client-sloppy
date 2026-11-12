@@ -1127,12 +1127,14 @@ fn setup_player_model(
         armor: ARMOR_LAYERS.map(|layer| bake_armor(layer(), &mut meshes)),
     };
 
-    rigs.local = Some(spawn_rig(
+    let local = spawn_rig(
         &mut commands,
         &assets,
         &mut materials,
         RenderLayers::default(),
-    ));
+    );
+    commands.entity(local.root).insert(LocalRigRoot);
+    rigs.local = Some(local);
     rigs.figure = Some(spawn_rig(
         &mut commands,
         &assets,
@@ -1988,6 +1990,11 @@ fn player_lit(
         glint: false,
     }
 }
+
+/// The local player's rig: hidden in first person, but still posed for a
+/// pack's shadow (`vk::entity_dump` takes it as shadow-only).
+#[derive(Component)]
+pub struct LocalRigRoot;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RigVisibility {

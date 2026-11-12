@@ -595,6 +595,7 @@ impl EnvScene {
             draws: pack.draws.clone(),
             blended: pack.textured.clone(),
             textures: self.textures.iter().map(|t| t.0.raw).collect(),
+            shadow_only: Vec::new(),
         })
     }
 
@@ -612,6 +613,7 @@ impl EnvScene {
             // For the sky: the textured pieces.
             blended: pack.textured.clone(),
             textures: self.textures.iter().map(|t| t.0.raw).collect(),
+            shadow_only: Vec::new(),
         })
     }
 

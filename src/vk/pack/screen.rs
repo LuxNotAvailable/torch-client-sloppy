@@ -369,6 +369,31 @@ impl PackScreen {
                     && screen.targets.shadow.is_some()
                 {
                     for slot in [0, 1, 2] {
+                        // Entities (the player too) cast with the opaque
+                        // terrain, before shadowtex1 is copied.
+                        let casters = screen.installed.shadow_casters;
+                        if slot == 2
+                            && (casters.entities || casters.player)
+                            && let Some(index) =
+                                screen.installed.entities[EntityKind::ShadowCaster.index()]
+                        {
+                            screen.building_entity = Some(false);
+                            let pass = screen.pass(
+                                ctx,
+                                memory,
+                                bindless,
+                                pipelines,
+                                index,
+                                flips,
+                                None,
+                                Some(0),
+                                true,
+                            );
+                            screen.building_entity = None;
+                            let mut pass = pass?;
+                            pass.entity = Some(false);
+                            screen.passes.push(pass);
+                        }
                         if slot == 2 {
                             screen.copy_shadow_at = Some(screen.passes.len() - first);
                         }
@@ -741,6 +766,7 @@ impl PackScreen {
                     (true, true) => EntityKind::HandWater,
                     (true, false) => EntityKind::Hand,
                     (false, true) => EntityKind::EntityTranslucent,
+                    (false, false) if shadow => EntityKind::ShadowCaster,
                     (false, false) => EntityKind::Entity,
                 };
                 program.fragment_for(kind.alpha_tests()[0])
@@ -1681,6 +1707,7 @@ impl PackScreen {
             };
             let (pipeline, base) = (pass.pipeline, pass.base);
             let entity_pass = pass.entity;
+            let shadow_pass = pass.shadow.is_some();
             let hand_pass = pass.hand;
             let sky_pass = pass.sky;
             let white = self.stubs.white.1;
@@ -1794,8 +1821,14 @@ impl PackScreen {
                         let order: Vec<u32> = if entity_pass == Some(true) {
                             e.blended.clone()
                         } else {
+                            // The shadow pass takes the shadow-only ones
+                            // too; the rest skip them.
                             (0..e.draws.len() as u32)
-                                .filter(|&i| !e.draws[i as usize].4)
+                                .filter(|&i| {
+                                    let only =
+                                        e.shadow_only.get(i as usize).copied().unwrap_or(false);
+                                    !e.draws[i as usize].4 && (shadow_pass || !only)
+                                })
                                 .collect()
                         };
                         for i in order {
@@ -1907,6 +1940,14 @@ impl PackScreen {
     }
 
     /// The pack's block ids, for the mesher's pack quads.
+    /// Whether the pack draws entities into its shadow map (so the hidden
+    /// first-person rig should be posed).
+    pub(crate) fn casts_player_shadow(&self) -> bool {
+        let casters = self.installed.shadow_casters;
+        self.installed.entities[EntityKind::ShadowCaster.index()].is_some()
+            && (casters.player || casters.entities)
+    }
+
     pub(crate) fn block_ids(
         &self,
     ) -> Option<std::sync::Arc<crate::renderer::packvertex::BlockIds>> {
