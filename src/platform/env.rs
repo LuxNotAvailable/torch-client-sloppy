@@ -201,6 +201,36 @@ const ALL: &[Var] = &[
         enabled: cfg!(feature = "vulkan"),
     },
     Var {
+        name: "MC_RENDERER",
+        what: "which renderer draws the game: native (Vulkan, the desktop default) or wgpu/legacy (the old one)",
+        default: "native on desktop",
+        enabled: cfg!(feature = "vulkan"),
+    },
+    Var {
+        name: "MC_NATIVE_PIPELINE",
+        what: "the native renderer's pipelining: always, never, or (unset) only above about 200 fps",
+        default: "automatic",
+        enabled: cfg!(feature = "vulkan"),
+    },
+    Var {
+        name: "MC_NATIVE_TERRAIN",
+        what: "turn native terrain stages off, for debugging (comma-separated flags)",
+        default: "off",
+        enabled: cfg!(feature = "vulkan"),
+    },
+    Var {
+        name: "MC_PACK_SHOW",
+        what: "show one shader pack target instead of the final image, for debugging",
+        default: "off",
+        enabled: cfg!(feature = "vulkan"),
+    },
+    Var {
+        name: "MC_WGSL_DUMP",
+        what: "a folder the pack-compile test writes translated shaders to",
+        default: "off",
+        enabled: true,
+    },
+    Var {
         name: "MC_VK_VALIDATION",
         what: "turn on the Khronos validation layer in the Vulkan renderer's release builds, when set to 1",
         default: "on in debug builds only",

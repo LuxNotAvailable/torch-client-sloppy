@@ -1,5 +1,5 @@
 //! The native renderer in the game (VULKAN_REWRITE_CHECKLIST.md phase 8),
-//! on with `MC_RENDERER=native`: Bevy's renderer starts with no backend,
+//! the desktop default (`MC_RENDERER=wgpu` for the old renderer): Bevy's renderer starts with no backend,
 //! and this plugin takes the primary window, draws each frame and presents.
 //!
 //! Drawn: the terrain (`TerrainScene`, fed the game's section stream by
@@ -26,7 +26,12 @@ use super::{Context, SetupError, Swapchain};
 /// Whether this run draws with the native renderer (`MC_RENDERER=native`).
 pub fn wanted() -> bool {
     static WANTED: OnceLock<bool> = OnceLock::new();
-    *WANTED.get_or_init(|| std::env::var("MC_RENDERER").is_ok_and(|v| v.eq_ignore_ascii_case("native")))
+    // Native by default on desktop; `MC_RENDERER=wgpu` (or `legacy`) for the old one.
+    *WANTED.get_or_init(|| match std::env::var("MC_RENDERER") {
+        Ok(v) if v.eq_ignore_ascii_case("native") => true,
+        Ok(v) if v.eq_ignore_ascii_case("wgpu") || v.eq_ignore_ascii_case("legacy") => false,
+        _ => cfg!(not(any(target_os = "android", target_arch = "wasm32"))),
+    })
 }
 
 /// Where the native renderer's frame goes, in nanoseconds summed since
