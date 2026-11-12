@@ -87,6 +87,19 @@ pub fn predict(
 
     let clicked_state = block_at(hit.block_pos)?;
 
+    if let Some(amount) = segment_amount(block) {
+        return segment_placement(
+            block,
+            amount,
+            hit,
+            yaw,
+            secondary_use,
+            min_y,
+            height,
+            &block_at,
+        );
+    }
+
     if block == BlockKind::Scaffolding && clicked_state.as_block_kind() == BlockKind::Scaffolding {
         let (pos, face) = scaffolding_extension(hit, yaw, secondary_use, &block_at)?;
         if pos.y < min_y || pos.y >= min_y + height as i32 {
@@ -129,6 +142,12 @@ pub fn predict(
     let replaced_state = block_at(pos)?;
     if !replacing_clicked && !replaceable(replaced_state, block)? {
         return None;
+    }
+
+    if let Some(state) =
+        supported_placement(block, hit, yaw, pitch, pos, replacing_clicked, &block_at)
+    {
+        return state.map(|state| (pos, state));
     }
 
     let attachment = attachment(block);
@@ -1018,6 +1037,152 @@ fn nearest_looking_directions(
     directions
 }
 
+/// `SegmentableBlock`s and their count property.
+fn segment_amount(block: BlockKind) -> Option<&'static str> {
+    match block {
+        BlockKind::PinkPetals | BlockKind::Wildflowers => Some("flower_amount"),
+        BlockKind::LeafLitter => Some("segment_amount"),
+        _ => None,
+    }
+}
+
+/// `SegmentableBlock`: adds a segment to a bed under 4 (unless sneaking),
+/// else starts one facing the player, where it survives.
+#[allow(clippy::too_many_arguments)]
+fn segment_placement(
+    block: BlockKind,
+    amount: &str,
+    hit: &BlockHitResult,
+    yaw: f32,
+    secondary_use: bool,
+    min_y: i32,
+    height: u32,
+    block_at: &dyn Fn(BlockPos) -> Option<BlockState>,
+) -> Option<(BlockPos, BlockState)> {
+    let grows = |state: BlockState| {
+        !secondary_use
+            && state.as_block_kind() == block
+            && crate::blocks::info::property(state, amount)
+                .and_then(|v| v.parse::<u8>().ok())
+                .is_some_and(|n| n < 4)
+    };
+    let clicked = block_at(hit.block_pos)?;
+    let pos = if grows(clicked) || REPLACEABLE.contains(&clicked.as_block_kind()) {
+        hit.block_pos
+    } else {
+        if has_use_interaction(clicked) {
+            return None;
+        }
+        hit.block_pos + hit.direction.normal()
+    };
+    if pos.y < min_y || pos.y >= min_y + height as i32 {
+        return None;
+    }
+    let current = block_at(pos)?;
+    if grows(current) {
+        let n: u8 = crate::blocks::info::property(current, amount)?
+            .parse()
+            .ok()?;
+        let mut placed = Box::<dyn BlockTrait>::from(current);
+        placed.set_property(amount, &(n + 1).to_string()).ok()?;
+        return Some((pos, placed.as_block_state()));
+    }
+    if !REPLACEABLE.contains(&current.as_block_kind()) {
+        return None;
+    }
+    let below = block_at(pos + Direction::Down.normal())?;
+    let survives = if block == BlockKind::LeafLitter {
+        is_face_sturdy(below, Direction::Up)
+    } else {
+        crate::blocks::tags::has(below, "supports_vegetation")
+    };
+    if !survives {
+        return None;
+    }
+    let mut placed = Box::<dyn BlockTrait>::from(BlockState::from(block));
+    let _ = placed.set_property("facing", direction_name(player_facing(yaw).opposite()));
+    Some((pos, placed.as_block_state()))
+}
+
+/// `StandingAndWallBlockItem`'s torch partner on walls.
+fn wall_torch(block: BlockKind) -> Option<BlockKind> {
+    Some(match block {
+        BlockKind::Torch => BlockKind::WallTorch,
+        BlockKind::SoulTorch => BlockKind::SoulWallTorch,
+        BlockKind::RedstoneTorch => BlockKind::RedstoneWallTorch,
+        BlockKind::CopperTorch => BlockKind::CopperWallTorch,
+        _ => return None,
+    })
+}
+
+/// Plants that only need `#supports_vegetation` below (`VegetationBlock`);
+/// ones that override `mayPlaceOn` are left out.
+fn is_plain_vegetation(block: BlockKind) -> bool {
+    let state = BlockState::from(block);
+    let tagged = crate::blocks::tags::has(state, "small_flowers")
+        || crate::blocks::tags::has(state, "saplings")
+        || matches!(block, BlockKind::ShortGrass | BlockKind::Fern);
+    tagged
+        && !matches!(
+            block,
+            BlockKind::WitherRose
+                | BlockKind::Azalea
+                | BlockKind::FloweringAzalea
+                | BlockKind::MangrovePropagule
+        )
+}
+
+/// Blocks placed only where they survive: torches and plain plants.
+/// `Some(None)` means it can't go here; `None` means not one of these.
+fn supported_placement(
+    block: BlockKind,
+    hit: &BlockHitResult,
+    yaw: f32,
+    pitch: f32,
+    pos: BlockPos,
+    replacing_clicked: bool,
+    block_at: &dyn Fn(BlockPos) -> Option<BlockState>,
+) -> Option<Option<BlockState>> {
+    let below = pos + Direction::Down.normal();
+    if is_plain_vegetation(block) {
+        let ok =
+            block_at(below).is_some_and(|s| crate::blocks::tags::has(s, "supports_vegetation"));
+        return Some(ok.then(|| BlockState::from(block)));
+    }
+    let wall = wall_torch(block)?;
+    let directions = nearest_looking_directions(yaw, pitch, hit.direction, replacing_clicked);
+    // `WallTorchBlock.getStateForPlacement`: the first horizontal look
+    // direction with a sturdy face behind.
+    let wall_state = directions
+        .iter()
+        .filter(|d| !matches!(d, Direction::Up | Direction::Down))
+        .find(|&&d| {
+            let behind = pos + d.normal();
+            block_at(behind).is_some_and(|s| is_face_sturdy(s, d.opposite()))
+        })
+        .map(|&d| {
+            let mut placed = Box::<dyn BlockTrait>::from(BlockState::from(wall));
+            let _ = placed.set_property("facing", direction_name(d.opposite()));
+            placed.as_block_state()
+        });
+    for d in directions {
+        match d {
+            Direction::Up => {}
+            Direction::Down => {
+                if block_at(below).is_some_and(|s| can_support_center(s, Direction::Up)) {
+                    return Some(Some(BlockState::from(block)));
+                }
+            }
+            _ => {
+                if wall_state.is_some() {
+                    return Some(wall_state);
+                }
+            }
+        }
+    }
+    Some(None)
+}
+
 fn accepts(block: BlockKind, name: &str, value: &str) -> bool {
     Box::<dyn BlockTrait>::from(BlockState::from(block))
         .set_property(name, value)
@@ -1649,7 +1814,6 @@ mod tests {
 
     #[test]
     fn blocks_that_need_support_are_not_predicted() {
-        assert!(place(ItemKind::Torch, Direction::Up, 1.0, 0., BlockKind::Stone).is_none());
         assert!(
             place(
                 ItemKind::OakSapling,
@@ -1661,6 +1825,62 @@ mod tests {
             .is_none()
         );
         assert!(place(ItemKind::Rail, Direction::Up, 1.0, 0., BlockKind::Stone).is_none());
+    }
+
+    #[test]
+    fn torches_stand_on_tops_and_hang_on_sides() {
+        let (_, floor) = place(ItemKind::Torch, Direction::Up, 1.0, 0., BlockKind::Stone).unwrap();
+        assert_eq!(floor.as_block_kind(), BlockKind::Torch);
+
+        let (pos, wall) = place(
+            ItemKind::SoulTorch,
+            Direction::North,
+            0.5,
+            0.,
+            BlockKind::Stone,
+        )
+        .unwrap();
+        assert_eq!(pos, TARGET + Direction::North.normal());
+        assert_eq!(wall.as_block_kind(), BlockKind::SoulWallTorch);
+        assert_eq!(property(wall, "facing"), Some("north"));
+
+        // Under a block there's nothing to stand on or hang from.
+        assert!(place(ItemKind::Torch, Direction::Down, 0.0, 0., BlockKind::Stone).is_none());
+    }
+
+    #[test]
+    fn leaf_litter_starts_facing_the_player_and_stacks_to_four() {
+        let (pos, state) = place(
+            ItemKind::LeafLitter,
+            Direction::Up,
+            1.0,
+            0.,
+            BlockKind::Stone,
+        )
+        .unwrap();
+        assert_eq!(pos, TARGET + Direction::Up.normal());
+        assert_eq!(property(state, "segment_amount"), Some("1"));
+        // Yaw 0 faces south; the litter faces back at the player.
+        assert_eq!(property(state, "facing"), Some("north"));
+
+        let grown = |amount: &str| {
+            let mut s = Box::<dyn BlockTrait>::from(BlockState::from(BlockKind::LeafLitter));
+            s.set_property("segment_amount", amount).unwrap();
+            let litter = s.as_block_state();
+            predict(
+                &ItemStack::new(ItemKind::LeafLitter, 1),
+                &hit(Direction::Up, 0.0),
+                0.,
+                0.,
+                false,
+                MIN_Y,
+                HEIGHT,
+                move |p| Some(if p == TARGET { litter } else { BlockState::AIR }),
+            )
+        };
+        let (_, three) = grown("2").unwrap();
+        assert_eq!(property(three, "segment_amount"), Some("3"));
+        assert!(grown("4").is_none(), "a full bed takes no more");
     }
 
     #[test]
