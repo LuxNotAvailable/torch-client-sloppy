@@ -543,7 +543,8 @@ fn start_use_item(bot: &Client, shared: &Arc<SharedMutex>) -> bool {
     if main.is_none_or(|k| !places(k) && main_hand_passes(bot, k)) && offhand_places(bot, places) {
         send_use_item(bot);
         send_use_item_on_with(bot, &hit, false, true);
-        use_offhand_item(bot);
+        use_offhand_item(bot, shared);
+        item_used_in(shared, 1);
         // The off hand swings (the left arm, unless left-handed).
         let left_handed = shared.lock().unwrap().skin_prefs.main_hand_left;
         crate::client::tick::swing_local_player(!left_handed, shared);
@@ -557,7 +558,7 @@ fn use_item(bot: &Client, shared: &Arc<SharedMutex>) -> bool {
     let Some(kind) = held_item_kind(bot) else {
         // An empty main hand passes straight to the off hand.
         send_use_item(bot);
-        use_offhand_item(bot);
+        use_offhand_item(bot, shared);
         return false;
     };
     #[cfg(audio)]
@@ -567,7 +568,7 @@ fn use_item(bot: &Client, shared: &Arc<SharedMutex>) -> bool {
     }
     send_use_item(bot);
     if main_hand_passes(bot, kind) {
-        use_offhand_item(bot);
+        use_offhand_item(bot, shared);
         return false;
     }
 
@@ -1215,8 +1216,13 @@ fn swing_main_hand(shared: &Arc<SharedMutex>) {
 }
 
 fn item_used(shared: &Arc<SharedMutex>) {
+    item_used_in(shared, 0);
+}
+
+/// Restarts a hand's equip ramp (0 main, 1 off).
+fn item_used_in(shared: &Arc<SharedMutex>, hand: usize) {
     let mut s = shared.lock().unwrap();
-    s.session.item_used[0] = s.session.item_used[0].wrapping_add(1);
+    s.session.item_used[hand] = s.session.item_used[hand].wrapping_add(1);
 }
 
 fn consume_held_item(bot: &Client) {
@@ -1462,7 +1468,7 @@ fn offhand_places(bot: &Client, places: impl Fn(ItemKind) -> bool) -> bool {
         })
 }
 
-fn use_offhand_item(bot: &Client) {
+fn use_offhand_item(bot: &Client, shared: &Arc<SharedMutex>) {
     use azalea_protocol::packets::game::{ServerboundUseItem, s_interact::InteractionHand};
     let (kind, duration) = {
         let Ok(inventory) = bot.component::<azalea::entity::inventory::Inventory>() else {
@@ -1498,11 +1504,15 @@ fn use_offhand_item(bot: &Client) {
     });
     if duration > 0 {
         start_using_item(kind, duration);
-        let mut use_item = USE_ITEM.lock().unwrap();
-        use_item.offhand = true;
-        if !SERVER_USING_ITEM.load(Ordering::Relaxed) {
-            use_item.unconfirmed.get_or_insert(0);
+        {
+            let mut use_item = USE_ITEM.lock().unwrap();
+            use_item.offhand = true;
+            if !SERVER_USING_ITEM.load(Ordering::Relaxed) {
+                use_item.unconfirmed.get_or_insert(0);
+            }
         }
+        // Vanilla `itemUsed(OFF_HAND)`: the hand dips and eases back up.
+        item_used_in(shared, 1);
     }
 }
 
