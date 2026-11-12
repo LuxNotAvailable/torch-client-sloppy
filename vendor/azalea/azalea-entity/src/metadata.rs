@@ -916,7 +916,7 @@ impl Default for OminousItemSpawnerMetadataBundle {
 #[derive(Component, Deref, DerefMut, Clone, PartialEq)]
 pub struct PaintingDirection(pub Direction);
 #[derive(Component, Deref, DerefMut, Clone, PartialEq)]
-pub struct PaintingVariant(pub azalea_registry::data::PaintingVariant);
+pub struct PaintingVariant(pub azalea_inventory::components::PaintingVariant);
 #[derive(Component)]
 pub struct Painting;
 impl Painting {
@@ -930,7 +930,7 @@ impl Painting {
                 entity.insert(PaintingDirection(d.value.into_direction()?));
             }
             9 => {
-                entity.insert(PaintingVariant(d.value.into_painting_variant()?));
+                entity.insert(PaintingVariant(*d.value.into_painting_variant()?));
             }
             _ => {}
         }
@@ -951,7 +951,11 @@ impl Default for PaintingMetadataBundle {
             _marker: Painting,
             parent: Default::default(),
             painting_direction: PaintingDirection(Default::default()),
-            painting_variant: PaintingVariant(azalea_registry::data::PaintingVariant::new_raw(0)),
+            painting_variant: PaintingVariant(azalea_inventory::components::PaintingVariant {
+                variant: azalea_registry::Holder::Reference(
+                    azalea_registry::data::PaintingVariant::new_raw(0),
+                ),
+            }),
         }
     }
 }

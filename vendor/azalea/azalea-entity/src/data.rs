@@ -89,7 +89,9 @@ pub enum EntityDataValue {
     ChickenSoundVariant(azalea_registry::data::ChickenSoundVariant),
     ZombieNautilusVariant(azalea_registry::data::ZombieNautilusVariant),
     OptionalGlobalPos(Option<Box<GlobalPos>>),
-    PaintingVariant(azalea_registry::data::PaintingVariant),
+    /// `ByteBufCodecs.holder`: a registry id plus one, or 0 and an inline
+    /// variant.
+    PaintingVariant(Box<components::PaintingVariant>),
     SnifferState(SnifferStateKind),
     ArmadilloState(ArmadilloStateKind),
     CopperGolemState(CopperGolemStateKind),
@@ -214,4 +216,25 @@ pub enum HumanoidArm {
     Left = 0,
     #[default]
     Right = 1,
+}
+
+#[cfg(test)]
+mod painting_tests {
+    use super::*;
+    use azalea_registry::{DataRegistry, Holder};
+
+    #[test]
+    fn painting_variants_read_as_holders() {
+        // A registry reference: id 4 goes over the wire as 5.
+        let v = components::PaintingVariant::azalea_read(&mut Cursor::new(&[5u8][..])).unwrap();
+        assert!(matches!(v.variant, Holder::Reference(r) if r.protocol_id() == 4));
+
+        // 0, then an inline 2x1 variant with no title or author.
+        let mut bytes = vec![0u8, 2, 1];
+        "minecraft:kebab".to_string().azalea_write(&mut bytes).unwrap();
+        bytes.extend([0, 0]);
+        let v = components::PaintingVariant::azalea_read(&mut Cursor::new(&bytes[..])).unwrap();
+        let Holder::Direct(d) = v.variant else { panic!("expected inline") };
+        assert_eq!((d.width, d.height), (2, 1));
+    }
 }

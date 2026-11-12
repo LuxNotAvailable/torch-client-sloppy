@@ -173,6 +173,19 @@ where
     Some((<Value<C> as DataRegistry>::NAME, value.protocol_id()))
 }
 
+/// A painting's variant when it names a registry entry. Inline variants
+/// (`Holder.Direct`) aren't drawn yet.
+fn painting_variant_key(eref: &EntityView) -> Option<(&'static str, u32)> {
+    use azalea_registry::DataRegistry;
+    match &meta::<azalea::entity::metadata::PaintingVariant>(eref)?.variant {
+        azalea_registry::Holder::Reference(v) => Some((
+            azalea_registry::data::PaintingVariant::NAME,
+            v.protocol_id(),
+        )),
+        azalea_registry::Holder::Direct(_) => None,
+    }
+}
+
 fn resolve_variant(
     registries: Option<&azalea_core::registry_holder::RegistryHolder>,
     key: Option<(&'static str, u32)>,
@@ -662,6 +675,18 @@ pub(crate) fn collect_entities(
             });
         }
 
+        if kind == EntityKind::Painting {
+            let spawned = add_entity_data_map
+                .get(&id)
+                .and_then(|&data| u8::try_from(data).ok())
+                .filter(|&data| data < 6)
+                .map(entities::Direction::from_index);
+            let raw = meta::<metadata::PaintingDirection>(eref);
+            shared.object.item_frame_direction = match raw.map(entities::Direction::from) {
+                Some(dir) if dir != entities::Direction::South => dir,
+                _ => spawned.unwrap_or(entities::Direction::South),
+            };
+        }
         if matches!(kind, EntityKind::ItemFrame | EntityKind::GlowItemFrame) {
             let raw = meta::<metadata::ItemFrameDirection>(eref);
             let spawned = add_entity_data_map
@@ -1089,10 +1114,9 @@ pub(crate) fn collect_entities(
                     .or_else(|| variant_key::<metadata::PigVariant>(eref))
                     .or_else(|| variant_key::<metadata::ChickenVariant>(eref))
                     .or_else(|| variant_key::<metadata::FrogVariant>(eref))
-                    .or_else(|| variant_key::<metadata::PaintingVariant>(eref))
                     .or_else(|| variant_key::<metadata::ZombieNautilusVariant>(eref))
             } else {
-                variant_key::<metadata::PaintingVariant>(eref)
+                painting_variant_key(eref)
             },
             sleeping_pos: if living {
                 meta::<metadata::SleepingPos>(eref).flatten()
