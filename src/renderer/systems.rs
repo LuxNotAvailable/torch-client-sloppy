@@ -2136,9 +2136,14 @@ fn sync_smooth_lighting(state: Res<crate::gui::GuiState>, mut last: Local<Option
     if *last == Some(wanted) {
         return;
     }
+    let had_previous_value = last.is_some();
     *last = Some(wanted);
     crate::renderer::set_smooth_lighting(wanted);
     forward_lighting_options();
+    // Meshed chunks keep their old lighting until meshed again.
+    if had_previous_value {
+        crate::client::bus::request(crate::client::bus::ClientRequest::ReloadChunks);
+    }
 }
 
 fn forward_lighting_options() {
