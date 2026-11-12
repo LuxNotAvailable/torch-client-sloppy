@@ -56,6 +56,7 @@ pub mod resourcepacks;
 pub mod screens;
 pub mod scroll_list;
 pub mod serverlist;
+pub mod setting_tip;
 #[cfg(feature = "shader_support")]
 pub mod shaderpacks;
 pub mod sign_edit;
@@ -70,6 +71,7 @@ pub mod tablist;
 pub mod title;
 pub mod toast;
 pub mod tooltip;
+pub mod video_tips;
 #[cfg(voice)]
 pub mod voice_chat;
 pub mod widgets;

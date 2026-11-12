@@ -19,6 +19,7 @@ use crate::gui::options::{
     ROW_INSET,
 };
 use crate::gui::painter::Painter;
+use crate::gui::setting_tip::Tip;
 use crate::gui::widgets::{self, Button, Slider, WIDGET_HEIGHT};
 
 const ON: &str = "ON";
@@ -36,6 +37,10 @@ pub struct Form<'p, 'a, 'c> {
     /// Slider ids: the form's base plus each slider's order.
     next_id: u32,
     changed: bool,
+    /// The last control's rectangle, for [`Form::tip`].
+    last: (f32, f32, f32),
+    /// The tooltip of the control under the mouse.
+    hovered: Option<&'static Tip>,
 }
 
 impl<'p, 'a, 'c> Form<'p, 'a, 'c> {
@@ -71,6 +76,8 @@ impl<'p, 'a, 'c> Form<'p, 'a, 'c> {
             column: 0,
             next_id: id_base,
             changed: false,
+            last: (0.0, 0.0, 0.0),
+            hovered: None,
         }
     }
 
@@ -84,6 +91,7 @@ impl<'p, 'a, 'c> Form<'p, 'a, 'c> {
             self.top + self.y + ROW_INSET,
         );
         self.column += 1;
+        self.last = (at.0, at.1, COLUMN_W);
         at
     }
 
@@ -124,17 +132,40 @@ impl<'p, 'a, 'c> Form<'p, 'a, 'c> {
         self.new_row();
         let at = self.cell();
         self.column = 2;
+        self.last = (at.0, at.1, BIG_W);
         at
+    }
+
+    /// Gives the last control a tooltip, shown while it's hovered.
+    pub fn tip(&mut self, tip: &'static Tip) {
+        let (x, y, w) = self.last;
+        if self.ctx.hovering(x, y, w, WIDGET_HEIGHT) {
+            self.hovered = Some(tip);
+        }
+    }
+
+    /// A header in a colour.
+    pub fn header_colored(&mut self, text: &str, rgb: u32) {
+        self.new_row();
+        let pad = if self.y > 0.0 { HEADER_PAD_TOP } else { 0.0 };
+        self.p.text_str(
+            text,
+            self.left,
+            self.top + self.y + ROW_INSET + pad,
+            rgb,
+            true,
+        );
+        self.y += pad + HEADER_H;
+    }
+
+    /// The hovered control's tooltip.
+    pub fn hovered_tip(&self) -> Option<&'static Tip> {
+        self.hovered
     }
 
     /// How tall the rows so far are.
     pub fn height(&self) -> f32 {
         self.y + if self.column > 0 { ROW_H } else { 0.0 }
-    }
-
-    /// The input the controls see.
-    pub fn ctx(&self) -> &'c ScreenCtx<'c> {
-        self.ctx
     }
 
     /// The painter, for anything drawn beside the controls.
@@ -198,11 +229,6 @@ impl<'p, 'a, 'c> Form<'p, 'a, 'c> {
             ..Button::new(x, y, COLUMN_W, WIDGET_HEIGHT, label)
         }
         .draw(self.p, self.ctx)
-    }
-
-    /// Draws `button`, placed by the caller in a taken cell.
-    pub fn draw(&mut self, button: Button) -> bool {
-        button.draw(self.p, self.ctx)
     }
 
     /// A button the width of both columns, on its own row.

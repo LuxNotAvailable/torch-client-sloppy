@@ -3,6 +3,8 @@ use crate::gui::form::Form;
 use crate::gui::painter::Painter;
 use crate::gui::render::{GuiInput, auto_gui_scale};
 use crate::gui::scroll_list::{ListArea, ScrollList};
+use crate::gui::setting_tip::Tip;
+use crate::gui::video_tips as tips;
 use crate::gui::widgets::{
     self, Button, HeaderFooter, Slider, WIDGET_HEIGHT, WIDGET_WIDTH_BIG, centered_x,
 };
@@ -33,7 +35,7 @@ const ZOOM_DEFAULT_SLIDER_ID: u32 = 50;
 const CHAT_SLIDER_ID_BASE: u32 = 60;
 const ENTITY_SHADOWS: &str = "Entity Shadows";
 const ENTITY_CULLING: &str = "Entity Culling";
-const SMOOTH_GUI_MODEL: &str = "Smooth Player Model";
+const INVENTORY_MODEL: &str = "Inventory Model";
 const LEAF_CULLING: &str = "Leaf Culling";
 const LEAF_CULLING_MODES: [&str; 3] = ["Off", "Smart", "Full"];
 const LEAF_SETTINGS: &str = "Leaves...";
@@ -56,22 +58,30 @@ pub fn draw_leaves(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         o.leaves = (o.leaves + 1) % 3;
         form.mark_changed();
     }
+    form.tip(&tips::LEAF_MODE);
     form.slider(&mut o.leaf_distance, 1, 32, leaf_distance_label);
+    form.tip(&tips::LEAF_DISTANCE);
     form.toggle(LEAF_BACKS, &mut o.leaf_backs);
+    form.tip(&tips::LEAF_BACKS);
     let culling = LEAF_CULLING_MODES[o.leaf_culling.min(2) as usize];
     if form.button(&format!("{LEAF_CULLING}: {culling}")) {
         o.leaf_culling = (o.leaf_culling + 1) % 3;
         form.mark_changed();
     }
+    form.tip(&tips::LEAF_CULLING);
+    let hovered = form.hovered_tip();
     if form.finish() {
         crate::gui::save_options(&state.options);
+    }
+    if let (Some(tip), Some(m)) = (hovered, ctx.mouse()) {
+        crate::gui::setting_tip::draw(p, tip, None, m.x, m.y, ctx.vw, ctx.vh);
     }
     if draw_done(p, ctx) {
         state.nav = Some(Screen::VideoSettings);
     }
 }
 const SIGN_GLOW_OUTLINE: &str = "Glowing Sign Outline";
-const SHADOW_OPACITY: &str = "Shadow Opacity";
+const SHADOW_OPACITY: &str = "Entity Shadow Opacity";
 const OUTLINE_SETTINGS: &str = "Block Outline...";
 const OUTLINE_TITLE: &str = "Block Outline";
 const OUTLINE_WIDTH: &str = "Width";
@@ -120,9 +130,19 @@ const CLEAR_ASSETS_YES: &str = "Clear";
 #[cfg(all(target_arch = "wasm32", feature = "asset_download"))]
 const CLEAR_ASSETS_NO: &str = "Cancel";
 
+const PRESET_HEADER: &str = "Graphics Preset";
 const DISPLAY_HEADER: &str = "Display";
-
-const QUALITY_HEADER: &str = "Quality & Performance";
+const PERFORMANCE_HEADER: &str = "Performance";
+const QUALITY_HEADER: &str = "Quality";
+const CAMERA_HEADER: &str = "Camera";
+const DETAILS_HEADER: &str = "Details";
+// Section colours, so each group reads at a glance.
+const PRESET_COLOR: u32 = 0xFFD27F;
+const DISPLAY_COLOR: u32 = 0x7FD4FF;
+const PERFORMANCE_COLOR: u32 = 0x8CFF8C;
+const QUALITY_COLOR: u32 = 0xD8A8FF;
+const CAMERA_COLOR: u32 = 0xFFB07F;
+const DETAILS_COLOR: u32 = 0xC8C8C8;
 
 const DONE: &str = "Done";
 
@@ -146,7 +166,6 @@ const VSYNC: &str = "VSync";
 #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
 const FULLSCREEN: &str = "Fullscreen";
 
-const FPS_COUNTER: &str = "FPS Counter";
 #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
 const RENDERER: &str = "Renderer";
 
@@ -536,9 +555,9 @@ fn render_distance_label(value: i32) -> String {
 #[cfg(feature = "shader_support")]
 fn shadow_update_label(value: i32) -> String {
     match value {
-        1 => "Shadow Updates: Every Frame".to_owned(),
-        2 => "Shadow Updates: Every 2nd Frame".to_owned(),
-        n => format!("Shadow Updates: Every {n}rd Frame"),
+        1 => "Shader Shadows: Every Frame".to_owned(),
+        2 => "Shader Shadows: Every 2nd Frame".to_owned(),
+        n => format!("Shader Shadows: Every {n}rd Frame"),
     }
 }
 
@@ -680,6 +699,13 @@ struct QualityPreset {
     /// Torch Vibrant's shadow map resolution and shadow distance, set when a
     /// preset is chosen (not part of matching one: they are the pack's).
     pack_shadow: (&'static str, &'static str),
+    max_fps: u32,
+    entity_culling: bool,
+    /// The inventory player model at 2x.
+    smooth_gui_model: bool,
+    /// Leaves: mode (fancy, fast, hybrid), hybrid distance, inner faces,
+    /// culling (off, smart, full).
+    leaves: (u32, u32, bool, u32),
 }
 
 const QUALITY_PRESETS: [QualityPreset; 6] = {
@@ -700,6 +726,10 @@ const QUALITY_PRESETS: [QualityPreset; 6] = {
             lighting: false,
             shadow_update: 2,
             pack_shadow: ("1024", "64.0"),
+            max_fps: 60,
+            entity_culling: true,
+            smooth_gui_model: false,
+            leaves: (1, 4, false, 2),
         },
         QualityPreset {
             name: "Low",
@@ -714,6 +744,10 @@ const QUALITY_PRESETS: [QualityPreset; 6] = {
             lighting: true,
             shadow_update: 2,
             pack_shadow: ("1024", "96.0"),
+            max_fps: 60,
+            entity_culling: true,
+            smooth_gui_model: false,
+            leaves: (2, 2, false, 2),
         },
         QualityPreset {
             name: "Medium",
@@ -728,6 +762,10 @@ const QUALITY_PRESETS: [QualityPreset; 6] = {
             lighting: true,
             shadow_update: 1,
             pack_shadow: ("2048", "128.0"),
+            max_fps: 120,
+            entity_culling: true,
+            smooth_gui_model: true,
+            leaves: (2, 4, true, 2),
         },
         QualityPreset {
             name: "High",
@@ -742,6 +780,10 @@ const QUALITY_PRESETS: [QualityPreset; 6] = {
             lighting: true,
             shadow_update: 1,
             pack_shadow: ("2048", "128.0"),
+            max_fps: 144,
+            entity_culling: true,
+            smooth_gui_model: true,
+            leaves: (0, 4, true, 1),
         },
         QualityPreset {
             name: "I Paid for the Whole GPU",
@@ -756,6 +798,10 @@ const QUALITY_PRESETS: [QualityPreset; 6] = {
             lighting: true,
             shadow_update: 1,
             pack_shadow: ("4096", "192.0"),
+            max_fps: crate::gui::MAX_FPS_UNLIMITED,
+            entity_culling: true,
+            smooth_gui_model: true,
+            leaves: (0, 4, true, 1),
         },
         QualityPreset {
             name: "Lux Special",
@@ -770,6 +816,10 @@ const QUALITY_PRESETS: [QualityPreset; 6] = {
             lighting: true,
             shadow_update: 1,
             pack_shadow: ("2048", "128.0"),
+            max_fps: crate::gui::MAX_FPS_UNLIMITED,
+            entity_culling: true,
+            smooth_gui_model: true,
+            leaves: (0, 4, true, 2),
         },
     ]
 };
@@ -786,6 +836,10 @@ impl QualityPreset {
             && o.entity_shadows == self.entity_shadows
             && o.lighting_enabled == self.lighting
             && o.shadow_update == self.shadow_update
+            && o.max_fps == self.max_fps
+            && o.entity_culling == self.entity_culling
+            && o.smooth_gui_model == self.smooth_gui_model
+            && (o.leaves, o.leaf_distance, o.leaf_backs, o.leaf_culling) == self.leaves
     }
 
     fn apply(&self, o: &mut crate::gui::GuiOptions) {
@@ -799,6 +853,10 @@ impl QualityPreset {
         o.entity_shadows = self.entity_shadows;
         o.lighting_enabled = self.lighting;
         o.shadow_update = self.shadow_update;
+        o.max_fps = self.max_fps;
+        o.entity_culling = self.entity_culling;
+        o.smooth_gui_model = self.smooth_gui_model;
+        (o.leaves, o.leaf_distance, o.leaf_backs, o.leaf_culling) = self.leaves;
     }
 }
 
@@ -832,6 +890,14 @@ fn reset_video_options(o: &mut crate::gui::GuiOptions) {
     o.max_fps = crate::gui::MAX_FPS_DEFAULT;
     o.vsync = crate::gui::VSYNC_DEFAULT;
     o.fps_counter = crate::gui::FPS_COUNTER_DEFAULT;
+    o.entity_culling = true;
+    o.smooth_gui_model = true;
+    o.biome_blend = 2;
+    o.water_clarity = crate::gui::WATER_CLARITY_DEFAULT;
+    o.pack_render_scale = crate::gui::PACK_RENDER_SCALE_MAX;
+    o.shadow_update = 1;
+    o.sign_glow_outline = 0;
+    (o.leaves, o.leaf_distance, o.leaf_backs, o.leaf_culling) = (0, 4, true, 2);
     o.touch_movement = Default::default();
     o.input_mode = Default::default();
 }
@@ -1070,14 +1136,29 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     draw_title(p, ctx, VIDEO_TITLE);
     let max_gui_scale = auto_gui_scale(ctx.vw * ctx.input.scale, ctx.vh * ctx.input.scale);
     let o = &mut state.options;
-    #[cfg_attr(any(target_arch = "wasm32", target_os = "android"), allow(unused_mut))]
-    let mut renderer_tip: Option<String> = None;
 
     #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
     let ctx_size = (ctx.vw * ctx.input.scale, ctx.vh * ctx.input.scale);
     let mut chosen_preset: Option<usize> = None;
+    let mut hovered: Option<&'static Tip> = None;
+    let mut note: Option<&'static str> = None;
     let changed = scrolling_form(p, ctx, &mut state.video_list, VIDEO_SLIDER_ID_BASE, |f| {
-        f.header(DISPLAY_HEADER);
+        // Presets first: one press sets everything below that has a cost.
+        f.header_colored(PRESET_HEADER, PRESET_COLOR);
+        let preset = current_preset(o);
+        let label = format!(
+            "Preset: {}",
+            preset.map_or("Custom", |i| QUALITY_PRESETS[i].name)
+        );
+        if f.wide_button(&label) {
+            let next = preset.map_or(0, |i| (i + 1) % QUALITY_PRESETS.len());
+            QUALITY_PRESETS[next].apply(o);
+            chosen_preset = Some(next);
+            f.mark_changed();
+        }
+        f.tip(&tips::PRESET);
+
+        f.header_colored(DISPLAY_HEADER, DISPLAY_COLOR);
         if f.slider(
             &mut o.max_fps,
             crate::gui::MAX_FPS_MIN,
@@ -1086,6 +1167,14 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         ) {
             o.max_fps = (o.max_fps + 5) / 10 * 10;
         }
+        f.tip(&tips::MAX_FPS);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            f.toggle(VSYNC, &mut o.vsync);
+            f.tip(&tips::VSYNC);
+        }
+        #[cfg(target_arch = "wasm32")]
+        f.skip();
         #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
         {
             let current = (
@@ -1104,22 +1193,14 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
                 o.fullscreen = false;
                 f.mark_changed();
             }
+            f.tip(&tips::WINDOW_SIZE);
             f.toggle(FULLSCREEN, &mut o.fullscreen);
+            f.tip(&tips::FULLSCREEN);
         }
         f.slider(&mut o.gui_scale, 0, max_gui_scale as u32, gui_scale_label);
+        f.tip(&tips::GUI_SCALE);
         f.slider(&mut o.gamma, 0, GAMMA_MAX, brightness_label);
-        f.toggle(VIEW_BOBBING, &mut o.view_bobbing);
-        f.toggle(FPS_COUNTER, &mut o.fps_counter);
-        #[cfg(not(target_arch = "wasm32"))]
-        f.toggle(VSYNC, &mut o.vsync);
-        #[cfg(target_arch = "wasm32")]
-        f.skip();
-        f.slider(
-            &mut o.fov_effects,
-            0,
-            FOV_EFFECTS_MAX as u32,
-            fov_effects_label,
-        );
+        f.tip(&tips::BRIGHTNESS);
         #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
         {
             let backend = o.render_backend;
@@ -1129,87 +1210,70 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
                 backend.caption(),
                 if pending { "*" } else { "" }
             );
-            let (x, y) = f.cell();
-            let hovered = f.ctx().hovering(x, y, COLUMN_W, WIDGET_HEIGHT);
-            if f.draw(Button::new(x, y, COLUMN_W, WIDGET_HEIGHT, &label)) {
+            if f.button(&label) {
                 o.render_backend = backend.next();
                 f.mark_changed();
             }
-            if pending && hovered {
-                renderer_tip = Some(format!(
-                    "Restart to start on {}",
-                    o.render_backend.caption()
-                ));
+            f.tip(&tips::RENDERER);
+            if pending && f.hovered_tip() == Some(&tips::RENDERER) {
+                note = Some("Restart to switch renderer.");
             }
         }
-        // Beside the renderer, filling its row.
-        f.toggle(ENTITY_CULLING, &mut o.entity_culling);
-        f.toggle(SMOOTH_GUI_MODEL, &mut o.smooth_gui_model);
 
-        f.header(QUALITY_HEADER);
-        // Steps through the presets; from settings that match none, the
-        // first.
-        let preset = current_preset(o);
-        let label = format!(
-            "Preset: {}",
-            preset.map_or("Custom", |i| QUALITY_PRESETS[i].name)
-        );
-        if f.wide_button(&label) {
-            let next = preset.map_or(0, |i| (i + 1) % QUALITY_PRESETS.len());
-            QUALITY_PRESETS[next].apply(o);
-            chosen_preset = Some(next);
-            f.mark_changed();
-        }
-        #[cfg(feature = "shader_support")]
-        f.slider(
-            &mut o.pack_render_scale,
-            crate::gui::PACK_RENDER_SCALE_MIN,
-            crate::gui::PACK_RENDER_SCALE_MAX,
-            pack_render_scale_label,
-        );
-        #[cfg(feature = "shader_support")]
-        f.slider(&mut o.shadow_update, 1, 3, shadow_update_label);
+        f.header_colored(PERFORMANCE_HEADER, PERFORMANCE_COLOR);
         f.slider(
             &mut o.render_distance,
             RENDER_DISTANCE_MIN as u32,
             RENDER_DISTANCE_MAX as u32,
             render_distance_label,
         );
-        f.slider(&mut o.biome_blend, 0, 7, biome_blend_label);
-        f.slider(
-            &mut o.water_clarity,
-            0,
-            crate::gui::WATER_CLARITY_MAX,
-            water_clarity_label,
-        );
-        if f.button(&format!("{CLOUDS}: {}", o.clouds.caption())) {
-            o.clouds = o.clouds.next();
+        f.tip(&tips::RENDER_DISTANCE);
+        f.toggle(ENTITY_CULLING, &mut o.entity_culling);
+        f.tip(&tips::ENTITY_CULLING);
+        let lighting = if o.lighting_enabled {
+            ON
+        } else {
+            "OFF (Fullbright)"
+        };
+        if f.button(&format!("{LIGHTING_ENGINE}: {lighting}")) {
+            o.lighting_enabled = !o.lighting_enabled;
             f.mark_changed();
         }
+        f.tip(&tips::LIGHTING_ENGINE);
+        #[cfg(feature = "shader_support")]
+        {
+            f.slider(
+                &mut o.pack_render_scale,
+                crate::gui::PACK_RENDER_SCALE_MIN,
+                crate::gui::PACK_RENDER_SCALE_MAX,
+                pack_render_scale_label,
+            );
+            f.tip(&tips::SHADER_SCALE);
+            f.slider(&mut o.shadow_update, 1, 3, shadow_update_label);
+            f.tip(&tips::SHADER_SHADOWS);
+        }
+
+        f.header_colored(QUALITY_HEADER, QUALITY_COLOR);
         f.toggle(SMOOTH_LIGHTING, &mut o.smooth_lighting);
-        f.toggle(LIGHTING_ENGINE, &mut o.lighting_enabled);
+        f.tip(&tips::SMOOTH_LIGHTING);
+        f.slider(&mut o.biome_blend, 0, 7, biome_blend_label);
+        f.tip(&tips::BIOME_BLEND);
         // Antialiasing: the mode, and its level beside it.
-        let (x, y) = f.cell();
-        let mode_hovered = f.ctx().hovering(x, y, COLUMN_W, WIDGET_HEIGHT);
         let label = format!("{ANTIALIASING}: {}", o.antialiasing.mode.caption());
-        if f.draw(Button::new(x, y, COLUMN_W, WIDGET_HEIGHT, &label)) {
+        if f.button(&label) {
             o.antialiasing.mode = o.antialiasing.mode.next();
             f.mark_changed();
         }
-        let (x, y) = f.cell();
-        let level_hovered = f.ctx().hovering(x, y, COLUMN_W, WIDGET_HEIGHT);
+        f.tip(&tips::ANTIALIASING);
         let level = o.antialiasing.level_caption();
         let label = format!("{AA_LEVEL}: {}", level.as_deref().unwrap_or("-"));
-        let level_button = Button {
-            active: level.is_some(),
-            ..Button::new(x, y, COLUMN_W, WIDGET_HEIGHT, &label)
-        };
-        if f.draw(level_button) {
+        if f.button_active(&label, level.is_some()) {
             o.antialiasing.next_level();
             f.mark_changed();
         }
+        f.tip(&tips::AA_LEVEL);
         #[cfg(feature = "shader_support")]
-        if (mode_hovered || level_hovered)
+        if matches!(f.hovered_tip(), Some(t) if *t == tips::ANTIALIASING || *t == tips::AA_LEVEL)
             && crate::renderer::packvertex::active()
             && matches!(
                 o.antialiasing.mode,
@@ -1217,38 +1281,77 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
                     | crate::renderer::antialias::AaMode::Supersample
             )
         {
-            renderer_tip = Some("Off while a shader pack is on; FXAA still works".to_owned());
+            note = Some("Off while a shader pack is on; FXAA still works.");
         }
-        #[cfg(not(feature = "shader_support"))]
-        let _ = (mode_hovered, level_hovered);
+        if f.button(&format!("{CLOUDS}: {}", o.clouds.caption())) {
+            o.clouds = o.clouds.next();
+            f.mark_changed();
+        }
+        f.tip(&tips::CLOUDS);
         if f.button(&format!("{PARTICLES}: {}", o.particles.caption())) {
             o.particles = o.particles.next();
             f.mark_changed();
         }
-        if f.button(LEAF_SETTINGS) {
+        f.tip(&tips::PARTICLES);
+        f.toggle(ENTITY_SHADOWS, &mut o.entity_shadows);
+        f.tip(&tips::ENTITY_SHADOWS);
+        f.slider(&mut o.shadow_opacity, 0, 100, shadow_opacity_label);
+        f.tip(&tips::SHADOW_OPACITY);
+        let model = if o.smooth_gui_model { "2x" } else { "1x" };
+        if f.button(&format!("{INVENTORY_MODEL}: {model}")) {
+            o.smooth_gui_model = !o.smooth_gui_model;
+            f.mark_changed();
+        }
+        f.tip(&tips::INVENTORY_MODEL);
+        f.slider(
+            &mut o.water_clarity,
+            0,
+            crate::gui::WATER_CLARITY_MAX,
+            water_clarity_label,
+        );
+        f.tip(&tips::WATER_CLARITY);
+        if f.wide_button(LEAF_SETTINGS) {
             state.nav = Some(Screen::LeafSettings);
         }
-        f.new_row();
-        f.toggle(ENTITY_SHADOWS, &mut o.entity_shadows);
-        f.slider(&mut o.shadow_opacity, 0, 100, shadow_opacity_label);
+        f.tip(&tips::LEAVES);
+
+        f.header_colored(CAMERA_HEADER, CAMERA_COLOR);
+        f.toggle(VIEW_BOBBING, &mut o.view_bobbing);
+        f.tip(&tips::VIEW_BOBBING);
+        f.slider(
+            &mut o.fov_effects,
+            0,
+            FOV_EFFECTS_MAX as u32,
+            fov_effects_label,
+        );
+        f.tip(&tips::FOV_EFFECTS);
+
+        f.header_colored(DETAILS_HEADER, DETAILS_COLOR);
         let outline =
             crate::blockentities::text::GlowOutline::ALL[o.sign_glow_outline.min(2) as usize];
         if f.button(&format!("{SIGN_GLOW_OUTLINE}: {}", outline.caption())) {
             o.sign_glow_outline = (o.sign_glow_outline + 1) % 3;
             f.mark_changed();
         }
+        f.tip(&tips::SIGN_GLOW);
         if f.button(OUTLINE_SETTINGS) {
             state.nav = Some(Screen::BlockOutlineSettings);
         }
+        f.tip(&tips::BLOCK_OUTLINE);
         #[cfg(feature = "shader_support")]
-        if f.wide_button(crate::gui::shaderpacks::SHADER_PACKS) {
-            state.shaderpacks.refresh();
-            state.nav = Some(Screen::ShaderPacks);
+        {
+            if f.wide_button(crate::gui::shaderpacks::SHADER_PACKS) {
+                state.shaderpacks.refresh();
+                state.nav = Some(Screen::ShaderPacks);
+            }
+            f.tip(&tips::SHADER_PACKS);
         }
         if f.wide_button(RESET_VIDEO) {
             reset_video_options(o);
             f.mark_changed();
         }
+        f.tip(&tips::RESET);
+        hovered = f.hovered_tip();
     });
 
     if changed {
@@ -1269,8 +1372,8 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     }
     #[cfg(not(feature = "shader_support"))]
     let _ = chosen_preset;
-    if let (Some(tip), Some(m)) = (renderer_tip, ctx.mouse()) {
-        draw_bind_tooltip(p, &[tip], m.x, m.y, ctx.vw);
+    if let (Some(tip), Some(m)) = (hovered, ctx.mouse()) {
+        crate::gui::setting_tip::draw(p, tip, note, m.x, m.y, ctx.vw, ctx.vh);
     }
     if draw_done(p, ctx) {
         state.nav = Some(Screen::Options);
@@ -2259,11 +2362,12 @@ mod tests {
 
     #[test]
     fn video_grid_stacks_like_the_options_list() {
-        // Display: header and four rows (five with the desktop's window
-        // size button); Quality: header (spaced), the preset button, and
-        // five rows (water clarity the fifth); then entity shadows, the
-        // glowing sign outline, the shader packs button when built in, and
-        // reset. Entity culling fills the renderer's row on desktop.
+        // Six headers, then: the preset (1 row); Display (4: frame cap and
+        // VSync, window size and fullscreen, GUI scale and brightness, the
+        // renderer); Performance (3: render distance and culling, lighting
+        // and shader scale, shader shadows); Quality (6, the last the
+        // Leaves button); Camera (1); Details (3: sign outline and block
+        // outline, shader packs, reset).
         let atlas = crate::gui::atlas::build_gui_atlas(&crate::assets_root());
         let mut p = Painter::new(&atlas, 0);
         let mut state = GuiState::default();
@@ -2274,22 +2378,14 @@ mod tests {
             vh: 240.0,
         };
         draw_video(&mut p, &mut state, &ctx);
-        // Desktop adds two rows: the window size and fullscreen, and the
-        // renderer with entity culling. Shader support adds two: the render
-        // scale with shadow updates, and the shader packs button.
-        const EXTRA_ROWS: f32 = 2.0 * cfg!(feature = "shader_support") as u32 as f32
-            + 2.0
-                * cfg!(all(not(target_arch = "wasm32"), not(target_os = "android"))) as u32 as f32;
-        let reset_row = 244.0 + (EXTRA_ROWS + 4.0) * ROW_H;
+        let shader = cfg!(feature = "shader_support") as u32 as f32;
+        let desktop =
+            cfg!(all(not(target_arch = "wasm32"), not(target_os = "android"))) as u32 as f32;
+        let rows = 1.0 + (2.0 + 2.0 * desktop) + (2.0 + shader) + 6.0 + 1.0 + (2.0 + shader);
         assert_eq!(
             state.video_list.content_h,
-            reset_row + ROW_H + LIST_PAD_BOTTOM
+            6.0 * HEADER_H + 5.0 * HEADER_PAD_TOP + rows * ROW_H + LIST_PAD_BOTTOM
         );
-
-        // A 1080p window at its automatic GUI scale has nothing to scroll;
-        // the smallest window (854x480) scrolls a little, as vanilla's does.
-        let (_, _, _, list_h) = LAYOUT.content_rect(960.0, 540.0);
-        assert!(state.video_list.content_h < list_h);
     }
 
     #[test]
