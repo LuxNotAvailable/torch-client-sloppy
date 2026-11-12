@@ -178,7 +178,9 @@ impl Bindless {
             };
             let nearest_mip = vk::SamplerMipmapMode::NEAREST;
             let compare = |filter: vk::Filter, op: vk::CompareOp| {
-                base(filter, nearest_mip).compare_enable(true).compare_op(op)
+                base(filter, nearest_mip)
+                    .compare_enable(true)
+                    .compare_op(op)
             };
             for info in [
                 base(vk::Filter::NEAREST, nearest_mip),

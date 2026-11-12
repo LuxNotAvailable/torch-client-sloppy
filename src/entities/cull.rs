@@ -213,7 +213,13 @@ fn ray_blocked(from: [f64; 3], to: [f64; 3], solid: &impl Fn(i32, i32, i32) -> b
     let mut cell = from.map(|v| v.floor() as i32);
     let end = to.map(|v| v.floor() as i32);
     let step = dir.map(|d| if d > 0.0 { 1 } else { -1 });
-    let delta = dir.map(|d| if d == 0.0 { f64::INFINITY } else { 1.0 / d.abs() });
+    let delta = dir.map(|d| {
+        if d == 0.0 {
+            f64::INFINITY
+        } else {
+            1.0 / d.abs()
+        }
+    });
     let mut next = [0, 1, 2].map(|a| {
         if dir[a] == 0.0 {
             f64::INFINITY
@@ -265,15 +271,30 @@ mod tests {
     #[test]
     fn a_box_peeking_past_the_wall_edge_is_drawn() {
         let eye = [0.5, 0.5, 0.5];
-        assert!(!box_hidden(eye, [14.0, 0.0, 13.0], [14.6, 1.8, 13.6], &wall));
+        assert!(!box_hidden(
+            eye,
+            [14.0, 0.0, 13.0],
+            [14.6, 1.8, 13.6],
+            &wall
+        ));
     }
 
     #[test]
     fn near_and_far_boxes_always_draw() {
         let solid_everywhere = |_: i32, _: i32, _: i32| true;
         let eye = [0.5, 0.5, 0.5];
-        assert!(!box_hidden(eye, [2.0, 0.0, 0.0], [2.6, 1.8, 0.6], &solid_everywhere));
-        assert!(!box_hidden(eye, [300.0, 0.0, 0.0], [300.6, 1.8, 0.6], &solid_everywhere));
+        assert!(!box_hidden(
+            eye,
+            [2.0, 0.0, 0.0],
+            [2.6, 1.8, 0.6],
+            &solid_everywhere
+        ));
+        assert!(!box_hidden(
+            eye,
+            [300.0, 0.0, 0.0],
+            [300.6, 1.8, 0.6],
+            &solid_everywhere
+        ));
     }
 
     #[test]

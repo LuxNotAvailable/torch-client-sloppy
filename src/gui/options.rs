@@ -1231,7 +1231,8 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         f.new_row();
         f.toggle(ENTITY_SHADOWS, &mut o.entity_shadows);
         f.slider(&mut o.shadow_opacity, 0, 100, shadow_opacity_label);
-        let outline = crate::blockentities::text::GlowOutline::ALL[o.sign_glow_outline.min(2) as usize];
+        let outline =
+            crate::blockentities::text::GlowOutline::ALL[o.sign_glow_outline.min(2) as usize];
         if f.button(&format!("{SIGN_GLOW_OUTLINE}: {}", outline.caption())) {
             o.sign_glow_outline = (o.sign_glow_outline + 1) % 3;
             f.mark_changed();
@@ -1260,7 +1261,10 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         crate::gui::shaderpacks::set_pack_options(
             state,
             crate::shaderpack::builtin::NAME,
-            &[("shadowMapResolution", resolution), ("shadowDistance", distance)],
+            &[
+                ("shadowMapResolution", resolution),
+                ("shadowDistance", distance),
+            ],
         );
     }
     #[cfg(not(feature = "shader_support"))]
@@ -2274,7 +2278,8 @@ mod tests {
         // renderer with entity culling. Shader support adds two: the render
         // scale with shadow updates, and the shader packs button.
         const EXTRA_ROWS: f32 = 2.0 * cfg!(feature = "shader_support") as u32 as f32
-            + 2.0 * cfg!(all(not(target_arch = "wasm32"), not(target_os = "android"))) as u32 as f32;
+            + 2.0
+                * cfg!(all(not(target_arch = "wasm32"), not(target_os = "android"))) as u32 as f32;
         let reset_row = 244.0 + (EXTRA_ROWS + 4.0) * ROW_H;
         assert_eq!(
             state.video_list.content_h,

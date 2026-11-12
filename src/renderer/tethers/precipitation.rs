@@ -77,7 +77,9 @@ pub(super) fn draw_precipitation(view: Res<FrameView>, camera: CameraQuery, mut 
                 Fall::Snow => &mut snow,
             };
             if native {
-                sheets.push(crate::renderer::weather::native_sheet(column, cam_pos, intensity, shade));
+                sheets.push(crate::renderer::weather::native_sheet(
+                    column, cam_pos, intensity, shade,
+                ));
                 continue;
             }
             for corners in crate::renderer::weather::sheet_pieces(column, cam_pos, intensity) {
@@ -85,7 +87,9 @@ pub(super) fn draw_precipitation(view: Res<FrameView>, camera: CameraQuery, mut 
             }
         }
     }
-    *crate::renderer::weather::SHEETS.lock().unwrap_or_else(|e| e.into_inner()) = sheets;
+    *crate::renderer::weather::SHEETS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = sheets;
     out.put(Kind::Rain, rain);
     out.put(Kind::Snow, snow);
 }

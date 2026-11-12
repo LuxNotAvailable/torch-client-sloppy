@@ -348,7 +348,8 @@ pub fn draw_overlay(
         );
 
         let start = st.page * per_page;
-        let shown: Vec<&'static str> = st.filtered[start.min(count)..(start + per_page).min(count)].to_vec();
+        let shown: Vec<&'static str> =
+            st.filtered[start.min(count)..(start + per_page).min(count)].to_vec();
         for (i, id) in shown.into_iter().enumerate() {
             let x = left + (i % cols) as f32 * CELL + 1.0;
             let y = top + (i / cols) as f32 * CELL + 1.0;
@@ -378,7 +379,8 @@ pub fn draw_overlay(
         let b_left = screen_left - MARGIN - b_cols as f32 * CELL;
         p.text_str("Bookmarks", b_left, MARGIN + 2.0, 0xFFFF_FFFF, true);
         let b_rows = ((bottom - top) / CELL).floor().max(0.0) as usize;
-        let bookmarks: Vec<&'static str> = st.bookmarks.iter().take(b_cols * b_rows).copied().collect();
+        let bookmarks: Vec<&'static str> =
+            st.bookmarks.iter().take(b_cols * b_rows).copied().collect();
         for (i, id) in bookmarks.into_iter().enumerate() {
             let x = b_left + (i % b_cols) as f32 * CELL + 1.0;
             let y = top + (i / b_cols) as f32 * CELL + 1.0;
@@ -497,7 +499,11 @@ pub fn draw_view(
     };
     let mut categories: Vec<Category> = all.iter().map(|r| r.category).collect();
     categories.dedup();
-    let recipes: Vec<&Recipe> = all.iter().copied().filter(|r| r.category == view.category).collect();
+    let recipes: Vec<&Recipe> = all
+        .iter()
+        .copied()
+        .filter(|r| r.category == view.category)
+        .collect();
     if recipes.is_empty() {
         st.view = st.history.pop();
         return None;
@@ -509,7 +515,9 @@ pub fn draw_view(
     const HEAD: f32 = 8.0 + 14.0 + 3.0 + 14.0 + 6.0;
     let each = recipe_h(view.category) + 4.0;
     let room = ctx.vh - 2.0 * MARGIN - TAB_H - HEAD - 6.0;
-    let per = ((room / each).floor() as usize).clamp(1, 4).min(recipes.len());
+    let per = ((room / each).floor() as usize)
+        .clamp(1, 4)
+        .min(recipes.len());
     let height = HEAD + per as f32 * each + 4.0;
     let left = ((ctx.vw - WINDOW_W) / 2.0).floor();
     let top = (((ctx.vh - height) / 2.0).floor()).max(MARGIN + TAB_H + 1.0);
@@ -553,7 +561,9 @@ pub fn draw_view(
     }
 
     panel(p, left, top, WINDOW_W, height);
-    if let (Some(x), Some(category)) = (chosen_tab, categories.iter().find(|c| **c == view.category)) {
+    if let (Some(x), Some(category)) =
+        (chosen_tab, categories.iter().find(|c| **c == view.category))
+    {
         panel(p, x, tab_y, TAB_W, TAB_H + 3.0);
         // Open into the window: its top edge and highlight run under the tab.
         p.fill(x + 1.0, top, TAB_W - 2.0, 3.0, PANEL);
@@ -585,7 +595,10 @@ pub fn draw_view(
     // Category, then page, each with arrows either side.
     let bar_x = left + 6.0;
     let bar_w = WINDOW_W - 12.0;
-    let at = categories.iter().position(|c| *c == view.category).unwrap_or(0);
+    let at = categories
+        .iter()
+        .position(|c| *c == view.category)
+        .unwrap_or(0);
     let step = arrow_bar(
         p,
         ctx,
@@ -597,7 +610,9 @@ pub fn draw_view(
     );
     if step != 0 {
         let n = categories.len() as i32;
-        next = Some(switch_to(categories[(at as i32 + step).rem_euclid(n) as usize]));
+        next = Some(switch_to(
+            categories[(at as i32 + step).rem_euclid(n) as usize],
+        ));
     }
     let pages = recipes.len().div_ceil(per);
     let page = view.page.min(pages - 1);
@@ -693,7 +708,9 @@ pub fn draw_view(
     }
 
     if let Some(view) = next {
-        if view.item != st.view.as_ref().map_or("", |v| v.item) || view.uses != st.view.as_ref().is_some_and(|v| v.uses) {
+        if view.item != st.view.as_ref().map_or("", |v| v.item)
+            || view.uses != st.view.as_ref().is_some_and(|v| v.uses)
+        {
             st.open(view.item, view.uses);
         } else {
             st.view = Some(view);
@@ -735,28 +752,30 @@ fn plan_fill(recipe: &Recipe, screen: Screen, slots: &[SlotStack]) -> Result<Fil
         Category::Smithing => "a smithing table",
     };
     // The input slots (a grid, row by row, `side` wide) and the player's.
-    let (inputs, side, player): (Vec<u16>, usize, std::ops::Range<usize>) =
-        match (recipe.category, screen) {
-            (Category::Crafting, Screen::Inventory) => ((1..=4).collect(), 2, 9..45),
-            (Category::Crafting, Screen::Container(ContainerKind::Crafting)) => {
-                ((1..=9).collect(), 3, 10..46)
-            }
-            (Category::Smelting, Screen::Container(ContainerKind::Furnace(FurnaceKind::Furnace)))
-            | (
-                Category::Blasting,
-                Screen::Container(ContainerKind::Furnace(FurnaceKind::BlastFurnace)),
-            )
-            | (Category::Smoking, Screen::Container(ContainerKind::Furnace(FurnaceKind::Smoker))) => {
-                (vec![0], 1, 3..39)
-            }
-            (Category::Stonecutting, Screen::Container(ContainerKind::Stonecutter)) => {
-                (vec![0], 1, 2..38)
-            }
-            (Category::Smithing, Screen::Container(ContainerKind::Smithing)) => {
-                (vec![0, 1, 2], 3, 4..40)
-            }
-            _ => return Err(format!("Needs {station}")),
-        };
+    let (inputs, side, player): (Vec<u16>, usize, std::ops::Range<usize>) = match (
+        recipe.category,
+        screen,
+    ) {
+        (Category::Crafting, Screen::Inventory) => ((1..=4).collect(), 2, 9..45),
+        (Category::Crafting, Screen::Container(ContainerKind::Crafting)) => {
+            ((1..=9).collect(), 3, 10..46)
+        }
+        (Category::Smelting, Screen::Container(ContainerKind::Furnace(FurnaceKind::Furnace)))
+        | (
+            Category::Blasting,
+            Screen::Container(ContainerKind::Furnace(FurnaceKind::BlastFurnace)),
+        )
+        | (Category::Smoking, Screen::Container(ContainerKind::Furnace(FurnaceKind::Smoker))) => {
+            (vec![0], 1, 3..39)
+        }
+        (Category::Stonecutting, Screen::Container(ContainerKind::Stonecutter)) => {
+            (vec![0], 1, 2..38)
+        }
+        (Category::Smithing, Screen::Container(ContainerKind::Smithing)) => {
+            (vec![0, 1, 2], 3, 4..40)
+        }
+        _ => return Err(format!("Needs {station}")),
+    };
     // Each ingredient's slot.
     let mut targets: Vec<(u16, Vec<&'static str>)> = Vec::new();
     if recipe.category == Category::Crafting && !recipe.shapeless() {
@@ -879,12 +898,23 @@ fn draw_recipe(
     match recipe.category {
         Category::Crafting => {
             let (gx, gy) = (x + 8.0, y + 4.0);
-            let width = if recipe.shapeless() { 3 } else { recipe.width as usize };
+            let width = if recipe.shapeless() {
+                3
+            } else {
+                recipe.width as usize
+            };
             for row in 0..3 {
                 for col in 0..3 {
                     let at = (col < width).then(|| row * width + col);
-                    let items = at.and_then(|i| recipe.inputs.get(i)).map_or(&[][..], Vec::as_slice);
-                    small(p, items, gx + 1.0 + col as f32 * CELL, gy + 1.0 + row as f32 * CELL);
+                    let items = at
+                        .and_then(|i| recipe.inputs.get(i))
+                        .map_or(&[][..], Vec::as_slice);
+                    small(
+                        p,
+                        items,
+                        gx + 1.0 + col as f32 * CELL,
+                        gy + 1.0 + row as f32 * CELL,
+                    );
                 }
             }
             arrow(p, x + 74.0, arrow_y);
@@ -957,7 +987,14 @@ mod tests {
         assert_eq!(fill.targets.iter().map(|t| t.0).collect::<Vec<_>>(), [1, 3]);
         let fill = plan_fill(&sticks, Screen::Container(ContainerKind::Crafting), &slots).unwrap();
         assert_eq!(fill.targets.iter().map(|t| t.0).collect::<Vec<_>>(), [1, 4]);
-        assert!(plan_fill(&sticks, Screen::Container(ContainerKind::Stonecutter), &slots).is_err());
+        assert!(
+            plan_fill(
+                &sticks,
+                Screen::Container(ContainerKind::Stonecutter),
+                &slots
+            )
+            .is_err()
+        );
     }
 
     #[test]

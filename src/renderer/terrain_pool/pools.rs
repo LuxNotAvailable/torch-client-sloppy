@@ -345,7 +345,12 @@ fn group_by_facing(verts: &[crate::renderer::mesh::PackedVertex], idx: &mut Vec<
     }
     let mut quads: Vec<(usize, [u32; 6])> = idx
         .chunks_exact(6)
-        .map(|q| (facing_group(verts, &q[..3]), [q[0], q[1], q[2], q[3], q[4], q[5]]))
+        .map(|q| {
+            (
+                facing_group(verts, &q[..3]),
+                [q[0], q[1], q[2], q[3], q[4], q[5]],
+            )
+        })
         .collect();
     quads.sort_by_key(|(group, _)| *group);
     idx.clear();

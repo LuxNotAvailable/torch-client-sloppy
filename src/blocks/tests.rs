@@ -888,7 +888,11 @@ fn shapes_cover_what_vanilla_culls_against() {
     // A stair's back (facing east: its back is east) and bottom are full.
     let stair = sides_of_state(
         "oak_stairs",
-        &[("facing", "east"), ("half", "bottom"), ("shape", "straight")],
+        &[
+            ("facing", "east"),
+            ("half", "bottom"),
+            ("shape", "straight"),
+        ],
     );
     assert_eq!(stair[5], FULL, "back");
     assert_eq!(stair[0], FULL, "bottom");

@@ -143,7 +143,13 @@ pub(crate) fn remesh_chunks(changed: impl Fn(i32, i32) -> bool) {
     let (Some(world), Some(q)) = (current_world().lock().unwrap().clone(), CHUNK_Q.get()) else {
         return;
     };
-    let chunks: Vec<(i32, i32)> = meshed_chunks().lock().unwrap().iter().copied().filter(|&(x, z)| changed(x, z)).collect();
+    let chunks: Vec<(i32, i32)> = meshed_chunks()
+        .lock()
+        .unwrap()
+        .iter()
+        .copied()
+        .filter(|&(x, z)| changed(x, z))
+        .collect();
     for (cx, cz) in chunks {
         q.push(world.clone(), cx, cz, JobScope::Column);
     }

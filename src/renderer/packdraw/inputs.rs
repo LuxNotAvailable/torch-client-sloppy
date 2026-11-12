@@ -168,7 +168,12 @@ impl Inputs {
         let f = |k: &str| value[k].as_f64().unwrap_or(0.0) as f32;
         let i = |k: &str| value[k].as_i64().unwrap_or(0) as i32;
         let b = |k: &str| value[k].as_bool().unwrap_or(false);
-        let a = |k: &str, n: usize| value[k].get(n).and_then(serde_json::Value::as_f64).unwrap_or(0.0) as f32;
+        let a = |k: &str, n: usize| {
+            value[k]
+                .get(n)
+                .and_then(serde_json::Value::as_f64)
+                .unwrap_or(0.0) as f32
+        };
         let v3 = |k: &str| Vec3::new(a(k, 0), a(k, 1), a(k, 2));
         Inputs {
             day_ticks: value["day_ticks"].as_f64().unwrap_or(0.0),

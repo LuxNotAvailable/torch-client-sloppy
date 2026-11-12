@@ -206,9 +206,7 @@ impl CullBuffers {
         let regions = view_count * pool_count * STREAMS;
         let commands = device.create_buffer(&BufferDescriptor {
             label: Some("terrain_cull_commands"),
-            size: (regions as u64)
-                * u64::from(slot_cap * super::FACE_GROUPS)
-                * INDIRECT_ARGS_SIZE,
+            size: (regions as u64) * u64::from(slot_cap * super::FACE_GROUPS) * INDIRECT_ARGS_SIZE,
             usage: BufferUsages::INDIRECT | BufferUsages::STORAGE | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -312,7 +310,10 @@ impl CullBuffers {
         let Some(eye) = eye else {
             return 0;
         };
-        let end = pools.draw_end.min(pools.meta_cpu.len() as u32).min(self.slot_cap);
+        let end = pools
+            .draw_end
+            .min(pools.meta_cpu.len() as u32)
+            .min(self.slot_cap);
         self.order_age += 1;
         let fresh = self.order_cpu.len() == end as usize
             && self.order_age < MAX_AGE
@@ -330,7 +331,8 @@ impl CullBuffers {
                 .collect();
             keyed.sort_unstable();
             self.order_cpu.clear();
-            self.order_cpu.extend(keyed.into_iter().map(|(_, slot)| slot));
+            self.order_cpu
+                .extend(keyed.into_iter().map(|(_, slot)| slot));
             if !self.order_cpu.is_empty() {
                 queue.write_buffer(&self.order, 0, bytemuck::cast_slice(&self.order_cpu));
             }

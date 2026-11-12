@@ -181,12 +181,7 @@ pub(crate) fn fill_recipe(
                 need -= carried;
             } else {
                 for _ in 0..need {
-                    planner.click(
-                        PickupClick::Right {
-                            slot: Some(*slot),
-                        }
-                        .into(),
-                    );
+                    planner.click(PickupClick::Right { slot: Some(*slot) }.into());
                 }
                 planner.left(source);
                 need = 0;

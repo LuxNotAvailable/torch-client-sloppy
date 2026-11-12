@@ -363,7 +363,11 @@ fn terrain_prelude(direct: bool) -> String {
     };
     let vulkan = super::preludes::vulkan_terrain();
     let row = crate::renderer::packvertex::QUAD_ROW;
-    let shift = if vulkan { " + iris_anim_shift(quad)" } else { "" };
+    let shift = if vulkan {
+        " + iris_anim_shift(quad)"
+    } else {
+        ""
+    };
     let quad = if vulkan {
         "let quad = iris_vk_quad(input);".to_owned()
     } else {
@@ -378,7 +382,7 @@ fn terrain_prelude(direct: bool) -> String {
                  @builtin(vertex_index) vertex_index: u32,\n    \
                  @builtin(instance_index) instance_index: u32,\n\
              }\n"
-                .to_owned(),
+            .to_owned(),
             VK_TERRAIN.to_owned(),
         )
     } else {
@@ -527,7 +531,10 @@ fn iris_vk_in(raw: IrisVertexIn) -> IrisVkIn {
 
 fn entity_prelude(skinned: bool) -> String {
     if super::preludes::vulkan_terrain() {
-        let head_end = ENTITY_PRELUDE.find("{part_input}}\n").expect("the struct's end") + "{part_input}}\n".len();
+        let head_end = ENTITY_PRELUDE
+            .find("{part_input}}\n")
+            .expect("the struct's end")
+            + "{part_input}}\n".len();
         return format!("{VK_ENTITY_INPUT}{}", &ENTITY_PRELUDE[head_end..])
             .replace("fn iris_model(input: IrisVertexIn,", "fn iris_model(input: IrisVkIn,")
             .replace(

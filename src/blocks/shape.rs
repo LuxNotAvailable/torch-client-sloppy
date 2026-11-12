@@ -138,12 +138,22 @@ mod tests {
     #[test]
     fn a_full_side_covers_a_half_and_a_half_does_not_cover_a_full() {
         let full = footprint(
-            &quad([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 1.0], [0.0, 0.0, 1.0]]),
+            &quad([
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [1.0, 0.0, 1.0],
+                [0.0, 0.0, 1.0],
+            ]),
             0,
         )
         .unwrap();
         let half = footprint(
-            &quad([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.5], [0.0, 0.0, 0.5]]),
+            &quad([
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [1.0, 0.0, 0.5],
+                [0.0, 0.0, 0.5],
+            ]),
             0,
         )
         .unwrap();
@@ -155,7 +165,12 @@ mod tests {
 
     #[test]
     fn a_face_off_the_side_has_no_footprint() {
-        let inset = quad([[0.0, 0.5, 0.0], [1.0, 0.5, 0.0], [1.0, 0.5, 1.0], [0.0, 0.5, 1.0]]);
+        let inset = quad([
+            [0.0, 0.5, 0.0],
+            [1.0, 0.5, 0.0],
+            [1.0, 0.5, 1.0],
+            [0.0, 0.5, 1.0],
+        ]);
         assert!(footprint(&inset, 0).is_none());
         assert!(footprint(&inset, 1).is_none());
     }

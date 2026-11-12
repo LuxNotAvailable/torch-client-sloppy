@@ -110,7 +110,9 @@ mod tests {
             ("shadowMapResolution", ["1024", "2048", "4096"]),
             ("shadowDistance", ["64.0", "96.0", "192.0"]),
         ] {
-            let option = declared.get(name).unwrap_or_else(|| panic!("{name} is not an option"));
+            let option = declared
+                .get(name)
+                .unwrap_or_else(|| panic!("{name} is not an option"));
             for value in values {
                 assert!(option.accepts(value), "{name} refuses {value}");
             }

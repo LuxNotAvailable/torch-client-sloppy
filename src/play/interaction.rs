@@ -535,7 +535,11 @@ fn start_use_item(bot: &Client, shared: &Arc<SharedMutex>) -> bool {
     // A main hand that neither places nor uses passes to the off hand,
     // which may place (vanilla tries useItemOn per hand).
     let main = held_item_kind(bot);
-    let places = |k: ItemKind| { use std::str::FromStr; azalea_registry::builtin::BlockKind::from_str(k.to_str()).is_ok_and(|b| b != azalea_registry::builtin::BlockKind::Air) };
+    let places = |k: ItemKind| {
+        use std::str::FromStr;
+        azalea_registry::builtin::BlockKind::from_str(k.to_str())
+            .is_ok_and(|b| b != azalea_registry::builtin::BlockKind::Air)
+    };
     if main.is_none_or(|k| !places(k) && main_hand_passes(bot, k)) && offhand_places(bot, places) {
         send_use_item(bot);
         send_use_item_on_with(bot, &hit, false, true);
@@ -1147,7 +1151,11 @@ fn send_use_item_on_with(bot: &Client, hit: &BlockHitResult, interacted: bool, o
         predict_open_toggle(bot, hit);
     }
     bot.write_packet(ServerboundUseItemOn {
-        hand: if offhand { InteractionHand::OffHand } else { InteractionHand::MainHand },
+        hand: if offhand {
+            InteractionHand::OffHand
+        } else {
+            InteractionHand::MainHand
+        },
         block_hit: hit.into(),
         seq,
     });
@@ -1445,12 +1453,13 @@ fn main_hand_passes(bot: &Client, kind: ItemKind) -> bool {
 /// use and holds the item in use if it is held (a shield).
 /// Whether the off hand holds a block item.
 fn offhand_places(bot: &Client, places: impl Fn(ItemKind) -> bool) -> bool {
-    bot.component::<azalea::entity::inventory::Inventory>().is_ok_and(|i| {
-        matches!(
-            i.get_equipment(azalea_inventory::components::EquipmentSlot::Offhand),
-            Some(ItemStack::Present(d)) if places(d.kind)
-        )
-    })
+    bot.component::<azalea::entity::inventory::Inventory>()
+        .is_ok_and(|i| {
+            matches!(
+                i.get_equipment(azalea_inventory::components::EquipmentSlot::Offhand),
+                Some(ItemStack::Present(d)) if places(d.kind)
+            )
+        })
 }
 
 fn use_offhand_item(bot: &Client) {

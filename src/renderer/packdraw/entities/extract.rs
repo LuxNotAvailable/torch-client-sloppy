@@ -233,7 +233,11 @@ pub(crate) fn extract_entity_draws(
 /// the built-in entity shader's `glint`.
 fn glint_transform() -> [f32; 4] {
     static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-    let ticks = START.get_or_init(std::time::Instant::now).elapsed().as_secs_f64() * 4000.0;
+    let ticks = START
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_secs_f64()
+        * 4000.0;
     let f = (ticks / 110_000.0).fract() as f32;
     let g = (ticks / 30_000.0).fract() as f32;
     let angle = std::f32::consts::PI / 18.0;

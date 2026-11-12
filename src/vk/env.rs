@@ -158,7 +158,12 @@ impl EnvScene {
                 spec(c"screen", None, false, None),
                 // The hand: over the world, on a cleared depth.
                 {
-                    let mut s = spec(c"hand", Some(vk::CompareOp::GREATER), false, Some(DEPTH_FORMAT));
+                    let mut s = spec(
+                        c"hand",
+                        Some(vk::CompareOp::GREATER),
+                        false,
+                        Some(DEPTH_FORMAT),
+                    );
                     if let Spec::Graphics(g) = &mut s {
                         g.depth_write = true;
                         g.blend = true;
@@ -166,13 +171,33 @@ impl EnvScene {
                     s
                 },
                 // Held items' glint: added over the hand, at its depth.
-                spec(c"hand_glint", Some(vk::CompareOp::GREATER_OR_EQUAL), true, Some(DEPTH_FORMAT)),
+                spec(
+                    c"hand_glint",
+                    Some(vk::CompareOp::GREATER_OR_EQUAL),
+                    true,
+                    Some(DEPTH_FORMAT),
+                ),
                 // World lines (outline, hitboxes, borders), as quads.
-                spec(c"world_lines", Some(vk::CompareOp::GREATER_OR_EQUAL), false, Some(DEPTH_FORMAT)),
+                spec(
+                    c"world_lines",
+                    Some(vk::CompareOp::GREATER_OR_EQUAL),
+                    false,
+                    Some(DEPTH_FORMAT),
+                ),
                 // The breaking cracks, darkening the block they lie on.
-                spec(c"world_cracks", Some(vk::CompareOp::GREATER_OR_EQUAL), false, Some(DEPTH_FORMAT)),
+                spec(
+                    c"world_cracks",
+                    Some(vk::CompareOp::GREATER_OR_EQUAL),
+                    false,
+                    Some(DEPTH_FORMAT),
+                ),
                 // Rain and snow sheets, blended at their depth.
-                spec(c"weather", Some(vk::CompareOp::GREATER_OR_EQUAL), false, Some(DEPTH_FORMAT)),
+                spec(
+                    c"weather",
+                    Some(vk::CompareOp::GREATER_OR_EQUAL),
+                    false,
+                    Some(DEPTH_FORMAT),
+                ),
             ],
         );
         let mut scene = Self::build(ctx, memory, bindless, env, eye, atlas_index, module)?;
@@ -190,14 +215,17 @@ impl EnvScene {
         atlas_index: u32,
         module: vk::ShaderModule,
     ) -> Result<EnvScene, SetupError> {
-
         // Meshes into one pool, as the entities'.
         let mut vertex_bytes = Vec::new();
         let mut index_bytes = Vec::new();
         let mut ranges = Vec::new();
         let (mut base, mut first) = (0u32, 0u32);
-        let lines: std::collections::HashSet<u32> =
-            env.parts.iter().filter(|p| p.kind == 4).map(|p| p.mesh).collect();
+        let lines: std::collections::HashSet<u32> = env
+            .parts
+            .iter()
+            .filter(|p| p.kind == 4)
+            .map(|p| p.mesh)
+            .collect();
         for (k, (verts, indices, _)) in env.meshes.iter().enumerate() {
             let quads;
             let (verts, indices) = if lines.contains(&(k as u32)) {
@@ -262,7 +290,11 @@ impl EnvScene {
                 .ok_or_else(full)?;
             // Packs sample the stored (sRGB-encoded) texels.
             let raw = bindless
-                .add_texture(ctx, image.raw_view.expect("made with a raw view"), vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .add_texture(
+                    ctx,
+                    image.raw_view.expect("made with a raw view"),
+                    vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                )
                 .ok_or_else(full)?;
             raw_indices.push((index, raw));
             textures.push((image, index, *w, *h));
@@ -422,9 +454,18 @@ impl EnvScene {
         let mut textured = Vec::new();
         for (part, (first, count, base)) in &self.sky {
             let piece = SKY_PIECES[(part.pad[0] as usize - 1).min(SKY_PIECES.len() - 1)];
-            let stage = crate::shaderpack::features::render_stage(if piece == "END_SKY" { "SKY" } else { piece });
-            let local = Mat4::from_scale(Vec3::splat(SKY_SCALE.recip())) * Mat4::from_cols_array(&part.transform);
-            let model = if matches!(piece, "SUN" | "MOON" | "STARS") { tilt * local } else { local };
+            let stage = crate::shaderpack::features::render_stage(if piece == "END_SKY" {
+                "SKY"
+            } else {
+                piece
+            });
+            let local = Mat4::from_scale(Vec3::splat(SKY_SCALE.recip()))
+                * Mat4::from_cols_array(&part.transform);
+            let model = if matches!(piece, "SUN" | "MOON" | "STARS") {
+                tilt * local
+            } else {
+                local
+            };
             // World again: the entity input takes the eye off.
             let model = Mat4::from_translation(self.eye) * model;
             if matches!(piece, "SUN" | "MOON" | "END_SKY") {
@@ -444,12 +485,28 @@ impl EnvScene {
                 transform: model.to_cols_array(),
                 ..Default::default()
             });
-            let texture = self.raw_indices.iter().find(|(s, _)| *s == part.texture).map_or(part.texture, |(_, r)| *r);
+            let texture = self
+                .raw_indices
+                .iter()
+                .find(|(s, _)| *s == part.texture)
+                .map_or(part.texture, |(_, r)| *r);
             draws.push((*first, *count, *base as i32, texture, part.alpha == 3));
         }
         self.pack = Some(PackSky {
-            instances: upload(ctx, memory, bindless, "pack sky instances", bytemuck::cast_slice(&instances))?,
-            meshes: upload(ctx, memory, bindless, "pack sky meshes", bytemuck::cast_slice(&meshes))?,
+            instances: upload(
+                ctx,
+                memory,
+                bindless,
+                "pack sky instances",
+                bytemuck::cast_slice(&instances),
+            )?,
+            meshes: upload(
+                ctx,
+                memory,
+                bindless,
+                "pack sky meshes",
+                bytemuck::cast_slice(&meshes),
+            )?,
             draws,
             textured,
         });
@@ -481,21 +538,44 @@ impl EnvScene {
                 mesh: meshes.len() as u32 - 1,
                 texture: part.texture,
                 alpha: part.alpha,
-                kind: 16 + stage(if translucent { "HAND_TRANSLUCENT" } else { "HAND_SOLID" }),
+                kind: 16
+                    + stage(if translucent {
+                        "HAND_TRANSLUCENT"
+                    } else {
+                        "HAND_SOLID"
+                    }),
                 tint: [1.0; 4],
                 light0: [0.0, 0.0, 0.0, 1.0],
                 light1: [0.0, 0.0, 0.0, 1.0],
                 levels: [eye_light[0] * 16.0, eye_light[1] * 16.0],
                 // View space; the entity input takes the eye off.
-                transform: (Mat4::from_translation(self.eye) * Mat4::from_cols_array(&part.transform)).to_cols_array(),
+                transform: (Mat4::from_translation(self.eye)
+                    * Mat4::from_cols_array(&part.transform))
+                .to_cols_array(),
                 ..Default::default()
             });
-            let texture = self.raw_indices.iter().find(|(s, _)| *s == part.texture).map_or(part.texture, |(_, r)| *r);
+            let texture = self
+                .raw_indices
+                .iter()
+                .find(|(s, _)| *s == part.texture)
+                .map_or(part.texture, |(_, r)| *r);
             draws.push((*first, *count, *base as i32, texture, translucent));
         }
         self.pack_hand = Some(PackSky {
-            instances: upload(ctx, memory, bindless, "pack hand instances", bytemuck::cast_slice(&instances))?,
-            meshes: upload(ctx, memory, bindless, "pack hand meshes", bytemuck::cast_slice(&meshes))?,
+            instances: upload(
+                ctx,
+                memory,
+                bindless,
+                "pack hand instances",
+                bytemuck::cast_slice(&instances),
+            )?,
+            meshes: upload(
+                ctx,
+                memory,
+                bindless,
+                "pack hand meshes",
+                bytemuck::cast_slice(&meshes),
+            )?,
             draws,
             textured: blended,
         });
@@ -666,7 +746,9 @@ impl EnvScene {
         view_proj: [[f32; 4]; 4],
         stage: u8,
     ) {
-        self.draw_with(ctx, cmd, pipelines, view_index, view_proj, stage, None, [0.0; 2]);
+        self.draw_with(
+            ctx, cmd, pipelines, view_index, view_proj, stage, None, [0.0; 2],
+        );
     }
 
     /// `draw`, with the lines and cracks swapped for `overlay` (a pack's)
@@ -772,7 +854,12 @@ impl EnvScene {
 
     /// Lines and cracks for a pack's `color` format (standard depth), once
     /// built; starts building them on first ask.
-    pub fn pack_overlay_pipes(&mut self, ctx: &Context, pipelines: &Pipelines, color: vk::Format) -> Option<[vk::Pipeline; 2]> {
+    pub fn pack_overlay_pipes(
+        &mut self,
+        ctx: &Context,
+        pipelines: &Pipelines,
+        color: vk::Format,
+    ) -> Option<[vk::Pipeline; 2]> {
         if self.pack_pipes.as_ref().is_some_and(|(f, ..)| *f != color)
             && let Some((_, pending, built)) = self.pack_pipes.take()
         {
@@ -798,7 +885,8 @@ impl EnvScene {
                     fragment_module: None,
                 })
             };
-            let pending = pipelines.build_on_worker(ctx, vec![spec(c"world_lines"), spec(c"world_cracks")]);
+            let pending =
+                pipelines.build_on_worker(ctx, vec![spec(c"world_lines"), spec(c"world_cracks")]);
             self.pack_pipes = Some((color, Some(pending), None));
         }
         let (_, pending, built) = self.pack_pipes.as_mut()?;
@@ -824,8 +912,26 @@ impl EnvScene {
         pipes: [vk::Pipeline; 2],
     ) {
         let size = [extent.width as f32, extent.height as f32];
-        self.draw_with(ctx, cmd, pipelines, view_index, view_proj, 5, Some(pipes), size);
-        self.draw_with(ctx, cmd, pipelines, view_index, view_proj, 6, Some(pipes), size);
+        self.draw_with(
+            ctx,
+            cmd,
+            pipelines,
+            view_index,
+            view_proj,
+            5,
+            Some(pipes),
+            size,
+        );
+        self.draw_with(
+            ctx,
+            cmd,
+            pipelines,
+            view_index,
+            view_proj,
+            6,
+            Some(pipes),
+            size,
+        );
     }
 
     /// The first-person hand, last in the terrain pass: depth cleared, then
@@ -850,11 +956,17 @@ impl EnvScene {
                     aspect_mask: vk::ImageAspectFlags::DEPTH,
                     color_attachment: 0,
                     clear_value: vk::ClearValue {
-                        depth_stencil: vk::ClearDepthStencilValue { depth: 0.0, stencil: 0 },
+                        depth_stencil: vk::ClearDepthStencilValue {
+                            depth: 0.0,
+                            stencil: 0,
+                        },
                     },
                 }],
                 &[vk::ClearRect {
-                    rect: vk::Rect2D { offset: vk::Offset2D::default(), extent },
+                    rect: vk::Rect2D {
+                        offset: vk::Offset2D::default(),
+                        extent,
+                    },
                     base_array_layer: 0,
                     layer_count: 1,
                 }],
@@ -942,7 +1054,19 @@ impl EnvScene {
     pub fn destroy(mut self, ctx: &Context, memory: &Memory) {
         let mut pipelines: Vec<vk::Pipeline> = self
             .pipes
-            .map(|p| vec![p.sky_blend, p.sky_add, p.clouds, p.screen, p.hand, p.hand_glint, p.lines, p.cracks, p.weather])
+            .map(|p| {
+                vec![
+                    p.sky_blend,
+                    p.sky_add,
+                    p.clouds,
+                    p.screen,
+                    p.hand,
+                    p.hand_glint,
+                    p.lines,
+                    p.cracks,
+                    p.weather,
+                ]
+            })
             .unwrap_or_default();
         if let Some(Ok((built, _))) = self.pending.as_mut().and_then(|p| p.wait()) {
             pipelines.extend(built);

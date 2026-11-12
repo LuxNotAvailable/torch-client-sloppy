@@ -66,7 +66,13 @@ mod seam {
         false
     }
 
-    pub(crate) fn sync_options(_lighting: bool, _smooth: bool, _biome_blend: u8, _leaf_culling: u8) {}
+    pub(crate) fn sync_options(
+        _lighting: bool,
+        _smooth: bool,
+        _biome_blend: u8,
+        _leaf_culling: u8,
+    ) {
+    }
 }
 
 #[cfg(target_arch = "wasm32")]

@@ -903,7 +903,9 @@ impl EntityAnim {
     /// the mob's `getMaxHeadYRot`.
     fn tick_body_rotation_control(&mut self) {
         let max = max_head_y_rot(self.kind);
-        let rotate = |base: f32, target: f32, max: f32| target - wrap_degrees(target - base).clamp(-max, max);
+        let rotate = |base: f32, target: f32, max: f32| {
+            target - wrap_degrees(target - base).clamp(-max, max)
+        };
         let xd = self.pos[0] - self.pos_old[0];
         let zd = self.pos[2] - self.pos_old[2];
         if xd * xd + zd * zd > 2.500_000_3e-7 {
@@ -1933,11 +1935,19 @@ mod tests {
         for _ in 0..3 {
             anim.tick(input.clone());
         }
-        assert!((anim.body_rot_pair().1 - 15.0).abs() < 1e-3, "{}", anim.body_rot_pair().1);
+        assert!(
+            (anim.body_rot_pair().1 - 15.0).abs() < 1e-3,
+            "{}",
+            anim.body_rot_pair().1
+        );
         for _ in 0..25 {
             anim.tick(input.clone());
         }
-        assert!((anim.body_rot_pair().1 - 90.0).abs() < 1e-3, "{}", anim.body_rot_pair().1);
+        assert!(
+            (anim.body_rot_pair().1 - 90.0).abs() < 1e-3,
+            "{}",
+            anim.body_rot_pair().1
+        );
     }
 
     #[test]
@@ -1951,7 +1961,11 @@ mod tests {
             input.pos[0] = step as f64;
             anim.tick(input.clone());
         }
-        assert!((anim.body_rot_pair().1 + 90.0).abs() < 1e-3, "{}", anim.body_rot_pair().1);
+        assert!(
+            (anim.body_rot_pair().1 + 90.0).abs() < 1e-3,
+            "{}",
+            anim.body_rot_pair().1
+        );
     }
 
     #[test]

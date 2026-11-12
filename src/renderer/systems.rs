@@ -2477,7 +2477,11 @@ fn resolve_backend() -> (
     use crate::gui::RenderBackend;
 
     // Legacy is the only wgpu path left: wgpu's own backend pick.
-    let started = if crate::vk::live::wanted() { RenderBackend::Native } else { RenderBackend::Legacy };
+    let started = if crate::vk::live::wanted() {
+        RenderBackend::Native
+    } else {
+        RenderBackend::Legacy
+    };
     crate::log_info!("render", "renderer: {}", started.caption());
     (started, None)
 }
@@ -2767,7 +2771,15 @@ pub fn run(
     #[cfg(not(target_arch = "wasm32"))]
     app.add_systems(Update, sync_vsync);
     app.add_systems(Last, trace_reextracted_meshes)
-        .add_systems(Update, (sync_smooth_lighting, sync_biome_blend, sync_leaf_culling, sync_leaf_options))
+        .add_systems(
+            Update,
+            (
+                sync_smooth_lighting,
+                sync_biome_blend,
+                sync_leaf_culling,
+                sync_leaf_options,
+            ),
+        )
         .add_systems(Update, sync_lighting_enabled)
         .add_systems(Update, toggle_screen.after(apply_gui_nav))
         .add_systems(

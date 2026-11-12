@@ -288,7 +288,8 @@ struct Registry {
 /// The live channels: the world, and the inventory figure.
 pub const LIVE_WORLD: usize = 0;
 pub const LIVE_FIGURE: usize = 1;
-static LIVE_ENTITIES: std::sync::Mutex<Vec<(Registry, Option<LiveEntities>)>> = std::sync::Mutex::new(Vec::new());
+static LIVE_ENTITIES: std::sync::Mutex<Vec<(Registry, Option<LiveEntities>)>> =
+    std::sync::Mutex::new(Vec::new());
 
 /// The channel's entities since the last take, if a frame came.
 pub fn take_live_entities(channel: usize) -> Option<LiveEntities> {
@@ -324,15 +325,22 @@ pub struct LiveParticles {
     pub sprites: Vec<ParticleSprite>,
 }
 
-static LIVE_PARTICLES: std::sync::Mutex<Option<(Registry, Option<LiveParticles>)>> = std::sync::Mutex::new(None);
+static LIVE_PARTICLES: std::sync::Mutex<Option<(Registry, Option<LiveParticles>)>> =
+    std::sync::Mutex::new(None);
 
 /// The particles since the last take, if a frame came.
 pub fn take_live_particles() -> Option<LiveParticles> {
     LIVE_PARTICLES.lock().ok()?.as_mut()?.1.take()
 }
 
-fn particles_to_live(cache: &Cache, mut sprites: Vec<ParticleSprite>, used_images: &[AssetId<Image>]) {
-    let Ok(mut live) = LIVE_PARTICLES.lock() else { return };
+fn particles_to_live(
+    cache: &Cache,
+    mut sprites: Vec<ParticleSprite>,
+    used_images: &[AssetId<Image>],
+) {
+    let Ok(mut live) = LIVE_PARTICLES.lock() else {
+        return;
+    };
     let (registry, pending) = live.get_or_insert_with(Default::default);
     let mut frame = pending.take().unwrap_or_default();
     let index: Vec<u32> = used_images
@@ -366,8 +374,15 @@ fn particles_to_live(cache: &Cache, mut sprites: Vec<ParticleSprite>, used_image
     *pending = Some(frame);
 }
 
-fn to_live(channel: usize, cache: &Cache, (mut instances, used_meshes, used_images): Collected, rows: &[[f32; 12]]) {
-    let Ok(mut live) = LIVE_ENTITIES.lock() else { return };
+fn to_live(
+    channel: usize,
+    cache: &Cache,
+    (mut instances, used_meshes, used_images): Collected,
+    rows: &[[f32; 12]],
+) {
+    let Ok(mut live) = LIVE_ENTITIES.lock() else {
+        return;
+    };
     while live.len() <= channel {
         live.push(Default::default());
     }
@@ -388,7 +403,9 @@ fn to_live(channel: usize, cache: &Cache, (mut instances, used_meshes, used_imag
                     let new = content_hash(verts, indices, *rigged);
                     if new != *hash {
                         *hash = new;
-                        frame.meshes.push((*index, verts.clone(), indices.clone(), *rigged));
+                        frame
+                            .meshes
+                            .push((*index, verts.clone(), indices.clone(), *rigged));
                         super::live::count_new(0, verts.len());
                     }
                     *index
@@ -396,8 +413,12 @@ fn to_live(channel: usize, cache: &Cache, (mut instances, used_meshes, used_imag
                 None => {
                     let index = registry.next_mesh;
                     registry.next_mesh += 1;
-                    registry.meshes.insert(*id, (index, key, content_hash(verts, indices, *rigged)));
-                    frame.meshes.push((index, verts.clone(), indices.clone(), *rigged));
+                    registry
+                        .meshes
+                        .insert(*id, (index, key, content_hash(verts, indices, *rigged)));
+                    frame
+                        .meshes
+                        .push((index, verts.clone(), indices.clone(), *rigged));
                     super::live::count_new(0, verts.len());
                     index
                 }
@@ -447,7 +468,9 @@ pub const KIND_REPEAT: u32 = 1 << 31;
 
 fn repeats(image: &Image) -> bool {
     match &image.sampler {
-        bevy::image::ImageSampler::Descriptor(d) => d.address_mode_u == bevy::image::ImageAddressMode::Repeat,
+        bevy::image::ImageSampler::Descriptor(d) => {
+            d.address_mode_u == bevy::image::ImageAddressMode::Repeat
+        }
         _ => false,
     }
 }
@@ -755,7 +778,8 @@ fn write_env(
 
     // The first-person hand, in the hand camera's view space.
     if let Some(view) = hand_view {
-        let layer = bevy::camera::visibility::RenderLayers::layer(crate::renderer::hand::HAND_LAYER);
+        let layer =
+            bevy::camera::visibility::RenderLayers::layer(crate::renderer::hand::HAND_LAYER);
         for (mesh, material, transform, visible, layers) in hand_parts {
             if !visible.get() || !layers.intersects(&layer) {
                 continue;
@@ -778,7 +802,11 @@ fn write_env(
     // Weather sheets (native, no pack): kind 6, a unit quad stretched by
     // the transform; uv scale and offset scroll the texture.
     if let Some((quad, rain, snow)) = crate::renderer::weather::ASSETS.get() {
-        let sheets = std::mem::take(&mut *crate::renderer::weather::SHEETS.lock().unwrap_or_else(|e| e.into_inner()));
+        let sheets = std::mem::take(
+            &mut *crate::renderer::weather::SHEETS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()),
+        );
         for s in sheets {
             let texture = if s.snow { snow } else { rain };
             add(
@@ -789,14 +817,20 @@ fn write_env(
                 0.0,
                 6,
                 s.uv,
-                Mat4::from_cols(s.across.extend(0.0), s.down.extend(0.0), Vec4::ZERO, s.origin.extend(1.0)),
+                Mat4::from_cols(
+                    s.across.extend(0.0),
+                    s.down.extend(0.0),
+                    Vec4::ZERO,
+                    s.origin.extend(1.0),
+                ),
                 0.0,
             );
         }
     }
     // The world's overlays: outline, hitboxes and borders as lines, the
     // breaking cracks as faces.
-    let outline_width = crate::renderer::overlays::OUTLINE_WIDTH.load(std::sync::atomic::Ordering::Relaxed) as f32;
+    let outline_width =
+        crate::renderer::overlays::OUTLINE_WIDTH.load(std::sync::atomic::Ordering::Relaxed) as f32;
     for (mesh, material, transform, visible, cracks, outline) in world_overlays {
         if !visible.get() {
             continue;
@@ -987,129 +1021,146 @@ fn write(
         .unwrap_or((Mat4::IDENTITY, 70f32.to_radians()));
     // One snapshot of what a layer draws, seen from `(cam, fov)`.
     let collect = |world: bevy::camera::visibility::RenderLayers| -> Collected {
-    let mut instances = Vec::new();
-    let mut used_meshes = Vec::new();
-    let mut used_images = Vec::new();
-    let (mut mesh_ids, mut image_ids) = (HashMap::new(), HashMap::new());
-    for (mesh, material, transform, visible, layers, tag, (block, particle, beam, weather)) in
-        &drawn
-    {
-        if !visible.get() || layers.is_some_and(|l| !l.intersects(&world)) {
-            continue;
-        }
-        // Particles go to `particles.bin`, as sprites.
-        if particle {
-            continue;
-        }
-        let Some(material) = materials.get(&material.0) else {
-            continue;
-        };
-        if !cache.meshes.contains_key(&mesh.0.id()) {
-            continue;
-        }
-        let next = mesh_ids.len() as u32;
-        let mesh_id = *mesh_ids.entry(mesh.0.id()).or_insert_with(|| {
-            used_meshes.push(mesh.0.id());
-            next
-        });
-        let texture = material
-            .texture
-            .as_ref()
-            .filter(|t| cache.images.contains_key(&t.id()))
-            .map_or(u32::MAX, |t| {
-                let next = image_ids.len() as u32;
-                *image_ids.entry(t.id()).or_insert_with(|| {
-                    used_images.push(t.id());
-                    next
-                })
+        let mut instances = Vec::new();
+        let mut used_meshes = Vec::new();
+        let mut used_images = Vec::new();
+        let (mut mesh_ids, mut image_ids) = (HashMap::new(), HashMap::new());
+        for (mesh, material, transform, visible, layers, tag, (block, particle, beam, weather)) in
+            &drawn
+        {
+            if !visible.get() || layers.is_some_and(|l| !l.intersects(&world)) {
+                continue;
+            }
+            // Particles go to `particles.bin`, as sprites.
+            if particle {
+                continue;
+            }
+            let Some(material) = materials.get(&material.0) else {
+                continue;
+            };
+            if !cache.meshes.contains_key(&mesh.0.id()) {
+                continue;
+            }
+            let next = mesh_ids.len() as u32;
+            let mesh_id = *mesh_ids.entry(mesh.0.id()).or_insert_with(|| {
+                used_meshes.push(mesh.0.id());
+                next
             });
-        let p = &material.params;
-        instances.push(EntityInstance {
-            mesh: mesh_id,
-            texture,
-            tag: tag.map_or(0, |t| t.0),
-            alpha: match material.alpha_mode {
-                AlphaMode::Opaque => 0,
-                AlphaMode::Mask(_) => 1,
-                AlphaMode::Add => 3,
-                _ => 2,
-            },
-            depth_bias: material.depth_bias,
-            kind: match (block, particle, beam, weather) {
-                (true, ..) => 1,
-                (_, true, ..) => 2,
-                (_, _, true, _) => 3,
-                (.., true) => 4,
-                _ => 0,
-            } | if material.texture.as_ref().is_some_and(|t| cache.repeat.contains(&t.id())) {
-                KIND_REPEAT
-            } else {
-                0
-            },
-            tint: p.tint.to_array(),
-            light: p.light.to_array(),
-            light0: p.light0.to_array(),
-            light1: p.light1.to_array(),
-            switches: p.switches.to_array(),
-            levels: [p.light_block.w, p.light_sky.w],
-            mode: p.mode,
-            see_through: u32::from(material.see_through),
-            transform: transform.to_matrix().to_cols_array(),
-        });
-    }
+            let texture = material
+                .texture
+                .as_ref()
+                .filter(|t| cache.images.contains_key(&t.id()))
+                .map_or(u32::MAX, |t| {
+                    let next = image_ids.len() as u32;
+                    *image_ids.entry(t.id()).or_insert_with(|| {
+                        used_images.push(t.id());
+                        next
+                    })
+                });
+            let p = &material.params;
+            instances.push(EntityInstance {
+                mesh: mesh_id,
+                texture,
+                tag: tag.map_or(0, |t| t.0),
+                alpha: match material.alpha_mode {
+                    AlphaMode::Opaque => 0,
+                    AlphaMode::Mask(_) => 1,
+                    AlphaMode::Add => 3,
+                    _ => 2,
+                },
+                depth_bias: material.depth_bias,
+                kind: match (block, particle, beam, weather) {
+                    (true, ..) => 1,
+                    (_, true, ..) => 2,
+                    (_, _, true, _) => 3,
+                    (.., true) => 4,
+                    _ => 0,
+                } | if material
+                    .texture
+                    .as_ref()
+                    .is_some_and(|t| cache.repeat.contains(&t.id()))
+                {
+                    KIND_REPEAT
+                } else {
+                    0
+                },
+                tint: p.tint.to_array(),
+                light: p.light.to_array(),
+                light0: p.light0.to_array(),
+                light1: p.light1.to_array(),
+                switches: p.switches.to_array(),
+                levels: [p.light_block.w, p.light_sky.w],
+                mode: p.mode,
+                see_through: u32::from(material.see_through),
+                transform: transform.to_matrix().to_cols_array(),
+            });
+        }
 
-    (instances, used_meshes, used_images)
+        (instances, used_meshes, used_images)
     };
-    let snapshot = |(instances, used_meshes, used_images): Collected, (cam, fov): (Mat4, f32)| -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut put = |bytes: &[u8]| out.extend_from_slice(bytes);
-    put(MAGIC);
-    put(&VERSION.to_le_bytes());
-    put(bytemuck::cast_slice(&cam.to_cols_array()));
-    put(&fov.to_le_bytes());
-    put(&(used_images.len() as u32).to_le_bytes());
-    for (i, id) in used_images.iter().enumerate() {
-        let (w, h, rgba) = &cache.images[id];
-        for n in [i as u32, *w, *h] {
-            put(&n.to_le_bytes());
-        }
-        put(rgba);
-    }
-    put(&(used_meshes.len() as u32).to_le_bytes());
-    for (i, id) in used_meshes.iter().enumerate() {
-        let (verts, indices, rigged) = &cache.meshes[id];
-        for n in [
-            i as u32,
-            verts.len() as u32,
-            indices.len() as u32,
-            u32::from(*rigged),
-        ] {
-            put(&n.to_le_bytes());
-        }
-        put(bytemuck::cast_slice(verts));
-        put(bytemuck::cast_slice(indices));
-    }
-    let rows = parts.rows();
-    put(&(rows.len() as u32).to_le_bytes());
-    put(bytemuck::cast_slice(rows));
-    put(&(instances.len() as u32).to_le_bytes());
-    put(bytemuck::cast_slice(&instances));
-    out
-    };
+    let snapshot =
+        |(instances, used_meshes, used_images): Collected, (cam, fov): (Mat4, f32)| -> Vec<u8> {
+            let mut out = Vec::new();
+            let mut put = |bytes: &[u8]| out.extend_from_slice(bytes);
+            put(MAGIC);
+            put(&VERSION.to_le_bytes());
+            put(bytemuck::cast_slice(&cam.to_cols_array()));
+            put(&fov.to_le_bytes());
+            put(&(used_images.len() as u32).to_le_bytes());
+            for (i, id) in used_images.iter().enumerate() {
+                let (w, h, rgba) = &cache.images[id];
+                for n in [i as u32, *w, *h] {
+                    put(&n.to_le_bytes());
+                }
+                put(rgba);
+            }
+            put(&(used_meshes.len() as u32).to_le_bytes());
+            for (i, id) in used_meshes.iter().enumerate() {
+                let (verts, indices, rigged) = &cache.meshes[id];
+                for n in [
+                    i as u32,
+                    verts.len() as u32,
+                    indices.len() as u32,
+                    u32::from(*rigged),
+                ] {
+                    put(&n.to_le_bytes());
+                }
+                put(bytemuck::cast_slice(verts));
+                put(bytemuck::cast_slice(indices));
+            }
+            let rows = parts.rows();
+            put(&(rows.len() as u32).to_le_bytes());
+            put(bytemuck::cast_slice(rows));
+            put(&(instances.len() as u32).to_le_bytes());
+            put(bytemuck::cast_slice(&instances));
+            out
+        };
     // Live, entities go straight across (`LiveEntities`): new meshes and
     // textures once, then each frame's instances and pose rows.
     let live = super::live::wanted();
     let world_layer = bevy::camera::visibility::RenderLayers::default();
     let out = if live {
-        to_live(LIVE_WORLD, &cache, collect(world_layer), bytemuck::cast_slice(parts.rows()));
+        to_live(
+            LIVE_WORLD,
+            &cache,
+            collect(world_layer),
+            bytemuck::cast_slice(parts.rows()),
+        );
         Vec::new()
     } else {
         snapshot(collect(world_layer), world_camera)
     };
     // The inventory's player figure, on its own layer, for the native GUI.
     if live && crate::renderer::inventory_figure::ready() {
-        let figure = bevy::camera::visibility::RenderLayers::layer(crate::renderer::inventory_figure::FIGURE_LAYER);
-        to_live(LIVE_FIGURE, &cache, collect(figure), bytemuck::cast_slice(parts.rows()));
+        let figure = bevy::camera::visibility::RenderLayers::layer(
+            crate::renderer::inventory_figure::FIGURE_LAYER,
+        );
+        to_live(
+            LIVE_FIGURE,
+            &cache,
+            collect(figure),
+            bytemuck::cast_slice(parts.rows()),
+        );
     }
 
     // The game's own frame beside it, the ground truth for vkview
@@ -1380,7 +1431,11 @@ fn write_particles(
     }
     // The frame's pack inputs (time of day, sky, weather), for packs.
     if let Some(inputs) = inputs {
-        deliver(dir.as_deref(), "inputs.json", inputs.to_json().to_string().into_bytes());
+        deliver(
+            dir.as_deref(),
+            "inputs.json",
+            inputs.to_json().to_string().into_bytes(),
+        );
     }
     let (Some(live), Some(atlas)) = (live, atlas) else {
         return;

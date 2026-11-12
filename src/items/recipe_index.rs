@@ -210,10 +210,7 @@ fn load_tags(dir: &Path) -> HashMap<String, Vec<&'static str>> {
         let Ok(rel) = path.strip_prefix(dir) else {
             continue;
         };
-        let name = rel
-            .with_extension("")
-            .to_string_lossy()
-            .replace('\\', "/");
+        let name = rel.with_extension("").to_string_lossy().replace('\\', "/");
         let Some(text) = crate::platform::assets::read_to_string(&path) else {
             continue;
         };
@@ -309,16 +306,27 @@ fn result(json: &Value) -> Option<(&'static str, u8)> {
     Some((known(id)?, count.clamp(1, 99) as u8))
 }
 
-fn parse_recipe(id: String, json: &Value, tags: &HashMap<String, Vec<&'static str>>) -> Option<Recipe> {
+fn parse_recipe(
+    id: String,
+    json: &Value,
+    tags: &HashMap<String, Vec<&'static str>>,
+) -> Option<Recipe> {
     let kind = strip(json.get("type")?.as_str()?);
-    let one = |key: &str| json.get(key).map(|v| ingredient(v, tags)).unwrap_or_default();
+    let one = |key: &str| {
+        json.get(key)
+            .map(|v| ingredient(v, tags))
+            .unwrap_or_default()
+    };
     let cooking = |category: Category, default_ticks: u32| -> Option<Recipe> {
         let (output, count) = result(json)?;
         let ticks = json
             .get("cookingtime")
             .and_then(Value::as_u64)
             .map_or(default_ticks, |t| t as u32);
-        let xp = json.get("experience").and_then(Value::as_f64).unwrap_or(0.0) as f32;
+        let xp = json
+            .get("experience")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0) as f32;
         Some(Recipe {
             id: id.clone(),
             category,
@@ -338,7 +346,11 @@ fn parse_recipe(id: String, json: &Value, tags: &HashMap<String, Vec<&'static st
                 .iter()
                 .filter_map(Value::as_str)
                 .collect();
-            let width = pattern.iter().map(|row| row.chars().count()).max()?.clamp(1, 3);
+            let width = pattern
+                .iter()
+                .map(|row| row.chars().count())
+                .max()?
+                .clamp(1, 3);
             let key = json.get("key")?.as_object()?;
             let mut inputs = Vec::with_capacity(width * pattern.len());
             for row in &pattern {
@@ -443,7 +455,9 @@ mod tests {
     use super::*;
 
     fn vanilla() -> RecipeIndex {
-        RecipeIndex::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("reference/minecraft-26.3/data/minecraft"))
+        RecipeIndex::load(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("reference/minecraft-26.3/data/minecraft"),
+        )
     }
 
     #[test]
@@ -452,10 +466,17 @@ mod tests {
         assert!(index.recipes.len() > 1600, "only {}", index.recipes.len());
 
         let planks = index.recipes_for("oak_planks");
-        let shapeless = planks.iter().find(|r| r.id == "oak_planks").expect("oak_planks");
+        let shapeless = planks
+            .iter()
+            .find(|r| r.id == "oak_planks")
+            .expect("oak_planks");
         assert!(shapeless.shapeless());
         assert_eq!(shapeless.count, 4);
-        assert!(shapeless.inputs[0].contains(&"oak_log"), "{:?}", shapeless.inputs);
+        assert!(
+            shapeless.inputs[0].contains(&"oak_log"),
+            "{:?}",
+            shapeless.inputs
+        );
 
         let boat = &index.recipes_for("acacia_boat")[0];
         assert_eq!(boat.width, 3);

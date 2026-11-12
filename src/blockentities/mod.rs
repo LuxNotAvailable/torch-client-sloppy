@@ -934,7 +934,10 @@ fn sync_block_entities(
 
         let moving =
             st.open > 0.0 || matches!(&st.anim, sim::Anim::Shulker(s) if s.progress(partial) > 0.0);
-        let beam = matches!(info.kind, BlockEntityKind::Beacon | BlockEntityKind::EndGateway);
+        let beam = matches!(
+            info.kind,
+            BlockEntityKind::Beacon | BlockEntityKind::EndGateway
+        );
         if crate::entities::cull::enabled() && !beam {
             cull_blocks.push(*pos);
         }

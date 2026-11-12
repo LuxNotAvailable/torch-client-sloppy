@@ -32,7 +32,10 @@ pub(crate) enum SlotKind {
     Comparison,
     /// A buffer of this WGSL type, written to when `read_write`. Uniform
     /// blocks come here too.
-    Buffer { ty: String, read_write: bool },
+    Buffer {
+        ty: String,
+        read_write: bool,
+    },
 }
 
 /// One resource the program declared, in slot-table order.
@@ -168,15 +171,13 @@ fn replace_uses(source: &str, name: &str, with: &str) -> String {
 fn handle_array(ty: &str) -> Option<(String, String)> {
     if ty.starts_with("texture_") {
         let array = format!("iris_textures_{}", tag(ty));
-        let decl = format!(
-            "@group(0) @binding(0) var {array}: binding_array<{ty}, {MAX_TEXTURES}>;\n"
-        );
+        let decl =
+            format!("@group(0) @binding(0) var {array}: binding_array<{ty}, {MAX_TEXTURES}>;\n");
         Some((array, decl))
     } else if ty == "sampler" || ty == "sampler_comparison" {
         let array = format!("iris_samplers_{ty}");
-        let decl = format!(
-            "@group(0) @binding(1) var {array}: binding_array<{ty}, {MAX_SAMPLERS}>;\n"
-        );
+        let decl =
+            format!("@group(0) @binding(1) var {array}: binding_array<{ty}, {MAX_SAMPLERS}>;\n");
         Some((array, decl))
     } else {
         None
@@ -503,7 +504,11 @@ mod tests {
                 }
             }
             let Ok(installed) = crate::vk::pack::load(&pack.name, false) else {
-                failures.push(format!("{}: does not compile: {}", pack.name, installed_error(&pack.name)));
+                failures.push(format!(
+                    "{}: does not compile: {}",
+                    pack.name,
+                    installed_error(&pack.name)
+                ));
                 continue;
             };
             for program in &installed.programs {
@@ -558,7 +563,11 @@ mod tests {
             .ok()?;
         let _ = std::fs::remove_file(&path);
         (!out.status.success()).then(|| {
-            String::from_utf8_lossy(&out.stderr).lines().next().unwrap_or("failed").to_owned()
+            String::from_utf8_lossy(&out.stderr)
+                .lines()
+                .next()
+                .unwrap_or("failed")
+                .to_owned()
         })
     }
 
@@ -576,10 +585,22 @@ mod tests {
         assert_eq!(slots.len(), 4);
         assert_eq!(slots[0].kind, SlotKind::Texture("texture_2d<f32>".into()));
         assert_eq!(slots[1].kind, SlotKind::Sampler);
-        assert!(matches!(slots[2].kind, SlotKind::Buffer { read_write: false, .. }));
+        assert!(matches!(
+            slots[2].kind,
+            SlotKind::Buffer {
+                read_write: false,
+                ..
+            }
+        ));
         assert!(!out.contains("var gtexture:"), "{out}");
-        assert!(out.contains("iris_textures_texture_2d_f32_[iris_slot(0u)]"), "{out}");
-        assert!(out.contains("iris_buffers_IrisFrame_read[iris_slot(2u)].time"), "{out}");
+        assert!(
+            out.contains("iris_textures_texture_2d_f32_[iris_slot(0u)]"),
+            "{out}"
+        );
+        assert!(
+            out.contains("iris_buffers_IrisFrame_read[iris_slot(2u)].time"),
+            "{out}"
+        );
         assert!(out.contains("[iris_slot(3u)].v[0]"), "{out}");
         crate::shaderpack::backend::wgsl_to_spirv_aliased(&out).expect("compiles");
     }

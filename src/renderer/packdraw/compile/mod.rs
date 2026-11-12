@@ -773,20 +773,32 @@ mod tests {
         let mut stages = 0usize;
         for pack in discover::list() {
             for direct in [false, true] {
-                let Ok(frame) = compile_frame(&pack.name, direct, None, Dimension::Overworld) else {
+                let Ok(frame) = compile_frame(&pack.name, direct, None, Dimension::Overworld)
+                else {
                     continue;
                 };
                 for program in &frame.programs {
                     let sources = std::iter::once(("vertex", &program.vertex))
                         .chain(program.vertex_skinned.iter().map(|s| ("vertex skinned", s)))
                         .chain(std::iter::once(("fragment", &program.fragment)))
-                        .chain(program.fragment_tests.iter().map(|(_, s)| ("fragment test", s)))
-                        .chain(program.fragment_linear.iter().map(|s| ("fragment linear", s)))
+                        .chain(
+                            program
+                                .fragment_tests
+                                .iter()
+                                .map(|(_, s)| ("fragment test", s)),
+                        )
+                        .chain(
+                            program
+                                .fragment_linear
+                                .iter()
+                                .map(|s| ("fragment linear", s)),
+                        )
                         .chain(program.compute.iter().map(|s| ("compute", s)))
                         .filter(|(_, s)| !s.is_empty());
                     for (stage, source) in sources {
                         stages += 1;
-                        let label = format!("{} (direct={direct}) {} {stage}", pack.name, program.name);
+                        let label =
+                            format!("{} (direct={direct}) {} {stage}", pack.name, program.name);
                         match crate::shaderpack::backend::wgsl_to_spirv(source) {
                             Err(e) => failures
                                 .push(format!("{label}: {}", e.lines().next().unwrap_or(""))),
@@ -846,7 +858,11 @@ mod tests {
             let Ok(frame) = compile_frame(&pack.name, false, None, Dimension::Overworld) else {
                 continue;
             };
-            let safe: String = pack.name.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+            let safe: String = pack
+                .name
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric())
+                .collect();
             for program in &frame.programs {
                 for (stage, source) in [("vsh", &program.vertex), ("fsh", &program.fragment)]
                     .into_iter()

@@ -51,7 +51,8 @@ pub fn wanted() -> bool {
 /// the last report (`MC_NATIVE_TIMING`): the entity and particle captures,
 /// the scene renewals, the frame's recording and submission, the whole
 /// renderer system, and frames counted.
-static TIMES: [std::sync::atomic::AtomicU64; 13] = [const { std::sync::atomic::AtomicU64::new(0) }; 13];
+static TIMES: [std::sync::atomic::AtomicU64; 13] =
+    [const { std::sync::atomic::AtomicU64::new(0) }; 13];
 const TIME_NAMES: [&str; 12] = [
     "capture entities+env",
     "capture particles",
@@ -89,7 +90,10 @@ impl Timed {
 
 impl Drop for Timed {
     fn drop(&mut self) {
-        TIMES[self.0].fetch_add(self.1.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+        TIMES[self.0].fetch_add(
+            self.1.elapsed().as_nanos() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
     }
 }
 
@@ -112,7 +116,12 @@ fn report_times(last: &mut Option<std::time::Instant>) {
     let parts: Vec<String> = TIME_NAMES
         .iter()
         .enumerate()
-        .map(|(i, n)| format!("{n} {:.2}", TIMES[i].swap(0, Relaxed) as f64 / 1e6 / frames as f64))
+        .map(|(i, n)| {
+            format!(
+                "{n} {:.2}",
+                TIMES[i].swap(0, Relaxed) as f64 / 1e6 / frames as f64
+            )
+        })
         .collect();
     let new: Vec<u64> = NEW.iter().map(|n| n.swap(0, Relaxed)).collect();
     info!(
@@ -188,7 +197,11 @@ struct Live {
     stale: bool,
     /// GPU time per pass (`MC_NATIVE_GPU_TIMING=1`): the queries, and
     /// per name the summed ms and frames since the last report.
-    gpu_timing: Option<(super::timestamps::Timestamps, std::collections::HashMap<&'static str, (f32, u32)>, std::time::Instant)>,
+    gpu_timing: Option<(
+        super::timestamps::Timestamps,
+        std::collections::HashMap<&'static str, (f32, u32)>,
+        std::time::Instant,
+    )>,
 }
 
 fn setup(world: &mut World) -> Result<Live, SetupError> {
@@ -198,7 +211,10 @@ fn setup(world: &mut World) -> Result<Live, SetupError> {
         .next()
         .ok_or_else(|| SetupError("no window yet".into()))?;
     let size = (window.physical_width(), window.physical_height());
-    let ctx = Context::new(Some((handles.get_display_handle(), handles.get_window_handle())), None)?;
+    let ctx = Context::new(
+        Some((handles.get_display_handle(), handles.get_window_handle())),
+        None,
+    )?;
     info!(
         "native renderer: {} ({:?}), Vulkan {}.{}.{}",
         ctx.info.name, ctx.info.kind, ctx.info.api.0, ctx.info.api.1, ctx.info.api.2
@@ -352,7 +368,12 @@ fn draw_frame(world: &mut World, mut last: Local<Option<std::time::Instant>>) {
         .unwrap_or_default();
     let wanted = world
         .get_non_send_resource::<RenderThread>()
-        .map_or((true, true), |t| (t.wants[0].load(Ordering::Relaxed), t.wants[1].load(Ordering::Relaxed)));
+        .map_or((true, true), |t| {
+            (
+                t.wants[0].load(Ordering::Relaxed),
+                t.wants[1].load(Ordering::Relaxed),
+            )
+        });
     let textures = match wanted {
         (false, false) => (None, None),
         _ => gui_textures(world),
@@ -398,7 +419,10 @@ fn draw_frame(world: &mut World, mut last: Local<Option<std::time::Instant>>) {
                 },
                 effects: None,
             };
-            SMOOTH_FIGURE.store(gui.options.smooth_gui_model, std::sync::atomic::Ordering::Relaxed);
+            SMOOTH_FIGURE.store(
+                gui.options.smooth_gui_model,
+                std::sync::atomic::Ordering::Relaxed,
+            );
             (post, gui.options.vsync)
         }
         None => (Default::default(), true),
@@ -473,10 +497,14 @@ impl Live {
         }
         self.feed_terrain();
         self.update_pack();
-        crate::renderer::weather::NATIVE.store(self.pack.is_none(), std::sync::atomic::Ordering::Relaxed);
+        crate::renderer::weather::NATIVE
+            .store(self.pack.is_none(), std::sync::atomic::Ordering::Relaxed);
         self.shots.extend(f.shots);
         if (self.post.fxaa, self.post.ssaa) != (f.post.fxaa, f.post.ssaa) {
-            info!("native renderer: anti-aliasing -> fxaa {}, ssaa {}", f.post.fxaa, f.post.ssaa);
+            info!(
+                "native renderer: anti-aliasing -> fxaa {}, ssaa {}",
+                f.post.fxaa, f.post.ssaa
+            );
             // The post pass frees its targets on change; let the GPU finish with them.
             // SAFETY: only waits.
             let _ = unsafe { self.ctx.device.device_wait_idle() };
@@ -519,7 +547,11 @@ fn figure_view(world: &mut World) -> Option<(bevy::math::Mat4, bevy::math::Vec3,
         return None;
     }
     let handle = world.get_resource::<FigureImage>()?.0.clone()?;
-    let size = world.get_resource::<Assets<bevy::image::Image>>()?.get(&handle)?.texture_descriptor.size;
+    let size = world
+        .get_resource::<Assets<bevy::image::Image>>()?
+        .get(&handle)?
+        .texture_descriptor
+        .size;
     let mut q = world.query_filtered::<(&GlobalTransform, &Projection), With<FigureCamera>>();
     let (transform, projection) = q.iter(world).next()?;
     let Projection::Orthographic(o) = projection else {
@@ -530,9 +562,17 @@ fn figure_view(world: &mut World) -> Option<(bevy::math::Mat4, bevy::math::Vec3,
         _ => return None,
     };
     // Bevy's orthographic projection, depth reversed as the world's.
-    let proj = bevy::math::Mat4::orthographic_rh(-w / 2.0, w / 2.0, -h / 2.0, h / 2.0, o.far, o.near);
+    let proj =
+        bevy::math::Mat4::orthographic_rh(-w / 2.0, w / 2.0, -h / 2.0, h / 2.0, o.far, o.near);
     let view = transform.to_matrix().inverse();
-    Some((proj * view, transform.translation(), vk::Extent2D { width: size.width, height: size.height }))
+    Some((
+        proj * view,
+        transform.translation(),
+        vk::Extent2D {
+            width: size.width,
+            height: size.height,
+        },
+    ))
 }
 
 /// The world camera as `terrain::Camera` (as `TerrainScene::game_camera`).
@@ -564,7 +604,10 @@ fn gui_textures(world: &World) -> (Option<[TextureData; 2]>, Option<TextureData>
 }
 
 /// An image's texels, in a format the GUI samples.
-fn image_data(images: &Assets<bevy::image::Image>, handle: &Handle<bevy::image::Image>) -> Option<TextureData> {
+fn image_data(
+    images: &Assets<bevy::image::Image>,
+    handle: &Handle<bevy::image::Image>,
+) -> Option<TextureData> {
     use bevy::render::render_resource::TextureFormat as F;
     let image = images.get(handle)?;
     let format = match image.texture_descriptor.format {
@@ -580,7 +623,10 @@ fn image_data(images: &Assets<bevy::image::Image>, handle: &Handle<bevy::image::
 fn gui_atlas(world: &World) -> Option<[TextureData; 2]> {
     let handles = world.get_resource::<crate::gui::pool::GuiTextures>()?;
     let images = world.get_resource::<Assets<bevy::image::Image>>()?;
-    Some([image_data(images, &handles.atlas)?, image_data(images, &handles.unihex)?])
+    Some([
+        image_data(images, &handles.atlas)?,
+        image_data(images, &handles.unihex)?,
+    ])
 }
 
 impl Drop for Live {
@@ -682,13 +728,15 @@ impl Live {
         let mut env_renewed = false;
         if let Some(bytes) = dump::take_live("env.bin") {
             match dump::read_env(&bytes) {
-                Ok(env) => match t.renew_env(ctx, memory, bindless, pipelines, format, env, self.eye) {
-                    Ok(o) => {
-                        old.extend(o.map(Retired::Env));
-                        env_renewed = true;
+                Ok(env) => {
+                    match t.renew_env(ctx, memory, bindless, pipelines, format, env, self.eye) {
+                        Ok(o) => {
+                            old.extend(o.map(Retired::Env));
+                            env_renewed = true;
+                        }
+                        Err(e) => fail("env", e.0),
                     }
-                    Err(e) => fail("env", e.0),
-                },
+                }
                 Err(e) => fail("env", e),
             }
         }
@@ -710,7 +758,15 @@ impl Live {
         }
         if let Some(frame) = dump::take_live_entities(dump::LIVE_FIGURE) {
             if self.figure.scene.is_none() {
-                match super::entities::EntityScene::new(ctx, memory, bindless, pipelines, vk::Format::R8G8B8A8_SRGB, dump::Snapshot::empty(), None) {
+                match super::entities::EntityScene::new(
+                    ctx,
+                    memory,
+                    bindless,
+                    pipelines,
+                    vk::Format::R8G8B8A8_SRGB,
+                    dump::Snapshot::empty(),
+                    None,
+                ) {
                     Ok(scene) => self.figure.scene = Some(scene),
                     Err(e) => fail("figure", e.0),
                 }
@@ -736,7 +792,9 @@ impl Live {
                 memory,
                 bindless,
                 pack.sun_path_rotation(),
-                self.pack_inputs.as_ref().map_or([0.0, 15.0], |i| [i.eye_light.x as f32, i.eye_light.y as f32]),
+                self.pack_inputs.as_ref().map_or([0.0, 15.0], |i| {
+                    [i.eye_light.x as f32, i.eye_light.y as f32]
+                }),
             )
         {
             fail("pack sky", e.0);
@@ -751,7 +809,9 @@ impl Live {
     /// `pack_changed` says so) and the swapchain's size.
     fn update_pack(&mut self) {
         let now = std::time::Instant::now();
-        if PACK_CHANGED.swap(false, std::sync::atomic::Ordering::Relaxed) || self.pack_checked.is_none() {
+        if PACK_CHANGED.swap(false, std::sync::atomic::Ordering::Relaxed)
+            || self.pack_checked.is_none()
+        {
             let name = crate::platform::storage::SHADER_PACK
                 .load()
                 .map(|p| p.trim().to_owned())
@@ -766,12 +826,15 @@ impl Live {
             height: (s.extent.height * scale / 100).max(1),
         });
         let current = self.pack.as_ref().map(|(n, _, e)| (n.clone(), *e));
-        if current.as_ref().map(|(n, e)| (Some(n.clone()), Some(*e))) == Some((wanted.clone(), extent))
+        if current.as_ref().map(|(n, e)| (Some(n.clone()), Some(*e)))
+            == Some((wanted.clone(), extent))
             || (current.is_none() && wanted.is_none())
         {
             return;
         }
-        let (Some(terrain), Some(extent), Some(swapchain)) = (&self.terrain, extent, &self.swapchain) else {
+        let (Some(terrain), Some(extent), Some(swapchain)) =
+            (&self.terrain, extent, &self.swapchain)
+        else {
             return;
         };
         self.ctx.idle();
@@ -833,7 +896,10 @@ impl Live {
             if let Some(bytes) = buffer.mapped() {
                 let mut rgba = bytes[..(extent.width * extent.height * 4) as usize].to_vec();
                 // Swapchains are mostly BGRA.
-                if matches!(format, vk::Format::B8G8R8A8_SRGB | vk::Format::B8G8R8A8_UNORM) {
+                if matches!(
+                    format,
+                    vk::Format::B8G8R8A8_SRGB | vk::Format::B8G8R8A8_UNORM
+                ) {
                     for px in rgba.chunks_exact_mut(4) {
                         px.swap(0, 2);
                     }
@@ -921,7 +987,9 @@ impl Live {
         let image = swapchain.images[recording.image_index as usize];
         let view = swapchain.views[recording.image_index as usize];
         let extent = swapchain.extent;
-        if self.gpu_timing.is_none() && crate::platform::env::var("MC_NATIVE_GPU_TIMING").is_ok_and(|v| v == "1") {
+        if self.gpu_timing.is_none()
+            && crate::platform::env::var("MC_NATIVE_GPU_TIMING").is_ok_and(|v| v == "1")
+        {
             match super::timestamps::Timestamps::new(&self.ctx) {
                 Ok(t) => self.gpu_timing = Some((t, Default::default(), std::time::Instant::now())),
                 Err(e) => error!("native renderer: gpu timing: {}", e.0),
@@ -940,21 +1008,45 @@ impl Live {
                 }
             }
             if since.elapsed().as_secs_f32() >= 2.0 {
-                let mut rows: Vec<(&str, f32)> = sums.drain().map(|(n, (ms, f))| (n, ms / f.max(1) as f32)).collect();
+                let mut rows: Vec<(&str, f32)> = sums
+                    .drain()
+                    .map(|(n, (ms, f))| (n, ms / f.max(1) as f32))
+                    .collect();
                 rows.sort_by(|a, b| b.1.total_cmp(&a.1));
                 let total: f32 = rows.iter().map(|r| r.1).sum();
-                let top: Vec<String> = rows.iter().take(15).map(|(n, ms)| format!("{n} {ms:.2}")).collect();
-                info!("native renderer: gpu {total:.2} ms/frame: {}", top.join(", "));
+                let top: Vec<String> = rows
+                    .iter()
+                    .take(15)
+                    .map(|(n, ms)| format!("{n} {ms:.2}"))
+                    .collect();
+                info!(
+                    "native renderer: gpu {total:.2} ms/frame: {}",
+                    top.join(", ")
+                );
                 *since = std::time::Instant::now();
             }
         }
-        let mut graph = Graph::new(&self.ctx, recording.commands, self.gpu_timing.as_mut().map(|g| &mut g.0));
-        graph.image(image, vk::ImageAspectFlags::COLOR, vk::ImageLayout::UNDEFINED);
+        let mut graph = Graph::new(
+            &self.ctx,
+            recording.commands,
+            self.gpu_timing.as_mut().map(|g| &mut g.0),
+        );
+        graph.image(
+            image,
+            vk::ImageAspectFlags::COLOR,
+            vk::ImageLayout::UNDEFINED,
+        );
         // The world, when there's one to see; in menus, the panorama.
         let mut drew_world = false;
         if self.menu {
             if self.panorama.is_none() {
-                match super::panorama::PanoramaScene::new(&self.ctx, &self.memory, &mut self.bindless, &self.pipelines, swapchain.format.format) {
+                match super::panorama::PanoramaScene::new(
+                    &self.ctx,
+                    &self.memory,
+                    &mut self.bindless,
+                    &self.pipelines,
+                    swapchain.format.format,
+                ) {
                     Ok(p) => self.panorama = Some(p),
                     Err(e) => {
                         error!("native renderer: panorama: {}", e.0);
@@ -1009,7 +1101,8 @@ impl Live {
                     pack.inputs = inputs;
                 }
                 let world_from_view =
-                    bevy::math::Mat4::look_to_rh(camera.eye, camera.forward(), bevy::math::Vec3::Y).inverse();
+                    bevy::math::Mat4::look_to_rh(camera.eye, camera.forward(), bevy::math::Vec3::Y)
+                        .inverse();
                 let pack_view = (world_from_view, camera.fov.to_radians());
                 let seconds = self.started.elapsed().as_secs_f32();
                 if let Some((light, eye)) = pack.begin_frame(pack_view, pack_extent, seconds)
@@ -1034,13 +1127,24 @@ impl Live {
                 let mut target = (image, view);
                 if self.post.fxaa {
                     if self.pack_post.is_none() {
-                        match super::post::PostPass::new(&self.ctx, &self.pipelines, swapchain.format.format) {
+                        match super::post::PostPass::new(
+                            &self.ctx,
+                            &self.pipelines,
+                            swapchain.format.format,
+                        ) {
                             Ok(p) => self.pack_post = Some(p),
                             Err(e) => error!("native renderer: pack fxaa: {}", e.0),
                         }
                     }
                     if let Some(post) = &mut self.pack_post {
-                        match post.scene(&self.ctx, &self.memory, &mut self.bindless, &mut graph, extent, self.frame) {
+                        match post.scene(
+                            &self.ctx,
+                            &self.memory,
+                            &mut self.bindless,
+                            &mut graph,
+                            extent,
+                            self.frame,
+                        ) {
                             Ok(scene) => target = scene,
                             Err(e) => error!("native renderer: pack fxaa: {}", e.0),
                         }
@@ -1058,17 +1162,43 @@ impl Live {
                     slot,
                     seconds,
                     Some(&geometry),
-                    Some(&mut |graph: &mut super::graph::Graph, o: super::pack::screen::Overlay| {
-                        terrain.record_pack_overlays(&self.ctx, set, &self.pipelines, graph, o, slot);
+                    Some(&mut |graph: &mut super::graph::Graph,
+                               o: super::pack::screen::Overlay| {
+                        terrain.record_pack_overlays(
+                            &self.ctx,
+                            set,
+                            &self.pipelines,
+                            graph,
+                            o,
+                            slot,
+                        );
                     }),
                 );
                 if target.0 != image
                     && let Some(post) = &self.pack_post
                 {
-                    post.record(&self.ctx, &self.bindless, &self.pipelines, &mut graph, (image, view), extent, 0, true);
+                    post.record(
+                        &self.ctx,
+                        &self.bindless,
+                        &self.pipelines,
+                        &mut graph,
+                        (image, view),
+                        extent,
+                        0,
+                        true,
+                    );
                 }
                 // The screen overlays over the pack's frame, as without one.
-                terrain.record_overlays(&self.ctx, &self.bindless, &self.pipelines, &mut graph, (image, view), extent, rotation, slot);
+                terrain.record_overlays(
+                    &self.ctx,
+                    &self.bindless,
+                    &self.pipelines,
+                    &mut graph,
+                    (image, view),
+                    extent,
+                    rotation,
+                    slot,
+                );
             }
         }
         let figure = match self.figure.record(
@@ -1116,32 +1246,43 @@ impl Live {
             ) {
                 Ok(buffer) => {
                     let (device, target) = (&self.ctx.device, buffer.raw);
-                    graph.pass("screenshot", &[(image, Use::TransferSrc)], &[], |cmd| unsafe {
-                        // SAFETY: the image is in TRANSFER_SRC; the buffer
-                        // is sized for it.
-                        device.cmd_copy_image_to_buffer(
-                            cmd,
-                            image,
-                            vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-                            target,
-                            &[vk::BufferImageCopy {
-                                image_subresource: vk::ImageSubresourceLayers {
-                                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                                    mip_level: 0,
-                                    base_array_layer: 0,
-                                    layer_count: 1,
-                                },
-                                image_extent: vk::Extent3D {
-                                    width: extent.width,
-                                    height: extent.height,
-                                    depth: 1,
-                                },
-                                ..Default::default()
-                            }],
-                        );
-                    });
+                    graph.pass(
+                        "screenshot",
+                        &[(image, Use::TransferSrc)],
+                        &[],
+                        |cmd| unsafe {
+                            // SAFETY: the image is in TRANSFER_SRC; the buffer
+                            // is sized for it.
+                            device.cmd_copy_image_to_buffer(
+                                cmd,
+                                image,
+                                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                                target,
+                                &[vk::BufferImageCopy {
+                                    image_subresource: vk::ImageSubresourceLayers {
+                                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                                        mip_level: 0,
+                                        base_array_layer: 0,
+                                        layer_count: 1,
+                                    },
+                                    image_extent: vk::Extent3D {
+                                        width: extent.width,
+                                        height: extent.height,
+                                        depth: 1,
+                                    },
+                                    ..Default::default()
+                                }],
+                            );
+                        },
+                    );
                     let format = swapchain.format.format;
-                    self.readbacks.push((buffer, extent, format, std::mem::take(&mut self.shots), self.frame));
+                    self.readbacks.push((
+                        buffer,
+                        extent,
+                        format,
+                        std::mem::take(&mut self.shots),
+                        self.frame,
+                    ));
                 }
                 Err(e) => error!("native renderer: screenshot: {}", e.0),
             }
@@ -1203,7 +1344,10 @@ impl GuiPass {
                 fragment_module: None,
             },
         )?;
-        let one = vk::Extent2D { width: 1, height: 1 };
+        let one = vk::Extent2D {
+            width: 1,
+            height: 1,
+        };
         let image = memory.image(
             ctx,
             "gui white",
@@ -1215,7 +1359,13 @@ impl GuiPass {
         let index = bindless
             .add_texture(ctx, image.view, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
             .ok_or_else(|| SetupError("the bindless set is full".into()))?;
-        let mut staging = memory.buffer(ctx, "gui white staging", 4, vk::BufferUsageFlags::TRANSFER_SRC, MemoryLocation::CpuToGpu)?;
+        let mut staging = memory.buffer(
+            ctx,
+            "gui white staging",
+            4,
+            vk::BufferUsageFlags::TRANSFER_SRC,
+            MemoryLocation::CpuToGpu,
+        )?;
         staging.write(0, &[255; 4]);
         Ok(GuiPass {
             module,
@@ -1275,15 +1425,29 @@ impl GuiPass {
             graph.image(image.raw, vk::ImageAspectFlags::COLOR, sampled);
         }
         if let Some(staging) = self.white_pending.take() {
-            graph.image(self.white.0.raw, vk::ImageAspectFlags::COLOR, vk::ImageLayout::UNDEFINED);
-            uploads.push((staging, self.white.0.raw, vk::Extent2D { width: 1, height: 1 }));
+            graph.image(
+                self.white.0.raw,
+                vk::ImageAspectFlags::COLOR,
+                vk::ImageLayout::UNDEFINED,
+            );
+            uploads.push((
+                staging,
+                self.white.0.raw,
+                vk::Extent2D {
+                    width: 1,
+                    height: 1,
+                },
+            ));
         }
         if self.textures.is_none()
             && let Some(data) = textures
         {
             let mut made = Vec::new();
             for (name, (w, h, format, bytes)) in ["gui atlas", "gui unihex"].into_iter().zip(data) {
-                let extent = vk::Extent2D { width: w, height: h };
+                let extent = vk::Extent2D {
+                    width: w,
+                    height: h,
+                };
                 let image = memory.image(
                     ctx,
                     name,
@@ -1303,7 +1467,11 @@ impl GuiPass {
                     MemoryLocation::CpuToGpu,
                 )?;
                 staging.write(0, &bytes);
-                graph.image(image.raw, vk::ImageAspectFlags::COLOR, vk::ImageLayout::UNDEFINED);
+                graph.image(
+                    image.raw,
+                    vk::ImageAspectFlags::COLOR,
+                    vk::ImageLayout::UNDEFINED,
+                );
                 uploads.push((staging, image.raw, extent));
                 made.push((image, index));
             }
@@ -1315,7 +1483,10 @@ impl GuiPass {
         if self.glint.is_none()
             && let Some((w, h, format, bytes)) = glint_data
         {
-            let extent = vk::Extent2D { width: w, height: h };
+            let extent = vk::Extent2D {
+                width: w,
+                height: h,
+            };
             let image = memory.image(
                 ctx,
                 "gui glint",
@@ -1327,14 +1498,27 @@ impl GuiPass {
             let index = bindless
                 .add_texture(ctx, image.view, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                 .ok_or_else(|| SetupError("the bindless set is full".into()))?;
-            let mut staging = memory.buffer(ctx, "gui glint staging", bytes.len() as u64, vk::BufferUsageFlags::TRANSFER_SRC, MemoryLocation::CpuToGpu)?;
+            let mut staging = memory.buffer(
+                ctx,
+                "gui glint staging",
+                bytes.len() as u64,
+                vk::BufferUsageFlags::TRANSFER_SRC,
+                MemoryLocation::CpuToGpu,
+            )?;
             staging.write(0, &bytes);
-            graph.image(image.raw, vk::ImageAspectFlags::COLOR, vk::ImageLayout::UNDEFINED);
+            graph.image(
+                image.raw,
+                vk::ImageAspectFlags::COLOR,
+                vk::ImageLayout::UNDEFINED,
+            );
             uploads.push((staging, image.raw, extent));
             self.glint = Some((image, index));
         }
         if !uploads.is_empty() {
-            let uses: Vec<_> = uploads.iter().map(|(_, i, _)| (*i, Use::TransferDst)).collect();
+            let uses: Vec<_> = uploads
+                .iter()
+                .map(|(_, i, _)| (*i, Use::TransferDst))
+                .collect();
             graph.pass("gui uploads", &uses, &[], |cmd| unsafe {
                 // SAFETY: copies into images in TRANSFER_DST, each staging
                 // buffer sized for its image.
@@ -1362,14 +1546,18 @@ impl GuiPass {
                 }
             });
             // Kept until the pass goes: a handful of one-off uploads.
-            self.spent.extend(uploads.into_iter().map(|(staging, ..)| staging));
+            self.spent
+                .extend(uploads.into_iter().map(|(staging, ..)| staging));
         }
 
         // This frame's vertices and indices, into the slot's buffers.
-        let (vbytes, ibytes): (&[u8], &[u8]) = (bytemuck::cast_slice(&frame.vertices), bytemuck::cast_slice(&frame.indices));
-        let fits = self.buffers[slot]
-            .as_ref()
-            .is_some_and(|((v, _), i)| v.size >= vbytes.len() as u64 && i.size >= ibytes.len() as u64);
+        let (vbytes, ibytes): (&[u8], &[u8]) = (
+            bytemuck::cast_slice(&frame.vertices),
+            bytemuck::cast_slice(&frame.indices),
+        );
+        let fits = self.buffers[slot].as_ref().is_some_and(|((v, _), i)| {
+            v.size >= vbytes.len() as u64 && i.size >= ibytes.len() as u64
+        });
         if !fits {
             if let Some(((v, vi), i)) = self.buffers[slot].take() {
                 // Frames in flight are done with this slot (its fence).
@@ -1378,11 +1566,23 @@ impl GuiPass {
                 memory.free_buffer(ctx, i);
             }
             let size = |n: usize| (n.max(1) as u64).next_power_of_two().max(1 << 16);
-            let v = memory.buffer(ctx, "gui vertices", size(vbytes.len()), vk::BufferUsageFlags::STORAGE_BUFFER, MemoryLocation::CpuToGpu)?;
+            let v = memory.buffer(
+                ctx,
+                "gui vertices",
+                size(vbytes.len()),
+                vk::BufferUsageFlags::STORAGE_BUFFER,
+                MemoryLocation::CpuToGpu,
+            )?;
             let vi = bindless
                 .add_buffer(ctx, v.raw)
                 .ok_or_else(|| SetupError("the bindless set is full".into()))?;
-            let i = memory.buffer(ctx, "gui indices", size(ibytes.len()), vk::BufferUsageFlags::INDEX_BUFFER, MemoryLocation::CpuToGpu)?;
+            let i = memory.buffer(
+                ctx,
+                "gui indices",
+                size(ibytes.len()),
+                vk::BufferUsageFlags::INDEX_BUFFER,
+                MemoryLocation::CpuToGpu,
+            )?;
             self.buffers[slot] = Some(((v, vi), i));
         }
         let Some(((v, vi), i)) = &mut self.buffers[slot] else {
@@ -1418,13 +1618,22 @@ impl GuiPass {
             let color = [vk::RenderingAttachmentInfo::default()
                 .image_view(view)
                 .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                .load_op(if clear { vk::AttachmentLoadOp::CLEAR } else { vk::AttachmentLoadOp::LOAD })
+                .load_op(if clear {
+                    vk::AttachmentLoadOp::CLEAR
+                } else {
+                    vk::AttachmentLoadOp::LOAD
+                })
                 .clear_value(vk::ClearValue {
-                    color: vk::ClearColorValue { float32: [0.0, 0.0, 0.0, 1.0] },
+                    color: vk::ClearColorValue {
+                        float32: [0.0, 0.0, 0.0, 1.0],
+                    },
                 })
                 .store_op(vk::AttachmentStoreOp::STORE)];
             let info = vk::RenderingInfo::default()
-                .render_area(vk::Rect2D { offset: vk::Offset2D::default(), extent })
+                .render_area(vk::Rect2D {
+                    offset: vk::Offset2D::default(),
+                    extent,
+                })
                 .layer_count(1)
                 .color_attachments(&color);
             device.cmd_begin_rendering(cmd, &info);
@@ -1443,9 +1652,23 @@ impl GuiPass {
                         max_depth: 1.0,
                     }],
                 );
-                device.cmd_set_scissor(cmd, 0, &[vk::Rect2D { offset: vk::Offset2D::default(), extent }]);
+                device.cmd_set_scissor(
+                    cmd,
+                    0,
+                    &[vk::Rect2D {
+                        offset: vk::Offset2D::default(),
+                        extent,
+                    }],
+                );
                 device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
-                device.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::GRAPHICS, pipelines.layout, 0, &[bindless.set], &[]);
+                device.cmd_bind_descriptor_sets(
+                    cmd,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    pipelines.layout,
+                    0,
+                    &[bindless.set],
+                    &[],
+                );
                 device.cmd_bind_index_buffer(cmd, index_buffer, 0, vk::IndexType::UINT32);
                 push(
                     ctx,
@@ -1550,8 +1773,9 @@ impl Figure {
         slot: usize,
     ) -> Result<Option<(vk::Image, u32)>, SetupError> {
         // Old targets once no frame in flight reads them.
-        let (done, keep): (Vec<_>, Vec<_>) =
-            std::mem::take(&mut self.spent).into_iter().partition(|(_, at)| frame >= at + FRAMES_IN_FLIGHT as u64);
+        let (done, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut self.spent)
+            .into_iter()
+            .partition(|(_, at)| frame >= at + FRAMES_IN_FLIGHT as u64);
         self.spent = keep;
         for (image, _) in done {
             memory.free_image(ctx, image);
@@ -1561,8 +1785,15 @@ impl Figure {
         };
         // Smoothed: drawn at twice the size; the GUI's linear sample
         // averages it down (at 1x the same sample is a plain copy).
-        let scale = if SMOOTH_FIGURE.load(std::sync::atomic::Ordering::Relaxed) { 2 } else { 1 };
-        let extent = vk::Extent2D { width: extent.width * scale, height: extent.height * scale };
+        let scale = if SMOOTH_FIGURE.load(std::sync::atomic::Ordering::Relaxed) {
+            2
+        } else {
+            1
+        };
+        let extent = vk::Extent2D {
+            width: extent.width * scale,
+            height: extent.height * scale,
+        };
         let full = || SetupError("the bindless set is full".into());
         if self.views.is_empty() {
             for _ in 0..FRAMES_IN_FLIGHT {
@@ -1577,7 +1808,11 @@ impl Figure {
                 self.views.push((buffer, index));
             }
         }
-        if self.target.as_ref().is_none_or(|((c, _), _)| c.extent != extent) {
+        if self
+            .target
+            .as_ref()
+            .is_none_or(|((c, _), _)| c.extent != extent)
+        {
             if let Some(((color, index), depth)) = self.target.take() {
                 bindless.remove_texture(index, frame);
                 self.spent.push((color, frame));
@@ -1607,15 +1842,28 @@ impl Figure {
         let Some(((color, index), depth)) = &self.target else {
             return Ok(None);
         };
-        graph.image(color.raw, vk::ImageAspectFlags::COLOR, vk::ImageLayout::UNDEFINED);
-        graph.image(depth.raw, vk::ImageAspectFlags::DEPTH, vk::ImageLayout::UNDEFINED);
+        graph.image(
+            color.raw,
+            vk::ImageAspectFlags::COLOR,
+            vk::ImageLayout::UNDEFINED,
+        );
+        graph.image(
+            depth.raw,
+            vk::ImageAspectFlags::DEPTH,
+            vk::ImageLayout::UNDEFINED,
+        );
         let (view_buffer, view_index) = &mut self.views[slot];
         view_buffer.write(0, &super::terrain::plain_view(view_proj, eye));
         let view_index = *view_index;
 
         scene.prepare(ctx, memory, bindless, graph, frame, slot);
-        scene.record_cull(ctx, bindless, pipelines, uploads, graph, view_index, None, eye, slot)?;
-        let mut images = vec![(color.raw, Use::ColorAttachment), (depth.raw, Use::DepthAttachment)];
+        scene.record_cull(
+            ctx, bindless, pipelines, uploads, graph, view_index, None, eye, slot,
+        )?;
+        let mut images = vec![
+            (color.raw, Use::ColorAttachment),
+            (depth.raw, Use::DepthAttachment),
+        ];
         let mut buffers = vec![(view_buffer.raw, Use::SampledFragment)];
         scene.uses(&mut images, &mut buffers);
         let device = &ctx.device;
@@ -1630,26 +1878,41 @@ impl Figure {
                 .image_view(color_view)
                 .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
                 .load_op(vk::AttachmentLoadOp::CLEAR)
-                .clear_value(vk::ClearValue { color: vk::ClearColorValue { float32: [0.0; 4] } })
+                .clear_value(vk::ClearValue {
+                    color: vk::ClearColorValue { float32: [0.0; 4] },
+                })
                 .store_op(vk::AttachmentStoreOp::STORE)];
             let depth_attachment = vk::RenderingAttachmentInfo::default()
                 .image_view(depth_view)
                 .image_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
                 .load_op(vk::AttachmentLoadOp::CLEAR)
                 .clear_value(vk::ClearValue {
-                    depth_stencil: vk::ClearDepthStencilValue { depth: 0.0, stencil: 0 },
+                    depth_stencil: vk::ClearDepthStencilValue {
+                        depth: 0.0,
+                        stencil: 0,
+                    },
                 })
                 .store_op(vk::AttachmentStoreOp::DONT_CARE);
             device.cmd_begin_rendering(
                 cmd,
                 &vk::RenderingInfo::default()
-                    .render_area(vk::Rect2D { offset: vk::Offset2D::default(), extent })
+                    .render_area(vk::Rect2D {
+                        offset: vk::Offset2D::default(),
+                        extent,
+                    })
                     .layer_count(1)
                     .color_attachments(&colors)
                     .depth_attachment(&depth_attachment),
             );
             super::depth_view::set_viewport(ctx, cmd, extent);
-            device.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::GRAPHICS, pipelines.layout, 0, &[bindless.set], &[]);
+            device.cmd_bind_descriptor_sets(
+                cmd,
+                vk::PipelineBindPoint::GRAPHICS,
+                pipelines.layout,
+                0,
+                &[bindless.set],
+                &[],
+            );
             let mode = super::test_scene::View::Shaded.mode();
             scene.draw_solid(ctx, cmd, pipelines, cols, mode, seconds, view_index);
             scene.draw_blend(ctx, cmd, pipelines, cols, mode, seconds, view_index);

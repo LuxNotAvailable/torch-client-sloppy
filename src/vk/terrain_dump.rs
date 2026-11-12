@@ -47,7 +47,9 @@ static LIVE_ATLAS: Mutex<Option<(u32, u32, Vec<u8>)>> = Mutex::new(None);
 
 /// Records the game stored or dropped since the last call.
 pub fn take_live() -> Vec<Record> {
-    LIVE.lock().map(|mut l| std::mem::take(&mut *l)).unwrap_or_default()
+    LIVE.lock()
+        .map(|mut l| std::mem::take(&mut *l))
+        .unwrap_or_default()
 }
 
 /// The block atlas, once the game has made it.
@@ -145,7 +147,12 @@ fn record(origin: [i32; 3], layer: u8, vis: u64, mesh: &MeshBuf) {
     let pack: &[u8] = bytemuck::cast_slice(&mesh.pack);
     #[cfg(not(feature = "shader_support"))]
     let pack: &[u8] = &[];
-    for n in [mesh.verts.len(), mesh.idx.len(), mesh.cutout_idx.len(), pack.len() / 16] {
+    for n in [
+        mesh.verts.len(),
+        mesh.idx.len(),
+        mesh.cutout_idx.len(),
+        pack.len() / 16,
+    ] {
         write(&(n as u32).to_le_bytes());
     }
     write(bytemuck::cast_slice::<PackedVertex, u8>(&mesh.verts));

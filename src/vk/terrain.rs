@@ -601,7 +601,8 @@ impl TerrainScene {
         };
         // A dump's other snapshots, when it has them.
         let read = |name: &str| -> Result<Vec<u8>, ()> {
-            dir.ok_or(()).and_then(|d| std::fs::read(d.join(name)).map_err(|_| ()))
+            dir.ok_or(())
+                .and_then(|d| std::fs::read(d.join(name)).map_err(|_| ()))
         };
         let atlas_size = atlas.dimensions();
 
@@ -959,7 +960,15 @@ impl TerrainScene {
         snapshot: super::entity_dump::Snapshot,
     ) -> Result<Option<super::entities::EntityScene>, SetupError> {
         let mut old = self.entities.take();
-        match super::entities::EntityScene::new(ctx, memory, bindless, pipelines, color_format, snapshot, old.as_mut()) {
+        match super::entities::EntityScene::new(
+            ctx,
+            memory,
+            bindless,
+            pipelines,
+            color_format,
+            snapshot,
+            old.as_mut(),
+        ) {
             Ok(scene) => {
                 self.entities = Some(scene);
                 Ok(old)
@@ -1011,9 +1020,18 @@ impl TerrainScene {
         frame: super::entity_dump::LiveParticles,
     ) -> Result<(), SetupError> {
         if self.particles.is_none() {
-            let empty = super::entity_dump::ParticleSnapshot { textures: Vec::new(), sprites: Vec::new() };
+            let empty = super::entity_dump::ParticleSnapshot {
+                textures: Vec::new(),
+                sprites: Vec::new(),
+            };
             self.particles = Some(super::particles::ParticleScene::new(
-                ctx, memory, bindless, pipelines, color_format, empty, None,
+                ctx,
+                memory,
+                bindless,
+                pipelines,
+                color_format,
+                empty,
+                None,
             )?);
         }
         match &mut self.particles {
@@ -1033,7 +1051,15 @@ impl TerrainScene {
         snapshot: super::entity_dump::ParticleSnapshot,
     ) -> Result<Option<super::particles::ParticleScene>, SetupError> {
         let mut old = self.particles.take();
-        match super::particles::ParticleScene::new(ctx, memory, bindless, pipelines, color_format, snapshot, old.as_mut()) {
+        match super::particles::ParticleScene::new(
+            ctx,
+            memory,
+            bindless,
+            pipelines,
+            color_format,
+            snapshot,
+            old.as_mut(),
+        ) {
             Ok(scene) => {
                 self.particles = Some(scene);
                 Ok(old)
@@ -1091,9 +1117,14 @@ impl TerrainScene {
         if !env.has_world_overlays() {
             return;
         }
-        let Some(pipes) = env.pack_overlay_pipes(ctx, pipelines, o.color.2) else { return };
+        let Some(pipes) = env.pack_overlay_pipes(ctx, pipelines, o.color.2) else {
+            return;
+        };
         let env = &*env;
-        let mut images = vec![(o.color.0, Use::ColorAttachment), (o.depth.0, Use::DepthAttachment)];
+        let mut images = vec![
+            (o.color.0, Use::ColorAttachment),
+            (o.depth.0, Use::DepthAttachment),
+        ];
         let mut buffers = Vec::new();
         env.uses(&mut images, &mut buffers);
         let device = &ctx.device;
@@ -1111,7 +1142,10 @@ impl TerrainScene {
                 .load_op(vk::AttachmentLoadOp::LOAD)
                 .store_op(vk::AttachmentStoreOp::STORE);
             let info = vk::RenderingInfo::default()
-                .render_area(vk::Rect2D { offset: vk::Offset2D::default(), extent })
+                .render_area(vk::Rect2D {
+                    offset: vk::Offset2D::default(),
+                    extent,
+                })
                 .layer_count(1)
                 .color_attachments(&colors)
                 .depth_attachment(&depth);
@@ -1128,8 +1162,22 @@ impl TerrainScene {
                     max_depth: 1.0,
                 }],
             );
-            device.cmd_set_scissor(cmd, 0, &[vk::Rect2D { offset: vk::Offset2D::default(), extent }]);
-            device.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::GRAPHICS, pipelines.layout, 0, &[set], &[]);
+            device.cmd_set_scissor(
+                cmd,
+                0,
+                &[vk::Rect2D {
+                    offset: vk::Offset2D::default(),
+                    extent,
+                }],
+            );
+            device.cmd_bind_descriptor_sets(
+                cmd,
+                vk::PipelineBindPoint::GRAPHICS,
+                pipelines.layout,
+                0,
+                &[set],
+                &[],
+            );
             env.draw_pack_overlays(ctx, cmd, pipelines, view_index, view_proj, extent, pipes);
             device.cmd_end_rendering(cmd);
         });
@@ -1270,7 +1318,13 @@ impl TerrainScene {
             | vk::BufferUsageFlags::TRANSFER_DST
             | vk::BufferUsageFlags::INDIRECT_BUFFER;
         if self.shadow.is_none() {
-            let counts = memory.buffer(ctx, "shadow counts", MAX_POOLS as u64 * 2 * 4, storage, MemoryLocation::GpuOnly)?;
+            let counts = memory.buffer(
+                ctx,
+                "shadow counts",
+                MAX_POOLS as u64 * 2 * 4,
+                storage,
+                MemoryLocation::GpuOnly,
+            )?;
             let counts_index = bindless.add_buffer(ctx, counts.raw).ok_or_else(full)?;
             let mut views = Vec::new();
             for _ in 0..FRAMES_IN_FLIGHT {
@@ -1284,7 +1338,8 @@ impl TerrainScene {
                 let index = bindless.add_buffer(ctx, view.raw).ok_or_else(full)?;
                 views.push((view, index));
             }
-            let commands = memory.buffer(ctx, "shadow commands", 16, storage, MemoryLocation::GpuOnly)?;
+            let commands =
+                memory.buffer(ctx, "shadow commands", 16, storage, MemoryLocation::GpuOnly)?;
             let commands_index = bindless.add_buffer(ctx, commands.raw).ok_or_else(full)?;
             self.shadow = Some(ShadowCull {
                 commands,
@@ -1297,7 +1352,13 @@ impl TerrainScene {
         let shadow = self.shadow.as_mut().expect("made above");
         // As big as the camera's commands, which `ensure_commands` sizes.
         if shadow.commands.size < self.commands.size {
-            let buffer = memory.buffer(ctx, "shadow commands", self.commands.size, storage, MemoryLocation::GpuOnly)?;
+            let buffer = memory.buffer(
+                ctx,
+                "shadow commands",
+                self.commands.size,
+                storage,
+                MemoryLocation::GpuOnly,
+            )?;
             let index = bindless.add_buffer(ctx, buffer.raw).ok_or_else(full)?;
             bindless.remove_buffer(shadow.commands_index, frame);
             let old = std::mem::replace(&mut shadow.commands, buffer);
@@ -1315,13 +1376,20 @@ impl TerrainScene {
             fog_ranges: [0.0, f32::MAX, 0.0, f32::MAX],
             env: [u32::MAX, 0, 0, 0],
         };
-        shadow.views[slot].0.write(0, bytemuck::bytes_of(&cull_view));
+        shadow.views[slot]
+            .0
+            .write(0, bytemuck::bytes_of(&cull_view));
         let device = &ctx.device;
         let (counts, commands) = (shadow.counts.raw, shadow.commands.raw);
-        graph.pass("shadow reset counts", &[], &[(counts, Use::TransferDst)], |cmd| unsafe {
-            // SAFETY: a fill of a buffer this pass owns.
-            device.cmd_fill_buffer(cmd, counts, 0, vk::WHOLE_SIZE, 0);
-        });
+        graph.pass(
+            "shadow reset counts",
+            &[],
+            &[(counts, Use::TransferDst)],
+            |cmd| unsafe {
+                // SAFETY: a fill of a buffer this pass owns.
+                device.cmd_fill_buffer(cmd, counts, 0, vk::WHOLE_SIZE, 0);
+            },
+        );
         let buffers = [
             (self.slots.buffer.raw, Use::ComputeRead),
             (self.visible.buffer.raw, Use::ComputeRead),
@@ -1329,8 +1397,18 @@ impl TerrainScene {
             (commands, Use::ComputeWrite),
             (counts, Use::ComputeWrite),
         ];
-        let ids = [self.slots.index, self.visible.index, shadow.commands_index, shadow.counts_index];
-        let more = [self.slot_high, self.list_capacity, shadow.views[slot].1, self.translucent_start];
+        let ids = [
+            self.slots.index,
+            self.visible.index,
+            shadow.commands_index,
+            shadow.counts_index,
+        ];
+        let more = [
+            self.slot_high,
+            self.list_capacity,
+            shadow.views[slot].1,
+            self.translucent_start,
+        ];
         let ranks = self.ranks.index;
         let slot_count = self.slot_high;
         graph.pass("shadow cull", &[], &buffers, |cmd| unsafe {
@@ -2667,8 +2745,19 @@ impl TerrainScene {
                 // The hand camera's projection (`renderer::hand`: 70° fov,
                 // near 0.05, reversed depth as the world's).
                 let hand = rotation.clip
-                    * Mat4::perspective_infinite_reverse_rh(70f32.to_radians(), rotation.aspect, 0.05);
-                env.draw_hand(ctx, cmd, pipelines, view_index, hand.to_cols_array_2d(), extent);
+                    * Mat4::perspective_infinite_reverse_rh(
+                        70f32.to_radians(),
+                        rotation.aspect,
+                        0.05,
+                    );
+                env.draw_hand(
+                    ctx,
+                    cmd,
+                    pipelines,
+                    view_index,
+                    hand.to_cols_array_2d(),
+                    extent,
+                );
             }
             device.cmd_end_rendering(cmd);
             if let Some(pool) = stats_pool {
@@ -3160,11 +3249,21 @@ fn leaf_fade(water_alpha: f32) -> [f32; 4] {
 
 impl TerrainScene {
     /// This slot's animation table, rewritten for this tick.
-    fn write_anim(&mut self, ctx: &Context, memory: &Memory, bindless: &mut Bindless, frame: u64, slot: usize) -> Result<(), SetupError> {
-        let rows = self.atlas.extent.height * crate::renderer::ATLAS_COLS / self.atlas.extent.width.max(1);
+    fn write_anim(
+        &mut self,
+        ctx: &Context,
+        memory: &Memory,
+        bindless: &mut Bindless,
+        frame: u64,
+        slot: usize,
+    ) -> Result<(), SetupError> {
+        let rows =
+            self.atlas.extent.height * crate::renderer::ATLAS_COLS / self.atlas.extent.width.max(1);
         // Nothing animating yet: the header alone (no shift).
-        let table = crate::renderer::block_anim::current()
-            .map_or_else(|| vec![rows, 0], |set| set.table(crate::renderer::block_anim::tick_now(), rows));
+        let table = crate::renderer::block_anim::current().map_or_else(
+            || vec![rows, 0],
+            |set| set.table(crate::renderer::block_anim::tick_now(), rows),
+        );
         let bytes = (table.len() * 4) as u64;
         if self.anim.len() <= slot {
             self.anim.resize_with(slot + 1, || None);
@@ -3182,7 +3281,9 @@ impl TerrainScene {
                 vk::BufferUsageFlags::STORAGE_BUFFER,
                 MemoryLocation::CpuToGpu,
             )?;
-            let index = bindless.add_buffer(ctx, buffer.raw).ok_or_else(|| SetupError("the bindless set is full".into()))?;
+            let index = bindless
+                .add_buffer(ctx, buffer.raw)
+                .ok_or_else(|| SetupError("the bindless set is full".into()))?;
             self.anim[slot] = Some((buffer, index));
         }
         if let Some((buffer, index)) = &mut self.anim[slot] {
@@ -3194,7 +3295,10 @@ impl TerrainScene {
 
     /// The table's bindless index plus one (0: none, unanimated).
     fn anim_index(&self, slot: usize) -> u32 {
-        self.anim.get(slot).and_then(Option::as_ref).map_or(0, |(_, i)| i + 1)
+        self.anim
+            .get(slot)
+            .and_then(Option::as_ref)
+            .map_or(0, |(_, i)| i + 1)
     }
 }
 
@@ -3219,7 +3323,9 @@ impl TerrainScene {
         if tick == self.anim_tick {
             return Ok(());
         }
-        let Some(set) = crate::renderer::block_anim::current() else { return Ok(()) };
+        let Some(set) = crate::renderer::block_anim::current() else {
+            return Ok(());
+        };
         let list_at = 2 + set.tile_count() * 2;
         // The same list `write_anim` wrote this frame.
         let words = set.table(tick, 0);
@@ -3230,7 +3336,11 @@ impl TerrainScene {
         self.anim_tick = tick;
         let px = self.atlas.extent.width / crate::renderer::ATLAS_COLS;
         let bytes = u64::from(count * px * px * 4);
-        if self.anim_blends.as_ref().is_none_or(|(b, _)| b.size < bytes) {
+        if self
+            .anim_blends
+            .as_ref()
+            .is_none_or(|(b, _)| b.size < bytes)
+        {
             if let Some((old, index)) = self.anim_blends.take() {
                 bindless.remove_buffer(index, frame);
                 memory.free_buffer(ctx, old);
@@ -3242,12 +3352,19 @@ impl TerrainScene {
                 vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_SRC,
                 MemoryLocation::GpuOnly,
             )?;
-            let index = bindless.add_buffer(ctx, buffer.raw).ok_or_else(|| SetupError("the bindless set is full".into()))?;
+            let index = bindless
+                .add_buffer(ctx, buffer.raw)
+                .ok_or_else(|| SetupError("the bindless set is full".into()))?;
             self.anim_blends = Some((buffer, index));
         }
-        let Some((blends, blends_index)) = &self.anim_blends else { return Ok(()) };
-        let spares: Vec<u32> = (0..count as usize).map(|k| words[list_at as usize + 1 + k * 4 + 3]).collect();
-        let (out, out_index, table_index, atlas) = (blends.raw, *blends_index, *table_index, self.atlas.raw);
+        let Some((blends, blends_index)) = &self.anim_blends else {
+            return Ok(());
+        };
+        let spares: Vec<u32> = (0..count as usize)
+            .map(|k| words[list_at as usize + 1 + k * 4 + 3])
+            .collect();
+        let (out, out_index, table_index, atlas) =
+            (blends.raw, *blends_index, *table_index, self.atlas.raw);
         let raw_index = self.atlas_raw_index;
         let device = &ctx.device;
         graph.pass(
@@ -3257,7 +3374,14 @@ impl TerrainScene {
             |cmd| unsafe {
                 // SAFETY: the shared layout and set; the atlas read-only.
                 device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipes.anim_blend);
-                device.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::COMPUTE, pipelines.layout, 0, &[bindless.set], &[]);
+                device.cmd_bind_descriptor_sets(
+                    cmd,
+                    vk::PipelineBindPoint::COMPUTE,
+                    pipelines.layout,
+                    0,
+                    &[bindless.set],
+                    &[],
+                );
                 push(
                     ctx,
                     cmd,
@@ -3295,11 +3419,21 @@ impl TerrainScene {
                             y: ((spare / crate::renderer::ATLAS_COLS) * px) as i32,
                             z: 0,
                         },
-                        image_extent: vk::Extent3D { width: px, height: px, depth: 1 },
+                        image_extent: vk::Extent3D {
+                            width: px,
+                            height: px,
+                            depth: 1,
+                        },
                         ..Default::default()
                     })
                     .collect();
-                device.cmd_copy_buffer_to_image(cmd, out, atlas, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &regions);
+                device.cmd_copy_buffer_to_image(
+                    cmd,
+                    out,
+                    atlas,
+                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    &regions,
+                );
             },
         );
         Ok(())

@@ -808,7 +808,10 @@ pub(super) fn toggle_freecam(
         state.options.lighting_enabled = !state.options.lighting_enabled;
         crate::gui::save_options(&state.options);
     }
-    if state.keybinds.just(Action::ToggleShaderPack, &keys, &buttons) {
+    if state
+        .keybinds
+        .just(Action::ToggleShaderPack, &keys, &buttons)
+    {
         state.shaderpacks.toggle();
     }
     let want = crate::modules::freecam::active();

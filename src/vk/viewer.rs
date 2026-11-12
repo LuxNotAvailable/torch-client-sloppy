@@ -415,7 +415,13 @@ impl Renderer {
                             Some([l.first()?.as_f64()? as f32, l.get(1)?.as_f64()? as f32])
                         })
                         .unwrap_or([0.0, 15.0]);
-                    terrain.pack_sky(&ctx, &memory, &mut bindless, installed.constants.sun_path_rotation, eye_light)?;
+                    terrain.pack_sky(
+                        &ctx,
+                        &memory,
+                        &mut bindless,
+                        installed.constants.sun_path_rotation,
+                        eye_light,
+                    )?;
                 }
                 let screen = crate::vk::pack::screen::PackScreen::new(
                     &ctx,
@@ -656,7 +662,10 @@ impl Renderer {
                 let camera = camera
                     .or_else(|| self.game_camera.then(|| scene.game_camera()).flatten())
                     .unwrap_or_else(|| scene.default_camera(seconds));
-                let camera = crate::vk::terrain::Camera { yaw: camera.yaw + self.turn * seconds, ..camera };
+                let camera = crate::vk::terrain::Camera {
+                    yaw: camera.yaw + self.turn * seconds,
+                    ..camera
+                };
                 scene.record(
                     &self.ctx,
                     memory,
@@ -684,9 +693,13 @@ impl Renderer {
                     let c = camera
                         .or_else(|| self.game_camera.then(|| terrain.game_camera()).flatten())
                         .unwrap_or_else(|| terrain.default_camera(seconds));
-                    let c = crate::vk::terrain::Camera { yaw: c.yaw + self.turn * seconds, ..c };
+                    let c = crate::vk::terrain::Camera {
+                        yaw: c.yaw + self.turn * seconds,
+                        ..c
+                    };
                     (
-                        bevy::math::Mat4::look_to_rh(c.eye, c.forward(), bevy::math::Vec3::Y).inverse(),
+                        bevy::math::Mat4::look_to_rh(c.eye, c.forward(), bevy::math::Vec3::Y)
+                            .inverse(),
                         c.fov.to_radians(),
                     )
                 }
@@ -695,15 +708,8 @@ impl Renderer {
             let light = pack.begin_frame(pack_camera, extent, seconds);
             if let (Some((view_proj, eye)), Scene::Terrain(terrain, _)) = (light, &mut *scene)
                 && let Err(e) = terrain.record_shadow_cull(
-                    &self.ctx,
-                    memory,
-                    bindless,
-                    pipelines,
-                    &mut graph,
-                    slot,
-                    self.frame,
-                    view_proj,
-                    eye,
+                    &self.ctx, memory, bindless, pipelines, &mut graph, slot, self.frame,
+                    view_proj, eye,
                 )
             {
                 eprintln!("vkview: shadow cull failed: {e}");
@@ -718,7 +724,8 @@ impl Renderer {
                         .or_else(|| self.game_camera.then(|| scene.game_camera()).flatten())
                         .unwrap_or_else(|| scene.default_camera(seconds));
                     (
-                        bevy::math::Mat4::look_to_rh(c.eye, c.forward(), bevy::math::Vec3::Y).inverse(),
+                        bevy::math::Mat4::look_to_rh(c.eye, c.forward(), bevy::math::Vec3::Y)
+                            .inverse(),
                         c.fov.to_radians(),
                     )
                 }

@@ -108,7 +108,12 @@ impl AnimationSet {
             if let Some(spare) = animation.spare {
                 out[at] = u32::from(spare) | (u32::from(spare) << 16);
                 out[at + 1] = 0;
-                blends.extend([u32::from(a), u32::from(b), u32::from(blend), u32::from(spare)]);
+                blends.extend([
+                    u32::from(a),
+                    u32::from(b),
+                    u32::from(blend),
+                    u32::from(spare),
+                ]);
             } else {
                 out[at] = u32::from(a) | (u32::from(b) << 16);
                 out[at + 1] = u32::from(blend);

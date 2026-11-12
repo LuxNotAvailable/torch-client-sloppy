@@ -33,7 +33,8 @@ pub(crate) const OUTLINE_COLORS: [(&str, [f32; 3]); 8] = [
 ];
 
 /// Block outline width, times vanilla's (native renderer).
-pub(crate) static OUTLINE_WIDTH: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+pub(crate) static OUTLINE_WIDTH: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(1);
 
 /// Applies the outline width and colour options.
 pub(super) fn update_outline_style(

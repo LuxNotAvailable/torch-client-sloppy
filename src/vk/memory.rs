@@ -104,7 +104,16 @@ impl Memory {
         usage: vk::ImageUsageFlags,
     ) -> Result<Image, SetupError> {
         let levels = 32 - extent.width.max(extent.height).max(1).leading_zeros();
-        self.image_inner(ctx, name, extent, format, usage, vk::ImageAspectFlags::COLOR, None, levels)
+        self.image_inner(
+            ctx,
+            name,
+            extent,
+            format,
+            usage,
+            vk::ImageAspectFlags::COLOR,
+            None,
+            levels,
+        )
     }
 
     /// An `R8G8B8A8_SRGB` image that also has a UNORM view (`raw_view`).
@@ -175,28 +184,32 @@ impl Memory {
                 None,
             )?;
             let raw_view = match raw_format {
-                Some(f) => Some(ctx.device.create_image_view(
-                    &vk::ImageViewCreateInfo::default()
-                        .image(raw)
-                        .view_type(vk::ImageViewType::TYPE_2D)
-                        .format(f)
-                        .subresource_range(range(aspect)),
-                    None,
-                )?),
+                Some(f) => Some(
+                    ctx.device.create_image_view(
+                        &vk::ImageViewCreateInfo::default()
+                            .image(raw)
+                            .view_type(vk::ImageViewType::TYPE_2D)
+                            .format(f)
+                            .subresource_range(range(aspect)),
+                        None,
+                    )?,
+                ),
                 None => None,
             };
             let mip_view = if levels > 1 {
-                Some(ctx.device.create_image_view(
-                    &vk::ImageViewCreateInfo::default()
-                        .image(raw)
-                        .view_type(vk::ImageViewType::TYPE_2D)
-                        .format(format)
-                        .subresource_range(vk::ImageSubresourceRange {
-                            level_count: levels,
-                            ..range(aspect)
-                        }),
-                    None,
-                )?)
+                Some(
+                    ctx.device.create_image_view(
+                        &vk::ImageViewCreateInfo::default()
+                            .image(raw)
+                            .view_type(vk::ImageViewType::TYPE_2D)
+                            .format(format)
+                            .subresource_range(vk::ImageSubresourceRange {
+                                level_count: levels,
+                                ..range(aspect)
+                            }),
+                        None,
+                    )?,
+                )
             } else {
                 None
             };

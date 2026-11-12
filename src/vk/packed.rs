@@ -221,7 +221,12 @@ pub fn unpack(record: &Record, corner: u32) -> PackedVertex {
     PackedVertex {
         pos: [pos[0], pos[1], pos[2], 0],
         uv: [u as u16, v as u16],
-        light: [light as u8, (light >> 8) as u8, ((w0 >> 25) & 1) as u8 * crate::renderer::mesh::MATERIAL_LEAF, 0],
+        light: [
+            light as u8,
+            (light >> 8) as u8,
+            ((w0 >> 25) & 1) as u8 * crate::renderer::mesh::MATERIAL_LEAF,
+            0,
+        ],
         color: [
             tinted(tint[0], grey) as u8,
             tinted(tint[1], grey) as u8,

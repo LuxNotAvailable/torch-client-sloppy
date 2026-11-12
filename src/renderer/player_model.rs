@@ -2133,8 +2133,7 @@ fn apply_rig(
             &rig.wings.material,
             &rig.stuck_materials[0],
             &rig.stuck_materials[1],
-        ]
-        {
+        ] {
             refresh_params(&mut *items.entity_materials, handle, lit);
         }
         // Held items glint as their own stacks do (vanilla's item layer).

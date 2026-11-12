@@ -35,7 +35,10 @@ pub(crate) fn to_wgsl(
 /// naga, or a native WGSL pack's own), to SPIR-V for the native renderer
 /// (VULKAN_REWRITE_CHECKLIST.md 6.1). Every pack program passes through
 /// WGSL already, so this one step covers both kinds of pack.
-#[allow(dead_code, reason = "used by the native renderer's pack path as it lands")]
+#[allow(
+    dead_code,
+    reason = "used by the native renderer's pack path as it lands"
+)]
 pub(crate) fn wgsl_to_spirv(source: &str) -> Result<Vec<u32>, String> {
     spirv_with(source, ValidationFlags::all())
 }
@@ -43,7 +46,10 @@ pub(crate) fn wgsl_to_spirv(source: &str) -> Result<Vec<u32>, String> {
 /// As `wgsl_to_spirv`, for a stage whose resources sit on the bindless set
 /// (`vk::pack::bindless`): several typed arrays alias each binding, which
 /// Vulkan allows and naga's binding check refuses, so that check is off.
-#[allow(dead_code, reason = "used by the native renderer's pack path as it lands")]
+#[allow(
+    dead_code,
+    reason = "used by the native renderer's pack path as it lands"
+)]
 pub(crate) fn wgsl_to_spirv_aliased(source: &str) -> Result<Vec<u32>, String> {
     spirv_with(source, ValidationFlags::all() - ValidationFlags::BINDINGS)
 }

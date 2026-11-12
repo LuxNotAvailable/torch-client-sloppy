@@ -459,7 +459,11 @@ mod tests {
             (terrain_prelude(false), true, slots.as_str()),
             (terrain_prelude(true), true, slots.as_str()),
             // The native renderer's slots buffer instead.
-            (with_vulkan_terrain(|| terrain_prelude(false)), true, "@group(2) @binding(7)"),
+            (
+                with_vulkan_terrain(|| terrain_prelude(false)),
+                true,
+                "@group(2) @binding(7)",
+            ),
             (SCREEN_PRELUDE.to_owned(), false, ""),
         ] {
             let target = transform::Target {

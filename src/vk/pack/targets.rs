@@ -190,17 +190,34 @@ impl PackTargets {
                 if mipmapped & (1 << index) != 0 {
                     memory.image_mipmapped(ctx, &name, extent, format, color_usage)
                 } else {
-                    memory.image(ctx, &name, extent, format, color_usage, vk::ImageAspectFlags::COLOR)
+                    memory.image(
+                        ctx,
+                        &name,
+                        extent,
+                        format,
+                        color_usage,
+                        vk::ImageAspectFlags::COLOR,
+                    )
                 }
             };
             *slot = Some(([half(0)?, half(1)?], format));
         }
         let depth = |name: &str, extent: vk::Extent2D| {
-            memory.image(ctx, name, extent, DEPTH_FORMAT, depth_usage, vk::ImageAspectFlags::DEPTH)
+            memory.image(
+                ctx,
+                name,
+                extent,
+                DEPTH_FORMAT,
+                depth_usage,
+                vk::ImageAspectFlags::DEPTH,
+            )
         };
         let shadow = match installed.shadow {
             Some(_) => {
-                let side = installed.constants.shadow_map_resolution.clamp(1, MAX_SHADOW_MAP);
+                let side = installed
+                    .constants
+                    .shadow_map_resolution
+                    .clamp(1, MAX_SHADOW_MAP);
                 let square = vk::Extent2D {
                     width: side,
                     height: side,

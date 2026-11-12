@@ -1,7 +1,8 @@
 use super::super::sources::TextureSource;
 use super::pack::Pack;
 use super::preludes::{
-    ENTITY_UNIFORMS, TERRAIN_BEGIN, VK_ENTITY_BEGIN, entity_prelude, entity_varyings, vulkan_terrain,
+    ENTITY_UNIFORMS, TERRAIN_BEGIN, VK_ENTITY_BEGIN, entity_prelude, entity_varyings,
+    vulkan_terrain,
 };
 use super::{AlphaTest, Dispatch, PACK_SET, Program, ProgramKind, SCREEN_PRELUDE, terrain_prelude};
 use crate::shaderpack::pipeline::{Binding, Layout};

@@ -789,7 +789,9 @@ pub(crate) fn apply_inv_actions(bot: &Client, actions: Vec<InvAction>, horse: Op
                     .component::<azalea::entity::PlayerAbilities>()
                     .map(|a| a.clone())
                     .unwrap_or_default();
-                let ops = crate::play::inventory_sort::fill_recipe(&inventory, &abilities, &clear, &targets, sets);
+                let ops = crate::play::inventory_sort::fill_recipe(
+                    &inventory, &abilities, &clear, &targets, sets,
+                );
                 let window_id = inventory.id;
                 drop(inventory);
                 for operation in ops {

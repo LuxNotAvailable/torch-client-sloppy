@@ -148,7 +148,10 @@ impl State {
             self.toggled_off = Some(loaded.name);
             return;
         }
-        let name = self.toggled_off.take().unwrap_or_else(|| crate::shaderpack::builtin::NAME.to_owned());
+        let name = self
+            .toggled_off
+            .take()
+            .unwrap_or_else(|| crate::shaderpack::builtin::NAME.to_owned());
         storage::SHADER_PACK.store(&name);
         #[cfg(feature = "vulkan")]
         crate::vk::live::pack_changed();

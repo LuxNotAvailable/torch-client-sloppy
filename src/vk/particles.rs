@@ -118,13 +118,23 @@ impl ParticleScene {
         let pending = match reused {
             Some(_) => None,
             None => Some(pipelines.build_on_worker(
-            ctx,
-            vec![
-                stream(c"particle_cutout", true, vk::CompareOp::GREATER_OR_EQUAL, false),
-                // Vanilla's translucent particles test depth and leave it.
-                stream(c"particle_blend", false, vk::CompareOp::GREATER_OR_EQUAL, true),
-            ],
-        )),
+                ctx,
+                vec![
+                    stream(
+                        c"particle_cutout",
+                        true,
+                        vk::CompareOp::GREATER_OR_EQUAL,
+                        false,
+                    ),
+                    // Vanilla's translucent particles test depth and leave it.
+                    stream(
+                        c"particle_blend",
+                        false,
+                        vk::CompareOp::GREATER_OR_EQUAL,
+                        true,
+                    ),
+                ],
+            )),
         };
 
         // Opaque sprites first, then translucent, each in the snapshot's
@@ -440,7 +450,12 @@ impl ParticleScene {
             pipelines.extend(built);
         }
         if let Some(live) = self.live.take() {
-            for b in live.staging.into_iter().flatten().chain(live.retired.into_iter().map(|(b, _)| b)) {
+            for b in live
+                .staging
+                .into_iter()
+                .flatten()
+                .chain(live.retired.into_iter().map(|(b, _)| b))
+            {
                 memory.free_buffer(ctx, b);
             }
         }
@@ -477,7 +492,10 @@ impl ParticleScene {
             let image = memory.image(
                 ctx,
                 "particle texture",
-                vk::Extent2D { width: w, height: h },
+                vk::Extent2D {
+                    width: w,
+                    height: h,
+                },
                 vk::Format::R8G8B8A8_SRGB,
                 vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
                 vk::ImageAspectFlags::COLOR,
@@ -504,7 +522,12 @@ impl ParticleScene {
         sprites.extend(translucent);
         for sprite in &mut sprites {
             if sprite.texture != super::entity_dump::TEXTURE_ATLAS {
-                sprite.texture = live.textures.get(sprite.texture as usize).copied().flatten().unwrap_or(0);
+                sprite.texture = live
+                    .textures
+                    .get(sprite.texture as usize)
+                    .copied()
+                    .flatten()
+                    .unwrap_or(0);
             }
         }
         self.stats.sprites = sprites.len();
@@ -523,7 +546,9 @@ impl ParticleScene {
         frame: u64,
         slot: usize,
     ) -> Result<(), SetupError> {
-        let Some(live) = self.live.as_mut() else { return Ok(()) };
+        let Some(live) = self.live.as_mut() else {
+            return Ok(());
+        };
         let (done, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut live.retired)
             .into_iter()
             .partition(|(_, at)| frame >= at + FRAMES_IN_FLIGHT as u64);
@@ -581,7 +606,9 @@ impl ParticleScene {
                 MemoryLocation::CpuToGpu,
             )?);
         }
-        let Some(staging) = staging.as_mut() else { return Ok(()) };
+        let Some(staging) = staging.as_mut() else {
+            return Ok(());
+        };
         staging.write(0, &sprites);
         for ((.., rgba), at) in images.iter().zip(&texture_at) {
             staging.write(*at as usize, rgba);
@@ -594,34 +621,55 @@ impl ParticleScene {
             .zip(&texture_at)
             .filter_map(|((k, w, h, _), at)| Some((self.textures.get(*k)?.0.raw, *w, *h, *at)))
             .collect();
-        let image_uses: Vec<(vk::Image, Use)> = copies.iter().map(|(i, ..)| (*i, Use::TransferDst)).collect();
+        let image_uses: Vec<(vk::Image, Use)> = copies
+            .iter()
+            .map(|(i, ..)| (*i, Use::TransferDst))
+            .collect();
         let sprite_bytes = sprites.len() as u64;
-        graph.pass("particle upload", &image_uses, &[(target, Use::TransferDst)], |cmd| unsafe {
-            // SAFETY: copies from this slot's staging, in the transfer
-            // states the graph set.
-            if sprite_bytes > 0 {
-                device.cmd_copy_buffer(cmd, source, target, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: sprite_bytes }]);
-            }
-            for (image, w, h, at) in &copies {
-                device.cmd_copy_buffer_to_image(
-                    cmd,
-                    source,
-                    *image,
-                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                    &[vk::BufferImageCopy {
-                        buffer_offset: *at,
-                        image_subresource: vk::ImageSubresourceLayers {
-                            aspect_mask: vk::ImageAspectFlags::COLOR,
-                            mip_level: 0,
-                            base_array_layer: 0,
-                            layer_count: 1,
-                        },
-                        image_extent: vk::Extent3D { width: *w, height: *h, depth: 1 },
-                        ..Default::default()
-                    }],
-                );
-            }
-        });
+        graph.pass(
+            "particle upload",
+            &image_uses,
+            &[(target, Use::TransferDst)],
+            |cmd| unsafe {
+                // SAFETY: copies from this slot's staging, in the transfer
+                // states the graph set.
+                if sprite_bytes > 0 {
+                    device.cmd_copy_buffer(
+                        cmd,
+                        source,
+                        target,
+                        &[vk::BufferCopy {
+                            src_offset: 0,
+                            dst_offset: 0,
+                            size: sprite_bytes,
+                        }],
+                    );
+                }
+                for (image, w, h, at) in &copies {
+                    device.cmd_copy_buffer_to_image(
+                        cmd,
+                        source,
+                        *image,
+                        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                        &[vk::BufferImageCopy {
+                            buffer_offset: *at,
+                            image_subresource: vk::ImageSubresourceLayers {
+                                aspect_mask: vk::ImageAspectFlags::COLOR,
+                                mip_level: 0,
+                                base_array_layer: 0,
+                                layer_count: 1,
+                            },
+                            image_extent: vk::Extent3D {
+                                width: *w,
+                                height: *h,
+                                depth: 1,
+                            },
+                            ..Default::default()
+                        }],
+                    );
+                }
+            },
+        );
         Ok(())
     }
 }

@@ -206,7 +206,11 @@ impl PanoramaScene {
         }
 
         let mut images = vec![(color.0, Use::ColorAttachment)];
-        images.extend(self.faces.iter().map(|(i, _)| (i.raw, Use::SampledFragment)));
+        images.extend(
+            self.faces
+                .iter()
+                .map(|(i, _)| (i.raw, Use::SampledFragment)),
+        );
         let index = |k: usize| self.faces[k].1;
         let ids = [index(0), index(1), index(2), index(3)];
         let more = [index(4), index(5), 0, 0];

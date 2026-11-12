@@ -17,7 +17,6 @@ pub mod command_history;
 pub mod confirmlink;
 pub mod container;
 pub mod creative;
-pub mod recipe_viewer;
 pub mod credits;
 pub mod death;
 pub mod dialog;
@@ -49,6 +48,7 @@ pub mod pool;
 #[cfg(test)]
 pub mod preview;
 pub mod profile;
+pub mod recipe_viewer;
 pub mod render;
 #[cfg(resource_packs)]
 pub mod resourcepacks;

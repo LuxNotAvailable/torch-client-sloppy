@@ -200,32 +200,32 @@ impl EntityScene {
         let pending = match reused {
             Some(_) => None,
             None => Some(pipelines.build_on_worker(
-            ctx,
-            vec![
-                Spec::Compute {
-                    module,
-                    entry: c"cull_entities".to_owned(),
-                },
-                stream(c"entity_solid", true, vk::CompareOp::GREATER, false, false),
-                // Blended layers lie on each other (a banner's patterns):
-                // equal depth passes, and nothing blended writes depth.
-                stream(
-                    c"entity_blend",
-                    false,
-                    vk::CompareOp::GREATER_OR_EQUAL,
-                    true,
-                    false,
-                ),
-                // Additive layers (beams, lightning): the shader premultiplies.
-                stream(
-                    c"entity_add",
-                    false,
-                    vk::CompareOp::GREATER_OR_EQUAL,
-                    true,
-                    true,
-                ),
-            ],
-        )),
+                ctx,
+                vec![
+                    Spec::Compute {
+                        module,
+                        entry: c"cull_entities".to_owned(),
+                    },
+                    stream(c"entity_solid", true, vk::CompareOp::GREATER, false, false),
+                    // Blended layers lie on each other (a banner's patterns):
+                    // equal depth passes, and nothing blended writes depth.
+                    stream(
+                        c"entity_blend",
+                        false,
+                        vk::CompareOp::GREATER_OR_EQUAL,
+                        true,
+                        false,
+                    ),
+                    // Additive layers (beams, lightning): the shader premultiplies.
+                    stream(
+                        c"entity_add",
+                        false,
+                        vk::CompareOp::GREATER_OR_EQUAL,
+                        true,
+                        true,
+                    ),
+                ],
+            )),
         };
 
         // One vertex and one index pool; a range per mesh (4.2).
@@ -391,7 +391,11 @@ impl EntityScene {
                 .ok_or_else(full)?;
             // Packs sample the stored (sRGB-encoded) texels, as the game's.
             let raw = bindless
-                .add_texture(ctx, image.raw_view.expect("made with a raw view"), vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .add_texture(
+                    ctx,
+                    image.raw_view.expect("made with a raw view"),
+                    vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                )
                 .ok_or_else(full)?;
             raw_indices.push((index, raw));
             textures.push((image, index));
@@ -433,7 +437,10 @@ impl EntityScene {
             .map(|i| {
                 let m = (i.mesh as usize) * 4;
                 let range = table.get(m..m + 4).unwrap_or(&[0, 0, 0, 0]);
-                let texture = raw_indices.iter().find(|(s, _)| *s == i.texture).map_or(i.texture, |(_, r)| *r);
+                let texture = raw_indices
+                    .iter()
+                    .find(|(s, _)| *s == i.texture)
+                    .map_or(i.texture, |(_, r)| *r);
                 (range[0], range[1], range[2] as i32, texture, i.alpha >= 2)
             })
             .collect();
@@ -1016,9 +1023,12 @@ impl EntityScene {
             }
             // In place when the mesh's old range holds the new data.
             let (room_v, room_i) = live.room[at];
-            let in_place = live.meshes.get(at).copied().flatten().filter(|_| {
-                verts.len() as u32 <= room_v && indices.len() as u32 <= room_i
-            });
+            let in_place = live
+                .meshes
+                .get(at)
+                .copied()
+                .flatten()
+                .filter(|_| verts.len() as u32 <= room_v && indices.len() as u32 <= room_i);
             let (vertex_at, index_at) = match in_place {
                 Some((first, _, base, ..)) => (base as u64 * 52, first as u64 * 4),
                 None => {
@@ -1054,14 +1064,21 @@ impl EntityScene {
             let image = memory.image_with_raw(
                 ctx,
                 "entity texture",
-                vk::Extent2D { width: w, height: h },
+                vk::Extent2D {
+                    width: w,
+                    height: h,
+                },
                 vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
             )?;
             let bindless_index = bindless
                 .add_texture(ctx, image.view, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                 .ok_or_else(full)?;
             let raw = bindless
-                .add_texture(ctx, image.raw_view.expect("made with a raw view"), vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .add_texture(
+                    ctx,
+                    image.raw_view.expect("made with a raw view"),
+                    vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                )
                 .ok_or_else(full)?;
             let at = index as usize;
             if live.textures.len() <= at {
@@ -1081,7 +1098,10 @@ impl EntityScene {
             let image = memory.image(
                 ctx,
                 "entity glint",
-                vk::Extent2D { width: w, height: h },
+                vk::Extent2D {
+                    width: w,
+                    height: h,
+                },
                 vk::Format::R8G8B8A8_UNORM,
                 vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
                 vk::ImageAspectFlags::COLOR,
@@ -1102,20 +1122,33 @@ impl EntityScene {
         let mut rigged = 0;
         for (i, instance) in instances.iter_mut().enumerate() {
             let mesh = live.meshes.get(instance.mesh as usize).copied().flatten();
-            let (raw_texture, texture) = match live.textures.get(instance.texture as usize).copied().flatten() {
+            let (raw_texture, texture) = match live
+                .textures
+                .get(instance.texture as usize)
+                .copied()
+                .flatten()
+            {
                 Some((t, raw)) => (raw, t),
                 None => (u32::MAX, u32::MAX),
             };
             instance.texture = texture;
             let (lo, hi) = match mesh {
-                Some((.., lo, hi)) => world_box(&Mat4::from_cols_array(&instance.transform), lo, hi),
+                Some((.., lo, hi)) => {
+                    world_box(&Mat4::from_cols_array(&instance.transform), lo, hi)
+                }
                 None => (Vec3::ZERO, Vec3::ZERO),
             };
             bounds.push([lo.x, lo.y, lo.z, 0.0, hi.x, hi.y, hi.z, 0.0]);
             if instance.alpha >= 2 {
-                blended.push((i as u32, (lo + hi) / 2.0, instance.depth_bias, instance.alpha == 3));
+                blended.push((
+                    i as u32,
+                    (lo + hi) / 2.0,
+                    instance.depth_bias,
+                    instance.alpha == 3,
+                ));
             }
-            let (first, count, base, is_rigged) = mesh.map_or((0, 0, 0, false), |m| (m.0, m.1, m.2, m.3));
+            let (first, count, base, is_rigged) =
+                mesh.map_or((0, 0, 0, false), |m| (m.0, m.1, m.2, m.3));
             if is_rigged {
                 rigged += 1;
             }
@@ -1180,7 +1213,9 @@ impl EntityScene {
         frame: u64,
         slot: usize,
     ) -> Result<(), SetupError> {
-        let Some(live) = self.live.as_mut() else { return Ok(()) };
+        let Some(live) = self.live.as_mut() else {
+            return Ok(());
+        };
         // Old buffers once no frame in flight reads them.
         let (done, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut live.retired)
             .into_iter()
@@ -1219,7 +1254,17 @@ impl EntityScene {
         let indirect = storage | vk::BufferUsageFlags::INDIRECT_BUFFER;
         let mut copies: Vec<(vk::Buffer, vk::Buffer, u64)> = Vec::new();
         let r = &mut live.retired;
-        if let Some((old, size)) = Self::grow(ctx, memory, bindless, &mut self.vertices, live.vertices_used, storage, frame, r, "entity vertices")? {
+        if let Some((old, size)) = Self::grow(
+            ctx,
+            memory,
+            bindless,
+            &mut self.vertices,
+            live.vertices_used,
+            storage,
+            frame,
+            r,
+            "entity vertices",
+        )? {
             copies.push((old, self.vertices.0.raw, size));
         }
         // The index pool (no bindless slot) grows the same way.
@@ -1229,7 +1274,9 @@ impl EntityScene {
                 ctx,
                 "entity indices",
                 size,
-                vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::TRANSFER_SRC,
+                vk::BufferUsageFlags::INDEX_BUFFER
+                    | vk::BufferUsageFlags::TRANSFER_DST
+                    | vk::BufferUsageFlags::TRANSFER_SRC,
                 MemoryLocation::GpuOnly,
             )?;
             let old = std::mem::replace(&mut self.indices, new);
@@ -1239,23 +1286,85 @@ impl EntityScene {
             r.push((old, frame));
         }
         let table_len = (live.meshes.len() * 16) as u64;
-        if let Some((old, size)) = Self::grow(ctx, memory, bindless, &mut self.meshes, table_len, storage, frame, r, "entity meshes")? {
+        if let Some((old, size)) = Self::grow(
+            ctx,
+            memory,
+            bindless,
+            &mut self.meshes,
+            table_len,
+            storage,
+            frame,
+            r,
+            "entity meshes",
+        )? {
             copies.push((old, self.meshes.0.raw, size));
         }
         let (instance_bytes, part_bytes, bound_bytes) = live.frame.take().unwrap_or_default();
         let count = self.count as u64;
-        Self::grow(ctx, memory, bindless, &mut self.instances, instance_bytes.len() as u64, storage, frame, r, "entity instances")?;
-        Self::grow(ctx, memory, bindless, &mut self.parts, part_bytes.len() as u64, storage, frame, r, "entity parts")?;
-        Self::grow(ctx, memory, bindless, &mut self.bounds, bound_bytes.len() as u64, storage, frame, r, "entity bounds")?;
-        Self::grow(ctx, memory, bindless, &mut self.ranks, count * 4, storage, frame, r, "entity ranks")?;
-        Self::grow(ctx, memory, bindless, &mut self.commands, count * 2 * COMMAND_SIZE, indirect, frame, r, "entity commands")?;
+        Self::grow(
+            ctx,
+            memory,
+            bindless,
+            &mut self.instances,
+            instance_bytes.len() as u64,
+            storage,
+            frame,
+            r,
+            "entity instances",
+        )?;
+        Self::grow(
+            ctx,
+            memory,
+            bindless,
+            &mut self.parts,
+            part_bytes.len() as u64,
+            storage,
+            frame,
+            r,
+            "entity parts",
+        )?;
+        Self::grow(
+            ctx,
+            memory,
+            bindless,
+            &mut self.bounds,
+            bound_bytes.len() as u64,
+            storage,
+            frame,
+            r,
+            "entity bounds",
+        )?;
+        Self::grow(
+            ctx,
+            memory,
+            bindless,
+            &mut self.ranks,
+            count * 4,
+            storage,
+            frame,
+            r,
+            "entity ranks",
+        )?;
+        Self::grow(
+            ctx,
+            memory,
+            bindless,
+            &mut self.commands,
+            count * 2 * COMMAND_SIZE,
+            indirect,
+            frame,
+            r,
+            "entity commands",
+        )?;
 
         // Everything new into this slot's staging.
         let table: Vec<u32> = if live.table_dirty {
             live.table_dirty = false;
             live.meshes
                 .iter()
-                .flat_map(|m| m.map_or([0, 0, 0, 0], |(f, c, b, rig, ..)| [f, c, b, u32::from(rig)]))
+                .flat_map(|m| {
+                    m.map_or([0, 0, 0, 0], |(f, c, b, rig, ..)| [f, c, b, u32::from(rig)])
+                })
                 .collect()
         } else {
             Vec::new()
@@ -1320,7 +1429,9 @@ impl EntityScene {
                 MemoryLocation::CpuToGpu,
             )?);
         }
-        let Some(staging) = staging.as_mut() else { return Ok(()) };
+        let Some(staging) = staging.as_mut() else {
+            return Ok(());
+        };
         for (at, bytes) in writes {
             staging.write(at as usize, bytes);
         }
@@ -1335,18 +1446,42 @@ impl EntityScene {
             graph.pass("entity grow", &[], &uses, |cmd| unsafe {
                 // SAFETY: whole-buffer copies into larger buffers.
                 for (old, new, size) in copies.iter().filter(|c| c.2 > 0) {
-                    device.cmd_copy_buffer(cmd, *old, *new, &[vk::BufferCopy { src_offset: 0, dst_offset: 0, size: *size }]);
+                    device.cmd_copy_buffer(
+                        cmd,
+                        *old,
+                        *new,
+                        &[vk::BufferCopy {
+                            src_offset: 0,
+                            dst_offset: 0,
+                            size: *size,
+                        }],
+                    );
                 }
             });
         }
-        let mut buffers: Vec<(vk::Buffer, Use)> = buffer_copies.iter().map(|(_, b, _, _)| (*b, Use::TransferDst)).collect();
+        let mut buffers: Vec<(vk::Buffer, Use)> = buffer_copies
+            .iter()
+            .map(|(_, b, _, _)| (*b, Use::TransferDst))
+            .collect();
         buffers.dedup();
-        let image_uses: Vec<(vk::Image, Use)> = image_copies.iter().map(|(_, i, _, _)| (*i, Use::TransferDst)).collect();
+        let image_uses: Vec<(vk::Image, Use)> = image_copies
+            .iter()
+            .map(|(_, i, _, _)| (*i, Use::TransferDst))
+            .collect();
         graph.pass("entity upload", &image_uses, &buffers, |cmd| unsafe {
             // SAFETY: copies from this slot's staging into the buffers and
             // images, in the transfer states the graph set.
             for (from, target, to, size) in buffer_copies.iter().filter(|c| c.3 > 0) {
-                device.cmd_copy_buffer(cmd, source, *target, &[vk::BufferCopy { src_offset: *from, dst_offset: *to, size: *size }]);
+                device.cmd_copy_buffer(
+                    cmd,
+                    source,
+                    *target,
+                    &[vk::BufferCopy {
+                        src_offset: *from,
+                        dst_offset: *to,
+                        size: *size,
+                    }],
+                );
             }
             for (from, image, w, h) in &image_copies {
                 device.cmd_copy_buffer_to_image(
@@ -1362,7 +1497,11 @@ impl EntityScene {
                             base_array_layer: 0,
                             layer_count: 1,
                         },
-                        image_extent: vk::Extent3D { width: *w, height: *h, depth: 1 },
+                        image_extent: vk::Extent3D {
+                            width: *w,
+                            height: *h,
+                            depth: 1,
+                        },
                         ..Default::default()
                     }],
                 );
@@ -1371,4 +1510,3 @@ impl EntityScene {
         Ok(())
     }
 }
-

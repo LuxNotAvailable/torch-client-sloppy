@@ -630,14 +630,8 @@ impl PlanResources<'_> {
                     mask(&program.draw_buffers),
                 ),
             };
-            let mut template = self.bind_template(
-                index,
-                self.usage.kind_blocks[at]?,
-                flips,
-                drawing,
-                true,
-                0,
-            );
+            let mut template =
+                self.bind_template(index, self.usage.kind_blocks[at]?, flips, drawing, true, 0);
             if EntityKind::ALL[at] == EntityKind::ArmorGlint {
                 // The glint scrolls across its texture: vanilla samples it
                 // linear and repeating, not as an entity skin.
