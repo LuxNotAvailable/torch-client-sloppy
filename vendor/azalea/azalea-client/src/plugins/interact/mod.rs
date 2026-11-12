@@ -289,12 +289,9 @@ pub fn handle_entity_interact(
         location: LpVec3::from(location),
         using_secondary_action: physics_state.trying_to_crouch,
     };
-    commands.trigger(SendGamePacketEvent::new(trigger.client, interact.clone()));
-
-    let consumes_action = false;
-    if !consumes_action {
-        commands.trigger(SendGamePacketEvent::new(trigger.client, interact));
-    }
+    // One packet: the pre-1.21.2 pair (interact_at, then interact) is gone,
+    // and a second send acts twice (item frames turned two steps).
+    commands.trigger(SendGamePacketEvent::new(trigger.client, interact));
 }
 
 pub fn check_is_interaction_restricted(

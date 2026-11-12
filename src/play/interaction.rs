@@ -532,6 +532,19 @@ fn start_use_item(bot: &Client, shared: &Arc<SharedMutex>) -> bool {
     if consumed {
         return true;
     }
+    // A main hand that neither places nor uses passes to the off hand,
+    // which may place (vanilla tries useItemOn per hand).
+    let main = held_item_kind(bot);
+    let places = |k: ItemKind| { use std::str::FromStr; azalea_registry::builtin::BlockKind::from_str(k.to_str()).is_ok_and(|b| b != azalea_registry::builtin::BlockKind::Air) };
+    if main.is_none_or(|k| !places(k) && main_hand_passes(bot, k)) && offhand_places(bot, places) {
+        send_use_item(bot);
+        send_use_item_on_with(bot, &hit, false, true);
+        use_offhand_item(bot);
+        // The off hand swings (the left arm, unless left-handed).
+        let left_handed = shared.lock().unwrap().skin_prefs.main_hand_left;
+        crate::client::tick::swing_local_player(!left_handed, shared);
+        return false;
+    }
 
     use_item(bot, shared)
 }
@@ -1092,6 +1105,10 @@ fn use_duration(held: &ItemStack) -> i32 {
 }
 
 fn send_use_item_on(bot: &Client, hit: &BlockHitResult, interacted: bool) {
+    send_use_item_on_with(bot, hit, interacted, false);
+}
+
+fn send_use_item_on_with(bot: &Client, hit: &BlockHitResult, interacted: bool, offhand: bool) {
     use azalea_protocol::packets::game::{
         s_interact::InteractionHand, s_use_item_on::ServerboundUseItemOn,
     };
@@ -1130,7 +1147,7 @@ fn send_use_item_on(bot: &Client, hit: &BlockHitResult, interacted: bool) {
         predict_open_toggle(bot, hit);
     }
     bot.write_packet(ServerboundUseItemOn {
-        hand: InteractionHand::MainHand,
+        hand: if offhand { InteractionHand::OffHand } else { InteractionHand::MainHand },
         block_hit: hit.into(),
         seq,
     });
@@ -1426,6 +1443,16 @@ fn main_hand_passes(bot: &Client, kind: ItemKind) -> bool {
 
 /// `startUseItem` for the off hand, after the main hand passed: sends the
 /// use and holds the item in use if it is held (a shield).
+/// Whether the off hand holds a block item.
+fn offhand_places(bot: &Client, places: impl Fn(ItemKind) -> bool) -> bool {
+    bot.component::<azalea::entity::inventory::Inventory>().is_ok_and(|i| {
+        matches!(
+            i.get_equipment(azalea_inventory::components::EquipmentSlot::Offhand),
+            Some(ItemStack::Present(d)) if places(d.kind)
+        )
+    })
+}
+
 fn use_offhand_item(bot: &Client) {
     use azalea_protocol::packets::game::{ServerboundUseItem, s_interact::InteractionHand};
     let (kind, duration) = {

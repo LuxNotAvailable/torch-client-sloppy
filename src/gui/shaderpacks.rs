@@ -101,6 +101,8 @@ pub struct State {
     list_scroll_drag: Option<f32>,
     error: Option<String>,
     revision: u64,
+    /// The pack the toggle key turned off, to turn back on.
+    toggled_off: Option<String>,
 }
 
 impl Default for State {
@@ -129,11 +131,33 @@ impl Default for State {
             list_scroll_drag: None,
             error,
             revision: 0,
+            toggled_off: None,
         }
     }
 }
 
 impl State {
+    /// The toggle key: as picking "no pack", then the pack it turned off
+    /// (else the built-in one), in the list.
+    pub fn toggle(&mut self) {
+        self.error = None;
+        if let Some(loaded) = self.loaded.take() {
+            storage::SHADER_PACK.store("");
+            #[cfg(feature = "vulkan")]
+            crate::vk::live::pack_changed();
+            self.toggled_off = Some(loaded.name);
+            return;
+        }
+        let name = self.toggled_off.take().unwrap_or_else(|| crate::shaderpack::builtin::NAME.to_owned());
+        storage::SHADER_PACK.store(&name);
+        #[cfg(feature = "vulkan")]
+        crate::vk::live::pack_changed();
+        match load(&name) {
+            Ok(loaded) => self.loaded = Some(loaded),
+            Err(e) => self.error = Some(format!("{name}: {e}")),
+        }
+    }
+
     pub fn revision(&self) -> u64 {
         self.revision
     }
@@ -418,6 +442,8 @@ pub fn draw_packs(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     if let Some(choice) = pick {
         state.shaderpacks.error = None;
         storage::SHADER_PACK.store(choice.as_deref().unwrap_or(""));
+        #[cfg(feature = "vulkan")]
+        crate::vk::live::pack_changed();
         match choice {
             None => state.shaderpacks.loaded = None,
             Some(name) => match load(&name) {

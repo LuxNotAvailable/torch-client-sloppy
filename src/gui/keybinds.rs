@@ -306,6 +306,8 @@ pub static BINDS: LazyLock<Vec<BindDef>> = LazyLock::new(|| {
     // id, since every saved bind file still holds the old C.
     BindDef { action: Action::Freecam, id: "key.client.detachedCamera", name: "Detached Camera", category: CLIENT, default: Bound::Unbound },
     BindDef { action: Action::Zoom, id: "key.client.zoom", name: "Zoom", category: CLIENT, default: Bound::Key(KeyCode::KeyC) },
+    BindDef { action: Action::ToggleLighting, id: "key.client.toggleLighting", name: "Toggle Lighting", category: CLIENT, default: Bound::Unbound },
+    BindDef { action: Action::ToggleShaderPack, id: "key.client.toggleShaderPack", name: "Toggle Shader Pack", category: CLIENT, default: Bound::Unbound },
     ];
     #[cfg(target_arch = "wasm32")]
     binds.push(BindDef { action: Action::Pause, id: "key.client.pause", name: "Pause Menu", category: CLIENT, default: Bound::Key(KeyCode::Backquote) });
@@ -366,6 +368,8 @@ pub enum Action {
     GameModeSwitcher,
     Freecam,
     Zoom,
+    ToggleLighting,
+    ToggleShaderPack,
     #[cfg(target_arch = "wasm32")]
     Pause,
     #[cfg(feature = "click_gui")]

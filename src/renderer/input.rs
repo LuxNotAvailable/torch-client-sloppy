@@ -796,13 +796,20 @@ pub(super) fn toggle_freecam(
     mut angles: ResMut<CameraAngles>,
     shared: Res<Shared>,
     mut camera: Query<&mut Transform, With<WorldCamera>>,
-    state: Res<crate::gui::GuiState>,
+    mut state: ResMut<crate::gui::GuiState>,
 ) {
     if state.screen.is_open() {
         return;
     }
     if state.keybinds.just(Action::Freecam, &keys, &buttons) {
         crate::modules::freecam::toggle();
+    }
+    if state.keybinds.just(Action::ToggleLighting, &keys, &buttons) {
+        state.options.lighting_enabled = !state.options.lighting_enabled;
+        crate::gui::save_options(&state.options);
+    }
+    if state.keybinds.just(Action::ToggleShaderPack, &keys, &buttons) {
+        state.shaderpacks.toggle();
     }
     let want = crate::modules::freecam::active();
 

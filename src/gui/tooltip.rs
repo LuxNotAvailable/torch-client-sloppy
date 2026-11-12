@@ -304,7 +304,8 @@ fn inherit(spans: &[Span], color: u32, italic: bool) -> Vec<Span> {
         .iter()
         .map(|s| {
             let mut style = s.style;
-            if style.is_default() {
+            // An uncoloured span (bold or italic only, too) takes the rarity.
+            if style.color == crate::text::Style::default().color {
                 style.color = color;
             }
             style.italic |= italic;
@@ -443,7 +444,14 @@ fn format_modifier(value: f64) -> String {
 
 pub(crate) fn styled_hover_name(stack: &SlotStack) -> Vec<Span> {
     let def = item(stack.item);
-    let rarity = def.map(|d| d.rarity.color()).unwrap_or(WHITE);
+    use crate::generated_items::Rarity;
+    // Enchanted items rise a rarity, as vanilla (common and uncommon to rare).
+    let rarity = def.map(|d| match d.rarity {
+        Rarity::Common | Rarity::Uncommon if !stack.enchantments.is_empty() => Rarity::Rare,
+        Rarity::Rare if !stack.enchantments.is_empty() => Rarity::Epic,
+        r => r,
+    });
+    let rarity = rarity.map(Rarity::color).unwrap_or(WHITE);
     match &stack.custom_name {
         Some(spans) => inherit(spans, rarity, true),
         None => {

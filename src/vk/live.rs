@@ -24,6 +24,15 @@ use super::upload::Uploads;
 use super::{Context, SetupError, Swapchain};
 
 /// Whether this run draws with the native renderer (`MC_RENDERER=native`).
+/// Set when the chosen pack changes (menu or toggle key): the renderer
+/// re-reads `shaderpack.txt` once.
+static PACK_CHANGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// The chosen pack changed (`shaderpack.txt` written).
+pub fn pack_changed() {
+    PACK_CHANGED.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
 pub fn wanted() -> bool {
     static WANTED: OnceLock<bool> = OnceLock::new();
     // Native by default on desktop; `MC_RENDERER=wgpu` (or `legacy`) for the old one.
@@ -738,15 +747,11 @@ impl Live {
         }
     }
 
-    /// Keeps the pack in step with the one chosen (looked up once a
-    /// second) and the swapchain's size.
+    /// Keeps the pack in step with the one chosen (re-read when
+    /// `pack_changed` says so) and the swapchain's size.
     fn update_pack(&mut self) {
         let now = std::time::Instant::now();
-        let stale = self
-            .pack_checked
-            .as_ref()
-            .is_none_or(|(at, _)| now.duration_since(*at).as_secs_f32() > 1.0);
-        if stale {
+        if PACK_CHANGED.swap(false, std::sync::atomic::Ordering::Relaxed) || self.pack_checked.is_none() {
             let name = crate::platform::storage::SHADER_PACK
                 .load()
                 .map(|p| p.trim().to_owned())

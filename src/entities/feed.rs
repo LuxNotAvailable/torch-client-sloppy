@@ -502,6 +502,27 @@ impl KindAnim {
 
 static EMPTY_KIND_ANIM: KindAnim = KindAnim::EMPTY;
 
+/// A `Mob` (body turned by `BodyRotationControl`): living, not a player
+/// or armor stand.
+fn is_mob(kind: EntityKind) -> bool {
+    !matches!(kind, EntityKind::Player | EntityKind::ArmorStand)
+}
+
+/// `Mob.getMaxHeadYRot` per kind.
+fn max_head_y_rot(kind: EntityKind) -> f32 {
+    match kind {
+        EntityKind::Armadillo => 32.0,
+        EntityKind::Axolotl | EntityKind::Dolphin => 1.0,
+        EntityKind::Camel | EntityKind::Breeze => 30.0,
+        EntityKind::Frog => 5.0,
+        EntityKind::Goat => 15.0,
+        EntityKind::Sniffer => 50.0,
+        EntityKind::Ravager => 45.0,
+        EntityKind::Shulker => 180.0,
+        _ => 75.0,
+    }
+}
+
 fn has_kind_state(kind: EntityKind) -> bool {
     !matches!(
         kind,
@@ -562,6 +583,9 @@ pub struct EntityAnim {
     body_rot_old: f32,
     head_rot: f32,
     head_rot_old: f32,
+    /// `BodyRotationControl`: ticks the head held still, and where.
+    head_stable_time: i32,
+    last_stable_head_rot: f32,
     y_rot: f32,
     y_rot_old: f32,
     x_rot: f32,
@@ -624,6 +648,8 @@ impl EntityAnim {
             body_rot: 0.0,
             body_rot_old: 0.0,
             head_rot: 0.0,
+            head_stable_time: 0,
+            last_stable_head_rot: 0.0,
             head_rot_old: 0.0,
             y_rot: 0.0,
             y_rot_old: 0.0,
@@ -870,6 +896,31 @@ impl EntityAnim {
             k.attach_pos = Some(old_block);
             k.teleport_interp = SHULKER_TELEPORT_TICKS;
             self.pos_old = self.pos;
+        }
+    }
+
+    /// `Mob.tickHeadTurn`: `BodyRotationControl.clientTick`, limited by
+    /// the mob's `getMaxHeadYRot`.
+    fn tick_body_rotation_control(&mut self) {
+        let max = max_head_y_rot(self.kind);
+        let rotate = |base: f32, target: f32, max: f32| target - wrap_degrees(target - base).clamp(-max, max);
+        let xd = self.pos[0] - self.pos_old[0];
+        let zd = self.pos[2] - self.pos_old[2];
+        if xd * xd + zd * zd > 2.500_000_3e-7 {
+            self.body_rot = self.y_rot;
+            self.head_rot = rotate(self.head_rot, self.body_rot, max);
+            self.last_stable_head_rot = self.head_rot;
+            self.head_stable_time = 0;
+        } else if (self.head_rot - self.last_stable_head_rot).abs() > 15.0 {
+            self.head_stable_time = 0;
+            self.last_stable_head_rot = self.head_rot;
+            self.body_rot = rotate(self.body_rot, self.head_rot, max);
+        } else {
+            self.head_stable_time += 1;
+            if self.head_stable_time > 10 {
+                let fraction = ((self.head_stable_time - 10) as f32 / 10.0).clamp(0.0, 1.0);
+                self.body_rot = rotate(self.body_rot, self.head_rot, max * (1.0 - fraction));
+            }
         }
     }
 
@@ -1412,7 +1463,11 @@ impl EntityAnim {
             if self.attack_anim > 0.0 {
                 target = self.y_rot;
             }
-            self.tick_head_turn(target);
+            if is_mob(self.kind) {
+                self.tick_body_rotation_control();
+            } else {
+                self.tick_head_turn(target);
+            }
 
             unwind(&mut self.y_rot_old, self.y_rot);
             unwind(&mut self.body_rot_old, self.body_rot);
@@ -1869,34 +1924,34 @@ mod tests {
 
     #[test]
     fn a_standing_mob_turns_its_body_only_as_far_as_the_clamp() {
+        // `BodyRotationControl`: the head may lead the body by 75 degrees,
+        // then the body turns after it once the head holds still.
         let mut anim = EntityAnim::new(1, EntityKind::Zombie);
         let mut input = TickInput::new();
         anim.tick(input.clone());
-        input.y_rot = 90.0;
-        for _ in 0..10 {
+        input.head_rot = Some(90.0);
+        for _ in 0..3 {
             anim.tick(input.clone());
         }
-        assert!(
-            (anim.body_rot_pair().1 - 40.0).abs() < 1e-3,
-            "{}",
-            anim.body_rot_pair().1
-        );
+        assert!((anim.body_rot_pair().1 - 15.0).abs() < 1e-3, "{}", anim.body_rot_pair().1);
+        for _ in 0..25 {
+            anim.tick(input.clone());
+        }
+        assert!((anim.body_rot_pair().1 - 90.0).abs() < 1e-3, "{}", anim.body_rot_pair().1);
     }
 
     #[test]
     fn the_body_follows_the_direction_of_travel() {
+        // Moving, a mob's body faces where it looks (`BodyRotationControl`).
         let mut anim = EntityAnim::new(1, EntityKind::Zombie);
         let mut input = TickInput::new();
+        input.y_rot = -90.0;
         anim.tick(input.clone());
         for step in 1..30 {
             input.pos[0] = step as f64;
             anim.tick(input.clone());
         }
-        assert!(
-            (anim.body_rot_pair().1 + 50.0).abs() < 1e-3,
-            "{}",
-            anim.body_rot_pair().1
-        );
+        assert!((anim.body_rot_pair().1 + 90.0).abs() < 1e-3, "{}", anim.body_rot_pair().1);
     }
 
     #[test]
