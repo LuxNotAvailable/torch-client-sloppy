@@ -177,6 +177,9 @@ struct Live {
     frame: u64,
     size: (u32, u32),
     stale: bool,
+    /// GPU time per pass (`MC_NATIVE_GPU_TIMING=1`): the queries, and
+    /// per name the summed ms and frames since the last report.
+    gpu_timing: Option<(super::timestamps::Timestamps, std::collections::HashMap<&'static str, (f32, u32)>, std::time::Instant)>,
 }
 
 fn setup(world: &mut World) -> Result<Live, SetupError> {
@@ -230,6 +233,7 @@ fn setup(world: &mut World) -> Result<Live, SetupError> {
         frame: 0,
         size,
         stale: false,
+        gpu_timing: None,
     })
 }
 
@@ -911,7 +915,34 @@ impl Live {
         let image = swapchain.images[recording.image_index as usize];
         let view = swapchain.views[recording.image_index as usize];
         let extent = swapchain.extent;
-        let mut graph = Graph::new(&self.ctx, recording.commands, None);
+        if self.gpu_timing.is_none() && crate::platform::env::var("MC_NATIVE_GPU_TIMING").is_ok_and(|v| v == "1") {
+            match super::timestamps::Timestamps::new(&self.ctx) {
+                Ok(t) => self.gpu_timing = Some((t, Default::default(), std::time::Instant::now())),
+                Err(e) => error!("native renderer: gpu timing: {}", e.0),
+            }
+        }
+        if let Some((t, sums, since)) = &mut self.gpu_timing {
+            t.begin_frame(&self.ctx, slot);
+            // Repeated names (one per pass) add up within the frame.
+            let mut seen: Vec<&'static str> = Vec::new();
+            for &(name, ms) in &t.last {
+                let e = sums.entry(name).or_default();
+                e.0 += ms;
+                if !seen.contains(&name) {
+                    e.1 += 1;
+                    seen.push(name);
+                }
+            }
+            if since.elapsed().as_secs_f32() >= 2.0 {
+                let mut rows: Vec<(&str, f32)> = sums.drain().map(|(n, (ms, f))| (n, ms / f.max(1) as f32)).collect();
+                rows.sort_by(|a, b| b.1.total_cmp(&a.1));
+                let total: f32 = rows.iter().map(|r| r.1).sum();
+                let top: Vec<String> = rows.iter().take(15).map(|(n, ms)| format!("{n} {ms:.2}")).collect();
+                info!("native renderer: gpu {total:.2} ms/frame: {}", top.join(", "));
+                *since = std::time::Instant::now();
+            }
+        }
+        let mut graph = Graph::new(&self.ctx, recording.commands, self.gpu_timing.as_mut().map(|g| &mut g.0));
         graph.image(image, vk::ImageAspectFlags::COLOR, vk::ImageLayout::UNDEFINED);
         // The world, when there's one to see; in menus, the panorama.
         let mut drew_world = false;

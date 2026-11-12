@@ -213,6 +213,12 @@ const ALL: &[Var] = &[
         enabled: cfg!(feature = "vulkan"),
     },
     Var {
+        name: "MC_NATIVE_GPU_TIMING",
+        what: "log the native renderer's GPU time per pass every 2 s, when set to 1",
+        default: "off",
+        enabled: cfg!(feature = "vulkan"),
+    },
+    Var {
         name: "MC_NATIVE_TERRAIN",
         what: "turn native terrain stages off, for debugging (comma-separated flags)",
         default: "off",

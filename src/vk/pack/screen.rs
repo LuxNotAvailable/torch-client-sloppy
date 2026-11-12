@@ -1320,7 +1320,8 @@ impl PackScreen {
                     .map(|(b, u)| (*b, if self.buffers.iter().any(|(o, _)| o.raw == *b) { Use::ComputeWrite } else { *u }))
                     .collect();
                 let (pipeline, base) = (pass.pipeline, pass.base);
-                graph.pass("pack compute", &uses, &writes, |cmd| unsafe {
+                let name = intern(&self.installed.programs[pass.program].name);
+                graph.pass(name, &uses, &writes, |cmd| unsafe {
                     // SAFETY: the shared layout and set; sampled images read-only.
                     device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipeline);
                     device.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::COMPUTE, pipelines.layout, 0, &[bindless.set], &[]);
@@ -1429,7 +1430,7 @@ impl PackScreen {
             let hand_pass = pass.hand;
             let sky_pass = pass.sky;
             let white = self.stubs.white.1;
-            let name = if draw.is_some() { "pack geometry" } else { "pack screen" };
+            let name = intern(&self.installed.programs[pass.program].name);
             graph.pass(name, &uses, &pass_buffers, |cmd| unsafe {
                 // SAFETY: attachments and sampled images in the layouts the
                 // graph set; the shared layout and set.
@@ -1697,6 +1698,18 @@ pub(crate) struct Overlay {
     pub depth: (vk::Image, vk::ImageView),
     pub extent: vk::Extent2D,
     pub view_proj: Mat4,
+}
+
+/// A program's name as a pass label for GPU timing (leaked once per name).
+fn intern(name: &str) -> &'static str {
+    static NAMES: std::sync::Mutex<Vec<(String, &'static str)>> = std::sync::Mutex::new(Vec::new());
+    let mut names = NAMES.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((_, n)) = names.iter().find(|(k, _)| k == name) {
+        return n;
+    }
+    let n: &'static str = Box::leak(format!("pack {name}").into_boxed_str());
+    names.push((name.to_owned(), n));
+    n
 }
 
 fn layers(aspect: vk::ImageAspectFlags) -> vk::ImageSubresourceLayers {

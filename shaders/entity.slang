@@ -185,7 +185,7 @@ float3 glint(float2 uv) {
     return texture_at(pc.more.z).SampleLevel(g_samplers[SAMPLER_LINEAR], st, 0).rgb * 0.75;
 }
 
-float4 entity_shade(VertexOut in, bool front) {
+float4 entity_shade(VertexOut in, bool front, bool blend) {
     ByteAddressBuffer instances = buffer_ro(pc.ids.x);
     uint at = in.instance * INSTANCE_SIZE;
     if (pc.more.y == VIEW_TEXTURE_INDEX) {
@@ -200,7 +200,9 @@ float4 entity_shade(VertexOut in, bool front) {
         ? float4(1, 1, 1, 1)
         : texture_at(texture).SampleLevel(g_samplers[sampler], in.uv, 0);
     float4 light = asfloat(instances.Load4(at + I_LIGHT));
-    if (color.a < light.a) {
+    // Blended draws skip empty texels too: nothing to blend (rain is
+    // mostly empty sheets).
+    if (color.a < (blend ? max(light.a, 1.0 / 255.0) : light.a)) {
         discard;
     }
     float4 tint = asfloat(instances.Load4(at + I_TINT));
@@ -232,18 +234,18 @@ float4 entity_shade(VertexOut in, bool front) {
 
 [shader("fragment")]
 float4 entity_solid(VertexOut in, bool front: SV_IsFrontFace): SV_Target {
-    return float4(entity_shade(in, front).rgb, 1);
+    return float4(entity_shade(in, front, false).rgb, 1);
 }
 
 [shader("fragment")]
 float4 entity_blend(VertexOut in, bool front: SV_IsFrontFace): SV_Target {
-    return entity_shade(in, front);
+    return entity_shade(in, front, true);
 }
 
 // Additive (Bevy's `AlphaMode::Add`, as the game draws beams and
 // lightning): the colour premultiplied by its alpha, added with (ONE, ONE).
 [shader("fragment")]
 float4 entity_add(VertexOut in, bool front: SV_IsFrontFace): SV_Target {
-    float4 color = entity_shade(in, front);
+    float4 color = entity_shade(in, front, true);
     return float4(color.rgb * color.a, 0);
 }

@@ -7,7 +7,7 @@ use ash::vk;
 use super::frame::FRAMES_IN_FLIGHT;
 use super::{Context, SetupError};
 
-const MAX_PASSES: u32 = 64;
+const MAX_PASSES: u32 = 256;
 
 pub struct Timestamps {
     pools: Vec<vk::QueryPool>,
