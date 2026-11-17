@@ -563,6 +563,8 @@ pub struct TerrainScene {
     /// (phase 4).
     entities: Option<super::entities::EntityScene>,
     particles: Option<super::particles::ParticleScene>,
+    /// The camera's world transform at the last `record`.
+    pack_camera: Mat4,
     /// `record` only culls: a shader pack draws the world.
     cull_only: bool,
     env: Option<super::env::EnvScene>,
@@ -839,6 +841,7 @@ impl TerrainScene {
         };
 
         Ok(TerrainScene {
+            pack_camera: Mat4::IDENTITY,
             hiz_allowed: options.hiz,
             options,
             module,
@@ -1098,7 +1101,8 @@ impl TerrainScene {
         }
     }
 
-    /// The world's lines and cracks into a pack's targets.
+    /// The world's lines and cracks, and the particles, into a pack's
+    /// targets (the pack draws no particles of its own here).
     pub(crate) fn record_pack_overlays(
         &mut self,
         ctx: &Context,
@@ -1110,20 +1114,32 @@ impl TerrainScene {
     ) {
         let set = bindless;
         let view_index = self.view_indices[slot];
-        let Some(env) = self.env.as_mut() else { return };
-        if !env.has_world_overlays() {
+        let lines = self
+            .env
+            .as_mut()
+            .filter(|env| env.has_world_overlays())
+            .and_then(|env| env.pack_overlay_pipes(ctx, pipelines, o.color.2));
+        let particles = self
+            .particles
+            .as_mut()
+            .is_some_and(|p| p.pack_ready(ctx, pipelines, o.color.2));
+        if lines.is_none() && !particles {
             return;
         }
-        let Some(pipes) = env.pack_overlay_pipes(ctx, pipelines, o.color.2) else {
-            return;
-        };
-        let env = &*env;
+        let env = self.env.as_ref();
+        let particle_scene = self.particles.as_ref().filter(|_| particles);
+        let (camera, atlas_index) = (self.pack_camera, self.atlas_index);
         let mut images = vec![
             (o.color.0, Use::ColorAttachment),
             (o.depth.0, Use::DepthAttachment),
         ];
         let mut buffers = Vec::new();
-        env.uses(&mut images, &mut buffers);
+        if let Some(env) = env.filter(|_| lines.is_some()) {
+            env.uses(&mut images, &mut buffers);
+        }
+        if let Some(p) = particle_scene {
+            p.uses(&mut images, &mut buffers);
+        }
         let device = &ctx.device;
         let (extent, view_proj) = (o.extent, o.view_proj.to_cols_array_2d());
         graph.pass("pack world overlays", &images, &buffers, |cmd| unsafe {
@@ -1175,7 +1191,20 @@ impl TerrainScene {
                 &[set],
                 &[],
             );
-            env.draw_pack_overlays(ctx, cmd, pipelines, view_index, view_proj, extent, pipes);
+            if let Some(p) = particle_scene {
+                p.draw_pack(
+                    ctx,
+                    cmd,
+                    pipelines,
+                    view_proj,
+                    camera,
+                    view_index,
+                    atlas_index,
+                );
+            }
+            if let (Some(env), Some(pipes)) = (env, lines) {
+                env.draw_pack_overlays(ctx, cmd, pipelines, view_index, view_proj, extent, pipes);
+            }
             device.cmd_end_rendering(cmd);
         });
     }
@@ -2490,6 +2519,8 @@ impl TerrainScene {
             );
         }
 
+        // The camera's turn, for particles drawn into a pack's targets.
+        self.pack_camera = Mat4::look_to_rh(camera.eye, camera.forward(), Vec3::Y).inverse();
         // A shader pack draws the world itself: only the culls are wanted.
         if self.cull_only {
             self.pyramid_view = None;

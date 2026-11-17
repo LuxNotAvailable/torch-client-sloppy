@@ -10,7 +10,7 @@ use crate::client::tracking::{
 };
 use crate::client::worker::JobScope;
 use crate::session::SharedMutex;
-use crate::{CHUNK_Q, SHARED, blockentities, lighting};
+use crate::{CHUNK_Q, blockentities, lighting};
 
 pub(crate) fn install_block_change_hook() {
     let hook_installed =
@@ -35,21 +35,24 @@ pub(crate) fn install_block_change_hook() {
                 send_light(lighting::LightJob::Block { world, pos });
             }
 
-            if !old.is_air()
-                && new.is_air()
-                && let Some(shared) = SHARED.get()
-                && let Ok(mut s) = shared.try_lock()
-                && crate::play::interaction::take_local_break(pos)
-            {
-                crate::session::push_particle_emit(
-                    &mut s.session.world.particle_emits,
-                    crate::session::ParticleEmit::Event(crate::session::LevelEventEmit {
+            // Not through the shared lock: it's often held while azalea's
+            // systems break the block, and the effects were dropped.
+            // A waterlogged block leaves its water behind.
+            let emptied = new.is_air()
+                || matches!(
+                    new.as_block_kind(),
+                    azalea_registry::builtin::BlockKind::Water
+                        | azalea_registry::builtin::BlockKind::Lava
+                );
+            if !old.is_air() && emptied && crate::play::interaction::take_local_break(pos) {
+                crate::session::push_late_particle_emit(crate::session::ParticleEmit::Event(
+                    crate::session::LevelEventEmit {
                         id: 2001,
                         pos: [pos.x, pos.y, pos.z],
                         data: old.id() as u32,
                         global: false,
-                    }),
-                );
+                    },
+                ));
             }
         }));
     if hook_installed.is_err() {

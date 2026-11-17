@@ -54,6 +54,11 @@ pub struct ParticleScene {
     pub stats: ParticleStats,
     /// The live renderer's state (`update`), for a scene kept across frames.
     live: Option<Live>,
+    /// Pipelines into a shader pack's targets (`pack_pipes`): their colour
+    /// format, the build, and the built pair.
+    pack_pipes: Option<(vk::Format, Option<Pending>, Option<Pipes>)>,
+    /// Pack pipelines replaced by a format change, freed with the scene.
+    stale_pipes: Vec<vk::Pipeline>,
 }
 
 /// A live scene's textures (kept, by stable index) and what this frame
@@ -86,13 +91,16 @@ impl ParticleScene {
         reuse: Option<&mut ParticleScene>,
     ) -> Result<ParticleScene, SetupError> {
         // Take the old scene's shader and pipelines instead of building them.
+        let mut pack_reuse = None;
         let reused = reuse.map(|old| {
+            pack_reuse = Some((old.pack_pipes.take(), std::mem::take(&mut old.stale_pipes)));
             (
                 std::mem::replace(&mut old.module, vk::ShaderModule::null()),
                 old.pipes.take(),
                 old.pending.take(),
             )
         });
+        let (pack_pipes, stale_pipes) = pack_reuse.unwrap_or_default();
         let module = match &reused {
             Some((m, ..)) => *m,
             None => pipelines.module(ctx, super::shaders::PARTICLE)?,
@@ -222,7 +230,109 @@ impl ParticleScene {
             translucent: translucent_count,
             stats,
             live: None,
+            pack_pipes,
+            stale_pipes,
         })
+    }
+
+    /// The cutout and blend pipelines for a shader pack's targets: `color`
+    /// (its colortex0), the pack's depth with GL-style compares, no depth
+    /// writes (the pack has done its depth by then). `None` while building.
+    fn pack_pipes(
+        &mut self,
+        ctx: &Context,
+        pipelines: &Pipelines,
+        color: vk::Format,
+    ) -> Option<Pipes> {
+        if self.pack_pipes.as_ref().is_some_and(|(f, ..)| *f != color)
+            && let Some((_, pending, built)) = self.pack_pipes.take()
+        {
+            self.stale_pipes
+                .extend(built.into_iter().flat_map(|p| [p.cutout, p.blend]));
+            if let Some(Ok((b, _))) = pending.and_then(|mut p| p.wait()) {
+                self.stale_pipes.extend(b);
+            }
+        }
+        if self.pack_pipes.is_none() {
+            let spec = |fragment: &std::ffi::CStr, blend| {
+                Spec::Graphics(GraphicsSpec {
+                    module: self.module,
+                    vertex: c"particle_vertex".to_owned(),
+                    fragment: fragment.to_owned(),
+                    color: vec![color],
+                    depth: Some(super::pack::targets::DEPTH_FORMAT),
+                    depth_test: Some(vk::CompareOp::LESS_OR_EQUAL),
+                    depth_write: false,
+                    cull: vk::CullModeFlags::NONE,
+                    topology: vk::PrimitiveTopology::TRIANGLE_LIST,
+                    blend,
+                    additive: false,
+                    fragment_module: None,
+                })
+            };
+            let pending = pipelines.build_on_worker(
+                ctx,
+                vec![
+                    spec(c"particle_cutout", false),
+                    spec(c"particle_blend", true),
+                ],
+            );
+            self.pack_pipes = Some((color, Some(pending), None));
+        }
+        let (_, pending, built) = self.pack_pipes.as_mut()?;
+        if built.is_none()
+            && let Some(Ok((b, _))) = pending.as_mut().and_then(|p| p.take())
+        {
+            *built = Some(Pipes {
+                cutout: b[0],
+                blend: b[1],
+            });
+            *pending = None;
+        }
+        *built
+    }
+
+    /// Both layers into a shader pack's targets, before its final pass
+    /// (inside the caller's rendering, with the layout and set bound).
+    #[allow(clippy::too_many_arguments, reason = "one draw's whole context")]
+    pub fn draw_pack(
+        &self,
+        ctx: &Context,
+        cmd: vk::CommandBuffer,
+        pipelines: &Pipelines,
+        view_proj: [[f32; 4]; 4],
+        camera: bevy::math::Mat4,
+        view_index: u32,
+        atlas_index: u32,
+    ) {
+        let Some(pipes) = self.pack_pipes.as_ref().and_then(|p| p.2) else {
+            return;
+        };
+        let ids = (0, view_index, atlas_index);
+        self.draw(
+            ctx,
+            cmd,
+            pipelines,
+            pipes.cutout,
+            (view_proj, camera),
+            ids,
+            (0, self.cutout),
+        );
+        self.draw(
+            ctx,
+            cmd,
+            pipelines,
+            pipes.blend,
+            (view_proj, camera),
+            ids,
+            (self.cutout, self.translucent),
+        );
+    }
+
+    /// Builds or picks up the pack pipelines for `color` before a pass
+    /// that draws with them (`draw_pack`); false until they're built.
+    pub fn pack_ready(&mut self, ctx: &Context, pipelines: &Pipelines, color: vk::Format) -> bool {
+        self.pack_pipes(ctx, pipelines, color).is_some()
     }
 
     fn ready(&mut self) -> Result<Option<Pipes>, SetupError> {
@@ -446,6 +556,13 @@ impl ParticleScene {
             .pipes
             .map(|p| vec![p.cutout, p.blend])
             .unwrap_or_default();
+        pipelines.append(&mut self.stale_pipes);
+        if let Some((_, pending, built)) = self.pack_pipes.take() {
+            pipelines.extend(built.into_iter().flat_map(|p| [p.cutout, p.blend]));
+            if let Some(Ok((b, _))) = pending.and_then(|mut p| p.wait()) {
+                pipelines.extend(b);
+            }
+        }
         if let Some(Ok((built, _))) = self.pending.as_mut().and_then(|p| p.wait()) {
             pipelines.extend(built);
         }

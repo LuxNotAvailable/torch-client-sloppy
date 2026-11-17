@@ -416,7 +416,12 @@ fn spawn_particles(
 ) {
     use crate::session::ParticleEmit;
 
-    let emits = std::mem::take(&mut shared.0.lock().unwrap().session.world.particle_emits);
+    let mut emits = std::mem::take(&mut shared.0.lock().unwrap().session.world.particle_emits);
+    emits.append(
+        &mut crate::session::LATE_PARTICLE_EMITS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+    );
     if emits.is_empty() {
         return;
     }

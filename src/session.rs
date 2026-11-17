@@ -601,6 +601,18 @@ pub struct LevelEventEmit {
 
 pub const MAX_PENDING_PARTICLE_EMITS: usize = 256;
 
+/// Emits from threads that can't wait for the shared lock (the block-change
+/// hook runs inside azalea's systems); the particle system drains it.
+pub static LATE_PARTICLE_EMITS: std::sync::Mutex<Vec<ParticleEmit>> =
+    std::sync::Mutex::new(Vec::new());
+
+pub fn push_late_particle_emit(emit: ParticleEmit) {
+    let mut queue = LATE_PARTICLE_EMITS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    push_particle_emit(&mut queue, emit);
+}
+
 pub fn push_particle_emit(queue: &mut Vec<ParticleEmit>, emit: ParticleEmit) {
     if queue.len() < MAX_PENDING_PARTICLE_EMITS {
         queue.push(emit);
