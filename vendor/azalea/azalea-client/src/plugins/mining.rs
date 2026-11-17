@@ -25,7 +25,7 @@ use crate::{
     packet::game::SendGamePacketEvent,
 };
 
-fn has_aqua_affinity(inventory: &Inventory, registries: &azalea_core::registry_holder::RegistryHolder) -> bool {
+pub fn has_aqua_affinity(inventory: &Inventory, registries: &azalea_core::registry_holder::RegistryHolder) -> bool {
     use azalea_inventory::components::Enchantments;
     use azalea_registry::DataRegistry;
     use azalea_registry::identifier::Identifier;
@@ -62,6 +62,7 @@ impl Plugin for MiningPlugin {
                 (
                     update_mining_component,
                     handle_auto_mine,
+                    queue_held_instant_mine,
                     handle_mining_queued,
                     decrement_mine_delay,
                     continue_mining_block,
@@ -141,6 +142,96 @@ fn handle_auto_mine(
             });
         } else if mining.is_some() && hit_result_component.miss() {
             stop_mining_block_event.write(StopMiningBlockEvent { entity });
+        }
+    }
+}
+
+/// Set by the game every tick: attack is held and nothing (a destroy delay,
+/// an open screen) holds the break back.
+pub static HOLD_TO_MINE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether the held item breaks this block on the first hit
+/// (`startDestroyBlock`'s `destroyProgress >= 1`).
+#[allow(clippy::too_many_arguments)]
+pub fn breaks_instantly(
+    state: BlockState,
+    pos: BlockPos,
+    held: &ItemStack,
+    fluid_on_eyes: &FluidOnEyes,
+    physics: &Physics,
+    attributes: &Attributes,
+    active_effects: &ActiveEffects,
+    aqua_affinity: bool,
+) -> bool {
+    if state.outline_shape(pos).is_empty() {
+        return false;
+    }
+    let block = Box::<dyn BlockTrait>::from(state);
+    get_mine_progress(
+        block.as_ref(),
+        held,
+        fluid_on_eyes,
+        physics,
+        attributes,
+        active_effects,
+        aqua_affinity,
+    ) >= 1.
+}
+
+/// Vanilla `continueDestroyBlock` with attack held: a block that breaks
+/// instantly is broken in the same tick (`handle_mining_queued`, next in
+/// the chain), so held attack takes one block a tick. Queuing through
+/// `StartMiningBlockEvent` would wait for an `Update` and a tick.
+#[allow(clippy::type_complexity)]
+fn queue_held_instant_mine(
+    mut commands: Commands,
+    query: Query<
+        (
+            Entity,
+            &HitResultComponent,
+            &GameMode,
+            &WorldHolder,
+            &Inventory,
+            &ActiveEffects,
+            &FluidOnEyes,
+            &Physics,
+            &Attributes,
+        ),
+        (Without<Mining>, Without<MiningQueued>),
+    >,
+) {
+    if !HOLD_TO_MINE.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    for (entity, hit, game_mode, world_holder, inventory, effects, fluid, physics, attributes) in
+        &query
+    {
+        if !matches!(game_mode, GameMode::Survival | GameMode::Adventure) {
+            continue;
+        }
+        let Some(hit) = hit.as_block_hit_result_if_not_miss() else {
+            continue;
+        };
+        let world = world_holder.shared.read();
+        let Some(state) = world.get_block_state(hit.block_pos) else {
+            continue;
+        };
+        let aqua = has_aqua_affinity(inventory, &world.registries);
+        if breaks_instantly(
+            state,
+            hit.block_pos,
+            inventory.held_item(),
+            fluid,
+            physics,
+            attributes,
+            effects,
+            aqua,
+        ) {
+            commands.entity(entity).insert(MiningQueued {
+                position: hit.block_pos,
+                direction: hit.direction,
+                force: false,
+            });
         }
     }
 }

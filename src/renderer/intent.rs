@@ -8,7 +8,7 @@ pub struct Intent {
     attack_held: bool,
     use_held: bool,
     attack_clicked: bool,
-    use_clicked: bool,
+    use_clicked: u8,
     pick_clicked: bool,
     pick_include_data: bool,
 }
@@ -25,7 +25,7 @@ impl Intent {
 
     pub fn click(&mut self, attack: bool, use_item: bool) {
         self.attack_clicked |= attack;
-        self.use_clicked |= use_item;
+        self.use_clicked = self.use_clicked.saturating_add(use_item as u8);
     }
 
     #[cfg_attr(
@@ -47,7 +47,11 @@ pub(crate) fn publish(mut intent: ResMut<Intent>, shared: Res<Shared>) {
     s.session.input.attack_held = intent.attack_held;
     s.session.input.use_held = intent.use_held;
     s.session.input.attack_clicked |= intent.attack_clicked;
-    s.session.input.use_clicked |= intent.use_clicked;
+    s.session.input.use_clicked = s
+        .session
+        .input
+        .use_clicked
+        .saturating_add(intent.use_clicked);
     if intent.pick_clicked {
         s.session.input.pick_clicked = true;
         s.session.input.pick_include_data = intent.pick_include_data;

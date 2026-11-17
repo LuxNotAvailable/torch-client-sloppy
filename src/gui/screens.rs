@@ -1565,7 +1565,7 @@ fn clear_world_clicks(shared: &Arc<SharedMutex>) {
     s.session.input.attack_held = false;
     s.session.input.use_held = false;
     s.session.input.attack_clicked = false;
-    s.session.input.use_clicked = false;
+    s.session.input.use_clicked = 0;
 }
 
 fn apply_book_out(out: book::BookOut, state: &mut GuiState, shared: &Arc<SharedMutex>) {

@@ -5,7 +5,7 @@ use std::sync::{
 
 use azalea::Client;
 use azalea::block::BlockState;
-use azalea::mining::{MineBlockPos, MineProgress, StopMiningBlockEvent};
+use azalea::mining::{HOLD_TO_MINE, MineBlockPos, MineProgress, StopMiningBlockEvent};
 use azalea::physics::collision::BlockWithShape;
 use azalea_core::direction::Direction;
 use azalea_core::game_type::GameMode;
@@ -78,7 +78,9 @@ struct UseItem {
 /// hunger update still in flight) never raises its using flag, so without
 /// this the held key would never try again.
 const USE_CONFIRM_TICKS: u32 = 20;
-static WAS_MINING: AtomicBool = AtomicBool::new(false);
+/// The block a timed break was working on last tick, to tell a finished
+/// break (it's gone now) from one given up.
+static WAS_MINING: Mutex<Option<BlockPos>> = Mutex::new(None);
 
 static LOCAL_BREAK: Mutex<Option<(BlockPos, crate::platform::time::Instant)>> = Mutex::new(None);
 
@@ -108,7 +110,8 @@ pub(crate) fn reset_session_state() {
     BREAK_DELAY.store(0, Ordering::Relaxed);
     PLACE_DELAY.store(0, Ordering::Relaxed);
     SERVER_USING_ITEM.store(false, Ordering::Relaxed);
-    WAS_MINING.store(false, Ordering::Relaxed);
+    *WAS_MINING.lock().unwrap() = None;
+    HOLD_TO_MINE.store(false, Ordering::Relaxed);
     let use_item = match USE_ITEM.try_lock() {
         Ok(guard) => Some(guard),
         Err(std::sync::TryLockError::Poisoned(poisoned)) => Some(poisoned.into_inner()),
@@ -178,9 +181,9 @@ pub fn handle_interaction(bot: &Client, shared: &Arc<SharedMutex>) {
         }
         if s.screen_open {
             s.session.input.attack_clicked = false;
-            s.session.input.use_clicked = false;
+            s.session.input.use_clicked = 0;
             s.session.input.pick_clicked = false;
-            (false, false, false, false, None, attack_ready)
+            (false, false, false, 0, None, attack_ready)
         } else {
             (
                 s.session.input.attack_held,
@@ -309,19 +312,18 @@ fn block_hit(bot: &Client) -> Option<BlockHitResult> {
     }
 }
 
+/// One tick of `Minecraft.continueAttack`. `finished`: a timed break
+/// completed last tick, which arms vanilla's `destroyDelay`; instant
+/// breaks don't, so held attack takes one block a tick.
 fn break_step(
     creative: bool,
     clicked: bool,
     delay: u32,
-    was_mining: bool,
+    finished: bool,
     mining_at: Option<BlockPos>,
     target: Option<BlockPos>,
 ) -> (bool, u32) {
-    let delay = if was_mining && mining_at.is_none() {
-        DESTROY_DELAY
-    } else {
-        delay
-    };
+    let delay = if finished { DESTROY_DELAY } else { delay };
 
     if !clicked && delay > 0 {
         return (false, delay - 1);
@@ -367,9 +369,23 @@ fn apply_break(
     } else {
         None
     };
-    let was_mining = WAS_MINING.swap(mining_at.is_some(), Ordering::Relaxed);
+    // The crosshair target refreshes on frames, so right after an instant
+    // break it can still name the emptied block: no target, not a break of
+    // air (which azalea would count as mining and drop a tick later).
+    let world = bot.world().ok();
+    let solid = |pos: BlockPos| {
+        world.as_ref().is_some_and(|w| {
+            w.read()
+                .get_block_state(pos)
+                .is_some_and(|s| !s.outline_shape(pos).is_empty())
+        })
+    };
+    let hit = hit.filter(|h| solid(h.block_pos));
+    let previous = std::mem::replace(&mut *WAS_MINING.lock().unwrap(), mining_at);
+    let finished = mining_at.is_none() && previous.is_some_and(|p| !solid(p));
 
     if !held && !clicked {
+        HOLD_TO_MINE.store(false, Ordering::Relaxed);
         BREAK_DELAY.store(0, Ordering::Relaxed);
         if mining_at.is_some() {
             bot.ecs
@@ -384,11 +400,24 @@ fn apply_break(
         creative,
         clicked,
         BREAK_DELAY.load(Ordering::Relaxed),
-        was_mining,
+        finished,
         mining_at,
         hit.map(|h| h.block_pos),
     );
     BREAK_DELAY.store(delay, Ordering::Relaxed);
+    // Held attack on a block that breaks instantly: azalea's
+    // `queue_held_instant_mine` breaks it inside the next game tick, so this
+    // (async) tick only names it for the break effects and swings.
+    HOLD_TO_MINE.store(
+        held && !creative && delay == 0 && mining_at.is_none(),
+        Ordering::Relaxed,
+    );
+    let instant = !creative && hit.is_some_and(|h| breaks_instantly(bot, h.block_pos));
+    let start = start && (clicked || !instant);
+    let held_instant = held && !clicked && instant && mining_at.is_none() && delay == 0;
+    if held_instant {
+        note_local_break(hit.expect("instant needs a target").block_pos);
+    }
     if let Some(pos) = mining_at.or_else(|| hit.map(|h| h.block_pos).filter(|_| start)) {
         note_local_break(pos);
     }
@@ -399,40 +428,79 @@ fn apply_break(
         bot.start_mining(pos);
     }
 
-    if start || mining_at.is_some() {
+    if start || held_instant || mining_at.is_some() {
         crate::client::tick::swing_local_player(false, shared);
     }
 }
 
+/// Whether the held item breaks the block at `pos` on the first hit.
+fn breaks_instantly(bot: &Client, pos: BlockPos) -> bool {
+    use azalea::entity::{ActiveEffects, Attributes, FluidOnEyes, Physics, inventory::Inventory};
+    let (Ok(world), Ok(inventory), Ok(effects), Ok(fluid), Ok(physics), Ok(attributes)) = (
+        bot.world(),
+        bot.component::<Inventory>(),
+        bot.component::<ActiveEffects>(),
+        bot.component::<FluidOnEyes>(),
+        bot.component::<Physics>(),
+        bot.component::<Attributes>(),
+    ) else {
+        return false;
+    };
+    let world = world.read();
+    let Some(state) = world.get_block_state(pos) else {
+        return false;
+    };
+    let aqua = azalea::mining::has_aqua_affinity(&inventory, &world.registries);
+    azalea::mining::breaks_instantly(
+        state,
+        pos,
+        inventory.held_item(),
+        &fluid,
+        &physics,
+        &attributes,
+        &effects,
+        aqua,
+    )
+}
+
+/// One tick of `Minecraft.tick`'s right-click handling: the delay counts
+/// down first, then every click since the last tick uses the item
+/// (`keyUse.consumeClick`, no delay), then a held button repeats once the
+/// delay is out. Returns the swings and the new delay.
 fn place_step(
     game_mode: GameMode,
-    clicked: bool,
+    clicks: u8,
     held: bool,
     delay: u32,
     already_using: bool,
-    use_item: impl FnOnce() -> bool,
-) -> (bool, u32) {
-    if delay > 0 {
-        return (false, delay - 1);
-    }
+    mut use_item: impl FnMut() -> bool,
+) -> (u32, u32) {
+    let mut delay = delay.saturating_sub(1);
     if already_using {
-        return (false, delay);
+        return (0, delay);
     }
-    if !held && !clicked {
-        return (false, delay);
+    let mut swings = 0;
+    let mut start = |delay: &mut u32| {
+        *delay = RIGHT_CLICK_DELAY;
+        if use_item() && game_mode != GameMode::Spectator {
+            swings += 1;
+        }
+    };
+    for _ in 0..clicks {
+        start(&mut delay);
     }
-
-    let used = use_item();
-    let swing = used && game_mode != GameMode::Spectator;
-    (swing, RIGHT_CLICK_DELAY)
+    if held && delay == 0 {
+        start(&mut delay);
+    }
+    (swings, delay)
 }
 
-fn apply_place(bot: &Client, shared: &Arc<SharedMutex>, held: bool, clicked: bool) {
+fn apply_place(bot: &Client, shared: &Arc<SharedMutex>, held: bool, clicks: u8) {
     let game_mode = bot
         .component::<GameMode>()
         .map(|gm| *gm)
         .unwrap_or(GameMode::Survival);
-    open_book_editor(bot, shared, clicked);
+    open_book_editor(bot, shared, clicks > 0);
     let secondary_use = {
         let s = shared.lock().unwrap();
         s.move_flags & crate::session::MOVE_SNEAK != 0
@@ -446,9 +514,9 @@ fn apply_place(bot: &Client, shared: &Arc<SharedMutex>, held: bool, clicked: boo
         riptide(bot);
         release_using_item(bot);
     }
-    let (swing, delay) = place_step(
+    let (swings, delay) = place_step(
         game_mode,
-        clicked,
+        clicks,
         held,
         PLACE_DELAY.load(Ordering::Relaxed),
         was_using,
@@ -466,7 +534,7 @@ fn apply_place(bot: &Client, shared: &Arc<SharedMutex>, held: bool, clicked: boo
         },
     );
     PLACE_DELAY.store(delay, Ordering::Relaxed);
-    if swing {
+    for _ in 0..swings {
         swing_main_hand(shared);
     }
 }
@@ -1149,7 +1217,9 @@ fn send_use_item_on_with(bot: &Client, hit: &BlockHitResult, interacted: bool, o
             );
             crate::play::use_sounds::block_used(state, hit.block_pos, may_build);
         }
-        predict_open_toggle(bot, hit);
+        predict_block_use(bot, hit, true);
+    } else if held_item_kind(bot) == Some(ItemKind::FlintAndSteel) {
+        predict_block_use(bot, hit, false);
     }
     bot.write_packet(ServerboundUseItemOn {
         hand: if offhand {
@@ -1162,7 +1232,9 @@ fn send_use_item_on_with(bot: &Client, hit: &BlockHitResult, interacted: bool, o
     });
 }
 
-fn predict_open_toggle(bot: &Client, hit: &BlockHitResult) {
+/// Predicts what the click does to the block (`play::block_use`):
+/// `interacted` for the block's own use, otherwise only an item's.
+fn predict_block_use(bot: &Client, hit: &BlockHitResult, interacted: bool) {
     use azalea::interact::BlockStatePredictionHandler;
 
     if bot.is_mining() {
@@ -1183,7 +1255,27 @@ fn predict_open_toggle(bot: &Client, hit: &BlockHitResult) {
         let Some(old) = world.get_block_state(hit.block_pos) else {
             return;
         };
-        let Some(new) = crate::play::placement::toggled_open(old) else {
+        let user = crate::play::block_use::User {
+            held: held_item_kind(bot),
+            facing: bot
+                .component::<azalea::entity::LookDirection>()
+                .map(|look| player_direction(look.y_rot()))
+                .unwrap_or(Direction::North),
+            may_build: !matches!(
+                bot.component::<GameMode>().map(|gm| *gm),
+                Ok(GameMode::Adventure | GameMode::Spectator)
+            ),
+            can_eat: bot
+                .component::<azalea::entity::PlayerAbilities>()
+                .is_ok_and(|a| a.invulnerable)
+                || bot.hunger().is_ok_and(|hunger| hunger.food < 20),
+        };
+        let new = if interacted {
+            crate::play::block_use::used(old, user)
+        } else {
+            crate::play::block_use::lit(old)
+        };
+        let Some(new) = new else {
             return;
         };
         let mut writes = vec![(hit.block_pos, old, new)];
@@ -1208,6 +1300,16 @@ fn predict_open_toggle(bot: &Client, hit: &BlockHitResult) {
     let world = world.read();
     for (pos, _, new) in &writes {
         world.set_block_state(*pos, *new);
+    }
+}
+
+/// `Entity.getDirection`: the horizontal way a yaw faces.
+fn player_direction(yaw: f32) -> Direction {
+    match (yaw as f64 / 90.0 + 0.5).floor() as i64 & 3 {
+        0 => Direction::South,
+        1 => Direction::West,
+        2 => Direction::North,
+        _ => Direction::East,
     }
 }
 
@@ -1846,7 +1948,7 @@ mod tests {
 
         for _ in 0..10 {
             assert_eq!(
-                break_step(false, false, 0, true, Some(P), Some(P)),
+                break_step(false, false, 0, false, Some(P), Some(P)),
                 (false, 0)
             );
         }
@@ -1855,7 +1957,7 @@ mod tests {
     #[test]
     fn survival_restarts_on_target_change() {
         assert_eq!(
-            break_step(false, false, 0, true, Some(P), Some(Q)),
+            break_step(false, false, 0, false, Some(P), Some(Q)),
             (true, 0)
         );
     }
@@ -1872,86 +1974,84 @@ mod tests {
     }
 
     #[test]
-    fn a_refused_click_neither_uses_nor_swings() {
-        let (swing, delay) = place_step(GameMode::Creative, true, false, 0, false, || true);
-        assert!(swing);
-        assert_eq!(delay, RIGHT_CLICK_DELAY);
-
-        let mut delay = delay;
-        for _ in 0..RIGHT_CLICK_DELAY {
-            let (swing, next) = place_step(GameMode::Creative, true, true, delay, false, || {
-                panic!("used during the delay")
-            });
-            assert!(!swing, "the arm swung on a click the delay refused");
-            delay = next;
-        }
-        assert_eq!(delay, 0);
+    fn every_click_uses_even_inside_the_delay() {
+        // `keyUse.consumeClick` ignores `rightClickDelay`: clicks are only
+        // limited by how fast they come.
+        let (swings, delay) = place_step(GameMode::Creative, 1, false, 0, false, || true);
+        assert_eq!((swings, delay), (1, RIGHT_CLICK_DELAY));
+        let (swings, delay) = place_step(GameMode::Creative, 1, false, delay, false, || true);
+        assert_eq!((swings, delay), (1, RIGHT_CLICK_DELAY));
+        // Three clicks between two ticks are three uses.
+        let mut uses = 0;
+        let (swings, _) = place_step(GameMode::Creative, 3, true, delay, false, || {
+            uses += 1;
+            true
+        });
+        assert_eq!((uses, swings), (3, 3));
     }
 
     #[test]
-    fn a_held_right_click_swings_on_every_repeat() {
+    fn a_held_right_click_repeats_every_four_ticks() {
         let mut delay = 0;
-        let mut swings = 0;
         let mut uses = 0;
         for _ in 0..21 {
-            let (swing, next) = place_step(GameMode::Survival, false, true, delay, false, || {
+            let (_, next) = place_step(GameMode::Survival, 0, true, delay, false, || {
                 uses += 1;
                 true
             });
-            swings += swing as u32;
             delay = next;
         }
-        assert_eq!(uses, 5);
-        assert_eq!(swings, 5);
+        // Ticks 0, 4, 8, 12, 16 and 20.
+        assert_eq!(uses, 6);
     }
 
     #[test]
     fn a_use_that_consumed_nothing_does_not_swing() {
         assert_eq!(
-            place_step(GameMode::Survival, true, false, 0, false, || false),
-            (false, RIGHT_CLICK_DELAY)
+            place_step(GameMode::Survival, 1, false, 0, false, || false),
+            (0, RIGHT_CLICK_DELAY)
         );
     }
 
     #[test]
     fn a_spectator_never_swings() {
         assert_eq!(
-            place_step(GameMode::Spectator, true, false, 0, false, || true),
-            (false, RIGHT_CLICK_DELAY)
+            place_step(GameMode::Spectator, 1, false, 0, false, || true),
+            (0, RIGHT_CLICK_DELAY)
         );
         assert_eq!(
-            place_step(GameMode::Spectator, false, true, 0, false, || true),
-            (false, RIGHT_CLICK_DELAY)
+            place_step(GameMode::Spectator, 0, true, 0, false, || true),
+            (0, RIGHT_CLICK_DELAY)
         );
     }
 
     #[test]
     fn an_untouched_button_does_nothing() {
         assert_eq!(
-            place_step(GameMode::Creative, false, false, 0, false, || panic!(
+            place_step(GameMode::Creative, 0, false, 0, false, || panic!(
                 "used without a button"
             )),
-            (false, 0)
+            (0, 0)
         );
     }
 
     #[test]
     fn a_use_already_in_progress_is_not_restarted() {
         assert_eq!(
-            place_step(GameMode::Survival, false, true, 0, true, || panic!(
+            place_step(GameMode::Survival, 1, true, 0, true, || panic!(
                 "restarted a use that was already running"
             )),
-            (false, 0)
+            (0, 0)
         );
     }
 
     #[test]
     fn a_click_during_a_use_is_swallowed() {
         assert_eq!(
-            place_step(GameMode::Survival, true, true, 0, true, || panic!(
+            place_step(GameMode::Survival, 1, true, 0, true, || panic!(
                 "a click restarted a use that was already running"
             )),
-            (false, 0)
+            (0, 0)
         );
     }
 

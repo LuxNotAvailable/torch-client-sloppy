@@ -1607,7 +1607,7 @@ pub(super) fn enter_screen(
         s.session.input.attack_held = false;
         s.session.input.use_held = false;
         s.session.input.attack_clicked = false;
-        s.session.input.use_clicked = false;
+        s.session.input.use_clicked = 0;
     }
     if open || world_cursor().0 == CursorGrabMode::None {
         crate::platform::pointer::unlock();

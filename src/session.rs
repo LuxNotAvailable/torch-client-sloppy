@@ -194,7 +194,8 @@ pub struct SessionInput {
     pub attack_held: bool,
     pub use_held: bool,
     pub attack_clicked: bool,
-    pub use_clicked: bool,
+    /// Right clicks since the last tick, each one a use.
+    pub use_clicked: u8,
     pub pick_clicked: bool,
     pub pick_include_data: bool,
 }
@@ -350,7 +351,7 @@ impl SessionState {
         self.input.attack_held = false;
         self.input.use_held = false;
         self.input.attack_clicked = false;
-        self.input.use_clicked = false;
+        self.input.use_clicked = 0;
     }
 
     pub fn set_action_bar(&mut self, spans: Vec<crate::text::Span>) {
