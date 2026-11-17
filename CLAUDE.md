@@ -4,6 +4,9 @@ Rust Minecraft client (Bevy + native Vulkan). Rules: `STYLE_GUIDE.md`.
 
 ## Context rules
 - Start at `docs/ARCHITECTURE.md`, then the target module's `mod.rs` `//!` doc.
+- Don't read `CHECKLIST_ARCHIVE.md` (finished checklist items) unless asked.
+  Ticked items move there from `CLEANUP_CHECKLIST.md` and
+  `VULKAN_REWRITE_CHECKLIST.md`.
 - Don't read `vendor/`. See `vendor/PATCHES.md`; open a crate only to debug it.
 - Don't read data files unless the task is about their values:
   `src/generated_*.rs`, `*_anim.rs`, `entities/models/aquatic/animation/`,

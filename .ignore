@@ -8,3 +8,4 @@ src/protocol/data/
 Cargo.lock
 *.png
 *.ogg
+CHECKLIST_ARCHIVE.md
