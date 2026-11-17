@@ -1053,6 +1053,8 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
         ],
     );
 
+    let spectating = spectated_view(bot);
+
     let (bob_ground, bob_speed) =
         bot.component::<azalea::entity::Physics>()
             .map_or((false, 0.0), |p| {
@@ -1090,7 +1092,19 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
                 .tick(moved, bob_speed, walking, bob_riding);
         }
         s.session.player_pos_prev = s.session.player_pos;
-        s.session.player_pos = [pos.x as f32, pos.y as f32, pos.z as f32];
+        // Spectating: the view is the spectated entity's.
+        let (view_pos, spectate) = match spectating {
+            Some((at, eye, yaw, pitch)) => (at, Some((eye, yaw, pitch))),
+            None => ([pos.x, pos.y, pos.z], None),
+        };
+        if spectate.is_some() != s.session.spectate.is_some() {
+            // Jump rather than glide between the bodies.
+            s.session.player_pos_prev =
+                [view_pos[0] as f32, view_pos[1] as f32, view_pos[2] as f32];
+            s.session.camera_eye = [0.0, 0.0];
+        }
+        s.session.spectate = spectate;
+        s.session.player_pos = [view_pos[0] as f32, view_pos[1] as f32, view_pos[2] as f32];
         s.session.last_tick_time = Some(crate::platform::time::Instant::now());
         s.session.tick_seq = s.session.tick_seq.wrapping_add(1);
         s.session.world.game_time = s.session.world.game_time.wrapping_add(1);
@@ -1549,6 +1563,37 @@ fn hold_unsigned(
     (Vec::new(), signing)
 }
 
+/// The spectated entity's feet, eye height and look (Minecraft yaw, pitch).
+fn spectated_view(bot: &Client) -> Option<([f64; 3], f32, f32, f32)> {
+    static MISSING: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+    let id = crate::client::tracking::spectated_id()?;
+    let ecs = bot.ecs.read();
+    let entity = ecs
+        .get::<azalea::entity::indexing::EntityIdIndex>(bot.entity)
+        .and_then(|index| {
+            index.get_by_minecraft_entity(azalea_core::entity_id::MinecraftEntityId(id))
+        });
+    let Some(entity) = entity else {
+        // Once per target: the camera can't follow what the client lacks.
+        if MISSING.swap(id, std::sync::atomic::Ordering::Relaxed) != id {
+            crate::log_warn!(
+                "net",
+                "spectated entity {id} isn't loaded; the camera stays put"
+            );
+        }
+        return None;
+    };
+    let at = ecs.get::<azalea::entity::Position>(entity)?;
+    let kind = **ecs.get::<azalea::entity::EntityKindComponent>(entity)?;
+    let eye = if kind == azalea_registry::builtin::EntityKind::Player {
+        crate::renderer::systems::pose_eye_height(ecs.get::<azalea::entity::Pose>(entity).copied())
+    } else {
+        azalea::entity::dimensions::EntityDimensions::from(kind).eye_height
+    };
+    let look = ecs.get::<azalea::entity::LookDirection>(entity)?;
+    Some(([at.x, at.y, at.z], eye, look.y_rot(), look.x_rot()))
+}
+
 fn collect_other_players(bot: &Client) -> (Vec<OtherPlayerInfo>, HashSet<i32>) {
     use azalea::entity::Pose;
     use azalea::entity::metadata;
@@ -1559,6 +1604,14 @@ fn collect_other_players(bot: &Client) -> (Vec<OtherPlayerInfo>, HashSet<i32>) {
     let max_healths = crate::client::tracking::max_healths().lock().unwrap();
     let viewer = crate::client::bot::username();
     let avatar_metadata_trusted = avatar_metadata_trusted();
+    // `isPassenger`: riding anything (the pose stays standing).
+    let riders: HashSet<i32> = crate::client::tracking::passengers()
+        .lock()
+        .unwrap()
+        .values()
+        .flatten()
+        .copied()
+        .collect();
 
     let players = bot.nearby_players().unwrap_or_default();
     let mut out = Vec::with_capacity(players.len());
@@ -1575,6 +1628,10 @@ fn collect_other_players(bot: &Client) -> (Vec<OtherPlayerInfo>, HashSet<i32>) {
             };
             let id = id.0;
             seen.insert(id);
+            // The spectated player isn't drawn: the camera is in it.
+            if Some(id) == crate::client::tracking::spectated_id() {
+                continue;
+            }
 
             let (y_rot, pitch) = eref
                 .get_component::<azalea::entity::LookDirection>()
@@ -1584,8 +1641,10 @@ fn collect_other_players(bot: &Client) -> (Vec<OtherPlayerInfo>, HashSet<i32>) {
 
             let worn = equip.get(&id).cloned().unwrap_or_default();
             let health = eref.get_component::<metadata::Health>().map(|c| c.0);
+            // A mounted player sits on its vehicle (`positionRider`).
+            let pos = crate::play::entity_feed::player_seat(id).unwrap_or([p.x, p.y, p.z]);
             let input = AnimInput {
-                pos: [p.x, p.y, p.z],
+                pos,
                 pitch,
                 head_yaw: heads.get(&id).copied().unwrap_or(y_rot),
                 y_rot,
@@ -1640,7 +1699,7 @@ fn collect_other_players(bot: &Client) -> (Vec<OtherPlayerInfo>, HashSet<i32>) {
                 stinger_count: eref
                     .get_component::<metadata::StingerCount>()
                     .map_or(0, |c| c.0.clamp(0, 255) as u8),
-                passenger: pose == Pose::Sitting,
+                passenger: riders.contains(&id),
                 main_arm_left: avatar_metadata_trusted
                     && eref
                         .get_component::<metadata::PlayerMainHand>()
@@ -1700,6 +1759,19 @@ fn collect_other_players(bot: &Client) -> (Vec<OtherPlayerInfo>, HashSet<i32>) {
     });
 
     anims.retain(|id, _| seen.contains(id));
+    // For seating riders on players (`entity_feed::seat_riders`).
+    let local = crate::client::tracking::local_entity_id();
+    crate::play::entity_feed::publish_player_poses(
+        anims
+            .iter()
+            .map(|(id, anim)| {
+                (
+                    if *id == LOCAL_ANIM_ID { local } else { *id },
+                    anim.pose_pair(),
+                )
+            })
+            .collect(),
+    );
 
     (out, seen)
 }
@@ -1793,7 +1865,7 @@ fn tick_local_anim(
         stinger_count: bot
             .component::<azalea::entity::metadata::StingerCount>()
             .map_or(0, |c| c.0.clamp(0, 255) as u8),
-        passenger: false,
+        passenger: crate::client::tracking::local_vehicle_id().is_some(),
         #[cfg(feature = "skins")]
         on_ground: bot
             .component::<azalea::entity::Physics>()

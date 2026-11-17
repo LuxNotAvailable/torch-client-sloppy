@@ -306,6 +306,9 @@ pub struct SessionState {
     /// The camera's eye height last tick and this one, eased towards the
     /// pose's (`client::tick`).
     pub camera_eye: [f32; 2],
+    /// Spectating another entity (`ClientboundSetCamera`): its eye height
+    /// and look (Minecraft yaw, pitch); the camera follows it.
+    pub spectate: Option<(f32, f32, f32)>,
     pub fall_flying: bool,
     pub swimming: bool,
     pub sleeping: bool,

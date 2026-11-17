@@ -86,11 +86,15 @@ pub fn riding_offset(kind: EntityKind) -> f64 {
         K::Giant => -3.75,
         K::Husk => -0.7,
         K::Illusioner => -0.6,
+        K::Mannequin => -0.6,
         K::Parched => -0.7,
         K::Phantom => -0.125,
         K::Piglin => -0.7,
         K::PiglinBrute => -0.7,
         K::Pillager => -0.6,
+        // `Avatar.DEFAULT_VEHICLE_ATTACHMENT` (players and mannequins), set in
+        // `Avatar`, not `EntityTypes`.
+        K::Player => -0.6,
         K::Skeleton => -0.7,
         K::Stray => -0.7,
         K::Vex => 0.04,

@@ -557,6 +557,17 @@ impl HumanoidAnim {
     }
 
     fn handle_movement_packets(&mut self, input: &AnimInput) -> Option<([f64; 3], f32, f32)> {
+        // A passenger is placed on its seat each tick (`positionRider`),
+        // never lerped: restarting the lerp every tick left it trailing.
+        if input.passenger {
+            self.raw_pos = input.pos;
+            self.raw_y_rot = input.y_rot;
+            self.raw_pitch = input.pitch;
+            if let Some(interp) = self.interp.as_mut() {
+                interp.cancel();
+            }
+            return Some((input.pos, input.y_rot, input.pitch));
+        }
         let mut deferred = None;
         if input.pos != self.raw_pos
             || input.y_rot != self.raw_y_rot
@@ -604,6 +615,12 @@ impl HumanoidAnim {
             }
         }
         deferred
+    }
+
+    /// Last tick's and this tick's position, and the body's yaw: a
+    /// player's pose as a vehicle (`seat_riders`).
+    pub fn pose_pair(&self) -> ([f64; 3], [f64; 3], f32) {
+        (self.pos_old, self.pos, self.body_yaw)
     }
 
     pub fn body_yaw_pair(&self) -> (f32, f32) {

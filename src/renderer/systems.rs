@@ -896,7 +896,9 @@ pub const SLEEPING_EYE_HEIGHT: f32 = 0.2;
 const SLEEPING_CAMERA_NUDGE: f32 = 0.3;
 
 pub fn session_eye_height(session: &crate::session::SessionState) -> f32 {
-    if session.sleeping {
+    if let Some((eye, ..)) = session.spectate {
+        eye
+    } else if session.sleeping {
         SLEEPING_EYE_HEIGHT
     } else if session.crawling {
         EYE_HEIGHT_CRAWLING

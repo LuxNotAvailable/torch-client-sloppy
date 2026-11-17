@@ -397,15 +397,43 @@ fn nearby_entities(bot: &Client, origin: AzVec3, cap: usize) -> Vec<(AzEntity, A
     all
 }
 
+/// Seats of riders that aren't fed entities (other players), by entity
+/// id: where `positionRider` puts them this tick (`player_seat`).
+static PLAYER_SEATS: std::sync::Mutex<Option<HashMap<i32, [f64; 3]>>> = std::sync::Mutex::new(None);
+
+type PlayerPose = ([f64; 3], [f64; 3], f32);
+
+/// Players' last and current positions and body yaw, by entity id (the
+/// local player too), published by the player tick so seating never takes
+/// the player animation lock under the entity one.
+static PLAYER_POSES: std::sync::Mutex<Option<HashMap<i32, PlayerPose>>> =
+    std::sync::Mutex::new(None);
+
+pub(crate) fn publish_player_poses(poses: HashMap<i32, PlayerPose>) {
+    if let Ok(mut slot) = PLAYER_POSES.lock() {
+        *slot = Some(poses);
+    }
+}
+
+/// Where a mounted player sits, from its vehicle (`seat_riders`).
+pub(crate) fn player_seat(id: i32) -> Option<[f64; 3]> {
+    PLAYER_SEATS.lock().ok()?.as_ref()?.get(&id).copied()
+}
+
 /// `Entity.positionRider` for fed riders on fed vehicles: the vehicle's
 /// seat point (turned with it) less the rider's own attachment. Riders on
 /// riders go after their vehicle, so jockey stacks line up.
 fn seat_riders(
     anims: &mut bevy::platform::collections::HashMap<i32, crate::entities::feed::EntityAnim>,
     mounts: &HashMap<i32, i32>,
+    player_vehicle: impl Fn(i32) -> Option<([f64; 3], [f64; 3], f32)>,
 ) {
     use crate::entities::attachments::{passenger_points, riding_offset};
+    let mut player_seats = HashMap::new();
     if mounts.is_empty() {
+        if let Ok(mut seats) = PLAYER_SEATS.lock() {
+            *seats = None;
+        }
         return;
     }
     let passengers = passengers().lock().unwrap();
@@ -425,20 +453,33 @@ fn seat_riders(
         .collect();
     order.sort_by_key(|(r, _)| depth(*r));
     for (rider, vehicle) in order {
-        let Some(v) = anims.get(&vehicle) else {
-            continue;
+        // A player carries its riders too (`/ride`).
+        let (old, now, yaw, kind, baby) = match anims.get(&vehicle) {
+            Some(v) => {
+                let (old, now, yaw) = v.pose_pair();
+                (old, now, yaw, v.kind, v.is_baby())
+            }
+            None => match player_vehicle(vehicle) {
+                Some((old, now, yaw)) => (
+                    old,
+                    now,
+                    yaw,
+                    azalea_registry::builtin::EntityKind::Player,
+                    false,
+                ),
+                None => continue,
+            },
         };
-        let (old, now, yaw) = v.pose_pair();
-        let scale = if v.is_baby() { 0.5 } else { 1.0 };
+        let scale = if baby { 0.5 } else { 1.0 };
         let index = passengers
             .get(&vehicle)
             .and_then(|list| list.iter().position(|id| *id == rider))
             .unwrap_or(0);
-        let point = match passenger_points(v.kind) {
+        let point = match passenger_points(kind) {
             Some(points) => points[index.min(points.len() - 1)],
             None => [
                 0.0,
-                azalea::entity::dimensions::EntityDimensions::from(v.kind).height as f64,
+                azalea::entity::dimensions::EntityDimensions::from(kind).height as f64,
                 0.0,
             ],
         };
@@ -453,11 +494,20 @@ fn seat_riders(
             (point[2] * cos - point[0] * sin) * scale,
         ];
         let Some(r) = anims.get_mut(&rider) else {
+            // Other players draw from their own state: hand them the seat.
+            let lift = -riding_offset(azalea_registry::builtin::EntityKind::Player);
+            player_seats.insert(
+                rider,
+                [now[0] + seat[0], now[1] + seat[1] - lift, now[2] + seat[2]],
+            );
             continue;
         };
         let rider_scale = if r.is_baby() { 0.5 } else { 1.0 };
         let lift = -riding_offset(r.kind) * rider_scale;
         r.seat(old, now, [seat[0], seat[1] - lift, seat[2]]);
+    }
+    if let Ok(mut seats) = PLAYER_SEATS.lock() {
+        *seats = Some(player_seats);
     }
 }
 
@@ -1460,8 +1510,23 @@ pub(crate) fn collect_entities(
             anim.set_vehicle_body_rot(pairs.get(id).copied());
         }
     }
-    seat_riders(&mut anims, &mounts);
-    let live: Vec<&EntityAnim> = ticked.iter().filter_map(|id| anims.get(id)).collect();
+    // Players as vehicles: the poses the player tick published (cloned,
+    // so no other lock is held while seating).
+    let player_poses = if mounts.is_empty() {
+        None
+    } else {
+        PLAYER_POSES.lock().ok().and_then(|p| p.clone())
+    };
+    seat_riders(&mut anims, &mounts, |id| {
+        player_poses.as_ref()?.get(&id).copied()
+    });
+    // The spectated entity isn't drawn: the camera is in it.
+    let spectated = crate::client::tracking::spectated_id();
+    let live: Vec<&EntityAnim> = ticked
+        .iter()
+        .filter(|id| Some(**id) != spectated)
+        .filter_map(|id| anims.get(id))
+        .collect();
     let out = std::sync::Arc::new(par_map(&live, |anim| (*anim).clone()));
 
     drop(_snap_timer);
@@ -1487,10 +1552,15 @@ pub(crate) fn collect_entities(
         .lock()
         .unwrap()
         .retain(|id, _| live_ids.contains(id));
-    passengers()
-        .lock()
-        .unwrap()
-        .retain(|id, _| live_ids.contains(id));
+    // Players (and the local player) carry riders too, though they aren't
+    // fed entities: their mounts stay (`/ride`).
+    {
+        let local = crate::client::tracking::local_entity_id();
+        passengers()
+            .lock()
+            .unwrap()
+            .retain(|id, _| live_ids.contains(id) || seen_players.contains(id) || *id == local);
+    }
     {
         let local = crate::client::tracking::local_entity_id();
         crate::client::tracking::max_healths()

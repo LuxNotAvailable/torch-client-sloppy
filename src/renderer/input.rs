@@ -377,6 +377,21 @@ pub(super) fn mouse_look(
         s.camera_yaw = angles.yaw;
         s.camera_pitch = angles.pitch;
     }
+    // Spectating: the view turns with the spectated entity, not the mouse.
+    let spectate = shared.0.lock().unwrap().session.spectate;
+    if let Some((_, yaw, pitch)) = spectate
+        && !freecam.active
+    {
+        angles.yaw = -yaw - 180.0;
+        angles.pitch = (-pitch).clamp(-89.0, 89.0);
+        if let Ok(mut t) = camera.single_mut() {
+            t.rotation = angles.rotation();
+        }
+        let mut s = shared.0.lock().unwrap();
+        s.camera_yaw = angles.yaw;
+        s.camera_pitch = angles.pitch;
+        return;
+    }
     // On mobile, the touch controls drive the camera unless the user picked a
     // physical mouse.
     if crate::gui::touch_active(&state.options) {

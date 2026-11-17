@@ -59,6 +59,23 @@ pub(crate) fn handle_packet(
         drop(s);
         unsecure_server_warning(shared, p.enforces_secure_chat);
     }
+    if let ClientboundGamePacket::SetCamera(p) = packet {
+        crate::log_info!(
+            "net",
+            "camera now follows entity {} (local {})",
+            p.camera_id.0,
+            crate::client::tracking::local_entity_id()
+        );
+        crate::client::tracking::CAMERA_ENTITY_ID
+            .store(p.camera_id.0, std::sync::atomic::Ordering::Relaxed);
+    }
+    // `ClientPacketListener.handleRespawn`: the camera goes back to the player.
+    if matches!(
+        packet,
+        ClientboundGamePacket::Respawn(_) | ClientboundGamePacket::Login(_)
+    ) {
+        crate::client::tracking::CAMERA_ENTITY_ID.store(-1, std::sync::atomic::Ordering::Relaxed);
+    }
     if let ClientboundGamePacket::Respawn(_) = packet {
         let mut s = shared.lock().unwrap();
         s.session.vitals.health_epoch = s.session.vitals.health_epoch.wrapping_add(1);

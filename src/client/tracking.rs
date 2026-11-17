@@ -102,6 +102,20 @@ pub(crate) fn local_entity_id() -> i32 {
     LOCAL_ENTITY_ID.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// The entity the camera follows (`ClientboundSetCamera`), -1 for none or
+/// the player itself.
+pub(crate) static CAMERA_ENTITY_ID: std::sync::atomic::AtomicI32 =
+    std::sync::atomic::AtomicI32::new(-1);
+
+/// The entity being spectated, if not the player.
+pub(crate) fn spectated_id() -> Option<i32> {
+    match CAMERA_ENTITY_ID.load(std::sync::atomic::Ordering::Relaxed) {
+        -1 => None,
+        id if id == local_entity_id() => None,
+        id => Some(id),
+    }
+}
+
 pub(crate) static LOCAL_VEHICLE_ID: std::sync::atomic::AtomicI32 =
     std::sync::atomic::AtomicI32::new(-1);
 
