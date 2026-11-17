@@ -183,7 +183,7 @@ fn drowned_outer_texture(st: &EntityState) -> TexturePath {
     }
 }
 
-fn drowned_root(st: &EntityState) -> RootPose {
+pub(crate) fn drowned_root(st: &EntityState) -> RootPose {
     let mut pose = setup_rotations(st, 90.0);
     let swim = st.extras.swim_amount;
     if swim > 0.0 {

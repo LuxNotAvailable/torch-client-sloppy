@@ -18,8 +18,23 @@ pub struct ItemGpu {
 }
 
 impl ItemGpu {
+    /// A named display slot, as vanilla resolves it: a missing left hand
+    /// takes the right hand's, and left hands are mirrored
+    /// (`ItemTransform.apply`'s left-hand fix).
     pub fn transform(&self, slot: &str) -> ItemTransform {
-        self.display.get_named(slot).unwrap_or(ItemTransform::NONE)
+        let Some(ctx) = DisplayContext::parse(slot) else {
+            return ItemTransform::NONE;
+        };
+        let mut t = self.display.for_context(ctx);
+        if matches!(
+            ctx,
+            DisplayContext::ThirdPersonLeftHand | DisplayContext::FirstPersonLeftHand
+        ) {
+            t.translation[0] = -t.translation[0];
+            t.rotation[1] = -t.rotation[1];
+            t.rotation[2] = -t.rotation[2];
+        }
+        t
     }
 
     pub fn for_context(&self, ctx: DisplayContext) -> ItemTransform {
