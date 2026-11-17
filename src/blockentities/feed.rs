@@ -143,6 +143,18 @@ struct Entry {
     data: Arc<BlockEntityData>,
     anim: Anim,
     private: sim::Private,
+    /// Ticks a finished piston move keeps drawing after its block
+    /// changed, while the terrain remeshes the block it became.
+    linger: u8,
+}
+
+/// How long a finished piston move lingers (`Entry::linger`).
+const PISTON_LINGER_TICKS: u8 = 2;
+
+impl Entry {
+    fn moving_piston(&self) -> bool {
+        matches!(&*self.data, BlockEntityData::Piston(_))
+    }
 }
 
 impl Entry {
@@ -152,6 +164,7 @@ impl Entry {
             anim: Anim::new(kind, &data),
             data,
             private: sim::Private::None,
+            linger: 0,
         }
     }
 }
@@ -205,13 +218,21 @@ pub fn on_block_event(packet: &ClientboundBlockEvent, world: &azalea_world::Worl
             .event(packet.action_id, packet.action_parameter, game_time);
         return;
     }
-    for (pos, moving) in
-        sim::piston::block_event(world, pos, packet.action_id, packet.action_parameter)
-    {
+    let moved = sim::piston::block_event(world, pos, packet.action_id, packet.action_parameter);
+    if moved.is_empty() {
+        return;
+    }
+    let writes = sim::piston::world_writes(world, pos, packet.action_id, &moved);
+    for (pos, moving) in moved {
         let data = Arc::new(BlockEntityData::Piston(moving));
         store
             .entries
             .insert(pos, Entry::new(BlockEntityKind::Piston, data));
+    }
+    // The block-change hook takes the store again.
+    drop(store);
+    for (pos, state) in writes {
+        world.set_block_state(BlockPos::new(pos[0], pos[1], pos[2]), state);
     }
 }
 
@@ -227,8 +248,11 @@ pub fn on_block_change(pos: BlockPos, new: BlockState) {
                     .insert(key, Entry::new(kind, Arc::new(BlockEntityData::None)));
             }
         },
+        // A piston move that just finished lingers (`publish`).
         None => {
-            store.entries.remove(&key);
+            if !store.entries.get(&key).is_some_and(Entry::moving_piston) {
+                store.entries.remove(&key);
+            }
         }
     }
 }
@@ -500,8 +524,20 @@ pub fn publish(
             .or_insert_with(|| kind_for_block(crate::util::block_model::block_id(state)))
             .is_none()
         {
-            changed = true;
-            return false;
+            // A finished piston move keeps drawing for a moment, so the
+            // block doesn't vanish until the terrain shows what it became.
+            if !entry.moving_piston() {
+                changed = true;
+                return false;
+            }
+            entry.linger = match entry.linger {
+                0 => PISTON_LINGER_TICKS,
+                1 => {
+                    changed = true;
+                    return false;
+                }
+                n => n - 1,
+            };
         }
         let resolved_state = resolve(states, state);
         #[cfg(audio)]

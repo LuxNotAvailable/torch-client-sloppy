@@ -173,6 +173,39 @@ pub fn block_event(
     trigger_event(&level, state, pos, direction, action, param)
 }
 
+/// The world changes vanilla's client makes on a piston event
+/// (`PistonBaseBlock.triggerEvent` / `moveBlocks`), so the terrain hides
+/// what moves while the moving block entities draw it: each moving block
+/// becomes `moving_piston`, the blocks it left become air, and an
+/// extending base turns extended. Without them the moving entries sit on
+/// air and are dropped before they draw.
+pub fn world_writes(
+    world: &azalea_world::World,
+    base: [i32; 3],
+    action: u8,
+    moved: &[([i32; 3], Moving)],
+) -> Vec<([i32; 3], BlockState)> {
+    let moving_piston = BlockState::from(BlockKind::MovingPiston);
+    let mut writes: Vec<([i32; 3], BlockState)> = Vec::new();
+    for (pos, m) in moved {
+        let step = if m.extending { -1 } else { 1 };
+        let from = relative(*pos, m.direction, step);
+        if from != base && !moved.iter().any(|(p, _)| *p == from) {
+            writes.push((from, BlockState::AIR));
+        }
+    }
+    for (pos, _) in moved {
+        writes.push((*pos, moving_piston));
+    }
+    if action == 0 {
+        let state = world
+            .get_block_state(BlockPos::new(base[0], base[1], base[2]))
+            .unwrap_or_default();
+        writes.push((base, with(state, &[("extended", "true")])));
+    }
+    writes
+}
+
 fn trigger_event<F: Fn([i32; 3]) -> BlockState>(
     level: &Level<F>,
     state: BlockState,
