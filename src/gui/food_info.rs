@@ -1,5 +1,5 @@
-//! AppleSkin's HUD and tooltip additions: saturation drawn over the hunger
-//! bar, what the held food would restore (hunger, saturation, and the health
+//! Food Info (after the AppleSkin mod): HUD and tooltip additions:
+//! saturation drawn over the hunger bar, what the held food would restore (hunger, saturation, and the health
 //! natural regeneration would then give back) flashing on the bars, and food
 //! values in item tooltips. Its exhaustion bar needs the server to send the
 //! exhaustion, which vanilla servers never do, so it is left out.
@@ -11,7 +11,7 @@ const ICON: f32 = 9.0;
 const STRIDE: f32 = 8.0;
 /// The saturation icon: the drumstick's outline in gold, made from vanilla's
 /// food icon when the GUI atlas is built.
-pub const SATURATION_SPRITE: &str = "appleskin/saturation";
+pub const SATURATION_SPRITE: &str = "torch/saturation";
 const GOLD: [u8; 4] = [255, 200, 50, 255];
 
 /// The opaque pixels of `icon` that touch a transparent one (or the edge),
@@ -36,9 +36,10 @@ pub fn outline_of(icon: &image::RgbaImage) -> image::RgbaImage {
 }
 
 crate::options! {
-    /// Which of AppleSkin's additions are on.
+    /// Which Food Info additions are on. Keys keep old `appleskin` names:
+    /// saved settings carry over.
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-    pub struct AppleSkinOptions {
+    pub struct FoodInfoOptions {
         pub saturation_overlay: bool = true => key("appleskinSaturationOverlay"),
         pub food_preview: bool = true => key("appleskinFoodPreview"),
         pub health_preview: bool = true => key("appleskinHealthPreview"),
@@ -46,14 +47,14 @@ crate::options! {
     }
 }
 
-impl Default for AppleSkinOptions {
+impl Default for FoodInfoOptions {
     fn default() -> Self {
         Self::defaults()
     }
 }
 
-fn options() -> AppleSkinOptions {
-    crate::gui::current_options().appleskin
+fn options() -> FoodInfoOptions {
+    crate::gui::current_options().food_info
 }
 
 /// A food's nutrition and the saturation it gives (`nutrition * modifier *

@@ -96,6 +96,7 @@ const ZOOM_SETTINGS: &str = "Zoom...";
 const FEATURES: &str = "Features...";
 const FEATURES_TITLE: &str = "Features";
 const INVENTORY_SORT: &str = "Inventory Sorting...";
+const RECIPE_VIEWER: &str = "Recipe Viewer";
 const INVENTORY_SORT_TITLE: &str = "Inventory Sorting";
 const SORT_BUTTONS: &str = "Sort Buttons";
 const SORT_HOTBAR: &str = "Include Hotbar";
@@ -1527,21 +1528,32 @@ pub fn draw_zoom(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
 /// Torch's own features, each with its settings.
 pub fn draw_features(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     draw_title(p, ctx, FEATURES_TITLE);
+    let viewer = format!(
+        "{RECIPE_VIEWER}: {}",
+        if state.options.recipe_viewer { ON } else { OFF }
+    );
+    // `None`: the recipe viewer's toggle, no sub-screen.
     #[allow(unused_mut)]
     let mut entries = vec![
-        (ZOOM_SETTINGS, Screen::ZoomSettings),
-        ("Block Info...", Screen::BlockInfoSettings),
-        (INVENTORY_SORT, Screen::InventorySortSettings),
-        ("AppleSkin...", Screen::AppleSkinSettings),
+        (ZOOM_SETTINGS, Some(Screen::ZoomSettings)),
+        ("Block Info...", Some(Screen::BlockInfoSettings)),
+        (INVENTORY_SORT, Some(Screen::InventorySortSettings)),
+        ("Food Info...", Some(Screen::FoodInfoSettings)),
+        (viewer.as_str(), None),
     ];
     #[cfg(feature = "hud_editor")]
-    entries.push(("Edit HUD...", Screen::HudEditor));
+    entries.push(("Edit HUD...", Some(Screen::HudEditor)));
     let left = (ctx.vw / 2.0 - GRID_LEFT_OFFSET).floor();
     let top = LAYOUT.content_y(ctx.vh, menu_content_h(entries.len()));
     for (i, (label, screen)) in entries.into_iter().enumerate() {
         let x = left + (i % 2) as f32 * COLUMN_STEP;
         let y = top + (i / 2) as f32 * (WIDGET_HEIGHT + ROW_SPACING);
         if Button::new(x, y, COLUMN_W, WIDGET_HEIGHT, label).draw(p, ctx) {
+            let Some(screen) = screen else {
+                state.options.recipe_viewer = !state.options.recipe_viewer;
+                crate::gui::save_options(&state.options);
+                continue;
+            };
             #[cfg(feature = "hud_editor")]
             if screen == Screen::HudEditor {
                 // The editor returns here when done.
@@ -1570,16 +1582,16 @@ pub fn draw_inventory_sort(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCt
     }
 }
 
-/// AppleSkin's additions, each on or off.
-pub fn draw_appleskin(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
-    let mut form = crate::gui::form::Form::new(p, ctx, "AppleSkin", 3, 0);
-    let o = &mut state.options.appleskin;
+/// Food Info additions, each on or off.
+pub fn draw_food_info(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
+    let mut form = crate::gui::form::Form::new(p, ctx, "Food Info", 3, 0);
+    let o = &mut state.options.food_info;
     form.toggle("Saturation Overlay", &mut o.saturation_overlay);
     form.toggle("Held Food Preview", &mut o.food_preview);
     form.toggle("Health Preview", &mut o.health_preview);
     form.toggle("Food Tooltips", &mut o.tooltip);
-    if form.wide_button("Reset AppleSkin Settings") {
-        *o = crate::gui::appleskin::AppleSkinOptions::default();
+    if form.wide_button("Reset Food Info Settings") {
+        *o = crate::gui::food_info::FoodInfoOptions::default();
         form.mark_changed();
     }
     if form.finish() {

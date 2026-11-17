@@ -169,6 +169,14 @@ fn save_bookmarks(bookmarks: &[&str]) {
     }
 }
 
+/// [`container_width`] when the viewer is on in Features.
+pub fn beside(state: &crate::gui::GuiState) -> Option<f32> {
+    if !state.options.recipe_viewer {
+        return None;
+    }
+    container_width(state.screen)
+}
+
 /// The width of the screen the item list sits beside, for the screens that
 /// show it (the inventory and containers with slots).
 pub fn container_width(screen: Screen) -> Option<f32> {

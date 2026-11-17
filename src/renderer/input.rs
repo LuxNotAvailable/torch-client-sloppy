@@ -1261,7 +1261,7 @@ pub(super) fn toggle_screen(
     // The recipe viewer takes Escape first: out of its search, or back out of
     // its recipe window, leaving the screen open.
     if close_key
-        && crate::gui::recipe_viewer::container_width(state.screen).is_some()
+        && crate::gui::recipe_viewer::beside(&state).is_some()
         && state.recipe_viewer.take_escape()
     {
         return;

@@ -3,7 +3,6 @@
 
 pub mod accountlist;
 pub mod advancements;
-pub mod appleskin;
 #[cfg(feature = "asset_download")]
 pub mod assetdownload;
 pub mod atlas;
@@ -29,6 +28,7 @@ pub mod draw;
 #[cfg(explore_modrinth)]
 pub mod explore_packs;
 pub mod focus;
+pub mod food_info;
 pub mod form;
 pub mod gamemode_switcher;
 pub mod health;
@@ -136,8 +136,8 @@ pub enum Screen {
     AccessibilitySettings,
     OnlineSettings,
     DebugOptions,
-    /// AppleSkin's settings, under Features.
-    AppleSkinSettings,
+    /// Food Info settings, under Features.
+    FoodInfoSettings,
     /// Signed chat and toasts.
     ChatSettings,
     /// The skin's layers and the main hand (vanilla's
@@ -214,7 +214,7 @@ settings_tree! {
     MouseSettings => Controls,
     BlockOutlineSettings => VideoSettings,
     LeafSettings => VideoSettings,
-    ZoomSettings | BlockInfoSettings | InventorySortSettings | AppleSkinSettings => Features,
+    ZoomSettings | BlockInfoSettings | InventorySortSettings | FoodInfoSettings => Features,
     FontSettings => Language,
     #[cfg(audio)]
     AudioSettings => Options,
@@ -574,12 +574,14 @@ crate::options! {
         pub view_bobbing: bool = true => key("bobView"),
         pub zoom: ZoomOptions = ZoomOptions::defaults() => group(),
         pub chat: ChatOptions = ChatOptions::defaults() => group(),
-        pub appleskin: appleskin::AppleSkinOptions = appleskin::AppleSkinOptions::defaults() => group(),
+        pub food_info: food_info::FoodInfoOptions = food_info::FoodInfoOptions::defaults() => group(),
         pub language: String = "en_us".to_owned() => key("lang"),
         pub accessibility: more_options::AccessibilityOptions = more_options::AccessibilityOptions::defaults() => group(),
         pub force_unicode: bool = false => key("forceUnicodeFont"),
         pub allow_listing: bool = true => key("allowServerListing"),
         pub pause_on_lost_focus: bool = true => key("pauseOnLostFocus"),
+        /// The recipe viewer (item list, recipes, bookmarks) beside inventories.
+        pub recipe_viewer: bool = true => key("recipeViewer"),
         /// The sort and transfer buttons on inventories.
         pub sort_buttons: bool = true => key("sortButtons"),
         /// Whether sorting and storing take in the hotbar.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate the food table in `src/gui/appleskin.rs` (`food_values`) from
+"""Regenerate the food table in `src/gui/food_info.rs` (`food_values`) from
 the decompiled `Foods.java` in `reference/minecraft-<version>/`.
 
     python3 tools/gen_food_table.py           # rewrite the table
@@ -20,7 +20,7 @@ from generated import replace_region  # noqa: E402
 CRATE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FOODS = os.path.join(CRATE, "reference", "minecraft-26.3", "net", "minecraft",
                      "world", "food", "Foods.java")
-TARGET = os.path.join(CRATE, "src", "gui", "appleskin.rs")
+TARGET = os.path.join(CRATE, "src", "gui", "food_info.rs")
 
 # `Foods.stew`: `nutrition(n).saturationModifier(0.6F)`.
 STEW_MODIFIER = 0.6

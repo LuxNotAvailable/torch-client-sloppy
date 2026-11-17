@@ -584,12 +584,12 @@ pub fn draw(
             });
         }
         if let Some(c) = cache.as_ref() {
-            match crate::gui::appleskin::tooltip_food(stack.item) {
-                // AppleSkin's row: a blank line wide enough for the icons,
+            match crate::gui::food_info::tooltip_food(stack.item) {
+                // Food Info row: a blank line wide enough for the icons,
                 // with the icons drawn over it.
                 Some(food) => {
                     let mut lines = c.lines.clone();
-                    let width = crate::gui::appleskin::tooltip_row_width(food);
+                    let width = crate::gui::food_info::tooltip_row_width(food);
                     let space = p
                         .atlas
                         .font
@@ -604,7 +604,7 @@ pub fn draw(
                         style: Default::default(),
                     }]);
                     if let Some((x, y)) = draw_lines(p, &lines, mx, my, vw, vh) {
-                        crate::gui::appleskin::draw_tooltip_row(p, food, x, y - 1.0);
+                        crate::gui::food_info::draw_tooltip_row(p, food, x, y - 1.0);
                     }
                 }
                 None => match &stack.bundle {

@@ -430,7 +430,7 @@ mod tests {
     }
 
     #[test]
-    fn preview_appleskin() {
+    fn preview_food_info() {
         let atlas = build_gui_atlas(&crate::assets_root());
         let (vw, vh) = (427.0_f32, 240.0_f32);
         let shared = shared_with(demo_menu(), Gamemode::Survival);
@@ -452,7 +452,7 @@ mod tests {
         );
         save(
             &rasterize_scaled(&p, vw as u32, vh as u32, SCALE, [70, 110, 170, 255]),
-            "gui_appleskin_hud.png",
+            "gui_food_info_hud.png",
         );
         // The bars alone, drawn straight from a snapshot.
         let mut hotbar = vec![SlotStack::default(); 10];
@@ -478,7 +478,7 @@ mod tests {
         );
         save(
             &rasterize_scaled(&p, 210, 45, 4, [70, 110, 170, 255]),
-            "gui_appleskin_bars.png",
+            "gui_food_info_bars.png",
         );
 
         let mut p = Painter::new(&atlas, 0);
@@ -490,14 +490,14 @@ mod tests {
         crate::gui::tooltip::draw(&mut p, &beef, 150.0, 100.0, vw, vh, false);
         save(
             &rasterize_scaled(&p, vw as u32, vh as u32, SCALE, [70, 110, 170, 255]),
-            "gui_appleskin_tooltip.png",
+            "gui_food_info_tooltip.png",
         );
     }
 
     #[test]
     #[ignore = "writes preview images"]
-    fn preview_appleskin_test() {
-        preview_appleskin();
+    fn preview_food_info_test() {
+        preview_food_info();
     }
 
     #[test]

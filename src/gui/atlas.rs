@@ -804,14 +804,14 @@ pub fn build_gui_atlas(assets: &Path) -> GuiAtlas {
         });
     }
 
-    // AppleSkin's saturation icon: the drumstick's outline in gold.
+    // Food Info's saturation icon: the drumstick's outline in gold.
     if let Ok(img) =
         crate::platform::assets::open_image(&textures.join("gui/sprites/hud/food_full.png"))
     {
         entries.push(Entry {
             kind: Kind::Sprite,
-            key: crate::gui::appleskin::SATURATION_SPRITE.to_string(),
-            image: crate::gui::appleskin::outline_of(&img.to_rgba8()),
+            key: crate::gui::food_info::SATURATION_SPRITE.to_string(),
+            image: crate::gui::food_info::outline_of(&img.to_rgba8()),
             scaling: Scaling::Stretch,
         });
     }

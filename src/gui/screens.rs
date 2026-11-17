@@ -95,7 +95,7 @@ pub fn draw(
     // their place while it is open.
     static WARM: std::sync::Once = std::sync::Once::new();
     WARM.call_once(crate::items::recipe_index::warm);
-    let viewer_beside = crate::gui::recipe_viewer::container_width(state.screen);
+    let viewer_beside = crate::gui::recipe_viewer::beside(state);
     if viewer_beside.is_none() {
         state.recipe_viewer.leave();
     }
@@ -1743,7 +1743,7 @@ settings_screens! {
     LeafSettings => options::draw_leaves,
     Features => options::draw_features,
     InventorySortSettings => options::draw_inventory_sort,
-    AppleSkinSettings => options::draw_appleskin,
+    FoodInfoSettings => options::draw_food_info,
     Language => crate::gui::more_options::draw_language,
     FontSettings => crate::gui::more_options::draw_font,
     AccessibilitySettings => crate::gui::more_options::draw_accessibility,
