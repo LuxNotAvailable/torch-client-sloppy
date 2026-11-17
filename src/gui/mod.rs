@@ -536,6 +536,9 @@ crate::options! {
         pub entity_culling: bool = true => key("torchEntityCulling"),
         /// The inventory player model drawn at 2x and averaged (native).
         pub smooth_gui_model: bool = true => key("torchSmoothGuiModel"),
+        /// Model item icons rendered at 2x and averaged; applies after a
+        /// restart (the icons bake at startup).
+        pub smooth_item_icons: bool = true => key("torchSmoothItemIcons"),
         /// Entity back faces aren't drawn (native): for weak GPUs.
         pub entity_backface_culling: bool = false => key("torchEntityBackfaceCulling"),
         /// How glowing sign text is outlined: 0 vanilla, 1 a shadow, 2 none.
@@ -1115,6 +1118,15 @@ pub fn current_options() -> std::sync::Arc<GuiOptions> {
 fn publish_options(options: &std::sync::Arc<GuiOptions>) {
     crate::text::FORCE_UNICODE.store(options.force_unicode, std::sync::atomic::Ordering::Relaxed);
     *CURRENT_OPTIONS.write().unwrap() = Some(options.clone());
+}
+
+/// Video Settings > Item Icons as saved, for the startup icon bake.
+pub fn stored_smooth_item_icons() -> bool {
+    load_options()
+        .as_ref()
+        .and_then(|json| json.get("torchSmoothItemIcons"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true)
 }
 
 fn load_options() -> Option<serde_json::Value> {

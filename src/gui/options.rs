@@ -36,6 +36,7 @@ const CHAT_SLIDER_ID_BASE: u32 = 60;
 const ENTITY_SHADOWS: &str = "Entity Shadows";
 const ENTITY_CULLING: &str = "Entity Culling";
 const INVENTORY_MODEL: &str = "Inventory Model";
+const ITEM_ICONS: &str = "Item Icons";
 const ENTITY_BACK_FACES: &str = "Entity Back Faces";
 const LEAF_CULLING: &str = "Leaf Culling";
 const LEAF_CULLING_MODES: [&str; 3] = ["Off", "Smart", "Full"];
@@ -1335,6 +1336,12 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
             f.mark_changed();
         }
         f.tip(&tips::INVENTORY_MODEL);
+        let icons = if o.smooth_item_icons { "2x" } else { "1x" };
+        if f.button(&format!("{ITEM_ICONS}: {icons}")) {
+            o.smooth_item_icons = !o.smooth_item_icons;
+            f.mark_changed();
+        }
+        f.tip(&tips::ITEM_ICONS);
         f.slider(
             &mut o.water_clarity,
             0,
@@ -2399,7 +2406,7 @@ mod tests {
         // Six headers, then: the preset (1 row); Display (4: frame cap and
         // VSync, window size and fullscreen, GUI scale and brightness, the
         // renderer); Performance (3: render distance and culling, lighting
-        // and shader scale, shader shadows); Quality (6, the last the
+        // and shader scale, shader shadows); Quality (7, the last the
         // Leaves button); Camera (1); Details (3: sign outline and block
         // outline, shader packs, reset).
         let atlas = crate::gui::atlas::build_gui_atlas(&crate::assets_root());
@@ -2415,7 +2422,7 @@ mod tests {
         let shader = cfg!(feature = "shader_support") as u32 as f32;
         let desktop =
             cfg!(all(not(target_arch = "wasm32"), not(target_os = "android"))) as u32 as f32;
-        let rows = 1.0 + (2.0 + 2.0 * desktop) + (2.0 + shader) + 6.0 + 1.0 + (2.0 + shader);
+        let rows = 1.0 + (2.0 + 2.0 * desktop) + (2.0 + shader) + 7.0 + 1.0 + (2.0 + shader);
         assert_eq!(
             state.video_list.content_h,
             6.0 * HEADER_H + 5.0 * HEADER_PAD_TOP + rows * ROW_H + LIST_PAD_BOTTOM

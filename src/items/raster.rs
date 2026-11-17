@@ -4,7 +4,9 @@ use image::RgbaImage;
 
 use super::model::{Tex, Transform};
 
-pub const SUPERSAMPLE: u32 = 1;
+/// Samples per icon pixel edge: 2 smooths model icons' edges (Video
+/// Settings > Item Icons, read once before the GUI atlas is baked).
+pub static SUPERSAMPLE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(2);
 
 pub struct Quad {
     pub pos: [[f32; 3]; 4],
@@ -83,7 +85,7 @@ fn project(p: [f32; 3], t: &Transform, size: f32) -> [f32; 3] {
 }
 
 pub fn render(quads: &[Quad], transform: &Transform, icon: u32) -> RgbaImage {
-    let size = icon * SUPERSAMPLE;
+    let size = icon * SUPERSAMPLE.load(std::sync::atomic::Ordering::Relaxed).max(1);
     let n = (size * size) as usize;
     let mut color = vec![[0.0f32; 4]; n];
     let mut depth = vec![f32::NEG_INFINITY; n];

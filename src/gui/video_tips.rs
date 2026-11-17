@@ -90,6 +90,10 @@ pub const INVENTORY_MODEL: Tip = Tip::new(
     "Renders the inventory player model at 2x resolution for a smoother, less jagged look.",
     Impact::Low,
 );
+pub const ITEM_ICONS: Tip = Tip::new(
+    "Renders block and model item icons at 2x resolution for smoother edges. Applies after a restart.",
+    Impact::Low,
+);
 pub const VIEW_BOBBING: Tip = Tip::new("Your view sways as you walk.", Impact::None);
 pub const FOV_EFFECTS: Tip = Tip::new(
     "How much sprinting, speed and potions widen or narrow your field of view.",
