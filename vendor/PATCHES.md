@@ -24,6 +24,8 @@ Treat as our code. History: `git log -- vendor/azalea`. Main areas:
 - `azalea-block`, `azalea-registry`: modded IDs past `MAX_STATE`, regenerated
   tables (`tags/`, `builtin.rs`, `data.rs`).
 - `azalea-entity`: metadata, inventory, particles.
+- `azalea-client`: `handle_walk` no longer stops a sprint; the vanilla stop
+  rules in `local_player_ai_step` do (`plugins/movement.rs`).
 - `codegen/`: Python generators for the tables above. Edit these, then
   regenerate; never edit generated tables by hand.
 

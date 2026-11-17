@@ -463,14 +463,14 @@ pub struct StartWalkEvent {
 
 pub fn handle_walk(
     mut events: MessageReader<StartWalkEvent>,
-    mut query: Query<(&mut ClientMovementState, &mut Sprinting, &mut Attributes)>,
+    mut query: Query<&mut ClientMovementState>,
 ) {
     for event in events.read() {
-        if let Ok((mut physics_state, mut sprinting, mut attributes)) = query.get_mut(event.entity)
-        {
+        if let Ok(mut physics_state) = query.get_mut(event.entity) {
             physics_state.move_direction = event.direction;
+            // Releasing sprint doesn't stop a sprint (vanilla `aiStep`):
+            // `local_player_ai_step`'s stop rules do, which keeps a swim.
             physics_state.trying_to_sprint = false;
-            set_sprinting(false, &mut sprinting, &mut attributes);
         }
     }
 }
