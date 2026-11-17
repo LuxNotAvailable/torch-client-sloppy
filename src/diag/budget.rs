@@ -1,4 +1,7 @@
-#![cfg_attr(not(feature = "budget"), allow(dead_code))]
+#![cfg_attr(
+    not(feature = "budget"),
+    allow(dead_code, reason = "used by the budget feature only")
+)]
 
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use std::time::Duration;

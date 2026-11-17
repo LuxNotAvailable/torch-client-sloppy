@@ -1,3 +1,6 @@
+//! Shared helpers: vanilla-parity math (`mth`, `javarandom`), particles,
+//! packs, zip, colours.
+
 pub(crate) mod biome_color;
 pub(crate) mod block_model;
 pub(crate) mod datapack;

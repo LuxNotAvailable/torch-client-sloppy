@@ -1,3 +1,6 @@
+//! Bevy/wgpu renderer (`MC_RENDERER=wgpu`): terrain, entities, sky, weather,
+//! post, shader-pack draw (`packdraw`).
+
 pub mod anim;
 pub mod antialias;
 pub(crate) mod atlas;

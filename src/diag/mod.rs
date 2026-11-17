@@ -1,3 +1,6 @@
+//! Diagnostics: logs, `prof_span!` profiler, perf reports, panic reports,
+//! watchdog, allocator stats.
+
 macro_rules! counted {
     (
         $(#[$m:meta])*
@@ -10,7 +13,7 @@ macro_rules! counted {
 
         const $count: usize = [$($name::$v),*].len();
 
-        #[allow(dead_code)]
+        #[allow(dead_code, reason = "not every enum reads `ALL`")]
         impl $name {
             /// Every variant, in order.
             $vis const ALL: [$name; $count] = [$($name::$v),*];

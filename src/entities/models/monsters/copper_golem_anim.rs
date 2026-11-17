@@ -1,4 +1,6 @@
-#![allow(dead_code)]
+//! Data only: keyframes ported from vanilla `CopperGolemAnimation`. Skip unless the task is
+//! about animation values.
+#![allow(dead_code, reason = "full vanilla set; not every animation is played")]
 #![allow(clippy::approx_constant, clippy::eq_op, clippy::excessive_precision)]
 
 use crate::entities::keyframe::{

@@ -1720,7 +1720,10 @@ impl Default for FrameGate {
     }
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    allow(dead_code, reason = "used by the web build only")
+)]
 fn frame_gate_decision(
     now: Instant,
     deadline: Option<Instant>,

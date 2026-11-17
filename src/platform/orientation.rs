@@ -1,7 +1,13 @@
-#[cfg_attr(not(feature = "mobile_ui"), allow(dead_code))]
+#[cfg_attr(
+    not(feature = "mobile_ui"),
+    allow(dead_code, reason = "used by the touch controls only")
+)]
 pub(crate) const SUPPORTED: bool = cfg!(target_os = "android");
 
-#[cfg_attr(not(feature = "mobile_ui"), allow(dead_code))]
+#[cfg_attr(
+    not(feature = "mobile_ui"),
+    allow(dead_code, reason = "used by the touch controls only")
+)]
 pub(crate) fn set_portrait(on: bool) {
     #[cfg(target_os = "android")]
     android::set_portrait(on);

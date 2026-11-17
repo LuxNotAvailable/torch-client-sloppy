@@ -1,3 +1,5 @@
+//! Data only: keyframes ported from vanilla `NautilusAnimation`. Skip unless the task is
+//! about animation values.
 #![allow(clippy::excessive_precision)]
 
 use crate::entities::keyframe::{

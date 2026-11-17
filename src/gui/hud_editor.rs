@@ -58,7 +58,10 @@ struct Drag {
     start: Rect,
     start_scale: f32,
     press: Vec2,
-    #[cfg_attr(not(feature = "mobile_ui"), allow(dead_code))]
+    #[cfg_attr(
+        not(feature = "mobile_ui"),
+        allow(dead_code, reason = "used by the touch controls only")
+    )]
     pressed_at: f32,
     moving: bool,
 }
@@ -89,7 +92,10 @@ enum Restore {
     Home(Home),
 }
 
-#[cfg_attr(not(feature = "mobile_ui"), allow(dead_code))]
+#[cfg_attr(
+    not(feature = "mobile_ui"),
+    allow(dead_code, reason = "used by the touch controls only")
+)]
 #[derive(Clone, Copy)]
 struct Pinch {
     target: Grab,

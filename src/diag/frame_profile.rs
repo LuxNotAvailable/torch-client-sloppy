@@ -39,7 +39,10 @@ pub fn set_enabled(on: bool) {
 }
 
 /// Turned on while a performance report records, whatever the page does.
-#[cfg_attr(not(feature = "perf_report"), allow(dead_code))]
+#[cfg_attr(
+    not(feature = "perf_report"),
+    allow(dead_code, reason = "used by perf_report builds only")
+)]
 pub fn set_capturing(on: bool) {
     switch(&CAPTURE, on);
 }
@@ -118,7 +121,10 @@ static LAST_FRAME: Mutex<Vec<(Group, &'static str, u64)>> = Mutex::new(Vec::new(
 
 /// The last finished frame's time per row, in nanoseconds (render stages
 /// for the render frame that ran alongside it).
-#[cfg_attr(not(feature = "perf_report"), allow(dead_code))]
+#[cfg_attr(
+    not(feature = "perf_report"),
+    allow(dead_code, reason = "used by perf_report builds only")
+)]
 pub fn last_frame() -> Vec<(Group, &'static str, u64)> {
     LAST_FRAME.lock().map(|f| f.clone()).unwrap_or_default()
 }

@@ -82,7 +82,10 @@ impl AdvancementFrame {
     }
 }
 
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "full vanilla `SystemToastId` set; not every one is sent"
+)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SystemId {
     NarratorToggle,

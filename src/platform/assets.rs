@@ -236,7 +236,10 @@ pub(crate) mod archive {
                 .copied()
         }
 
-        #[cfg_attr(not(resource_packs), allow(dead_code))]
+        #[cfg_attr(
+            not(resource_packs),
+            allow(dead_code, reason = "used by resource-pack builds only")
+        )]
         pub(crate) fn stack(&self, key: &str) -> impl Iterator<Item = &'static [u8]> {
             self.0
                 .get()
@@ -270,14 +273,17 @@ pub(crate) mod archive {
     #[cfg(resource_packs)]
     pub(crate) static PACKS: Stack = Stack::new();
 
-    #[cfg_attr(not(packed_assets), allow(dead_code))]
+    #[cfg_attr(
+        not(packed_assets),
+        allow(dead_code, reason = "used by packed-asset builds only")
+    )]
     pub(crate) fn load(packed: Vec<u8>) -> Result<(), String> {
         install(vec![super::unpack(packed)?])
     }
 
     #[cfg_attr(
         all(not(packed_assets), not(feature = "asset_download")),
-        allow(dead_code)
+        allow(dead_code, reason = "used by packed or downloaded assets only")
     )]
     pub(crate) fn install(layers: Vec<Layer>) -> Result<(), String> {
         BASE.install(layers)
@@ -304,7 +310,7 @@ pub(crate) const ARCHIVE_MAGIC: &[u8; 8] = b"MCASSET2";
 
 #[cfg_attr(
     all(not(packed_assets), not(feature = "asset_download")),
-    allow(dead_code)
+    allow(dead_code, reason = "used by packed or downloaded assets only")
 )]
 pub(crate) fn unpack(
     packed: Vec<u8>,
@@ -332,7 +338,10 @@ pub(crate) fn unpack(
 
 #[cfg_attr(
     all(not(packed_assets), not(feature = "asset_download"), not(audio)),
-    allow(dead_code)
+    allow(
+        dead_code,
+        reason = "used by packed, downloaded or audio asset loading only"
+    )
 )]
 pub(crate) fn read_table(
     from: &mut impl std::io::Read,

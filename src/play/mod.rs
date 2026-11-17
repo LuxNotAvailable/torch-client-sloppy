@@ -1,3 +1,6 @@
+//! Player actions and prediction: interaction, placement, riding and
+//! vehicles, flight, commands, action sounds.
+
 pub(crate) mod boat;
 pub(crate) mod commands;
 pub(crate) mod dialog;

@@ -6,6 +6,7 @@ use crate::TEXTURE_MAP;
 use crate::blocks::bake::tile_uv_rect;
 use crate::blocks::rand::position_seed;
 use crate::util::javarandom::JavaRandom;
+use crate::util::mth::lerp;
 
 static SMOOTH_LIGHTING: AtomicBool = AtomicBool::new(true);
 
@@ -108,34 +109,29 @@ pub fn set_lighting_enabled(enabled: bool) {
 
 fn uv_horizontal(x0: f32, z0: f32, x1: f32, z1: f32, tile: u32, rows: u32) -> [[f32; 2]; 4] {
     let [au0, av0, au1, av1] = tile_uv_rect(tile, rows);
-    let u0 = lerp(au0, au1, x0);
-    let u1 = lerp(au0, au1, x1);
-    let v0 = lerp(av0, av1, z0);
-    let v1 = lerp(av0, av1, z1);
+    let u0 = lerp(x0, au0, au1);
+    let u1 = lerp(x1, au0, au1);
+    let v0 = lerp(z0, av0, av1);
+    let v1 = lerp(z1, av0, av1);
     [[u0, v0], [u1, v0], [u1, v1], [u0, v1]]
 }
 
 fn uv_ns(x0: f32, x1: f32, y0: f32, y1: f32, tile: u32, rows: u32) -> [[f32; 2]; 4] {
     let [au0, av0, au1, av1] = tile_uv_rect(tile, rows);
-    let u0 = lerp(au0, au1, x0);
-    let u1 = lerp(au0, au1, x1);
-    let fv_top = lerp(av0, av1, 1.0 - y1);
-    let fv_bot = lerp(av0, av1, 1.0 - y0);
+    let u0 = lerp(x0, au0, au1);
+    let u1 = lerp(x1, au0, au1);
+    let fv_top = lerp(1.0 - y1, av0, av1);
+    let fv_bot = lerp(1.0 - y0, av0, av1);
     [[u0, fv_bot], [u1, fv_bot], [u1, fv_top], [u0, fv_top]]
 }
 
 fn uv_ew(z0: f32, z1: f32, y0: f32, y1: f32, tile: u32, rows: u32) -> [[f32; 2]; 4] {
     let [au0, av0, au1, av1] = tile_uv_rect(tile, rows);
-    let u0 = lerp(au0, au1, z0);
-    let u1 = lerp(au0, au1, z1);
-    let fv_top = lerp(av0, av1, 1.0 - y1);
-    let fv_bot = lerp(av0, av1, 1.0 - y0);
+    let u0 = lerp(z0, au0, au1);
+    let u1 = lerp(z1, au0, au1);
+    let fv_top = lerp(1.0 - y1, av0, av1);
+    let fv_bot = lerp(1.0 - y0, av0, av1);
     [[u0, fv_bot], [u1, fv_bot], [u1, fv_top], [u0, fv_top]]
-}
-
-#[inline]
-fn lerp(a: f32, b: f32, t: f32) -> f32 {
-    a + (b - a) * t
 }
 
 #[repr(C)]
@@ -1067,8 +1063,8 @@ fn fluid_flow(occ: &Occupancy, bx: i32, by: i32, bz: i32, self_height: f32) -> (
 
 fn flowing_top_uvs(flow_x: f32, flow_z: f32, tile: u32, ar: u32) -> [[f32; 2]; 4] {
     let [u0, v0, u1, v1] = tile_uv_rect(tile, ar);
-    let get_u = |t: f32| lerp(u0, u1, t);
-    let get_v = |t: f32| lerp(v0, v1, t);
+    let get_u = |t: f32| lerp(t, u0, u1);
+    let get_v = |t: f32| lerp(t, v0, v1);
     let angle = flow_z.atan2(flow_x) - std::f32::consts::FRAC_PI_2;
     let c = angle.cos() * 0.25;
     let s = angle.sin() * 0.25;
@@ -1170,8 +1166,8 @@ fn emit_fluid_side(
     let corners = corners.map(|[x, y, z]| [x + wx, y + wy, z + wz]);
 
     let [u0t, v0t, u1t, v1t] = tile_uv_rect(tile, ar);
-    let get_u = |t: f32| lerp(u0t, u1t, t);
-    let get_v = |t: f32| lerp(v0t, v1t, t);
+    let get_u = |t: f32| lerp(t, u0t, u1t);
+    let get_v = |t: f32| lerp(t, v0t, v1t);
     let (u_a, u_b) = (get_u(0.0), get_u(0.5));
     let v_bottom = get_v(0.5);
     let face_uvs = [

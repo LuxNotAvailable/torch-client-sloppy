@@ -1,3 +1,6 @@
+//! Item models: definitions (`model`), runtime dispatch, icons, meshes,
+//! potions, recipe index.
+
 pub mod dispatch;
 pub mod icons;
 pub(crate) mod json;

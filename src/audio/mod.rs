@@ -1,3 +1,6 @@
+//! Sound engine: categories, music, ambience, subtitles, device output. Not
+//! voice chat (`voice`).
+
 pub mod ambience;
 pub mod category;
 pub(crate) mod defs;

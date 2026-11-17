@@ -1,3 +1,6 @@
+//! Resource packs: list, mount, format check, Modrinth browse, Torch Default
+//! pack (`TORCH_DEFAULT_PACK.md`).
+
 #[cfg(explore_modrinth)]
 pub(crate) mod modrinth;
 

@@ -63,7 +63,10 @@ pub struct TabListState {
     scroll: f32,
 }
 
-#[cfg_attr(feature = "mobile_ui", allow(dead_code))]
+#[cfg_attr(
+    feature = "mobile_ui",
+    allow(dead_code, reason = "desktop only; the touch controls replace it")
+)]
 pub fn draw(
     p: &mut Painter,
     ctx: &ScreenCtx,

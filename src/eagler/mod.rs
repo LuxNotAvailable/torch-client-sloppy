@@ -1,3 +1,6 @@
+//! Eaglercraft transport: game connection over a websocket, plus server
+//! query.
+
 mod handshake;
 pub(crate) mod query;
 mod socket;

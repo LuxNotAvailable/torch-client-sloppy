@@ -1,0 +1,10 @@
+# Search excludes for rg-based tools (Grep, Glob). Not a gitignore.
+# Override with `rg --no-ignore` when the task needs these.
+vendor/
+src/generated_*.rs
+src/entities/models/**/*_anim.rs
+src/entities/models/aquatic/animation/
+src/protocol/data/
+Cargo.lock
+*.png
+*.ogg

@@ -1,8 +1,4 @@
-use crate::util::mth::rot_lerp_f64;
-
-fn lerp(t: f64, a: f64, b: f64) -> f64 {
-    a + t * (b - a)
-}
+use crate::util::mth::{lerp_d as lerp, rot_lerp_f64};
 
 pub const DEFAULT_INTERPOLATION_STEPS: i32 = 3;
 

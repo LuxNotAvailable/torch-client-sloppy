@@ -1,4 +1,10 @@
-#![cfg_attr(not(feature = "click_gui"), allow(dead_code))]
+//! Click-GUI modules (ESP, zoom, freecam, ...): list, registry, values,
+//! persisted store.
+
+#![cfg_attr(
+    not(feature = "click_gui"),
+    allow(dead_code, reason = "used by the click_gui feature only")
+)]
 
 pub mod aim_assist;
 pub mod auto_mace;

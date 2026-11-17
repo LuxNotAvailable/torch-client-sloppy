@@ -1,3 +1,6 @@
+//! Blockstate registry and model baking. Per-state facts: `info`. Not
+//! lighting or meshing.
+
 use crate::platform::time::Instant;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};

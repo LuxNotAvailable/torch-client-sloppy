@@ -1,3 +1,6 @@
+//! Every screen, HUD and widget. Frame steps: `screens`. Settings: `form`,
+//! `option_codec`. Talks to the game via `client::bus`.
+
 pub mod accountlist;
 pub mod advancements;
 pub mod appleskin;

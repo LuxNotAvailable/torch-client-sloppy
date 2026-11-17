@@ -1,3 +1,5 @@
+//! Touch controls (`mobile_ui`): pad, look, pointer.
+
 pub mod look;
 pub mod pad;
 pub mod pointer;

@@ -1,3 +1,6 @@
+//! Multi-version support: packet tables, id remaps, hops (`hop`, recipe at
+//! top). Tables in `data/` from `tools/protogen.py`.
+
 #![allow(
     dead_code,
     reason = "the tables carry lookups no hop written yet reads"

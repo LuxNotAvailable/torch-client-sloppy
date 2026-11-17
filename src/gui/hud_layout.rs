@@ -1,4 +1,7 @@
-#![cfg_attr(not(feature = "hud_editor"), allow(dead_code))]
+#![cfg_attr(
+    not(feature = "hud_editor"),
+    allow(dead_code, reason = "used by the hud_editor feature only")
+)]
 
 use std::ops::Deref;
 

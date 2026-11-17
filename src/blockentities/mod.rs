@@ -1,3 +1,6 @@
+//! Block entities: client models (`render/`), client-side sim (`sim/`), feed
+//! from packets (`feed`), transient blocks.
+
 pub mod bake;
 pub mod banner;
 pub mod feed;

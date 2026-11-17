@@ -1,3 +1,6 @@
+//! Shader packs: discover, `shaders.properties`, preprocess, options, program
+//! pipeline.
+
 pub(crate) const ROOT: &str = "shaders";
 
 pub(crate) const SOURCE_EXTENSIONS: &[&str] = &[".glsl", ".vsh", ".fsh", ".gsh", ".csh", ".wgsl"];

@@ -1,3 +1,6 @@
+//! Client light engine: sky and block light per section, run on the light
+//! thread (`level`).
+
 pub mod data_layer;
 pub mod engine;
 pub mod level;

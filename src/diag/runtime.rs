@@ -202,13 +202,19 @@ fn cpu_ticks() -> u64 {
     }
 }
 
-#[cfg_attr(not(feature = "profiling"), allow(dead_code))]
+#[cfg_attr(
+    not(feature = "profiling"),
+    allow(dead_code, reason = "used by profiling builds only")
+)]
 pub struct ThreadCpu {
     pub name: String,
     pub percent: f32,
 }
 
-#[cfg_attr(not(feature = "profiling"), allow(dead_code))]
+#[cfg_attr(
+    not(feature = "profiling"),
+    allow(dead_code, reason = "used by profiling builds only")
+)]
 pub fn thread_cpu() -> Vec<ThreadCpu> {
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     return Vec::new();
@@ -217,7 +223,10 @@ pub fn thread_cpu() -> Vec<ThreadCpu> {
     return proc_thread_cpu();
 }
 
-#[cfg_attr(not(feature = "profiling"), allow(dead_code))]
+#[cfg_attr(
+    not(feature = "profiling"),
+    allow(dead_code, reason = "used by profiling builds only")
+)]
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn proc_thread_cpu() -> Vec<ThreadCpu> {
     use std::collections::HashMap;
@@ -275,7 +284,10 @@ fn proc_thread_cpu() -> Vec<ThreadCpu> {
     out
 }
 
-#[cfg_attr(not(feature = "profiling"), allow(dead_code))]
+#[cfg_attr(
+    not(feature = "profiling"),
+    allow(dead_code, reason = "used by profiling builds only")
+)]
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn clock_hz() -> u64 {
     // `USER_HZ`: the clock-tick rate `/proc` reports in, fixed at 100 for

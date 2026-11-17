@@ -1,3 +1,6 @@
+//! OS/web/Android layer: env, storage, http, input, clipboard, time, threads.
+//! Read env via `env::var`, never `std::env`.
+
 pub(crate) mod address;
 pub(crate) mod assets;
 pub(crate) mod cli;

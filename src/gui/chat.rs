@@ -17,7 +17,10 @@ const CHAT_WIDTH: f32 = 320.0;
 #[cfg(feature = "mobile_ui")]
 const CHAT_WIDTH: f32 = 240.0;
 const LINE_HEIGHT: f32 = 9.0;
-#[cfg_attr(feature = "mobile_ui", allow(dead_code))]
+#[cfg_attr(
+    feature = "mobile_ui",
+    allow(dead_code, reason = "desktop only; the touch controls replace it")
+)]
 const BOTTOM_MARGIN: f32 = 40.0;
 #[cfg(feature = "mobile_ui")]
 const MOBILE_BOTTOM_MARGIN: f32 = 14.0 + suggestions::SUGGESTION_LINE_HEIGHT + 6.0;
@@ -25,9 +28,15 @@ const MOBILE_BOTTOM_MARGIN: f32 = 14.0 + suggestions::SUGGESTION_LINE_HEIGHT + 6
 const MOBILE_TOP_GAP: f32 = 2.0 * LINE_HEIGHT;
 const MESSAGE_INDENT: f32 = 4.0;
 const TEXT_RISE: f32 = 8.0;
-#[cfg_attr(feature = "mobile_ui", allow(dead_code))]
+#[cfg_attr(
+    feature = "mobile_ui",
+    allow(dead_code, reason = "desktop only; the touch controls replace it")
+)]
 const FOCUSED_LINES: usize = 20;
-#[cfg_attr(feature = "mobile_ui", allow(dead_code))]
+#[cfg_attr(
+    feature = "mobile_ui",
+    allow(dead_code, reason = "desktop only; the touch controls replace it")
+)]
 const UNFOCUSED_LINES: usize = 10;
 #[cfg(feature = "mobile_ui")]
 const MOBILE_FOCUSED_LINES: usize = 8;

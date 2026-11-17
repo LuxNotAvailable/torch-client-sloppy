@@ -1,9 +1,9 @@
 //! The native Vulkan renderer (VULKAN_REWRITE_CHECKLIST.md), built
 //! alongside the current Bevy/wgpu one behind the `vulkan` feature.
 //!
-//! For now it drives only the `vkview` development viewer
-//! (`src/bin/vkview.rs`), which runs each piece on its own, with debug
-//! views, before the game uses it.
+//! Desktop default; `MC_RENDERER=wgpu` for the old one. Game path: `live`.
+//! Dev viewer: `viewer` (`src/bin/vkview.rs`), runs each piece alone with
+//! debug views.
 
 pub mod bindless;
 pub mod context;

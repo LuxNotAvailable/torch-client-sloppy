@@ -35,7 +35,10 @@ pub(crate) fn dismiss() {
     }
 }
 
-#[cfg_attr(not(feature = "mobile_ui"), allow(dead_code))]
+#[cfg_attr(
+    not(feature = "mobile_ui"),
+    allow(dead_code, reason = "used by the touch controls only")
+)]
 pub(crate) fn pin(on: bool) {
     #[cfg(target_os = "android")]
     {
@@ -48,7 +51,10 @@ pub(crate) fn pin(on: bool) {
     let _ = on;
 }
 
-#[cfg_attr(not(feature = "mobile_ui"), allow(dead_code))]
+#[cfg_attr(
+    not(feature = "mobile_ui"),
+    allow(dead_code, reason = "used by the touch controls only")
+)]
 pub(crate) fn reassert() {
     #[cfg(target_os = "android")]
     if android::wanted() && !android::dismissed() {

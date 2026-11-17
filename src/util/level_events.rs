@@ -6,7 +6,7 @@ use azalea::entity::particle::Particle as P;
 use azalea::entity::particle::{BlockParticle, PowerParticle, SpellParticle};
 
 #[derive(Clone, Copy)]
-#[cfg_attr(not(audio), allow(dead_code))]
+#[cfg_attr(not(audio), allow(dead_code, reason = "used by audio builds only"))]
 enum Bus {
     Blocks,
     Hostile,

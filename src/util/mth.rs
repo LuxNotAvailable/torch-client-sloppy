@@ -12,6 +12,11 @@ pub fn lerp(t: f32, a: f32, b: f32) -> f32 {
     a + t * (b - a)
 }
 
+/// `Mth.lerp(double, double, double)`.
+pub fn lerp_d(t: f64, a: f64, b: f64) -> f64 {
+    a + t * (b - a)
+}
+
 pub fn lerp_f64(t: f32, a: f64, b: f64) -> f64 {
     a + t as f64 * (b - a)
 }

@@ -280,7 +280,7 @@ macro_rules! options {
 
         impl $name {
             /// Every field at its default.
-            #[allow(dead_code)]
+            #[allow(dead_code, reason = "not every option group calls it")]
             pub fn defaults() -> Self {
                 <Self as $crate::gui::option_codec::OptionGroup>::read_from(&|_| None)
             }

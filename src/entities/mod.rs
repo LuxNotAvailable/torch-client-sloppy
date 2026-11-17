@@ -1,3 +1,6 @@
+//! Entity state, kind facts (`facts`), models (`models/` by family), rigs and
+//! posing. Drawing: `renderer`/`vk`.
+
 pub mod attachments;
 pub mod bake;
 pub mod blockmodel;

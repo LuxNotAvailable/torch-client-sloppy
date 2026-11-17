@@ -1,3 +1,6 @@
+//! Connection and game loop: packet handlers (`packets`), tick (`tick`), GUI
+//! bus (`bus`), chunk meshing (`mesh_worker`).
+
 #[cfg(feature = "asset_download")]
 pub(crate) mod advancements;
 pub(crate) mod assets;

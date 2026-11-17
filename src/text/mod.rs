@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+//! Fonts, glyph layout and text components.
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -9,6 +9,7 @@ use image::RgbaImage;
 use crate::util::zip;
 
 pub mod events;
+#[allow(dead_code, reason = "end poem and credits roll not drawn yet")]
 pub mod texts;
 
 pub const LINE_HEIGHT: f32 = 9.0;
@@ -68,10 +69,6 @@ impl Style {
             color: rgb,
             ..Style::default()
         }
-    }
-
-    pub fn is_default(&self) -> bool {
-        *self == Style::default()
     }
 
     pub fn shadow_color(rgb: u32) -> u32 {

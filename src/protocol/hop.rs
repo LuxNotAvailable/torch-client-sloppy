@@ -1,3 +1,18 @@
+//! Protocol hops: rewrite an older server's packets into the version azalea
+//! speaks, and ours back. Id tables are data (`data/*.json`, from
+//! `tools/protogen.py`); this file holds only the shape rewrites.
+//!
+//! Add a packet rewrite:
+//! 1. Write `fn name(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>>`.
+//! 2. List it in the hop's `HopSpec` (`V774`): `inbound` as
+//!    `(Phase, "packet", body!(name))`, or `outbound` as
+//!    `(Phase, "ours", "theirs", name)`.
+//! 3. Packets with no entry pass through by id remap alone.
+//!
+//! Add a version: `protogen.py packets` and `remap` for its tables, a loader
+//! in `packets.rs`/`remap.rs`, a `HopSpec`, and an arm in
+//! `Translator::for_protocol`.
+
 use std::fmt;
 use std::sync::OnceLock;
 
