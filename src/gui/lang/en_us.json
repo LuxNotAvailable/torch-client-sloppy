@@ -141,8 +141,6 @@
   "torch.mod.which_modules_may_run_legit_permits_only": "Which modules may run. Legit permits only what the server cannot see. Ctrl+] raises, Ctrl+[ lowers.",
   "torch.more_options.advanced_tooltips": "Advanced Tooltips",
   "torch.more_options.chunk_borders": "Chunk Borders",
-  "torch.more_options.culling_view_culled": "Culling View: Culled",
-  "torch.more_options.culling_view_off": "Culling View: Off",
   "torch.more_options.english_us": "English (US)",
   "torch.more_options.fetching_the_language_list": "Fetching the language list...",
   "torch.more_options.fps_counter": "FPS Counter",

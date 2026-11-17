@@ -9,7 +9,7 @@ use bevy::math::{Mat4, Vec3};
 use gpu_allocator::MemoryLocation;
 
 use super::bindless::Bindless;
-use super::depth_view::{DEPTH_FORMAT, DepthTarget, DepthView, set_viewport};
+use super::depth::{DEPTH_FORMAT, DepthTarget, set_viewport};
 use super::graph::{Graph, Use};
 use super::memory::{Buffer, Image, Memory};
 use super::pipeline::{GraphicsDesc, Pipelines, Push, push};
@@ -27,9 +27,6 @@ pub enum View {
     Shaded,
     Normals,
     TextureIndex,
-    Depth,
-    /// The terrain's occlusion pyramid, one level (`--hiz-level`).
-    Pyramid,
 }
 
 impl View {
@@ -38,8 +35,6 @@ impl View {
             "shaded" => View::Shaded,
             "normals" => View::Normals,
             "texture" => View::TextureIndex,
-            "depth" => View::Depth,
-            "hiz" => View::Pyramid,
             _ => return None,
         })
     }
@@ -49,7 +44,6 @@ impl View {
             View::Shaded => 0,
             View::Normals => 1,
             View::TextureIndex => 2,
-            View::Depth | View::Pyramid => 3,
         }
     }
 }
@@ -58,7 +52,6 @@ pub struct TestScene {
     module: vk::ShaderModule,
     cull: vk::Pipeline,
     draw: vk::Pipeline,
-    depth_view: DepthView,
     tiles: Buffer,
     kept: Buffer,
     command: Buffer,
@@ -100,7 +93,6 @@ impl TestScene {
                 fragment_module: None,
             },
         )?;
-        let depth_view = DepthView::new(ctx, pipelines, color_format)?;
         let storage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
         let tiles = memory.buffer(
             ctx,
@@ -141,7 +133,6 @@ impl TestScene {
             module,
             cull,
             draw,
-            depth_view,
             tiles,
             kept,
             command,
@@ -174,7 +165,7 @@ impl TestScene {
         seconds: f32,
         view: View,
     ) -> Result<(), SetupError> {
-        let (depth_image, depth_view, depth_index) = self
+        let (depth_image, depth_view, _) = self
             .depth
             .get(ctx, memory, bindless, graph, extent, frame)?;
         let depth = (depth_image, depth_view);
@@ -328,20 +319,6 @@ impl TestScene {
                 device.cmd_end_rendering(cmd);
             },
         );
-
-        if view == View::Depth {
-            self.depth_view.record(
-                ctx,
-                bindless,
-                pipelines,
-                graph,
-                (depth.0, depth_index),
-                color,
-                extent,
-                NEAR,
-                30.0,
-            );
-        }
         Ok(())
     }
 
@@ -436,7 +413,6 @@ impl TestScene {
             ctx.device.destroy_pipeline(self.draw, None);
             ctx.device.destroy_shader_module(self.module, None);
         }
-        self.depth_view.destroy(ctx);
         memory.free_buffer(ctx, self.tiles);
         memory.free_buffer(ctx, self.kept);
         memory.free_buffer(ctx, self.command);

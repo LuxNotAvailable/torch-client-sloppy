@@ -20,7 +20,7 @@ use bevy::math::{Mat4, Vec3};
 use gpu_allocator::MemoryLocation;
 
 use super::bindless::Bindless;
-use super::depth_view::DEPTH_FORMAT;
+use super::depth::DEPTH_FORMAT;
 use super::entity_dump::Snapshot;
 use super::frame::FRAMES_IN_FLIGHT;
 use super::graph::{Graph, Use};

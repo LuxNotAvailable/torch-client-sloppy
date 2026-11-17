@@ -6,7 +6,7 @@
 use ash::vk;
 
 use super::bindless::Bindless;
-use super::depth_view::set_viewport;
+use super::depth::set_viewport;
 use super::graph::{Graph, Use};
 use super::memory::{Image, Memory};
 use super::pipeline::{GraphicsDesc, Pipelines, Push, push};

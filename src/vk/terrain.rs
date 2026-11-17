@@ -30,7 +30,7 @@ use gpu_allocator::MemoryLocation;
 use offset_allocator::{Allocation, Allocator};
 
 use super::bindless::Bindless;
-use super::depth_view::{DEPTH_FORMAT, DepthTarget, DepthView, set_viewport};
+use super::depth::{DEPTH_FORMAT, DepthTarget, set_viewport};
 use super::frame::FRAMES_IN_FLIGHT;
 use super::graph::{Graph, Use};
 use super::memory::{Buffer, Image, Memory};
@@ -201,8 +201,6 @@ pub struct Options {
     pub wave: bool,
     /// Bytes of section changes uploaded per frame.
     pub budget: u64,
-    /// The pyramid level `--view hiz` shows.
-    pub hiz_level: u32,
     /// FXAA, SSAA and post effects (`vk::post`).
     pub post: super::post::Settings,
     /// Store whole-face quads as compact records (`vk::packed`).
@@ -217,7 +215,6 @@ impl Default for Options {
             buckets: true,
             wave: true,
             budget: UPLOAD_BUDGET,
-            hiz_level: 3,
             packed: true,
             post: super::post::Settings::default(),
         }
@@ -478,12 +475,13 @@ pub const PACK_COMMAND_SIZE: u64 = COMMAND_SIZE;
 
 pub struct TerrainScene {
     options: Options,
+    /// Hi-Z as built (`Options::hiz`); the debug toggle can only turn it off.
+    hiz_allowed: bool,
     module: vk::ShaderModule,
     /// The pipelines, once the worker has built them; until then frames
     /// only stream sections in and clear.
     pipes: Option<Pipes>,
     pending: Option<super::pipeline::Pending>,
-    depth_view: DepthView,
     post: super::post::PostPass,
 
     pools: Vec<Pool>,
@@ -652,7 +650,6 @@ impl TerrainScene {
                 },
             ],
         );
-        let depth_view = DepthView::new(ctx, pipelines, color_format)?;
         let post = super::post::PostPass::new(ctx, pipelines, color_format)?;
 
         let storage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
@@ -842,11 +839,11 @@ impl TerrainScene {
         };
 
         Ok(TerrainScene {
+            hiz_allowed: options.hiz,
             options,
             module,
             pipes: None,
             pending: Some(pending),
-            depth_view,
             post,
             pools: Vec::new(),
             translucent,
@@ -1191,6 +1188,11 @@ impl TerrainScene {
     /// The anti-aliasing and post settings, as the game's options change.
     pub fn set_post(&mut self, post: super::post::Settings) {
         self.options.post = post;
+    }
+
+    /// Debug Options > Occlusion Culling.
+    pub fn set_hiz(&mut self, on: bool) {
+        self.options.hiz = on && self.hiz_allowed;
     }
 
     /// Queues section changes the game made (the live renderer's feed).
@@ -2105,15 +2107,12 @@ impl TerrainScene {
         view: View,
     ) -> Result<(), SetupError> {
         self.write_anim(ctx, memory, bindless, frame, slot)?;
-        // The scene goes through the post pass when it has anything to do
-        // (and never under a debug view, which reads the depth 1:1).
+        // The scene goes through the post pass when it has anything to do.
         let settings = self.options.post;
         let effects = settings
             .effects
             .unwrap_or_else(|| self.env.as_ref().map_or(0, |e| e.post));
-        let post = !self.cull_only
-            && !matches!(view, View::Depth | View::Pyramid)
-            && (settings.fxaa || settings.ssaa != 1.0 || effects != 0);
+        let post = !self.cull_only && (settings.fxaa || settings.ssaa != 1.0 || effects != 0);
         if post {
             let scene_extent = settings.scene_extent(extent);
             let scene = self
@@ -2765,37 +2764,6 @@ impl TerrainScene {
             }
         });
 
-        match view {
-            View::Depth => self.depth_view.record(
-                ctx,
-                bindless,
-                pipelines,
-                graph,
-                (depth, depth_index),
-                color,
-                extent,
-                NEAR,
-                64.0,
-            ),
-            View::Pyramid => {
-                if let Some((grown, size, levels)) = &self.pyramid {
-                    self.depth_view.record_pyramid(
-                        ctx,
-                        bindless,
-                        pipelines,
-                        graph,
-                        (grown.buffer.raw, grown.index),
-                        *size,
-                        self.options.hiz_level.clamp(1, *levels),
-                        color,
-                        extent,
-                        NEAR,
-                        64.0,
-                    );
-                }
-            }
-            _ => {}
-        }
         Ok(())
     }
 
@@ -3123,7 +3091,6 @@ impl TerrainScene {
                 ctx.device.destroy_query_pool(pool, None);
             }
         }
-        self.depth_view.destroy(ctx);
         self.post.destroy(ctx, memory);
         let mut buffers = vec![
             self.translucent.buffer,

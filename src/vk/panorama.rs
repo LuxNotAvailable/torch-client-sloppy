@@ -240,7 +240,7 @@ impl PanoramaScene {
                     .color_attachments(&colors),
             );
             if let Some(pipeline) = pipeline {
-                super::depth_view::set_viewport(ctx, cmd, extent);
+                super::depth::set_viewport(ctx, cmd, extent);
                 device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
                 device.cmd_bind_descriptor_sets(
                     cmd,

@@ -1106,6 +1106,8 @@ impl Live {
             terrain.set_post(self.post);
             // Under a pack the terrain only culls; the pack draws.
             terrain.set_cull_only(self.pack.is_some());
+            // Debug Options > Occlusion Culling.
+            terrain.set_hiz(!crate::renderer::terrain_pool::hiz::disabled());
             let _timed = Timed::new(9);
             match terrain.record(
                 &self.ctx,
@@ -1903,7 +1905,7 @@ impl Figure {
                 ctx,
                 "figure depth",
                 extent,
-                super::depth_view::DEPTH_FORMAT,
+                super::depth::DEPTH_FORMAT,
                 vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
                 vk::ImageAspectFlags::DEPTH,
             )?;
@@ -1974,7 +1976,7 @@ impl Figure {
                     .color_attachments(&colors)
                     .depth_attachment(&depth_attachment),
             );
-            super::depth_view::set_viewport(ctx, cmd, extent);
+            super::depth::set_viewport(ctx, cmd, extent);
             device.cmd_bind_descriptor_sets(
                 cmd,
                 vk::PipelineBindPoint::GRAPHICS,

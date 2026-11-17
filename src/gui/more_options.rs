@@ -118,26 +118,10 @@ pub fn draw_debug(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     form.toggle("Hitboxes", &mut state.hitboxes);
     form.toggle("Advanced Tooltips", &mut state.advanced_tooltips);
     // The terrain's occlusion pyramid (`terrain_pool::hiz`), for comparing
-    // with it off and seeing what it holds.
+    // with it off.
     let mut culling = !state.occlusion_culling_off;
     if form.toggle("Occlusion Culling", &mut culling) {
         state.occlusion_culling_off = !culling;
-    }
-    let levels = hiz_levels();
-    let culled = crate::renderer::terrain_pool::hiz::VIEW_CULLED;
-    let label = match state.culling_view {
-        0 => "Culling View: Off".to_owned(),
-        v if v == culled => "Culling View: Culled".to_owned(),
-        level => format!("Culling View: Level {}", level - 1),
-    };
-    // Off, Culled sections, then each pyramid level.
-    if form.button(&label) {
-        state.culling_view = match state.culling_view {
-            0 => culled,
-            v if v == culled => 1,
-            level if level >= levels => 0,
-            level => level + 1,
-        };
     }
     // Records a performance report of the play that follows (closes the
     // menus so the recording is of play, not of this screen).
@@ -154,7 +138,7 @@ pub fn draw_debug(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         }
     }
     form.finish();
-    set_hiz_debug(!state.occlusion_culling_off, state.culling_view);
+    set_hiz_debug(!state.occlusion_culling_off);
     if (state.options.pause_on_lost_focus, state.options.fps_counter) != saved_before {
         crate::gui::save_options(&state.options);
     }
@@ -265,14 +249,7 @@ pub fn draw_language(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     }
 }
 
-/// The pyramid's level count, or 0 without one (builds without the
-/// terrain's culling).
-fn hiz_levels() -> u32 {
-    crate::renderer::terrain_pool::hiz::LEVELS.load(std::sync::atomic::Ordering::Relaxed)
-}
-
-fn set_hiz_debug(enabled: bool, view: u32) {
+fn set_hiz_debug(enabled: bool) {
     use std::sync::atomic::Ordering;
     crate::renderer::terrain_pool::hiz::ENABLED.store(enabled, Ordering::Relaxed);
-    crate::renderer::terrain_pool::hiz::VIEW_LEVEL.store(view, Ordering::Relaxed);
 }

@@ -3,16 +3,15 @@
 //! window of its own, so each piece can be checked before the game uses it.
 //!
 //! `vkview [--frames N] [--device NAME] [--vsync] [--size WxH] [--stress]
-//!         [--view shaded|normals|texture|depth] [--screenshot FILE.png]
+//!         [--view shaded|normals|texture] [--screenshot FILE.png]
 //!         [--terrain DIR [--camera X,Y,Z,YAW,PITCH|game] [--no-hiz] [--no-vis]
-//!          [--no-buckets] [--budget MB] [--hiz-level N] [--greedy]
+//!          [--no-buckets] [--budget MB] [--greedy]
 //!          [--fxaa] [--ssaa SCALE] [--post creeper,spider,invert,blur|none]]`
 //!
 //! The scene is the test scene, or with `--terrain` a terrain dump the game
 //! wrote (`MC_DUMP_TERRAIN=DIR`), seen from `--camera` or, without one,
 //! from above, turning. In the terrain, `--view texture` colours each
-//! section apart and `--view hiz` shows a level of the occlusion pyramid;
-//! the `--no-*` flags turn a culling stage off, for comparing. The dump
+//! section apart; the `--no-*` flags turn a culling stage off, for comparing. The dump
 //! streams in under the upload budget, and `--frames` starts counting once
 //! it has. `--sheet FILE.png [--sheet-tile WxH] [--sheet-cols N]
 //! [--sheet-every N]` gathers every Nth measured frame, shrunk to a tile,
@@ -171,11 +170,6 @@ fn options(args: Vec<String>) -> Options {
                         }
                 });
                 options.terrain_options.post.effects = Some(flags);
-            }
-            "--hiz-level" => {
-                if let Some(level) = args.next().and_then(|v| v.parse().ok()) {
-                    options.terrain_options.hiz_level = level;
-                }
             }
             "--camera" => {
                 let text = args.next().unwrap_or_default();

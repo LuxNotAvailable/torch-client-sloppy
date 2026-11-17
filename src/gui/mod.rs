@@ -1149,10 +1149,8 @@ pub struct GuiState {
     /// F3+B: entities' hitboxes.
     pub hitboxes: bool,
     /// Debug Options: the terrain's occlusion culling off (it is on by
-    /// default), and the culling view (0 off, else 1 + the pyramid level
-    /// shown).
+    /// default).
     pub occlusion_culling_off: bool,
-    pub culling_view: u32,
     pub stats: stats::StatsState,
     pub social: social::SocialState,
     pub op_block: op_blocks::OpBlockState,

@@ -14,7 +14,7 @@ use bevy::math::{Mat4, Vec3};
 use gpu_allocator::MemoryLocation;
 
 use super::bindless::Bindless;
-use super::depth_view::DEPTH_FORMAT;
+use super::depth::DEPTH_FORMAT;
 use super::entity_dump::{EnvPart, Environment};
 use super::frame::FRAMES_IN_FLIGHT;
 use super::graph::{Graph, Use};
@@ -1021,7 +1021,7 @@ impl EnvScene {
                     .layer_count(1)
                     .color_attachments(&colors),
             );
-            super::depth_view::set_viewport(ctx, cmd, extent);
+            super::depth::set_viewport(ctx, cmd, extent);
             device.cmd_bind_descriptor_sets(
                 cmd,
                 vk::PipelineBindPoint::GRAPHICS,
