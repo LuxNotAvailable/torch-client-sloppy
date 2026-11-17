@@ -359,7 +359,10 @@ pub(in crate::gui) fn scroll_input(
     *scroll = scroll.clamp(0.0, max_scroll);
 }
 
-#[cfg_attr(not(any(feature = "shader_support", resource_packs)), allow(dead_code))]
+#[cfg_attr(
+    not(any(feature = "shader_support", resource_packs)),
+    allow(dead_code, reason = "used by the pack screens only")
+)]
 pub(in crate::gui) fn masked_input(
     ctx: &ScreenCtx,
     rect: (f32, f32, f32, f32),
@@ -1584,6 +1587,7 @@ pub fn draw_appleskin(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
 fn sensitivity_label(value: i32) -> String {
     match value {
         0 => format!("{SENSITIVITY}: *yawn*"),
+        69 => format!("{SENSITIVITY}: 69 Nice"),
         200 => format!("{SENSITIVITY}: HYPERSPEED!!!"),
         v => format!("{SENSITIVITY}: {v}%"),
     }
