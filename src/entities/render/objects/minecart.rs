@@ -62,7 +62,11 @@ fn on_rail(st: &EntityState) -> Option<(Vec3, f32, f32)> {
     let world = crate::client::tracking::read_world(slot.as_ref()?);
     let [x, y, z] = st.pos.map(f64::from);
     let (offset, yaw, pitch) = crate::play::minecart::rail_render_pose(&world, x, y, z)?;
-    Some((Vec3::new(offset.x as f32, offset.y as f32, offset.z as f32), yaw, pitch))
+    Some((
+        Vec3::new(offset.x as f32, offset.y as f32, offset.z as f32),
+        yaw,
+        pitch,
+    ))
 }
 
 fn jitter(id: i32) -> [f32; 3] {

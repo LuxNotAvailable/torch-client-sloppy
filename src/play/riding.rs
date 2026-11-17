@@ -294,7 +294,9 @@ impl Plugin for RidingPlugin {
                     .in_set(PhysicsSystems)
                     .after(azalea::physics::ai_step)
                     .before(travel),
-                crate::play::minecart::predict.after(PhysicsSystems).before(ride_post_travel),
+                crate::play::minecart::predict
+                    .after(PhysicsSystems)
+                    .before(ride_post_travel),
                 ride_post_travel
                     .after(PhysicsSystems)
                     .before(azalea::movement::send_position),

@@ -113,8 +113,8 @@ fn rail_of(state: BlockState) -> Option<(Rail, Option<bool>)> {
         RailShape::AscendingNorth => Rail::AscendingNorth,
         RailShape::AscendingSouth => Rail::AscendingSouth,
     };
-    let powered = (kind == BlockKind::PoweredRail)
-        .then(|| state.property::<Powered>().unwrap_or_default());
+    let powered =
+        (kind == BlockKind::PoweredRail).then(|| state.property::<Powered>().unwrap_or_default());
     Some((shape, powered))
 }
 
@@ -273,9 +273,9 @@ fn clip(boxes: &[Aabb], bb: &Aabb, axis: usize, mut d: f64) -> f64 {
     let get = |v: Vec3, a: usize| [v.x, v.y, v.z][a];
     const EPS: f64 = 1.0e-7;
     for b in boxes {
-        let overlaps = (0..3).filter(|&a| a != axis).all(|a| {
-            get(b.max, a) - EPS > get(bb.min, a) && get(b.min, a) + EPS < get(bb.max, a)
-        });
+        let overlaps = (0..3)
+            .filter(|&a| a != axis)
+            .all(|a| get(b.max, a) - EPS > get(bb.min, a) && get(b.min, a) + EPS < get(bb.max, a));
         if !overlaps {
             continue;
         }
@@ -305,7 +305,11 @@ fn sweep(world: &impl Blocks, bb: Aabb, d: Vec3) -> Vec3 {
     let boxes = world.boxes(&area);
     let mut bb = bb;
     let mut out = Vec3::ZERO;
-    let order = if d.x.abs() < d.z.abs() { [1, 2, 0] } else { [1, 0, 2] };
+    let order = if d.x.abs() < d.z.abs() {
+        [1, 2, 0]
+    } else {
+        [1, 0, 2]
+    };
     for axis in order {
         let want = [d.x, d.y, d.z][axis];
         if want == 0.0 {
@@ -651,7 +655,13 @@ impl Ridden {
 pub(crate) fn predict(
     local: Query<(&EntityIdIndex, &LookDirection, &ClientMovementState), With<LocalEntity>>,
     carts: Query<
-        (&EntityKindComponent, &Position, &Physics, &LookDirection, &WorldName),
+        (
+            &EntityKindComponent,
+            &Position,
+            &Physics,
+            &LookDirection,
+            &WorldName,
+        ),
         Without<LocalEntity>,
     >,
     worlds: Res<Worlds>,
@@ -679,7 +689,11 @@ pub(crate) fn predict(
     };
     let world = world_lock.read();
     let server = physics.vec_delta_codec.base();
-    let server = if server == Vec3::ZERO { **position } else { server };
+    let server = if server == Vec3::ZERO {
+        **position
+    } else {
+        server
+    };
 
     let r = match ridden.as_mut() {
         Some(r) if r.id == vehicle_id => r,
