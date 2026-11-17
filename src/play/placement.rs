@@ -6,6 +6,7 @@ use std::{
 
 use crate::blocks::facing::{clockwise, name as direction_name};
 use crate::play::redstone::has_neighbor_signal;
+use crate::play::survival;
 use azalea::block::{BlockState, BlockTrait};
 use azalea::physics::collision::{
     BlockWithShape,
@@ -80,8 +81,8 @@ pub fn predict(
         return None;
     };
 
-    let block = BlockKind::from_str(item.kind.to_str()).ok()?;
-    if block == BlockKind::Air {
+    let block = survival::item_block(item.kind.to_str())?;
+    if survival::unpredicted(block) {
         return None;
     }
 
@@ -97,7 +98,8 @@ pub fn predict(
             min_y,
             height,
             &block_at,
-        );
+        )
+        .filter(|&(pos, state)| survival::survives(state, pos, &block_at));
     }
 
     if block == BlockKind::Scaffolding && clicked_state.as_block_kind() == BlockKind::Scaffolding {
@@ -144,9 +146,17 @@ pub fn predict(
         return None;
     }
 
-    if let Some(state) =
-        supported_placement(block, hit, yaw, pitch, pos, replacing_clicked, &block_at)
-    {
+    if let Some(state) = supported_placement(
+        block,
+        hit,
+        yaw,
+        pitch,
+        pos,
+        replacing_clicked,
+        secondary_use,
+        replaced_state,
+        &block_at,
+    ) {
         return state.map(|state| (pos, state));
     }
 
@@ -164,14 +174,105 @@ pub fn predict(
         &block_at,
     )?;
 
-    if BlockState::from(block).is_collision_shape_empty() && attachment == Attachment::None {
+    let state = two_part_state(block, state, hit, yaw, pos, &block_at)?;
+    if !survival::survives(state, pos, &block_at) {
         return None;
     }
-    if accepts(block, "half", "upper") || accepts(block, "part", "head") {
-        return None;
+    // The other half or the bed head needs room
+    // (`DoorBlock`/`DoublePlantBlock`/`BedBlock.getStateForPlacement`).
+    if let Some((other, _)) = partner(state, pos) {
+        let room = other.y < min_y + height as i32
+            && block_at(other).is_some_and(|s| replaceable(s, block) == Some(true));
+        if !room {
+            return None;
+        }
     }
 
     Some((pos, state))
+}
+
+/// The second block a placement writes: a door's or tall plant's upper
+/// half, or a bed's head (`setPlacedBy`, run on the client too).
+pub fn partner(state: BlockState, pos: BlockPos) -> Option<(BlockPos, BlockState)> {
+    let block = state.as_block_kind();
+    let mut other = Box::<dyn BlockTrait>::from(state);
+    if survival::places_upper_half(block) {
+        other.set_property("half", "upper").ok()?;
+        return Some((pos.up(1), other.as_block_state()));
+    }
+    if survival::is_bed(block) {
+        let facing =
+            crate::blocks::facing::from_name(crate::blocks::info::property(state, "facing")?)?;
+        other.set_property("part", "head").ok()?;
+        return Some((pos + facing.normal(), other.as_block_state()));
+    }
+    None
+}
+
+/// Doors and beds face the way the player looks
+/// (`getHorizontalDirection`); doors also pick a hinge and take power.
+fn two_part_state(
+    block: BlockKind,
+    state: BlockState,
+    hit: &BlockHitResult,
+    yaw: f32,
+    pos: BlockPos,
+    block_at: &dyn Fn(BlockPos) -> Option<BlockState>,
+) -> Option<BlockState> {
+    let door = survival::places_upper_half(block) && accepts(block, "hinge", "left");
+    if !door && !survival::is_bed(block) {
+        return Some(state);
+    }
+    let facing = player_facing(yaw);
+    let mut placed = Box::<dyn BlockTrait>::from(state);
+    let _ = placed.set_property("facing", direction_name(facing));
+    if door {
+        let _ = placed.set_property("half", "lower");
+        let _ = placed.set_property("hinge", door_hinge(facing, hit, pos, block_at));
+        let powered =
+            has_neighbor_signal(pos, block_at) || has_neighbor_signal(pos.up(1), block_at);
+        let _ = placed.set_property("powered", bool_str(powered));
+        let _ = placed.set_property("open", bool_str(powered));
+    } else {
+        let _ = placed.set_property("part", "foot");
+    }
+    Some(placed.as_block_state())
+}
+
+/// `DoorBlock.getHinge`.
+fn door_hinge(
+    facing: Direction,
+    hit: &BlockHitResult,
+    pos: BlockPos,
+    block_at: &dyn Fn(BlockPos) -> Option<BlockState>,
+) -> &'static str {
+    let left = crate::blocks::facing::counter_clockwise(facing);
+    let right = clockwise(facing);
+    let full = |p: BlockPos| block_at(p).is_some_and(|s| s.is_collision_shape_full());
+    let lower_door = |p: BlockPos| {
+        block_at(p).is_some_and(|s| {
+            s.as_block_kind().to_str().ends_with("_door")
+                && crate::blocks::info::property(s, "half") == Some("lower")
+        })
+    };
+    let balance = full(pos + right.normal()) as i32 + full(pos.up(1) + right.normal()) as i32
+        - full(pos + left.normal()) as i32
+        - full(pos.up(1) + left.normal()) as i32;
+    let door_left = lower_door(pos + left.normal());
+    let door_right = lower_door(pos + right.normal());
+    if (door_left && !door_right) || balance > 0 {
+        return "right";
+    }
+    if (door_right && !door_left) || balance < 0 {
+        return "left";
+    }
+    let n = facing.normal();
+    let (cx, cz) = (hit.location.x - pos.x as f64, hit.location.z - pos.z as f64);
+    let left_side = (n.x >= 0 || cz >= 0.5)
+        && (n.x <= 0 || cz <= 0.5)
+        && (n.z >= 0 || cx <= 0.5)
+        && (n.z <= 0 || cx >= 0.5);
+    if left_side { "left" } else { "right" }
 }
 
 pub fn is_unobstructed(state: BlockState, pos: BlockPos, entities: &[Aabb]) -> bool {
@@ -1067,7 +1168,10 @@ fn segment_placement(
                 .is_some_and(|n| n < 4)
     };
     let clicked = block_at(hit.block_pos)?;
-    let pos = if grows(clicked) || REPLACEABLE.contains(&clicked.as_block_kind()) {
+    // `canBeReplaced`: never by the block's own item, once it's full.
+    let replaceable =
+        |s: BlockState| s.as_block_kind() != block && REPLACEABLE.contains(&s.as_block_kind());
+    let pos = if grows(clicked) || replaceable(clicked) {
         hit.block_pos
     } else {
         if has_use_interaction(clicked) {
@@ -1087,53 +1191,20 @@ fn segment_placement(
         placed.set_property(amount, &(n + 1).to_string()).ok()?;
         return Some((pos, placed.as_block_state()));
     }
-    if !REPLACEABLE.contains(&current.as_block_kind()) {
+    if !replaceable(current) {
         return None;
     }
-    let below = block_at(pos + Direction::Down.normal())?;
-    let survives = if block == BlockKind::LeafLitter {
-        is_face_sturdy(below, Direction::Up)
-    } else {
-        crate::blocks::tags::has(below, "supports_vegetation")
-    };
-    if !survives {
-        return None;
-    }
+    // `predict` checks it survives (`survival`).
     let mut placed = Box::<dyn BlockTrait>::from(BlockState::from(block));
     let _ = placed.set_property("facing", direction_name(player_facing(yaw).opposite()));
     Some((pos, placed.as_block_state()))
 }
 
-/// `StandingAndWallBlockItem`'s torch partner on walls.
-fn wall_torch(block: BlockKind) -> Option<BlockKind> {
-    Some(match block {
-        BlockKind::Torch => BlockKind::WallTorch,
-        BlockKind::SoulTorch => BlockKind::SoulWallTorch,
-        BlockKind::RedstoneTorch => BlockKind::RedstoneWallTorch,
-        BlockKind::CopperTorch => BlockKind::CopperWallTorch,
-        _ => return None,
-    })
-}
-
-/// Plants that only need `#supports_vegetation` below (`VegetationBlock`);
-/// ones that override `mayPlaceOn` are left out.
-fn is_plain_vegetation(block: BlockKind) -> bool {
-    let state = BlockState::from(block);
-    let tagged = crate::blocks::tags::has(state, "small_flowers")
-        || crate::blocks::tags::has(state, "saplings")
-        || matches!(block, BlockKind::ShortGrass | BlockKind::Fern);
-    tagged
-        && !matches!(
-            block,
-            BlockKind::WitherRose
-                | BlockKind::Azalea
-                | BlockKind::FloweringAzalea
-                | BlockKind::MangrovePropagule
-        )
-}
-
-/// Blocks placed only where they survive: torches and plain plants.
+/// `StandingAndWallBlockItem.getPlacementState`: torches, signs, banners,
+/// heads and coral fans try each look direction, standing (or hanging)
+/// one way and on the wall the others, keeping the first that survives.
 /// `Some(None)` means it can't go here; `None` means not one of these.
+#[allow(clippy::too_many_arguments)]
 fn supported_placement(
     block: BlockKind,
     hit: &BlockHitResult,
@@ -1141,46 +1212,87 @@ fn supported_placement(
     pitch: f32,
     pos: BlockPos,
     replacing_clicked: bool,
+    secondary_use: bool,
+    replaced_state: BlockState,
     block_at: &dyn Fn(BlockPos) -> Option<BlockState>,
 ) -> Option<Option<BlockState>> {
-    let below = pos + Direction::Down.normal();
-    if is_plain_vegetation(block) {
-        let ok =
-            block_at(below).is_some_and(|s| crate::blocks::tags::has(s, "supports_vegetation"));
-        return Some(ok.then(|| BlockState::from(block)));
-    }
-    let wall = wall_torch(block)?;
+    let (wall, hangs) = survival::wall_block(block)?;
+    let attach = if hangs {
+        Direction::Up
+    } else {
+        Direction::Down
+    };
     let directions = nearest_looking_directions(yaw, pitch, hit.direction, replacing_clicked);
-    // `WallTorchBlock.getStateForPlacement`: the first horizontal look
-    // direction with a sturdy face behind.
+    let water = bool_str(is_water(replaced_state));
     let wall_state = directions
         .iter()
         .filter(|d| !matches!(d, Direction::Up | Direction::Down))
-        .find(|&&d| {
-            let behind = pos + d.normal();
-            block_at(behind).is_some_and(|s| is_face_sturdy(s, d.opposite()))
-        })
-        .map(|&d| {
+        // A wall hanging sign hangs beside the clicked face, not on it.
+        .filter(|&&d| !hangs || axis_name(d) != axis_name(hit.direction))
+        .find_map(|&d| {
             let mut placed = Box::<dyn BlockTrait>::from(BlockState::from(wall));
-            let _ = placed.set_property("facing", direction_name(d.opposite()));
-            placed.as_block_state()
+            placed
+                .set_property("facing", direction_name(d.opposite()))
+                .ok()?;
+            let _ = placed.set_property("waterlogged", water);
+            let state = placed.as_block_state();
+            let ok = if survival::has_rule(wall) {
+                survival::survives(state, pos, block_at)
+            } else {
+                // `WallSkullBlock`: anything not replaceable behind it.
+                block_at(pos + d.normal()).is_some_and(|s| replaceable(s, wall) == Some(false))
+            };
+            ok.then_some(state)
         });
     for d in directions {
-        match d {
-            Direction::Up => {}
-            Direction::Down => {
-                if block_at(below).is_some_and(|s| can_support_center(s, Direction::Up)) {
-                    return Some(Some(BlockState::from(block)));
-                }
-            }
-            _ => {
-                if wall_state.is_some() {
-                    return Some(wall_state);
-                }
-            }
+        if d == attach.opposite() {
+            continue;
+        }
+        let state = if d == attach {
+            standing_state(block, hangs, yaw, secondary_use, pos, water, block_at)
+        } else {
+            wall_state
+        };
+        if let Some(state) = state.filter(|&s| survival::survives(s, pos, block_at)) {
+            return Some(Some(state));
         }
     }
     Some(None)
+}
+
+/// The standing (or ceiling-hanging) block's own placement state.
+fn standing_state(
+    block: BlockKind,
+    hangs: bool,
+    yaw: f32,
+    secondary_use: bool,
+    pos: BlockPos,
+    water: &'static str,
+    block_at: &dyn Fn(BlockPos) -> Option<BlockState>,
+) -> Option<BlockState> {
+    let mut placed = Box::<dyn BlockTrait>::from(BlockState::from(block));
+    let _ = placed.set_property("waterlogged", water);
+    let id = block.to_str();
+    // Signs and banners face the player; heads face away.
+    let faces_player = id.ends_with("_sign") || id.ends_with("_banner");
+    let mut rotation = rotation_segment(if faces_player { yaw + 180.0 } else { yaw });
+    if hangs {
+        // `CeilingHangingSignBlock`: under a full face the chains go to
+        // the edges, square to the player.
+        let above = block_at(pos.up(1))?;
+        let attached = !is_face_sturdy(above, Direction::Down) || secondary_use;
+        if !attached {
+            rotation = match player_facing(yaw).opposite() {
+                Direction::South => "0",
+                Direction::West => "4",
+                Direction::North => "8",
+                _ => "12",
+            };
+        }
+        let _ = placed.set_property("attached", bool_str(attached));
+    }
+    let _ = placed.set_property("rotation", rotation);
+    Some(placed.as_block_state())
 }
 
 fn accepts(block: BlockKind, name: &str, value: &str) -> bool {
@@ -1824,7 +1936,82 @@ mod tests {
             )
             .is_none()
         );
-        assert!(place(ItemKind::Rail, Direction::Up, 1.0, 0., BlockKind::Stone).is_none());
+        // Under a block a rail has nothing to stand on.
+        assert!(place(ItemKind::Rail, Direction::Down, 0.0, 0., BlockKind::Stone).is_none());
+        assert!(
+            place(
+                ItemKind::WheatSeeds,
+                Direction::Up,
+                1.0,
+                0.,
+                BlockKind::Stone
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn seeds_rails_and_plants_place_where_they_survive() {
+        let (_, wheat) = place(
+            ItemKind::WheatSeeds,
+            Direction::Up,
+            1.0,
+            0.,
+            BlockKind::Farmland,
+        )
+        .unwrap();
+        assert_eq!(wheat.as_block_kind(), BlockKind::Wheat);
+        let (_, potatoes) = place(
+            ItemKind::Potato,
+            Direction::Up,
+            1.0,
+            0.,
+            BlockKind::Farmland,
+        )
+        .unwrap();
+        assert_eq!(potatoes.as_block_kind(), BlockKind::Potatoes);
+        let (_, rail) = place(ItemKind::Rail, Direction::Up, 1.0, 0., BlockKind::Stone).unwrap();
+        assert_eq!(rail.as_block_kind(), BlockKind::Rail);
+        let (_, sapling) = place(
+            ItemKind::OakSapling,
+            Direction::Up,
+            1.0,
+            0.,
+            BlockKind::Dirt,
+        )
+        .unwrap();
+        assert_eq!(sapling.as_block_kind(), BlockKind::OakSapling);
+        let (_, wire) =
+            place(ItemKind::Redstone, Direction::Up, 1.0, 0., BlockKind::Stone).unwrap();
+        assert_eq!(wire.as_block_kind(), BlockKind::RedstoneWire);
+        let (_, carpet) = place(
+            ItemKind::WhiteCarpet,
+            Direction::Up,
+            1.0,
+            0.,
+            BlockKind::Glass,
+        )
+        .unwrap();
+        assert_eq!(carpet.as_block_kind(), BlockKind::WhiteCarpet);
+    }
+
+    #[test]
+    fn signs_stand_on_tops_and_hang_on_walls() {
+        let (_, floor) =
+            place(ItemKind::OakSign, Direction::Up, 1.0, 0., BlockKind::Stone).unwrap();
+        assert_eq!(floor.as_block_kind(), BlockKind::OakSign);
+        // Yaw 0 looks south; the sign's front turns back to the player.
+        assert_eq!(property(floor, "rotation"), Some("8"));
+        let (_, wall) = place(
+            ItemKind::OakSign,
+            Direction::North,
+            0.5,
+            0.,
+            BlockKind::Stone,
+        )
+        .unwrap();
+        assert_eq!(wall.as_block_kind(), BlockKind::OakWallSign);
+        assert_eq!(property(wall, "facing"), Some("north"));
     }
 
     #[test]
@@ -1875,7 +2062,15 @@ mod tests {
                 false,
                 MIN_Y,
                 HEIGHT,
-                move |p| Some(if p == TARGET { litter } else { BlockState::AIR }),
+                move |p| {
+                    Some(if p == TARGET {
+                        litter
+                    } else if p == TARGET.down(1) {
+                        BlockState::from(BlockKind::Stone)
+                    } else {
+                        BlockState::AIR
+                    })
+                },
             )
         };
         let (_, three) = grown("2").unwrap();
@@ -1884,9 +2079,24 @@ mod tests {
     }
 
     #[test]
-    fn two_block_placements_are_not_predicted() {
-        assert!(place(ItemKind::OakDoor, Direction::Up, 1.0, 0., BlockKind::Stone).is_none());
-        assert!(place(ItemKind::RedBed, Direction::Up, 1.0, 0., BlockKind::Stone).is_none());
+    fn doors_and_beds_write_their_second_block() {
+        let (pos, door) =
+            place(ItemKind::OakDoor, Direction::Up, 1.0, 0., BlockKind::Stone).unwrap();
+        assert_eq!(property(door, "half"), Some("lower"));
+        assert_eq!(property(door, "facing"), Some("south"));
+        let (top, upper) = partner(door, pos).unwrap();
+        assert_eq!(top, pos.up(1));
+        assert_eq!(property(upper, "half"), Some("upper"));
+
+        let (pos, bed) = place(ItemKind::RedBed, Direction::Up, 1.0, 0., BlockKind::Stone).unwrap();
+        assert_eq!(property(bed, "part"), Some("foot"));
+        let (head_pos, head) = partner(bed, pos).unwrap();
+        assert_eq!(head_pos, pos + Direction::South.normal());
+        assert_eq!(property(head, "part"), Some("head"));
+
+        let (pos, sunflower) =
+            place(ItemKind::Sunflower, Direction::Up, 1.0, 0., BlockKind::Dirt).unwrap();
+        assert_eq!(partner(sunflower, pos).map(|(p, _)| p), Some(pos.up(1)));
     }
 
     fn player_at(x: f64, y: f64, z: f64) -> Aabb {

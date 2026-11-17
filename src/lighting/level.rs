@@ -86,6 +86,12 @@ impl LightMap {
         )
     }
 
+    /// Whether the map has light for the block's section or column.
+    pub fn knows(&self, x: i32, y: i32, z: i32) -> bool {
+        let sec = SectionPos::of_block(x, y, z);
+        self.sections.contains_key(&sec) || self.lit.contains(&sec.column())
+    }
+
     pub fn resolve(&self, sec: SectionPos) -> SectionSample {
         if let Some(layers) = self.sections.get(&sec) {
             return SectionSample::Layers(layers.clone());

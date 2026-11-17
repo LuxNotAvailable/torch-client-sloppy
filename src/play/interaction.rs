@@ -1643,15 +1643,28 @@ fn predict_use(bot: &Client, kind: UseKind, secondary_use: bool) -> Option<Predi
         bucket: bucket_action,
     } = predicted?;
 
+    // A door's upper half, a tall plant's top or a bed's head.
+    let partner = bucket_action
+        .is_none()
+        .then(|| crate::play::placement::partner(state, pos))
+        .flatten()
+        .and_then(|(at, new)| world.read().get_block_state(at).map(|old| (at, new, old)));
+
     let seq = {
         let mut ecs = bot.ecs.write();
         let mut handler = ecs.get_mut::<BlockStatePredictionHandler>(bot.entity)?;
         let seq = handler.start_predicting();
         handler.retain_known_server_state(pos, old_state, player_pos);
+        if let Some((at, _, old)) = partner {
+            handler.retain_known_server_state(at, old, player_pos);
+        }
         seq
     };
 
     world.read().set_block_state(pos, state);
+    if let Some((at, new, _)) = partner {
+        world.read().set_block_state(at, new);
+    }
 
     match bucket_action {
         Some(BucketAction::Empty(_is_lava)) => {

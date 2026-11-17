@@ -22,8 +22,10 @@ pub(crate) mod mob_effects;
 pub(crate) mod movement_sounds;
 pub(crate) mod no_fall;
 pub(crate) mod placement;
+mod placement_rules;
 pub(crate) mod redstone;
 pub(crate) mod riding;
 pub(crate) mod screen_warp;
+pub(crate) mod survival;
 #[cfg(audio)]
 pub(crate) mod use_sounds;

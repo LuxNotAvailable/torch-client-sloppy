@@ -33,6 +33,8 @@ import net.minecraft.world.level.block.state.BlockState;
  *   tab   <id> <TOP|BOTTOM> <column> <title key> <icon id> <item id>...
  *   sound <id> <volume> <pitch> <break> <step> <place> <hit> <fall>
  *   use   <id> <door|trapdoor|fence_gate|button> <byHand> <open/on event> <close/off event>
+ *   class <id> <block class> <its superclasses, up to Block>...
+ *   blockitem <item id> <block id> <item class> [<wall block id> <attachment direction>]
  *
  * Run it with the server jar and its libraries on the classpath.
  */
@@ -86,6 +88,36 @@ public class DumpGameData {
                 .append(' ').append(kind).append(' ').append(byHand)
                 .append(' ').append(on.location().getPath())
                 .append(' ').append(off.location().getPath()).append('\n');
+        }
+
+        for (Block block : BuiltInRegistries.BLOCK) {
+            out.append("class ").append(BuiltInRegistries.BLOCK.getKey(block).getPath());
+            for (Class<?> c = block.getClass(); c != Block.class && c != null; c = c.getSuperclass()) {
+                out.append(' ').append(c.getSimpleName());
+            }
+            out.append('\n');
+        }
+
+        for (Item item : BuiltInRegistries.ITEM) {
+            if (item instanceof net.minecraft.world.item.BlockItem blockItem) {
+                out.append("blockitem ").append(BuiltInRegistries.ITEM.getKey(item).getPath())
+                    .append(' ').append(BuiltInRegistries.BLOCK.getKey(blockItem.getBlock()).getPath())
+                    .append(' ').append(item.getClass().getSimpleName());
+                if (blockItem instanceof net.minecraft.world.item.StandingAndWallBlockItem) {
+                    Block wall = null;
+                    Object attach = null;
+                    for (Class<?> c = blockItem.getClass(); c != Item.class; c = c.getSuperclass()) {
+                        for (var f : c.getDeclaredFields()) {
+                            f.setAccessible(true);
+                            if (f.getName().equals("wallBlock")) wall = (Block) f.get(blockItem);
+                            if (f.getName().equals("attachmentDirection")) attach = f.get(blockItem);
+                        }
+                    }
+                    out.append(' ').append(BuiltInRegistries.BLOCK.getKey(wall).getPath())
+                        .append(' ').append(attach);
+                }
+                out.append('\n');
+            }
         }
 
         for (Item item : BuiltInRegistries.ITEM) {

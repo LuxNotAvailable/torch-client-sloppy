@@ -85,7 +85,10 @@ fn project(p: [f32; 3], t: &Transform, size: f32) -> [f32; 3] {
 }
 
 pub fn render(quads: &[Quad], transform: &Transform, icon: u32) -> RgbaImage {
-    let size = icon * SUPERSAMPLE.load(std::sync::atomic::Ordering::Relaxed).max(1);
+    let size = icon
+        * SUPERSAMPLE
+            .load(std::sync::atomic::Ordering::Relaxed)
+            .max(1);
     let n = (size * size) as usize;
     let mut color = vec![[0.0f32; 4]; n];
     let mut depth = vec![f32::NEG_INFINITY; n];

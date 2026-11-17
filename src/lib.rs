@@ -510,7 +510,11 @@ fn run(args: platform::cli::Args) -> eyre::Result<()> {
         let started = platform::time::Instant::now();
         let atlas_work = |assets_root: &std::path::Path| {
             let t = platform::time::Instant::now();
-            let samples = if gui::stored_smooth_item_icons() { 2 } else { 1 };
+            let samples = if gui::stored_smooth_item_icons() {
+                2
+            } else {
+                1
+            };
             items::raster::SUPERSAMPLE.store(samples, std::sync::atomic::Ordering::Relaxed);
             let gui_atlas = gui::atlas::build_gui_atlas(assets_root);
             log_info!(
