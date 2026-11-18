@@ -1902,6 +1902,11 @@ fn update_skin(
     if rig.worn == *skin && rig.seen_textures == generation {
         return;
     }
+    // A rig spawned this frame (`commands`) has no parts yet; marking the
+    // skin worn now would skip its arm swap for good.
+    if layers.get(rig.parts[PART_RIGHT_ARM]).is_err() {
+        return;
+    }
     let slim_changed = rig.worn.slim() != skin.slim();
     rig.worn = skin.clone();
     rig.seen_textures = generation;
