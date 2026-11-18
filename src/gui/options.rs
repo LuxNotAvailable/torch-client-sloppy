@@ -2481,9 +2481,9 @@ mod tests {
 
     #[test]
     fn video_grid_stacks_like_the_options_list() {
-        // Six headers, then: the preset (1 row); Display (4: frame cap and
-        // VSync, window size and fullscreen, GUI scale and brightness, the
-        // renderer); Performance (3: render distance and culling, lighting
+        // Six headers, then: the preset (1 row); Display (5: frame cap and
+        // GUI frame cap, VSync, window size and fullscreen, GUI scale and
+        // brightness, the renderer); Performance (3: render distance and culling, lighting
         // and shader scale, shader shadows); Quality (7, the last the
         // Leaves button); Camera (1); Details (3: sign outline and block
         // outline, shader packs, reset).
@@ -2500,7 +2500,7 @@ mod tests {
         let shader = cfg!(feature = "shader_support") as u32 as f32;
         let desktop =
             cfg!(all(not(target_arch = "wasm32"), not(target_os = "android"))) as u32 as f32;
-        let rows = 1.0 + (2.0 + 2.0 * desktop) + (2.0 + shader) + 7.0 + 1.0 + (2.0 + shader);
+        let rows = 1.0 + (3.0 + 2.0 * desktop) + (2.0 + shader) + 7.0 + 1.0 + (2.0 + shader);
         assert_eq!(
             state.video_list.content_h,
             6.0 * HEADER_H + 5.0 * HEADER_PAD_TOP + rows * ROW_H + LIST_PAD_BOTTOM

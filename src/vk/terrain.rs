@@ -1412,13 +1412,15 @@ impl TerrainScene {
             .write(0, bytemuck::bytes_of(&cull_view));
         let device = &ctx.device;
         let (counts, commands) = (shadow.counts.raw, shadow.commands.raw);
+        let zeroed = u64::from(self.translucent_start) * COMMAND_SIZE;
         graph.pass(
             "shadow reset counts",
             &[],
-            &[(counts, Use::TransferDst)],
+            &[(counts, Use::TransferDst), (commands, Use::TransferDst)],
             |cmd| unsafe {
-                // SAFETY: a fill of a buffer this pass owns.
+                // SAFETY: fills of buffers this pass owns.
                 device.cmd_fill_buffer(cmd, counts, 0, vk::WHOLE_SIZE, 0);
+                ctx.zero_unused(cmd, commands, zeroed);
             },
         );
         let buffers = [
@@ -2424,13 +2426,18 @@ impl TerrainScene {
         };
         self.views[slot].write(0, bytemuck::bytes_of(&cull_view));
 
+        let zeroed = u64::from(self.translucent_start) * COMMAND_SIZE;
         graph.pass(
             "reset counts",
             &[],
-            &[(self.counts.raw, Use::TransferDst)],
+            &[
+                (self.counts.raw, Use::TransferDst),
+                (self.commands.raw, Use::TransferDst),
+            ],
             |cmd| unsafe {
-                // SAFETY: a fill of a buffer this pass owns.
+                // SAFETY: fills of buffers this pass owns.
                 device.cmd_fill_buffer(cmd, self.counts.raw, 0, vk::WHOLE_SIZE, 0);
+                ctx.zero_unused(cmd, self.commands.raw, zeroed);
             },
         );
 
@@ -2631,7 +2638,7 @@ impl TerrainScene {
                 for (p, pool) in self.pools.iter().enumerate() {
                     let list = p as u64 * 2 + kind as u64;
                     device.cmd_bind_index_buffer(cmd, pool.indices.raw, 0, vk::IndexType::UINT32);
-                    device.cmd_draw_indexed_indirect_count(
+                    ctx.draw_indexed_indirect_count(
                         cmd,
                         self.commands.raw,
                         list * capacity as u64 * COMMAND_SIZE,

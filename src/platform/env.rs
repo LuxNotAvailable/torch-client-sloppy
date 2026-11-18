@@ -243,6 +243,18 @@ const ALL: &[Var] = &[
         enabled: cfg!(feature = "vulkan"),
     },
     Var {
+        name: "MC_VK_EXTENSION_PATH",
+        what: "1 makes the Vulkan renderer take the Vulkan 1.1 path (features from extensions, as on older Android devices) on any device, to test it",
+        default: "only on devices below Vulkan 1.3",
+        enabled: cfg!(feature = "vulkan"),
+    },
+    Var {
+        name: "MC_VK_NO_INDIRECT_COUNT",
+        what: "1 makes the Vulkan renderer draw its culled lists at full length with the unused commands zeroed, as on devices without drawIndirectCount",
+        default: "only where drawIndirectCount is missing",
+        enabled: cfg!(feature = "vulkan"),
+    },
+    Var {
         name: "MC_NO_NEAR_FIRST",
         what: "1 walks terrain sections in slot order rather than nearest the camera first, to measure what the order saves",
         default: "off",

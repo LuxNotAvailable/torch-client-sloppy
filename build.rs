@@ -94,7 +94,7 @@ fn compile_slang() {
         let json = out.join(format!("{stem}.json"));
         let output = Command::new(&slangc)
             .arg(&path)
-            .args(["-target", "spirv", "-profile", "spirv_1_5"])
+            .args(["-target", "spirv", "-profile", "spirv_1_3"])
             .args(["-fvk-use-entrypoint-name", "-matrix-layout-column-major"])
             // Slang widens the profile for texture types; only the capabilities
             // a shader uses reach the module (41012). The read-only view of

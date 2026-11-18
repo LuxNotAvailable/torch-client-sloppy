@@ -732,13 +732,16 @@ impl EntityScene {
             );
         }
         let counts = self.counts.0.raw;
+        let commands = self.commands.0.raw;
+        let zeroed = u64::from(self.count) * COMMAND_SIZE;
         graph.pass(
             "entity reset",
             &[],
-            &[(counts, Use::TransferDst)],
+            &[(counts, Use::TransferDst), (commands, Use::TransferDst)],
             |cmd| unsafe {
-                // SAFETY: a fill of a buffer this pass owns.
+                // SAFETY: fills of buffers this pass owns.
                 device.cmd_fill_buffer(cmd, counts, 0, vk::WHOLE_SIZE, 0);
+                ctx.zero_unused(cmd, commands, zeroed);
             },
         );
         let mut buffers = vec![
@@ -895,7 +898,7 @@ impl EntityScene {
         self.bind(ctx, cmd, pipelines, view_proj, mode, seconds, view_index);
         // SAFETY: as above; the commands and count the cull wrote.
         unsafe {
-            ctx.device.cmd_draw_indexed_indirect_count(
+            ctx.draw_indexed_indirect_count(
                 cmd,
                 self.commands.0.raw,
                 0,

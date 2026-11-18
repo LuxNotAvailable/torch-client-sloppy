@@ -186,23 +186,26 @@ fn left_inner(st: &EntityState) -> Transform {
     hand_placement(st, true, body_hook(st))
 }
 
-/// Both hands' layers for `kinds`, rooted as their bodies are.
+/// Both hands' layers for `kinds`, rooted as their bodies are: one spec
+/// per hand, shared by the kinds, named `names` (right, left; unique per
+/// call).
 pub fn register(
     registry: &mut Registry,
     kinds: &[EntityKind],
+    names: [&'static str; 2],
     root: Option<fn(&EntityState) -> RootPose>,
 ) {
-    for &kind in kinds {
+    {
         let hands = [
             (
-                "held_right",
+                names[0],
                 right_item as fn(&EntityState) -> TexturePath,
                 "thirdperson_righthand",
                 right_inner as fn(&EntityState) -> Transform,
                 right_visible as fn(&EntityState) -> bool,
             ),
             (
-                "held_left",
+                names[1],
                 left_item,
                 "thirdperson_lefthand",
                 left_inner,
@@ -214,7 +217,7 @@ pub fn register(
             if let Some(root) = root {
                 spec = spec.with_root(root);
             }
-            registry.add(kind, spec);
+            registry.add_many(kinds, spec);
         }
     }
 }

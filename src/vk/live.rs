@@ -222,8 +222,14 @@ fn setup(world: &mut World) -> Result<Live, SetupError> {
         None,
     )?;
     info!(
-        "native renderer: {} ({:?}), Vulkan {}.{}.{}",
-        ctx.info.name, ctx.info.kind, ctx.info.api.0, ctx.info.api.1, ctx.info.api.2
+        "native renderer: {} ({:?}), Vulkan {}.{}.{}, {:?} path{}",
+        ctx.info.name,
+        ctx.info.kind,
+        ctx.info.api.0,
+        ctx.info.api.1,
+        ctx.info.api.2,
+        ctx.info.path,
+        if ctx.info.indirect_count { "" } else { ", fixed draw counts" }
     );
     let swapchain = Swapchain::new(&ctx, size, true, None)?;
     let frames = Frames::new(&ctx)?;

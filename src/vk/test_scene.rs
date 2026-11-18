@@ -315,7 +315,7 @@ impl TestScene {
                         view_proj: view_proj.to_cols_array_2d(),
                     },
                 );
-                device.cmd_draw_indirect_count(cmd, self.command.raw, 0, self.count.raw, 0, 1, 16);
+                ctx.draw_indirect_count(cmd, self.command.raw, 0, self.count.raw, 0, 1, 16);
                 device.cmd_end_rendering(cmd);
             },
         );

@@ -271,7 +271,12 @@ fn build_graphics(
     // SAFETY: every state struct is a local that outlives the call.
     unsafe { device.create_graphics_pipelines(cache, &info, None) }
         .map(|p| p[0])
-        .map_err(|(_, e)| e.into())
+        .map_err(|(_, e)| {
+            SetupError(format!(
+                "graphics pipeline {:?}/{:?}: {e:?}",
+                desc.vertex, desc.fragment
+            ))
+        })
 }
 
 fn build_compute(

@@ -30,6 +30,8 @@
 //! error. `--screenshot` saves the last frame. `--stress` resizes,
 //! minimises and restores the window during the run, to exercise swapchain
 //! recreation. Set `MC_VK_VALIDATION=1` for the layer in release builds.
+//! `--extension-path` and `--no-indirect-count` force the Vulkan 1.1 path
+//! and the fixed-count draws (`MC_VK_EXTENSION_PATH`, `MC_VK_NO_INDIRECT_COUNT`).
 //!
 //! `--headless` draws offscreen, with no window, with the same summary,
 //! screenshots and contact sheets.
@@ -116,6 +118,11 @@ fn options(args: Vec<String>) -> Options {
             "--frames" => options.frames = args.next().and_then(|v| v.parse().ok()),
             "--device" => options.device = args.next(),
             "--vsync" => options.vsync = true,
+            // The Android path's switches, as flags where env vars can't
+            // reach (the APK).
+            // SAFETY: set while parsing, before any thread reads them.
+            "--extension-path" => unsafe { std::env::set_var("MC_VK_EXTENSION_PATH", "1") },
+            "--no-indirect-count" => unsafe { std::env::set_var("MC_VK_NO_INDIRECT_COUNT", "1") },
             "--stress" => options.stress = true,
             "--screenshot" => options.screenshot = args.next(),
             "--terrain" => options.terrain = args.next().map(Into::into),
@@ -302,14 +309,16 @@ impl Renderer {
         let ctx = Context::new(handles, options.device.as_deref())?;
         let info = &ctx.info;
         println!(
-            "vkview: {} ({:?}), Vulkan {}.{}.{}, driver {}, subgroup {}",
+            "vkview: {} ({:?}), Vulkan {}.{}.{}, driver {}, subgroup {}, {:?} path{}",
             info.name,
             info.kind,
             info.api.0,
             info.api.1,
             info.api.2,
             info.driver,
-            info.subgroup_size
+            info.subgroup_size,
+            info.path,
+            if info.indirect_count { "" } else { ", fixed draw counts" }
         );
         let swapchain = match &window {
             Some(window) => {

@@ -38,8 +38,14 @@ pub fn register(registry: &mut Registry) {
                 K::Illusioner,
                 K::Vex,
             ],
+            ["held_right", "held_left"],
             None,
         );
-        held::register(registry, &[K::Drowned], Some(zombie::drowned_root));
+        held::register(
+            registry,
+            &[K::Drowned],
+            ["drowned_held_right", "drowned_held_left"],
+            Some(zombie::drowned_root),
+        );
     }
 }

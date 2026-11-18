@@ -309,6 +309,8 @@ float4 sample_atlas(float2 uv) {
     return lerp(ta, tb, float(entry.y) / 65535.0);
 }
 
+// A cut-out hole returns alpha -1, for the entry point to discard: the
+// PowerVR compiler fails on a discard inside a called function.
 float4 terrain_shade(VertexOut in, bool cutout) {
     if (pc.more.y == VIEW_NORMALS) {
         float3 n = normalize(cross(ddx(in.world), ddy(in.world)));
@@ -321,7 +323,7 @@ float4 terrain_shade(VertexOut in, bool cutout) {
     float4 texel = sample_atlas(in.uv);
     if (cutout && texel.a < 0.1) {
         if (!leaf_filled(in)) {
-            discard;
+            return float4(0, 0, 0, -1);
         }
         // A hole filled with the leaf's average colour (a small mip),
         // halfway to black: the shade of a leaf's shadowed inside.
@@ -339,7 +341,11 @@ float4 terrain_solid(VertexOut in): SV_Target {
 
 [shader("fragment")]
 float4 terrain_cutout(VertexOut in): SV_Target {
-    return float4(terrain_shade(in, true).rgb, 1);
+    float4 c = terrain_shade(in, true);
+    if (c.a < 0) {
+        discard;
+    }
+    return float4(c.rgb, 1);
 }
 
 // Vanilla's translucent layer: water, stained glass, ice, slime, honey and

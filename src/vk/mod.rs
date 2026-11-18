@@ -74,7 +74,9 @@ impl std::fmt::Display for SetupError {
 impl std::error::Error for SetupError {}
 
 impl From<ash::vk::Result> for SetupError {
+    #[track_caller]
     fn from(result: ash::vk::Result) -> SetupError {
-        SetupError(format!("Vulkan call failed: {result:?}"))
+        let at = std::panic::Location::caller();
+        SetupError(format!("Vulkan call failed: {result:?} ({}:{})", at.file(), at.line()))
     }
 }

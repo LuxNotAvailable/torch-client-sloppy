@@ -1854,7 +1854,7 @@ impl PackScreen {
                         for (p, (_, indices)) in t.pools.iter().enumerate() {
                             let list = p as u64 * 2 + slot as u64;
                             device.cmd_bind_index_buffer(cmd, *indices, 0, vk::IndexType::UINT32);
-                            device.cmd_draw_indexed_indirect_count(
+                            ctx.draw_indexed_indirect_count(
                                 cmd,
                                 commands.0,
                                 list * u64::from(t.capacity) * size,
