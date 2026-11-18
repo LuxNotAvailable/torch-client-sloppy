@@ -25,7 +25,6 @@ git clone https://github.com/LuxNotAvailable/torch-client-sloppy.git
 cd torch-client-sloppy
 cargo build --release          # desktop: target/release/torch-client
 tools/build_linux.sh           # Linux
-tools/build_web.sh             # browser
 tools/build_android.sh         # Android APK
 ```
 

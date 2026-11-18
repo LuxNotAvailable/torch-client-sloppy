@@ -332,12 +332,3 @@ pub fn id_of(dim: Dimension) -> u8 {
         Dimension::End => 2,
     }
 }
-
-#[cfg(target_arch = "wasm32")]
-pub fn from_id(v: u8) -> Dimension {
-    match v {
-        1 => Dimension::Nether,
-        2 => Dimension::End,
-        _ => Dimension::Overworld,
-    }
-}

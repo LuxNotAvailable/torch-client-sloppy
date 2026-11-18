@@ -283,10 +283,7 @@ struct FillResult {
     generation: u64,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 type FillTask = bevy::tasks::Task<FillResult>;
-#[cfg(target_arch = "wasm32")]
-type FillTask = FillResult;
 
 fn run_fill(
     mut grid: Grid,
@@ -320,14 +317,9 @@ fn spawn_fill(
     y_hi: i32,
     generation: u64,
 ) -> FillTask {
-    #[cfg(not(target_arch = "wasm32"))]
     {
         bevy::tasks::AsyncComputeTaskPool::get()
             .spawn(async move { run_fill(grid, snapshot, here, radius, y_lo, y_hi, generation) })
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        run_fill(grid, snapshot, here, radius, y_lo, y_hi, generation)
     }
 }
 
@@ -352,7 +344,6 @@ fn install(
 }
 
 fn poll_fill(task: &mut Option<FillTask>) -> Option<FillResult> {
-    #[cfg(not(target_arch = "wasm32"))]
     {
         let pending = task.as_mut()?;
         let done = bevy::tasks::block_on(bevy::tasks::futures_lite::future::poll_once(pending));
@@ -360,10 +351,6 @@ fn poll_fill(task: &mut Option<FillTask>) -> Option<FillResult> {
             *task = None;
         }
         done
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        task.take()
     }
 }
 
@@ -480,11 +467,6 @@ pub fn update_occlusion(
         state.task = Some(spawn_fill(
             grid, snapshot, here, radius, y_lo, y_hi, generation,
         ));
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    if let Some(result) = poll_fill(&mut state.task) {
-        refill |= install(&mut state, result, here, now);
     }
 
     if state.section.is_none() || !refill {

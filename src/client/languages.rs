@@ -51,7 +51,6 @@ pub fn installed(code: &str) -> bool {
     code == "en_us" || dir().join(format!("{code}.json")).exists()
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn fetch_json(url: &str) -> Result<serde_json::Value, String> {
     let bytes = crate::platform::http::get_bytes_blocking(url)?;
     serde_json::from_slice(&bytes).map_err(|e| e.to_string())
@@ -73,7 +72,7 @@ pub fn refresh() {
         }
         *list = ListState::Fetching;
     }
-    #[cfg(not(target_arch = "wasm32"))]
+
     std::thread::spawn(|| {
         let result = (|| -> Result<Index, String> {
             let manifest =
@@ -131,10 +130,6 @@ pub fn refresh() {
             Err(e) => *LIST.lock().unwrap() = ListState::Failed(e),
         }
     });
-    #[cfg(target_arch = "wasm32")]
-    {
-        *LIST.lock().unwrap() = ListState::Failed("not available in the browser".into());
-    }
 }
 
 /// Fetches a language if needed, then switches to it.
@@ -150,7 +145,7 @@ pub fn choose(code: &str) {
         .and_then(|i| i.hashes.get(code).cloned());
     let Some(hash) = hash else { return };
     *DOWNLOADING.lock().unwrap() = Some(code.to_owned());
-    #[cfg(not(target_arch = "wasm32"))]
+
     {
         let code = code.to_owned();
         std::thread::spawn(move || {
@@ -166,8 +161,6 @@ pub fn choose(code: &str) {
             }
         });
     }
-    #[cfg(target_arch = "wasm32")]
-    let _ = hash;
 }
 
 /// Lays `code`'s strings over English (or clears them, for English).

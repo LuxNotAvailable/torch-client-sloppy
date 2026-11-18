@@ -8,7 +8,7 @@ macro_rules! slots {
             pub(crate) const $name: Slot = Slot($file);
         )*
 
-        #[cfg(not(target_arch = "wasm32"))]
+
         pub(crate) const ALL: &[Slot] = &[$($(#[cfg($cfg)])? $name,)*];
     };
 }
@@ -29,26 +29,16 @@ slots! {
     MODRINTH_PACKS = "modrinth_packs.json";
     #[cfg(feature = "shader_support")]
     SHADER_PACK = "shaderpack.txt";
-    #[cfg(all(audio, not(target_arch = "wasm32")))]
+    #[cfg(audio)]
     SOUNDS_SKIPPED = "sounds_skipped.txt";
 }
 
 impl Slot {
     pub(crate) fn load(&self) -> Option<String> {
-        #[cfg(target_arch = "wasm32")]
-        {
-            return web::get(&self.web_key());
-        }
-        #[cfg(not(target_arch = "wasm32"))]
         std::fs::read_to_string(self.path()).ok()
     }
 
     pub(crate) fn store(&self, value: &str) {
-        #[cfg(target_arch = "wasm32")]
-        {
-            web::set(&self.web_key(), value);
-        }
-        #[cfg(not(target_arch = "wasm32"))]
         if let Err(e) = self.store_native(value) {
             crate::log_warn!(
                 "storage",
@@ -59,7 +49,6 @@ impl Slot {
         }
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     fn store_native(&self, value: &str) -> std::io::Result<()> {
         let path = self.path();
         if let Some(parent) = path.parent() {
@@ -76,18 +65,12 @@ impl Slot {
         }
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn path(&self) -> std::path::PathBuf {
         dir().join(self.0)
     }
-
-    #[cfg(target_arch = "wasm32")]
-    fn web_key(&self) -> String {
-        format!("torch-client/{}", self.0)
-    }
 }
 
-#[cfg(all(not(target_arch = "wasm32"), not(test)))]
+#[cfg(not(test))]
 pub(crate) fn dir() -> std::path::PathBuf {
     match crate::platform::env::var_os("MC_CLIENT_CONFIG_DIR") {
         Some(p) => std::path::PathBuf::from(p),
@@ -97,7 +80,7 @@ pub(crate) fn dir() -> std::path::PathBuf {
 
 /// Tests keep their files apart from the player's: a test that saves
 /// accounts or options must never overwrite the real ones.
-#[cfg(all(not(target_arch = "wasm32"), test))]
+#[cfg(test)]
 pub(crate) fn dir() -> std::path::PathBuf {
     std::env::temp_dir().join(format!("torch-client-test-{}", std::process::id()))
 }
@@ -105,10 +88,7 @@ pub(crate) fn dir() -> std::path::PathBuf {
 #[cfg(target_os = "windows")]
 pub(crate) const WINDOWS_FOLDER: &str = "torch-client";
 
-#[cfg(all(
-    not(any(target_arch = "wasm32", target_os = "android", target_os = "windows")),
-    not(test)
-))]
+#[cfg(all(not(any(target_os = "android", target_os = "windows")), not(test)))]
 fn default_dir() -> std::path::PathBuf {
     std::path::PathBuf::from("/tmp/torch-client")
 }
@@ -129,21 +109,4 @@ fn default_dir() -> std::path::PathBuf {
         .get()
         .and_then(|app| app.internal_data_path())
         .unwrap_or_else(std::env::temp_dir)
-}
-
-#[cfg(target_arch = "wasm32")]
-mod web {
-    fn storage() -> Option<web_sys::Storage> {
-        web_sys::window()?.local_storage().ok()?
-    }
-
-    pub(super) fn get(key: &str) -> Option<String> {
-        storage()?.get_item(key).ok()?
-    }
-
-    pub(super) fn set(key: &str, value: &str) {
-        if let Some(storage) = storage() {
-            let _ = storage.set_item(key, value);
-        }
-    }
 }

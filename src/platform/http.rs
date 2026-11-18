@@ -5,7 +5,6 @@ pub(crate) enum Fetched {
     Cancelled,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 mod imp {
     use super::{Fetched, USER_AGENT};
     use std::io::Read;
@@ -98,85 +97,6 @@ mod imp {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
-mod imp {
-    use super::Fetched;
-    use wasm_bindgen::{JsCast, JsValue};
-    use wasm_bindgen_futures::JsFuture;
-
-    fn err(what: &str, e: JsValue) -> String {
-        format!("{what}: {e:?}")
-    }
-
-    async fn response(url: &str) -> Result<web_sys::Response, String> {
-        let window = web_sys::window().ok_or("no window")?;
-        let value = JsFuture::from(window.fetch_with_str(url))
-            .await
-            .map_err(|e| err("fetch failed", e))?;
-        let resp: web_sys::Response = value.dyn_into().map_err(|e| err("not a response", e))?;
-        if !resp.ok() {
-            return Err(format!("http {}", resp.status()));
-        }
-        Ok(resp)
-    }
-
-    pub(super) async fn get_string(url: &str) -> Result<String, String> {
-        let resp = response(url).await?;
-        let text = JsFuture::from(resp.text().map_err(|e| err("no body", e))?)
-            .await
-            .map_err(|e| err("body failed", e))?;
-        text.as_string().ok_or_else(|| "body is not text".into())
-    }
-
-    pub(super) async fn get_bytes(
-        url: &str,
-        expected: u64,
-        progress: &mut dyn FnMut(u64, u64) -> bool,
-    ) -> Result<Fetched, String> {
-        let resp = response(url).await?;
-        let total = if expected > 0 {
-            expected
-        } else {
-            resp.headers()
-                .get("content-length")
-                .ok()
-                .flatten()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(0)
-        };
-
-        let body = resp.body().ok_or("response has no body")?;
-        let reader: web_sys::ReadableStreamDefaultReader = body
-            .get_reader()
-            .dyn_into()
-            .map_err(|e| err("not a byte reader", e.into()))?;
-
-        let mut out: Vec<u8> = Vec::with_capacity(total as usize);
-        loop {
-            let chunk = JsFuture::from(reader.read())
-                .await
-                .map_err(|e| err("read failed", e))?;
-            let done = js_sys::Reflect::get(&chunk, &JsValue::from_str("done"))
-                .map(|v| v.as_bool().unwrap_or(false))
-                .unwrap_or(false);
-            if done {
-                break;
-            }
-            let value = js_sys::Reflect::get(&chunk, &JsValue::from_str("value"))
-                .map_err(|e| err("chunk has no value", e))?;
-            let array = js_sys::Uint8Array::new(&value);
-            let at = out.len();
-            out.resize(at + array.length() as usize, 0);
-            array.copy_to(&mut out[at..]);
-            if !progress(out.len() as u64, total) {
-                let _ = reader.cancel();
-                return Ok(Fetched::Cancelled);
-            }
-        }
-        Ok(Fetched::Body(out))
-    }
-}
-
 pub(crate) async fn get_string(url: &str) -> Result<String, String> {
     imp::get_string(url).await
 }
@@ -189,7 +109,6 @@ pub(crate) async fn get_bytes(
     imp::get_bytes(url, expected, progress).await
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn get_bytes_blocking(url: &str) -> Result<Vec<u8>, String> {
     imp::get_bytes_blocking(url)
 }

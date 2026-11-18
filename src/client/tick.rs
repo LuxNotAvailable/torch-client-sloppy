@@ -90,7 +90,6 @@ fn read_tick_snapshot(bot: &Client, shared: &Arc<SharedMutex>) -> Option<TickSna
     };
     if let Ok(partial) = bot.partial_world() {
         viewwindow::keep_view_center_on_the_player(&partial, pos);
-        crate::client::mesh_worker::sweep_parked(&partial);
     }
 
     let (other_positions, seen_players) = collect_other_players(bot);
@@ -1484,9 +1483,6 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
 
     viewwindow::apply_client_information_requests(bot, shared);
 
-    if crate::client::mesh_worker::take_died() {
-        worldsync::reload_all_chunks(bot, shared);
-    }
     // The requests, in the order they were made.
     let mut reloaded = false;
     for request in crate::client::bus::take_requests() {

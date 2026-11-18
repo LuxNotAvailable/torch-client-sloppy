@@ -76,7 +76,7 @@ const ALL: &[Var] = &[
         } else {
             "/tmp/torch-client"
         },
-        enabled: !cfg!(target_arch = "wasm32"),
+        enabled: true,
     },
     Var {
         name: "MC_ASSET_DIR",
@@ -86,7 +86,7 @@ const ALL: &[Var] = &[
         } else {
             "torch-client/assets under the system temporary directory"
         },
-        enabled: cfg!(all(feature = "asset_download", not(target_arch = "wasm32"))),
+        enabled: cfg!(feature = "asset_download"),
     },
     Var {
         name: "MC_POOL_THREADS",
@@ -108,8 +108,7 @@ const ALL: &[Var] = &[
     },
     Var {
         name: "MC_PROTOCOL",
-        what: "protocol number to speak on the wire, overriding what the server says \
-               (on the web build, read from the page's own `?MC_PROTOCOL=` query string instead)",
+        what: "protocol number to speak on the wire, overriding what the server says",
         default: "asked for with a status ping before each join",
         enabled: cfg!(feature = "multiversion"),
     },
@@ -135,7 +134,7 @@ const ALL: &[Var] = &[
         name: "MC_CPU_RIGS",
         what: "pose mob models on the CPU, re-baking each mob's mesh, instead of in the vertex shader",
         default: "off",
-        enabled: cfg!(not(target_arch = "wasm32")),
+        enabled: true,
     },
     Var {
         name: "MC_COLLIDE_CHECK",
@@ -159,28 +158,20 @@ const ALL: &[Var] = &[
     Var {
         name: "MC_UPLOAD_VERTS",
         what: "terrain vertices uploaded per frame",
-        default: if cfg!(target_arch = "wasm32") {
-            "30000"
-        } else {
-            "120000"
-        },
+        default: "120000",
         enabled: true,
     },
     Var {
         name: "MC_UPLOAD_SECTIONS",
         what: "terrain sections uploaded per frame",
-        default: if cfg!(target_arch = "wasm32") {
-            "24"
-        } else {
-            "128"
-        },
+        default: "128",
         enabled: true,
     },
     Var {
         name: "MC_MESH_THREADS",
         what: "mesh worker threads",
         default: "2",
-        enabled: !cfg!(target_arch = "wasm32"),
+        enabled: true,
     },
     Var {
         name: "MC_MESH_BUDGET_MS",
@@ -288,7 +279,7 @@ const ALL: &[Var] = &[
         name: "MC_WORKER_PRIORITY",
         what: "\"normal\" keeps the mesh and light threads at normal priority instead of below it",
         default: "below normal",
-        enabled: !cfg!(target_arch = "wasm32"),
+        enabled: true,
     },
     Var {
         name: "MC_PERF_AUTOSTART",

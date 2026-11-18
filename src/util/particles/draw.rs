@@ -260,7 +260,7 @@ pub(super) fn batch_material(
                 glint: false,
             },
         ),
-        #[cfg(not(target_arch = "wasm32"))]
+
         rig_parts: crate::renderer::rig_parts::PARTS,
         glint: crate::renderer::entity_material::GLINT,
         lightmap: crate::renderer::terrain::LIGHTMAP,

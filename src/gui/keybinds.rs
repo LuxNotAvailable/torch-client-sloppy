@@ -251,9 +251,8 @@ const VOICE: &str = "Voice Chat";
 
 #[rustfmt::skip]
 pub static BINDS: LazyLock<Vec<BindDef>> = LazyLock::new(|| {
-    #[cfg(target_arch = "wasm32")]
-    const SPRINT: KeyCode = KeyCode::KeyR;
-    #[cfg(not(target_arch = "wasm32"))]
+
+    
     const SPRINT: KeyCode = KeyCode::ControlLeft;
 
     #[allow(unused_mut)]
@@ -309,8 +308,7 @@ pub static BINDS: LazyLock<Vec<BindDef>> = LazyLock::new(|| {
     BindDef { action: Action::ToggleLighting, id: "key.client.toggleLighting", name: "Toggle Lighting", category: CLIENT, default: Bound::Unbound },
     BindDef { action: Action::ToggleShaderPack, id: "key.client.toggleShaderPack", name: "Toggle Shader Pack", category: CLIENT, default: Bound::Unbound },
     ];
-    #[cfg(target_arch = "wasm32")]
-    binds.push(BindDef { action: Action::Pause, id: "key.client.pause", name: "Pause Menu", category: CLIENT, default: Bound::Key(KeyCode::Backquote) });
+
     #[cfg(feature = "click_gui")]
     binds.push(BindDef { action: Action::ClickGui, id: "key.client.clickGui", name: "Click GUI", category: CLIENT, default: Bound::Key(KeyCode::ShiftRight) });
     #[cfg(feature = "hud_editor")]
@@ -370,8 +368,7 @@ pub enum Action {
     Zoom,
     ToggleLighting,
     ToggleShaderPack,
-    #[cfg(target_arch = "wasm32")]
-    Pause,
+
     #[cfg(feature = "click_gui")]
     ClickGui,
     #[cfg(feature = "hud_editor")]

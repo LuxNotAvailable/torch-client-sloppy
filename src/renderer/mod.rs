@@ -55,7 +55,7 @@ pub use atlas::{Textures, build_block_atlas, placeholder_atlas, texture_is_opaqu
 pub use frame_view::{FrameView, FrameViewSystems};
 pub use mesh::{
     MeshBuf, biome_blend, build_section_mesh, lighting_enabled, set_biome_blend,
-    set_lighting_enabled, set_smooth_lighting, smooth_lighting_enabled,
+    set_lighting_enabled, set_smooth_lighting,
 };
 pub use occupancy::Occupancy;
 pub use systems::{Shared, run};

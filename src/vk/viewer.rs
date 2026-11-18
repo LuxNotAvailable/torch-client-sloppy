@@ -318,7 +318,11 @@ impl Renderer {
             info.driver,
             info.subgroup_size,
             info.path,
-            if info.indirect_count { "" } else { ", fixed draw counts" }
+            if info.indirect_count {
+                ""
+            } else {
+                ", fixed draw counts"
+            }
         );
         let swapchain = match &window {
             Some(window) => {

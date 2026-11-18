@@ -8,19 +8,10 @@ pub(crate) fn open(url: &str) {
     if !is_web_url(url) {
         return;
     }
-    #[cfg(target_arch = "wasm32")]
-    {
-        let opened = web_sys::window()
-            .and_then(|w| w.open_with_url_and_target(url, "_blank").ok())
-            .flatten()
-            .is_some();
-        if !opened {
-            crate::platform::clipboard::set(url);
-        }
-    }
+
     #[cfg(target_os = "android")]
     crate::platform::clipboard::set(url);
-    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+    #[cfg(not(target_os = "android"))]
     match native(url) {
         Ok(mut child) => {
             let url = url.to_owned();
@@ -35,13 +26,13 @@ pub(crate) fn open(url: &str) {
 }
 
 pub(crate) fn open_folder(path: &std::path::Path) {
-    #[cfg(any(target_arch = "wasm32", target_os = "android"))]
+    #[cfg(target_os = "android")]
     let _ = path;
-    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+    #[cfg(not(target_os = "android"))]
     open_folder_native(path);
 }
 
-#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+#[cfg(not(target_os = "android"))]
 fn open_folder_native(path: &std::path::Path) {
     if let Err(e) = std::fs::create_dir_all(path) {
         crate::log_warn!("url", "could not create {}: {e}", path.display());
@@ -50,7 +41,7 @@ fn open_folder_native(path: &std::path::Path) {
     let _ = native(path.as_os_str());
 }
 
-#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+#[cfg(not(target_os = "android"))]
 fn native(url: impl AsRef<std::ffi::OsStr>) -> std::io::Result<std::process::Child> {
     let (program, args): (&str, &[&str]) = if cfg!(target_os = "macos") {
         ("open", &[])

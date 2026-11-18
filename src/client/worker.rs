@@ -149,11 +149,6 @@ impl JobQueue {
         }
     }
 
-    #[cfg(target_arch = "wasm32")]
-    pub fn prefer_loads(&self) {
-        self.inner.lock().unwrap().loads_first = true;
-    }
-
     pub fn push(&self, world: Arc<RwLock<World>>, chunk_x: i32, chunk_z: i32, scope: JobScope) {
         self.push_in(world, chunk_x, chunk_z, scope, false);
     }
@@ -383,9 +378,7 @@ impl JobQueue {
 
 pub fn spawn_chunk_workers(shared: Arc<SharedMutex>) -> Arc<JobQueue> {
     let queue = Arc::new(JobQueue::new());
-    let n_workers = if cfg!(target_arch = "wasm32") {
-        0
-    } else {
+    let n_workers = {
         crate::platform::env::var("MC_MESH_THREADS")
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
@@ -515,17 +508,6 @@ fn mesh_budget() -> Duration {
             .map(Duration::from_millis)
             .unwrap_or(DEFAULT_MESH_BUDGET)
     })
-}
-
-#[cfg(target_arch = "wasm32")]
-pub fn drain_all(queue: &JobQueue, shared: &Arc<SharedMutex>, scratch: &mut Scratch, cap: usize) {
-    while let Some(job) = queue.try_pop() {
-        run_job(job, queue, shared, scratch, None);
-        let s = shared.lock().unwrap();
-        if s.session.world.pending_chunks.len() + s.session.world.pending_edits.len() >= cap {
-            return;
-        }
-    }
 }
 
 pub fn drain_for(
@@ -919,13 +901,6 @@ static BIOME_TABLE: RwLock<Option<Arc<Vec<u8>>>> = RwLock::new(None);
 
 pub(crate) fn reset_biome_table() {
     *BIOME_TABLE.write() = None;
-}
-
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn install_biome_table(table: Vec<u8>) {
-    if !table.is_empty() {
-        *BIOME_TABLE.write() = Some(Arc::new(table));
-    }
 }
 
 pub(crate) fn biome_table(registries: &RegistryHolder) -> Arc<Vec<u8>> {

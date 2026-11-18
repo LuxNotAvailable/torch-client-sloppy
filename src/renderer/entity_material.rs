@@ -127,7 +127,7 @@ pub struct EntityMaterial {
     pub texture: Option<Handle<Image>>,
     #[uniform(2)]
     pub params: EntityParams,
-    #[cfg(not(target_arch = "wasm32"))]
+
     #[storage(3, read_only, visibility(vertex))]
     pub rig_parts: Handle<bevy::render::storage::ShaderStorageBuffer>,
     #[texture(4)]
@@ -167,7 +167,7 @@ impl EntityMaterial {
         EntityMaterial {
             texture,
             params: EntityParams::new(mode, cutoff, lit),
-            #[cfg(not(target_arch = "wasm32"))]
+
             rig_parts: super::rig_parts::PARTS,
             glint: GLINT,
             lightmap: super::terrain::LIGHTMAP,
@@ -214,8 +214,7 @@ impl Material for EntityMaterial {
         layout: &MeshVertexBufferLayoutRef,
         key: bevy::pbr::MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
-        let rigged = cfg!(not(target_arch = "wasm32"))
-            && layout.0.contains(super::rig_parts::ATTRIBUTE_PART);
+        let rigged = layout.0.contains(super::rig_parts::ATTRIBUTE_PART);
         let mut attributes = vec![
             Mesh::ATTRIBUTE_POSITION.at_shader_location(0),
             Mesh::ATTRIBUTE_NORMAL.at_shader_location(1),

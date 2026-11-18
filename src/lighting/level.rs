@@ -116,61 +116,6 @@ impl LightMap {
             }
         }
     }
-
-    #[cfg(target_arch = "wasm32")]
-    pub fn section_layers(&self, sec: SectionPos) -> Option<&SectionLight> {
-        self.sections.get(&sec).map(|l| &**l)
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub fn column_state(&self, col: ColumnPos) -> (bool, Option<i32>) {
-        (self.lit.contains(&col), self.top.get(&col).copied())
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub fn lowest_section(&self) -> i32 {
-        self.lowest
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub fn set_lowest_section(&mut self, y: i32) {
-        self.lowest = y;
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub fn put_section(&mut self, sec: SectionPos, layers: Option<SectionLight>) {
-        match layers {
-            Some(layers) => {
-                self.sections.insert(sec, Arc::new(layers));
-            }
-            None => {
-                self.sections.remove(&sec);
-            }
-        }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub fn set_column(&mut self, col: ColumnPos, lit: bool, top: Option<i32>) {
-        if lit {
-            self.lit.insert(col);
-        } else {
-            self.lit.remove(&col);
-        }
-        match top {
-            Some(top) => {
-                self.top.insert(col, top);
-            }
-            None => {
-                self.top.remove(&col);
-            }
-        }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub fn drop_column(&mut self, col: ColumnPos) {
-        self.lit.remove(&col);
-        self.top.remove(&col);
-    }
 }
 
 static ENGINE_BYTES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -536,20 +481,6 @@ where
 {
     let (tx, rx) = std::sync::mpsc::channel();
 
-    #[cfg(target_arch = "wasm32")]
-    {
-        let worker = LightWorker::new(map);
-        WEB_LIGHT.with(|cell| {
-            *cell.borrow_mut() = Some(WebLight {
-                rx,
-                worker,
-                on_dirty: Box::new(on_dirty),
-            });
-        });
-        return LightThread { tx };
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
     std::thread::Builder::new()
         .name("light".into())
         .spawn(move || {
@@ -587,26 +518,6 @@ impl LightWorker {
             stats: true,
             changed: None,
         }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub fn without_stats(mut self) -> Self {
-        self.stats = false;
-        self
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub fn tracking_changes(mut self) -> Self {
-        self.changed = Some(Vec::new());
-        self
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub fn take_changed(&mut self) -> Vec<SectionPos> {
-        self.changed
-            .as_mut()
-            .map(std::mem::take)
-            .unwrap_or_default()
     }
 
     pub fn try_take(rx: &Receiver<LightJob>, max: usize) -> Option<Vec<LightJob>> {
@@ -767,47 +678,8 @@ impl LightWorker {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
-struct WebLight {
-    rx: Receiver<LightJob>,
-    worker: LightWorker,
-    #[allow(clippy::type_complexity)]
-    on_dirty: Box<dyn FnMut(&[SectionPos], &[(Arc<RwLock<World>>, ColumnPos)])>,
-}
+pub fn pump() {}
 
-#[cfg(target_arch = "wasm32")]
-thread_local! {
-    static WEB_LIGHT: std::cell::RefCell<Option<WebLight>> =
-        const { std::cell::RefCell::new(None) };
-}
-
-#[cfg(target_arch = "wasm32")]
-const WEB_LIGHT_BUDGET: std::time::Duration = std::time::Duration::from_millis(3);
-
-#[cfg(target_arch = "wasm32")]
-const WEB_LIGHT_BATCH: usize = 16;
-
-pub fn pump() {
-    #[cfg(target_arch = "wasm32")]
-    WEB_LIGHT.with(|cell| {
-        let mut slot = cell.borrow_mut();
-        let Some(state) = slot.as_mut() else { return };
-        let WebLight {
-            rx,
-            worker,
-            on_dirty,
-        } = state;
-        let started = crate::platform::time::Instant::now();
-        while started.elapsed() < WEB_LIGHT_BUDGET {
-            let Some(batch) = LightWorker::try_take(rx, WEB_LIGHT_BATCH) else {
-                break;
-            };
-            worker.run_batch(batch, on_dirty);
-        }
-    });
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 fn light_loop<F: FnMut(&[SectionPos], &[(Arc<RwLock<World>>, ColumnPos)])>(
     rx: Receiver<LightJob>,
     map: Arc<RwLock<LightMap>>,

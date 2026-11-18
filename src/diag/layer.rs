@@ -1,20 +1,12 @@
 use super::stats::{Stat, bump};
 
 pub fn custom_layers(_app: &mut bevy::app::App) -> Option<bevy::log::BoxedLayer> {
-    #[cfg_attr(
-        all(
-            target_arch = "wasm32",
-            not(feature = "profiling"),
-            not(feature = "perf_report")
-        ),
-        expect(unused_mut)
-    )]
     let mut layers: Vec<bevy::log::BoxedLayer> = vec![Box::new(DropCounter)];
-    #[cfg(not(target_arch = "wasm32"))]
+
     layers.push(Box::new(crate::diag::logfile::FileLayer));
     #[cfg(feature = "profiling")]
     layers.extend(crate::diag::profiling::bridge_layer());
-    #[cfg(all(feature = "perf_report", not(target_arch = "wasm32")))]
+    #[cfg(feature = "perf_report")]
     layers.push(Box::new(RenderSpans));
     Some(Box::new(layers))
 }
@@ -64,10 +56,10 @@ impl bevy::log::tracing::field::Visit for FieldPeek<'_> {
 /// Times the spans Bevy wraps its render graph nodes, queue submit and
 /// present in, which no `prof_span!` can reach, as timed spans in the
 /// performance report. The node spans come from `bevy_render/trace`.
-#[cfg(all(feature = "perf_report", not(target_arch = "wasm32")))]
+#[cfg(feature = "perf_report")]
 struct RenderSpans;
 
-#[cfg(all(feature = "perf_report", not(target_arch = "wasm32")))]
+#[cfg(feature = "perf_report")]
 impl RenderSpans {
     fn label(name: &str) -> Option<&'static str> {
         match name {
@@ -102,7 +94,7 @@ impl RenderSpans {
 /// A node's type without module paths or the `ViewNodeRunner` wrapper:
 /// `bevy_render::..::ViewNodeRunner<a::b::MainOpaquePass3dNode>` becomes
 /// `MainOpaquePass3dNode`.
-#[cfg(all(feature = "perf_report", not(target_arch = "wasm32")))]
+#[cfg(feature = "perf_report")]
 fn short_type(type_name: &str) -> &str {
     let inner = match (type_name.find('<'), type_name.rfind('>')) {
         (Some(open), Some(close)) if type_name[..open].ends_with("NodeRunner") => {
@@ -115,10 +107,10 @@ fn short_type(type_name: &str) -> &str {
 }
 
 /// Reads a node span's `name` field.
-#[cfg(all(feature = "perf_report", not(target_arch = "wasm32")))]
+#[cfg(feature = "perf_report")]
 struct NodeName(Option<&'static str>);
 
-#[cfg(all(feature = "perf_report", not(target_arch = "wasm32")))]
+#[cfg(feature = "perf_report")]
 impl bevy::log::tracing::field::Visit for NodeName {
     fn record_str(&mut self, field: &bevy::log::tracing::field::Field, value: &str) {
         if field.name() == "name" {
@@ -138,10 +130,10 @@ impl bevy::log::tracing::field::Visit for NodeName {
 }
 
 /// The label a span is timed under, kept on the span.
-#[cfg(all(feature = "perf_report", not(target_arch = "wasm32")))]
+#[cfg(feature = "perf_report")]
 struct Label(&'static str);
 
-#[cfg(all(feature = "perf_report", not(target_arch = "wasm32")))]
+#[cfg(feature = "perf_report")]
 impl<S> bevy::log::tracing_subscriber::Layer<S> for RenderSpans
 where
     S: bevy::log::tracing::Subscriber
@@ -203,7 +195,7 @@ where
     }
 }
 
-#[cfg(all(test, feature = "perf_report", not(target_arch = "wasm32")))]
+#[cfg(all(test, feature = "perf_report"))]
 mod tests {
     use super::short_type;
 

@@ -1320,15 +1320,7 @@ impl SharedMutex {
         &self,
         timeout: std::time::Duration,
     ) -> Result<parking_lot::MutexGuard<'_, SharedState>, WouldBlock> {
-        #[cfg(target_arch = "wasm32")]
-        {
-            let _ = timeout;
-            self.try_lock()
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.0.try_lock_for(timeout).ok_or(WouldBlock)
-        }
+        self.0.try_lock_for(timeout).ok_or(WouldBlock)
     }
 }
 

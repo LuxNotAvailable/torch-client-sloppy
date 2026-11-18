@@ -3,7 +3,7 @@ pub(crate) struct Args {
     pub username: Option<String>,
     pub address: Option<String>,
     #[cfg_attr(
-        any(target_arch = "wasm32", not(feature = "online_mode")),
+        not(feature = "online_mode"),
         allow(
             dead_code,
             reason = "no command line on the web, and nothing to authenticate with offline"
@@ -18,7 +18,6 @@ pub(crate) fn valid_username(name: &str) -> bool {
     (3..=16).contains(&name.len()) && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Action {
     Dir,
@@ -27,7 +26,6 @@ pub(crate) enum Action {
     Ping(String),
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Scope {
     All,
@@ -35,7 +33,6 @@ pub(crate) enum Scope {
     Assets,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl Scope {
     fn flag(self) -> &'static str {
         match self {
@@ -46,13 +43,11 @@ impl Scope {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) enum Command {
     Play(Args),
     Run(Action),
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 const HELP: &str = "\
 A from-scratch Minecraft client.
 
@@ -82,7 +77,7 @@ ACCOUNTS
     and no server checks it, which is what a cracked server accepts.
 ";
 
-#[cfg(all(feature = "online_mode", not(target_arch = "wasm32")))]
+#[cfg(feature = "online_mode")]
 const HELP_TOKEN: &str = "\
     -t, --access-token <T>  Join online-mode servers as the account this token
                             belongs to. It is a Minecraft session token (the
@@ -98,13 +93,12 @@ const HELP_TOKEN: &str = "\
                             screen for anything but a scripted run.
 ";
 
-#[cfg(all(not(feature = "online_mode"), not(target_arch = "wasm32")))]
+#[cfg(not(feature = "online_mode"))]
 const HELP_TOKEN: &str = "\
     --access-token needs the `online_mode` feature, which this build does not
     have. Rebuild with `cargo build --release --features online_mode`.
 ";
 
-#[cfg(not(target_arch = "wasm32"))]
 const HELP_ACTIONS: &str = "
 ACTIONS
     Each runs on its own and exits; none of them starts the game.
@@ -135,26 +129,24 @@ ACTIONS
     directory this client reads and does not own.
 ";
 
-#[cfg(not(target_arch = "wasm32"))]
 const HELP_ADDRESSES: &str = "
 ADDRESSES
     host, or host:port      A Minecraft server over TCP. Port defaults to 25565.
 ";
 
-#[cfg(all(feature = "eagler", not(target_arch = "wasm32")))]
+#[cfg(feature = "eagler")]
 const HELP_EAGLER: &str = "    wss://host[/path]       An Eaglercraft server over WebSocket, via
                             EaglerXServer. Port defaults to 443, or 80 for
                             ws://. The path is part of the URL and is kept, so
                             proxies that route by path work.
 ";
 
-#[cfg(not(any(feature = "eagler", target_arch = "wasm32")))]
+#[cfg(not(feature = "eagler"))]
 const HELP_EAGLER: &str =
     "    wss:// addresses need the `eagler` feature, which this build does not have.
     Rebuild with `cargo build --release --features eagler`.
 ";
 
-#[cfg(not(target_arch = "wasm32"))]
 const EXAMPLES: &str = "
 EXAMPLES
     torch-client
@@ -170,7 +162,6 @@ EXAMPLES
     torch-client --ping play.example.com
 ";
 
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn parse() -> Args {
     match parse_from(std::env::args().skip(1)) {
         Ok(Command::Play(args)) => args,
@@ -182,7 +173,6 @@ pub(crate) fn parse() -> Args {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn parse_from(args: impl Iterator<Item = String>) -> Result<Command, String> {
     let mut username = None;
     let mut address = None;
@@ -309,7 +299,6 @@ fn parse_from(args: impl Iterator<Item = String>) -> Result<Command, String> {
     }))
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn reset(scope: Scope) -> Action {
     Action::Reset {
         scope,
@@ -317,7 +306,6 @@ fn reset(scope: Scope) -> Action {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn name_of(action: &Action) -> &'static str {
     match action {
         Action::Dir => "--dir",
@@ -327,7 +315,6 @@ fn name_of(action: &Action) -> &'static str {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn run_action(action: Action) -> i32 {
     match action {
         Action::Dir => {
@@ -343,7 +330,6 @@ fn run_action(action: Action) -> i32 {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn print_env() {
     let table: Vec<_> = crate::platform::env::table().collect();
     let width = table.iter().map(|v| v.name.len()).max().unwrap_or(0);
@@ -358,7 +344,6 @@ fn print_env() {
     );
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn print_dirs() {
     println!("Working directory");
     let config = crate::platform::storage::dir();
@@ -385,7 +370,6 @@ fn print_dirs() {
     println!("  MINECRAFT_ASSETS moves it, and no reset ever deletes it");
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn row(label: &str, path: &std::path::Path, var: &str) {
     let state = match walk(path) {
         Some((files, bytes)) => format!("{files} files, {}", human_size(bytes)),
@@ -395,7 +379,6 @@ fn row(label: &str, path: &std::path::Path, var: &str) {
     println!("  {:8}  {state}, moved by {var}", "");
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn asset_store() -> Option<std::path::PathBuf> {
     #[cfg(feature = "asset_download")]
     {
@@ -407,7 +390,6 @@ fn asset_store() -> Option<std::path::PathBuf> {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn walk(dir: &std::path::Path) -> Option<(u64, u64)> {
     let entries = std::fs::read_dir(dir).ok()?;
     let mut files = 0;
@@ -429,7 +411,6 @@ fn walk(dir: &std::path::Path) -> Option<(u64, u64)> {
     Some((files, bytes))
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn human_size(bytes: u64) -> String {
     match bytes {
         0..1_000 => format!("{bytes} B"),
@@ -439,7 +420,6 @@ fn human_size(bytes: u64) -> String {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn delete(scope: Scope, assume_yes: bool) -> i32 {
     let config = crate::platform::storage::dir();
     let mut dirs: Vec<std::path::PathBuf> = Vec::new();
@@ -527,7 +507,6 @@ fn delete(scope: Scope, assume_yes: bool) -> i32 {
     0
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn ping(address: &str) -> i32 {
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -583,10 +562,8 @@ fn ping(address: &str) -> i32 {
     0
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 type Piece<'a> = (&'a str, &'a crate::text::Style);
 
-#[cfg(not(target_arch = "wasm32"))]
 fn pieces(spans: &[crate::text::Span]) -> Vec<Vec<Piece<'_>>> {
     let mut lines = vec![Vec::new()];
     for span in spans {
@@ -603,7 +580,6 @@ fn pieces(spans: &[crate::text::Span]) -> Vec<Vec<Piece<'_>>> {
     lines
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn trim(line: &mut Vec<Piece<'_>>) {
     while line.len() > 1 && line[0].0.trim_start().is_empty() {
         line.remove(0);
@@ -619,12 +595,10 @@ fn trim(line: &mut Vec<Piece<'_>>) {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn plain(line: &[Piece<'_>]) -> String {
     line.iter().map(|(text, _)| *text).collect()
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn motd(spans: &[crate::text::Span], colour: bool) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for mut line in pieces(spans) {
@@ -639,7 +613,6 @@ fn motd(spans: &[crate::text::Span], colour: bool) -> Vec<String> {
     out
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn draw(line: &[Piece<'_>], colour: bool) -> String {
     let mut out = String::new();
     for (text, style) in line {
@@ -654,7 +627,6 @@ fn draw(line: &[Piece<'_>], colour: bool) -> String {
     out
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn wrap(names: &[(String, String)], width: usize) -> Vec<String> {
     let mut lines: Vec<(usize, String)> = Vec::new();
     for (plain, shown) in names {
@@ -671,7 +643,6 @@ fn wrap(names: &[(String, String)], width: usize) -> Vec<String> {
     lines.into_iter().map(|(_, line)| line).collect()
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn escape(style: &crate::text::Style) -> String {
     let mut codes = nearest(style.color).to_string();
     for (on, code) in [
@@ -688,7 +659,6 @@ fn escape(style: &crate::text::Style) -> String {
     format!("\x1b[{codes}m")
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn nearest(rgb: u32) -> u32 {
     const ANSI: [u32; 16] = [
         30, 34, 32, 36, 31, 35, 33, 37, 90, 94, 92, 96, 91, 95, 93, 97,
@@ -708,7 +678,6 @@ fn nearest(rgb: u32) -> u32 {
     best.1
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn removable(dir: &std::path::Path) -> Result<(), String> {
     use std::path::Component;
 
@@ -738,7 +707,6 @@ fn removable(dir: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn confirm(assume_yes: bool) -> Result<bool, String> {
     use std::io::{BufRead, IsTerminal, Write};
 
@@ -867,7 +835,7 @@ mod tests {
         assert!(action(&["--ping"]).is_err());
         assert_eq!(
             action(&["--ping", "wss://play.example"]).is_err(),
-            !cfg!(any(feature = "eagler", target_arch = "wasm32"))
+            !cfg!(feature = "eagler")
         );
         assert_eq!(action(&["--dir", "--dir"]), Ok(Some(Action::Dir)));
     }

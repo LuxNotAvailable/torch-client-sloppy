@@ -528,7 +528,6 @@ impl Default for ClickGuiState {
             field: {
                 let mut f = TextBox::new(48, "Type to search");
                 f.focused = true;
-                f.browser_keyboard = false;
                 f
             },
             mouse_input: GuiInput::default(),
@@ -992,7 +991,6 @@ impl ClickGuiState {
         let mut text = MultiLineTextBox::new(max_len, EDITOR_MAX_LINES);
         text.set_text(&store().text_at(slot as usize));
         text.inner.focused = true;
-        text.inner.browser_keyboard = true;
         let lines = text.line_count(font, EDITOR_W - 2.0 * EDITOR_PAD);
         let mut title = String::with_capacity(32);
         title.push_str(module(id).name);
@@ -2270,7 +2268,6 @@ impl ClickGuiState {
         if active && ui.input.left_click {
             if hovered && !mine {
                 let mut text = TextBox::new(max_len, "");
-                text.browser_keyboard = false;
                 text.focused = true;
                 store().with_text(slot as usize, |t| text.set_text(t));
                 self.owner = KeyOwner::Field(FieldEdit { slot, text });

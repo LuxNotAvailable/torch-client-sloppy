@@ -23,7 +23,7 @@ pub(crate) fn install_block_change_hook() {
             else {
                 return;
             };
-            if !crate::client::mesh_worker::forward_block_change(pos, new) {
+            {
                 {
                     let meshed = meshed_chunks().lock().unwrap();
                     for (cx, cz, scope) in remesh_jobs(pos) {
@@ -227,20 +227,10 @@ pub(crate) fn note_chunk_received(bot: &Client, cx: i32, cz: i32) {
     let Ok(world) = bot.world() else { return };
     let mut received = received_chunks().lock().unwrap();
     received.insert((cx, cz));
-    let mut meshed = meshed_chunks().lock().unwrap();
+    let meshed = meshed_chunks().lock().unwrap();
     let ready = ready_after_arrival(|c| received.contains(&c), |c| meshed.contains(&c), cx, cz);
-    let to_worker = crate::client::mesh_worker::active();
-    if to_worker {
-        for col in &ready {
-            meshed.insert((col.x, col.z));
-        }
-    }
     drop(meshed);
     drop(received);
-    if to_worker {
-        crate::client::mesh_worker::forward_chunk(&world, cx, cz, &ready);
-        return;
-    }
     send_light(lighting::LightJob::Chunk {
         world: world.clone(),
         col: lighting::ColumnPos { x: cx, z: cz },
@@ -272,7 +262,6 @@ pub(crate) fn send_server_light(cx: i32, cz: i32, light: lighting::ServerLight) 
 
 pub(crate) fn drop_server_light(cx: i32, cz: i32) {
     server_light_stash().lock().unwrap().remove(&(cx, cz));
-    crate::client::mesh_worker::drop_chunk_packet(cx, cz);
 }
 
 pub(crate) fn reload_all_chunks(bot: &Client, shared: &Arc<SharedMutex>) {
@@ -288,9 +277,7 @@ pub(crate) fn reload_all_chunks(bot: &Client, shared: &Arc<SharedMutex>) {
         s.session.world.pending_edits.clear();
         s.session.world.unloaded_chunks.clear();
     }
-    if !crate::client::mesh_worker::forward_reset_light() {
-        send_light(lighting::LightJob::Reset);
-    }
+    send_light(lighting::LightJob::Reset);
     for (cx, cz) in cols {
         note_chunk_received(bot, cx, cz);
     }
@@ -319,11 +306,9 @@ pub(crate) fn forget_chunk(
         .world
         .unloaded_chunks
         .push((cx, cz));
-    if !crate::client::mesh_worker::forward_unload(cx, cz) {
-        send_light(lighting::LightJob::Unload {
-            col: lighting::ColumnPos { x: cx, z: cz },
-        });
-    }
+    send_light(lighting::LightJob::Unload {
+        col: lighting::ColumnPos { x: cx, z: cz },
+    });
     drop_server_light(cx, cz);
 
     if FORGOTTEN_SINCE_COMPACT.fetch_add(1, Ordering::Relaxed) + 1 >= COMPACT_INTERVAL {
@@ -337,9 +322,7 @@ pub(crate) fn reset_level(shared: &Arc<SharedMutex>) {
     bump_chunk_generation();
     crate::renderer::environment::reset_weather();
     crate::client::envprobe::reset();
-    if !crate::client::mesh_worker::forward_reset_level() {
-        send_light(lighting::LightJob::Reset);
-    }
+    send_light(lighting::LightJob::Reset);
     server_light_stash().lock().unwrap().clear();
     crate::client::viewwindow::reset_positioned();
     crate::client::viewwindow::reset_server_centre();

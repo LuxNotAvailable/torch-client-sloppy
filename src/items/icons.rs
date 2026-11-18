@@ -1248,9 +1248,7 @@ pub fn bake_item_icons(assets: &Path) -> ItemIcons {
 
     let block_gui = cache.model("block/block").gui.unwrap_or(Transform::NONE);
 
-    let threads = if cfg!(target_arch = "wasm32") {
-        1
-    } else {
+    let threads = {
         std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(4)
@@ -1259,13 +1257,6 @@ pub fn bake_item_icons(assets: &Path) -> ItemIcons {
     let chunk = ids.len().div_ceil(threads.max(1)).max(1);
     let mut results: Vec<(Vec<(u32, RgbaImage)>, Dispatch, Source)> = Vec::with_capacity(ids.len());
 
-    #[cfg(target_arch = "wasm32")]
-    {
-        let cache = &cache;
-        results.extend(ids.iter().map(|id| bake_one(cache, id, block_gui)));
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
     std::thread::scope(|scope| {
         let cache = &cache;
         let handles: Vec<_> = ids

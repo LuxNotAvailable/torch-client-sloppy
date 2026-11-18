@@ -214,7 +214,6 @@ pub fn heap_live() -> Option<u64> {
     #[cfg(all(
         feature = "perf_report",
         not(feature = "alloc_diag"),
-        not(target_arch = "wasm32"),
         not(target_os = "android")
     ))]
     return Some(tracked::LIVE.load(std::sync::atomic::Ordering::Relaxed) as u64);
@@ -232,7 +231,6 @@ pub fn heap_live() -> Option<u64> {
 #[cfg(all(
     feature = "perf_report",
     not(feature = "alloc_diag"),
-    not(target_arch = "wasm32"),
     not(target_os = "android")
 ))]
 pub mod tracked {

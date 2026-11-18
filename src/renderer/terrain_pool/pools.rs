@@ -21,14 +21,14 @@ const ORIGIN_TEXEL: usize = 16;
 // at render distance 32 that tail was about one 85 MiB pool's worth of the
 // 513 MiB allocated; at short render distances one pool was mostly empty.
 // Halving the pool halves that tail, for a few more (cheap) multi-draws.
-#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+#[cfg(not(target_os = "android"))]
 const POOL_VERTICES: u32 = 1_600_000;
-#[cfg(any(target_arch = "wasm32", target_os = "android"))]
+#[cfg(target_os = "android")]
 const POOL_VERTICES: u32 = 1_200_000;
 
-#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+#[cfg(not(target_os = "android"))]
 const POOL_INDICES: u32 = 3_200_000;
-#[cfg(any(target_arch = "wasm32", target_os = "android"))]
+#[cfg(target_os = "android")]
 const POOL_INDICES: u32 = 2_400_000;
 
 const PAGE_INDICES: u32 = 1 << 16;

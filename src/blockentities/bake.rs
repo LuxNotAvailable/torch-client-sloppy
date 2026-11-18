@@ -56,10 +56,6 @@ pub fn set_regions(regions: Regions) {
 /// Whether blocks in this state may be baked: a kind on the list, with its
 /// textures in the atlas. Cached per state, as the mesher asks for every block.
 pub fn bakes(state: u16) -> bool {
-    if cfg!(target_arch = "wasm32") {
-        // The web mesher runs in a worker that cannot see the live set.
-        return false;
-    }
     const UNKNOWN: u8 = 0;
     const NO: u8 = 1;
     const YES: u8 = 2;

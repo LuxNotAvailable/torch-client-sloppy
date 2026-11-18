@@ -39,13 +39,6 @@ pub(crate) fn run_exit_tasks() {
     crate::client::bot::shutdown_connection();
 }
 
-#[cfg(target_arch = "wasm32")]
-pub(super) fn run_exit_tasks_on_exit(mut exit: bevy::ecs::message::MessageReader<AppExit>) {
-    if exit.read().next().is_some() {
-        run_exit_tasks();
-    }
-}
-
 #[inline]
 fn save_on_session_end() {
     crate::modules::save();
@@ -412,7 +405,7 @@ pub(super) fn mouse_look(
         s.camera_yaw = angles.yaw;
     }
     {
-        let hand = if state.screen.is_open() || !crate::platform::pointer::is_locked() {
+        let hand = if state.screen.is_open() {
             Vec2::ZERO
         } else {
             // Zoomed in, the mouse slows with the view.
@@ -667,16 +660,13 @@ pub(super) fn window_focus_cursor(
         return;
     }
     let (grab, visible) = super::systems::world_cursor();
-    if grab != CursorGrabMode::None {
-        crate::platform::pointer::lock();
-    }
-    #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+    #[cfg(not(target_os = "android"))]
     {
         let mut window = window;
         let center = Vec2::new(window.width() / 2.0, window.height() / 2.0);
         window.set_cursor_position(Some(center));
     }
-    #[cfg(any(target_os = "android", target_arch = "wasm32"))]
+    #[cfg(target_os = "android")]
     let _ = window;
     // Written every time, so the window backend sends the grab again.
     super::systems::apply_cursor(opts, grab, visible);
@@ -694,73 +684,13 @@ pub(super) fn track_lifecycle(
     }
 }
 
-#[cfg_attr(
-    feature = "mobile_ui",
-    allow(
-        unused_mut,
-        unreachable_code,
-        reason = "touch controls drive the camera instead"
-    )
-)]
-pub(super) fn web_pointer_lock(
-    buttons: Res<ButtonInput<MouseButton>>,
-    shared: Res<Shared>,
-    #[cfg_attr(feature = "mobile_ui", allow(unused_mut))] mut state: ResMut<crate::gui::GuiState>,
-    #[cfg_attr(feature = "mobile_ui", allow(unused_mut))] mut windows: Query<
-        (&mut Window, &mut CursorOptions),
-        With<PrimaryWindow>,
-    >,
-    mut held_frames: Local<u32>,
-) {
-    #[cfg(feature = "mobile_ui")]
-    {
-        let _ = (buttons, shared, state, windows, held_frames);
-        return;
-    }
-    #[cfg(not(feature = "mobile_ui"))]
-    {
-        if !cfg!(target_arch = "wasm32") {
-            return;
-        }
-        let claimed = crate::platform::pointer::take_claimed();
-        if state.screen.is_open() {
-            *held_frames = 0;
-            return;
-        }
-        let pressed =
-            buttons.just_pressed(MouseButton::Left) || buttons.just_pressed(MouseButton::Right);
-        if crate::platform::pointer::is_locked() {
-            if claimed && pressed {
-                state.suppress_click = true;
-            }
-            *held_frames = held_frames.saturating_add(1);
-            return;
-        }
-        const SETTLED: u32 = 3;
-        if std::mem::take(&mut *held_frames) >= SETTLED {
-            enter_screen(crate::gui::Screen::Pause, &mut state, &shared, &mut windows);
-            return;
-        }
-        if pressed {
-            crate::platform::pointer::lock();
-            state.suppress_click = true;
-        }
-    }
-}
-
-pub(super) fn web_fullscreen(
+pub(super) fn fullscreen_key(
     keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
     state: Res<crate::gui::GuiState>,
-    mut captured: Local<bool>,
 ) {
     if state.keybinds.just(Action::Fullscreen, &keys, &buttons) {
         crate::platform::fullscreen::toggle();
-    }
-    let fullscreen = crate::platform::fullscreen::is_fullscreen();
-    if fullscreen != *captured {
-        *captured = fullscreen;
-        crate::platform::fullscreen::capture_escape(fullscreen);
     }
 }
 
@@ -1003,9 +933,7 @@ pub(crate) fn wheel_notches(
     options: &crate::gui::GuiOptions,
 ) -> Vec2 {
     const PIXELS_PER_NOTCH: f32 = 100.0;
-    #[cfg(target_arch = "wasm32")]
-    const LINES_PER_NOTCH: f32 = 3.0;
-    #[cfg(not(target_arch = "wasm32"))]
+
     const LINES_PER_NOTCH: f32 = 1.0;
 
     let per = match wheel.unit {
@@ -1202,8 +1130,6 @@ pub(super) fn toggle_screen(
         return;
     }
 
-    let field_escape = !state.screen.is_menu() && crate::platform::keyboard::take_escape();
-
     let guard = std::mem::take(&mut state.keybinds.escape_guard);
     if state.keybinds.capturing.is_some() || (guard && keys.just_pressed(KeyCode::Escape)) {
         return;
@@ -1213,8 +1139,7 @@ pub(super) fn toggle_screen(
     {
         let click_gui = state.keybinds.just(Action::ClickGui, &keys, &buttons);
         if state.screen == Screen::ClickGui {
-            let escape =
-                (keys.just_pressed(KeyCode::Escape) || field_escape) && !state.clickgui.escape();
+            let escape = keys.just_pressed(KeyCode::Escape) && !state.clickgui.escape();
             if click_gui || escape {
                 let back = state.clickgui_parent;
                 enter_screen(back, &mut state, &shared, &mut windows);
@@ -1232,8 +1157,7 @@ pub(super) fn toggle_screen(
     {
         let hud_key = state.keybinds.just(Action::HudEditor, &keys, &buttons);
         if state.screen == Screen::HudEditor {
-            let escape =
-                (keys.just_pressed(KeyCode::Escape) || field_escape) && !state.hud_state.escape();
+            let escape = keys.just_pressed(KeyCode::Escape) && !state.hud_state.escape();
             if hud_key || escape {
                 let back = state.hud_state.parent;
                 enter_screen(back, &mut state, &shared, &mut windows);
@@ -1261,7 +1185,7 @@ pub(super) fn toggle_screen(
         && !state.screen.is_local_overlay()
         && !creative_search_focused
         && !state.anvil_typing();
-    let close_key = keys.just_pressed(KeyCode::Escape) || field_escape;
+    let close_key = keys.just_pressed(KeyCode::Escape);
     // The recipe viewer takes Escape first: out of its search, or back out of
     // its recipe window, leaving the screen open.
     if close_key
@@ -1270,15 +1194,10 @@ pub(super) fn toggle_screen(
     {
         return;
     }
-    #[cfg(target_arch = "wasm32")]
-    let pause_key = state.keybinds.just(Action::Pause, &keys, &buttons);
-    #[cfg(not(target_arch = "wasm32"))]
+
     let pause_key = false;
-    let enter_from_field = state.screen.chat_open() && crate::platform::keyboard::take_enter();
     let submit_key = state.screen.chat_open()
-        && (keys.just_pressed(KeyCode::Enter)
-            || keys.just_pressed(KeyCode::NumpadEnter)
-            || enter_from_field);
+        && (keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::NumpadEnter));
 
     if state.screen.is_menu() {
         return;

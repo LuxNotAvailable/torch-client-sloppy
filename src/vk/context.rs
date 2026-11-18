@@ -8,8 +8,8 @@ use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 use super::SetupError;
 use super::requirements::{
-    DESKTOP_API, ExtFeatures, FLOOR_API, Features, Offered, PATH_EXTENSIONS, Path, device_extensions,
-    extensions_of, indirect_count_usable, path_for,
+    DESKTOP_API, ExtFeatures, FLOOR_API, Features, Offered, PATH_EXTENSIONS, Path,
+    device_extensions, extensions_of, indirect_count_usable, path_for,
 };
 
 /// What the device is, for logs and the performance report.
@@ -253,10 +253,18 @@ impl Context {
         // SAFETY: the caller's.
         unsafe {
             if self.info.indirect_count {
-                self.device
-                    .cmd_draw_indirect_count(cmd, commands, offset, count, count_offset, max, stride);
+                self.device.cmd_draw_indirect_count(
+                    cmd,
+                    commands,
+                    offset,
+                    count,
+                    count_offset,
+                    max,
+                    stride,
+                );
             } else {
-                self.device.cmd_draw_indirect(cmd, commands, offset, max, stride);
+                self.device
+                    .cmd_draw_indirect(cmd, commands, offset, max, stride);
             }
         }
     }
@@ -357,12 +365,7 @@ fn choose_device(
         let mut info = info;
         info.path = path;
         info.indirect_count = indirect_count_usable(offered.v12.draw_indirect_count == vk::TRUE);
-        missing.extend(
-            offered
-                .missing(&required)
-                .into_iter()
-                .map(str::to_owned),
-        );
+        missing.extend(offered.missing(&required).into_iter().map(str::to_owned));
         // SAFETY: a plain query on an enumerated device.
         let families = unsafe { instance.get_physical_device_queue_family_properties(device) };
         let family = families.iter().enumerate().find_map(|(i, f)| {
@@ -459,8 +462,7 @@ fn device_info(instance: &ash::Instance, device: vk::PhysicalDevice) -> DeviceIn
     }
 }
 
-static INSTANCE_API: std::sync::atomic::AtomicU32 =
-    std::sync::atomic::AtomicU32::new(DESKTOP_API);
+static INSTANCE_API: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(DESKTOP_API);
 
 /// The instance version: 1.3, or what an older loader offers (at least 1.1).
 fn instance_api(entry: &ash::Entry) -> u32 {

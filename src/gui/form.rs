@@ -96,10 +96,6 @@ impl<'p, 'a, 'c> Form<'p, 'a, 'c> {
     }
 
     /// Leaves the next cell empty.
-    #[cfg_attr(
-        not(target_arch = "wasm32"),
-        allow(dead_code, reason = "the browser build has no VSync cell")
-    )]
     pub fn skip(&mut self) {
         self.cell();
     }

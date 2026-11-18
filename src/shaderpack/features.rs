@@ -63,23 +63,19 @@ impl Feature {
     pub(crate) fn absence(self) -> &'static str {
         match self {
             Feature::TessellationShaders => "this renderer has no tessellation stage",
-            Feature::ComputeShaders | Feature::CustomImages | Feature::Ssbo => {
-                "the browser build uses WebGL2, which has no compute shaders"
-            }
             _ => "not implemented yet",
         }
     }
 }
 
-const COMPUTE: bool = !cfg!(all(target_arch = "wasm32", not(feature = "webgpu")));
-
 pub(crate) fn supported(feature: Feature) -> bool {
     match feature {
         Feature::TessellationShaders => false,
 
-        Feature::ComputeShaders | Feature::CustomImages | Feature::Ssbo => COMPUTE,
-
-        Feature::SeparateHardwareSamplers
+        Feature::ComputeShaders
+        | Feature::CustomImages
+        | Feature::Ssbo
+        | Feature::SeparateHardwareSamplers
         | Feature::PerBufferBlending
         | Feature::HigherShadowcolor
         | Feature::BlockEmissionAttribute => true,

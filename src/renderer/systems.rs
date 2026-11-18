@@ -15,11 +15,10 @@ use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 
 use super::input::{
     CameraAngles, FreecamState, THIRD_PERSON_DISTANCE, ThirdPersonState, apply_gui_nav,
-    bot_movement_input, flight_toggle_input, freecam_movement, handle_hotbar_keys,
+    bot_movement_input, flight_toggle_input, freecam_movement, fullscreen_key, handle_hotbar_keys,
     handle_hotbar_scroll, handle_keybinds, handle_mouse_input, handle_spectator_action_key,
     handle_spectator_fly_speed_scroll, mouse_look, reload_all_chunks, toggle_advanced_tooltips,
-    toggle_chunk_borders, toggle_freecam, toggle_screen, toggle_third_person, web_fullscreen,
-    web_pointer_lock, window_focus_cursor,
+    toggle_chunk_borders, toggle_freecam, toggle_screen, toggle_third_person, window_focus_cursor,
 };
 use super::overlays::{
     BlockOutline, BlockOutlineMarker, BreakOverlay, BreakOverlayMarker, ChunkBorderMarker,
@@ -574,9 +573,6 @@ fn take_budgeted(
 }
 
 fn mesh_on_render_thread(mut scratch: Local<crate::client::worker::Scratch>) {
-    if crate::client::mesh_worker::active() {
-        return;
-    }
     {
         #[cfg(feature = "budget")]
         let _t = crate::diag::budget::timed(crate::diag::budget::Slot::Light);
@@ -655,9 +651,6 @@ fn poll_shared_state(
             state.session.world.pending_chunks.len() + state.session.world.pending_edits.len(),
         );
     }
-    crate::client::mesh_worker::note_backlog(
-        state.session.world.pending_chunks.len() + state.session.world.pending_edits.len(),
-    );
 
     let unloaded: Vec<(i32, i32)> = std::mem::take(&mut state.session.world.unloaded_chunks);
     let clear_all = std::mem::take(&mut state.session.world.clear_chunks);
@@ -669,13 +662,9 @@ fn poll_shared_state(
     {
         return;
     }
-    #[cfg(target_arch = "wasm32")]
-    const DEFAULT_VERT_BUDGET: usize = 30_000;
-    #[cfg(not(target_arch = "wasm32"))]
+
     const DEFAULT_VERT_BUDGET: usize = 120_000;
-    #[cfg(target_arch = "wasm32")]
-    const DEFAULT_SECTION_BUDGET: usize = 24;
-    #[cfg(not(target_arch = "wasm32"))]
+
     const DEFAULT_SECTION_BUDGET: usize = 128;
     static VERT_BUDGET: OnceLock<usize> = OnceLock::new();
     static SECTION_BUDGET: OnceLock<usize> = OnceLock::new();
@@ -1217,11 +1206,7 @@ fn collect_hud_info(
     crate::diag::budget::note_drawn_entities(rig_node_q.iter().count());
     #[cfg(feature = "budget")]
     if let Some(sampled) = crate::diag::budget::sample() {
-        if cfg!(target_arch = "wasm32") {
-            crate::log_info!("budget", "frame: {}", sampled.line());
-        } else {
-            crate::log_debug!("render", "frame budget: {}", sampled.line());
-        }
+        crate::log_debug!("render", "frame budget: {}", sampled.line());
     }
 
     *gated_ms += time.delta_secs() * 1000.0;
@@ -1540,10 +1525,10 @@ fn log_window_geometry(
     );
 }
 
-#[cfg(any(target_os = "android", target_arch = "wasm32"))]
+#[cfg(target_os = "android")]
 pub(super) fn apply_cursor(_opts: Mut<CursorOptions>, _grab: CursorGrabMode, _visible: bool) {}
 
-#[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+#[cfg(not(target_os = "android"))]
 pub(super) fn apply_cursor(mut opts: Mut<CursorOptions>, grab: CursorGrabMode, visible: bool) {
     opts.grab_mode = grab;
     opts.visible = visible;
@@ -1612,11 +1597,6 @@ pub(super) fn enter_screen(
         s.session.input.attack_clicked = false;
         s.session.input.use_clicked = 0;
     }
-    if open || world_cursor().0 == CursorGrabMode::None {
-        crate::platform::pointer::unlock();
-    } else {
-        crate::platform::pointer::lock();
-    }
     if let Ok((window, opts)) = windows.single_mut() {
         let (grab, visible) = world_cursor();
         apply_cursor(
@@ -1624,13 +1604,13 @@ pub(super) fn enter_screen(
             if open { CursorGrabMode::None } else { grab },
             open || visible,
         );
-        #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+        #[cfg(not(target_os = "android"))]
         if open && !was_open {
             let mut window = window;
             let center = Vec2::new(window.width() / 2.0, window.height() / 2.0);
             window.set_cursor_position(Some(center));
         }
-        #[cfg(any(target_os = "android", target_arch = "wasm32"))]
+        #[cfg(target_os = "android")]
         let _ = (&window, was_open);
     }
     if was_open && !open {
@@ -1645,9 +1625,6 @@ fn limit_framerate(
     monitors: Query<&bevy::window::Monitor, With<bevy::window::PrimaryMonitor>>,
     mut next_frame: Local<Option<Instant>>,
 ) {
-    if cfg!(target_arch = "wasm32") {
-        return;
-    }
     let mut target = gui.options.max_fps;
     // An open GUI takes its own cap; screens outside a world never need
     // more than 60, whatever the settings.
@@ -1733,10 +1710,7 @@ impl Default for FrameGate {
     }
 }
 
-#[cfg_attr(
-    not(target_arch = "wasm32"),
-    allow(dead_code, reason = "used by the web build only")
-)]
+#[cfg(test)]
 fn frame_gate_decision(
     now: Instant,
     deadline: Option<Instant>,
@@ -1748,24 +1722,6 @@ fn frame_gate_decision(
         Some(deadline) => (true, Some((deadline + period).max(now))),
         None => (true, Some(now + period)),
     }
-}
-
-#[cfg(target_arch = "wasm32")]
-fn web_frame_gate(
-    gui: Res<crate::gui::GuiState>,
-    mut gate: ResMut<FrameGate>,
-    mut next_frame: Local<Option<Instant>>,
-) {
-    let target = gui.options.max_fps;
-    if target >= crate::gui::MAX_FPS_UNLIMITED {
-        *next_frame = None;
-        gate.render = true;
-        return;
-    }
-    let period = Duration::from_secs_f64(1.0 / target as f64);
-    let (render, next) = frame_gate_decision(Instant::now(), *next_frame, period);
-    *next_frame = next;
-    gate.render = render;
 }
 
 /// Bevy's PBR plugin: its defaults, except on Android.
@@ -1792,56 +1748,6 @@ fn pbr_plugin() -> bevy::pbr::PbrPlugin {
 
 fn unfocused_update_mode() -> bevy::winit::UpdateMode {
     bevy::winit::UpdateMode::reactive_low_power(std::time::Duration::from_secs_f64(1. / 30.))
-}
-
-#[cfg(target_arch = "wasm32")]
-fn web_text_focus_pacing(
-    gui: Res<crate::gui::GuiState>,
-    mut settings: ResMut<bevy::winit::WinitSettings>,
-    mut overridden: Local<bool>,
-) {
-    let held = (gui.screen.is_open() || *overridden) && crate::platform::keyboard::has_focus();
-    if held == *overridden {
-        return;
-    }
-    *overridden = held;
-    settings.unfocused_mode = if held {
-        settings.focused_mode
-    } else {
-        unfocused_update_mode()
-    };
-}
-
-#[cfg(target_arch = "wasm32")]
-#[derive(Resource, Default)]
-struct GatedCameras(Vec<Entity>);
-
-#[cfg(target_arch = "wasm32")]
-fn ungate_cameras(mut gated: ResMut<GatedCameras>, mut cameras: Query<&mut Camera>) {
-    for entity in gated.0.drain(..) {
-        if let Ok(mut camera) = cameras.get_mut(entity)
-            && !camera.is_active
-        {
-            camera.is_active = true;
-        }
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-fn gate_cameras(
-    gate: Res<FrameGate>,
-    mut gated: ResMut<GatedCameras>,
-    mut cameras: Query<(Entity, &mut Camera)>,
-) {
-    if gate.render {
-        return;
-    }
-    for (entity, mut camera) in &mut cameras {
-        if camera.is_active {
-            camera.is_active = false;
-            gated.0.push(entity);
-        }
-    }
 }
 
 #[cfg(feature = "budget")]
@@ -2155,20 +2061,10 @@ fn sync_smooth_lighting(state: Res<crate::gui::GuiState>, mut last: Local<Option
     let had_previous_value = last.is_some();
     *last = Some(wanted);
     crate::renderer::set_smooth_lighting(wanted);
-    forward_lighting_options();
     // Meshed chunks keep their old lighting until meshed again.
     if had_previous_value {
         crate::client::bus::request(crate::client::bus::ClientRequest::ReloadChunks);
     }
-}
-
-fn forward_lighting_options() {
-    crate::client::mesh_worker::sync_options(
-        crate::renderer::lighting_enabled(),
-        crate::renderer::smooth_lighting_enabled(),
-        crate::renderer::biome_blend() as u8,
-        crate::renderer::mesh::leaf_culling(),
-    );
 }
 
 /// Video Settings > Leaves: options re-mesh everything; under hybrid, the
@@ -2190,7 +2086,6 @@ fn sync_leaf_options(
         let had_previous_value = last.is_some();
         *last = Some(wanted);
         m::set_leaf_options(wanted.0 as u8, wanted.1 as u8, wanted.2, camera_chunk);
-        forward_lighting_options();
         if had_previous_value {
             crate::client::bus::request(crate::client::bus::ClientRequest::ReloadChunks);
         }
@@ -2198,7 +2093,6 @@ fn sync_leaf_options(
     }
     if mode == 2 && camera_chunk != old_camera {
         m::set_leaf_options(mode, distance, backs, camera_chunk);
-        forward_lighting_options();
         crate::client::worldsync::remesh_chunks(|x, z| {
             m::fast_leaves_for(x, z, old_camera) != m::fast_leaves_for(x, z, camera_chunk)
         });
@@ -2214,7 +2108,6 @@ fn sync_leaf_culling(state: Res<crate::gui::GuiState>, mut last: Local<Option<u3
     let had_previous_value = last.is_some();
     *last = Some(wanted);
     crate::renderer::mesh::set_leaf_culling(wanted as u8);
-    forward_lighting_options();
     if had_previous_value {
         crate::client::bus::request(crate::client::bus::ClientRequest::ReloadChunks);
     }
@@ -2230,7 +2123,6 @@ fn sync_biome_blend(state: Res<crate::gui::GuiState>, mut last: Local<Option<u32
     let had_previous_value = last.is_some();
     *last = Some(wanted);
     crate::renderer::set_biome_blend(wanted as u8);
-    forward_lighting_options();
     if had_previous_value {
         crate::client::bus::request(crate::client::bus::ClientRequest::ReloadChunks);
     }
@@ -2248,13 +2140,11 @@ fn sync_lighting_enabled(
     let had_previous_value = last.is_some();
     *last = Some(wanted);
     crate::renderer::set_lighting_enabled(wanted);
-    forward_lighting_options();
     if had_previous_value {
         crate::client::bus::request(crate::client::bus::ClientRequest::ReloadChunks);
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn sync_vsync(
     state: Res<crate::gui::GuiState>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
@@ -2659,10 +2549,7 @@ pub fn run(
                     present_mode: bevy::window::PresentMode::AutoNoVsync,
                     #[cfg(not(target_os = "android"))]
                     present_mode: bevy::window::PresentMode::AutoVsync,
-                    #[cfg(target_arch = "wasm32")]
-                    canvas: Some("#canvas".into()),
-                    #[cfg(target_arch = "wasm32")]
-                    fit_canvas_to_parent: true,
+
                     ..default()
                 }),
                 exit_condition: bevy::window::ExitCondition::OnPrimaryClosed,
@@ -2784,7 +2671,7 @@ pub fn run(
     );
     #[cfg(audio)]
     app.add_systems(Update, (sync_audio_listener, tick_music));
-    #[cfg(not(target_arch = "wasm32"))]
+
     app.add_systems(Update, sync_vsync);
     app.add_systems(Last, trace_reextracted_meshes)
         .add_systems(
@@ -2832,17 +2719,10 @@ pub fn run(
         .add_systems(Update, window_focus_cursor)
         .add_systems(Update, crate::renderer::input::track_lifecycle)
         .add_systems(Update, log_window_geometry)
-        .add_systems(Update, web_fullscreen)
+        .add_systems(Update, fullscreen_key)
         .add_systems(
             Update,
-            crate::platform::fullscreen::apply_desktop.after(web_fullscreen),
-        )
-        .add_systems(
-            Update,
-            web_pointer_lock
-                .after(apply_gui_nav)
-                .after(toggle_screen)
-                .run_if(in_state(AppState::InGame)),
+            crate::platform::fullscreen::apply_desktop.after(fullscreen_key),
         )
         .add_systems(Update, {
             #[cfg(feature = "click_gui")]
@@ -2930,7 +2810,6 @@ pub fn run(
             handle_mouse_input
                 .after(apply_gui_nav)
                 .after(toggle_screen)
-                .after(web_pointer_lock)
                 .run_if(in_state(AppState::InGame)),
         )
         .add_systems(
@@ -2985,12 +2864,6 @@ pub fn run(
         );
     }
 
-    #[cfg(target_arch = "wasm32")]
-    app.init_resource::<GatedCameras>()
-        .add_systems(First, (web_frame_gate, ungate_cameras).chain())
-        .add_systems(Last, gate_cameras)
-        .add_systems(Update, web_text_focus_pacing);
-
     #[cfg(target_os = "android")]
     app.add_systems(Update, track_native_window_size.before(log_window_geometry))
         .add_systems(Update, log_frame_rate);
@@ -3017,17 +2890,13 @@ pub fn run(
     }
     #[cfg(feature = "shader_support")]
     app.add_plugins(crate::renderer::packdraw::ShaderPackPlugin);
-    #[cfg(all(feature = "perf_report", not(target_arch = "wasm32")))]
+    #[cfg(feature = "perf_report")]
     app.add_plugins(crate::diag::perf_report::PerfReportPlugin);
-
-    #[cfg(target_arch = "wasm32")]
-    app.add_systems(Last, super::input::run_exit_tasks_on_exit);
 
     app.run();
 
-    #[cfg(not(target_arch = "wasm32"))]
     super::input::run_exit_tasks();
-    #[cfg(not(target_arch = "wasm32"))]
+
     crate::diag::logfile::flush();
     #[cfg(resource_packs)]
     crate::resourcepacks::restart_if_requested();

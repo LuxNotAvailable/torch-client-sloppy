@@ -136,7 +136,7 @@ impl Plugin for GuiPlugin {
         let options = crate::gui::GuiOptions::default();
         // The window opens at its default size; the saved one follows on
         // the first frame, once the window exists to resize.
-        #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+        #[cfg(not(target_os = "android"))]
         if options.window_width > 0
             && options.window_height > 0
             && let Ok(mut request) = crate::gui::options::WINDOW_REQUEST.lock()
@@ -627,17 +627,6 @@ pub(crate) fn collect_input(
         }
     }
 
-    if let Some(shift) = crate::platform::keyboard::take_tab() {
-        input.tab = true;
-        input.shift |= shift;
-    }
-
-    if !state.screen.chat_open() && crate::platform::keyboard::take_enter() {
-        input.enter = true;
-        input.select = true;
-        input.edits.push(EditKey::Enter);
-    }
-
     #[cfg(target_os = "android")]
     {
         if !crate::platform::keyboard::has_focus() {
@@ -658,10 +647,6 @@ pub(crate) fn collect_input(
         input.enter = false;
         input.select = false;
         input.defocus = true;
-    }
-
-    if elsewhere || state.screen.is_menu() {
-        input.escape |= crate::platform::keyboard::take_escape();
     }
 
     let nav = crate::platform::keyboard::take_nav();
@@ -842,7 +827,7 @@ fn draw_keyboard_probe(p: &mut Painter, input: &GuiInput, vw: f32, vh: f32) {
 }
 
 /// Resizes the window to the size Video Settings asked for.
-#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+#[cfg(not(target_os = "android"))]
 fn apply_window_request(mut windows: Query<&mut Window, With<PrimaryWindow>>) {
     let Some((w, h)) = crate::gui::options::WINDOW_REQUEST
         .lock()
@@ -857,5 +842,5 @@ fn apply_window_request(mut windows: Query<&mut Window, With<PrimaryWindow>>) {
     }
 }
 
-#[cfg(any(target_arch = "wasm32", target_os = "android"))]
+#[cfg(target_os = "android")]
 fn apply_window_request() {}

@@ -1,9 +1,7 @@
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn dir() -> std::path::PathBuf {
     crate::platform::storage::dir().join("screenshots")
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn save(image: &image::RgbImage) -> Result<String, String> {
     use image::ImageEncoder;
 
@@ -26,7 +24,6 @@ pub(crate) fn save(image: &image::RgbImage) -> Result<String, String> {
     Ok(name)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn free_name(dir: &std::path::Path) -> (String, std::path::PathBuf) {
     let stamp = timestamp(epoch_secs());
     let mut n = 0u32;
@@ -44,7 +41,6 @@ fn free_name(dir: &std::path::Path) -> (String, std::path::PathBuf) {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn epoch_secs() -> i64 {
     crate::platform::time::SystemTime::now()
         .duration_since(crate::platform::time::UNIX_EPOCH)
@@ -52,7 +48,6 @@ pub(crate) fn epoch_secs() -> i64 {
         .unwrap_or(0)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn timestamp(secs: i64) -> String {
     let days = secs.div_euclid(86_400);
     let rem = secs.rem_euclid(86_400);
@@ -72,12 +67,7 @@ pub(crate) fn timestamp(secs: i64) -> String {
     format!("{year:04}-{month:02}-{day:02}_{hour:02}.{minute:02}.{second:02}")
 }
 
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn save(_image: &image::RgbImage) -> Result<String, String> {
-    Err("the web build cannot copy screenshots to the clipboard yet".to_string())
-}
-
-#[cfg(all(test, not(target_arch = "wasm32")))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

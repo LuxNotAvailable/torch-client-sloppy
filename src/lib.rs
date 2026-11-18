@@ -1,4 +1,3 @@
-#![cfg_attr(target_arch = "wasm32", feature(alloc_error_hook))]
 // No `unsafe` in this crate except where a platform needs a foreign call;
 // each such place says so with `#[allow(unsafe_code)]` and why.
 #![deny(unsafe_code)]
@@ -10,7 +9,7 @@ mod blocks;
 mod client;
 mod diag;
 mod direction;
-#[cfg(any(feature = "eagler", target_arch = "wasm32"))]
+#[cfg(feature = "eagler")]
 mod eagler;
 mod entities;
 #[cfg(audio)]
@@ -51,7 +50,6 @@ static ALLOC: diag::alloc::Counting = diag::alloc::Counting;
 #[cfg(all(
     not(feature = "alloc_diag"),
     not(feature = "perf_report"),
-    not(target_arch = "wasm32"),
     not(target_os = "android")
 ))]
 #[global_allocator]
@@ -61,7 +59,6 @@ static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 #[cfg(all(
     feature = "perf_report",
     not(feature = "alloc_diag"),
-    not(target_arch = "wasm32"),
     not(target_os = "android")
 ))]
 #[global_allocator]
@@ -160,7 +157,7 @@ pub(crate) fn textures_dir() -> PathBuf {
     feature = "online_mode",
     feature = "eagler",
     explore_modrinth,
-    all(feature = "asset_download", not(target_arch = "wasm32"))
+    feature = "asset_download"
 ))]
 use rustls as tls;
 
@@ -168,7 +165,7 @@ use rustls as tls;
     feature = "online_mode",
     feature = "eagler",
     explore_modrinth,
-    all(feature = "asset_download", not(target_arch = "wasm32"))
+    feature = "asset_download"
 ))]
 pub(crate) fn install_crypto_provider() {
     static INSTALLED: std::sync::Once = std::sync::Once::new();
@@ -200,95 +197,9 @@ pub(crate) fn android_tls_config() -> Option<rustls::ClientConfig> {
     feature = "online_mode",
     feature = "eagler",
     explore_modrinth,
-    all(feature = "asset_download", not(target_arch = "wasm32"))
+    feature = "asset_download"
 )))]
 pub(crate) fn install_crypto_provider() {}
-
-#[cfg(target_arch = "wasm32")]
-#[wasm_bindgen::prelude::wasm_bindgen]
-pub fn start_web(assets: Vec<u8>, username: String, address: String) -> Result<(), String> {
-    console_error_panic_hook::set_once();
-    diag::panic_report::install_alloc_error_hook();
-    step("start_web entered (build: breadcrumbs)");
-
-    platform::keyboard::install_devtools_passthrough();
-
-    #[cfg(feature = "webgpu")]
-    require_webgpu()?;
-
-    if assets.is_empty() && cfg!(feature = "asset_download") {
-        step("no stored assets; the download screen will ask");
-    } else {
-        step(&format!("unpacking {} bytes of assets", assets.len()));
-        client::mesh_worker::spawn(&assets);
-        load_assets(assets)?;
-    }
-
-    step("assets ready, starting the client");
-    start(
-        Some(username.trim().to_string()).filter(|u| platform::cli::valid_username(u)),
-        Some(address).filter(|a| !a.is_empty()),
-    )
-    .map_err(|e| e.to_string())
-}
-
-#[cfg(target_arch = "wasm32")]
-#[wasm_bindgen::prelude::wasm_bindgen]
-pub fn start_mesh_worker(assets: Vec<u8>) {
-    client::mesh_worker::mirror::start(assets);
-}
-
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn bake_block_lookups() {
-    let textures_dir = textures_dir().to_string_lossy().into_owned();
-    let textures = renderer::Textures::blocks(&textures_dir);
-    let (atlas, tiles) = build_block_atlas(&textures, &textures_dir);
-    ATLAS_ROWS.set(renderer::atlas_rows(&atlas)).ok();
-    TEXTURE_MAP.set(tiles).ok();
-}
-
-#[cfg(target_arch = "wasm32")]
-#[wasm_bindgen::prelude::wasm_bindgen]
-pub fn take_web_assets() -> Option<Vec<u8>> {
-    client::assets::take_installed()
-}
-
-#[cfg(target_arch = "wasm32")]
-#[wasm_bindgen::prelude::wasm_bindgen]
-pub fn ships_assets() -> bool {
-    !cfg!(feature = "asset_download")
-}
-
-#[cfg(target_arch = "wasm32")]
-#[wasm_bindgen::prelude::wasm_bindgen]
-pub fn asset_cache_key() -> String {
-    let magic = std::str::from_utf8(platform::assets::ARCHIVE_MAGIC).unwrap_or("archive");
-    format!("{magic}-{ASSET_VERSION}")
-}
-
-#[cfg(all(target_arch = "wasm32", feature = "webgpu"))]
-fn require_webgpu() -> Result<(), String> {
-    use wasm_bindgen::JsValue;
-
-    let window = web_sys::window().ok_or_else(|| {
-        "no `window`: this build has to run in a browser tab, not a worker".to_string()
-    })?;
-    let navigator = JsValue::from(window.navigator());
-    let gpu = js_sys::Reflect::get(&navigator, &JsValue::from_str("gpu"))
-        .map_err(|_| "could not read `navigator.gpu`".to_string())?;
-    if gpu.is_undefined() || gpu.is_null() {
-        return Err(
-            "this browser has no WebGPU (`navigator.gpu` is missing), and this \
-                    build has no WebGL2 path compiled into it. Use the WebGL2 site \
-                    instead. On a phone, WebGPU needs a recent Chrome or Edge; Firefox \
-                    and iOS Safari are still catching up. Serving over https:// or \
-                    localhost is also required."
-                .to_string(),
-        );
-    }
-    step("navigator.gpu present");
-    Ok(())
-}
 
 pub fn start(username: Option<String>, address: Option<String>) -> eyre::Result<()> {
     run(platform::cli::Args {
@@ -298,7 +209,7 @@ pub fn start(username: Option<String>, address: Option<String>) -> eyre::Result<
     })
 }
 
-#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+#[cfg(not(target_os = "android"))]
 pub fn start_from_cli() -> eyre::Result<()> {
     run(platform::cli::parse())
 }
@@ -335,7 +246,7 @@ fn android_main(app: bevy::android::android_activity::AndroidApp) {
     std::process::exit(code);
 }
 
-#[cfg(any(target_arch = "wasm32", target_os = "android"))]
+#[cfg(target_os = "android")]
 pub fn load_assets(packed: Vec<u8>) -> Result<(), String> {
     platform::assets::archive::load(packed)
 }
@@ -390,21 +301,16 @@ fn android_main(app: bevy::android::android_activity::AndroidApp) {
     std::process::exit(0);
 }
 
-#[cfg(target_arch = "wasm32")]
-pub fn step(message: &str) {
-    web_sys::console::log_1(&format!("[mc] {message}").into());
-}
-
 #[cfg(target_os = "android")]
 pub fn step(message: &str) {
     platform::logcat::write(message);
 }
 
-#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+#[cfg(not(target_os = "android"))]
 pub fn step(_message: &str) {}
 
 fn authenticate(args: &platform::cli::Args) -> Option<String> {
-    #[cfg(all(feature = "online_mode", not(target_arch = "wasm32")))]
+    #[cfg(feature = "online_mode")]
     {
         let token = args.access_token.clone()?;
         let name = match client::auth::sign_in_with_token(token) {
@@ -425,7 +331,7 @@ fn authenticate(args: &platform::cli::Args) -> Option<String> {
         }
         Some(name)
     }
-    #[cfg(not(all(feature = "online_mode", not(target_arch = "wasm32"))))]
+    #[cfg(not(feature = "online_mode"))]
     {
         let _ = args;
         None
@@ -436,7 +342,7 @@ fn run(args: platform::cli::Args) -> eyre::Result<()> {
     platform::time::fine_timer();
     diag::alloc::label_thread(diag::alloc::Site::Render);
     diag::alloc::init_task_pools();
-    #[cfg(not(target_arch = "wasm32"))]
+
     diag::logfile::init();
     diag::panic_report::install_panic_hook();
     client::bot::install_exit_signal_handlers();
@@ -539,9 +445,6 @@ fn run(args: platform::cli::Args) -> eyre::Result<()> {
             (atlas_image, tex_map)
         };
 
-        #[cfg(target_arch = "wasm32")]
-        let (gui_atlas, (atlas_image, tex_map)) = (atlas_work(assets_root), block_work());
-        #[cfg(not(target_arch = "wasm32"))]
         let (gui_atlas, (atlas_image, tex_map)) = std::thread::scope(|scope| {
             let gui = scope.spawn(|| atlas_work(assets_root));
             let rest = block_work();

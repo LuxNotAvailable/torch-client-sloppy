@@ -116,26 +116,6 @@ const CHAT: &str = "Chat Settings...";
 const SKIN_TITLE: &str = "Skin Customisation";
 const SKIN: &str = "Skin Customisation...";
 
-#[cfg(all(target_arch = "wasm32", feature = "asset_download"))]
-const STORAGE_HEADER: &str = "Storage";
-#[cfg(all(target_arch = "wasm32", feature = "asset_download"))]
-const CLEAR_ASSETS: &str = "Clear Cached Assets";
-
-#[cfg(all(target_arch = "wasm32", feature = "asset_download"))]
-const CLEAR_ASSETS_TITLE: &str = "Clear cached assets?";
-#[cfg(all(target_arch = "wasm32", feature = "asset_download"))]
-const CLEAR_ASSETS_MESSAGE: &str = concat!(
-    "The stored copy of the game's assets will be deleted.\n",
-    "The client downloads about 44 MB from Mojang again\n",
-    "the next time this page is opened.",
-);
-#[cfg(all(target_arch = "wasm32", feature = "asset_download"))]
-const CLEAR_ASSETS_WARNING: &str = "The page reloads immediately.";
-#[cfg(all(target_arch = "wasm32", feature = "asset_download"))]
-const CLEAR_ASSETS_YES: &str = "Clear";
-#[cfg(all(target_arch = "wasm32", feature = "asset_download"))]
-const CLEAR_ASSETS_NO: &str = "Cancel";
-
 const PRESET_HEADER: &str = "Graphics Preset";
 const DISPLAY_HEADER: &str = "Display";
 const PERFORMANCE_HEADER: &str = "Performance";
@@ -169,10 +149,9 @@ const LIGHTING_ENGINE: &str = "Lighting Engine";
 const MAX_FRAMERATE: &str = "Max Framerate";
 const UNLIMITED: &str = "Unlimited";
 const VSYNC: &str = "VSync";
-#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+#[cfg(not(target_os = "android"))]
 const FULLSCREEN: &str = "Fullscreen";
 
-#[cfg(not(target_arch = "wasm32"))]
 const RENDERER: &str = "Renderer";
 
 #[cfg(feature = "mobile_ui")]
@@ -611,7 +590,7 @@ fn gui_max_fps_label(value: i32) -> String {
 }
 
 /// Window sizes offered, in physical pixels.
-#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+#[cfg(not(target_os = "android"))]
 const WINDOW_SIZES: [(u32, u32); 5] = [
     (854, 480),
     (1280, 720),
@@ -622,12 +601,12 @@ const WINDOW_SIZES: [(u32, u32); 5] = [
 
 /// The window's size as asked for from Video Settings, for the window
 /// system to apply.
-#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+#[cfg(not(target_os = "android"))]
 pub(crate) static WINDOW_REQUEST: std::sync::Mutex<Option<(u32, u32)>> =
     std::sync::Mutex::new(None);
 
 /// The next size after the window's current one.
-#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+#[cfg(not(target_os = "android"))]
 fn next_window_size(current: (u32, u32)) -> (u32, u32) {
     WINDOW_SIZES
         .iter()
@@ -1042,10 +1021,7 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
                 state.video_list.reset();
                 state.features_list.reset();
                 state.game_list.reset();
-                #[cfg(all(target_arch = "wasm32", feature = "asset_download"))]
-                {
-                    state.confirm_clear_assets = false;
-                }
+
                 #[cfg(feature = "asset_download")]
                 {
                     state.storage_nothing_missing = false;
@@ -1071,7 +1047,7 @@ pub fn draw_manage_storage(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCt
     draw_title(p, ctx, MANAGE_STORAGE_TITLE);
 
     let mut count = 1;
-    if cfg!(not(any(target_arch = "wasm32", target_os = "android"))) {
+    if cfg!(not(target_os = "android")) {
         count += 1;
     }
     if cfg!(feature = "asset_download") {
@@ -1109,7 +1085,7 @@ pub fn draw_manage_storage(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCt
         crate::gui::save_options(&state.options);
     }
 
-    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+    #[cfg(not(target_os = "android"))]
     {
         let (x, y) = cell(next);
         next += 1;
@@ -1175,7 +1151,7 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     let max_gui_scale = auto_gui_scale(ctx.vw * ctx.input.scale, ctx.vh * ctx.input.scale);
     let o = &mut state.options;
 
-    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+    #[cfg(not(target_os = "android"))]
     let ctx_size = (ctx.vw * ctx.input.scale, ctx.vh * ctx.input.scale);
     let mut chosen_preset: Option<usize> = None;
     let mut hovered: Option<&'static Tip> = None;
@@ -1215,16 +1191,15 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
             o.gui_max_fps = (o.gui_max_fps + 5) / 10 * 10;
         }
         f.tip(&tips::GUI_MAX_FPS);
-        #[cfg(not(target_arch = "wasm32"))]
+
         {
             f.toggle(VSYNC, &mut o.vsync);
             f.tip(&tips::VSYNC);
             // Keeps the rows below paired.
             f.skip();
         }
-        #[cfg(target_arch = "wasm32")]
-        f.skip();
-        #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+
+        #[cfg(not(target_os = "android"))]
         {
             let current = (
                 (ctx_size.0 as f32).round() as u32,
@@ -1250,7 +1225,7 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         f.tip(&tips::GUI_SCALE);
         f.slider(&mut o.gamma, 0, GAMMA_MAX, brightness_label);
         f.tip(&tips::BRIGHTNESS);
-        #[cfg(not(target_arch = "wasm32"))]
+
         {
             let backend = o.render_backend;
             let pending = backend != crate::renderer::systems::started_backend();
@@ -1962,31 +1937,6 @@ pub(in crate::gui) fn draw_bind_tooltip(
     }
 }
 
-#[cfg(all(target_arch = "wasm32", feature = "asset_download"))]
-fn draw_clear_assets(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
-    crate::gui::screens::dim_background(p, ctx.vw, ctx.vh);
-    let buttons = [CLEAR_ASSETS_NO.to_owned(), CLEAR_ASSETS_YES.to_owned()];
-    let chosen = crate::gui::confirmlink::draw_box(
-        p,
-        ctx,
-        CLEAR_ASSETS_TITLE,
-        CLEAR_ASSETS_MESSAGE,
-        Some(CLEAR_ASSETS_WARNING),
-        &buttons,
-        COLUMN_W,
-    );
-    match chosen {
-        Some(1) => {
-            if let Err(e) = crate::client::assets::clear_web_cache() {
-                crate::log_warn!("assets", "could not clear the stored archive: {e}");
-            }
-            state.confirm_clear_assets = false;
-        }
-        Some(_) => state.confirm_clear_assets = false,
-        None => {}
-    }
-}
-
 /// Vanilla's `SkinCustomizationScreen`: a toggle for each layer of the skin,
 /// in `PlayerModelPart` order, then the main hand.
 pub fn draw_skin(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
@@ -2036,12 +1986,6 @@ pub fn draw_skin(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
 }
 
 pub fn draw_chat(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
-    #[cfg(all(target_arch = "wasm32", feature = "asset_download"))]
-    if state.confirm_clear_assets {
-        draw_clear_assets(p, state, ctx);
-        return;
-    }
-
     draw_title(p, ctx, CHAT_TITLE);
     let can_sign = signing_available(state);
     let o = &mut state.options;
@@ -2072,14 +2016,6 @@ pub fn draw_chat(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
             crate::gui::TOAST_TIME_MAX as u32,
             toast_time_label,
         );
-
-        #[cfg(all(target_arch = "wasm32", feature = "asset_download"))]
-        {
-            f.header(STORAGE_HEADER);
-            if f.wide_button(CLEAR_ASSETS) {
-                state.confirm_clear_assets = true;
-            }
-        }
 
         if f.wide_button(RESET_CHAT) {
             reset_chat_options(o);
@@ -2498,10 +2434,9 @@ mod tests {
         };
         draw_video(&mut p, &mut state, &ctx);
         let shader = cfg!(feature = "shader_support") as u32 as f32;
-        let desktop =
-            cfg!(all(not(target_arch = "wasm32"), not(target_os = "android"))) as u32 as f32;
+        let desktop = cfg!(not(target_os = "android")) as u32 as f32;
         // The renderer choice shows wherever Vulkan runs.
-        let native = cfg!(not(target_arch = "wasm32")) as u32 as f32;
+        let native = true as u32 as f32;
         let rows = 1.0 + (3.0 + desktop + native) + (2.0 + shader) + 7.0 + 1.0 + (2.0 + shader);
         assert_eq!(
             state.video_list.content_h,

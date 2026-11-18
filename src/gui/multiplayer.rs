@@ -592,7 +592,6 @@ fn draw_footer(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx, locked: b
         true,
     );
 
-    #[cfg(not(target_arch = "wasm32"))]
     {
         let path = serverlist::path();
         if serverlist::is_temporary(&path) {}

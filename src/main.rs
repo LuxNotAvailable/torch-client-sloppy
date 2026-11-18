@@ -3,10 +3,10 @@
 // to `logs/latest.log`.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
-#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+#[cfg(not(target_os = "android"))]
 fn main() -> eyre::Result<()> {
     torch_client::start_from_cli()
 }
 
-#[cfg(any(target_arch = "wasm32", target_os = "android"))]
+#[cfg(target_os = "android")]
 fn main() {}

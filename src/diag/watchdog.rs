@@ -478,11 +478,9 @@ fn check_bot_liveness() {
 }
 
 pub fn start_watchdog() {
-    #[cfg(not(target_arch = "wasm32"))]
     start_watchdog_thread();
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn start_watchdog_thread() {
     let spawned = std::thread::Builder::new()
         .name("watchdog".into())
@@ -542,7 +540,6 @@ pub fn set_watching(on: bool) {
     WAKE.notify_all();
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn park_until_watching() {
     if *WATCHING.lock() {
         return;

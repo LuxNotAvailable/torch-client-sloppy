@@ -32,10 +32,10 @@ pub(crate) mod alloc;
 pub(crate) mod budget;
 pub(crate) mod frame_profile;
 mod layer;
-#[cfg(not(target_arch = "wasm32"))]
+
 pub(crate) mod logfile;
 pub(crate) mod panic_report;
-#[cfg(all(feature = "perf_report", not(target_arch = "wasm32")))]
+#[cfg(feature = "perf_report")]
 pub(crate) mod perf_report;
 #[cfg(feature = "profiling")]
 pub(crate) mod profiling;
@@ -92,17 +92,6 @@ pub fn line(level: Level, tag: &str, msg: &str) {
     emit(level, &out);
 }
 
-#[cfg(target_arch = "wasm32")]
-fn emit(level: Level, out: &str) {
-    let text = wasm_bindgen::JsValue::from_str(out);
-    match level {
-        Level::Error => web_sys::console::error_1(&text),
-        Level::Warn => web_sys::console::warn_1(&text),
-        Level::Debug | Level::Info => web_sys::console::log_1(&text),
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 fn emit(level: Level, out: &str) {
     use std::io::Write as _;
     let mut err = std::io::stderr().lock();

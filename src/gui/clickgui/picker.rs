@@ -19,7 +19,6 @@ pub struct Picker {
 impl Picker {
     pub fn new(list: &'static BitList) -> Picker {
         let mut query = TextBox::new(32, "Search");
-        query.browser_keyboard = false;
         query.focused = true;
         Picker {
             list,

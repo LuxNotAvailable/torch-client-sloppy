@@ -76,12 +76,10 @@ vulkan = ["dep:ash", "dep:ash-window", "dep:gpu-allocator", "dep:winit", "dep:ra
 # The Vulkan viewer as an Android app (tools/vkview-apk): the library's
 # android_main runs the viewer instead of the game.
 vkview_apk = ["vulkan"]
-# WebGPU instead of WebGL 2 in the browser build.
-webgpu = ["bevy/webgpu"]
 
 # --- Sound ---
 
-# Sound, desktop only: on the web and Android the feature does nothing (see
+# Sound, desktop only: on Android the feature does nothing (see
 # build.rs). Downloads about 332 MB of sounds on first run, which can be skipped.
 audio = ["asset_download", "dep:rodio"]
 # Simple Voice Chat, when the server runs it (see src/voice): voices played at
@@ -212,7 +210,7 @@ tokio = { version = "1", features = ["full"] }
 
 # --- Desktop ---
 
-[target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))'.dependencies]
+[target.'cfg(not(target_os = "android"))'.dependencies]
 bevy = { version = "0.18", default-features = false, features = ["multi_threaded", "x11", "wayland"] }
 arboard = { version = "3.6", default-features = false }
 mimalloc = { version = "0.1", default-features = false }
@@ -231,7 +229,7 @@ torch-opus = { path = "crates/torch-opus", optional = true }
 [target.'cfg(all(target_os = "linux", not(target_os = "android")))'.dependencies]
 winit = { version = "0.30", default-features = false, features = ["wayland-dlopen"] }
 
-[target.'cfg(all(unix, not(target_arch = "wasm32")))'.dependencies]
+[target.'cfg(unix)'.dependencies]
 # Exit signals without hand-written `signal()` calls.
 ctrlc = { version = "3.5", features = ["termination"] }
 
@@ -241,53 +239,6 @@ ctrlc = { version = "3.5", features = ["termination"] }
 bevy = { version = "0.18", default-features = false, features = ["multi_threaded", "android-native-activity"] }
 jni = "0.22"
 webpki-roots = "1"
-
-# --- Browser ---
-
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-bevy = { version = "0.18", default-features = false, features = ["webgl2"] }
-tokio = { version = "1", default-features = false, features = ["sync", "macros", "rt", "time"] }
-azalea-auth = { path = "vendor/azalea/azalea-auth", default-features = false }
-uuid = "1"
-console_error_panic_hook = "0.1"
-getrandom = { version = "0.4", features = ["wasm_js"] }
-getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
-js-sys = "0.3"
-wasm-bindgen = "0.2"
-wasm-bindgen-futures = "0.4"
-web-time = "1"
-web-sys = { version = "0.3", features = [
-    "Window",
-    "Location",
-    "Storage",
-    "Navigator",
-    "Clipboard",
-    "Document",
-    "Element",
-    "EventTarget",
-    "HtmlElement",
-    "HtmlInputElement",
-    "CssStyleDeclaration",
-    "Event",
-    "KeyboardEvent",
-    "VisualViewport",
-    "WebSocket",
-    "BinaryType",
-    "MessageEvent",
-    "CloseEvent",
-    "ErrorEvent",
-    "Worker",
-    "WorkerOptions",
-    "WorkerType",
-    "DedicatedWorkerGlobalScope",
-    "console",
-    "Response",
-    "Headers",
-    "ReadableStream",
-    "ReadableStreamDefaultReader",
-    "Request",
-    "RequestInit",
-] }
 
 # ---------------------------------------------------------------------------
 # Profiles

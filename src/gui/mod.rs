@@ -1208,8 +1208,7 @@ pub struct GuiState {
     pub voice_list: scroll_list::ScrollList,
     #[cfg(voice)]
     pub voice_groups: voice_chat::GroupsState,
-    #[cfg(all(target_arch = "wasm32", feature = "asset_download"))]
-    pub confirm_clear_assets: bool,
+
     #[cfg(feature = "asset_download")]
     pub storage_nothing_missing: bool,
     #[cfg(feature = "shader_support")]

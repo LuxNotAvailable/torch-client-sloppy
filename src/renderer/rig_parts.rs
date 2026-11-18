@@ -32,14 +32,10 @@ pub type PartRows = [[f32; 4]; 3];
 
 const ZERO_ROWS: PartRows = [[0.0; 4]; 3];
 
-/// Whether new model rigs pose on the GPU. Off on WebGL (no vertex-stage
-/// storage buffers) and under `MC_CPU_RIGS=1`. Shader packs pose them too:
+/// Whether new model rigs pose on the GPU. Off under `MC_CPU_RIGS=1`. Shader packs pose them too:
 /// their entity programs compile a skinned vertex stage
 /// (`packdraw::compile::preludes::entity_prelude`).
 pub fn enabled() -> bool {
-    if cfg!(target_arch = "wasm32") {
-        return false;
-    }
     static FORCED_CPU: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     let forced = *FORCED_CPU.get_or_init(|| {
         matches!(

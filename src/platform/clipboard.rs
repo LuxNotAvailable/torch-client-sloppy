@@ -1,28 +1,20 @@
 pub fn get() -> String {
-    #[cfg(target_arch = "wasm32")]
-    {
-        web::take_pasted()
-    }
     #[cfg(target_os = "android")]
     {
         android::get().unwrap_or_default()
     }
-    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+    #[cfg(not(target_os = "android"))]
     {
         native::with(|clip| clip.get_text().unwrap_or_default()).unwrap_or_default()
     }
 }
 
 pub fn set(text: &str) {
-    #[cfg(target_arch = "wasm32")]
-    {
-        web::copy(text);
-    }
     #[cfg(target_os = "android")]
     {
         android::set(text);
     }
-    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+    #[cfg(not(target_os = "android"))]
     {
         native::with(|clip| {
             let _ = clip.set_text(text);
@@ -30,7 +22,7 @@ pub fn set(text: &str) {
     }
 }
 
-#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+#[cfg(not(target_os = "android"))]
 mod native {
     use std::sync::{Mutex, OnceLock};
 
@@ -146,33 +138,5 @@ mod android {
                 .l()?;
             env.cast_local::<JString>(string)?.try_to_string(env)
         })
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-mod web {
-    use std::sync::Mutex;
-
-    static PASTED: Mutex<String> = Mutex::new(String::new());
-
-    #[wasm_bindgen::prelude::wasm_bindgen]
-    pub fn on_paste(text: String) {
-        if let Ok(mut slot) = PASTED.lock() {
-            *slot = text;
-        }
-    }
-
-    pub(super) fn take_pasted() -> String {
-        PASTED
-            .lock()
-            .map(|mut slot| std::mem::take(&mut *slot))
-            .unwrap_or_default()
-    }
-
-    pub(super) fn copy(text: &str) {
-        let Some(window) = web_sys::window() else {
-            return;
-        };
-        let _ = window.navigator().clipboard().write_text(text);
     }
 }

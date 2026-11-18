@@ -85,17 +85,14 @@ pub fn clear() {
     slot.state = None;
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 static CLI_SESSION: OnceLock<CliSession> = OnceLock::new();
 
-#[cfg(not(target_arch = "wasm32"))]
 struct CliSession {
     name: String,
     uuid: uuid::Uuid,
     token: String,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub fn sign_in_with_token(token: String) -> Result<String, String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -273,7 +270,7 @@ fn now() -> u64 {
 
 pub async fn account() -> Result<azalea::account::Account, String> {
     client();
-    #[cfg(not(target_arch = "wasm32"))]
+
     if let Some(session) = CLI_SESSION.get() {
         log_info!(
             "auth",

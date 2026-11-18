@@ -85,16 +85,6 @@ impl DataLayer {
         self.data.is_none()
     }
 
-    #[cfg(target_arch = "wasm32")]
-    pub fn as_bytes(&self) -> Option<&[u8; SIZE]> {
-        self.data.as_deref()
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub fn fill_value(&self) -> u8 {
-        self.default
-    }
-
     fn materialise(&mut self) -> &mut [u8; SIZE] {
         let byte = self.default | (self.default << 4);
         Arc::make_mut(self.data.get_or_insert_with(|| Arc::new([byte; SIZE])))

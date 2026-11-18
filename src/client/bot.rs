@@ -2,7 +2,7 @@ use crate::{log_debug, log_error, log_info, log_warn};
 use azalea::FormattedText;
 use azalea::prelude::*;
 use std::sync::Mutex;
-#[cfg(not(target_arch = "wasm32"))]
+
 use std::thread;
 
 use crate::SHARED;
@@ -102,11 +102,11 @@ fn close_connection() -> bool {
 
 pub(crate) fn shutdown_connection() {
     close_connection();
-    #[cfg(all(unix, not(target_arch = "wasm32")))]
+    #[cfg(unix)]
     azalea_protocol::connect::force_close_last_tcp();
 }
 
-#[cfg(all(unix, not(target_arch = "wasm32")))]
+#[cfg(unix)]
 pub(crate) fn install_exit_signal_handlers() {
     // Ctrl-C and SIGTERM: drop the server connection at once (so the server
     // sees the player leave), then end as the signal would have.
@@ -119,7 +119,7 @@ pub(crate) fn install_exit_signal_handlers() {
     }
 }
 
-#[cfg(not(all(unix, not(target_arch = "wasm32"))))]
+#[cfg(not(unix))]
 pub(crate) fn install_exit_signal_handlers() {}
 
 pub struct PacketRelayPlugin;
@@ -256,12 +256,7 @@ pub(crate) fn start_bot(address: String) {
         s.session_ended = false;
         s.end_notice = None;
     }
-    #[cfg(target_arch = "wasm32")]
-    let spawn_connection = |body: Box<dyn FnOnce() + 'static>| {
-        body();
-        true
-    };
-    #[cfg(not(target_arch = "wasm32"))]
+
     let spawn_connection = |body: Box<dyn FnOnce() + Send + 'static>| match thread::Builder::new()
         .name("bot".into())
         .spawn(move || {
@@ -285,7 +280,7 @@ pub(crate) fn start_bot(address: String) {
                 if let Ok(mut live) = LIVE_CLIENT.try_lock() {
                     *live = None;
                 }
-                #[cfg(all(unix, not(target_arch = "wasm32")))]
+                #[cfg(unix)]
                 azalea_protocol::connect::forget_last_tcp();
                 crate::diag::note_bot_stopped();
                 if std::thread::panicking() {
@@ -342,7 +337,7 @@ pub(crate) fn start_bot(address: String) {
             let account = Account::offline(&username());
             #[cfg(feature = "multiversion")]
             crate::protocol::detect(&address).await;
-            #[cfg(any(feature = "eagler", target_arch = "wasm32"))]
+            #[cfg(feature = "eagler")]
             let bridged = match crate::eagler::prepare(
                 &crate::platform::address::normalize(&address),
                 account.username(),
@@ -360,7 +355,7 @@ pub(crate) fn start_bot(address: String) {
                     return;
                 }
             };
-            #[cfg(not(any(feature = "eagler", target_arch = "wasm32")))]
+            #[cfg(not(feature = "eagler"))]
             let bridged: Option<azalea_protocol::address::ResolvedAddr> = None;
 
             let result = match &bridged {
@@ -628,7 +623,7 @@ pub(crate) fn force_disconnect() -> bool {
              the socket is being severed directly instead."
         );
     }
-    #[cfg(all(unix, not(target_arch = "wasm32")))]
+    #[cfg(unix)]
     azalea_protocol::connect::force_close_last_tcp();
     if let Ok(mut live) = LIVE_CLIENT.try_lock() {
         *live = None;

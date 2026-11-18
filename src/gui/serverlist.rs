@@ -6,7 +6,6 @@ pub struct ServerEntry {
     pub address: String,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub fn path() -> PathBuf {
     crate::platform::storage::SERVERS.path()
 }

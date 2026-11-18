@@ -64,15 +64,6 @@ fn decode_dir(dir: &str) -> BTreeMap<String, image::RgbaImage> {
         Some((stem, decoded.to_rgba8()))
     };
 
-    #[cfg(target_arch = "wasm32")]
-    {
-        paths
-            .iter()
-            .filter_map(|p| decode(p))
-            .collect::<BTreeMap<String, image::RgbaImage>>()
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
     {
         let threads = std::thread::available_parallelism()
             .map(|n| n.get())
@@ -767,7 +758,7 @@ const MAX_TILE_PX: u32 = 64;
 /// per model unit; squeezed into 16 px tiles they lose every other texel.
 /// The taller atlas this makes (about 5000 px) is past what web and Android
 /// GPUs allow, so they keep the common size.
-const MAX_DETAIL_TILE_PX: u32 = if cfg!(any(target_arch = "wasm32", target_os = "android")) {
+const MAX_DETAIL_TILE_PX: u32 = if cfg!(target_os = "android") {
     TILE_PX
 } else {
     32

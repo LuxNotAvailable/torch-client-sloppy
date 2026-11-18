@@ -9,9 +9,6 @@ const VERSION_MANIFEST: &str = "https://piston-meta.mojang.com/mc/game/version_m
 
 const OBJECT_STORE: &str = "https://resources.download.minecraft.net";
 
-#[cfg(target_arch = "wasm32")]
-const OBJECT_PROXY: &str = "https://getstuff.xpncvr.workers.dev/";
-
 const NAMESPACE_DIR: &str = "assets/minecraft/";
 
 const DATA_DIR: &str = "data/minecraft/";
@@ -34,7 +31,6 @@ const KEEP_LIST: &str = include_str!("../../tools/asset_keep_list.txt");
 
 pub(crate) const CAN_FETCH_OBJECTS: bool = true;
 
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn root() -> PathBuf {
     match crate::platform::env::var_os("MC_ASSET_DIR") {
         Some(p) => PathBuf::from(p),
@@ -42,11 +38,7 @@ pub(crate) fn root() -> PathBuf {
     }
 }
 
-#[cfg(all(
-    not(target_arch = "wasm32"),
-    not(target_os = "windows"),
-    not(target_os = "android")
-))]
+#[cfg(all(not(target_os = "windows"), not(target_os = "android")))]
 fn default_root() -> PathBuf {
     std::env::temp_dir().join("torch-client/assets")
 }
@@ -60,7 +52,7 @@ fn default_root() -> PathBuf {
         .join("assets")
 }
 
-#[cfg(all(not(target_arch = "wasm32"), target_os = "windows"))]
+#[cfg(target_os = "windows")]
 fn default_root() -> PathBuf {
     use crate::platform::storage::WINDOWS_FOLDER as FOLDER;
 
@@ -71,23 +63,13 @@ fn default_root() -> PathBuf {
 }
 
 pub(crate) fn pack_root(version: &str) -> PathBuf {
-    #[cfg(target_arch = "wasm32")]
-    {
-        PathBuf::from("/assets").join(version)
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        root().join("versions").join(version)
-    }
+    root().join("versions").join(version)
 }
 
 mod store {
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(super) use native::*;
-    #[cfg(target_arch = "wasm32")]
-    pub(super) use web::*;
 
-    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) use native::*;
+
     mod native {
         use std::path::PathBuf;
 
@@ -137,59 +119,9 @@ mod store {
             std::fs::read(index_pack(id)).ok()
         }
     }
-
-    #[cfg(target_arch = "wasm32")]
-    mod web {
-        use std::sync::Mutex;
-
-        pub(in crate::client::assets) static INSTALLED: Mutex<Option<Vec<u8>>> = Mutex::new(None);
-
-        pub(in crate::client::assets) fn save_version(
-            _version: &str,
-            bytes: &[u8],
-        ) -> Result<(), String> {
-            *INSTALLED.lock().unwrap() = Some(bytes.to_vec());
-            crate::log_info!("assets", "archive built, {} bytes", bytes.len());
-            Ok(())
-        }
-
-        pub(in crate::client::assets) fn has_index(_id: &str) -> bool {
-            false
-        }
-
-        pub(in crate::client::assets) fn load_version(_version: &str) -> Option<Vec<u8>> {
-            INSTALLED.lock().unwrap().clone()
-        }
-
-        pub(in crate::client::assets) fn load_index(_id: &str) -> Option<Vec<u8>> {
-            None
-        }
-    }
-}
-
-#[cfg(all(target_arch = "wasm32", feature = "asset_download"))]
-pub(crate) fn clear_web_cache() -> Result<(), String> {
-    use wasm_bindgen::{JsCast, JsValue};
-
-    let window = web_sys::window().ok_or_else(|| "no window".to_owned())?;
-    let f = js_sys::Reflect::get(&window, &JsValue::from_str("clearStoredAssets"))
-        .map_err(|_| "the page defines no clearStoredAssets".to_owned())?;
-    let f = f
-        .dyn_ref::<js_sys::Function>()
-        .ok_or_else(|| "clearStoredAssets is not a function".to_owned())?;
-    f.call0(&window)
-        .map_err(|_| "clearStoredAssets threw".to_owned())?;
-    log_info!("assets", "asked the page to clear the stored archive");
-    Ok(())
-}
-
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn take_installed() -> Option<Vec<u8>> {
-    store::INSTALLED.lock().unwrap().clone()
 }
 
 pub(crate) fn mount() -> bool {
-    #[cfg(not(target_arch = "wasm32"))]
     if crate::platform::env::var_os("MINECRAFT_ASSETS").is_some() {
         return false;
     }
@@ -219,7 +151,7 @@ pub(crate) fn mount() -> bool {
         return false;
     }
 
-    #[cfg(all(audio, not(target_arch = "wasm32")))]
+    #[cfg(audio)]
     {
         let sounds_ok = meta["index"]
             .as_str()
@@ -255,7 +187,7 @@ pub(crate) fn mount() -> bool {
         }
         #[cfg(audio)]
         crate::audio::init(id);
-        #[cfg(all(audio, not(target_arch = "wasm32")))]
+        #[cfg(audio)]
         MOUNTED_INDEX.set(id.to_owned()).ok();
     }
     log_info!("assets", "jar layer {version}: {} entries", jar_layer.len());
@@ -290,14 +222,8 @@ fn progress_line(done: u64, total: u64) -> String {
 
 fn object_url(hash: &str) -> String {
     let direct = format!("{OBJECT_STORE}/{}/{hash}", &hash[..2]);
-    #[cfg(target_arch = "wasm32")]
-    {
-        format!("{OBJECT_PROXY}{direct}")
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        direct
-    }
+
+    direct
 }
 
 fn kept(key: &str) -> bool {
@@ -381,16 +307,16 @@ pub(crate) fn download() -> &'static Download {
     })
 }
 
-#[cfg(all(audio, not(target_arch = "wasm32")))]
+#[cfg(audio)]
 static SOUNDS_ONLY: AtomicBool = AtomicBool::new(false);
 
-#[cfg(all(audio, not(target_arch = "wasm32")))]
+#[cfg(audio)]
 static SOUNDS_SKIPPED: AtomicBool = AtomicBool::new(false);
 
-#[cfg(all(audio, not(target_arch = "wasm32")))]
+#[cfg(audio)]
 static MOUNTED_INDEX: OnceLock<String> = OnceLock::new();
 
-#[cfg(all(audio, not(target_arch = "wasm32")))]
+#[cfg(audio)]
 pub(crate) fn check_missing() -> bool {
     SOUNDS_SKIPPED.store(false, Ordering::Relaxed);
     crate::platform::storage::SOUNDS_SKIPPED.store("");
@@ -405,13 +331,13 @@ pub(crate) fn check_missing() -> bool {
     missing
 }
 
-#[cfg(not(all(audio, not(target_arch = "wasm32"))))]
+#[cfg(not(audio))]
 pub(crate) fn check_missing() -> bool {
     false
 }
 
 pub(crate) fn adopt_sounds() {
-    #[cfg(all(audio, not(target_arch = "wasm32")))]
+    #[cfg(audio)]
     {
         SOUNDS_ONLY.store(false, Ordering::Relaxed);
         if let Some(id) = MOUNTED_INDEX.get() {
@@ -444,7 +370,7 @@ impl Download {
     }
 
     pub(crate) fn sounds_running(&self) -> bool {
-        cfg!(all(audio, not(target_arch = "wasm32")))
+        cfg!(audio)
             && self.sound_active.load(Ordering::Relaxed)
             && !self.sound_skip.load(Ordering::Relaxed)
     }
@@ -487,17 +413,13 @@ impl Download {
         *self.error.lock().unwrap() = "";
         self.set(Stage::Asking);
 
-        #[cfg(target_arch = "wasm32")]
-        crate::platform::executor::spawn(async move { self.run(&version).await });
-
-        #[cfg(not(target_arch = "wasm32"))]
         std::thread::Builder::new()
             .name("asset-download".into())
             .spawn(move || crate::platform::executor::block_on(self.run(&version)))
             .ok();
     }
 
-    #[cfg(all(audio, not(target_arch = "wasm32")))]
+    #[cfg(audio)]
     fn rewind(&self) {
         if matches!(self.stage(), Stage::Done | Stage::Cancelled | Stage::Failed) {
             self.set(Stage::Idle);
@@ -513,7 +435,7 @@ impl Download {
     }
 
     async fn run(&'static self, version: &str) {
-        #[cfg(all(audio, not(target_arch = "wasm32")))]
+        #[cfg(audio)]
         if SOUNDS_ONLY.load(Ordering::Relaxed) {
             let result = self.install_sounds_only(version).await;
             match self.settle_sounds(result) {
@@ -552,7 +474,7 @@ impl Download {
         let manifest = get_json(VERSION_MANIFEST).await?;
         let meta = get_json(&pick_version(&manifest, version)?).await?;
 
-        #[cfg(all(audio, not(target_arch = "wasm32")))]
+        #[cfg(audio)]
         let sounds = SoundTask::spawn(self, &meta)?;
 
         let client = &meta["downloads"]["client"];
@@ -598,37 +520,21 @@ impl Download {
                     let objects = match self.fetch_objects(index_url, wanted).await {
                         Ok(Some(objects)) => objects,
                         Ok(None) => return Ok(false),
-                        #[cfg(target_arch = "wasm32")]
-                        Err(e) => {
-                            log_warn!("assets", "no objects layer: {}", e.detail);
-                            Vec::new()
-                        }
-                        #[cfg(not(target_arch = "wasm32"))]
+
                         Err(e) => return Err(e),
                     };
-                    #[cfg(not(target_arch = "wasm32"))]
+
                     {
                         let packed = pack(objects);
                         store::save_index(id, &packed)
                             .map_err(|e| Failure::new("Cannot write to the assets folder", e))?;
                     }
-                    #[cfg(target_arch = "wasm32")]
-                    {
-                        let count = objects.len();
-                        for (key, bytes) in objects {
-                            match entries.iter().position(|(k, _)| *k == key) {
-                                Some(at) => entries[at].1 = bytes,
-                                None => entries.push((key, bytes)),
-                            }
-                        }
-                        log_info!("assets", "folded {count} objects into the archive");
-                    }
                 }
             }
-            index_id = (!cfg!(target_arch = "wasm32")).then(|| id.to_owned());
+            index_id = Some(id.to_owned());
         }
 
-        #[cfg(all(audio, not(target_arch = "wasm32")))]
+        #[cfg(audio)]
         if !sounds.finish()? {
             return Ok(false);
         }
@@ -797,7 +703,7 @@ impl Download {
         Ok(Some(out))
     }
 
-    #[cfg(all(audio, not(target_arch = "wasm32")))]
+    #[cfg(audio)]
     async fn install_sounds_only(&self, version: &str) -> Result<bool, Failure> {
         self.set(Stage::Asking);
         let manifest = get_json(VERSION_MANIFEST).await?;
@@ -812,7 +718,7 @@ impl Download {
         self.install_sounds(index_url, index_id).await
     }
 
-    #[cfg(all(audio, not(target_arch = "wasm32")))]
+    #[cfg(audio)]
     fn settle_sounds(&self, result: Result<bool, Failure>) -> Result<bool, Failure> {
         match result {
             Ok(false) if !self.cancelled() => {
@@ -828,7 +734,7 @@ impl Download {
         }
     }
 
-    #[cfg(all(audio, not(target_arch = "wasm32")))]
+    #[cfg(audio)]
     async fn install_sounds(&self, index_url: &str, index_id: &str) -> Result<bool, Failure> {
         if crate::audio::store::installed(index_id) {
             log_info!("assets", "the sound set for index {index_id} is installed");
@@ -840,7 +746,7 @@ impl Download {
         result
     }
 
-    #[cfg(all(audio, not(target_arch = "wasm32")))]
+    #[cfg(audio)]
     async fn fetch_sounds(&self, index_url: &str, index_id: &str) -> Result<bool, Failure> {
         use std::sync::atomic::AtomicUsize;
 
@@ -946,7 +852,7 @@ impl Download {
         Ok(true)
     }
 
-    #[cfg(all(audio, not(target_arch = "wasm32")))]
+    #[cfg(audio)]
     async fn fetch_object(&self, hash: &str) -> Result<Option<Vec<u8>>, Failure> {
         let url = object_url(hash);
         let body = crate::platform::http::get_bytes(&url, 0, &mut |_, _| !self.cancelled())
@@ -967,13 +873,13 @@ impl Download {
     }
 }
 
-#[cfg(all(audio, not(target_arch = "wasm32")))]
+#[cfg(audio)]
 struct SoundTask {
     dl: &'static Download,
     handle: Option<std::thread::JoinHandle<Result<bool, Failure>>>,
 }
 
-#[cfg(all(audio, not(target_arch = "wasm32")))]
+#[cfg(audio)]
 impl SoundTask {
     fn spawn(dl: &'static Download, meta: &serde_json::Value) -> Result<SoundTask, Failure> {
         let index = &meta["assetIndex"];
@@ -1003,7 +909,7 @@ impl SoundTask {
     }
 }
 
-#[cfg(all(audio, not(target_arch = "wasm32")))]
+#[cfg(audio)]
 impl Drop for SoundTask {
     fn drop(&mut self) {
         if let Some(handle) = self.handle.take() {
@@ -1114,12 +1020,6 @@ async fn get_json(url: &str) -> Result<serde_json::Value, Failure> {
     serde_json::from_str(&text).map_err(|e| Failure::new("Mojang sent something unreadable", e))
 }
 
-#[cfg(target_arch = "wasm32")]
-fn fallback_url(url: &str) -> Option<String> {
-    Some(format!("{OBJECT_PROXY}{url}"))
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 fn fallback_url(_: &str) -> Option<String> {
     None
 }

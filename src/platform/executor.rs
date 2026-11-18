@@ -2,11 +2,6 @@ pub(crate) fn spawn<F>(future: F)
 where
     F: Future<Output = ()> + 'static,
 {
-    #[cfg(target_arch = "wasm32")]
-    {
-        wasm_bindgen_futures::spawn_local(future);
-    }
-    #[cfg(not(target_arch = "wasm32"))]
     {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
@@ -19,7 +14,7 @@ where
     }
 }
 
-#[cfg(all(not(target_arch = "wasm32"), feature = "asset_download"))]
+#[cfg(feature = "asset_download")]
 pub(crate) fn block_on<F: Future>(future: F) -> F::Output {
     use std::task::{Context, Poll};
     let mut future = std::pin::pin!(future);
@@ -32,15 +27,6 @@ pub(crate) fn block_on<F: Future>(future: F) -> F::Output {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn spawn_detached<F>(future: F)
-where
-    F: Future<Output = ()> + 'static,
-{
-    wasm_bindgen_futures::spawn_local(future);
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn spawn_detached<F>(future: F)
 where
     F: Future<Output = ()> + Send + 'static,
@@ -48,15 +34,7 @@ where
     native_pool().spawn(future);
 }
 
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn spawn_task<F>(future: F)
-where
-    F: Future<Output = ()> + 'static,
-{
-    wasm_bindgen_futures::spawn_local(future);
-}
-
-#[cfg(all(not(target_arch = "wasm32"), feature = "eagler"))]
+#[cfg(feature = "eagler")]
 pub(crate) fn spawn_task<F>(future: F)
 where
     F: Future<Output = ()> + Send + 'static,
@@ -64,7 +42,6 @@ where
     tokio::spawn(future);
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn native_pool() -> &'static tokio::runtime::Runtime {
     static POOL: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
     POOL.get_or_init(|| {

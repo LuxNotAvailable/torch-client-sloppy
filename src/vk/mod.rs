@@ -77,6 +77,10 @@ impl From<ash::vk::Result> for SetupError {
     #[track_caller]
     fn from(result: ash::vk::Result) -> SetupError {
         let at = std::panic::Location::caller();
-        SetupError(format!("Vulkan call failed: {result:?} ({}:{})", at.file(), at.line()))
+        SetupError(format!(
+            "Vulkan call failed: {result:?} ({}:{})",
+            at.file(),
+            at.line()
+        ))
     }
 }

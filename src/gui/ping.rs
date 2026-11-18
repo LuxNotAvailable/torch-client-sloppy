@@ -63,13 +63,7 @@ pub(crate) struct Status {
     pub version: String,
     pub protocol: i32,
     pub latency_ms: u32,
-    #[cfg_attr(
-        target_arch = "wasm32",
-        allow(
-            dead_code,
-            reason = "`--ping` is the only reader, and the web build has no command line"
-        )
-    )]
+
     pub sample: Vec<String>,
 }
 
@@ -153,7 +147,7 @@ pub(crate) async fn status_once(address: &str, icon: bool) -> Result<Status, Str
     let started = Instant::now();
     let dial = crate::platform::address::normalize(address);
 
-    #[cfg(any(feature = "eagler", target_arch = "wasm32"))]
+    #[cfg(feature = "eagler")]
     if crate::platform::address::is_websocket(&dial) {
         return match crate::platform::time::timeout(TIMEOUT, crate::eagler::query::status(&dial))
             .await

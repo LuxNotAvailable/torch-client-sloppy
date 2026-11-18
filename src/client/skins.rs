@@ -156,7 +156,6 @@ pub(crate) fn take_ready() -> Vec<(Arc<str>, Kind, RgbaImage)> {
     std::mem::take(&mut *ready)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn submit(url: Arc<str>, kind: Kind) {
     use std::sync::mpsc::{Sender, channel};
 
@@ -180,10 +179,6 @@ fn submit(url: Arc<str>, kind: Kind) {
     let _ = queue.lock().unwrap().send((url, kind));
 }
 
-#[cfg(target_arch = "wasm32")]
-fn submit(_url: Arc<str>, _kind: Kind) {}
-
-#[cfg(not(target_arch = "wasm32"))]
 fn load(url: &str, kind: Kind) -> Option<RgbaImage> {
     let path = cache_path(url);
     let cached = path.as_ref().and_then(|p| std::fs::read(p).ok());
@@ -214,7 +209,6 @@ fn load(url: &str, kind: Kind) -> Option<RgbaImage> {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn fetch(url: &str) -> Option<Vec<u8>> {
     use crate::platform::http::Fetched;
 
@@ -238,7 +232,6 @@ fn fetch(url: &str) -> Option<Vec<u8>> {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn cache_path(url: &str) -> Option<std::path::PathBuf> {
     let segment = url.rsplit('/').next()?;
     if segment.len() < 8

@@ -23,7 +23,6 @@ pub(crate) struct Pack {
     pub(crate) name: String,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn scan(dir: &Path) -> Vec<Pack> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
@@ -51,7 +50,6 @@ pub(crate) fn scan(dir: &Path) -> Vec<Pack> {
     packs
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn is_zip(name: &str) -> bool {
     let bytes = name.as_bytes();
     bytes.len() > 4 && bytes[bytes.len() - 4..].eq_ignore_ascii_case(b".zip")

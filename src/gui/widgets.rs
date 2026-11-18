@@ -21,13 +21,8 @@ pub struct TextBox {
     pub no_shadow: bool,
     dragging: bool,
     pending_focus: bool,
-    #[cfg(any(target_arch = "wasm32", target_os = "android"))]
+    #[cfg(target_os = "android")]
     keyboard_active: bool,
-    #[cfg_attr(
-        not(any(feature = "click_gui", target_arch = "wasm32")),
-        allow(dead_code, reason = "read by the click GUI and the browser keyboard")
-    )]
-    pub browser_keyboard: bool,
     pub max_width: Option<f32>,
     pub strip_formatting: bool,
 }
@@ -42,7 +37,6 @@ impl TextBox {
             max_len,
             placeholder: placeholder.to_string(),
             color: 0xE0E0E0,
-            browser_keyboard: true,
             ..Default::default()
         }
     }
@@ -195,22 +189,19 @@ impl TextBox {
         self.word_position_from(dir, self.cursor)
     }
 
-    #[cfg(any(target_arch = "wasm32", target_os = "android"))]
+    #[cfg(target_os = "android")]
     pub fn sync_keyboard(&mut self) -> bool {
         self.sync_keyboard_inner(None)
     }
 
-    #[cfg(any(target_arch = "wasm32", target_os = "android"))]
+    #[cfg(target_os = "android")]
     fn sync_keyboard_inner(&mut self, _limit: Limit<'_>) -> bool {
         #[allow(unused_mut)]
         let mut changed = false;
         if self.keyboard_active && !crate::platform::keyboard::has_focus() {
             self.keyboard_active = false;
         }
-        #[cfg(target_os = "android")]
         let wants = self.focused && !crate::platform::keyboard::dismissed();
-        #[cfg(not(target_os = "android"))]
-        let wants = self.focused && self.browser_keyboard;
 
         if wants && !self.keyboard_active {
             crate::platform::keyboard::show(&self.text, self.anchor, self.cursor);
@@ -219,50 +210,21 @@ impl TextBox {
             crate::platform::keyboard::hide();
             self.keyboard_active = false;
         }
-        #[cfg(target_arch = "wasm32")]
-        if self.keyboard_active
-            && let Some((text, cursor, anchor)) = crate::platform::keyboard::poll()
-        {
-            let mut clamped: String = text
-                .chars()
-                .filter(|&c| allowed_char(c))
-                .take(self.max_len)
-                .collect();
-            if let Some((font, max)) = _limit
-                && font.width_str(&clamped) > max
-            {
-                clamped = self.text.clone();
-            }
-            if clamped != self.text {
-                self.text = clamped.clone();
-                changed = true;
-            }
-            let len = self.char_count();
-            self.cursor = cursor.min(len);
-            self.anchor = anchor.min(len);
-            if clamped != text {
-                crate::platform::keyboard::sync_selection(&clamped, self.anchor, self.cursor);
-            }
-        }
+
         changed
     }
 
-    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+    #[cfg(not(target_os = "android"))]
     pub fn sync_keyboard(&mut self) -> bool {
         false
     }
 
-    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+    #[cfg(not(target_os = "android"))]
     fn sync_keyboard_inner(&mut self, _limit: Limit<'_>) -> bool {
         false
     }
 
-    pub fn push_keyboard(&self) {
-        #[cfg(target_arch = "wasm32")]
-        if self.keyboard_active {
-            crate::platform::keyboard::sync_selection(&self.text, self.anchor, self.cursor);
-        }
-    }
+    pub fn push_keyboard(&self) {}
 
     pub fn handle_input(&mut self, input: &GuiInput) -> bool {
         self.handle_input_inner(input, None)
@@ -281,10 +243,6 @@ impl TextBox {
         }
         if let Some(edited) = self.apply_shortcut(input, limit) {
             changed |= edited;
-        }
-        if self.take_browser_backspace() {
-            changed |= self.apply_edit(EditKey::Backspace, input, limit);
-            self.push_browser_backspace();
         }
         for &key in &input.edits {
             if intercept(self, key) {
@@ -308,12 +266,8 @@ impl TextBox {
             changed |= self.apply_edit(EditKey::Char(*c), input, limit);
         }
 
-        let browser_backspace = self.take_browser_backspace();
-        if input.backspace || browser_backspace {
+        if input.backspace {
             changed |= self.apply_edit(EditKey::Backspace, input, limit);
-            if browser_backspace {
-                self.push_browser_backspace();
-            }
         }
         if input.delete {
             changed |= self.apply_edit(EditKey::Delete, input, limit);
@@ -367,22 +321,6 @@ impl TextBox {
             return Some(self.insert(&text, limit));
         }
         None
-    }
-
-    fn take_browser_backspace(&mut self) -> bool {
-        #[cfg(target_arch = "wasm32")]
-        {
-            self.keyboard_active && crate::platform::keyboard::take_backspace()
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            false
-        }
-    }
-
-    fn push_browser_backspace(&self) {
-        #[cfg(target_arch = "wasm32")]
-        crate::platform::keyboard::sync(&self.text, self.cursor);
     }
 
     fn apply_edit(&mut self, key: EditKey, input: &GuiInput, limit: Limit<'_>) -> bool {

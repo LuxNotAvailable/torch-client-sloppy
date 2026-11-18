@@ -44,10 +44,7 @@ pub fn wanted() -> bool {
         Ok(v) if v.eq_ignore_ascii_case("native") => true,
         Ok(v) if v.eq_ignore_ascii_case("wgpu") || v.eq_ignore_ascii_case("legacy") => false,
         // Else the Renderer setting, on desktop.
-        _ => {
-            cfg!(not(target_arch = "wasm32"))
-                && crate::gui::RenderBackend::stored() == crate::gui::RenderBackend::Native
-        }
+        _ => crate::gui::RenderBackend::stored() == crate::gui::RenderBackend::Native,
     })
 }
 
@@ -232,7 +229,11 @@ fn setup(world: &mut World) -> Result<Live, SetupError> {
         ctx.info.api.1,
         ctx.info.api.2,
         ctx.info.path,
-        if ctx.info.indirect_count { "" } else { ", fixed draw counts" }
+        if ctx.info.indirect_count {
+            ""
+        } else {
+            ", fixed draw counts"
+        }
     );
     let swapchain = Swapchain::new(&ctx, size, true, None)?;
     let frames = Frames::new(&ctx)?;
@@ -1178,7 +1179,11 @@ impl Live {
         let mut turn = None;
         if let Some((angle, upright)) = swapchain.upright() {
             if self.upright.is_none() {
-                match super::post::PostPass::new(&self.ctx, &self.pipelines, swapchain.format.format) {
+                match super::post::PostPass::new(
+                    &self.ctx,
+                    &self.pipelines,
+                    swapchain.format.format,
+                ) {
                     Ok(p) => self.upright = Some(p),
                     Err(e) => error!("native renderer: pre-rotation: {}", e.0),
                 }

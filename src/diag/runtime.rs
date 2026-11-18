@@ -2,11 +2,7 @@ use crate::platform::time::Instant;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
-pub const MEMORY_METRICS: bool = cfg!(any(
-    target_os = "linux",
-    target_os = "android",
-    target_arch = "wasm32"
-));
+pub const MEMORY_METRICS: bool = cfg!(any(target_os = "linux", target_os = "android"));
 
 pub const CPU_METRICS: bool = cfg!(any(target_os = "linux", target_os = "android"));
 
@@ -110,29 +106,7 @@ pub fn runtime() -> Runtime {
     prev.last
 }
 
-#[allow(unsafe_code, reason = "wasm-bindgen's import block")]
-#[cfg(target_arch = "wasm32")]
-fn wasm_linear_memory_bytes() -> u64 {
-    #[wasm_bindgen::prelude::wasm_bindgen(inline_js = "
-        export function mc_memory_byte_length(memory) {
-            return memory.buffer.byteLength;
-        }
-    ")]
-    unsafe extern "C" {
-        #[wasm_bindgen(catch)]
-        fn mc_memory_byte_length(
-            memory: &wasm_bindgen::JsValue,
-        ) -> Result<f64, wasm_bindgen::JsValue>;
-    }
-
-    mc_memory_byte_length(&wasm_bindgen::memory()).unwrap_or(0.0) as u64
-}
-
 fn rss_bytes() -> u64 {
-    #[cfg(target_arch = "wasm32")]
-    return wasm_linear_memory_bytes();
-
-    #[cfg(not(target_arch = "wasm32"))]
     {
         if !MEMORY_METRICS {
             return 0;
@@ -155,10 +129,6 @@ fn rss_bytes() -> u64 {
 }
 
 fn rss_anon_bytes() -> u64 {
-    #[cfg(target_arch = "wasm32")]
-    return wasm_linear_memory_bytes();
-
-    #[cfg(not(target_arch = "wasm32"))]
     {
         if !MEMORY_METRICS {
             return 0;
@@ -181,10 +151,6 @@ fn rss_anon_bytes() -> u64 {
 }
 
 fn cpu_ticks() -> u64 {
-    #[cfg(target_arch = "wasm32")]
-    return 0;
-
-    #[cfg(not(target_arch = "wasm32"))]
     {
         if !CPU_METRICS {
             return 0;

@@ -1,6 +1,6 @@
 pub(crate) const WEBSOCKET: [(&str, u16); 2] = [("wss://", 443), ("ws://", 80)];
 
-pub(crate) const EAGLER: bool = cfg!(any(feature = "eagler", target_arch = "wasm32"));
+pub(crate) const EAGLER: bool = cfg!(feature = "eagler");
 
 pub(crate) fn websocket(address: &str) -> Option<(&'static str, u16)> {
     let address = address.trim();
@@ -12,9 +12,6 @@ pub(crate) fn websocket(address: &str) -> Option<(&'static str, u16)> {
 
 pub(crate) fn normalize(address: &str) -> String {
     let address = address.trim();
-    if cfg!(target_arch = "wasm32") && !is_websocket(address) {
-        return format!("wss://{address}");
-    }
     address.to_string()
 }
 
@@ -55,13 +52,10 @@ mod tests {
     }
 
     #[test]
-    fn a_bare_address_is_a_websocket_one_only_where_there_are_no_sockets() {
+    fn a_bare_address_stays_bare() {
         let bare = super::normalize("play.example:25565");
-        if cfg!(target_arch = "wasm32") {
-            assert_eq!(bare, "wss://play.example:25565");
-        } else {
-            assert_eq!(bare, "play.example:25565");
-        }
+        assert_eq!(bare, "play.example:25565");
+
         assert_eq!(super::normalize("wss://play.example"), "wss://play.example");
         assert_eq!(super::normalize(" ws://play.example "), "ws://play.example");
     }

@@ -207,9 +207,7 @@ fn prepare() {
     if PREPARING.swap(true, Ordering::Relaxed) {
         return;
     }
-    #[cfg(target_arch = "wasm32")]
-    build();
-    #[cfg(not(target_arch = "wasm32"))]
+
     std::thread::Builder::new()
         .name("asset-prepare".into())
         .spawn(build)
@@ -235,10 +233,6 @@ fn build() {
         gui_atlas,
     });
     log_info!("assets", "atlases rebuilt from the installed set");
-    #[cfg(target_arch = "wasm32")]
-    if let Some(archive) = crate::client::assets::take_installed() {
-        crate::client::mesh_worker::spawn(&archive);
-    }
 }
 
 #[allow(clippy::too_many_arguments)]

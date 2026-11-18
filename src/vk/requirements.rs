@@ -58,7 +58,11 @@ pub fn extensions_of(
     unsafe { instance.enumerate_device_extension_properties(device) }
         .unwrap_or_default()
         .iter()
-        .filter_map(|e| e.extension_name_as_c_str().ok().map(std::ffi::CStr::to_owned))
+        .filter_map(|e| {
+            e.extension_name_as_c_str()
+                .ok()
+                .map(std::ffi::CStr::to_owned)
+        })
         .collect()
 }
 
@@ -163,9 +167,8 @@ impl Offered {
         let mut offered = ext.as_core(core);
         let bit = |b: bool| if b { vk::TRUE } else { vk::FALSE };
         // No feature structure: the extension present means usable.
-        offered.v12.descriptor_indexing = bit(
-            has(ash::ext::descriptor_indexing::NAME) && has(ash::khr::maintenance3::NAME),
-        );
+        offered.v12.descriptor_indexing =
+            bit(has(ash::ext::descriptor_indexing::NAME) && has(ash::khr::maintenance3::NAME));
         offered.v12.draw_indirect_count = bit(has(ash::khr::draw_indirect_count::NAME));
         if !(has(ash::khr::depth_stencil_resolve::NAME) && has(ash::khr::create_renderpass2::NAME))
         {

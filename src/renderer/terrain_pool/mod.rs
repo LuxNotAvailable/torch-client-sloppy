@@ -338,8 +338,7 @@ fn decide_tier(world: &World) -> TerrainTier {
         && features.contains(bevy::render::render_resource::WgpuFeatures::INDIRECT_FIRST_INSTANCE);
     let count_ok =
         features.contains(bevy::render::render_resource::WgpuFeatures::MULTI_DRAW_INDIRECT_COUNT);
-    let indirect =
-        indirect && (count_ok || !(cfg!(target_os = "android") || cfg!(target_arch = "wasm32")));
+    let indirect = indirect && (count_ok || !cfg!(target_os = "android"));
     let count = indirect && count_ok;
     let base_vertex = world
         .resource::<bevy::render::renderer::RenderAdapter>()

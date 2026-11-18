@@ -116,17 +116,7 @@ pub(crate) fn handle_packet(
     trace(packet);
     #[cfg(audio)]
     sounds(packet);
-    #[cfg(target_arch = "wasm32")]
-    match packet {
-        ClientboundGamePacket::BlockUpdate(_) => {
-            crate::client::mesh_worker::tally::count("server block updates", 1)
-        }
-        ClientboundGamePacket::SectionBlocksUpdate(p) => crate::client::mesh_worker::tally::count(
-            "server section updates",
-            p.states.len() as u64,
-        ),
-        _ => {}
-    }
+
     weather(packet);
     chunk_accounting(world, packet);
     server_lighting(world, packet);
@@ -568,9 +558,6 @@ fn chunk_accounting(world: &WorldHolder, packet: &ClientboundGamePacket) {
 fn server_lighting(world: &WorldHolder, packet: &ClientboundGamePacket) {
     match packet {
         ClientboundGamePacket::LevelChunkWithLight(p) => {
-            if crate::client::mesh_worker::offer_chunk_packet(p) {
-                return;
-            }
             if !world
                 .partial
                 .read()
@@ -582,9 +569,7 @@ fn server_lighting(world: &WorldHolder, packet: &ClientboundGamePacket) {
             worldsync::stash_server_light(p.x, p.z, server_light(&p.light_data));
         }
         ClientboundGamePacket::LightUpdate(p) => {
-            if !crate::client::mesh_worker::offer_light_update(p.x, p.z, &p.light_data) {
-                worldsync::send_server_light(p.x, p.z, server_light(&p.light_data));
-            }
+            worldsync::send_server_light(p.x, p.z, server_light(&p.light_data));
         }
         _ => {}
     }

@@ -98,20 +98,8 @@ fn parse_env() -> Option<i32> {
     Some(protocol)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn raw_override() -> Option<String> {
     crate::platform::env::var("MC_PROTOCOL").ok()
-}
-
-#[cfg(target_arch = "wasm32")]
-fn raw_override() -> Option<String> {
-    let search = web_sys::window()?.location().search().ok()?;
-    search
-        .trim_start_matches('?')
-        .split('&')
-        .filter_map(|pair| pair.split_once('='))
-        .find(|(key, _)| *key == "MC_PROTOCOL")
-        .map(|(_, value)| value.to_owned())
 }
 
 pub(crate) fn set_session(protocol: Option<i32>) {

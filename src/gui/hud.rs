@@ -781,9 +781,7 @@ fn performance_items<'a>(info: &'a HudInfo, d: &DebugInfo) -> Vec<Item<'a>> {
         .into(),
         row(
             "CPU",
-            if cfg!(target_arch = "wasm32") {
-                "n/a (no CPU-time API in a browser)".to_string()
-            } else if !crate::diag::CPU_METRICS {
+            if !crate::diag::CPU_METRICS {
                 "n/a (no process CPU clock read on this platform)".to_string()
             } else {
                 format!("{:.0}% of {} cores", rt.cpu_percent, rt.cores)
@@ -1070,7 +1068,7 @@ fn overview_sections(info: &HudInfo, d: &DebugInfo) -> Vec<(&'static str, Vec<It
         .into(),
         row(
             "CPU",
-            if cfg!(target_arch = "wasm32") || !crate::diag::CPU_METRICS {
+            if !crate::diag::CPU_METRICS {
                 "n/a".to_string()
             } else {
                 format!("{:.0}%", rt.cpu_percent)
