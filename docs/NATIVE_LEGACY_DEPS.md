@@ -10,16 +10,16 @@ These keep the native renderer fed. They must move to the game-side code that su
 
 | What | Caller (legacy) | Callee (vk) |
 |---|---|---|
-| Terrain sections, after meshing | `renderer/systems.rs:193` in `ChunkIndex::store_section` (182–245) | `terrain_dump::section` |
-| Terrain cleared | `renderer/systems.rs:297` in `ChunkIndex::clear` (295–308) | `terrain_dump::cleared` |
-| Column dropped | `renderer/systems.rs:311` in `ChunkIndex::drop_column` (309–322) | `terrain_dump::column_dropped` |
-| Block atlas texels | `renderer/systems.rs:369` in `setup` (354–420) | `terrain_dump::atlas` |
+| Terrain sections, after meshing | moved: `terrain/stream.rs` `finish` | `terrain_dump::section` |
+| Terrain cleared | moved: `terrain/stream.rs` `finish` | `terrain_dump::cleared` |
+| Column dropped | moved: `terrain/stream.rs` `finish` | `terrain_dump::column_dropped` |
+| Block atlas texels | moved: `lib.rs` `run`, after the atlas is built | `terrain_dump::atlas` |
 | Entity/env/particle capture plugin | `renderer/entity_material.rs:314` in `EntityMaterialPlugin::build` (303–320) | `entity_dump::plugin` |
 | Live renderer plugin | `renderer/systems.rs:2604` in `run` (2533–2700) | `live::LivePlugin` |
 | Backend choice | `renderer/systems.rs:2357` `wgpu_settings` (2347–2378), `:2386` `resolve_backend` (2379–2420) | `live::wanted` |
 | Pack compile switch | `renderer/packdraw/mod.rs:248` `native_renderer` (246–250) | `live::wanted` |
-| Pack changed | `gui/shaderpacks.rs:147, 157, 449` | `live::pack_changed` |
-| Entity dump gate | `entities/mod.rs:915` | `terrain_dump::folder` |
+| Pack changed | `gui/shaderpacks.rs:147, 157, 449` (game side already) | `live::pack_changed` |
+| Entity dump gate | `entities/mod.rs:915` (game side already) | `terrain_dump::folder` |
 
 ## 2. Terrain
 
@@ -82,12 +82,12 @@ The pack front end lives in `renderer/packdraw`; the native side compiles and ru
 
 | Data | Defined | Used (vk) |
 |---|---|---|
-| `packdraw::compile::{compile_frame, with_vulkan_terrain}` | `renderer/packdraw/compile/mod.rs:197`; `compile/preludes.rs:10` | `pack/mod.rs:25–26`; `pack/bindless.rs:494–499` |
-| `packdraw::compile::{EntityKind, ScreenStage, Step, geometry_alpha}` | `compile/kinds.rs:54, 108`; `compile/mod.rs:112, 142` | `pack/screen.rs:16, 755` |
-| `packdraw::install::{install, Installed, InstalledProgram, Module}` | `renderer/packdraw/install.rs:32, 37, 57, 107` | `pack/mod.rs:18`; `pack/screen.rs:17, 788`; `pack/targets.rs:163` |
-| `packdraw::sources::{Depth, Stub, TextureSource}` | `renderer/packdraw/sources.rs:6, 12, 22` | `pack/screen.rs:18` |
+| `packdraw::compile::{compile_frame, with_vulkan_terrain}` | moved: `shaderpack/compile/` | `pack/mod.rs:25–26`; `pack/bindless.rs:494–499` |
+| `packdraw::compile::{EntityKind, ScreenStage, Step, geometry_alpha}` | moved: `shaderpack/compile/` | `pack/screen.rs:16, 755` |
+| `packdraw::install::{install, Installed, InstalledProgram, Module}` | moved: `shaderpack/install.rs` (Bevy systems: `renderer/packdraw/sync.rs`) | `pack/mod.rs:18`; `pack/screen.rs:17, 788`; `pack/targets.rs:163` |
+| `packdraw::sources::{Depth, Stub, TextureSource}` | moved: `shaderpack/sources.rs` | `pack/screen.rs:18` |
 | `packdraw::uniforms::{BlockSpec, FrameValues, History, UniformBytes, MatrixSet}` | `uniforms/mod.rs:32, 69, 81`; `uniforms/values.rs:64, 77` | `pack/screen.rs:19, 937` |
-| `packdraw::usage::mip_targets` | `renderer/packdraw/usage.rs:166` | `pack/targets.rs:171` |
+| `packdraw::usage::mip_targets` | moved: `shaderpack/usage.rs` | `pack/targets.rs:171` |
 | `packdraw::inputs::Inputs` (+ `from_json`) | `renderer/packdraw/inputs.rs:85, 167` | `pack/screen.rs:156`; `live.rs:179, 908`; `viewer.rs:457`; `entity_dump.rs:1451` |
 | `dimension::Dimension` | moved: `client/dimension.rs` | `pack/mod.rs:17`; `pack/bindless.rs:499` |
 | `packvertex::{BlockIds, current, set_current}` | moved: `shaderpack/packvertex.rs` | `live.rs:651–658`; `pack/screen.rs:1953` |
@@ -104,8 +104,9 @@ The pack front end lives in `renderer/packdraw`; the native side compiles and ru
 
 ## Replacement order (suggested)
 
-1. Move the shared data types out of `renderer/`. Done for `mesh`, `visgraph`, the `occlusion` flood fill, `block_anim` data, `packvertex` and `dimension` (and `timeline`, which `dimension` needs). Still to do: the `packdraw` front end. It isn't a plain move: it uses wgpu types (`BlendState`, `TextureViewDimension`), `RenderDevice` buffers in `uniforms`, `terrain_pool` constants, `images::CustomTexture`, and `inputs` reads the Bevy ECS (step 3).
-2. Move section 1's hooks into the mesher and asset loading, so `terrain_dump` no longer depends on `ChunkIndex` or `setup`.
+1. Move the shared data types out of `renderer/`. Done: `mesh`, `visgraph`, the `occlusion` flood fill, `block_anim` data, `packvertex`, `dimension` (+ `timeline`), and the `packdraw` front end (`compile`, `install`, `sources`, `usage`, `images` as `shaderpack/textures.rs`). Pack blends and texture dimensions are now pack-side types; wgpu converts in `renderer/packdraw/pipelines.rs`. `ShadowCullMode` and `SLOT_TABLE_BINDING` live in `shaderpack::compile`.
+   Still pointing back into `renderer/`, to go with step 3: `shaderpack` uses `packdraw::uniforms` (`MatrixSet`, `unsupplied`, `builtin_type`, `resolve_input`) and `terrain_pool::ORIGIN_ROW` (wgpu `direct` prelude branch only).
+2. Move section 1's hooks into the mesher and asset loading, so `terrain_dump` no longer depends on `ChunkIndex` or `setup`. Done: `terrain::stream` takes the world's section changes (budgets, dedup) and fires every listener (the dump and the block entity caches); `ChunkIndex` only applies them to wgpu slots. The atlas goes to `terrain_dump::atlas` from `lib.rs`. The plugin and backend rows stay with `renderer::run` until the app setup leaves `renderer/` (step 5).
 3. Replace the cameras (section 3) with a plain game-side `View` resource: eye, rotation, fov, fog, hand/figure matrices.
 4. Replace `entity_dump` capture (section 4): the game hands draw lists to the native renderer directly instead of spawning Bevy meshes. This is the biggest step.
 5. Replace screenshots and GUI images (section 6) with Torch's own image types. Then drop `bevy_render`, `bevy_pbr`, `bevy_core_pipeline` and wgpu.

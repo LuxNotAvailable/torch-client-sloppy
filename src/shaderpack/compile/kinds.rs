@@ -373,8 +373,7 @@ impl ShadowCulling {
     pub(crate) fn mode(
         self,
         voxelizes: bool,
-    ) -> crate::renderer::terrain_pool::cull::ShadowCullMode {
-        use crate::renderer::terrain_pool::cull::ShadowCullMode;
+    ) -> ShadowCullMode {
         match self {
             ShadowCulling::Distance => ShadowCullMode::Distance,
             ShadowCulling::Advanced => ShadowCullMode::Advanced,
@@ -450,12 +449,42 @@ pub(crate) struct Blends {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 struct ProgramBlend {
-    all: Option<Option<bevy::render::render_resource::BlendState>>,
-    buffers: std::collections::HashMap<u8, Option<bevy::render::render_resource::BlendState>>,
+    all: Option<Option<Blend>>,
+    buffers: std::collections::HashMap<u8, Option<Blend>>,
 }
 
-fn blend_factor(name: &str) -> Option<bevy::render::render_resource::BlendFactor> {
-    use bevy::render::render_resource::BlendFactor as F;
+/// A GL blend factor (`ONE_MINUS_SRC_ALPHA`, ...).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BlendFactor {
+    Zero,
+    One,
+    Src,
+    OneMinusSrc,
+    Dst,
+    OneMinusDst,
+    SrcAlpha,
+    OneMinusSrcAlpha,
+    DstAlpha,
+    OneMinusDstAlpha,
+    SrcAlphaSaturated,
+}
+
+/// Source and destination factors, added.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct BlendComponent {
+    pub(crate) src: BlendFactor,
+    pub(crate) dst: BlendFactor,
+}
+
+/// A pack blend mode: colour, then alpha.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Blend {
+    pub(crate) color: BlendComponent,
+    pub(crate) alpha: BlendComponent,
+}
+
+fn blend_factor(name: &str) -> Option<BlendFactor> {
+    use BlendFactor as F;
     Some(match name {
         "ZERO" => F::Zero,
         "ONE" => F::One,
@@ -472,19 +501,18 @@ fn blend_factor(name: &str) -> Option<bevy::render::render_resource::BlendFactor
     })
 }
 
-fn blend_value(value: &str) -> Option<Option<bevy::render::render_resource::BlendState>> {
+fn blend_value(value: &str) -> Option<Option<Blend>> {
     let words: Vec<&str> = value.split_whitespace().collect();
     match words.as_slice() {
         [off] if off.eq_ignore_ascii_case("off") => Some(None),
         [src, dst, src_a, dst_a] => {
             let component = |src: &str, dst: &str| {
-                Some(bevy::render::render_resource::BlendComponent {
-                    src_factor: blend_factor(src)?,
-                    dst_factor: blend_factor(dst)?,
-                    operation: bevy::render::render_resource::BlendOperation::Add,
+                Some(BlendComponent {
+                    src: blend_factor(src)?,
+                    dst: blend_factor(dst)?,
                 })
             };
-            Some(Some(bevy::render::render_resource::BlendState {
+            Some(Some(Blend {
                 color: component(src, dst)?,
                 alpha: component(src_a, dst_a)?,
             }))
@@ -524,23 +552,20 @@ impl Blends {
         blends
     }
 
-    /// The blend for `program` writing `buffer`, else `default`.
-    pub(crate) fn resolve(
-        &self,
-        program: &str,
-        buffer: u8,
-        default: Option<bevy::render::render_resource::BlendState>,
-    ) -> Option<bevy::render::render_resource::BlendState> {
-        let Some(entry) = self.programs.get(program) else {
-            return default;
-        };
-        entry
-            .buffers
-            .get(&buffer)
-            .copied()
-            .or(entry.all)
-            .unwrap_or(default)
+    /// The pack's blend for `program` writing `buffer`: `None` where it
+    /// sets none (the draw's default applies), `Some(None)` for `off`.
+    pub(crate) fn resolve(&self, program: &str, buffer: u8) -> Option<Option<Blend>> {
+        let entry = self.programs.get(program)?;
+        entry.buffers.get(&buffer).copied().or(entry.all)
     }
+}
+
+/// How shadow terrain is culled against the light's view.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ShadowCullMode {
+    Distance,
+    Advanced,
+    SafeZone,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -633,7 +658,6 @@ mod tests {
 
     #[test]
     fn blend_lines_set_programs_and_single_buffers() {
-        use bevy::render::render_resource::{BlendFactor, BlendState};
         let props: std::collections::HashMap<String, String> = [
             ("blend.gbuffers_water", "off"),
             (
@@ -648,17 +672,20 @@ mod tests {
         .map(|(k, v)| (k.to_owned(), v.to_owned()))
         .collect();
         let blends = Blends::read(&props);
-        let default = Some(BlendState::ALPHA_BLENDING);
-        assert_eq!(blends.resolve("gbuffers_water", 0, default), None);
-        let clouds = blends.resolve("gbuffers_clouds", 0, None).expect("blends");
-        assert_eq!(clouds.color.dst_factor, BlendFactor::OneMinusSrcAlpha);
-        assert_eq!(blends.resolve("gbuffers_clouds", 3, default), None);
+        assert_eq!(blends.resolve("gbuffers_water", 0), Some(None));
+        let clouds = blends
+            .resolve("gbuffers_clouds", 0)
+            .flatten()
+            .expect("blends");
+        assert_eq!(clouds.color.dst, BlendFactor::OneMinusSrcAlpha);
+        assert_eq!(blends.resolve("gbuffers_clouds", 3), Some(None));
         let hand = blends
-            .resolve("gbuffers_hand", 4, None)
+            .resolve("gbuffers_hand", 4)
+            .flatten()
             .expect("gaux1 is colortex4");
-        assert_eq!(hand.color.src_factor, BlendFactor::One);
-        assert_eq!(blends.resolve("gbuffers_hand", 0, default), default);
-        assert_eq!(blends.resolve("composite", 0, default), default);
+        assert_eq!(hand.color.src, BlendFactor::One);
+        assert_eq!(blends.resolve("gbuffers_hand", 0), None);
+        assert_eq!(blends.resolve("composite", 0), None);
     }
 
     #[test]
@@ -767,7 +794,6 @@ mod tests {
         assert_eq!(ShadowCulling::parse(Some("false")), ShadowCulling::Distance);
         assert_eq!(ShadowCulling::parse(Some("true")), ShadowCulling::Advanced);
         assert_eq!(ShadowCulling::parse(None), ShadowCulling::Default);
-        use crate::renderer::terrain_pool::cull::ShadowCullMode;
         assert_eq!(ShadowCulling::Default.mode(true), ShadowCullMode::Distance);
         assert_eq!(ShadowCulling::Default.mode(false), ShadowCullMode::Advanced);
         assert_eq!(ShadowCulling::SafeZone.mode(true), ShadowCullMode::SafeZone);

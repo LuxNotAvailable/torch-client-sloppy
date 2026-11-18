@@ -491,8 +491,8 @@ mod tests {
     fn every_installed_stage_goes_bindless() {
         let (mut stages, mut failures) = (0usize, Vec::new());
         for pack in crate::shaderpack::discover::list() {
-            if let Ok(frame) = crate::renderer::packdraw::compile::with_vulkan_terrain(|| {
-                crate::renderer::packdraw::compile::compile_frame(
+            if let Ok(frame) = crate::shaderpack::compile::with_vulkan_terrain(|| {
+                crate::shaderpack::compile::compile_frame(
                     &pack.name,
                     false,
                     None,

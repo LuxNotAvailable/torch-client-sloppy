@@ -9,8 +9,8 @@ use bevy::render::texture::GpuImage;
 
 use super::GPU_LABEL;
 use super::formats::{image_format, wgpu_format};
-use super::images::CustomTexture;
-use super::install::Installed;
+use crate::shaderpack::textures::CustomTexture;
+use crate::shaderpack::install::Installed;
 use crate::shaderpack::customimages::{CustomImage, Dimension, ImageSize};
 use crate::shaderpack::directives::{MAX_COLOR_TARGETS, MAX_SHADOW_COLORS};
 

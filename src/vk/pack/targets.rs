@@ -160,7 +160,7 @@ impl PackTargets {
     pub(crate) fn new(
         ctx: &Context,
         memory: &Memory,
-        installed: &crate::renderer::packdraw::install::Installed,
+        installed: &crate::shaderpack::install::Installed,
         size: vk::Extent2D,
         no_hand: bool,
     ) -> Result<PackTargets, SetupError> {
@@ -168,7 +168,7 @@ impl PackTargets {
             | vk::ImageUsageFlags::SAMPLED
             | vk::ImageUsageFlags::TRANSFER_SRC
             | vk::ImageUsageFlags::TRANSFER_DST;
-        let mipmapped = crate::renderer::packdraw::usage::mip_targets(installed);
+        let mipmapped = crate::shaderpack::usage::mip_targets(installed);
         let depth_usage = vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT
             | vk::ImageUsageFlags::SAMPLED
             | vk::ImageUsageFlags::TRANSFER_SRC

@@ -1,6 +1,6 @@
 use super::TERRAIN_SET;
 use crate::renderer::terrain_pool::ORIGIN_ROW;
-use crate::renderer::terrain_pool::draw::SLOT_TABLE_BINDING;
+use super::SLOT_TABLE_BINDING;
 
 thread_local! {
     static VULKAN_TERRAIN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -298,14 +298,6 @@ layout(location = 14) in uint iris_EntityFlags;
 layout(location = 15) in uint iris_PartBase;
 layout(location = 17) in vec4 iris_GlintTransform;
 ";
-
-const _: () = assert!(
-    crate::renderer::packdraw::entities::ENTITY_GLINT_LOCATION == 17
-        && crate::renderer::packdraw::entities::ENTITY_GLINT == 2
-        && crate::renderer::packdraw::entities::ENTITY_PART_BASE_LOCATION == 15
-        && crate::renderer::packdraw::entities::ENTITY_PART_LOCATION == 16
-        && crate::renderer::packdraw::entities::ENTITY_PARTS_SET == 1
-);
 
 /// The part's matrix, stored as its top three rows; the normal goes through
 /// the cofactor matrix, the inverse transpose up to the determinant.

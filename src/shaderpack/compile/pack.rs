@@ -1,4 +1,4 @@
-use super::super::images::CustomTextures;
+use super::super::textures::CustomTextures;
 use super::AlphaTest;
 use crate::client::dimension::Dimension;
 use crate::shaderpack::options::{self, Options, Values};

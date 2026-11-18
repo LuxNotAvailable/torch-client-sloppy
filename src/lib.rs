@@ -468,6 +468,12 @@ fn run(args: platform::cli::Args) -> eyre::Result<()> {
             Arc::new(gui::atlas::GuiAtlas::boot()),
         )
     };
+    // The native renderer's terrain atlas (and `MC_DUMP_TERRAIN`'s copy).
+    #[cfg(feature = "vulkan")]
+    if let Some(data) = atlas_image.data.as_deref() {
+        let size = atlas_image.texture_descriptor.size;
+        vk::terrain_dump::atlas(size.width, size.height, data);
+    }
     if have_assets {
         TEXTURE_MAP.set(tex_map.clone()).ok();
         ATLAS_ROWS.set(renderer::atlas_rows(&atlas_image)).ok();

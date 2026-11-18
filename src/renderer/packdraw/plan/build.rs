@@ -9,19 +9,19 @@ use bevy::render::texture::GpuImage;
 use bevy::render::view::ExtractedView;
 
 use super::super::GPU_LABEL;
-use super::super::compile::{ScreenStage, Segment, Step};
+use crate::shaderpack::compile::{ScreenStage, Segment, Step};
 use super::super::formats::wgpu_format;
 use super::super::frame::{Install, PackRender, Sized, Stage, Usage};
 use super::super::fullscreen::Blit;
-use super::super::install::Installed;
+use crate::shaderpack::install::Installed;
 use super::super::pipelines::{Building, Pipelines};
-use super::super::sources::{Depth, Stub, TextureSource};
+use crate::shaderpack::sources::{Depth, Stub, TextureSource};
 use super::super::targets::{
     ShadowTargets, Statics, Target, Targets, display_view, image_target, storage_buffer,
     zero_layout,
 };
 use super::super::uniforms::PackUniforms;
-use super::super::usage::depth_index;
+use crate::shaderpack::usage::depth_index;
 use super::*;
 use crate::renderer::terrain_pool::{TerrainTextures, TerrainView, stream};
 use crate::shaderpack::directives::{MAX_COLOR_TARGETS, SampleKind};

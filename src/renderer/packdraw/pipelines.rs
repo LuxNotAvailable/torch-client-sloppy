@@ -13,15 +13,15 @@ use bevy::render::renderer::RenderDevice;
 use bevy::render::view::ViewTarget;
 use bevy::tasks::Task;
 
-use super::compile::{EntityKind, ProgramKind};
+use crate::shaderpack::compile::{EntityKind, ProgramKind};
 use super::entities::{entity_instance_layout, entity_skinned_vertex_layout, entity_vertex_layout};
 use super::formats::{image_format, wgpu_format};
 use super::frame::{PackRender, Stage};
 use super::fullscreen::{opaque_target, stores_display};
-use super::install::{Installed, Module};
-use super::sources::TextureSource;
+use crate::shaderpack::install::{Installed, Module};
+use crate::shaderpack::sources::TextureSource;
 use super::targets::DEPTH_FORMAT;
-use super::usage::depth_index;
+use crate::shaderpack::usage::depth_index;
 use super::{GPU_LABEL, pipeline_label};
 use crate::renderer::terrain_pool::TerrainView;
 use crate::renderer::terrain_pool::draw::{PackTakeover, TerrainPipeline, packed_vertex_layout};
@@ -151,7 +151,7 @@ pub(super) fn program_layout(
                             SampleKind::Sint => TextureSampleType::Sint,
                             SampleKind::Depth => TextureSampleType::Depth,
                         },
-                        view_dimension: source.view_dimension(),
+                        view_dimension: wgpu_dimension(source.view_dimension()),
                         multisampled: false,
                     },
                     count: None,
@@ -514,6 +514,41 @@ fn color_targets(
     )
 }
 
+fn wgpu_dimension(dimension: crate::shaderpack::customimages::Dimension) -> TextureViewDimension {
+    use crate::shaderpack::customimages::Dimension;
+    match dimension {
+        Dimension::D1 => TextureViewDimension::D1,
+        Dimension::D2 => TextureViewDimension::D2,
+        Dimension::D3 => TextureViewDimension::D3,
+    }
+}
+
+fn wgpu_blend(blend: crate::shaderpack::compile::Blend) -> BlendState {
+    use crate::shaderpack::compile::{BlendComponent as Pack, BlendFactor as F};
+    let factor = |f: F| match f {
+        F::Zero => BlendFactor::Zero,
+        F::One => BlendFactor::One,
+        F::Src => BlendFactor::Src,
+        F::OneMinusSrc => BlendFactor::OneMinusSrc,
+        F::Dst => BlendFactor::Dst,
+        F::OneMinusDst => BlendFactor::OneMinusDst,
+        F::SrcAlpha => BlendFactor::SrcAlpha,
+        F::OneMinusSrcAlpha => BlendFactor::OneMinusSrcAlpha,
+        F::DstAlpha => BlendFactor::DstAlpha,
+        F::OneMinusDstAlpha => BlendFactor::OneMinusDstAlpha,
+        F::SrcAlphaSaturated => BlendFactor::SrcAlphaSaturated,
+    };
+    let component = |c: Pack| BlendComponent {
+        src_factor: factor(c.src),
+        dst_factor: factor(c.dst),
+        operation: BlendOperation::Add,
+    };
+    BlendState {
+        color: component(blend.color),
+        alpha: component(blend.alpha),
+    }
+}
+
 /// Each buffer's blend: the pack's `blend.<program>[.<buffer>]` where it set
 /// one, else this draw's default.
 fn blended_targets(
@@ -528,7 +563,8 @@ fn blended_targets(
             let format = installed.targets.settings[*buffer as usize].format;
             let blend = installed
                 .blends
-                .resolve(program, *buffer, blend)
+                .resolve(program, *buffer)
+                .map_or(blend, |pack| pack.map(wgpu_blend))
                 .filter(|_| format.sample_kind() == SampleKind::Float);
             Some(ColorTargetState {
                 format: wgpu_format(format),
@@ -609,7 +645,7 @@ fn build_pipelines(
             buffers: vec![packed_vertex_layout()],
             primitive: pack_triangles(PrimitiveTopology::TriangleList, Some(Face::Back)),
             depth: Some((true, CompareFunction::Less)),
-            fragment: program.fragment_for(super::compile::geometry_alpha(geometry, false)),
+            fragment: program.fragment_for(crate::shaderpack::compile::geometry_alpha(geometry, false)),
             targets: color_targets(
                 installed,
                 &program.name,
@@ -656,7 +692,7 @@ fn build_pipelines(
                 buffers: vec![packed_vertex_layout()],
                 primitive,
                 depth: Some((true, CompareFunction::Less)),
-                fragment: program.fragment_for(super::compile::geometry_alpha(geometry, true)),
+                fragment: program.fragment_for(crate::shaderpack::compile::geometry_alpha(geometry, true)),
                 targets: shadow_color_targets(installed, &program.draw_buffers),
             }))
         })
@@ -668,7 +704,7 @@ fn build_pipelines(
         }
         let index = installed.entities[at]?;
         let program = &installed.programs[index];
-        let mut variant = |second: bool, skinned: Option<&super::install::Module>| {
+        let mut variant = |second: bool, skinned: Option<&crate::shaderpack::install::Module>| {
             let state = entity_pass_state(kind, second);
             let (layouts, vertex, buffers) = match skinned {
                 Some(vertex) => (
@@ -838,7 +874,7 @@ mod tests {
         assert!(hand.depth == Some((true, CompareFunction::LessEqual)));
         assert_eq!(
             EntityKind::Hand.alpha_tests()[0],
-            Some(super::super::compile::ONE_TENTH_ALPHA)
+            Some(crate::shaderpack::compile::ONE_TENTH_ALPHA)
         );
         let caster = state(EntityKind::ShadowCaster, false);
         assert!(
@@ -848,7 +884,7 @@ mod tests {
         );
         assert_eq!(
             EntityKind::ShadowCaster.alpha_tests()[0],
-            Some(super::super::compile::ONE_TENTH_ALPHA)
+            Some(crate::shaderpack::compile::ONE_TENTH_ALPHA)
         );
         let hand_water = state(EntityKind::HandWater, false);
         assert!(

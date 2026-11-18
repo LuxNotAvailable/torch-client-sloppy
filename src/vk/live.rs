@@ -646,7 +646,7 @@ impl Live {
 struct NativeCapture;
 
 /// Hands the mesher a pack's block ids and has the chunks re-meshed with
-/// its pack quads (`packdraw::install::sync_pack_vertices` does this for
+/// its pack quads (`packdraw::sync::sync_pack_vertices` does this for
 /// the game's own compile, which the native renderer doesn't make).
 fn publish_block_ids(ids: Option<std::sync::Arc<crate::shaderpack::packvertex::BlockIds>>) {
     let old = crate::shaderpack::packvertex::current();

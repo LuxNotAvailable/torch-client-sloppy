@@ -5,25 +5,21 @@ macro_rules! gpu_label {
 }
 
 pub(crate) mod center_depth;
-pub(crate) mod compile;
 mod depthcopy;
 pub(crate) mod endflash;
 mod entities;
 mod formats;
 mod frame;
 mod fullscreen;
-mod images;
 pub(crate) mod inputs;
-pub(crate) mod install;
 mod mipmaps;
 mod node;
 mod packatlas;
 mod pipelines;
 mod plan;
-pub(crate) mod sources;
+mod sync;
 mod targets;
 pub(crate) mod uniforms;
-pub(crate) mod usage;
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -38,7 +34,7 @@ use bevy::render::{ExtractSchedule, Render, RenderApp, RenderSystems};
 
 use crate::renderer::terrain_pool::draw::PackTakeover;
 
-pub(crate) const GPU_LABEL: &str = "shaderpack";
+use crate::shaderpack::install::GPU_LABEL;
 
 static CURRENT_GENERATION: AtomicU32 = AtomicU32::new(0);
 
@@ -257,11 +253,11 @@ impl Plugin for ShaderPackPlugin {
         app.init_resource::<inputs::Inputs>().add_systems(
             Update,
             (
-                (install::sync_compiled_pack, install::sync_pack_vertices).chain(),
+                (sync::sync_compiled_pack, sync::sync_pack_vertices).chain(),
                 inputs::gather_inputs
                     .after(crate::renderer::frame_view::FrameViewSystems)
                     // The native renderer runs packs without the game's compile.
-                    .run_if(resource_exists::<install::CompiledPack>.or(native_renderer)),
+                    .run_if(resource_exists::<sync::CompiledPack>.or(native_renderer)),
                 sync_render_scale,
             ),
         );

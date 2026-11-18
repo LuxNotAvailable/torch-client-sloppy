@@ -87,7 +87,7 @@ pub fn atlas(width: u32, height: u32, rgba: &[u8]) {
 }
 
 /// Appends one stored section's opaque and translucent meshes.
-pub fn section(origin: [i32; 3], vis: VisibilitySet, meshes: &[MeshBuf; 2]) {
+pub fn section(origin: [i32; 3], vis: VisibilitySet, meshes: [&MeshBuf; 2]) {
     if super::live::wanted() {
         for (layer, mesh) in meshes.iter().enumerate() {
             live(Record::Layer(Section {

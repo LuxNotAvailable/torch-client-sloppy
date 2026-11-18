@@ -34,7 +34,6 @@ use super::frame_view::{FrameView, FrameViewSystems};
 use super::terrain_pool::{TerrainOp, TerrainOps};
 use crate::terrain::visgraph::VisibilitySet;
 use super::AppState;
-use crate::terrain::PendingSection;
 use crate::session::SharedMutex;
 use crate::session::SharedState;
 
@@ -190,10 +189,6 @@ impl ChunkIndex {
         ops: &TerrainOps,
     ) {
         let origin = [cx * 16, sec_y, cz * 16];
-        #[cfg(feature = "vulkan")]
-        crate::vk::terrain_dump::section(origin, vis, &meshes);
-        crate::blockentities::transient::section_rebuilt(origin);
-        crate::blockentities::bake::section_rebuilt(origin);
         let Self {
             columns,
             free_slots,
@@ -294,10 +289,6 @@ impl ChunkIndex {
     }
 
     pub fn clear(&mut self, ops: &TerrainOps) {
-        #[cfg(feature = "vulkan")]
-        crate::vk::terrain_dump::cleared();
-        crate::blockentities::transient::clear();
-        crate::blockentities::bake::clear();
         ops.push(TerrainOp::ClearAll);
         self.columns.clear();
         self.free_slots.clear();
@@ -308,8 +299,6 @@ impl ChunkIndex {
     }
 
     pub fn drop_column(&mut self, key: (i32, i32), ops: &TerrainOps) {
-        #[cfg(feature = "vulkan")]
-        crate::vk::terrain_dump::column_dropped(key.0, key.1);
         let Some(column) = self.columns.remove(&key) else {
             return;
         };
@@ -364,11 +353,6 @@ fn setup(
     mut pending_atlas: ResMut<PendingAtlas>,
     start_screen: Res<crate::gui::render::StartScreen>,
 ) {
-    #[cfg(feature = "vulkan")]
-    if let Some(data) = pending_atlas.0.data.as_deref() {
-        let size = pending_atlas.0.texture_descriptor.size;
-        crate::vk::terrain_dump::atlas(size.width, size.height, data);
-    }
     let atlas = images.add(std::mem::take(&mut pending_atlas.0));
     commands.remove_resource::<PendingAtlas>();
     commands.insert_resource(BlockAtlasHandle(atlas.clone()));
@@ -551,28 +535,6 @@ fn setup(
     ));
 }
 
-fn take_budgeted(
-    queue: &mut Vec<PendingSection>,
-    verts: &mut usize,
-    sections: &mut usize,
-) -> Vec<PendingSection> {
-    if queue.is_empty() || *verts == 0 || *sections == 0 {
-        return Vec::new();
-    }
-    let mut room = 0usize;
-    for sec in queue.iter() {
-        room += 1;
-        let n = sec.opaque.verts.len() + sec.water.verts.len();
-        let over = n >= *verts;
-        *verts = verts.saturating_sub(n);
-        if over || room >= *sections {
-            break;
-        }
-    }
-    *sections -= room.min(*sections);
-    queue.drain(..room).collect()
-}
-
 fn mesh_on_render_thread(mut scratch: Local<crate::client::worker::Scratch>) {
     {
         #[cfg(feature = "budget")]
@@ -596,8 +558,7 @@ fn poll_shared_state(
     mut index: ResMut<ChunkIndex>,
     mut camera: Query<&mut Transform, With<WorldCamera>>,
     mut last_poll_ms: Local<f32>,
-    mut dedup_seen: Local<HashSet<(i32, i32, i32)>>,
-    mut dedup_keep: Local<Vec<bool>>,
+    mut scratch: Local<crate::terrain::stream::Scratch>,
     gui: Res<crate::gui::GuiState>,
     mut view: ResMut<FrameView>,
 ) {
@@ -647,78 +608,23 @@ fn poll_shared_state(
     }
     state.profiling.queue_depth =
         state.session.world.pending_chunks.len() + state.session.world.pending_edits.len();
-    if let Some(q) = crate::CHUNK_Q.get() {
-        q.set_backlog(
-            state.session.world.pending_chunks.len() + state.session.world.pending_edits.len(),
-        );
-    }
-
-    let unloaded: Vec<(i32, i32)> = std::mem::take(&mut state.session.world.unloaded_chunks);
-    let clear_all = std::mem::take(&mut state.session.world.clear_chunks);
-
-    if state.session.world.pending_chunks.is_empty()
-        && state.session.world.pending_edits.is_empty()
-        && unloaded.is_empty()
-        && !clear_all
-    {
-        return;
-    }
-
-    const DEFAULT_VERT_BUDGET: usize = 120_000;
-
-    const DEFAULT_SECTION_BUDGET: usize = 128;
-    static VERT_BUDGET: OnceLock<usize> = OnceLock::new();
-    static SECTION_BUDGET: OnceLock<usize> = OnceLock::new();
-    let max_verts = env_budget(&VERT_BUDGET, "MC_UPLOAD_VERTS", DEFAULT_VERT_BUDGET);
-    let max_sections = env_budget(
-        &SECTION_BUDGET,
-        "MC_UPLOAD_SECTIONS",
-        DEFAULT_SECTION_BUDGET,
-    );
-    let mut verts = max_verts;
-    let mut sections = max_sections;
-    let mut pending = take_budgeted(
-        &mut state.session.world.pending_edits,
-        &mut verts,
-        &mut sections,
-    );
-    pending.extend(take_budgeted(
-        &mut state.session.world.pending_chunks,
-        &mut verts,
-        &mut sections,
-    ));
+    let batch = crate::terrain::stream::take(&mut state.session.world);
     drop(state);
-    crate::log_debug!("render", "uploading {} sections", pending.len());
+    let Some(mut batch) = batch else {
+        return;
+    };
+    crate::terrain::stream::finish(&mut batch, &mut scratch);
 
-    crate::client::tracking::retain_loaded(&mut pending, |s| (s.chunk_x, s.chunk_z));
-
-    if clear_all {
+    if batch.clear_all {
         index.clear(&ops);
     } else {
-        for key in unloaded {
+        for key in batch.unloaded {
             index.drop_column(key, &ops);
         }
     }
-
-    dedup_seen.clear();
-    dedup_keep.clear();
-    dedup_keep.extend(
-        pending
-            .iter()
-            .rev()
-            .map(|c| dedup_seen.insert((c.chunk_x, c.chunk_z, c.sec_y))),
-    );
-    dedup_keep.reverse();
-    let mut next = 0;
-    pending.retain(|_| {
-        let keep = dedup_keep[next];
-        next += 1;
-        keep
-    });
-
     {
         let _churn = crate::diag::alloc::scope(crate::diag::alloc::Site::Upload);
-        for sec in pending {
+        for sec in batch.sections {
             index.store_section(
                 sec.chunk_x,
                 sec.chunk_z,
@@ -744,16 +650,6 @@ fn refresh_frame_view(
     let mut state = shared.0.lock().unwrap();
     sync_bot_options(&mut state, &gui, &third_person, &freecam);
     view.fill(&state, false);
-}
-
-fn env_budget(lock: &'static OnceLock<usize>, name: &str, default: usize) -> usize {
-    *lock.get_or_init(|| {
-        crate::platform::env::var(name)
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .filter(|n| *n > 0)
-            .unwrap_or(default)
-    })
 }
 
 pub fn partial_ticks(state: &SharedState) -> f32 {

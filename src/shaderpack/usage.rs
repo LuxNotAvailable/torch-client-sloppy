@@ -1,5 +1,3 @@
-use bevy::render::renderer::RenderDevice;
-
 use super::compile::{EntityKind, ProgramKind, Step};
 use super::install::{Installed, InstalledProgram};
 use super::sources::{Depth, TextureSource};
@@ -7,25 +5,24 @@ use crate::shaderpack::directives::{MAX_COLOR_TARGETS, SampleKind};
 use crate::shaderpack::pipeline::Binding;
 use crate::shaderpack::transform::ImageAccess;
 
-pub(super) struct Usage {
-    pub(super) shadow: bool,
-    pub(super) shadow_filtered: [bool; 2],
-    pub(super) image_conflicts: Vec<[u16; 2]>,
-    pub(super) snapshots: u16,
-    pub(super) mip_targets: u16,
-    pub(super) cleared: u16,
-    pub(super) copy_depth: bool,
-    pub(super) copy_no_hand: bool,
-    pub(super) shadow_voxelizes: bool,
-    pub(super) shadow_copy_opaque: bool,
-    pub(super) kind_blocks: [Option<usize>; EntityKind::COUNT],
+pub(crate) struct Usage {
+    pub(crate) shadow: bool,
+    pub(crate) shadow_filtered: [bool; 2],
+    pub(crate) image_conflicts: Vec<[u16; 2]>,
+    pub(crate) snapshots: u16,
+    pub(crate) mip_targets: u16,
+    pub(crate) cleared: u16,
+    pub(crate) copy_depth: bool,
+    pub(crate) copy_no_hand: bool,
+    pub(crate) shadow_voxelizes: bool,
+    pub(crate) shadow_copy_opaque: bool,
+    pub(crate) kind_blocks: [Option<usize>; EntityKind::COUNT],
 }
 
 impl Usage {
-    pub(super) fn of(device: &RenderDevice, installed: &Installed) -> Usage {
-        let vertex_storage = device
-            .features()
-            .contains(wgpu::Features::VERTEX_WRITABLE_STORAGE);
+    /// `vertex_storage`: the GPU writes storage from vertex stages;
+    /// `depth_copy`: it can copy depth for filtered shadow sampling.
+    pub(crate) fn of(vertex_storage: bool, depth_copy: bool, installed: &Installed) -> Usage {
         let shadow = installed.shadow.is_some_and(|index| {
             let usable = vertex_storage || !writes_images_from_vertex(&installed.programs[index]);
             if !usable {
@@ -37,7 +34,7 @@ impl Usage {
             usable
         });
         let shadow_filtered = if shadow {
-            shadow_filtering(device, installed)
+            shadow_filtering(depth_copy, installed)
         } else {
             [false; 2]
         };
@@ -105,8 +102,8 @@ impl Usage {
     }
 }
 
-fn shadow_filtering(device: &RenderDevice, installed: &Installed) -> [bool; 2] {
-    if installed.shadow.is_none() || !super::depthcopy::supported(device) {
+fn shadow_filtering(depth_copy: bool, installed: &Installed) -> [bool; 2] {
+    if installed.shadow.is_none() || !depth_copy {
         return [false; 2];
     }
     [Depth::All, Depth::Opaque].map(|depth| {
@@ -120,7 +117,7 @@ fn shadow_filtering(device: &RenderDevice, installed: &Installed) -> [bool; 2] {
     })
 }
 
-pub(super) fn depth_index(depth: Depth) -> usize {
+pub(crate) fn depth_index(depth: Depth) -> usize {
     match depth {
         Depth::All => 0,
         Depth::Opaque => 1,

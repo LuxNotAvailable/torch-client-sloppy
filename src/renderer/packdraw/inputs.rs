@@ -255,7 +255,7 @@ pub(crate) fn gather_inputs(
     atlas: Option<Res<BlockAtlasHandle>>,
     images: Res<Assets<Image>>,
     gui: Res<crate::gui::GuiState>,
-    compiled: Option<Res<super::install::CompiledPack>>,
+    compiled: Option<Res<super::sync::CompiledPack>>,
     third_person: Res<crate::renderer::input::ThirdPersonState>,
     freecam: Res<crate::renderer::input::FreecamState>,
     mut inputs: ResMut<Inputs>,

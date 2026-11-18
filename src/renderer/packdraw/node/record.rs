@@ -4,7 +4,7 @@ use bevy::render::render_resource::{
     Texture, TextureView,
 };
 
-use super::super::compile::PACK_QUADS_SET;
+use crate::shaderpack::compile::PACK_QUADS_SET;
 use super::super::plan::Attachment;
 use crate::renderer::terrain_pool::draw::StreamSources;
 

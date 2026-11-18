@@ -1,4 +1,4 @@
-use bevy::render::render_resource::TextureViewDimension;
+use crate::shaderpack::customimages::Dimension;
 
 use crate::shaderpack::directives;
 
@@ -35,7 +35,7 @@ pub(crate) enum TextureSource {
     EntityTexture,
     Image {
         index: u8,
-        dimension: TextureViewDimension,
+        dimension: Dimension,
     },
 }
 
@@ -98,11 +98,10 @@ impl TextureSource {
 
     pub(crate) fn image(
         index: u8,
-        dimension: crate::shaderpack::customimages::Dimension,
+        dimension: Dimension,
         name: &str,
         ty: &str,
     ) -> Result<TextureSource, String> {
-        use crate::shaderpack::customimages::Dimension;
         let shape = crate::shaderpack::transform::untyped(ty);
         let matches = match dimension {
             Dimension::D1 => shape == "sampler1D",
@@ -110,11 +109,6 @@ impl TextureSource {
             Dimension::D3 => shape == "sampler3D",
         };
         if matches {
-            let dimension = match dimension {
-                Dimension::D1 => TextureViewDimension::D1,
-                Dimension::D2 => TextureViewDimension::D2,
-                Dimension::D3 => TextureViewDimension::D3,
-            };
             Ok(TextureSource::Image { index, dimension })
         } else {
             Err(format!("{ty} {name}: the image it reads is {dimension:?}"))
@@ -168,18 +162,18 @@ impl TextureSource {
         }
     }
 
-    pub(crate) fn view_dimension(self) -> TextureViewDimension {
+    pub(crate) fn view_dimension(self) -> Dimension {
         match self {
             TextureSource::Image { dimension, .. } => dimension,
             TextureSource::Stub(Stub::Zero3d | Stub::Uint3d) | TextureSource::Custom3d(_) => {
-                TextureViewDimension::D3
+                Dimension::D3
             }
-            _ => TextureViewDimension::D2,
+            _ => Dimension::D2,
         }
     }
 
     pub(crate) fn is_3d(self) -> bool {
-        self.view_dimension() == TextureViewDimension::D3
+        self.view_dimension() == Dimension::D3
     }
 }
 

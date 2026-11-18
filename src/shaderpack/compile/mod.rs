@@ -7,9 +7,9 @@ use crate::shaderpack::programs::{self, Geometry};
 use crate::shaderpack::{backend, pipeline, transform};
 use crate::shaderpack::{discover, features, include, properties};
 
-use super::images::{CustomTexture, CustomTextures};
+use super::textures::{CustomTexture, CustomTextures};
 use super::sources::TextureSource;
-use super::uniforms::MatrixSet;
+use crate::renderer::packdraw::uniforms::MatrixSet;
 use crate::client::dimension::Dimension;
 
 mod kinds;
@@ -27,6 +27,9 @@ use program::{compile_compute, compile_program};
 pub(crate) const PACK_SET: u32 = 0;
 
 pub(crate) const TERRAIN_SET: u32 = 1;
+
+/// The terrain group's slot table (origins, or the indirect slot words).
+pub(crate) const SLOT_TABLE_BINDING: u32 = 5;
 
 const _: () = assert!(PACK_SET == 0 && TERRAIN_SET == 1);
 
@@ -218,7 +221,7 @@ pub(crate) fn compile_frame(
         .map(|(p, e)| (p.to_owned(), e.to_owned()))
         .collect();
     let (customs, custom_problems) =
-        Customs::compile(props.other.iter(), &super::uniforms::resolve_input);
+        Customs::compile(props.other.iter(), &crate::renderer::packdraw::uniforms::resolve_input);
     let mut notes: Vec<String> = custom_problems
         .into_iter()
         .map(|p| format!("custom uniform skipped: {p}"))
@@ -896,7 +899,7 @@ mod tests {
                                 program.kind,
                                 program.draw_buffers,
                                 program.textures.len(),
-                                super::super::uniforms::unsupplied(
+                                crate::renderer::packdraw::uniforms::unsupplied(
                                     &program.layout.uniforms,
                                     &frame.customs
                                 )
@@ -914,7 +917,7 @@ mod tests {
                             .programs
                             .iter()
                             .flat_map(|p| {
-                                super::super::uniforms::unsupplied(
+                                crate::renderer::packdraw::uniforms::unsupplied(
                                     &p.layout.uniforms,
                                     &frame.customs,
                                 )

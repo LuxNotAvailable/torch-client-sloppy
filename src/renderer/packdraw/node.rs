@@ -10,7 +10,7 @@ use bevy::render::render_resource::{LoadOp, RenderPassColorAttachment, RenderPas
 use bevy::render::renderer::{RenderContext, RenderDevice};
 use bevy::render::view::{ExtractedView, ViewTarget};
 
-use super::compile::{PACK_SET, ScreenStage, Segment, TERRAIN_SET};
+use crate::shaderpack::compile::{PACK_SET, ScreenStage, Segment, TERRAIN_SET};
 use super::entities::{
     ENTITY_INSTANCE_SIZE, ENTITY_PARTS_SET, entity_layout_matches, entity_skinned_layout_matches,
 };

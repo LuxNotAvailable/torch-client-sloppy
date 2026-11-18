@@ -34,7 +34,7 @@ const ZERO_ROWS: PartRows = [[0.0; 4]; 3];
 
 /// Whether new model rigs pose on the GPU. Off under `MC_CPU_RIGS=1`. Shader packs pose them too:
 /// their entity programs compile a skinned vertex stage
-/// (`packdraw::compile::preludes::entity_prelude`).
+/// (`shaderpack::compile::preludes::entity_prelude`).
 pub fn enabled() -> bool {
     static FORCED_CPU: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     let forced = *FORCED_CPU.get_or_init(|| {

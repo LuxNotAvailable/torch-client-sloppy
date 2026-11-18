@@ -10,7 +10,7 @@ use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::texture::GpuImage;
 
 use super::GPU_LABEL;
-use super::compile::{EntityKind, Segment};
+use crate::shaderpack::compile::{EntityKind, Segment};
 use super::frame::{Install, PackRender, Stage};
 use super::pipelines::Building;
 use super::targets::extent;
@@ -212,6 +212,14 @@ pub(crate) const ENTITY_PART_LOCATION: u32 = 16;
 /// The instance's first part matrix.
 pub(crate) const ENTITY_PART_BASE_LOCATION: u32 = 15;
 const _: () = assert!(4 + 11 == ENTITY_PART_BASE_LOCATION);
+// The entity prelude (`shaderpack::compile::preludes`) hard-codes these.
+const _: () = assert!(
+    ENTITY_GLINT_LOCATION == 17
+        && ENTITY_GLINT == 2
+        && ENTITY_PART_BASE_LOCATION == 15
+        && ENTITY_PART_LOCATION == 16
+        && ENTITY_PARTS_SET == 1
+);
 
 const ENTITY_STRIDE: u64 = 48;
 const ENTITY_SKINNED_STRIDE: u64 = 52;

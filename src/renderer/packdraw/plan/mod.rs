@@ -7,7 +7,7 @@ use bevy::render::render_resource::{
 };
 use bevy::render::renderer::RenderDevice;
 
-use super::compile::EntityKind;
+use crate::shaderpack::compile::EntityKind;
 
 pub(crate) use build::prepare_plan;
 

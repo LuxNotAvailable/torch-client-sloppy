@@ -1,6 +1,6 @@
 //! Torch Vibrant, the pack built into the client: Bedrock's Vibrant Visuals
 //! as a lightweight native pack. Its programs are WGSL written against the
-//! engine (see `renderer::packdraw::compile::native`), so nothing is
+//! engine (see `shaderpack::compile::native`), so nothing is
 //! translated, and its terrain is shaded per block-face texel through a
 //! cache instead of per pixel.
 
@@ -44,7 +44,7 @@ pub(crate) const FILES: &[(&str, &str)] = files![
 #[cfg(test)]
 mod tests {
     use crate::client::dimension::Dimension;
-    use crate::renderer::packdraw::compile::compile_frame;
+    use crate::shaderpack::compile::compile_frame;
 
     #[test]
     fn every_file_on_disk_is_embedded() {

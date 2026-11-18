@@ -241,9 +241,6 @@ pub struct TerrainPipelineKey {
     pub shadow: bool,
 }
 
-#[cfg(feature = "shader_support")]
-pub const SLOT_TABLE_BINDING: u32 = 5;
-
 fn terrain_layouts() -> (BindGroupLayoutDescriptor, BindGroupLayoutDescriptor) {
     let meta_size = NonZeroU64::new(size_of::<SlotMeta>() as u64);
     let common = (

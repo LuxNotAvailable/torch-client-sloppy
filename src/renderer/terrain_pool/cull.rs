@@ -504,12 +504,7 @@ pub fn pack_shadow_view(
 }
 
 #[cfg(feature = "shader_support")]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ShadowCullMode {
-    Distance,
-    Advanced,
-    SafeZone,
-}
+use crate::shaderpack::compile::ShadowCullMode;
 
 #[cfg(feature = "shader_support")]
 pub struct ShadowCullInput {

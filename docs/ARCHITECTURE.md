@@ -34,8 +34,8 @@ meshes chunk sections (on `client`'s worker). `renderer` (Bevy/wgpu,
 | `protocol` | multi-version support: packet tables, id remaps, hops | `hop.rs` (recipe at top) |
 | `renderer` | Bevy/wgpu renderer: terrain, entities, sky, post, shader-pack draw | `systems.rs`, `terrain.rs` |
 | `resourcepacks` | pack list, mounting, Modrinth, Torch Default pack | `mod.rs`, `TORCH_DEFAULT_PACK.md` |
-| `shaderpack` | Iris/OptiFine pack loading: properties, preprocess, programs, pack block ids and vertex data | `pipeline.rs`, `packvertex.rs` |
-| `terrain` | section meshing for both renderers: block geometry, light, CTM, vertex layout, cave visibility, block animations | `mod.rs`, `mesh.rs` |
+| `shaderpack` | Iris/OptiFine pack loading: properties, preprocess, programs; compiling to WGSL (`compile/`, `install`) for both renderers; pack block ids and vertex data | `pipeline.rs`, `compile/mod.rs`, `install.rs` |
+| `terrain` | section meshing for both renderers: block geometry, light, CTM, vertex layout, cave visibility, block animations; streaming section changes to the renderer and its listeners (`stream`) | `mod.rs`, `mesh.rs`, `stream.rs` |
 | `text` | fonts, glyph layout, text components | `mod.rs` |
 | `util` | vanilla-parity helpers (`mth`, `javarandom`), particles, packs, zip | `mth.rs` |
 | `vk` | native Vulkan renderer and `vkview` | `mod.rs`, `live.rs` |

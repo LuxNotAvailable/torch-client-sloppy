@@ -10,11 +10,12 @@ use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::view::{ExtractedView, ViewTarget};
 
 use super::GPU_LABEL;
-use super::compile::EntityKind;
+use crate::shaderpack::compile::EntityKind;
 use super::entities::{EntityBatch, EntityDraw, EntityInstance};
 use super::fullscreen::Blit;
 use super::inputs::Inputs;
-use super::install::{CompiledPack, Installed};
+use super::sync::CompiledPack;
+use crate::shaderpack::install::Installed;
 use super::packatlas::PackAtlas;
 use super::pipelines::{Building, Pipelines, make_layout, program_layout};
 use super::plan::{Plan, PlanKey};
@@ -23,7 +24,7 @@ use super::targets::{
     storage_buffer,
 };
 use super::uniforms::{BlockSpec, FrameValues, History, MatrixSet, PackUniforms};
-pub(super) use super::usage::Usage;
+pub(super) use crate::shaderpack::usage::Usage;
 use crate::renderer::terrain_pool::TerrainView;
 use crate::renderer::terrain_pool::cull::{PackCullView, ShadowCullInput, shadow_cull_shape};
 use crate::renderer::terrain_pool::draw::{PackTakeover, TerrainBindGroup};
@@ -169,7 +170,7 @@ impl PackRender {
     pub(crate) fn reject_install(&mut self) {
         let generation = self.generation();
         self.failed = generation;
-        super::install::reject(generation);
+        super::sync::reject(generation);
         self.install = None;
     }
 }
@@ -211,7 +212,13 @@ pub(crate) fn extract_pack(
 }
 
 fn install(device: &RenderDevice, queue: &RenderQueue, installed: Arc<Installed>) -> Install {
-    let usage = Usage::of(device, &installed);
+    let usage = Usage::of(
+        device
+            .features()
+            .contains(wgpu::Features::VERTEX_WRITABLE_STORAGE),
+        super::depthcopy::supported(device),
+        &installed,
+    );
     let layouts = (0..installed.programs.len())
         .map(|index| {
             make_layout(

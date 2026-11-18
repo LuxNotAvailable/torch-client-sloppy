@@ -1,17 +1,14 @@
 use std::sync::Arc;
 
-use bevy::prelude::*;
-use bevy::tasks::Task;
-
-use super::GPU_LABEL;
 use super::compile::{self, Frame, ProgramKind};
 use super::sources::TextureSource;
-use super::uniforms;
-use crate::client::dimension::Dimension;
-use crate::renderer::terrain_pool::TerrainTier;
+use crate::renderer::packdraw::uniforms;
 use crate::shaderpack::directives::{Constants, Targets};
 use crate::shaderpack::expressions::Customs;
 use crate::shaderpack::pipeline::Layout;
+
+/// Labels every pack shader module and GPU object, so errors name the pack.
+pub(crate) const GPU_LABEL: &str = "shaderpack";
 
 impl InstalledProgram {
     pub(crate) fn fragment_for(&self, default: Option<compile::AlphaTest>) -> &Module {
@@ -77,7 +74,7 @@ pub(crate) struct Installed {
     pub(crate) customs: Customs,
     pub(crate) used_targets: u16,
     pub(crate) used_shadow: u8,
-    pub(crate) images: Vec<super::images::CustomTexture>,
+    pub(crate) images: Vec<super::textures::CustomTexture>,
     pub(crate) block_ids: Option<Arc<crate::shaderpack::packvertex::BlockIds>>,
     pub(crate) custom_images: Vec<crate::shaderpack::customimages::CustomImage>,
     pub(crate) buffers: Vec<crate::shaderpack::customimages::BufferObject>,
@@ -86,20 +83,6 @@ pub(crate) struct Installed {
     pub(crate) old_hand_light: bool,
 }
 
-#[derive(Resource)]
-pub(crate) struct CompiledPack {
-    name: String,
-    revision: u64,
-    dimension: Dimension,
-    pub(crate) installed: Arc<Installed>,
-}
-
-pub(crate) struct Pending {
-    name: String,
-    revision: u64,
-    dimension: Dimension,
-    task: Task<Result<Frame, String>>,
-}
 
 /// A compiled pack ready to draw: each stage's WGSL labelled for its
 /// renderer. Device free, so the native renderer installs packs the same
@@ -176,7 +159,7 @@ pub(crate) fn install(pack: &str, generation: u32, direct: bool, frame: Frame) -
     }
 }
 
-fn report(name: &str, installed: &Installed, notes: &[String]) {
+pub(crate) fn report(name: &str, installed: &Installed, notes: &[String]) {
     crate::log_info!(
         "shaders",
         "compiled {name}: {} programs (begin {}, prepare {}, deferred {}, composite {} steps, final {}, setup {}), generation {}",
@@ -202,130 +185,5 @@ fn report(name: &str, installed: &Installed, notes: &[String]) {
     }
     for note in notes {
         crate::log_info!("shaders", "{name}: {note}");
-    }
-}
-
-pub(crate) fn sync_compiled_pack(
-    mut commands: Commands,
-    gui: Res<crate::gui::GuiState>,
-    tier: Option<Res<TerrainTier>>,
-    compiled: Option<Res<CompiledPack>>,
-    mut failed: Local<Option<(String, u64, Dimension)>>,
-    mut generation: Local<u32>,
-    mut pending: Local<Option<Pending>>,
-) {
-    let Some(tier) = tier else { return };
-    let loaded = gui.shaderpacks.loaded.as_ref();
-    let wanted = loaded.map(|l| l.name.clone());
-    let revision = gui.shaderpacks.revision();
-    let editing = gui.screen == crate::gui::Screen::ShaderOptions;
-    let direct = !tier.indirect;
-    let dimension = crate::client::dimension::current();
-
-    if let Some(running) = pending.as_mut() {
-        let current = Some(&running.name) == wanted.as_ref()
-            && (editing || running.revision == revision)
-            && running.dimension == dimension;
-        if !current {
-            *pending = None;
-        } else {
-            let Some(result) = bevy::tasks::futures::check_ready(&mut running.task) else {
-                return;
-            };
-            let Pending {
-                name,
-                revision,
-                dimension,
-                ..
-            } = pending.take().expect("matched above");
-            match result {
-                Ok(mut frame) => {
-                    let notes = std::mem::take(&mut frame.notes);
-                    let installed = install(&name, *generation, direct, frame);
-                    report(&name, &installed, &notes);
-                    *failed = None;
-                    commands.insert_resource(CompiledPack {
-                        name,
-                        revision,
-                        dimension,
-                        installed: Arc::new(installed),
-                    });
-                }
-                Err(e) => {
-                    crate::log_warn!("shaders", "{name} did not compile: {e}");
-                    *failed = Some((name, revision, dimension));
-                    commands.remove_resource::<CompiledPack>();
-                }
-            }
-            return;
-        }
-    }
-
-    let stale = match compiled.as_deref() {
-        None => wanted.is_some(),
-        Some(current) => {
-            Some(&current.name) != wanted.as_ref()
-                || (!editing && current.revision != revision)
-                || current.dimension != dimension
-        }
-    };
-    if !stale {
-        return;
-    }
-    let (Some(name), Some(loaded)) = (wanted, loaded) else {
-        commands.remove_resource::<CompiledPack>();
-        *failed = None;
-        return;
-    };
-    if *failed == Some((name.clone(), revision, dimension)) {
-        return;
-    }
-
-    *generation = generation.wrapping_add(1).max(1);
-    let values = loaded.values().clone();
-    let task_name = name.clone();
-    let task = bevy::tasks::AsyncComputeTaskPool::get()
-        .spawn(async move { compile::compile_frame(&task_name, direct, Some(values), dimension) });
-    *pending = Some(Pending {
-        name,
-        revision,
-        dimension,
-        task,
-    });
-}
-
-static REJECTED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-
-pub(crate) fn reject(generation: u32) {
-    REJECTED.store(generation, std::sync::atomic::Ordering::Release);
-}
-
-pub(crate) fn sync_pack_vertices(
-    compiled: Option<Res<CompiledPack>>,
-    shared: Res<crate::renderer::systems::Shared>,
-    mut published: Local<Option<Arc<crate::shaderpack::packvertex::BlockIds>>>,
-) {
-    let rejected = REJECTED.load(std::sync::atomic::Ordering::Acquire);
-    let live = compiled
-        .as_deref()
-        .filter(|c| c.installed.generation != rejected);
-    let player_shadow = live.is_some_and(|c| {
-        let casters = c.installed.shadow_casters;
-        c.installed.entities[super::compile::EntityKind::ShadowCaster.index()].is_some()
-            && (casters.player || casters.entities)
-    });
-    crate::shaderpack::packvertex::set_player_shadow(player_shadow);
-    let wanted = live.and_then(|c| c.installed.block_ids.clone());
-    let remesh = match (published.as_ref(), wanted.as_ref()) {
-        (None, None) => return,
-        (Some(old), Some(new)) if Arc::ptr_eq(old, new) => return,
-        (Some(old), Some(new)) => old != new,
-        _ => true,
-    };
-    crate::shaderpack::packvertex::set_current(wanted.clone());
-    *published = wanted;
-    if remesh {
-        let _ = &shared;
-        crate::client::bus::request(crate::client::bus::ClientRequest::ReloadChunks);
     }
 }

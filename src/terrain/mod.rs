@@ -1,5 +1,6 @@
 //! Section meshing, shared by the client mesher and the native renderer:
-//! block geometry, light, connected textures, vertex layout, cave visibility.
+//! block geometry, light, connected textures, vertex layout, cave visibility,
+//! and the per-frame section stream (`stream`).
 
 pub(crate) mod block_anim;
 pub mod cave;
@@ -7,6 +8,7 @@ pub(crate) mod ctm;
 pub mod lighter;
 pub(crate) mod mesh;
 pub(crate) mod occupancy;
+pub mod stream;
 pub mod visgraph;
 
 pub use mesh::{

@@ -86,7 +86,7 @@ pub(crate) enum ImageSize {
     },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Dimension {
     D1,
     D2,
