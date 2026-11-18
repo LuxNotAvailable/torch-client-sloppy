@@ -7,7 +7,7 @@ use bevy::render::render_resource::{
 };
 use bevy::shader::ShaderRef;
 
-use super::dimension::Dimension;
+use crate::client::dimension::Dimension;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum LightMode {

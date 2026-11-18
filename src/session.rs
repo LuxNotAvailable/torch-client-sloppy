@@ -1,4 +1,5 @@
-use crate::renderer::{HumanoidAnim, PendingSection};
+use crate::renderer::HumanoidAnim;
+use crate::terrain::PendingSection;
 
 pub const MOVE_FORWARD: u8 = 1 << 0;
 pub const MOVE_BACK: u8 = 1 << 1;

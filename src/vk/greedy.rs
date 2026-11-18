@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 
 use super::terrain_dump::Section;
-use crate::renderer::mesh::PackedVertex;
+use crate::terrain::mesh::PackedVertex;
 
 /// Quads before and after merging.
 #[derive(Clone, Copy, Debug, Default)]

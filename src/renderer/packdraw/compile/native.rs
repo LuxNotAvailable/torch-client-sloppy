@@ -362,7 +362,7 @@ fn terrain_prelude(direct: bool) -> String {
         )
     };
     let vulkan = super::preludes::vulkan_terrain();
-    let row = crate::renderer::packvertex::QUAD_ROW;
+    let row = crate::shaderpack::packvertex::QUAD_ROW;
     let shift = if vulkan {
         " + iris_anim_shift(quad)"
     } else {

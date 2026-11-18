@@ -58,7 +58,7 @@ says how a tweak joins it.
 
 ## Tweaks so far
 
-- **Connected glass** (`renderer/ctm.rs`): glass, tinted glass, the 16 stained
+- **Connected glass** (`terrain/ctm.rs`): glass, tinted glass, the 16 stained
   glasses and their panes. Pane extras in `mesh.rs`: end strips sample the frame
   column, end caps take the pane's edge texture, and stacked panes hide the
   edges between them.

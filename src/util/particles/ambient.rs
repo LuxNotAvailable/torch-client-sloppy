@@ -21,7 +21,7 @@ pub(crate) fn set_day_tick(ticks: f64) {
 /// timeline.
 fn night_tracks() -> bool {
     let tick = DAY_TICK.load(std::sync::atomic::Ordering::Relaxed);
-    crate::renderer::dimension::current().registry_id() == "minecraft:overworld"
+    crate::client::dimension::current().registry_id() == "minecraft:overworld"
         && (12600..23401).contains(&tick)
 }
 

@@ -5,7 +5,7 @@ use bevy::transform::TransformSystems;
 
 use super::AppState;
 use super::systems::WorldCamera;
-use super::timeline::{self, CLOUD_HEIGHT};
+use crate::client::timeline::{self, CLOUD_HEIGHT};
 use crate::direction::Direction;
 use crate::gui::GuiState;
 

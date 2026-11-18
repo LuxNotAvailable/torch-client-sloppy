@@ -5,7 +5,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::image::{ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::prelude::*;
 
-use super::{ATLAS_COLS, TILE_PX};
+use crate::terrain::{ATLAS_COLS, TILE_PX};
 
 static OPAQUE_TEXTURES: OnceLock<HashSet<String>> = OnceLock::new();
 
@@ -40,7 +40,7 @@ impl Textures {
     pub fn blocks(textures_dir: &str) -> Textures {
         let mut block = decode_dir(&format!("{textures_dir}/block"));
         // Resource packs' connected-texture tiles.
-        let tiles = super::ctm::tile_images(&block);
+        let tiles = crate::terrain::ctm::tile_images(&block);
         block.extend(tiles);
         if !block.is_empty() {
             block
@@ -272,7 +272,7 @@ struct AnimationFrame {
 
 struct AnimatedStrip {
     stem: String,
-    meta: super::block_anim::Meta,
+    meta: crate::terrain::block_anim::Meta,
 }
 
 /// Crops every frame but the first out of each animated strip. The first is
@@ -293,7 +293,7 @@ fn animation_frames(
         let png = std::path::Path::new(textures_dir)
             .join("block")
             .join(format!("{stem}.png"));
-        let Some(meta) = super::block_anim::read_meta(&png, count) else {
+        let Some(meta) = crate::terrain::block_anim::read_meta(&png, count) else {
             continue;
         };
         let mut seen = std::collections::BTreeSet::new();
@@ -373,7 +373,7 @@ fn publish_animations(
         let (Some(frames), Ok(base)) = (frames, u16::try_from(base)) else {
             continue;
         };
-        animations.push(super::block_anim::BlockAnimation {
+        animations.push(crate::terrain::block_anim::BlockAnimation {
             base,
             frames: frames.into_boxed_slice(),
             interpolate: strip.meta.interpolate,
@@ -383,7 +383,7 @@ fn publish_animations(
         });
     }
     let total = tile_count + frames.len();
-    super::block_anim::publish(total as u32, animations);
+    crate::terrain::block_anim::publish(total as u32, animations);
 }
 
 fn block_atlas_sampler() -> ImageSampler {

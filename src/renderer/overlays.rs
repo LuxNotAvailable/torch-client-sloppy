@@ -4,7 +4,7 @@ use bevy::prelude::*;
 
 use super::frame_view::FrameView;
 use super::systems::BlockTileMap;
-use crate::renderer::{ATLAS_COLS, TILE_PX};
+use crate::terrain::{ATLAS_COLS, TILE_PX};
 use crate::session::{BreakingBlock, TargetedBlock};
 
 #[derive(Resource)]
@@ -70,7 +70,7 @@ pub(crate) struct BreakOverlayMarker;
 pub(super) struct ChunkBorderOverlay {
     pub(super) entity: Entity,
     pub(super) mesh: Handle<Mesh>,
-    pub(super) shown: Option<(i32, i32, i32, super::dimension::Dimension)>,
+    pub(super) shown: Option<(i32, i32, i32, crate::client::dimension::Dimension)>,
 }
 
 #[derive(Component)]
@@ -754,7 +754,7 @@ pub(super) fn update_chunk_borders(
     mut targets: Query<(&mut Transform, &mut Visibility), With<ChunkBorderMarker>>,
 ) {
     let pos = state.chunk_borders.then_some(view.player_pos);
-    let dim = super::dimension::current();
+    let dim = crate::client::dimension::current();
     let key = pos.map(|p| {
         let (cx, cz) = (
             (p[0].floor() as i32).div_euclid(16),

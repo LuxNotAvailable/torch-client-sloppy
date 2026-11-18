@@ -83,7 +83,7 @@ fn apply_ssaa(
     );
     let supersample = state.options.antialiasing.supersample();
     #[cfg(feature = "shader_support")]
-    let supersample = supersample.filter(|_| !crate::renderer::packvertex::active());
+    let supersample = supersample.filter(|_| !crate::shaderpack::packvertex::active());
     let scale = render_scale(supersample, window.scale_factor());
     let enabled = scale != 1.0;
     let camera_count = scene_cameras.iter().count();

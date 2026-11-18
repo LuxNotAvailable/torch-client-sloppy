@@ -31,6 +31,7 @@ mod resourcepacks;
 mod session;
 #[cfg(feature = "shader_support")]
 mod shaderpack;
+mod terrain;
 mod text;
 mod util;
 #[cfg(feature = "vulkan")]

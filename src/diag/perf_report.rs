@@ -1011,7 +1011,7 @@ fn describe(
         ),
         (
             "dimension".to_owned(),
-            crate::renderer::dimension::current()
+            crate::client::dimension::current()
                 .registry_id()
                 .to_owned(),
         ),

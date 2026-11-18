@@ -1,5 +1,5 @@
 use crate::direction::Direction;
-use crate::renderer::Occupancy;
+use crate::terrain::Occupancy;
 
 pub mod coords {
     pub const FULL_BRIGHT: u32 = pack(15, 15);
@@ -609,7 +609,7 @@ mod tests {
 #[cfg(test)]
 mod orientation {
     use super::*;
-    use crate::renderer::Occupancy;
+    use crate::terrain::Occupancy;
 
     fn scene(occluders: &[(i32, i32, i32)]) -> Occupancy {
         let mut occ = Occupancy::new(0, 0, -2, 6);

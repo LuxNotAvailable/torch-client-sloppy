@@ -9,9 +9,9 @@ use bevy::prelude::*;
 use bevy::transform::TransformSystems;
 
 use super::AppState;
-use super::dimension::{self, Skybox};
+use crate::client::dimension::{self, Skybox};
 use super::systems::WorldCamera;
-use super::timeline::{self, Argb, SkyState};
+use crate::client::timeline::{self, Argb, SkyState};
 
 const SKY_SCALE: f32 = 16.0;
 
@@ -756,7 +756,7 @@ fn update_sky(
         // Terrain wholly inside the fog is left out of the draw; a shader
         // pack draws its own fog, so then nothing is.
         #[cfg(feature = "shader_support")]
-        let pack = crate::renderer::packvertex::active();
+        let pack = crate::shaderpack::packvertex::active();
         #[cfg(not(feature = "shader_support"))]
         let pack = false;
         if pack {

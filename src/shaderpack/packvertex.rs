@@ -125,17 +125,6 @@ pub fn set_current(ids: Option<Arc<BlockIds>>) {
     }
 }
 
-pub fn quads_layout() -> bevy::render::render_resource::BindGroupLayoutDescriptor {
-    use bevy::render::render_resource::binding_types::texture_2d;
-    use bevy::render::render_resource::{
-        BindGroupLayoutDescriptor, BindGroupLayoutEntries, ShaderStages, TextureSampleType,
-    };
-    BindGroupLayoutDescriptor::new(
-        "shaderpack pack quads",
-        &BindGroupLayoutEntries::single(ShaderStages::VERTEX, texture_2d(TextureSampleType::Uint)),
-    )
-}
-
 pub fn quad_texel(index: u32) -> [u32; 2] {
     [index % QUAD_ROW, index / QUAD_ROW]
 }
@@ -155,7 +144,7 @@ impl PackBlock {
         let shade = if self.lighting.old_lighting {
             face_shade
         } else {
-            self.shades[crate::renderer::dimension::UP]
+            self.shades[crate::client::dimension::UP]
         };
         self.combine(tint, ao * shade)
     }

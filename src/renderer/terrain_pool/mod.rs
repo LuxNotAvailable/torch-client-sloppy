@@ -13,7 +13,7 @@ use bevy::shader::Shader;
 use bytemuck::{Pod, Zeroable};
 use parking_lot::Mutex;
 
-use super::mesh::MeshBuf;
+use crate::terrain::mesh::MeshBuf;
 
 pub const STREAM_SOLID: u32 = 0;
 pub const STREAM_CUTOUT: u32 = 1;

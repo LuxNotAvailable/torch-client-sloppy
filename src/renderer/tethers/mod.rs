@@ -197,7 +197,7 @@ pub struct WeatherLayer;
 
 /// The holder and world item models read: the local player, now.
 fn update_item_context(view: Res<FrameView>) {
-    let dimension = crate::renderer::dimension::current()
+    let dimension = crate::client::dimension::current()
         .registry_id()
         .to_owned();
     let dimension = if dimension.contains(':') {

@@ -626,7 +626,7 @@ fn uv_transform_is_a_quarter_turn_for_every_rotation_and_face() {
 
 #[test]
 fn the_mesher_culls_a_face_against_a_solid_neighbour() {
-    use crate::renderer::{Occupancy, build_section_mesh};
+    use crate::terrain::{Occupancy, build_section_mesh};
     use crate::util::block_model::block_visual;
     use azalea::block::BlockState;
     use azalea::registry::builtin::BlockKind;
@@ -818,7 +818,7 @@ fn every_blockstate_file_parses() {
 
 #[test]
 fn a_modded_block_is_a_tinted_missing_texture_cube() {
-    use crate::renderer::{BlockGeom, TintKind};
+    use crate::terrain::{BlockGeom, TintKind};
     use crate::util::block_model::{block_visual, modded_tint};
     use azalea::block::BlockState;
 
@@ -839,7 +839,7 @@ fn a_modded_block_is_a_tinted_missing_texture_cube() {
 
 #[test]
 fn translucent_blocks_mesh_into_the_translucent_layer() {
-    use crate::renderer::{Occupancy, build_section_mesh};
+    use crate::terrain::{Occupancy, build_section_mesh};
     use crate::util::block_model::block_visual;
     use azalea::block::BlockState;
     use azalea::registry::builtin::BlockKind;

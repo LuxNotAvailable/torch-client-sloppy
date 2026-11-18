@@ -38,7 +38,7 @@ pub struct BeState {
 }
 
 fn packed_light((block, sky): (u8, u8)) -> i32 {
-    crate::renderer::lighter::coords::pack(block, sky) as i32
+    crate::terrain::lighter::coords::pack(block, sky) as i32
 }
 
 #[derive(Clone, Copy)]
@@ -803,7 +803,7 @@ fn sync_block_entities(
     lights.begin(&lightmap.current);
     assets.epoch = assets.epoch.wrapping_add(1);
 
-    let dirs = diffuse_lights(crate::renderer::dimension::current());
+    let dirs = diffuse_lights(crate::client::dimension::current());
 
     let center_of = |pos: &[i32; 3]| {
         Vec3::new(

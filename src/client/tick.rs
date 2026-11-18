@@ -918,7 +918,7 @@ fn world_sounds(
     let velocity = bot
         .component::<Physics>()
         .map_or([0.0; 3], |p| [p.velocity.x, p.velocity.y, p.velocity.z]);
-    let dimension = crate::renderer::dimension::current().registry_id();
+    let dimension = crate::client::dimension::current().registry_id();
     let biome =
         crate::client::envprobe::camera_biome().and_then(crate::util::biome_color::biome_name);
     let minecarts: Vec<(i32, [f64; 3])> = entity_anims
@@ -1112,7 +1112,7 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
         crate::util::particles::set_day_tick(s.session.world.day_clock.ticks);
         #[cfg(audio)]
         END_FLASHES.lock().unwrap().tick(
-            crate::renderer::dimension::current().registry_id() == "minecraft:the_end",
+            crate::client::dimension::current().registry_id() == "minecraft:the_end",
             s.session.world.day_clock.ticks.floor() as i64,
             crate::audio::listener_position(),
         );

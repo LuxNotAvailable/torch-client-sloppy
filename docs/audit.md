@@ -7,7 +7,7 @@
 | Where | Dup of | Fix |
 |-------|--------|-----|
 | `src/util/interp.rs` `fn lerp(t:f64,a:f64,b:f64)` | `mth::lerp_f64` (t is f32 there) | add f64-t overload to mth |
-| `src/renderer/mesh.rs:137` `fn lerp(a,b,t)` | `mth::lerp(t,a,b)` | use mth |
+| `src/terrain/mesh.rs:137` `fn lerp(a,b,t)` | `mth::lerp(t,a,b)` | use mth |
 
 Not dupes (legit repeated names): `clamp`×12, `normalize`×5, `Target`×4, timeline `lerp` trait, environment `lerp` — all domain-specific.
 

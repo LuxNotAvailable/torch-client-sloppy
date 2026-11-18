@@ -1950,7 +1950,7 @@ impl PackScreen {
 
     pub(crate) fn block_ids(
         &self,
-    ) -> Option<std::sync::Arc<crate::renderer::packvertex::BlockIds>> {
+    ) -> Option<std::sync::Arc<crate::shaderpack::packvertex::BlockIds>> {
         self.installed.block_ids.clone()
     }
 

@@ -77,7 +77,7 @@ impl Blocks {
         let atlas_rows = crate::ATLAS_ROWS
             .get()
             .copied()
-            .unwrap_or(crate::renderer::TILE_PX);
+            .unwrap_or(crate::terrain::TILE_PX);
         println!(
             "[BlockModels] {} blockstates parsed in {:.1} ms",
             defs.len(),

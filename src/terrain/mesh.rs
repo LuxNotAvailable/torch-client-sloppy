@@ -153,9 +153,9 @@ pub struct MeshBuf {
     pub min: [i16; 3],
     pub max: [i16; 3],
     #[cfg(feature = "shader_support")]
-    pub pack: Vec<super::packvertex::PackQuad>,
+    pub pack: Vec<crate::shaderpack::packvertex::PackQuad>,
     #[cfg(feature = "shader_support")]
-    pub pack_block: Option<super::packvertex::PackBlock>,
+    pub pack_block: Option<crate::shaderpack::packvertex::PackBlock>,
 }
 
 #[cfg(feature = "shader_support")]
@@ -329,7 +329,7 @@ impl MeshBuf {
                 e3[0] * e1[1] - e3[1] * e1[0],
             ];
             self.pack
-                .push(super::packvertex::quad(block, corners, face_uvs, normal));
+                .push(crate::shaderpack::packvertex::quad(block, corners, face_uvs, normal));
         }
         self.idx
             .extend_from_slice(&[base + 2, base + 1, base, base + 3, base + 2, base]);
@@ -371,7 +371,7 @@ impl MeshBuf {
         #[cfg(feature = "shader_support")]
         if let Some(block) = &self.pack_block {
             let corners = quad.pos.map(|p| [p[0] + wx, p[1] + wy, p[2] + wz]);
-            self.pack.push(super::packvertex::quad(
+            self.pack.push(crate::shaderpack::packvertex::quad(
                 block,
                 &corners,
                 &quad.uv,
@@ -492,7 +492,7 @@ pub fn build_section_mesh(
     // Lighting off is unlit: every face at full brightness.
     let unshaded = [1.0; 6];
     let cardinal = if lighting_enabled() {
-        super::dimension::current().cardinal()
+        crate::client::dimension::current().cardinal()
     } else {
         &unshaded
     };
@@ -504,7 +504,7 @@ pub fn build_section_mesh(
     };
 
     #[cfg(feature = "shader_support")]
-    let pack_ids = super::packvertex::current();
+    let pack_ids = crate::shaderpack::packvertex::current();
     #[cfg(feature = "shader_support")]
     let water_pack_id = pack_ids.as_ref().map(|ids| {
         ids.of(
@@ -520,7 +520,7 @@ pub fn build_section_mesh(
         );
         #[cfg(feature = "shader_support")]
         if let Some(ids) = &pack_ids {
-            let block = super::packvertex::PackBlock {
+            let block = crate::shaderpack::packvertex::PackBlock {
                 id: ids.of(rb.state),
                 emission: rb.emission,
                 cell: [wx, wy, wz],

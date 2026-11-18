@@ -252,7 +252,7 @@ fn apply_antialiasing(
 ) {
     let aa = state.options.antialiasing;
     #[cfg(feature = "shader_support")]
-    let pack = crate::renderer::packvertex::active();
+    let pack = crate::shaderpack::packvertex::active();
     #[cfg(not(feature = "shader_support"))]
     let pack = false;
 

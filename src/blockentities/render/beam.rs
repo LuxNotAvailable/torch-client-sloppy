@@ -155,7 +155,7 @@ impl<'a> Beam<'a> {
                     return None;
                 }
                 let (percent, distance, dye) = if spawning {
-                    let max_y = crate::renderer::dimension::current().y_range().1 - 1;
+                    let max_y = crate::client::dimension::current().y_range().1 - 1;
                     (gateway.spawn_percent(st.partial), max_y as f32, MAGENTA)
                 } else {
                     (gateway.cooldown_percent(st.partial), 50.0, PURPLE)

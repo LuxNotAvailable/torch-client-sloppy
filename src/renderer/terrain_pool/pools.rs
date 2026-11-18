@@ -175,8 +175,8 @@ impl Pool {
     fn pack_extent(&self) -> Extent3d {
         let quads = self.vertex_capacity / 4;
         Extent3d {
-            width: crate::renderer::packvertex::QUAD_ROW,
-            height: quads.div_ceil(crate::renderer::packvertex::QUAD_ROW).max(1),
+            width: crate::shaderpack::packvertex::QUAD_ROW,
+            height: quads.div_ceil(crate::shaderpack::packvertex::QUAD_ROW).max(1),
             depth_or_array_layers: 1,
         }
     }
@@ -186,7 +186,7 @@ impl Pool {
         let extent = self.pack_extent();
         u64::from(extent.width)
             * u64::from(extent.height)
-            * std::mem::size_of::<crate::renderer::packvertex::PackQuad>() as u64
+            * std::mem::size_of::<crate::shaderpack::packvertex::PackQuad>() as u64
     }
 
     #[cfg(feature = "shader_support")]
@@ -243,9 +243,9 @@ fn write_quads(
     queue: &RenderQueue,
     texture: &Texture,
     first: u32,
-    quads: &[crate::renderer::packvertex::PackQuad],
+    quads: &[crate::shaderpack::packvertex::PackQuad],
 ) {
-    use crate::renderer::packvertex::{QUAD_ROW, quad_texel};
+    use crate::shaderpack::packvertex::{QUAD_ROW, quad_texel};
     let mut at = first;
     let mut rest = quads;
     while !rest.is_empty() {
@@ -306,7 +306,7 @@ const META_STRIDE: u64 = 96;
 
 /// Which facing group a quad belongs to (`FACE_GROUPS` order), from its
 /// first triangle; a quad not flat on an axis is group 6.
-fn facing_group(verts: &[crate::renderer::mesh::PackedVertex], tri: &[u32]) -> usize {
+fn facing_group(verts: &[crate::terrain::mesh::PackedVertex], tri: &[u32]) -> usize {
     let p = |i: u32| {
         let v = verts[i as usize].pos;
         [f32::from(v[0]), f32::from(v[1]), f32::from(v[2])]
@@ -337,7 +337,7 @@ fn facing_group(verts: &[crate::renderer::mesh::PackedVertex], tri: &[u32]) -> u
 
 /// Orders the solid stream's quads by facing group (stable within each)
 /// and returns each group's index count, for the cull (`SlotMeta`).
-fn group_by_facing(verts: &[crate::renderer::mesh::PackedVertex], idx: &mut Vec<u32>) -> [u32; 8] {
+fn group_by_facing(verts: &[crate::terrain::mesh::PackedVertex], idx: &mut Vec<u32>) -> [u32; 8] {
     let mut counts = [0u32; 8];
     if idx.len() % 6 != 0 {
         counts[6] = idx.len() as u32;
@@ -488,7 +488,7 @@ impl TerrainPools {
             stats,
             #[cfg(feature = "shader_support")]
             quads_layout: {
-                let descriptor = crate::renderer::packvertex::quads_layout();
+                let descriptor = quads_layout();
                 device.create_bind_group_layout(descriptor.label.as_ref(), &descriptor.entries)
             },
         }
@@ -730,7 +730,7 @@ impl WaterSort {
         pool: u32,
         first_index: u32,
         origin: [i32; 3],
-        mesh: &crate::renderer::mesh::MeshBuf,
+        mesh: &crate::terrain::mesh::MeshBuf,
     ) -> Self {
         let indices: Vec<u32> = mesh.idx.iter().chain(&mesh.cutout_idx).copied().collect();
         // A quad's six indices name its four vertices in any order (fluid
@@ -910,7 +910,7 @@ pub fn apply_ops(
     pools.retired_last_frame = std::mem::take(&mut pools.retired_this_frame);
 
     #[cfg(feature = "shader_support")]
-    let quads_layout = if crate::renderer::packvertex::active() {
+    let quads_layout = if crate::shaderpack::packvertex::active() {
         let layout = pools.quads_layout.clone();
         for pool in &mut pools.pools {
             pool.pack_quads(&device, &layout);
@@ -1130,10 +1130,23 @@ pub fn apply_ops(
     pools.publish_stats();
 }
 
+/// The pack quad table's bind group (wgpu side of `shaderpack::packvertex`).
+#[cfg(feature = "shader_support")]
+fn quads_layout() -> bevy::render::render_resource::BindGroupLayoutDescriptor {
+    use bevy::render::render_resource::binding_types::texture_2d;
+    use bevy::render::render_resource::{
+        BindGroupLayoutDescriptor, BindGroupLayoutEntries, ShaderStages, TextureSampleType,
+    };
+    BindGroupLayoutDescriptor::new(
+        "shaderpack pack quads",
+        &BindGroupLayoutEntries::single(ShaderStages::VERTEX, texture_2d(TextureSampleType::Uint)),
+    )
+}
+
 #[cfg(test)]
 mod water_sort_tests {
     use super::*;
-    use crate::renderer::mesh::{MeshBuf, PackedVertex};
+    use crate::terrain::mesh::{MeshBuf, PackedVertex};
 
     fn quad_at(mesh: &mut MeshBuf, x: f32) {
         let base = mesh.verts.len() as u32;
@@ -1202,7 +1215,7 @@ mod water_sort_tests {
 #[cfg(test)]
 mod upload_budget_tests {
     use super::*;
-    use crate::renderer::mesh::MeshBuf;
+    use crate::terrain::mesh::MeshBuf;
 
     fn upload(slot: u32, kib: usize) -> TerrainOp {
         TerrainOp::Upload {

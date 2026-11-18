@@ -496,7 +496,7 @@ mod tests {
                     &pack.name,
                     false,
                     None,
-                    crate::renderer::dimension::Dimension::Overworld,
+                    crate::client::dimension::Dimension::Overworld,
                 )
             }) {
                 for note in frame.notes.iter().take(3) {

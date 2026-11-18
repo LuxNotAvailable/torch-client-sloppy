@@ -597,7 +597,7 @@ impl RenderSpec {
 
     pub fn effective_light_mode(&self) -> LightMode {
         match self.light_mode() {
-            LightMode::Cardinal if !crate::renderer::lighting_enabled() => LightMode::Flat,
+            LightMode::Cardinal if !crate::terrain::lighting_enabled() => LightMode::Flat,
             mode => mode,
         }
     }
@@ -1394,7 +1394,7 @@ fn sync_entities(
         keep
     });
 
-    let dirs = diffuse_lights(crate::renderer::dimension::current());
+    let dirs = diffuse_lights(crate::client::dimension::current());
     let light = crate::client::worldsync::light_map().read();
     assets.lights.begin(&lightmap.current);
     assets.epoch = assets.epoch.wrapping_add(1);

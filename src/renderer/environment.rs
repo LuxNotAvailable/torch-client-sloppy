@@ -2,8 +2,8 @@ use bevy::prelude::Resource;
 
 use crate::util::biome_color::{BiomeEnv, ColorAttr, FloatAttr};
 
-use super::dimension::Dimension;
-use super::timeline::{Argb, Lerp, SkyState};
+use crate::client::dimension::Dimension;
+use crate::client::timeline::{Argb, Lerp, SkyState};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Bases {
@@ -19,7 +19,7 @@ pub struct Bases {
 
 impl Bases {
     pub fn for_dimension(dim: Dimension) -> Bases {
-        let timeline = super::timeline::datapack_bases();
+        let timeline = crate::client::timeline::datapack_bases();
         let overworld = matches!(dim, Dimension::Overworld);
         Bases {
             sky_color: if overworld {
@@ -330,7 +330,7 @@ pub fn apply_sky_flash(sky: &mut SkyState, flashing: bool) {
     let [r, g, b, a] = sky.sky_color.to_rgba_f32();
     let mix = |from: f32, to: f32| from + (to - from) * 0.22;
     let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u32;
-    sky.sky_color = super::timeline::Argb(
+    sky.sky_color = crate::client::timeline::Argb(
         byte(a) << 24 | byte(mix(r, 0.8)) << 16 | byte(mix(g, 0.8)) << 8 | byte(mix(b, 1.0)),
     );
     sky.sky_light_factor = 1.0;
@@ -561,7 +561,7 @@ mod tests {
 
     #[test]
     fn no_weather_changes_nothing() {
-        let before = super::super::timeline::sample(6000.0);
+        let before = crate::client::timeline::sample(6000.0);
         let mut after = before;
         apply_weather(&mut after, 0.0, 0.0);
         assert_eq!(before.sky_color, after.sky_color);
@@ -571,7 +571,7 @@ mod tests {
 
     #[test]
     fn full_rain_greys_the_sky() {
-        let mut sky = super::super::timeline::sample(6000.0);
+        let mut sky = crate::client::timeline::sample(6000.0);
         let clear = sky.sky_color;
         sky.star_brightness = 0.5;
         apply_weather(&mut sky, 1.0, 0.0);
@@ -582,7 +582,7 @@ mod tests {
 
     #[test]
     fn thunder_takes_over_from_rain() {
-        let base = super::super::timeline::sample(6000.0);
+        let base = crate::client::timeline::sample(6000.0);
         let mut both = base;
         apply_weather(&mut both, 1.0, 1.0);
         let mut thunder_only = base;
@@ -696,7 +696,7 @@ impl Default for Environment {
     fn default() -> Self {
         let bases = Bases::for_dimension(Dimension::Overworld);
         Environment {
-            sky: super::timeline::sample(0.0),
+            sky: crate::client::timeline::sample(0.0),
             fog_distance: bases.fog_distance,
             render_fog_distance: (115.2, 128.0),
             sky_fog_end: bases.sky_fog_end,
@@ -723,9 +723,9 @@ impl Environment {
     ) {
         let bases = Bases::for_dimension(dim);
 
-        let mut sky = super::timeline::sample_with(
+        let mut sky = crate::client::timeline::sample_with(
             ticks,
-            &super::timeline::TrackBases {
+            &crate::client::timeline::TrackBases {
                 sky_color: layer.sky_color,
                 fog_color: layer.fog_color,
                 cloud_color: bases.cloud_color,

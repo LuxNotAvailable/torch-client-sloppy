@@ -7,10 +7,10 @@ Searches skip data files (`.ignore`); use `rg --no-ignore` to reach them.
 
 Network (`eagler`/azalea, `protocol` hops) feeds `client` (packets, tick,
 `bus`). `client` updates the session and world. `play` predicts player
-actions. `entities` and `blockentities` turn state into models. `renderer`
-(Bevy/wgpu, `MC_RENDERER=wgpu`) or `vk` (native Vulkan, desktop default)
-draws them. `gui`
-draws screens and HUD and talks back through `client::bus`.
+actions. `entities` and `blockentities` turn state into models; `terrain`
+meshes chunk sections (on `client`'s worker). `renderer` (Bevy/wgpu,
+`MC_RENDERER=wgpu`) or `vk` (native Vulkan, desktop default) draws them.
+`gui` draws screens and HUD and talks back through `client::bus`.
 
 ## `src/`
 
@@ -20,7 +20,7 @@ draws screens and HUD and talks back through `client::bus`.
 | `audio` | sound engine, categories, music, ambience, subtitles | `mod.rs` |
 | `blockentities` | block entity models (`render/`) and client sim (`sim/`) | `mod.rs` |
 | `blocks` | blockstate registry, model baking, per-state `info` | `info.rs`, `bake.rs` |
-| `client` | connection, packet handlers, game tick, GUI bus, chunk meshing worker | `tick.rs`, `bus.rs`, `packets.rs` |
+| `client` | connection, packet handlers, game tick, GUI bus, chunk meshing worker, dimension types, sky timelines | `tick.rs`, `bus.rs`, `packets.rs` |
 | `diag` | logging, profiler (`prof_span!`), perf reports, watchdog | `perf_report.rs` |
 | `eagler` | Eaglercraft websocket transport, server query | `mod.rs` |
 | `entities` | entity state, kind facts, models (`models/` by family), rigs, posing | `mod.rs`, `facts.rs` |
@@ -34,7 +34,8 @@ draws screens and HUD and talks back through `client::bus`.
 | `protocol` | multi-version support: packet tables, id remaps, hops | `hop.rs` (recipe at top) |
 | `renderer` | Bevy/wgpu renderer: terrain, entities, sky, post, shader-pack draw | `systems.rs`, `terrain.rs` |
 | `resourcepacks` | pack list, mounting, Modrinth, Torch Default pack | `mod.rs`, `TORCH_DEFAULT_PACK.md` |
-| `shaderpack` | Iris/OptiFine pack loading: properties, preprocess, programs | `pipeline.rs` |
+| `shaderpack` | Iris/OptiFine pack loading: properties, preprocess, programs, pack block ids and vertex data | `pipeline.rs`, `packvertex.rs` |
+| `terrain` | section meshing for both renderers: block geometry, light, CTM, vertex layout, cave visibility, block animations | `mod.rs`, `mesh.rs` |
 | `text` | fonts, glyph layout, text components | `mod.rs` |
 | `util` | vanilla-parity helpers (`mth`, `javarandom`), particles, packs, zip | `mth.rs` |
 | `vk` | native Vulkan renderer and `vkview` | `mod.rs`, `live.rs` |

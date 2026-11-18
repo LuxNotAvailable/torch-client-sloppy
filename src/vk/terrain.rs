@@ -39,8 +39,8 @@ use super::terrain_dump::{Record, Replay, Section};
 use super::test_scene::View;
 use super::upload::Uploads;
 use super::{Context, SetupError};
-use crate::renderer::mesh::PackedVertex;
-use crate::renderer::visgraph::VisibilitySet;
+use crate::terrain::mesh::PackedVertex;
+use crate::terrain::visgraph::VisibilitySet;
 
 const NEAR: f32 = 0.05;
 
@@ -1661,7 +1661,7 @@ impl TerrainScene {
                 ),
                 None => (indices, 0),
             };
-            let plain_verts: &[crate::renderer::mesh::PackedVertex] = match &packed {
+            let plain_verts: &[crate::terrain::mesh::PackedVertex] = match &packed {
                 Some(p) => &p.verts,
                 None => &section.verts,
             };
@@ -2076,7 +2076,7 @@ impl TerrainScene {
     fn fill_visibility(&mut self, eye: Vec3) {
         let here = IVec3::new(
             (eye.x / 16.0).floor() as i32,
-            crate::renderer::occlusion::section_y(eye.y),
+            crate::terrain::cave::section_y(eye.y),
             (eye.z / 16.0).floor() as i32,
         );
         self.frames_since_fill += 1;
@@ -2095,7 +2095,7 @@ impl TerrainScene {
             y_hi = y_hi.max(y);
         }
         let vis = &self.vis;
-        let reached = crate::renderer::occlusion::flood_fill(
+        let reached = crate::terrain::cave::flood_fill(
             (here.x, here.y, here.z),
             radius.min(64),
             y_lo,
@@ -3243,7 +3243,7 @@ mod tests {
 /// Terrain push params: hybrid leaves' fade (distance in chunks, 0 for
 /// none; the camera's chunk) and the water alpha.
 fn leaf_fade(water_alpha: f32) -> [f32; 4] {
-    let (mode, distance, _, (cx, cz)) = crate::renderer::mesh::leaf_options();
+    let (mode, distance, _, (cx, cz)) = crate::terrain::mesh::leaf_options();
     // Fast: -1 (every leaf filled); hybrid: the distance; fancy: 0.
     let d = match mode {
         1 => -1.0,
@@ -3264,11 +3264,11 @@ impl TerrainScene {
         slot: usize,
     ) -> Result<(), SetupError> {
         let rows =
-            self.atlas.extent.height * crate::renderer::ATLAS_COLS / self.atlas.extent.width.max(1);
+            self.atlas.extent.height * crate::terrain::ATLAS_COLS / self.atlas.extent.width.max(1);
         // Nothing animating yet: the header alone (no shift).
-        let table = crate::renderer::block_anim::current().map_or_else(
+        let table = crate::terrain::block_anim::current().map_or_else(
             || vec![rows, 0],
-            |set| set.table(crate::renderer::block_anim::tick_now(), rows),
+            |set| set.table(crate::terrain::block_anim::tick_now(), rows),
         );
         let bytes = (table.len() * 4) as u64;
         if self.anim.len() <= slot {
@@ -3322,14 +3322,14 @@ impl TerrainScene {
         frame: u64,
         slot: usize,
     ) -> Result<(), SetupError> {
-        let tick = crate::renderer::block_anim::tick_now();
+        let tick = crate::terrain::block_anim::tick_now();
         let (Some(pipes), Some(Some((_, table_index)))) = (self.pipes, self.anim.get(slot)) else {
             return Ok(());
         };
         if tick == self.anim_tick {
             return Ok(());
         }
-        let Some(set) = crate::renderer::block_anim::current() else {
+        let Some(set) = crate::terrain::block_anim::current() else {
             return Ok(());
         };
         let list_at = 2 + set.tile_count() * 2;
@@ -3340,7 +3340,7 @@ impl TerrainScene {
             return Ok(());
         }
         self.anim_tick = tick;
-        let px = self.atlas.extent.width / crate::renderer::ATLAS_COLS;
+        let px = self.atlas.extent.width / crate::terrain::ATLAS_COLS;
         let bytes = u64::from(count * px * px * 4);
         if self
             .anim_blends
@@ -3421,8 +3421,8 @@ impl TerrainScene {
                             layer_count: 1,
                         },
                         image_offset: vk::Offset3D {
-                            x: ((spare % crate::renderer::ATLAS_COLS) * px) as i32,
-                            y: ((spare / crate::renderer::ATLAS_COLS) * px) as i32,
+                            x: ((spare % crate::terrain::ATLAS_COLS) * px) as i32,
+                            y: ((spare / crate::terrain::ATLAS_COLS) * px) as i32,
                             z: 0,
                         },
                         image_extent: vk::Extent3D {

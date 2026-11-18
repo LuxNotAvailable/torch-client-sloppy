@@ -4,7 +4,7 @@ use azalea::block::BlockTrait;
 
 use crate::TEXTURE_MAP;
 use crate::blocks::rand::ShapeOffset;
-use crate::renderer::{BlockGeom, RenderedBlock, TintKind};
+use crate::terrain::{BlockGeom, RenderedBlock, TintKind};
 
 fn tex(name: &str) -> u32 {
     TEXTURE_MAP

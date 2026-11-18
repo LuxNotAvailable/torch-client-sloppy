@@ -547,7 +547,7 @@ impl LightWorker {
         // Lighting off (Video Settings): nothing is lit, so nothing is
         // propagated or kept. Chunks still pass on to be meshed (at full
         // brightness); turning lighting on reloads them, which lights them.
-        if !crate::renderer::lighting_enabled() {
+        if !crate::terrain::lighting_enabled() {
             if level.is_some() || view.is_some() {
                 *level = None;
                 *view = None;

@@ -264,8 +264,8 @@ impl FrameValues {
             sun_position: celestial(inputs.sun_angle),
             moon_position: celestial(inputs.moon_angle),
             up_position: view_rotation.transform_vector3(Vec3::new(0.0, 100.0, 0.0)),
-            end_flash: if crate::renderer::dimension::current()
-                == crate::renderer::dimension::Dimension::End
+            end_flash: if crate::client::dimension::current()
+                == crate::client::dimension::Dimension::End
             {
                 crate::renderer::packdraw::endflash::at(inputs.day_ticks)
             } else {
@@ -401,9 +401,9 @@ impl FrameValues {
             // Vanilla's fog is linear: GL_LINEAR.
             B::FogMode => Value::Int(0x2601),
             // Vanilla's cloud level; NaN where the dimension has no clouds.
-            B::CloudHeight => Value::Float(match crate::renderer::dimension::current() {
-                crate::renderer::dimension::Dimension::Overworld => {
-                    crate::renderer::timeline::CLOUD_HEIGHT
+            B::CloudHeight => Value::Float(match crate::client::dimension::current() {
+                crate::client::dimension::Dimension::Overworld => {
+                    crate::client::timeline::CLOUD_HEIGHT
                 }
                 _ => f32::NAN,
             }),

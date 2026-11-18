@@ -39,7 +39,7 @@ pub(super) fn draw_particles(
         return;
     }
 
-    let dim = crate::renderer::dimension::current();
+    let dim = crate::client::dimension::current();
     let dirs = diffuse_lights(dim);
     let terrain_atlas = particle_atlas(&chunk_material, &standard);
     let item_atlas = gui_assets.as_ref().map(|a| a.image.clone());
@@ -524,7 +524,7 @@ pub(super) fn tint_ratio(
     pos: [i32; 3],
     world: Option<&azalea_world::World>,
 ) -> [f32; 3] {
-    use crate::renderer::TintKind;
+    use crate::terrain::TintKind;
     use azalea::block::BlockTrait;
     use azalea_registry::DataRegistry;
 

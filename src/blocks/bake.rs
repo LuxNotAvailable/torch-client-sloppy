@@ -4,7 +4,7 @@ use crate::items::model::{
     Assets, Elem, FaceDef, Resolved, corner_uv, default_face_uv, face_positions,
 };
 use crate::items::raster;
-use crate::renderer::{ATLAS_COLS, TILE_PX};
+use crate::terrain::{ATLAS_COLS, TILE_PX};
 
 use super::rotation::{self, Mat3};
 use super::state::{ModelRef, Rot, Slot};
@@ -54,7 +54,7 @@ impl BakedQuad {
         if self.shaded {
             cardinal[self.face as usize]
         } else {
-            cardinal[crate::renderer::dimension::UP]
+            cardinal[crate::client::dimension::UP]
         }
     }
 }

@@ -7,7 +7,7 @@ use super::GPU_LABEL;
 use super::compile::{self, Frame, ProgramKind};
 use super::sources::TextureSource;
 use super::uniforms;
-use crate::renderer::dimension::Dimension;
+use crate::client::dimension::Dimension;
 use crate::renderer::terrain_pool::TerrainTier;
 use crate::shaderpack::directives::{Constants, Targets};
 use crate::shaderpack::expressions::Customs;
@@ -78,7 +78,7 @@ pub(crate) struct Installed {
     pub(crate) used_targets: u16,
     pub(crate) used_shadow: u8,
     pub(crate) images: Vec<super::images::CustomTexture>,
-    pub(crate) block_ids: Option<Arc<crate::renderer::packvertex::BlockIds>>,
+    pub(crate) block_ids: Option<Arc<crate::shaderpack::packvertex::BlockIds>>,
     pub(crate) custom_images: Vec<crate::shaderpack::customimages::CustomImage>,
     pub(crate) buffers: Vec<crate::shaderpack::customimages::BufferObject>,
     pub(crate) entity_ids: std::collections::HashMap<String, i32>,
@@ -220,7 +220,7 @@ pub(crate) fn sync_compiled_pack(
     let revision = gui.shaderpacks.revision();
     let editing = gui.screen == crate::gui::Screen::ShaderOptions;
     let direct = !tier.indirect;
-    let dimension = crate::renderer::dimension::current();
+    let dimension = crate::client::dimension::current();
 
     if let Some(running) = pending.as_mut() {
         let current = Some(&running.name) == wanted.as_ref()
@@ -303,7 +303,7 @@ pub(crate) fn reject(generation: u32) {
 pub(crate) fn sync_pack_vertices(
     compiled: Option<Res<CompiledPack>>,
     shared: Res<crate::renderer::systems::Shared>,
-    mut published: Local<Option<Arc<crate::renderer::packvertex::BlockIds>>>,
+    mut published: Local<Option<Arc<crate::shaderpack::packvertex::BlockIds>>>,
 ) {
     let rejected = REJECTED.load(std::sync::atomic::Ordering::Acquire);
     let live = compiled
@@ -314,7 +314,7 @@ pub(crate) fn sync_pack_vertices(
         c.installed.entities[super::compile::EntityKind::ShadowCaster.index()].is_some()
             && (casters.player || casters.entities)
     });
-    crate::renderer::packvertex::set_player_shadow(player_shadow);
+    crate::shaderpack::packvertex::set_player_shadow(player_shadow);
     let wanted = live.and_then(|c| c.installed.block_ids.clone());
     let remesh = match (published.as_ref(), wanted.as_ref()) {
         (None, None) => return,
@@ -322,7 +322,7 @@ pub(crate) fn sync_pack_vertices(
         (Some(old), Some(new)) => old != new,
         _ => true,
     };
-    crate::renderer::packvertex::set_current(wanted.clone());
+    crate::shaderpack::packvertex::set_current(wanted.clone());
     *published = wanted;
     if remesh {
         let _ = &shared;

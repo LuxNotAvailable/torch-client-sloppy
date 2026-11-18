@@ -6,7 +6,7 @@
 //!
 //! `sections.bin`: the magic `TVKD`, a version, then records: origin
 //! (3 × i32), layer (u8: 0 opaque, 1 translucent, `DROPPED` for a column
-//! unloaded), the section's visibility set (u64, `renderer::visgraph`),
+//! unloaded), the section's visibility set (u64, `terrain::visgraph`),
 //! vertex, index and cutout index counts (3 × u32), the 20-byte vertices,
 //! then the indices and cutout indices (u32 each). A section stored again
 //! (re-meshed) appears again, empty layers too, so replaying the records in
@@ -16,8 +16,8 @@
 use std::io::Write;
 use std::sync::Mutex;
 
-use crate::renderer::mesh::{MeshBuf, PackedVertex};
-use crate::renderer::visgraph::VisibilitySet;
+use crate::terrain::mesh::{MeshBuf, PackedVertex};
+use crate::terrain::visgraph::VisibilitySet;
 
 pub const MAGIC: &[u8; 4] = b"TVKD";
 /// 4: each record also carries its pack quads (6.3).

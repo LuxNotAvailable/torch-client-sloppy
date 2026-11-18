@@ -1,5 +1,5 @@
-use super::dimension::Dimension;
-use super::timeline::Argb;
+use crate::client::dimension::Dimension;
+use crate::client::timeline::Argb;
 
 #[derive(Clone, Copy, Default)]
 pub struct State {
@@ -25,7 +25,7 @@ fn rgb(argb: Argb) -> [f32; 3] {
 impl State {
     pub fn sample(
         dim: Dimension,
-        sky: &super::timeline::SkyState,
+        sky: &crate::client::timeline::SkyState,
         flicker: f32,
         gamma: f32,
     ) -> Self {
@@ -54,7 +54,7 @@ pub fn levels_at(eye: [f32; 3]) -> (u8, u8) {
 }
 
 pub fn resolved_levels(levels: (u8, u8)) -> (u8, u8) {
-    if crate::renderer::lighting_enabled() {
+    if crate::terrain::lighting_enabled() {
         levels
     } else {
         (15, 15)
@@ -182,7 +182,7 @@ fn not_gamma(color: [f32; 3]) -> [f32; 3] {
 
 pub fn texel(state: &State, block: u32, sky: u32) -> [f32; 3] {
     // Lighting off is fullbright: every level shows a texture as it is.
-    if !crate::renderer::lighting_enabled() {
+    if !crate::terrain::lighting_enabled() {
         return [1.0; 3];
     }
     let block_level = block as f32 / 15.0;
@@ -248,7 +248,7 @@ mod tests {
     fn noon() -> State {
         State::sample(
             Dimension::Overworld,
-            &crate::renderer::timeline::sample(6000.0),
+            &crate::client::timeline::sample(6000.0),
             0.0,
             0.5,
         )
@@ -271,7 +271,7 @@ mod tests {
         let nether = texel(
             &State::sample(
                 Dimension::Nether,
-                &crate::renderer::timeline::sample(6000.0),
+                &crate::client::timeline::sample(6000.0),
                 0.0,
                 0.5,
             ),
@@ -287,7 +287,7 @@ mod tests {
     fn the_nether_ignores_sky_light() {
         let s = State::sample(
             Dimension::Nether,
-            &crate::renderer::timeline::sample(6000.0),
+            &crate::client::timeline::sample(6000.0),
             0.0,
             0.5,
         );
@@ -300,7 +300,7 @@ mod tests {
         let night = texel(
             &State::sample(
                 Dimension::Overworld,
-                &crate::renderer::timeline::sample(18000.0),
+                &crate::client::timeline::sample(18000.0),
                 0.0,
                 0.5,
             ),
@@ -316,7 +316,7 @@ mod tests {
         let c = texel(
             &State::sample(
                 Dimension::Overworld,
-                &crate::renderer::timeline::sample(18000.0),
+                &crate::client::timeline::sample(18000.0),
                 0.0,
                 0.5,
             ),

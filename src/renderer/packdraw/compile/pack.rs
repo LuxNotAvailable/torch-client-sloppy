@@ -1,6 +1,6 @@
 use super::super::images::CustomTextures;
 use super::AlphaTest;
-use crate::renderer::dimension::Dimension;
+use crate::client::dimension::Dimension;
 use crate::shaderpack::options::{self, Options, Values};
 use crate::shaderpack::{include, preprocess, programs, properties};
 use crate::util::pack::Source;

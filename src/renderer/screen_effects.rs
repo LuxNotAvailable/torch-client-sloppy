@@ -291,8 +291,8 @@ fn update(
     let lm = &lightmap.current;
     let level = f32::from(block).max(f32::from(sky) * lm.sky_factor);
     // Dimension `ambient_light`: only the nether's is non-zero.
-    let ambient = match super::dimension::current() {
-        super::dimension::Dimension::Nether => 0.1,
+    let ambient = match crate::client::dimension::current() {
+        crate::client::dimension::Dimension::Nether => 0.1,
         _ => 0.0,
     };
     let target = (1.0 - brightness(level, ambient)).clamp(0.0, 1.0);

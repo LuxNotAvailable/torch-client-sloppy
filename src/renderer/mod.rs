@@ -6,8 +6,6 @@ pub mod antialias;
 pub(crate) mod atlas;
 pub(crate) mod block_anim;
 pub mod clouds;
-pub(crate) mod ctm;
-pub mod dimension;
 pub mod entity_material;
 pub mod environment;
 pub mod esp_material;
@@ -18,17 +16,12 @@ pub mod input;
 pub mod intent;
 pub mod inventory_figure;
 pub mod item_assets;
-pub mod lighter;
 pub mod lightmap;
 pub mod maps;
-pub(crate) mod mesh;
 pub mod occlusion;
-mod occupancy;
 pub mod overlays;
 #[cfg(feature = "shader_support")]
 pub mod packdraw;
-#[cfg(feature = "shader_support")]
-pub mod packvertex;
 pub mod panorama;
 pub mod player_model;
 pub mod post;
@@ -44,24 +37,16 @@ pub mod systems;
 pub mod terrain;
 pub mod terrain_pool;
 pub mod tethers;
-pub mod timeline;
 pub mod view_bob;
-pub mod visgraph;
 pub mod weather;
 pub mod world_text;
 
 pub use anim::{AnimInput, Armor, HeldItem, HumanoidAnim};
 pub use atlas::{Textures, build_block_atlas, placeholder_atlas, texture_is_opaque};
 pub use frame_view::{FrameView, FrameViewSystems};
-pub use mesh::{
-    MeshBuf, biome_blend, build_section_mesh, lighting_enabled, set_biome_blend,
-    set_lighting_enabled, set_smooth_lighting,
-};
-pub use occupancy::Occupancy;
-pub use systems::{Shared, run};
 
-pub const ATLAS_COLS: u32 = 16;
-pub const TILE_PX: u32 = 16;
+use crate::terrain::ATLAS_COLS;
+pub use systems::{Shared, run};
 
 pub fn embedded_path(path: &str) -> String {
     let crate_name = module_path!().split(':').next().unwrap_or("torch_client");
@@ -97,64 +82,6 @@ pub(crate) fn rgba_image(
     );
     image.sampler = bevy::image::ImageSampler::nearest();
     image
-}
-
-#[derive(Clone, Debug)]
-pub enum BlockGeom {
-    Model(std::sync::Arc<crate::blocks::BakedBlock>),
-    Fluid {
-        amount: u8,
-        still: u32,
-        flow: u32,
-        lava: bool,
-    },
-}
-
-pub fn fluid_surface(amount: u8) -> f32 {
-    amount as f32 / 9.0
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub enum TintKind {
-    #[default]
-    None,
-    Grass,
-    Foliage,
-    DryFoliage,
-    Redstone(u8),
-    /// A melon or pumpkin stem by its age (0 to 7), or `ATTACHED` for an
-    /// attached stem (vanilla's `BlockTintSources.stem` and its constant).
-    Stem(u8),
-    Water,
-    /// A modded block, coloured by its raw state id so blocks tell apart.
-    Modded(u32),
-}
-
-#[derive(Clone)]
-pub struct RenderedBlock {
-    pub geom: BlockGeom,
-    pub is_solid: bool,
-    pub waterlogged: bool,
-    pub full_cube: bool,
-    pub emission: u8,
-    pub emissive: bool,
-    pub cull_group: u32,
-    pub tint_kind: TintKind,
-    pub offset: crate::blocks::rand::ShapeOffset,
-    pub state: u16,
-    pub translucent: bool,
-    /// Its sides' coverage, an index into `blocks::shape::shapes`; 0 for
-    /// none.
-    pub shape: u32,
-}
-
-pub struct PendingSection {
-    pub chunk_x: i32,
-    pub chunk_z: i32,
-    pub sec_y: i32,
-    pub opaque: MeshBuf,
-    pub water: MeshBuf,
-    pub vis: visgraph::VisibilitySet,
 }
 
 #[derive(bevy::prelude::States, Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]

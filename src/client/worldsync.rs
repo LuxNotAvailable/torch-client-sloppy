@@ -346,17 +346,17 @@ pub(crate) fn set_dimension(
     world: &azalea::local_player::WorldHolder,
     common: &azalea_protocol::packets::common::CommonPlayerSpawnInfo,
 ) {
-    use crate::renderer::dimension::Dimension;
+    use crate::client::dimension::Dimension;
 
-    crate::renderer::dimension::set_current(Dimension::from_path(common.dimension.path()));
-    crate::renderer::dimension::set_sea_level(common.sea_level);
+    crate::client::dimension::set_current(Dimension::from_path(common.dimension.path()));
+    crate::client::dimension::set_sea_level(common.sea_level);
     let floor = common.is_flat.then(|| {
         let world = world.shared.read();
         common
             .dimension_type(&world.registries)
             .map_or(-64, |(_, kind)| kind.min_y)
     });
-    crate::renderer::dimension::set_horizon(floor);
+    crate::client::dimension::set_horizon(floor);
 }
 
 #[cfg(test)]

@@ -54,7 +54,7 @@ pub(crate) fn sample(bot: &Client, eye: [f64; 3]) -> Option<BiomeLayer> {
     if !crate::util::biome_color::any_biome_env() {
         return None;
     }
-    let bases = Bases::for_dimension(crate::renderer::dimension::current());
+    let bases = Bases::for_dimension(crate::client::dimension::current());
 
     let quart = [
         eye[0] * 0.25 - 0.5,

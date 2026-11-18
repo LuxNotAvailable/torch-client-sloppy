@@ -32,8 +32,9 @@ pub const VANILLA_FOV_DEGREES: f32 = 70.0;
 
 use super::frame_view::{FrameView, FrameViewSystems};
 use super::terrain_pool::{TerrainOp, TerrainOps};
-use super::visgraph::VisibilitySet;
-use super::{AppState, PendingSection};
+use crate::terrain::visgraph::VisibilitySet;
+use super::AppState;
+use crate::terrain::PendingSection;
 use crate::session::SharedMutex;
 use crate::session::SharedState;
 
@@ -73,7 +74,7 @@ fn update_environment(
     let ticks = view.day_ticks;
     let eye = view.tick_eye();
 
-    let dim = super::dimension::current();
+    let dim = crate::client::dimension::current();
     let bases = super::environment::Bases::for_dimension(dim);
     let layer = view
         .biome
@@ -122,7 +123,7 @@ fn update_lightmap(
 
     let gamma = gui.options.gamma as f32 / 100.0;
     let lm =
-        super::lightmap::State::sample(super::dimension::current(), &env.sky, state.flicker, gamma);
+        super::lightmap::State::sample(crate::client::dimension::current(), &env.sky, state.flicker, gamma);
     state.current = lm;
     super::lightmap::write_image_data(&lm, &mut pixels.data);
 }
@@ -185,7 +186,7 @@ impl ChunkIndex {
         cz: i32,
         sec_y: i32,
         vis: VisibilitySet,
-        meshes: [super::mesh::MeshBuf; 2],
+        meshes: [crate::terrain::mesh::MeshBuf; 2],
         ops: &TerrainOps,
     ) {
         let origin = [cx * 16, sec_y, cz * 16];
@@ -2060,7 +2061,7 @@ fn sync_smooth_lighting(state: Res<crate::gui::GuiState>, mut last: Local<Option
     }
     let had_previous_value = last.is_some();
     *last = Some(wanted);
-    crate::renderer::set_smooth_lighting(wanted);
+    crate::terrain::set_smooth_lighting(wanted);
     // Meshed chunks keep their old lighting until meshed again.
     if had_previous_value {
         crate::client::bus::request(crate::client::bus::ClientRequest::ReloadChunks);
@@ -2074,7 +2075,7 @@ fn sync_leaf_options(
     camera: Query<&GlobalTransform, With<WorldCamera>>,
     mut last: Local<Option<(u32, u32, bool)>>,
 ) {
-    use crate::renderer::mesh as m;
+    use crate::terrain::mesh as m;
     let o = &state.options;
     let wanted = (o.leaves, o.leaf_distance, o.leaf_backs);
     let (mode, distance, backs, old_camera) = m::leaf_options();
@@ -2107,7 +2108,7 @@ fn sync_leaf_culling(state: Res<crate::gui::GuiState>, mut last: Local<Option<u3
     }
     let had_previous_value = last.is_some();
     *last = Some(wanted);
-    crate::renderer::mesh::set_leaf_culling(wanted as u8);
+    crate::terrain::mesh::set_leaf_culling(wanted as u8);
     if had_previous_value {
         crate::client::bus::request(crate::client::bus::ClientRequest::ReloadChunks);
     }
@@ -2122,7 +2123,7 @@ fn sync_biome_blend(state: Res<crate::gui::GuiState>, mut last: Local<Option<u32
     }
     let had_previous_value = last.is_some();
     *last = Some(wanted);
-    crate::renderer::set_biome_blend(wanted as u8);
+    crate::terrain::set_biome_blend(wanted as u8);
     if had_previous_value {
         crate::client::bus::request(crate::client::bus::ClientRequest::ReloadChunks);
     }
@@ -2139,7 +2140,7 @@ fn sync_lighting_enabled(
     }
     let had_previous_value = last.is_some();
     *last = Some(wanted);
-    crate::renderer::set_lighting_enabled(wanted);
+    crate::terrain::set_lighting_enabled(wanted);
     if had_previous_value {
         crate::client::bus::request(crate::client::bus::ClientRequest::ReloadChunks);
     }

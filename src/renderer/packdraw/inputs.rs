@@ -398,8 +398,8 @@ pub(crate) fn gather_inputs(
             crate::util::biome_color::downfall(row),
         )
     });
-    let dimension = crate::renderer::dimension::current();
-    let sea_level = crate::renderer::dimension::sea_level();
+    let dimension = crate::client::dimension::current();
+    let sea_level = crate::client::dimension::sea_level();
     let precipitation = climate.map_or(0, |(env, _)| {
         use crate::renderer::environment::{Precipitation, precipitation_at};
         match precipitation_at(env, pos.y.floor() as i32, sea_level) {

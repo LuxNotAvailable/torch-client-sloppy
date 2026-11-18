@@ -10,7 +10,7 @@ use crate::shaderpack::{discover, features, include, properties};
 use super::images::{CustomTexture, CustomTextures};
 use super::sources::TextureSource;
 use super::uniforms::MatrixSet;
-use crate::renderer::dimension::Dimension;
+use crate::client::dimension::Dimension;
 
 mod kinds;
 mod native;
@@ -168,7 +168,7 @@ pub(crate) struct Frame {
     pub(crate) used_targets: u16,
     pub(crate) used_shadow: u8,
     pub(crate) images: Vec<CustomTexture>,
-    pub(crate) block_ids: Option<std::sync::Arc<crate::renderer::packvertex::BlockIds>>,
+    pub(crate) block_ids: Option<std::sync::Arc<crate::shaderpack::packvertex::BlockIds>>,
     pub(crate) custom_images: Vec<crate::shaderpack::customimages::CustomImage>,
     pub(crate) buffers: Vec<crate::shaderpack::customimages::BufferObject>,
     pub(crate) entity_ids: std::collections::HashMap<String, i32>,
@@ -242,7 +242,7 @@ pub(crate) fn compile_frame(
         custom_images,
         buffers,
     };
-    let pack_lighting = crate::renderer::packvertex::PackLighting {
+    let pack_lighting = crate::shaderpack::packvertex::PackLighting {
         old_lighting: true_key(&props.other, "oldLighting", false),
         separate_ao: true_key(&props.other, "separateAo", false),
     };
@@ -550,7 +550,7 @@ pub(crate) fn compile_frame(
             })
             .unwrap_or_default();
         frame.block_ids = Some(std::sync::Arc::new(
-            crate::renderer::packvertex::BlockIds::build(&entries, pack_lighting),
+            crate::shaderpack::packvertex::BlockIds::build(&entries, pack_lighting),
         ));
     }
     Ok(frame)

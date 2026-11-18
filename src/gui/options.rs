@@ -1308,7 +1308,7 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         f.tip(&tips::AA_LEVEL);
         #[cfg(feature = "shader_support")]
         if matches!(f.hovered_tip(), Some(t) if *t == tips::ANTIALIASING || *t == tips::AA_LEVEL)
-            && crate::renderer::packvertex::active()
+            && crate::shaderpack::packvertex::active()
             && matches!(
                 o.antialiasing.mode,
                 crate::renderer::antialias::AaMode::Msaa

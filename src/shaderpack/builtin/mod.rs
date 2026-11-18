@@ -43,7 +43,7 @@ pub(crate) const FILES: &[(&str, &str)] = files![
 
 #[cfg(test)]
 mod tests {
-    use crate::renderer::dimension::Dimension;
+    use crate::client::dimension::Dimension;
     use crate::renderer::packdraw::compile::compile_frame;
 
     #[test]

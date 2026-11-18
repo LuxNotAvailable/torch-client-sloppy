@@ -1027,7 +1027,7 @@ fn write(
             (t.to_matrix(), fov)
         })
         .unwrap_or((Mat4::IDENTITY, 70f32.to_radians()));
-    let player_shadow = crate::renderer::packvertex::player_shadow();
+    let player_shadow = crate::shaderpack::packvertex::player_shadow();
     // Whether a mesh sits in the local player's rig.
     let under_local_rig = |mut at: Entity| {
         for _ in 0..8 {

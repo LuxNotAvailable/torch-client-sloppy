@@ -85,11 +85,11 @@ impl ProcessGpu {
         queue.submit([encoder.finish()]);
         for (tile, tile_levels) in tiles.iter() {
             let (tx, ty) = (
-                tile % crate::renderer::ATLAS_COLS,
-                tile / crate::renderer::ATLAS_COLS,
+                tile % crate::terrain::ATLAS_COLS,
+                tile / crate::terrain::ATLAS_COLS,
             );
             for (level, bytes) in tile_levels.iter().enumerate().take(levels as usize) {
-                let side = (size.width / crate::renderer::ATLAS_COLS) >> level;
+                let side = (size.width / crate::terrain::ATLAS_COLS) >> level;
                 queue.write_texture(
                     wgpu::TexelCopyTextureInfo {
                         texture: &texture,
@@ -134,7 +134,7 @@ impl ProcessGpu {
 /// the pack's copy of the atlas, at every mip level, as vanilla uploads
 /// animation frames. The game's own atlas keeps its frames as they are.
 fn animate(pack: &mut PackAtlas, device: &RenderDevice, queue: &RenderQueue, atlas: &GpuImage) {
-    use crate::renderer::block_anim;
+    use crate::terrain::block_anim;
     let tick = block_anim::tick_now();
     if pack.animated_at == Some(tick) {
         return;
@@ -165,7 +165,7 @@ fn animate(pack: &mut PackAtlas, device: &RenderDevice, queue: &RenderQueue, atl
     }
     let size = atlas.texture.size();
     let levels = atlas.texture.mip_level_count();
-    let tile_px = size.width / crate::renderer::ATLAS_COLS;
+    let tile_px = size.width / crate::terrain::ATLAS_COLS;
     let mut encoder =
         device
             .wgpu_device()
@@ -173,8 +173,8 @@ fn animate(pack: &mut PackAtlas, device: &RenderDevice, queue: &RenderQueue, atl
                 label: Some(gpu_label!("atlas animation")),
             });
     let origin = |tile: u16, side: u32| wgpu::Origin3d {
-        x: (u32::from(tile) % crate::renderer::ATLAS_COLS) * side,
-        y: (u32::from(tile) / crate::renderer::ATLAS_COLS) * side,
+        x: (u32::from(tile) % crate::terrain::ATLAS_COLS) * side,
+        y: (u32::from(tile) / crate::terrain::ATLAS_COLS) * side,
         z: 0,
     };
     for (index, frame) in changed {

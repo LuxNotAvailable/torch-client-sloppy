@@ -648,12 +648,12 @@ struct NativeCapture;
 /// Hands the mesher a pack's block ids and has the chunks re-meshed with
 /// its pack quads (`packdraw::install::sync_pack_vertices` does this for
 /// the game's own compile, which the native renderer doesn't make).
-fn publish_block_ids(ids: Option<std::sync::Arc<crate::renderer::packvertex::BlockIds>>) {
-    let old = crate::renderer::packvertex::current();
+fn publish_block_ids(ids: Option<std::sync::Arc<crate::shaderpack::packvertex::BlockIds>>) {
+    let old = crate::shaderpack::packvertex::current();
     if old.as_deref() == ids.as_deref() {
         return;
     }
-    crate::renderer::packvertex::set_current(ids);
+    crate::shaderpack::packvertex::set_current(ids);
     crate::client::bus::request(crate::client::bus::ClientRequest::ReloadChunks);
 }
 
@@ -969,7 +969,7 @@ impl Live {
         if let Some((_, old, _)) = self.pack.take() {
             old.destroy(&self.ctx, &self.memory);
         }
-        crate::renderer::packvertex::set_native_player_shadow(false);
+        crate::shaderpack::packvertex::set_native_player_shadow(false);
         let Some(name) = wanted else {
             // No pack: the mesher drops its pack quads.
             publish_block_ids(None);
@@ -999,7 +999,7 @@ impl Live {
                 // The mesher's pack quads (normals, block ids) for this pack,
                 // as the game's own compile would publish them.
                 publish_block_ids(screen.block_ids());
-                crate::renderer::packvertex::set_native_player_shadow(screen.casts_player_shadow());
+                crate::shaderpack::packvertex::set_native_player_shadow(screen.casts_player_shadow());
                 self.pack = Some((name, screen, extent));
                 self.pack_revision = revision;
             }

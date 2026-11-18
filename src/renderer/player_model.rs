@@ -1551,7 +1551,7 @@ fn sync_player_models(
         #[cfg(feature = "skins")]
         model: &assets,
     };
-    let dirs = diffuse_lights(crate::renderer::dimension::current());
+    let dirs = diffuse_lights(crate::client::dimension::current());
 
     let partial = view.partial;
     // The players of the tick being drawn, which `partial` is measured
@@ -1634,7 +1634,7 @@ fn sync_player_models(
     }
 
     #[cfg(feature = "shader_support")]
-    let pose_hidden = crate::renderer::packvertex::player_shadow();
+    let pose_hidden = crate::shaderpack::packvertex::player_shadow();
     #[cfg(not(feature = "shader_support"))]
     let pose_hidden = false;
     for ((id, feet, sample, worn), slot) in players.iter().zip(assign.iter()) {

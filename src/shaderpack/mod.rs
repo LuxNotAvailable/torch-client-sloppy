@@ -18,6 +18,7 @@ pub(crate) mod lang;
 pub(crate) mod literal;
 pub(crate) mod macros;
 pub(crate) mod options;
+pub(crate) mod packvertex;
 pub(crate) mod pipeline;
 pub(crate) mod preprocess;
 pub(crate) mod programs;

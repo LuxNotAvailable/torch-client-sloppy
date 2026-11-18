@@ -176,7 +176,7 @@ const VK_ANIM: &str = "vec2 iris_anim_shift() {
 pub(super) const TERRAIN_BEGIN: &str =
     "iris_Origin = iris_origin();\n    iris_Quad = iris_pack_quad();\n    ";
 
-const _: () = assert!(PACK_QUADS_SET == 2 && crate::renderer::packvertex::QUAD_ROW == 2048);
+const _: () = assert!(PACK_QUADS_SET == 2 && crate::shaderpack::packvertex::QUAD_ROW == 2048);
 
 /// The vertex prelude of an entity program. `skinned` is the variant for a
 /// GPU-posed rig's mesh: each vertex carries its part index, and the part's
@@ -381,7 +381,7 @@ pub(super) fn entity_varyings(fragment: &str, first: u32) -> (String, String, St
     (inputs, outputs, copies)
 }
 
-const _: () = assert!(crate::renderer::packvertex::UNMAPPED == 65535);
+const _: () = assert!(crate::shaderpack::packvertex::UNMAPPED == 65535);
 
 pub(crate) const SCREEN_PRELUDE: &str = "vec2 iris_corner() {\n    \
     return vec2(float((gl_VertexIndex << 1) & 2), float(gl_VertexIndex & 2));\n\

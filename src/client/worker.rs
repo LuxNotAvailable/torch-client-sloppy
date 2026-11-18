@@ -13,7 +13,7 @@ use azalea_world::{Chunk, World};
 use parking_lot::RwLock;
 
 use crate::ATLAS_ROWS;
-use crate::renderer::{self, Occupancy, PendingSection, RenderedBlock, build_section_mesh};
+use crate::terrain::{self, Occupancy, PendingSection, RenderedBlock, build_section_mesh};
 use crate::session::{SharedMutex, SideMutex};
 use crate::util::block_model::block_visual;
 
@@ -598,10 +598,10 @@ fn process_job(
         return None;
     }
 
-    renderer::mesh::set_fast_leaves(renderer::mesh::fast_leaves_for(
+    terrain::mesh::set_fast_leaves(terrain::mesh::fast_leaves_for(
         job.chunk_x,
         job.chunk_z,
-        renderer::mesh::leaf_options().3,
+        terrain::mesh::leaf_options().3,
     ));
     let (min_y, height, chunk_arc, neighbors, biomes) = {
         let world = LockWaits::take(timing, &mut waits.world, || job.world.read());
@@ -678,7 +678,7 @@ fn process_job(
         );
         fill_biome_quarts(occ, &chunk, min_y, x_base, z_base, &biomes);
     }
-    if crate::renderer::lighting_enabled() {
+    if crate::terrain::lighting_enabled() {
         let light = LockWaits::take(timing, &mut waits.light, || {
             crate::client::worldsync::light_map().read()
         });
@@ -715,7 +715,7 @@ fn process_job(
             cache,
             &biomes,
         );
-        if crate::renderer::biome_blend() > 0 {
+        if crate::terrain::biome_blend() > 0 {
             fill_biome_quarts(
                 occ,
                 &chunk,
@@ -727,7 +727,7 @@ fn process_job(
         }
     }
 
-    let atlas_rows = ATLAS_ROWS.get().copied().unwrap_or(renderer::TILE_PX);
+    let atlas_rows = ATLAS_ROWS.get().copied().unwrap_or(terrain::TILE_PX);
     let mut results: Vec<PendingSection> = Vec::with_capacity((sec_hi - sec_lo) as usize);
     // fill_occupancy has resolved every state in the window; from here the
     // cache is only read, so the mesher can borrow blocks instead of cloning them.
@@ -807,9 +807,9 @@ fn mesh_section<'c>(
     cache: &'c BlockCache,
     blocks: &mut Vec<(i32, i32, i32, &'c RenderedBlock)>,
 ) -> (
-    renderer::MeshBuf,
-    renderer::MeshBuf,
-    renderer::visgraph::VisibilitySet,
+    terrain::MeshBuf,
+    terrain::MeshBuf,
+    terrain::visgraph::VisibilitySet,
 ) {
     blocks.clear();
     if section.block_count != 0 {
@@ -839,7 +839,7 @@ fn mesh_section<'c>(
         }
     }
     let (opaque, water) = build_section_mesh(blocks, x_base, sec_y, z_base, atlas_rows, occ);
-    let vis = crate::renderer::visgraph::resolve(|lx, ly, lz| {
+    let vis = crate::terrain::visgraph::resolve(|lx, ly, lz| {
         occ.is_solid(x_base + lx as i32, sec_y + ly as i32, z_base + lz as i32)
     });
     (opaque, water, vis)
@@ -1036,10 +1036,10 @@ fn fill_occupancy(
                     }
                     if rb.is_solid
                         || (rb.cull_group == crate::util::block_model::LEAVES_CULL_GROUP
-                            && renderer::mesh::fast_leaves())
+                            && terrain::mesh::fast_leaves())
                     {
                         occ.set_solid(x, y, z);
-                    } else if let renderer::BlockGeom::Fluid { amount, lava, .. } = rb.geom {
+                    } else if let terrain::BlockGeom::Fluid { amount, lava, .. } = rb.geom {
                         occ.set_fluid(x, y, z, amount, lava);
                     } else if rb.waterlogged {
                         occ.set_fluid(x, y, z, 8, false);

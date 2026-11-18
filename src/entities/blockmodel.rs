@@ -59,7 +59,7 @@ impl QuadBuf {
     fn push(&mut self, quad: &BakedQuad) {
         let base = self.positions.len() as u32;
         let normal = quad.normal;
-        let shade = quad.shade(crate::renderer::dimension::current().cardinal());
+        let shade = quad.shade(crate::client::dimension::current().cardinal());
         for i in 0..4 {
             self.positions.push(quad.pos[i]);
             self.uvs.push(quad.uv[i]);

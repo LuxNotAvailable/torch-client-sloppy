@@ -24,7 +24,7 @@
 //!
 //! A corner's colour is `(tint × grey + 127) / 255` per channel.
 
-use crate::renderer::mesh::PackedVertex;
+use crate::terrain::mesh::PackedVertex;
 
 /// Indices from here up name packed corners: `PACKED_BASE + 4 × record +
 /// corner`. Must match `PACKED_BASE` in `shaders/terrain.slang`.
@@ -163,7 +163,7 @@ fn record_of(verts: &[PackedVertex], quad: &[u32]) -> Option<(Record, [u32; 4])>
             | ((block[2] as u32) << 10)
             | ((axis as u32) << 15)
             | (steps << 17)
-            | (u32::from(vs[0].light[2] == crate::renderer::mesh::MATERIAL_LEAF) << 25),
+            | (u32::from(vs[0].light[2] == crate::terrain::mesh::MATERIAL_LEAF) << 25),
         u32::from(u0) | (u32::from(u1) << 16),
         u32::from(v0) | (u32::from(v1) << 16),
         light(0) | (light(1) << 16),
@@ -224,7 +224,7 @@ pub fn unpack(record: &Record, corner: u32) -> PackedVertex {
         light: [
             light as u8,
             (light >> 8) as u8,
-            ((w0 >> 25) & 1) as u8 * crate::renderer::mesh::MATERIAL_LEAF,
+            ((w0 >> 25) & 1) as u8 * crate::terrain::mesh::MATERIAL_LEAF,
             0,
         ],
         color: [
