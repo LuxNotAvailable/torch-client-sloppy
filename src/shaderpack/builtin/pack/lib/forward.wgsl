@@ -40,6 +40,10 @@ fn vertex(input: IrisVertexIn) -> Varyings {
 @fragment
 fn fragment(v: Varyings) -> Lit {
     var c = textureSample(gtexture, gtexture_sampler, v.uv) * v.color;
+    let dpx = dpdx(v.player);
+    let dpy = dpdy(v.player);
+    let dux = dpdx(v.uv);
+    let duy = dpdy(v.uv);
     if (!iris_alpha_pass(c.a)) {
         discard;
     }
@@ -52,7 +56,7 @@ fn fragment(v: Varyings) -> Lit {
         let around = sky_color(normalize(vec3<f32>(v.player.x, 0.05, v.player.z)));
         lit = albedo * (direct_light() * 0.55 + above * 0.5 + around * 0.6 + vec3<f32>(0.01));
     } else {
-        let vis = shadow_visibility(v.player, n, 2u);
+        let vis = shadow_visibility(texel_point(v, dpx, dpy, dux, duy), n, 2u);
         lit = surface_light(albedo, n, v.light, vis, false);
     }
     var out: Lit;
@@ -60,4 +64,25 @@ fn fragment(v: Varyings) -> Lit {
     let hand = v.stage == MC_RENDER_STAGE_HAND_SOLID || v.stage == MC_RENDER_STAGE_HAND_TRANSLUCENT;
     out.texel = select(TEXEL_LIT, TEXEL_HAND, hand);
     return out;
+}
+
+/// Where the middle of the texture pixel drawn here lies on the surface, so
+/// shadows step texel by texel as on terrain. Found by stepping across the
+/// screen (exact on a flat face, however many pixels the texel spans);
+/// left where the step is unsure, at silhouettes or a degenerate mapping.
+fn texel_point(v: Varyings, dpx: vec3<f32>, dpy: vec3<f32>, dux: vec2<f32>, duy: vec2<f32>) -> vec3<f32> {
+    let atlas = vec2<f32>(textureDimensions(gtexture));
+    let want = (floor(v.uv * atlas) + 0.5) / atlas - v.uv;
+    let det = dux.x * duy.y - dux.y * duy.x;
+    if (abs(det) < 1e-14) {
+        return v.player;
+    }
+    let a = (want.x * duy.y - want.y * duy.x) / det;
+    let b = (dux.x * want.y - dux.y * want.x) / det;
+    let step = a * dpx + b * dpy;
+    // A texel is at most a block or so across on any model.
+    if (dot(step, step) > 1.0) {
+        return v.player;
+    }
+    return v.player + step;
 }
