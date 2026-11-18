@@ -8,7 +8,6 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use crate::gui::GuiState;
 use crate::renderer::AppState;
 use crate::renderer::hand::HandCamera;
-use crate::renderer::sky::SkyRoot;
 use crate::renderer::systems::WorldCamera;
 
 const PANORAMA_LAYER: usize = 3;
@@ -230,7 +229,6 @@ fn toggle_cameras(
         ),
     >,
     mut world: Query<&mut Camera, With<WorldCamera>>,
-    mut sky: Query<&mut Visibility, With<SkyRoot>>,
 ) {
     let in_menu = state.in_menu() || *app_state.get() != AppState::InGame;
 
@@ -247,16 +245,6 @@ fn toggle_cameras(
     }
     if let Ok(mut c) = world.single_mut() {
         set(&mut c, !in_menu);
-    }
-    if let Ok(mut visibility) = sky.single_mut() {
-        let want = if in_menu {
-            Visibility::Hidden
-        } else {
-            Visibility::Inherited
-        };
-        if *visibility != want {
-            *visibility = want;
-        }
     }
 }
 

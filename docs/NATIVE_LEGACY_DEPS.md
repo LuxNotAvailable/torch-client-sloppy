@@ -66,12 +66,12 @@ The whole capture reads Bevy render components: `Mesh3d`, `MeshMaterial3d<_>`, `
 | `player_model::LocalRigRoot` | `renderer/player_model.rs:1997` | `entity_dump.rs:1001` |
 | `tethers::WeatherLayer` | `renderer/tethers/mod.rs:196` | `entity_dump.rs:615` |
 | `blockentities::{BeRigNode, BeamNode}`, `particles::draw::ParticleBatch` (tags) | `src/blockentities`, `src/util/particles/draw.rs` | `entity_dump.rs:611–616` |
-| `sky::{SkyPart, SkyPartMaterial, SKY_SCALE}` | `renderer/sky.rs:16, 39, 194` | `entity_dump.rs:164, 620–627, 651, 980` |
-| `clouds::CloudLayer` + `StandardMaterial` | `renderer/clouds.rs:140` | `entity_dump.rs:629–633, 650, 979` |
+| `sky::{SkyPart, SkyPartMaterial, SKY_SCALE}` | replaced: `draw::Env::sky` (filled by `renderer/sky.rs` `update_sky`; no Bevy sky entities), `draw::SKY_SCALE` | `entity_dump.rs` `write_env` |
+| `clouds::CloudLayer` + `StandardMaterial` | replaced: `draw::Env::clouds` (filled by `renderer/clouds.rs`) | `entity_dump.rs` `write_env` |
 | `screen_effects::Overlay` (screen overlays) | `renderer/screen_effects.rs:36` | `entity_dump.rs:167–175, 656, 986` |
 | `overlays::{BlockOutlineMarker, BreakOverlayMarker, HitboxMarker, ChunkBorderMarker, EspMarker, OUTLINE_WIDTH}` | `renderer/overlays.rs:21, 36, 67, 77, 92, 583` | `entity_dump.rs:176–199, 837` |
 | `glint::GlintMaterial` | `renderer/glint.rs:10, 45` | `entity_dump.rs:204, 666, 996` |
-| `weather::{ASSETS, SHEETS, NATIVE}` | `renderer/weather.rs:155–161` | `entity_dump.rs:808–812`; `live.rs:618` |
+| `weather::{ASSETS, SHEETS, NATIVE}` | replaced: `draw::Env::weather` (filled by `tethers/precipitation.rs`); `NATIVE` stays (set by `live.rs`) | `live.rs:618` |
 | `screenshot::request_numbered` (vkview reference frame) | `renderer/screenshot.rs:16` | `entity_dump.rs:1208` |
 | Particles: `util::particles::{LiveParticles, ParticleAtlas}`, `live_sprites` | replaced: `draw::Particles` (filled by `util/particles/draw.rs` `fill_draw_list`) | `entity_dump.rs` `write_particles` |
 | `write` system (all of the above) | — | `entity_dump.rs:968–1235`; `write_env` 646–966 |
@@ -112,4 +112,5 @@ The pack front end lives in `renderer/packdraw`; the native side compiles and ru
 4. Replace `entity_dump` capture (section 4): the game hands draw lists to the native renderer directly instead of spawning Bevy meshes. This is the biggest step.
    In batches; wgpu may break meanwhile. Textures stay Bevy `Image` handles (`bevy_image`, not the renderer); meshes and materials go. Lists live in `draw` (`EntityVertex`, `EntityInstance`, `ParticleSprite`, `EnvPart`; filled in `draw::DrawSystems`).
    - Batch 1, done: the types moved to `draw`; `renderer/lightmap.rs` is `lighting::lightmap`; particles fill `draw::Particles`.
+   - Batch 2, done: sky, clouds and weather fill `draw::Env` with game-side meshes (`draw::MeshData`); `write_env` takes those beside the remaining Bevy meshes. The wgpu path no longer draws the sky or clouds. Producers stay in `renderer/` until step 5 (they read `environment` and `FrameView`).
 5. Replace screenshots and GUI images (section 6) with Torch's own image types. Then drop `bevy_render`, `bevy_pbr`, `bevy_core_pipeline` and wgpu.

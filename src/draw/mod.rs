@@ -128,3 +128,86 @@ pub struct Particles {
     pub sprites: Vec<ParticleSprite>,
     pub textures: Vec<bevy::prelude::Handle<bevy::image::Image>>,
 }
+
+/// `EntityInstance::alpha` and `EnvPart::alpha` values.
+pub const ALPHA_OPAQUE: u32 = 0;
+pub const ALPHA_BLEND: u32 = 2;
+pub const ALPHA_ADD: u32 = 3;
+
+/// A mesh the game built. `id` is new for every build, so a renderer can
+/// tell a rebuilt mesh from the one it holds.
+#[derive(Debug)]
+pub struct MeshData {
+    pub id: u64,
+    pub verts: Vec<EntityVertex>,
+    pub indices: Vec<u32>,
+    /// Vertices name rig parts (`EntityVertex::part`).
+    pub rigged: bool,
+}
+
+impl MeshData {
+    pub fn new(
+        verts: Vec<EntityVertex>,
+        indices: Vec<u32>,
+        rigged: bool,
+    ) -> std::sync::Arc<MeshData> {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        std::sync::Arc::new(MeshData {
+            id: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            verts,
+            indices,
+            rigged,
+        })
+    }
+}
+
+/// What a part samples.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum Texture {
+    #[default]
+    None,
+    Image(bevy::prelude::Handle<bevy::image::Image>),
+}
+
+/// One env part (sky, clouds, weather, ...): `EnvPart` with its mesh and
+/// texture by value.
+#[derive(Clone, Debug)]
+pub struct EnvDraw {
+    pub mesh: std::sync::Arc<MeshData>,
+    pub texture: Texture,
+    /// `ALPHA_*`.
+    pub alpha: u32,
+    /// As `EnvPart::kind`.
+    pub kind: u32,
+    pub bias: f32,
+    pub pad: [f32; 3],
+    pub uv: [f32; 4],
+    /// Linear RGBA.
+    pub tint: [f32; 4],
+    pub transform: bevy::math::Mat4,
+}
+
+impl EnvDraw {
+    /// A part with no uv transform, untinted and unpadded.
+    pub fn new(mesh: std::sync::Arc<MeshData>, kind: u32, transform: bevy::math::Mat4) -> EnvDraw {
+        EnvDraw {
+            mesh,
+            texture: Texture::None,
+            alpha: ALPHA_OPAQUE,
+            kind,
+            bias: 0.0,
+            pad: [0.0; 3],
+            uv: [1.0, 1.0, 0.0, 0.0],
+            tint: [1.0; 4],
+            transform,
+        }
+    }
+}
+
+/// This frame's env parts, by producer, each list in drawing order.
+#[derive(bevy::prelude::Resource, Default)]
+pub struct Env {
+    pub sky: Vec<EnvDraw>,
+    pub clouds: Vec<EnvDraw>,
+    pub weather: Vec<EnvDraw>,
+}

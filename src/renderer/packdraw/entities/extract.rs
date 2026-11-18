@@ -246,27 +246,6 @@ fn glint_transform() -> [f32; 4] {
 
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub(crate) fn extract_standard_draws(
-    sky: Extract<
-        Query<(
-            &crate::renderer::sky::SkyPart,
-            &Mesh3d,
-            &crate::renderer::sky::SkySource,
-            &GlobalTransform,
-            &ViewVisibility,
-        )>,
-    >,
-    sky_root: Extract<Query<&GlobalTransform, With<crate::renderer::sky::SkyRoot>>>,
-    clouds: Extract<
-        Query<
-            (
-                &Mesh3d,
-                &MeshMaterial3d<StandardMaterial>,
-                &GlobalTransform,
-                &ViewVisibility,
-            ),
-            With<crate::renderer::clouds::CloudLayer>,
-        >,
-    >,
     hand: Extract<
         Query<(
             Entity,
@@ -297,8 +276,6 @@ pub(crate) fn extract_standard_draws(
     render: Option<ResMut<PackRender>>,
 ) {
     crate::prof_span!("render:pack_extract_standard_draws");
-    use crate::renderer::sky::SkyPart;
-    use crate::shaderpack::features::render_stage;
     let Some(mut render) = render else { return };
     let Some(install) = render.install.as_deref_mut() else {
         return;
@@ -345,73 +322,8 @@ pub(crate) fn extract_standard_draws(
         });
     };
 
-    if (has(EntityKind::SkyBasic) || has(EntityKind::SkyTextured))
-        && let Ok(root) = sky_root.single()
-    {
-        let (scale, _, translation) = root.to_scale_rotation_translation();
-        let local = Mat4::from_scale(scale.recip()) * Mat4::from_translation(-translation);
-        // `sunPathRotation` tilts the celestial sphere, and Iris draws the
-        // sun, moon and stars on it, so they stay where `sunPosition` (and
-        // a pack's sun glow) says. The uniforms put the tilt between the
-        // sphere's yaw and its daily turn; in the sphere's own frame that is
-        // this rotation, applied around the camera.
-        let tilt = Mat4::from_rotation_y((-90.0f32).to_radians())
-            * Mat4::from_rotation_z(installed.constants.sun_path_rotation.to_radians())
-            * Mat4::from_rotation_y(90.0f32.to_radians());
-        let parts = installed.sky_parts;
-        for (part, mesh, material, transform, visible) in &sky {
-            let (kind, stage, order, wanted) = match part {
-                SkyPart::SkyDisc => (EntityKind::SkyBasic, "SKY", 0, parts.sky),
-                SkyPart::SunriseFan => (EntityKind::SkyBasic, "SUNSET", 1, parts.sky),
-                SkyPart::Sun => (EntityKind::SkyTextured, "SUN", 2, parts.sun),
-                SkyPart::Moon => (EntityKind::SkyTextured, "MOON", 3, parts.moon),
-                SkyPart::Stars => (EntityKind::SkyBasic, "STARS", 4, parts.stars),
-                SkyPart::DarkDisc => (EntityKind::SkyBasic, "VOID", 5, parts.sky),
-                SkyPart::EndSky => (EntityKind::SkyTextured, "SKY", 0, parts.sky),
-            };
-            if !visible.get() || !wanted || !has(kind) {
-                continue;
-            }
-            let Some(material) = materials.get(&material.0) else {
-                continue;
-            };
-            let second = material.alpha_mode == AlphaMode::Add;
-            let celestial = matches!(part, SkyPart::Sun | SkyPart::Moon | SkyPart::Stars);
-            let model = local * transform.to_matrix();
-            push(
-                kind,
-                mesh,
-                material,
-                if celestial { tilt * model } else { model },
-                true,
-                render_stage(stage),
-                order,
-                second,
-            );
-        }
-    }
-
-    if has(EntityKind::Clouds) {
-        for (mesh, material, transform, visible) in &clouds {
-            if !visible.get() {
-                continue;
-            }
-            let Some(material) = materials.get(&material.0) else {
-                continue;
-            };
-            let fast = material.cull_mode.is_none();
-            push(
-                EntityKind::Clouds,
-                mesh,
-                material,
-                transform.to_matrix(),
-                false,
-                EntityKind::Clouds.render_stage(),
-                0,
-                fast,
-            );
-        }
-    }
+    // The sky and clouds are `draw::Env` parts now; the wgpu pack path
+    // no longer draws them.
 
     for (mesh, material, transform, visible, cracks) in &overlays {
         let kind = if cracks {
@@ -441,8 +353,7 @@ pub(crate) fn extract_standard_draws(
         && let Ok(camera) = hand_camera.single()
     {
         let view = camera.to_matrix().inverse();
-        let layer =
-            bevy::camera::visibility::RenderLayers::layer(crate::client::view::HAND_LAYER);
+        let layer = bevy::camera::visibility::RenderLayers::layer(crate::client::view::HAND_LAYER);
         for (entity, mesh, material, transform, visible, layers) in &hand {
             if !visible.get() || !layers.intersects(&layer) {
                 continue;

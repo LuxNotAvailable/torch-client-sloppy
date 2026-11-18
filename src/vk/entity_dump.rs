@@ -507,21 +507,35 @@ type Drawn<'a> = (
     ),
 );
 
-/// Rewrites `entities.bin` every few seconds.
-type SkyDrawn<'a> = (
-    &'a Mesh3d,
-    &'a MeshMaterial3d<crate::renderer::sky::SkyPartMaterial>,
-    &'a GlobalTransform,
-    &'a InheritedVisibility,
-    &'a crate::renderer::sky::SkyPart,
-);
+/// An env part's mesh: a Bevy asset (overlays, the hand) or a draw list's.
+enum MeshRef {
+    Asset(AssetId<Mesh>),
+    Draw(std::sync::Arc<crate::draw::MeshData>),
+}
 
-type CloudDrawn<'a> = (
-    &'a Mesh3d,
-    &'a MeshMaterial3d<StandardMaterial>,
-    &'a GlobalTransform,
-    &'a InheritedVisibility,
-);
+#[derive(PartialEq, Eq, Hash)]
+enum MeshKey {
+    Asset(AssetId<Mesh>),
+    Draw(u64),
+}
+
+impl MeshRef {
+    fn key(&self) -> MeshKey {
+        match self {
+            MeshRef::Asset(id) => MeshKey::Asset(*id),
+            MeshRef::Draw(m) => MeshKey::Draw(m.id),
+        }
+    }
+}
+
+fn alpha_mode(code: u32) -> AlphaMode {
+    match code {
+        0 => AlphaMode::Opaque,
+        1 => AlphaMode::Mask(0.5),
+        3 => AlphaMode::Add,
+        _ => AlphaMode::Blend,
+    }
+}
 
 fn alpha_code(mode: AlphaMode) -> u32 {
     match mode {
@@ -537,9 +551,7 @@ fn alpha_code(mode: AlphaMode) -> u32 {
 fn write_env(
     dir: Option<&std::path::Path>,
     cache: &Cache,
-    sky: &Query<SkyDrawn>,
-    clouds: &Query<CloudDrawn, With<crate::renderer::clouds::CloudLayer>>,
-    sky_materials: &Assets<crate::renderer::sky::SkyPartMaterial>,
+    env: &crate::draw::Env,
     standard: &Assets<StandardMaterial>,
     lightmap: Option<&crate::renderer::terrain::LightmapPixels>,
     fog: Option<crate::client::view::Fog>,
@@ -561,7 +573,7 @@ fn write_env(
     let mut parts = Vec::new();
     let (mut mesh_ids, mut image_ids) = (HashMap::new(), HashMap::new());
     let (mut used_meshes, mut used_images) = (Vec::new(), Vec::new());
-    let mut add = |mesh: AssetId<Mesh>,
+    let mut add = |mesh: MeshRef,
                    texture: Option<AssetId<Image>>,
                    tint: Vec4,
                    alpha: AlphaMode,
@@ -571,11 +583,13 @@ fn write_env(
                    transform: Mat4,
                    piece: f32|
      -> bool {
-        if !cache.meshes.contains_key(&mesh) {
+        if let MeshRef::Asset(id) = &mesh
+            && !cache.meshes.contains_key(id)
+        {
             return false;
         }
         let next = mesh_ids.len() as u32;
-        let mesh_id = *mesh_ids.entry(mesh).or_insert_with(|| {
+        let mesh_id = *mesh_ids.entry(mesh.key()).or_insert_with(|| {
             used_meshes.push(mesh);
             next
         });
@@ -605,42 +619,21 @@ fn write_env(
         });
         true
     };
-    for (mesh, material, transform, visible, piece) in sky {
-        if !visible.get() {
-            continue;
-        }
-        if let Some(m) = sky_materials.get(&material.0) {
-            let (tint, texture, alpha, bias) = m.parts();
-            add(
-                mesh.0.id(),
-                texture.map(Handle::id),
-                tint,
-                alpha,
-                bias,
-                0,
-                [1.0, 1.0, 0.0, 0.0],
-                transform.to_matrix(),
-                piece.index() as f32 + 1.0,
-            );
-        }
-    }
-    for (mesh, material, transform, visible) in clouds {
-        if !visible.get() {
-            continue;
-        }
-        if let Some(m) = standard.get(&material.0) {
-            add(
-                mesh.0.id(),
-                m.base_color_texture.as_ref().map(Handle::id),
-                m.base_color.to_linear().to_vec4(),
-                m.alpha_mode,
-                m.depth_bias,
-                1,
-                [1.0, 1.0, 0.0, 0.0],
-                transform.to_matrix(),
-                0.0,
-            );
-        }
+    for part in env.sky.iter().chain(&env.clouds).chain(&env.weather) {
+        add(
+            MeshRef::Draw(part.mesh.clone()),
+            match &part.texture {
+                crate::draw::Texture::None => None,
+                crate::draw::Texture::Image(h) => Some(h.id()),
+            },
+            Vec4::from_array(part.tint),
+            alpha_mode(part.alpha),
+            part.bias,
+            part.kind,
+            part.uv,
+            part.transform,
+            part.pad[0],
+        );
     }
     // Screen overlays as the hand camera draws them: their transforms are
     // in its view space.
@@ -652,7 +645,7 @@ fn write_env(
             if let Some(m) = standard.get(&material.0) {
                 let uv = m.uv_transform;
                 add(
-                    mesh.0.id(),
+                    MeshRef::Asset(mesh.0.id()),
                     m.base_color_texture.as_ref().map(Handle::id),
                     m.base_color.to_linear().to_vec4(),
                     m.alpha_mode,
@@ -680,7 +673,7 @@ fn write_env(
             }
             if let Some(m) = standard.get(&material.0) {
                 add(
-                    mesh.0.id(),
+                    MeshRef::Asset(mesh.0.id()),
                     m.base_color_texture.as_ref().map(Handle::id),
                     m.base_color.to_linear().to_vec4(),
                     m.alpha_mode,
@@ -693,34 +686,6 @@ fn write_env(
             }
         }
     }
-    // Weather sheets (native, no pack): kind 6, a unit quad stretched by
-    // the transform; uv scale and offset scroll the texture.
-    if let Some((quad, rain, snow)) = crate::renderer::weather::ASSETS.get() {
-        let sheets = std::mem::take(
-            &mut *crate::renderer::weather::SHEETS
-                .lock()
-                .unwrap_or_else(|e| e.into_inner()),
-        );
-        for s in sheets {
-            let texture = if s.snow { snow } else { rain };
-            add(
-                quad.id(),
-                texture.as_ref().map(Handle::id),
-                Vec4::from_array(s.tint),
-                AlphaMode::Blend,
-                0.0,
-                6,
-                s.uv,
-                Mat4::from_cols(
-                    s.across.extend(0.0),
-                    s.down.extend(0.0),
-                    Vec4::ZERO,
-                    s.origin.extend(1.0),
-                ),
-                0.0,
-            );
-        }
-    }
     // The world's overlays: outline, hitboxes and borders as lines, the
     // breaking cracks as faces.
     let outline_width =
@@ -731,7 +696,7 @@ fn write_env(
         }
         if let Some(m) = standard.get(&material.0) {
             add(
-                mesh.0.id(),
+                MeshRef::Asset(mesh.0.id()),
                 m.base_color_texture.as_ref().map(Handle::id),
                 m.base_color.to_linear().to_vec4(),
                 m.alpha_mode,
@@ -754,7 +719,7 @@ fn write_env(
             }
             if let Some(m) = glint_materials.get(&material.0)
                 && add(
-                    mesh.0.id(),
+                    MeshRef::Asset(mesh.0.id()),
                     Some(m.mask.id()),
                     Vec4::ONE,
                     AlphaMode::Add,
@@ -814,13 +779,19 @@ fn write_env(
         put(rgba);
     }
     put(&(used_meshes.len() as u32).to_le_bytes());
-    for (i, id) in used_meshes.iter().enumerate() {
-        let (verts, indices, rigged) = &cache.meshes[id];
+    for (i, mesh) in used_meshes.iter().enumerate() {
+        let (verts, indices, rigged) = match mesh {
+            MeshRef::Asset(id) => {
+                let (v, i, r) = &cache.meshes[id];
+                (v.as_slice(), i.as_slice(), *r)
+            }
+            MeshRef::Draw(m) => (m.verts.as_slice(), m.indices.as_slice(), m.rigged),
+        };
         for n in [
             i as u32,
             verts.len() as u32,
             indices.len() as u32,
-            u32::from(*rigged),
+            u32::from(rigged),
         ] {
             put(&n.to_le_bytes());
         }
@@ -853,10 +824,8 @@ fn write(
     materials: Res<Assets<EntityMaterial>>,
     parts: Res<crate::renderer::rig_parts::RigParts>,
     view: Res<crate::client::view::View>,
-    (sky, clouds, sky_materials, standard, images): (
-        Query<SkyDrawn>,
-        Query<CloudDrawn, With<crate::renderer::clouds::CloudLayer>>,
-        Res<Assets<crate::renderer::sky::SkyPartMaterial>>,
+    (env, standard, images): (
+        Res<crate::draw::Env>,
         Res<Assets<StandardMaterial>>,
         Option<Res<crate::renderer::terrain::LightmapPixels>>,
     ),
@@ -1070,9 +1039,7 @@ fn write(
     write_env(
         dir.as_deref(),
         &cache,
-        &sky,
-        &clouds,
-        &sky_materials,
+        &env,
         &standard,
         images.as_deref(),
         view.fog,

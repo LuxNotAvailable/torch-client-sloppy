@@ -1,11 +1,13 @@
-use bevy::asset::RenderAssetUsages;
-use bevy::mesh::{Indices, PrimitiveTopology};
+//! The cloud layer, as `draw::Env::clouds`.
+
+use std::sync::Arc;
+
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
 
 use super::AppState;
 use super::systems::WorldCamera;
-use crate::client::timeline::{self, CLOUD_HEIGHT};
+use crate::client::timeline::CLOUD_HEIGHT;
 use crate::direction::Direction;
 use crate::gui::GuiState;
 
@@ -129,15 +131,13 @@ impl Plugin for CloudPlugin {
         .add_systems(
             PostUpdate,
             update_clouds
+                .in_set(crate::draw::DrawSystems)
                 .before(TransformSystems::Propagate)
                 .run_if(in_state(AppState::InGame))
                 .run_if(resource_exists::<CloudAssets>),
         );
     }
 }
-
-#[derive(Component)]
-pub(crate) struct CloudLayer;
 
 struct CloudTexture {
     width: usize,
@@ -154,17 +154,11 @@ const SOLID: u8 = 1 << 4;
 #[derive(Resource)]
 struct CloudAssets {
     texture: Option<CloudTexture>,
-    mesh: Handle<Mesh>,
-    material: Handle<StandardMaterial>,
+    mesh: Arc<crate::draw::MeshData>,
     built: Option<(i32, i32, RelativeCameraPos, CloudStatus)>,
-    painted: Option<(timeline::Argb, CloudStatus)>,
 }
 
-fn setup(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
+fn setup(mut commands: Commands) {
     let path = crate::textures_dir().join("environment/clouds.png");
     let texture = match crate::platform::assets::open_image(&path) {
         Ok(img) => Some(CloudTexture::new(&img.to_rgba8())),
@@ -173,35 +167,10 @@ fn setup(
             None
         }
     };
-
-    let mesh = meshes.add(empty_mesh());
-    let material = materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        unlit: true,
-        alpha_mode: AlphaMode::Blend,
-        cull_mode: Some(bevy::render::render_resource::Face::Back),
-        double_sided: false,
-        fog_enabled: false,
-        depth_bias: super::sky::BIAS_CLOUDS,
-        ..default()
-    });
-
-    commands.spawn((
-        Mesh3d(mesh.clone()),
-        MeshMaterial3d(material.clone()),
-        Transform::from_xyz(0.0, CLOUD_HEIGHT, 0.0),
-        Visibility::Hidden,
-        // The mesh is rebuilt in place, so its spawn-time bounds go stale.
-        bevy::camera::visibility::NoFrustumCulling,
-        CloudLayer,
-    ));
-
     commands.insert_resource(CloudAssets {
         texture,
-        mesh,
-        material,
+        mesh: crate::draw::MeshData::new(Vec::new(), Vec::new(), false),
         built: None,
-        painted: None,
     });
 }
 
@@ -245,20 +214,6 @@ impl CloudTexture {
     }
 }
 
-fn empty_mesh() -> Mesh {
-    let mut mesh = Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
-    );
-    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, Vec::<[f32; 3]>::new());
-    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, Vec::<[f32; 3]>::new());
-    #[cfg(feature = "shader_support")]
-    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, Vec::<[f32; 2]>::new());
-    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, Vec::<[f32; 4]>::new());
-    mesh.insert_indices(Indices::U32(Vec::new()));
-    mesh
-}
-
 struct MeshBuilder {
     positions: Vec<[f32; 3]>,
     colors: Vec<[f32; 4]>,
@@ -300,7 +255,7 @@ fn build_mesh(
     center_z: i32,
     relative: RelativeCameraPos,
     status: CloudStatus,
-) -> Mesh {
+) -> Arc<crate::draw::MeshData> {
     let radius_cells = (CLOUD_RANGE_CHUNKS * 16) as f32 / CELL_SIZE;
     let radius_cells = radius_cells.ceil() as i32;
     let extrude = status == CloudStatus::Fancy;
@@ -335,18 +290,18 @@ fn build_mesh(
         color[3] = 1.0 - (distance / CLOUD_FOG_END).clamp(0.0, 1.0);
     }
 
-    let mut mesh = Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
-    );
-    let normals = vec![[0.0, 1.0, 0.0]; b.positions.len()];
-    #[cfg(feature = "shader_support")]
-    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.0f32, 0.0]; b.positions.len()]);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, b.positions);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, b.colors);
-    mesh.insert_indices(Indices::U32(b.indices));
-    mesh
+    let verts = b
+        .positions
+        .iter()
+        .zip(&b.colors)
+        .map(|(&pos, &color)| crate::draw::EntityVertex {
+            pos,
+            normal: [0.0, 1.0, 0.0],
+            color,
+            ..Default::default()
+        })
+        .collect();
+    crate::draw::MeshData::new(verts, b.indices, false)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -399,15 +354,11 @@ fn update_clouds(
     view: Res<super::frame_view::FrameView>,
     env: Res<super::environment::Environment>,
     mut assets: ResMut<CloudAssets>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut out: ResMut<crate::draw::Env>,
     camera: Query<&Transform, With<WorldCamera>>,
-    mut layer: Query<(&mut Transform, &mut Visibility), (With<CloudLayer>, Without<WorldCamera>)>,
 ) {
     crate::prof_span!("render:update_clouds");
-    let Ok((mut transform, mut visibility)) = layer.single_mut() else {
-        return;
-    };
+    out.clouds.clear();
     let status = gui.options.clouds;
 
     let partial = view.partial;
@@ -416,7 +367,6 @@ fn update_clouds(
     let Some((texture_cells_w, texture_cells_h)) =
         assets.texture.as_ref().map(|t| (t.width, t.height))
     else {
-        *visibility = Visibility::Hidden;
         return;
     };
     // Under water the clouds sit past the water fog's end (vanilla's
@@ -424,11 +374,9 @@ fn update_clouds(
     let [eye_x, eye_y, eye_z] = view.tick_eye();
     let underwater = crate::util::block_model::eye_fluid_at(eye_x, eye_y, eye_z)
         == Some(crate::util::block_model::EyeFluid::Water);
-    if status == CloudStatus::Off || color.alpha() == 0 || underwater {
-        *visibility = Visibility::Hidden;
+    if status == CloudStatus::Off || color.alpha() == 0 || underwater || gui.in_menu() {
         return;
     }
-    *visibility = Visibility::Visible;
 
     let Ok(camera) = camera.single() else { return };
     let (cam_x, cam_y, cam_z) = (
@@ -460,34 +408,26 @@ fn update_clouds(
     let x_in_cell = cloud_x - cell_x as f64 * CELL_SIZE as f64;
     let z_in_cell = cloud_z - cell_z as f64 * CELL_SIZE as f64;
 
-    transform.translation = Vec3::new(
+    let key = (cell_x, cell_z, relative, status);
+    if assets.built != Some(key) {
+        assets.built = Some(key);
+        let Some(texture) = assets.texture.as_ref() else {
+            return;
+        };
+        assets.mesh = build_mesh(texture, cell_x, cell_z, relative, status);
+    }
+
+    let at = Vec3::new(
         (cam_x - x_in_cell) as f32,
         CLOUD_HEIGHT,
         (cam_z - z_in_cell) as f32,
     );
-
-    let key = (cell_x, cell_z, relative, status);
-    if assets.built != Some(key) {
-        assets.built = Some(key);
-        let rebuilt = match assets.texture.as_ref() {
-            Some(texture) => build_mesh(texture, cell_x, cell_z, relative, status),
-            None => return,
-        };
-        if let Some(mesh) = meshes.get_mut(&assets.mesh) {
-            *mesh = rebuilt;
-        }
-    }
-
-    if assets.painted != Some((color, status)) {
-        assets.painted = Some((color, status));
-        if let Some(material) = materials.get_mut(&assets.material) {
-            material.base_color = color.to_color();
-            material.cull_mode = match status {
-                CloudStatus::Fancy => Some(bevy::render::render_resource::Face::Back),
-                _ => None,
-            };
-        }
-    }
+    out.clouds.push(crate::draw::EnvDraw {
+        alpha: crate::draw::ALPHA_BLEND,
+        bias: super::sky::BIAS_CLOUDS,
+        tint: color.to_color().to_linear().to_f32_array(),
+        ..crate::draw::EnvDraw::new(assets.mesh.clone(), 1, Mat4::from_translation(at))
+    });
 }
 
 #[cfg(test)]
@@ -516,9 +456,9 @@ mod tests {
         let t = checkerboard();
         let fast = build_mesh(&t, 0, 0, RelativeCameraPos::BelowClouds, CloudStatus::Fast);
         let fancy = build_mesh(&t, 0, 0, RelativeCameraPos::BelowClouds, CloudStatus::Fancy);
-        assert!(fast.count_vertices() > 0);
-        assert!(fancy.count_vertices() > fast.count_vertices());
-        assert_eq!(fast.count_vertices() % 4, 0);
+        assert!(fast.verts.len() > 0);
+        assert!(fancy.verts.len() > fast.verts.len());
+        assert_eq!(fast.verts.len() % 4, 0);
     }
 
     #[test]
@@ -532,22 +472,14 @@ mod tests {
             RelativeCameraPos::InsideClouds,
             CloudStatus::Fancy,
         );
-        assert!(inside.count_vertices() > below.count_vertices());
+        assert!(inside.verts.len() > below.verts.len());
     }
 
     #[test]
     fn the_fade_reaches_zero_at_the_rim() {
         let t = checkerboard();
         let mesh = build_mesh(&t, 0, 0, RelativeCameraPos::BelowClouds, CloudStatus::Fast);
-        let colors = match mesh.attribute(Mesh::ATTRIBUTE_COLOR).unwrap() {
-            bevy::mesh::VertexAttributeValues::Float32x4(v) => v.clone(),
-            _ => panic!("colours are not 4-float"),
-        };
-        let positions = match mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap() {
-            bevy::mesh::VertexAttributeValues::Float32x3(v) => v.clone(),
-            _ => panic!("positions are not 3-float"),
-        };
-        for (p, c) in positions.iter().zip(colors.iter()) {
+        for (p, c) in mesh.verts.iter().map(|v| (v.pos, v.color)) {
             let d = (p[0] * p[0] + p[2] * p[2]).sqrt();
             assert!(c[3] >= 0.0 && c[3] <= 1.0);
             if d >= CLOUD_FOG_END {

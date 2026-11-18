@@ -3,7 +3,12 @@
 
 use super::*;
 
-pub(super) fn draw_precipitation(view: Res<FrameView>, camera: CameraQuery, mut out: LayerOut) {
+pub(super) fn draw_precipitation(
+    view: Res<FrameView>,
+    camera: CameraQuery,
+    mut out: LayerOut,
+    mut env_out: ResMut<crate::draw::Env>,
+) {
     let (mut rain, mut snow) = (Geo::default(), Geo::default());
     // The native renderer builds the sheets on the GPU (no pack).
     let native = crate::renderer::weather::NATIVE.load(std::sync::atomic::Ordering::Relaxed);
@@ -87,9 +92,32 @@ pub(super) fn draw_precipitation(view: Res<FrameView>, camera: CameraQuery, mut 
             }
         }
     }
-    *crate::renderer::weather::SHEETS
-        .lock()
-        .unwrap_or_else(|e| e.into_inner()) = sheets;
+    // Sheets as env parts (kind 6): a unit quad stretched by the
+    // transform; uv scale and offset scroll the texture.
+    env_out.weather.clear();
+    if let Some((quad, rain, snow)) = crate::renderer::weather::ASSETS.get() {
+        env_out.weather.extend(sheets.into_iter().map(|s| {
+            let texture = if s.snow { snow } else { rain };
+            crate::draw::EnvDraw {
+                texture: texture
+                    .clone()
+                    .map_or(crate::draw::Texture::None, crate::draw::Texture::Image),
+                alpha: crate::draw::ALPHA_BLEND,
+                uv: s.uv,
+                tint: s.tint,
+                ..crate::draw::EnvDraw::new(
+                    quad.clone(),
+                    6,
+                    Mat4::from_cols(
+                        s.across.extend(0.0),
+                        s.down.extend(0.0),
+                        Vec4::ZERO,
+                        s.origin.extend(1.0),
+                    ),
+                )
+            }
+        }));
+    }
     out.put(Kind::Rain, rain);
     out.put(Kind::Snow, snow);
 }

@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use super::compile::{self, Frame, ProgramKind};
 use super::sources::TextureSource;
-use crate::shaderpack::uniforms;
 use crate::shaderpack::directives::{Constants, Targets};
 use crate::shaderpack::expressions::Customs;
 use crate::shaderpack::pipeline::Layout;
+use crate::shaderpack::uniforms;
 
 /// Labels every pack shader module and GPU object, so errors name the pack.
 pub(crate) const GPU_LABEL: &str = "shaderpack";
@@ -64,7 +64,6 @@ pub(crate) struct Installed {
     pub(crate) shadow_streams: [Option<usize>; 3],
     pub(crate) shadowcomp: Vec<usize>,
     pub(crate) entities: [Option<usize>; super::compile::EntityKind::COUNT],
-    pub(crate) sky_parts: super::compile::SkyParts,
     pub(crate) shadow_casters: super::compile::ShadowCasters,
     pub(crate) shadow_culling: super::compile::ShadowCulling,
     pub(crate) blends: super::compile::Blends,
@@ -82,7 +81,6 @@ pub(crate) struct Installed {
     pub(crate) item_ids: std::collections::HashMap<String, i32>,
     pub(crate) old_hand_light: bool,
 }
-
 
 /// A compiled pack ready to draw: each stage's WGSL labelled for its
 /// renderer. Device free, so the native renderer installs packs the same
@@ -139,7 +137,6 @@ pub(crate) fn install(pack: &str, generation: u32, direct: bool, frame: Frame) -
         shadow_streams: frame.shadow_streams,
         shadowcomp: frame.shadowcomp,
         entities: frame.entities,
-        sky_parts: frame.sky_parts,
         shadow_casters: frame.shadow_casters,
         shadow_culling: frame.shadow_culling,
         blends: frame.blends,

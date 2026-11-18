@@ -154,12 +154,9 @@ pub struct NativeSheet {
 /// read by the precipitation layer to skip its CPU mesh.
 pub static NATIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// This frame's sheets, when `NATIVE`.
-pub static SHEETS: std::sync::Mutex<Vec<NativeSheet>> = std::sync::Mutex::new(Vec::new());
-
 /// The unit quad and the rain and snow textures the native sheets use.
 pub static ASSETS: std::sync::OnceLock<(
-    bevy::asset::Handle<bevy::mesh::Mesh>,
+    std::sync::Arc<crate::draw::MeshData>,
     Option<bevy::asset::Handle<bevy::image::Image>>,
     Option<bevy::asset::Handle<bevy::image::Image>>,
 )> = std::sync::OnceLock::new();
