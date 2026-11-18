@@ -10,6 +10,10 @@ pub const MAX_FPS: Tip = Tip::new(
     "Caps how many frames are drawn each second. A cap saves power and heat; Unlimited draws as fast as your GPU can.",
     Impact::Varies,
 );
+pub const GUI_MAX_FPS: Tip = Tip::new(
+    "Caps the framerate while an inventory, chat or menu is open. Never above Max Framerate; menus outside a world stay at 60 or less.",
+    Impact::Varies,
+);
 pub const VSYNC: Tip = Tip::new(
     "Matches frames to your monitor's refresh rate so the picture doesn't tear. Can add a little input delay.",
     Impact::Low,

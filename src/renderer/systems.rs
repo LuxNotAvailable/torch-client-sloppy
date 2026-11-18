@@ -1637,6 +1637,8 @@ pub(super) fn enter_screen(
     }
 }
 
+const MENU_MAX_FPS: u32 = 60;
+
 fn limit_framerate(
     gui: Res<crate::gui::GuiState>,
     monitors: Query<&bevy::window::Monitor, With<bevy::window::PrimaryMonitor>>,
@@ -1645,7 +1647,15 @@ fn limit_framerate(
     if cfg!(target_arch = "wasm32") {
         return;
     }
-    let target = gui.options.max_fps;
+    let mut target = gui.options.max_fps;
+    // An open GUI takes its own cap; screens outside a world never need
+    // more than 60, whatever the settings.
+    if gui.screen != crate::gui::Screen::None {
+        target = target.min(gui.options.gui_max_fps);
+    }
+    if gui.screen.is_menu() {
+        target = target.min(MENU_MAX_FPS);
+    }
     let now = Instant::now();
     if target >= crate::gui::MAX_FPS_UNLIMITED {
         *next_frame = None;

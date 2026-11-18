@@ -567,6 +567,8 @@ crate::options! {
         pub window_width: u32 = 0 => key("windowWidth"),
         pub window_height: u32 = 0 => key("windowHeight"),
         pub max_fps: u32 = MAX_FPS_DEFAULT => key("maxFps").clamp(MAX_FPS_MIN, MAX_FPS_UNLIMITED),
+        /// The framerate cap while a GUI or menu is open (never above `max_fps`).
+        pub gui_max_fps: u32 = MAX_FPS_DEFAULT => key("torchGuiMaxFps").clamp(MAX_FPS_MIN, MAX_FPS_UNLIMITED),
         pub vsync: bool = VSYNC_DEFAULT => key("vsync"),
         /// Exclusive fullscreen on desktop (F11, Video Settings).
         pub fullscreen: bool = false => key("fullscreen"),
@@ -915,7 +917,7 @@ impl GuiOptions {
     }
 }
 
-pub const MAX_FPS_MIN: u32 = 10;
+pub const MAX_FPS_MIN: u32 = 30;
 pub const MAX_FPS_UNLIMITED: u32 = 260;
 pub const MAX_FPS_DEFAULT: u32 = if cfg!(feature = "mobile_ui") { 30 } else { 60 };
 

@@ -601,6 +601,15 @@ fn max_fps_label(value: i32) -> String {
     }
 }
 
+/// The framerate cap while a GUI or menu is open.
+fn gui_max_fps_label(value: i32) -> String {
+    if value as u32 >= crate::gui::MAX_FPS_UNLIMITED {
+        format!("GUI Framerate: {UNLIMITED}")
+    } else {
+        format!("GUI Framerate: {value} fps")
+    }
+}
+
 /// Window sizes offered, in physical pixels.
 #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
 const WINDOW_SIZES: [(u32, u32); 5] = [
@@ -914,6 +923,7 @@ fn reset_video_options(o: &mut crate::gui::GuiOptions) {
     o.smooth_lighting = crate::gui::SMOOTH_LIGHTING_DEFAULT;
     o.lighting_enabled = crate::gui::LIGHTING_ENABLED_DEFAULT;
     o.max_fps = crate::gui::MAX_FPS_DEFAULT;
+    o.gui_max_fps = crate::gui::MAX_FPS_DEFAULT;
     o.vsync = crate::gui::VSYNC_DEFAULT;
     o.fps_counter = crate::gui::FPS_COUNTER_DEFAULT;
     o.entity_culling = true;
@@ -1196,10 +1206,21 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
             o.max_fps = (o.max_fps + 5) / 10 * 10;
         }
         f.tip(&tips::MAX_FPS);
+        if f.slider(
+            &mut o.gui_max_fps,
+            crate::gui::MAX_FPS_MIN,
+            crate::gui::MAX_FPS_UNLIMITED,
+            gui_max_fps_label,
+        ) {
+            o.gui_max_fps = (o.gui_max_fps + 5) / 10 * 10;
+        }
+        f.tip(&tips::GUI_MAX_FPS);
         #[cfg(not(target_arch = "wasm32"))]
         {
             f.toggle(VSYNC, &mut o.vsync);
             f.tip(&tips::VSYNC);
+            // Keeps the rows below paired.
+            f.skip();
         }
         #[cfg(target_arch = "wasm32")]
         f.skip();
