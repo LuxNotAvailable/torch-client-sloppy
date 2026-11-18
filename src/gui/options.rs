@@ -1027,6 +1027,7 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         match entry {
             Entry::Screen(screen) => {
                 state.video_list.reset();
+                state.features_list.reset();
                 state.game_list.reset();
                 #[cfg(all(target_arch = "wasm32", feature = "asset_download"))]
                 {
@@ -1527,41 +1528,72 @@ pub fn draw_zoom(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
 
 /// Torch's own features, each with its settings.
 pub fn draw_features(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
+    use crate::gui::feature_tips as ft;
+    use crate::gui::setting_tip::Risk;
     draw_title(p, ctx, FEATURES_TITLE);
-    let viewer = format!(
-        "{RECIPE_VIEWER}: {}",
-        if state.options.recipe_viewer { ON } else { OFF }
-    );
-    // `None`: the recipe viewer's toggle, no sub-screen.
-    #[allow(unused_mut)]
-    let mut entries = vec![
-        (ZOOM_SETTINGS, Some(Screen::ZoomSettings)),
-        ("Block Info...", Some(Screen::BlockInfoSettings)),
-        (INVENTORY_SORT, Some(Screen::InventorySortSettings)),
-        ("Food Info...", Some(Screen::FoodInfoSettings)),
-        (viewer.as_str(), None),
-    ];
-    #[cfg(feature = "hud_editor")]
-    entries.push(("Edit HUD...", Some(Screen::HudEditor)));
-    let left = (ctx.vw / 2.0 - GRID_LEFT_OFFSET).floor();
-    let top = LAYOUT.content_y(ctx.vh, menu_content_h(entries.len()));
-    for (i, (label, screen)) in entries.into_iter().enumerate() {
-        let x = left + (i % 2) as f32 * COLUMN_STEP;
-        let y = top + (i / 2) as f32 * (WIDGET_HEIGHT + ROW_SPACING);
-        if Button::new(x, y, COLUMN_W, WIDGET_HEIGHT, label).draw(p, ctx) {
-            let Some(screen) = screen else {
-                state.options.recipe_viewer = !state.options.recipe_viewer;
-                crate::gui::save_options(&state.options);
-                continue;
-            };
-            #[cfg(feature = "hud_editor")]
-            if screen == Screen::HudEditor {
-                // The editor returns here when done.
-                state.hud_state.parent = Screen::Features;
-                state.hud_state.over_menu = state.in_menu();
+    let o = &mut state.options;
+    let mut next: Option<Screen> = None;
+    let mut hovered: Option<&'static Tip> = None;
+    // Grouped by how likely an anticheat is to flag them.
+    let changed = scrolling_form(p, ctx, &mut state.features_list, 0, |f| {
+        let header = |f: &mut Form<'_, '_, '_>, risk: Risk| {
+            let (name, rgb) = risk.caption();
+            f.header_colored(name, rgb);
+        };
+        let mut open = |f: &mut Form<'_, '_, '_>, label, screen, tip| {
+            if f.button(label) {
+                next = Some(screen);
             }
-            state.nav = Some(screen);
+            f.tip(tip);
+        };
+
+        header(f, Risk::Safe);
+        open(f, ZOOM_SETTINGS, Screen::ZoomSettings, &ft::ZOOM);
+        open(
+            f,
+            "Block Info...",
+            Screen::BlockInfoSettings,
+            &ft::BLOCK_INFO,
+        );
+        open(f, "Food Info...", Screen::FoodInfoSettings, &ft::FOOD_INFO);
+        #[cfg(feature = "hud_editor")]
+        open(f, "Edit HUD...", Screen::HudEditor, &ft::EDIT_HUD);
+
+        header(f, Risk::Risky);
+        open(
+            f,
+            INVENTORY_SORT,
+            Screen::InventorySortSettings,
+            &ft::INVENTORY_SORT,
+        );
+        f.toggle(RECIPE_VIEWER, &mut o.recipe_viewer);
+        f.tip(&ft::RECIPE_VIEWER);
+
+        #[cfg(feature = "click_gui")]
+        {
+            header(f, Risk::Dangerous);
+            open(f, "Modules...", Screen::ClickGui, &ft::MODULES);
         }
+        hovered = f.hovered_tip();
+    });
+    if changed {
+        crate::gui::save_options(&state.options);
+    }
+    if let Some(screen) = next {
+        #[cfg(feature = "hud_editor")]
+        if screen == Screen::HudEditor {
+            // The editor returns here when done.
+            state.hud_state.parent = Screen::Features;
+            state.hud_state.over_menu = state.in_menu();
+        }
+        #[cfg(feature = "click_gui")]
+        if screen == Screen::ClickGui {
+            state.clickgui_parent = Screen::Features;
+        }
+        state.nav = Some(screen);
+    }
+    if let (Some(tip), Some(m)) = (hovered, ctx.mouse()) {
+        crate::gui::setting_tip::draw(p, tip, None, m.x, m.y, ctx.vw, ctx.vh);
     }
     if draw_done(p, ctx) {
         state.nav = Some(Screen::Options);

@@ -27,6 +27,7 @@ pub mod disconnected;
 pub mod draw;
 #[cfg(explore_modrinth)]
 pub mod explore_packs;
+pub mod feature_tips;
 pub mod focus;
 pub mod food_info;
 pub mod form;
@@ -1195,6 +1196,7 @@ pub struct GuiState {
     pub menu: multiplayer::MenuState,
     pub profile: profile::ProfileState,
     pub video_list: scroll_list::ScrollList,
+    pub features_list: scroll_list::ScrollList,
     pub game_list: scroll_list::ScrollList,
     #[cfg(voice)]
     pub voice_list: scroll_list::ScrollList,
