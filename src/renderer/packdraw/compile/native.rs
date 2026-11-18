@@ -619,7 +619,11 @@ fn iris_attributes(input: IrisVertexIn) -> IrisAttributes {
     a.light = input.light;
     var color = input.color;
     if ((input.flags & 1u) != 0u) { color.a = 1.0; }
-    a.color = color * input.tint;
+    // Engine colours are linear; packs expect sRGB (`gl_Color`).
+    let lin = color * input.tint;
+    let lo = lin.rgb * 12.92;
+    let hi = 1.055 * pow(max(lin.rgb, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4)) - 0.055;
+    a.color = vec4<f32>(select(hi, lo, lin.rgb <= vec3<f32>(0.0031308)), lin.a);
     let n = iris_model(input, vec4<f32>(local_normal, 0.0));
     a.normal = select(vec3<f32>(0.0, 1.0, 0.0), normalize(n), dot(n, n) > 1e-8);
     a.entity = vec4<f32>(-1.0, 0.0, 0.0, 1.0);
