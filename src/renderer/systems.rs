@@ -7,9 +7,6 @@ use std::time::Duration;
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::ClearColorConfig;
 use bevy::camera::visibility::RenderLayers;
-use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
-use bevy::light::cluster::ClusterConfig;
-use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 
@@ -394,20 +391,10 @@ fn setup(
 
     commands.spawn((
         WorldCamera,
-        // Readable, so the terrain cull can build its occlusion pyramid.
-        Camera3d {
-            depth_texture_usages: (bevy::render::render_resource::TextureUsages::RENDER_ATTACHMENT
-                | bevy::render::render_resource::TextureUsages::TEXTURE_BINDING)
-                .into(),
-            ..default()
-        },
-        ClusterConfig::None,
         Camera {
             clear_color: ClearColorConfig::Custom(SKY_COLOR),
             ..default()
         },
-        Msaa::Off,
-        Tonemapping::None,
         Projection::Perspective(PerspectiveProjection {
             fov: VANILLA_FOV_DEGREES.to_radians(),
             // Vanilla's near plane (`Camera.PROJECTION_Z_NEAR`).
@@ -418,16 +405,13 @@ fn setup(
             near_clip_plane: bevy::math::vec4(0.0, 0.0, -1.0, -0.05),
             ..default()
         }),
-        DistanceFog {
+        super::sky::WorldFog {
             color: SKY_COLOR,
-            falloff: FogFalloff::Linear {
-                start: 96.0,
-                end: 160.0,
-            },
-            ..default()
+            start: 96.0,
+            end: 160.0,
+            env: Vec2::ZERO,
         },
         Transform::from_xyz(0.0, 64.0, 0.0),
-        no_indirect_drawing(),
     ));
 }
 
@@ -558,9 +542,6 @@ const TICK_SECS: f32 = 0.05;
 
 pub fn scene_camera(order: isize, clear_color: ClearColorConfig, layer: usize) -> impl Bundle {
     (
-        Camera3d::default(),
-        Msaa::Off,
-        ClusterConfig::None,
         Camera {
             order,
             clear_color,
@@ -568,8 +549,6 @@ pub fn scene_camera(order: isize, clear_color: ClearColorConfig, layer: usize) -
             is_active: false,
             ..default()
         },
-        Tonemapping::None,
-        DebandDither::Disabled,
         RenderLayers::layer(layer),
     )
 }
@@ -2179,14 +2158,6 @@ fn withheld_features() -> Option<bevy::render::settings::WgpuFeatures> {
 fn constrained_limits() -> Option<bevy::render::settings::WgpuLimits> {
     None
 }
-
-#[cfg(target_os = "android")]
-pub(crate) fn no_indirect_drawing() -> impl Bundle {
-    bevy::render::view::NoIndirectDrawing
-}
-
-#[cfg(not(target_os = "android"))]
-pub(crate) fn no_indirect_drawing() -> impl Bundle {}
 
 fn toggle_prof_overlay(
     keys: Res<ButtonInput<KeyCode>>,

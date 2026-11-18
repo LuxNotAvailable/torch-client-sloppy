@@ -140,50 +140,6 @@ pub(crate) fn current_warp(view: &FrameView) -> Mat4 {
         .unwrap_or(Mat4::IDENTITY)
 }
 
-/// The warp, snapshotted for the render world.
-#[derive(Resource, Clone, Copy, Default)]
-struct ViewWarp(Mat4);
-
-fn snapshot_warp(view: Res<FrameView>, mut warp: ResMut<ViewWarp>) {
-    warp.0 = current_warp(&view);
-}
-
-/// The warp and the render entity to put it on, carried from extraction to
-/// the render schedule.
-#[derive(Resource, Default)]
-struct PendingWarp(Option<(Entity, Mat4)>);
-
-/// Notes this frame's warp for the world camera's render entity. Applying
-/// it here would be lost: `extract_cameras` inserts the camera's
-/// `ExtractedView` through commands, which land after this schedule's
-/// systems and replace whatever this one changed.
-fn extract_warp(
-    warp: bevy::render::Extract<Res<ViewWarp>>,
-    camera: bevy::render::Extract<
-        Query<&bevy::render::sync_world::RenderEntity, With<WorldCamera>>,
-    >,
-    mut pending: ResMut<PendingWarp>,
-) {
-    pending.0 = (warp.0 != Mat4::IDENTITY)
-        .then(|| camera.iter().next().map(|render| (render.id(), warp.0)))
-        .flatten();
-}
-
-/// Puts the warp on the world camera's extracted projection, once the view
-/// is in place and before the view uniforms are built from it, so the
-/// camera itself stays rigid for everything that reads its transform.
-fn warp_projection(
-    pending: Res<PendingWarp>,
-    mut views: Query<&mut bevy::render::view::ExtractedView>,
-) {
-    let Some((entity, warp)) = pending.0 else {
-        return;
-    };
-    if let Ok(mut view) = views.get_mut(entity) {
-        view.clip_from_view *= warp;
-    }
-}
-
 pub struct ViewBobPlugin;
 
 impl Plugin for ViewBobPlugin {
@@ -196,17 +152,6 @@ impl Plugin for ViewBobPlugin {
                 .before(TransformSystems::Propagate)
                 .run_if(in_state(AppState::InGame)),
         );
-        app.init_resource::<ViewWarp>()
-            .add_systems(PostUpdate, snapshot_warp);
-        if let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) {
-            render_app
-                .init_resource::<PendingWarp>()
-                .add_systems(bevy::render::ExtractSchedule, extract_warp)
-                .add_systems(
-                    bevy::render::Render,
-                    warp_projection.in_set(bevy::render::RenderSystems::ManageViews),
-                );
-        }
     }
 }
 

@@ -2,7 +2,6 @@
 //! for the native renderer's shader packs.
 
 use bevy::math::{IVec2, Vec3};
-use bevy::pbr::DistanceFog;
 use bevy::prelude::*;
 
 use crate::renderer::environment::Environment;
@@ -56,7 +55,7 @@ pub(crate) fn gather_inputs(
     shared: Res<Shared>,
     view: Res<FrameView>,
     environment: Res<Environment>,
-    camera: Query<(&Transform, Option<&DistanceFog>), With<WorldCamera>>,
+    camera: Query<(&Transform, Option<&crate::renderer::sky::WorldFog>), With<WorldCamera>>,
     atlas: Option<Res<BlockAtlasHandle>>,
     images: Res<Assets<Image>>,
     gui: Res<crate::gui::GuiState>,
@@ -170,10 +169,7 @@ pub(crate) fn gather_inputs(
         let c = f.color.to_srgba();
         Vec3::new(c.red, c.green, c.blue)
     });
-    let fog_range = fog.map_or(bevy::math::Vec2::ZERO, |f| {
-        let c = f.directional_light_color.to_linear();
-        bevy::math::Vec2::new(c.red, c.green)
-    });
+    let fog_range = fog.map_or(bevy::math::Vec2::ZERO, |f| f.env);
     let [r, g, b, _] = environment.sky.sky_color.to_rgba_f32();
     let (block, sky) = crate::lighting::lightmap::levels_at(eye.to_array());
     let eye_in =

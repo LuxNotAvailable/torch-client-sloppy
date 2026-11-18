@@ -197,9 +197,7 @@ pub struct WeatherLayer;
 
 /// The holder and world item models read: the local player, now.
 fn update_item_context(view: Res<FrameView>) {
-    let dimension = crate::client::dimension::current()
-        .registry_id()
-        .to_owned();
+    let dimension = crate::client::dimension::current().registry_id().to_owned();
     let dimension = if dimension.contains(':') {
         dimension
     } else {
@@ -320,13 +318,7 @@ fn setup(
             ))
             .id();
         if matches!(kind, Kind::Shadow | Kind::Rain | Kind::Snow) {
-            // Neither casts the sun's shadow: rain sheets would darken the
-            // world and streak the light shafts.
-            commands.entity(entity).insert((
-                WeatherLayer,
-                bevy::light::NotShadowCaster,
-                bevy::light::NotShadowReceiver,
-            ));
+            commands.entity(entity).insert(WeatherLayer);
         }
         layers.insert(
             kind,

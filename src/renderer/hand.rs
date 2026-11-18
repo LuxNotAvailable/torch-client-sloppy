@@ -2,7 +2,6 @@ use std::f32::consts::PI;
 
 use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
 use bevy::camera::{Camera, ClearColorConfig, PerspectiveProjection, Projection};
-use bevy::light::cluster::ClusterConfig;
 use bevy::prelude::*;
 
 use crate::items::mesh::Transform as ItemTransform;
@@ -825,10 +824,6 @@ fn decoration_mesh(decorations: &[crate::session::MapDecoration]) -> Mesh {
 }
 
 #[derive(Component)]
-#[cfg_attr(
-    feature = "shader_support",
-    derive(Clone, bevy::render::extract_component::ExtractComponent)
-)]
 pub struct HandCamera;
 
 #[derive(Component)]
@@ -1192,10 +1187,6 @@ fn setup_hand(
 
     let camera = commands
         .spawn((
-            Camera3d::default(),
-            Msaa::Off,
-            ClusterConfig::None,
-            crate::renderer::systems::no_indirect_drawing(),
             Camera {
                 order: HAND_CAMERA_ORDER,
                 clear_color: ClearColorConfig::None,
@@ -1208,7 +1199,6 @@ fn setup_hand(
                 far: HAND_FAR,
                 ..default()
             }),
-            bevy::core_pipeline::tonemapping::Tonemapping::None,
             Transform::default(),
             RenderLayers::layer(HAND_LAYER),
             HandCamera,

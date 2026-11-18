@@ -6,7 +6,6 @@ use std::sync::Arc;
 use crate::util::javarandom::JavaRandom;
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::{Camera, ClearColorConfig};
-use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
 
@@ -62,6 +61,16 @@ impl Plugin for SkyPlugin {
                     .run_if(resource_exists::<SkyAssets>),
             );
     }
+}
+
+/// The world camera's distance fog, set by the sky each frame.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct WorldFog {
+    pub color: Color,
+    pub start: f32,
+    pub end: f32,
+    /// The environmental fog range (pack env channels).
+    pub env: Vec2,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -380,7 +389,7 @@ fn update_sky(
     env: Res<super::environment::Environment>,
     mut assets: ResMut<SkyAssets>,
     mut out: ResMut<crate::draw::Env>,
-    mut world_view: Query<(&Transform, &mut DistanceFog, &mut Camera), With<WorldCamera>>,
+    mut world_view: Query<(&Transform, &mut WorldFog, &mut Camera), With<WorldCamera>>,
 ) {
     crate::prof_span!("render:update_sky");
     out.sky.clear();
@@ -439,11 +448,8 @@ fn update_sky(
     let fog_color = sky.fog_color.to_color();
 
     fog.color = fog_color;
-    fog.falloff = FogFalloff::Linear {
-        start: env.render_fog_distance.0,
-        end: env.render_fog_distance.1,
-    };
-    fog.directional_light_color = Color::linear_rgba(environmental.0, environmental.1, 0.0, 0.0);
+    (fog.start, fog.end) = env.render_fog_distance;
+    fog.env = Vec2::new(environmental.0, environmental.1);
     camera.clear_color = ClearColorConfig::Custom(fog_color);
 
     if gui.in_menu() {

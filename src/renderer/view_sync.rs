@@ -27,7 +27,15 @@ fn fill(
     mut view: ResMut<View>,
     frame_view: Res<FrameView>,
     panorama: Query<&Camera, With<PanoramaCamera>>,
-    world: Query<(&GlobalTransform, &Projection, &Camera, Option<&DistanceFog>), With<WorldCamera>>,
+    world: Query<
+        (
+            &GlobalTransform,
+            &Projection,
+            &Camera,
+            Option<&super::sky::WorldFog>,
+        ),
+        With<WorldCamera>,
+    >,
     hand: Query<(&GlobalTransform, &Projection), With<HandCamera>>,
     figure: Query<(&GlobalTransform, &Projection), With<FigureCamera>>,
     figure_image: Option<Res<FigureImage>>,
@@ -55,22 +63,17 @@ fn fill(
     view.warp = super::view_bob::current_warp(&frame_view);
 }
 
-fn fog_of(fog: &DistanceFog, camera: &Camera) -> Fog {
+fn fog_of(fog: &super::sky::WorldFog, camera: &Camera) -> Fog {
     let clear = match camera.clear_color {
         ClearColorConfig::Custom(c) => c.to_linear().to_f32_array(),
         _ => fog.color.to_linear().to_f32_array(),
     };
-    let (start, end) = match fog.falloff {
-        bevy::pbr::FogFalloff::Linear { start, end } => (start, end),
-        _ => (0.0, f32::MAX),
-    };
-    let env = fog.directional_light_color.to_linear();
     Fog {
         clear,
         color: fog.color.to_linear().to_f32_array(),
-        env: [env.red, env.green],
-        start,
-        end,
+        env: fog.env.to_array(),
+        start: fog.start,
+        end: fog.end,
     }
 }
 

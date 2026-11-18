@@ -11,7 +11,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use bevy::camera::{ClearColorConfig, RenderTarget, ScalingMode};
 use bevy::image::ImageSampler;
 use bevy::prelude::*;
-use bevy::render::extract_resource::{ExtractResource, ExtractResourcePlugin};
 use bevy::render::render_resource::TextureFormat;
 
 use super::anim::AnimSample;
@@ -102,7 +101,7 @@ pub fn box_height(s: &AnimSample) -> f32 {
 pub struct InventoryFigure(pub Option<Figure>);
 
 /// The texture the figure is drawn into, for the GUI to sample.
-#[derive(Resource, Default, Clone, ExtractResource)]
+#[derive(Resource, Default, Clone)]
 pub struct FigureImage(pub Option<Handle<Image>>);
 
 /// Whether the figure's texture holds this frame's figure. The GUI only
@@ -199,7 +198,6 @@ impl Plugin for InventoryFigurePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<InventoryFigure>()
             .init_resource::<FigureImage>()
-            .add_plugins(ExtractResourcePlugin::<FigureImage>::default())
             .add_systems(Startup, spawn_camera)
             .add_systems(Update, aim_camera);
     }

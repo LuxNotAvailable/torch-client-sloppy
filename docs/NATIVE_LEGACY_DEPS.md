@@ -41,10 +41,12 @@ These keep the native renderer fed. They must move to the game-side code that su
 
 ## 3. Cameras and view (`live.rs`, from the Bevy ECS)
 
+Done (step 5): the cameras are plain `bevy_camera` entities (no `Camera3d`, `Msaa`, `ClusterConfig`, tonemapping or render-world extraction). The sky sets the world camera's `sky::WorldFog`; `view_sync` copies it to `View::fog`. The view-bob warp reaches `vk` only through `View::warp`.
+
 | Data | Defined | Used (vk) |
 |---|---|---|
 | `systems::WorldCamera` + `GlobalTransform` + `Projection::Perspective` | replaced: `client::view::View::world` (filled by `renderer/view_sync.rs`) | `live.rs:697–715` `world_camera`; `entity_dump.rs:976, 983, 1450` |
-| `DistanceFog` (`FogFalloff::Linear`) on the world camera | replaced: `View::fog` | `entity_dump.rs:907, 983` |
+| `DistanceFog` (`FogFalloff::Linear`) on the world camera | replaced: `View::fog` (from `renderer/sky.rs` `WorldFog`) | `entity_dump.rs:907, 983` |
 | `panorama::PanoramaCamera` + `Camera::is_active` (menu?) | replaced: `View::menu` | `live.rs:461–466` |
 | `panorama` lens constants (copied) | `renderer/panorama.rs` | `vk/panorama.rs:18–25` |
 | `inventory_figure::{FigureCamera, FigureImage, ready, FIGURE_LAYER}` + ortho `ScalingMode::Fixed` | replaced: `View::{figure, figure_ready}`, `client::view::FIGURE_LAYER` | `live.rs:662–695` `figure_view`; `entity_dump.rs:1189–1199` |
