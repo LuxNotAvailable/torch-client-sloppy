@@ -75,7 +75,7 @@ pub(super) struct ChunkBorderOverlay {
 }
 
 #[derive(Resource, Clone)]
-pub(crate) struct LineMaterial(pub(crate) Handle<StandardMaterial>);
+pub(crate) struct LineMaterial(pub(crate) Handle<crate::draw::SimpleMaterial>);
 
 pub(super) const OUTLINE_INFLATE: f32 = 0.002;
 

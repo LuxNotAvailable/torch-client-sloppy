@@ -1,11 +1,8 @@
-use bevy::asset::{Asset, embedded_asset};
-use bevy::mesh::{Mesh, MeshVertexBufferLayoutRef};
-use bevy::pbr::{Material, MaterialPipeline, MaterialPlugin};
+//! The entity material as plain data: texture, light and blend, read by
+//! the draw-list collector (`entity_draw`).
+
+use bevy::asset::Asset;
 use bevy::prelude::*;
-use bevy::render::render_resource::{
-    AsBindGroup, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
-};
-use bevy::shader::ShaderRef;
 
 use crate::client::dimension::Dimension;
 
@@ -28,7 +25,7 @@ pub fn diffuse_lights(dim: Dimension) -> [Vec3; 2] {
     [pair[0].normalize(), pair[1].normalize()]
 }
 
-#[derive(Clone, Copy, PartialEq, Debug, ShaderType)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub struct EntityParams {
     pub tint: Vec4,
     pub light: Vec4,
@@ -115,49 +112,20 @@ impl EntityParams {
     }
 }
 
-fn shader() -> ShaderRef {
-    super::embedded_shader("renderer/entity.wgsl")
-}
-
-#[derive(Asset, TypePath, AsBindGroup, Clone)]
-#[bind_group_data(EntityMaterialKey)]
+#[derive(Asset, TypePath, Clone, Debug)]
 pub struct EntityMaterial {
-    #[texture(0)]
-    #[sampler(1)]
     pub texture: Option<Handle<Image>>,
-    #[uniform(2)]
     pub params: EntityParams,
-
-    #[storage(3, read_only, visibility(vertex))]
-    pub rig_parts: Handle<bevy::render::storage::ShaderStorageBuffer>,
-    #[texture(4)]
-    #[sampler(5)]
-    pub glint: Handle<Image>,
-    pub alpha_mode: AlphaMode,
+    pub alpha_mode: crate::draw::Alpha,
     pub depth_bias: i32,
     pub see_through: bool,
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
-pub struct EntityMaterialKey {
-    depth_bias: i32,
-    see_through: bool,
-}
-
-impl From<&EntityMaterial> for EntityMaterialKey {
-    fn from(material: &EntityMaterial) -> Self {
-        EntityMaterialKey {
-            depth_bias: material.depth_bias,
-            see_through: material.see_through,
-        }
-    }
 }
 
 impl EntityMaterial {
     pub fn new(
         texture: Option<Handle<Image>>,
         mode: LightMode,
-        alpha_mode: AlphaMode,
+        alpha_mode: crate::draw::Alpha,
         cutoff: f32,
         lit: Lit,
         depth_bias: i32,
@@ -165,9 +133,6 @@ impl EntityMaterial {
         EntityMaterial {
             texture,
             params: EntityParams::new(mode, cutoff, lit),
-
-            rig_parts: super::rig_parts::PARTS,
-            glint: GLINT,
             alpha_mode,
             depth_bias,
             see_through: false,
@@ -175,69 +140,7 @@ impl EntityMaterial {
     }
 }
 
-impl Material for EntityMaterial {
-    fn vertex_shader() -> ShaderRef {
-        shader()
-    }
-
-    fn fragment_shader() -> ShaderRef {
-        shader()
-    }
-
-    fn alpha_mode(&self) -> AlphaMode {
-        self.alpha_mode
-    }
-
-    /// Orders blended layers drawn over the same surface (a banner's dyed
-    /// patterns): Bevy sorts transparent draws by distance plus this, so
-    /// without it coplanar layers tie and swap from frame to frame. A
-    /// millimetre a step keeps the stack in order without moving it past
-    /// anything else; the depth test is offset in the pipeline (`specialize`).
-    fn depth_bias(&self) -> f32 {
-        self.depth_bias as f32 * 0.001
-    }
-
-    fn enable_prepass() -> bool {
-        false
-    }
-
-    fn enable_shadows() -> bool {
-        false
-    }
-
-    fn specialize(
-        _pipeline: &MaterialPipeline,
-        descriptor: &mut RenderPipelineDescriptor,
-        layout: &MeshVertexBufferLayoutRef,
-        key: bevy::pbr::MaterialPipelineKey<Self>,
-    ) -> Result<(), SpecializedMeshPipelineError> {
-        let rigged = layout.0.contains(super::rig_parts::ATTRIBUTE_PART);
-        let mut attributes = vec![
-            Mesh::ATTRIBUTE_POSITION.at_shader_location(0),
-            Mesh::ATTRIBUTE_NORMAL.at_shader_location(1),
-            Mesh::ATTRIBUTE_UV_0.at_shader_location(2),
-            Mesh::ATTRIBUTE_COLOR.at_shader_location(3),
-        ];
-        if rigged {
-            attributes.push(super::rig_parts::ATTRIBUTE_PART.at_shader_location(4));
-            descriptor.vertex.shader_defs.push("RIGGED".into());
-        }
-        let vertex_layout = layout.0.get_layout(&attributes)?;
-        descriptor.vertex.buffers = vec![vertex_layout];
-        descriptor.primitive.cull_mode = None;
-        if let Some(depth_stencil) = descriptor.depth_stencil.as_mut() {
-            depth_stencil.bias.constant = key.bind_group_data.depth_bias;
-            if key.bind_group_data.see_through {
-                depth_stencil.depth_compare =
-                    bevy::render::render_resource::CompareFunction::Always;
-            }
-        }
-        Ok(())
-    }
-}
-
-/// The armor glint texture every entity material binds; materials wait for it
-/// until the assets are ready.
+/// The armor glint texture.
 pub const GLINT: Handle<Image> = bevy::asset::uuid_handle!("2b7e4c19-8d5a-4f63-b0e2-91c7a6d34f85");
 
 /// The item glint texture, for the GUI and hand glints.
@@ -298,12 +201,10 @@ pub struct EntityMaterialPlugin;
 
 impl Plugin for EntityMaterialPlugin {
     fn build(&self, app: &mut App) {
-        embedded_asset!(app, "entity.wgsl");
-        app.add_plugins((
-            super::rig_parts::RigPartsPlugin,
-            MaterialPlugin::<EntityMaterial>::default(),
-        ))
-        .add_systems(
+        app.init_asset::<EntityMaterial>()
+            .init_asset::<crate::draw::SimpleMaterial>()
+            .init_resource::<super::rig_parts::RigParts>()
+            .add_systems(
             Update,
             load_glint.run_if(resource_added::<super::systems::AssetsReady>),
         );

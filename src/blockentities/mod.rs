@@ -751,7 +751,7 @@ fn sync_block_entities(
     gui: Option<Res<crate::gui::render::GuiAssets>>,
     camera_q: Query<&GlobalTransform, With<crate::renderer::systems::WorldCamera>>,
     mut nodes: Query<(&mut Transform, &mut Visibility), With<BeRigNode>>,
-    mut mats: Query<&mut MeshMaterial3d<EntityMaterial>>,
+    mut mats: Query<&mut crate::draw::Material3d<EntityMaterial>>,
     (lightmap, occlusion, mut rig_parts, mut aabbs, mut gpu_rigs_were): (
         Res<crate::renderer::systems::LightmapState>,
         Res<crate::renderer::occlusion::OcclusionState>,
@@ -1098,7 +1098,7 @@ fn lit_for(
 fn set_layer_material(
     layer: &mut LayerRig,
     material: &Handle<EntityMaterial>,
-    mats: &mut Query<&mut MeshMaterial3d<EntityMaterial>>,
+    mats: &mut Query<&mut crate::draw::Material3d<EntityMaterial>>,
 ) {
     let mut point_at = |entity: Entity| {
         if let Ok(mut slot) = mats.get_mut(entity) {
@@ -1228,7 +1228,7 @@ fn spawn_layer(
                 let aabb = pose_slot(rig_parts, slot, &gpu.model, rigged, &states);
                 let spawned = commands.spawn((
                     Mesh3d(rigged.mesh.clone()),
-                    MeshMaterial3d(material.clone()),
+                    crate::draw::Material3d(material.clone()),
                     bevy::mesh::MeshTag(slot.offset),
                     aabb,
                     // The shared mesh's own bounds are the unposed parts.
@@ -1267,7 +1267,7 @@ fn spawn_layer(
                 let geom_node = gpu.meshes[i].as_ref().map(|mesh| {
                     let spawned = commands.spawn((
                         Mesh3d(mesh.clone()),
-                        MeshMaterial3d(material.clone()),
+                        crate::draw::Material3d(material.clone()),
                         Transform::default(),
                         Visibility::Inherited,
                         BeRigNode,
@@ -1310,7 +1310,7 @@ fn spawn_layer(
             let handle = meshes.add(mesh);
             let mut spawned = commands.spawn((
                 Mesh3d(handle.clone()),
-                MeshMaterial3d(material.clone()),
+                crate::draw::Material3d(material.clone()),
                 Transform::default(),
                 Visibility::Inherited,
                 BeRigNode,
@@ -1353,11 +1353,11 @@ fn spawn_roots(commands: &mut Commands, spec: &BeSpec, st: &BeState) -> (Entity,
     (root, node)
 }
 
-fn blend_modes(spec: &BeSpec) -> (AlphaMode, f32) {
+fn blend_modes(spec: &BeSpec) -> (crate::draw::Alpha, f32) {
     let (alpha_mode, cutoff) = match spec.blend {
-        Blend::Cutout => (AlphaMode::Mask(0.1), 0.1),
-        Blend::Translucent => (AlphaMode::Blend, 0.1),
-        Blend::Additive => (AlphaMode::Add, 0.0),
+        Blend::Cutout => (crate::draw::Alpha::Mask(0.1), 0.1),
+        Blend::Translucent => (crate::draw::Alpha::Blend, 0.1),
+        Blend::Additive => (crate::draw::Alpha::Add, 0.0),
     };
     let cutoff = match &spec.geom {
         _ if spec.no_cutout => 0.0,

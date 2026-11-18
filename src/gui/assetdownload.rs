@@ -239,7 +239,7 @@ fn build() {
 pub(crate) fn adopt_downloaded_assets(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
-    mut standard: ResMut<Assets<StandardMaterial>>,
+    mut standard: ResMut<Assets<crate::draw::SimpleMaterial>>,
     block: Option<Res<crate::renderer::systems::BlockAtlasHandle>>,
     chunk: Option<Res<crate::renderer::systems::ChunkMaterial>>,
     water: Option<Res<crate::renderer::systems::WaterMaterial>>,

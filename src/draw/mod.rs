@@ -3,6 +3,9 @@
 //! parts. The game builds these; the native renderer uploads them.
 
 pub mod bridge;
+pub mod material;
+
+pub use material::{Alpha, Material3d, SimpleMaterial};
 
 /// One mesh vertex: what `entity.wgsl` reads, and the rig part.
 #[repr(C)]
@@ -133,19 +136,9 @@ pub struct Particles {
 
 /// `EntityInstance::alpha` and `EnvPart::alpha` values.
 pub const ALPHA_OPAQUE: u32 = 0;
+pub const ALPHA_CUTOUT: u32 = 1;
 pub const ALPHA_BLEND: u32 = 2;
 pub const ALPHA_ADD: u32 = 3;
-
-/// A Bevy alpha mode as `ALPHA_*`.
-pub fn alpha_of(mode: bevy::prelude::AlphaMode) -> u32 {
-    use bevy::prelude::AlphaMode;
-    match mode {
-        AlphaMode::Opaque => ALPHA_OPAQUE,
-        AlphaMode::Mask(_) => 1,
-        AlphaMode::Add => ALPHA_ADD,
-        _ => ALPHA_BLEND,
-    }
-}
 
 /// A mesh the game built. `id` is new for every build, so a renderer can
 /// tell a rebuilt mesh from the one it holds; `slot` stays with whatever

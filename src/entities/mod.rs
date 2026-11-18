@@ -777,7 +777,7 @@ impl EntityAssets {
     fn block_atlas(
         &mut self,
         chunk_material: &crate::renderer::systems::ChunkMaterial,
-        materials: &Assets<StandardMaterial>,
+        materials: &Assets<crate::draw::SimpleMaterial>,
     ) -> Option<Handle<Image>> {
         if self.block_atlas.is_none() {
             self.block_atlas = materials
@@ -793,7 +793,7 @@ impl EntityAssets {
         lit: Lit,
         levels: (u8, u8),
         chunk_material: &crate::renderer::systems::ChunkMaterial,
-        standard: &Assets<StandardMaterial>,
+        standard: &Assets<crate::draw::SimpleMaterial>,
         materials: &mut Assets<EntityMaterial>,
     ) -> Option<(Handle<EntityMaterial>, Handle<Image>)> {
         let atlas = self.block_atlas(chunk_material, standard)?;
@@ -965,9 +965,9 @@ fn entity_material(texture: Option<Handle<Image>>, spec: &RenderSpec, lit: Lit) 
         Blend::Additive => 0.0,
     };
     let alpha_mode = match spec.blend {
-        Blend::Cutout => AlphaMode::Mask(cutoff),
-        Blend::Translucent => AlphaMode::Blend,
-        Blend::Additive => AlphaMode::Add,
+        Blend::Cutout => crate::draw::Alpha::Mask(cutoff),
+        Blend::Translucent => crate::draw::Alpha::Blend,
+        Blend::Additive => crate::draw::Alpha::Add,
     };
     EntityMaterial::new(
         texture,
@@ -1301,7 +1301,7 @@ fn sync_entities(
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<EntityMaterial>>,
-    mut standard_materials: ResMut<Assets<StandardMaterial>>,
+    mut standard_materials: ResMut<Assets<crate::draw::SimpleMaterial>>,
     mut item_assets: ResMut<crate::renderer::item_assets::ItemAssets>,
     (map_textures, chunk_material, lightmap, carried, occlusion, mut rig_parts): (
         Res<crate::renderer::maps::MapTextures>,
@@ -1323,7 +1323,7 @@ fn sync_entities(
         Query<&mut GlobalTransform, With<EntityRigNode>>,
         Query<&mut Aabb, With<EntityRigNode>>,
     ),
-    mut mats: Query<&mut MeshMaterial3d<EntityMaterial>>,
+    mut mats: Query<&mut crate::draw::Material3d<EntityMaterial>>,
     (mut variant_tick, _frame, mut seen, mut idx, mut gpu_rigs_were): (
         Local<u32>,
         Local<Vec<EntityState>>,
@@ -1490,7 +1490,7 @@ fn sync_entities(
                                 } else {
                                     commands
                                         .entity(baked.node)
-                                        .insert(MeshMaterial3d(material.clone()));
+                                        .insert(crate::draw::Material3d(material.clone()));
                                 }
                                 layer.material = Some(material);
                                 layer.tex = Some(tex);
@@ -1736,7 +1736,7 @@ fn despawn_rig(commands: &mut Commands, rig_parts: &mut RigParts, rig: &EntityRi
 fn set_layer_material(
     layer: &mut LayerRig,
     material: &Handle<EntityMaterial>,
-    mats: &mut Query<&mut MeshMaterial3d<EntityMaterial>>,
+    mats: &mut Query<&mut crate::draw::Material3d<EntityMaterial>>,
 ) {
     let mut point_at = |entity: Entity| {
         if let Ok(mut slot) = mats.get_mut(entity) {
@@ -1765,7 +1765,7 @@ fn insert_copies(
     for &copy in copies {
         commands
             .entity(copy)
-            .insert((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone())));
+            .insert((Mesh3d(mesh.clone()), crate::draw::Material3d(material.clone())));
     }
 }
 
@@ -1774,7 +1774,7 @@ fn clear_copies(commands: &mut Commands, copies: &[Entity]) {
         commands
             .entity(copy)
             .remove::<Mesh3d>()
-            .remove::<MeshMaterial3d<EntityMaterial>>();
+            .remove::<crate::draw::Material3d<EntityMaterial>>();
     }
 }
 
@@ -1886,7 +1886,7 @@ fn spawn_model_rig(
         bake::empty_aabb(),
     ));
     if let Some(material) = &material {
-        node.insert(MeshMaterial3d(material.clone()));
+        node.insert(crate::draw::Material3d(material.clone()));
     }
     if let Some(slot) = slot {
         // The shared mesh's own bounds are the unposed parts.

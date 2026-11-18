@@ -98,7 +98,7 @@ const FACES: [Face; 6] = [
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<crate::draw::SimpleMaterial>>,
     mut images: ResMut<Assets<Image>>,
 ) {
     let dir = crate::assets_root().join("textures/gui/title/background");
@@ -134,17 +134,14 @@ fn setup(
         );
         texture.sampler = bevy::image::ImageSampler::linear();
 
-        let material = materials.add(StandardMaterial {
+        let material = materials.add(crate::draw::SimpleMaterial {
             base_color_texture: Some(images.add(texture)),
-            unlit: true,
-            cull_mode: None,
-            fog_enabled: false,
             ..default()
         });
 
         commands.spawn((
             Mesh3d(meshes.add(face_mesh(face))),
-            MeshMaterial3d(material),
+            crate::draw::Material3d(material),
             Transform::default(),
             RenderLayers::layer(PANORAMA_LAYER),
             PanoramaLayerTag,

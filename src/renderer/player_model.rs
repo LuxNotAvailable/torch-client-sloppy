@@ -1150,7 +1150,7 @@ fn spawn_rig(
         materials.add(EntityMaterial::new(
             Some(assets.skin.clone()),
             LightMode::Cardinal,
-            AlphaMode::Mask(0.1),
+            crate::draw::Alpha::Mask(0.1),
             0.1,
             lit,
             0,
@@ -1162,7 +1162,7 @@ fn spawn_rig(
         materials.add(EntityMaterial::new(
             None,
             LightMode::Flat,
-            AlphaMode::Mask(0.1),
+            crate::draw::Alpha::Mask(0.1),
             0.1,
             lit,
             0,
@@ -1198,7 +1198,7 @@ fn spawn_rig(
         let entity = commands
             .spawn((
                 Mesh3d(assets.meshes[i].clone()),
-                MeshMaterial3d(if def.parent.is_some() {
+                crate::draw::Material3d(if def.parent.is_some() {
                     overlay.clone()
                 } else {
                     base.clone()
@@ -1223,7 +1223,7 @@ fn spawn_rig(
         let entity = commands
             .spawn((
                 Mesh3d(assets.no_item.clone()),
-                MeshMaterial3d(material.clone()),
+                crate::draw::Material3d(material.clone()),
                 Transform::default(),
                 Visibility::Hidden,
                 HeldItemNode {
@@ -1250,7 +1250,7 @@ fn spawn_rig(
     let cape_material = materials.add(EntityMaterial::new(
         None,
         LightMode::Cardinal,
-        AlphaMode::Mask(0.1),
+        crate::draw::Alpha::Mask(0.1),
         0.1,
         lit,
         0,
@@ -1260,7 +1260,7 @@ fn spawn_rig(
         let entity = commands
             .spawn((
                 Mesh3d(assets.cape.clone()),
-                MeshMaterial3d(cape_material.clone()),
+                crate::draw::Material3d(cape_material.clone()),
                 Transform::from_translation(Vec3::from(CAPE.pivot)),
                 Visibility::Hidden,
                 RigPart,
@@ -1280,7 +1280,7 @@ fn spawn_rig(
     let wings_material = materials.add(EntityMaterial::new(
         None,
         LightMode::Cardinal,
-        AlphaMode::Mask(0.1),
+        crate::draw::Alpha::Mask(0.1),
         0.1,
         lit,
         0,
@@ -1289,7 +1289,7 @@ fn spawn_rig(
         let entity = commands
             .spawn((
                 Mesh3d(assets.wings[i].clone()),
-                MeshMaterial3d(wings_material.clone()),
+                crate::draw::Material3d(wings_material.clone()),
                 Transform::default(),
                 Visibility::Hidden,
                 RigPart,
@@ -1305,7 +1305,7 @@ fn spawn_rig(
         materials.add(EntityMaterial::new(
             None,
             LightMode::Cardinal,
-            AlphaMode::Mask(0.1),
+            crate::draw::Alpha::Mask(0.1),
             0.1,
             lit,
             0,
@@ -1318,7 +1318,7 @@ fn spawn_rig(
                 let entity = commands
                     .spawn((
                         Mesh3d(piece.mesh.clone()),
-                        MeshMaterial3d(armor_materials[slot].clone()),
+                        crate::draw::Material3d(armor_materials[slot].clone()),
                         Transform::default(),
                         Visibility::Hidden,
                         RigArmor,
@@ -1340,7 +1340,7 @@ fn spawn_rig(
         materials.add(EntityMaterial::new(
             None,
             LightMode::Cardinal,
-            AlphaMode::Mask(0.1),
+            crate::draw::Alpha::Mask(0.1),
             0.1,
             lit,
             0,
@@ -1352,7 +1352,7 @@ fn spawn_rig(
             let entity = commands
                 .spawn((
                     Mesh3d(assets.stuck_meshes[kind].clone()),
-                    MeshMaterial3d(stuck_materials[kind].clone()),
+                    crate::draw::Material3d(stuck_materials[kind].clone()),
                     Transform::default(),
                     Visibility::Hidden,
                     RigPart,
@@ -1481,7 +1481,7 @@ struct ItemCtx<'a> {
     assets: &'a mut ItemAssets,
     meshes: &'a mut Assets<Mesh>,
     images: &'a mut Assets<Image>,
-    materials: &'a mut Assets<StandardMaterial>,
+    materials: &'a mut Assets<crate::draw::SimpleMaterial>,
     entity_materials: &'a mut Assets<EntityMaterial>,
     no_item: Handle<Mesh>,
     armor_textures: &'a mut ArmorTextures,
@@ -1512,7 +1512,7 @@ fn sync_player_models(
     mut item_assets: ResMut<ItemAssets>,
     mut item_meshes: ResMut<Assets<Mesh>>,
     mut item_images: ResMut<Assets<Image>>,
-    mut item_materials: ResMut<Assets<StandardMaterial>>,
+    mut item_materials: ResMut<Assets<crate::draw::SimpleMaterial>>,
     mut entity_materials: ResMut<Assets<EntityMaterial>>,
     mut armor_textures: ResMut<ArmorTextures>,
     #[cfg(feature = "skins")] mut skin_textures: ResMut<super::skin::SkinTextures>,

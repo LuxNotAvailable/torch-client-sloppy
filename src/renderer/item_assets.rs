@@ -11,7 +11,7 @@ use crate::items::model::{DisplayContext, DisplayTransforms};
 #[derive(Clone)]
 pub struct ItemGpu {
     pub mesh: Handle<Mesh>,
-    pub material: Handle<StandardMaterial>,
+    pub material: Handle<crate::draw::SimpleMaterial>,
     pub texture: Handle<Image>,
     pub display: DisplayTransforms,
     pub bounds: (Vec3, Vec3),
@@ -71,7 +71,7 @@ impl ItemAssets {
         using: bool,
         meshes: &mut Assets<Mesh>,
         images: &mut Assets<Image>,
-        materials: &mut Assets<StandardMaterial>,
+        materials: &mut Assets<crate::draw::SimpleMaterial>,
     ) -> Option<&ItemGpu> {
         if id.is_empty() {
             return None;
@@ -114,7 +114,7 @@ impl ItemAssets {
         using: bool,
         meshes: &mut Assets<Mesh>,
         images: &mut Assets<Image>,
-        materials: &mut Assets<StandardMaterial>,
+        materials: &mut Assets<crate::draw::SimpleMaterial>,
     ) -> Option<ItemGpu> {
         let built = self.builder.build(id, ctx, using)?;
         if built.vertices.is_empty() {
@@ -128,13 +128,10 @@ impl ItemAssets {
             RenderAssetUsages::RENDER_WORLD,
         ));
 
-        let material = materials.add(StandardMaterial {
+        let material = materials.add(crate::draw::SimpleMaterial {
             base_color: Color::WHITE,
             base_color_texture: Some(texture.clone()),
-            unlit: true,
-            alpha_mode: AlphaMode::Mask(0.1),
-            double_sided: true,
-            cull_mode: None,
+            alpha_mode: crate::draw::Alpha::Mask(0.1),
             ..default()
         });
 

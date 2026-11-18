@@ -319,7 +319,7 @@ struct Uploads<'w, 's> {
     meshes: Res<'w, Assets<Mesh>>,
     images: Res<'w, Assets<Image>>,
     entity_materials: Res<'w, Assets<crate::renderer::entity_material::EntityMaterial>>,
-    standard_materials: Res<'w, Assets<StandardMaterial>>,
+    standard_materials: Res<'w, Assets<crate::draw::SimpleMaterial>>,
     device: Option<Res<'w, bevy::render::renderer::RenderDevice>>,
 }
 

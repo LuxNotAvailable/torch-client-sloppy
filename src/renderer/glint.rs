@@ -1,41 +1,19 @@
 //! The enchantment shimmer, drawn additively over an item mesh and masked by
 //! that item's own texture.
 
-use bevy::asset::embedded_asset;
 use bevy::prelude::*;
-use bevy::render::render_resource::AsBindGroup;
-use bevy::shader::ShaderRef;
 
-#[derive(Asset, TypePath, AsBindGroup, Clone)]
+#[derive(Asset, TypePath, Clone, Debug)]
 pub struct GlintMaterial {
-    #[texture(0)]
-    #[sampler(1)]
+    /// The item's texture, whose alpha masks the shimmer.
     pub mask: Handle<Image>,
-    #[texture(2)]
-    #[sampler(3)]
-    pub glint: Handle<Image>,
-}
-
-impl Material for GlintMaterial {
-    fn fragment_shader() -> ShaderRef {
-        super::embedded_shader("renderer/glint.wgsl")
-    }
-
-    fn alpha_mode(&self) -> AlphaMode {
-        AlphaMode::Add
-    }
-
-    fn depth_bias(&self) -> f32 {
-        1.0
-    }
 }
 
 pub struct GlintPlugin;
 
 impl Plugin for GlintPlugin {
     fn build(&self, app: &mut App) {
-        embedded_asset!(app, "glint.wgsl");
-        app.add_plugins(MaterialPlugin::<GlintMaterial>::default())
+        app.init_asset::<GlintMaterial>()
             .init_resource::<GlintMaterials>();
     }
 }
@@ -55,7 +33,6 @@ impl GlintMaterials {
             .or_insert_with(|| {
                 materials.add(GlintMaterial {
                     mask: texture.clone(),
-                    glint: super::entity_material::GLINT_ITEM,
                 })
             })
             .clone()

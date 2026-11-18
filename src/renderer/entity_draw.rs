@@ -11,7 +11,7 @@ use crate::draw::{EntityDraw, EntityInstance, KIND_SHADOW_ONLY};
 type Drawn<'a> = (
     Entity,
     &'a Mesh3d,
-    &'a MeshMaterial3d<EntityMaterial>,
+    &'a crate::draw::Material3d<EntityMaterial>,
     &'a GlobalTransform,
     &'a InheritedVisibility,
     Option<&'a RenderLayers>,
@@ -105,7 +105,7 @@ fn fill_draw_list(
                 mesh: 0,
                 texture: u32::MAX,
                 tag: tag.map_or(0, |t| t.0),
-                alpha: crate::draw::alpha_of(material.alpha_mode),
+                alpha: material.alpha_mode.code(),
                 depth_bias: material.depth_bias,
                 kind: match (block, beam, weather) {
                     (true, ..) => 1,

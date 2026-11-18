@@ -12,7 +12,7 @@ pub(super) fn draw_particles(
     gui_assets: Option<Res<crate::gui::render::GuiAssets>>,
     lightmap: Res<LightmapState>,
     chunk_material: Res<ChunkMaterial>,
-    standard: Res<Assets<StandardMaterial>>,
+    standard: Res<Assets<crate::draw::SimpleMaterial>>,
     atlas: Res<ParticleAtlas>,
     live: Res<LiveParticles>,
     mut ent_materials: ResMut<Assets<EntityMaterial>>,
@@ -23,7 +23,7 @@ pub(super) fn draw_particles(
     mut drawn: Query<
         (
             &mut Transform,
-            &mut MeshMaterial3d<EntityMaterial>,
+            &mut crate::draw::Material3d<EntityMaterial>,
             &mut Visibility,
         ),
         With<ParticleBatch>,
@@ -148,7 +148,7 @@ pub(super) fn draw_particles(
                 .spawn((
                     ParticleBatch,
                     Mesh3d(mesh.clone()),
-                    MeshMaterial3d(material),
+                    crate::draw::Material3d(material),
                     Transform::from_translation(origin),
                     NoFrustumCulling,
                 ))
@@ -212,7 +212,7 @@ pub(super) fn hide_from(
     drawn: &mut Query<
         (
             &mut Transform,
-            &mut MeshMaterial3d<EntityMaterial>,
+            &mut crate::draw::Material3d<EntityMaterial>,
             &mut Visibility,
         ),
         With<ParticleBatch>,
@@ -261,12 +261,10 @@ pub(super) fn batch_material(
             },
         ),
 
-        rig_parts: crate::renderer::rig_parts::PARTS,
-        glint: crate::renderer::entity_material::GLINT,
         alpha_mode: if key.translucent {
-            AlphaMode::Blend
+            crate::draw::Alpha::Blend
         } else {
-            AlphaMode::Mask(0.1)
+            crate::draw::Alpha::Mask(0.1)
         },
         depth_bias: 0,
         see_through: false,
@@ -501,7 +499,7 @@ pub(super) fn empty_particle_mesh() -> Mesh {
 
 pub(super) fn particle_atlas(
     chunk_material: &ChunkMaterial,
-    standard: &Assets<StandardMaterial>,
+    standard: &Assets<crate::draw::SimpleMaterial>,
 ) -> Option<Handle<Image>> {
     standard
         .get(&chunk_material.0)

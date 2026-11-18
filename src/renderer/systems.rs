@@ -42,14 +42,14 @@ pub struct Shared(pub Arc<SharedMutex>);
 pub struct WorldCamera;
 
 #[derive(Resource)]
-pub struct ChunkMaterial(pub Handle<StandardMaterial>);
+pub struct ChunkMaterial(pub Handle<crate::draw::SimpleMaterial>);
 
 #[derive(Resource)]
 #[allow(
     dead_code,
     reason = "resource holds the handle that keeps the asset alive"
 )]
-pub struct WaterMaterial(pub Handle<StandardMaterial>);
+pub struct WaterMaterial(pub Handle<crate::draw::SimpleMaterial>);
 
 #[derive(Resource, Default)]
 pub struct LightmapState {
@@ -338,7 +338,7 @@ pub(crate) struct RendererSetup;
 
 fn setup(
     mut commands: Commands,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<crate::draw::SimpleMaterial>>,
     mut images: ResMut<Assets<Image>>,
     mut cursor_opts: Query<&mut CursorOptions, With<PrimaryWindow>>,
     mut pending_atlas: ResMut<PendingAtlas>,
@@ -347,25 +347,18 @@ fn setup(
     let atlas = images.add(std::mem::take(&mut pending_atlas.0));
     commands.remove_resource::<PendingAtlas>();
     commands.insert_resource(BlockAtlasHandle(atlas.clone()));
-    let chunk_material = materials.add(StandardMaterial {
+    let chunk_material = materials.add(crate::draw::SimpleMaterial {
         base_color: Color::WHITE,
         base_color_texture: Some(atlas.clone()),
-        perceptual_roughness: 0.95,
-        unlit: true,
-        alpha_mode: AlphaMode::Mask(0.1),
-        double_sided: true,
-        cull_mode: None,
+        alpha_mode: crate::draw::Alpha::Mask(0.1),
         ..default()
     });
     commands.insert_resource(ChunkMaterial(chunk_material));
 
-    let water_material = materials.add(StandardMaterial {
+    let water_material = materials.add(crate::draw::SimpleMaterial {
         base_color: Color::WHITE,
         base_color_texture: Some(atlas.clone()),
-        unlit: true,
-        alpha_mode: AlphaMode::Blend,
-        double_sided: true,
-        cull_mode: None,
+        alpha_mode: crate::draw::Alpha::Blend,
         ..default()
     });
     commands.insert_resource(WaterMaterial(water_material));
@@ -377,11 +370,9 @@ fn setup(
     });
 
     // Structure block bounds draw their lines with this.
-    let line_mat = materials.add(StandardMaterial {
+    let line_mat = materials.add(crate::draw::SimpleMaterial {
         base_color: Color::WHITE,
-        unlit: true,
-        alpha_mode: AlphaMode::Blend,
-        cull_mode: None,
+        alpha_mode: crate::draw::Alpha::Blend,
         ..default()
     });
     commands.insert_resource(LineMaterial(line_mat));

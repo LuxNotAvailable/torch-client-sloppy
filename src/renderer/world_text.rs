@@ -314,16 +314,14 @@ fn setup(
             texture: Some(gui.image.clone()),
             params: EntityParams::new(LightMode::Text, 0.0, Lit::full_bright()),
 
-            rig_parts: crate::renderer::rig_parts::PARTS,
-            glint: crate::renderer::entity_material::GLINT,
-            alpha_mode: AlphaMode::Blend,
+            alpha_mode: crate::draw::Alpha::Blend,
             depth_bias: 0,
             see_through,
         });
 
         let _spawned = commands.spawn((
             Mesh3d(mesh),
-            MeshMaterial3d(material),
+            crate::draw::Material3d(material),
             Transform::default(),
             Visibility::Visible,
             NoFrustumCulling,

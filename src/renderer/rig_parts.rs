@@ -1,29 +1,20 @@
 //! Part matrices for GPU-posed model rigs.
 //!
 //! A posed model keeps one static mesh per model, each vertex tagged with its
-//! part index, and every live rig layer owns a fixed run of part matrices in
-//! one shared storage buffer. The vertex shader reads
-//! `parts[MeshTag + part]`, so posing a mob writes a few matrices instead of
-//! re-baking and re-uploading its whole mesh, and every mob of a model shares
-//! one mesh that Bevy can batch.
+//! part index, and every live rig layer owns a fixed run of part matrices.
+//! The renderer's vertex shader reads `parts[MeshTag + part]` (the rows go
+//! out in `draw::Entities`), so posing a mob writes a few matrices instead of
+//! re-baking its whole mesh, and every mob of a model shares one mesh.
 
-use bevy::asset::{RenderAssetUsages, uuid_handle};
 use bevy::math::Mat4;
 use bevy::mesh::{MeshVertexAttribute, VertexFormat};
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
-use bevy::render::render_asset::RenderAssets;
-use bevy::render::render_resource::BufferUsages;
-use bevy::render::renderer::RenderQueue;
-use bevy::render::storage::{GpuShaderStorageBuffer, ShaderStorageBuffer};
-use bevy::render::{Extract, ExtractSchedule, Render, RenderApp, RenderSystems};
 
 pub const ATTRIBUTE_PART: MeshVertexAttribute =
     MeshVertexAttribute::new("RigPart", 0x5c1e_7a0d_93b4_2f61, VertexFormat::Uint32);
 
-pub const PARTS: Handle<ShaderStorageBuffer> = uuid_handle!("8f0d9b62-3c4e-4a71-9e25-6b1f7c0a4d38");
-
-/// Matrices the buffer holds; a rig that would overflow it falls back to the
+/// Matrices the renderer holds; a rig that would overflow it falls back to the
 /// CPU bake.
 pub const CAPACITY: u32 = 1 << 16;
 
@@ -56,7 +47,6 @@ pub struct PartSlot {
 pub struct RigParts {
     rows: Vec<PartRows>,
     free: HashMap<u32, Vec<u32>>,
-    generation: u64,
 }
 
 impl RigParts {
@@ -69,7 +59,6 @@ impl RigParts {
             return None;
         }
         self.rows.resize(self.rows.len() + len as usize, ZERO_ROWS);
-        self.generation = self.generation.wrapping_add(1);
         Some(PartSlot { offset, len })
     }
 
@@ -77,7 +66,6 @@ impl RigParts {
         let start = slot.offset as usize;
         self.rows[start..start + slot.len as usize].fill(ZERO_ROWS);
         self.free.entry(slot.len).or_default().push(slot.offset);
-        self.generation = self.generation.wrapping_add(1);
     }
 
     /// Every part's rows, by offset (the entity dump copies them).
@@ -92,7 +80,6 @@ impl RigParts {
         for (out, mat) in run.iter_mut().zip(mats) {
             *out = part_rows(mat);
         }
-        self.generation = self.generation.wrapping_add(1);
     }
 }
 
@@ -104,67 +91,6 @@ pub fn part_rows(mat: Option<Mat4>) -> PartRows {
             m.row(2).to_array(),
         ],
         None => ZERO_ROWS,
-    }
-}
-
-#[derive(Resource, Default)]
-struct RigPartsUpload {
-    rows: Vec<PartRows>,
-    generation: u64,
-    pending: bool,
-}
-
-fn extract_rig_parts(parts: Extract<Res<RigParts>>, mut upload: ResMut<RigPartsUpload>) {
-    if parts.generation == upload.generation {
-        return;
-    }
-    upload.generation = parts.generation;
-    upload.rows.clear();
-    upload.rows.extend_from_slice(&parts.rows);
-    upload.pending = true;
-}
-
-fn upload_rig_parts(
-    mut upload: ResMut<RigPartsUpload>,
-    buffers: Res<RenderAssets<GpuShaderStorageBuffer>>,
-    queue: Res<RenderQueue>,
-) {
-    if !upload.pending || upload.rows.is_empty() {
-        return;
-    }
-    let Some(gpu) = buffers.get(PARTS.id()) else {
-        return;
-    };
-    queue.write_buffer(&gpu.buffer, 0, bytemuck::cast_slice(&upload.rows));
-    upload.pending = false;
-}
-
-pub struct RigPartsPlugin;
-
-impl Plugin for RigPartsPlugin {
-    fn build(&self, app: &mut App) {
-        let mut storage = ShaderStorageBuffer::with_size(
-            CAPACITY as usize * std::mem::size_of::<PartRows>(),
-            RenderAssetUsages::default(),
-        );
-        storage.buffer_description.label = Some("rig_parts");
-        storage.buffer_description.usage = BufferUsages::STORAGE | BufferUsages::COPY_DST;
-        app.world_mut()
-            .resource_mut::<Assets<ShaderStorageBuffer>>()
-            .insert(&PARTS, storage)
-            .expect("a uuid handle has no generation to go stale");
-        app.init_resource::<RigParts>();
-
-        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
-            return;
-        };
-        render_app
-            .init_resource::<RigPartsUpload>()
-            .add_systems(ExtractSchedule, extract_rig_parts)
-            .add_systems(
-                Render,
-                upload_rig_parts.in_set(RenderSystems::PrepareResources),
-            );
     }
 }
 

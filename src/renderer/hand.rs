@@ -928,12 +928,12 @@ struct HandAssets {
     slim_arm: [Handle<Mesh>; 2],
     #[cfg(feature = "skins")]
     slim_sleeve: [Handle<Mesh>; 2],
-    base: Handle<StandardMaterial>,
-    overlay: Handle<StandardMaterial>,
-    map_background: Handle<StandardMaterial>,
-    map_checkerboard: Handle<StandardMaterial>,
-    map_picture: [Handle<StandardMaterial>; 2],
-    decorations: Handle<StandardMaterial>,
+    base: Handle<crate::draw::SimpleMaterial>,
+    overlay: Handle<crate::draw::SimpleMaterial>,
+    map_background: Handle<crate::draw::SimpleMaterial>,
+    map_checkerboard: Handle<crate::draw::SimpleMaterial>,
+    map_picture: [Handle<crate::draw::SimpleMaterial>; 2],
+    decorations: Handle<crate::draw::SimpleMaterial>,
 }
 
 pub struct HandPlugin;
@@ -987,7 +987,7 @@ impl Plugin for HandPlugin {
 fn fill_draw_list(
     parts: Query<(
         &Mesh3d,
-        &MeshMaterial3d<StandardMaterial>,
+        &crate::draw::Material3d<crate::draw::SimpleMaterial>,
         &GlobalTransform,
         &InheritedVisibility,
         &RenderLayers,
@@ -995,14 +995,14 @@ fn fill_draw_list(
     glints: Query<
         (
             &Mesh3d,
-            &MeshMaterial3d<crate::renderer::glint::GlintMaterial>,
+            &crate::draw::Material3d<crate::renderer::glint::GlintMaterial>,
             &GlobalTransform,
             &InheritedVisibility,
         ),
         With<HandGlint>,
     >,
     meshes: Res<crate::draw::bridge::Meshes>,
-    standard: Res<Assets<StandardMaterial>>,
+    standard: Res<Assets<crate::draw::SimpleMaterial>>,
     glint_materials: Res<Assets<crate::renderer::glint::GlintMaterial>>,
     mut out: ResMut<crate::draw::Env>,
 ) {
@@ -1022,7 +1022,7 @@ fn fill_draw_list(
                 .base_color_texture
                 .clone()
                 .map_or(Texture::None, Texture::Image),
-            alpha: crate::draw::alpha_of(m.alpha_mode),
+            alpha: m.alpha_mode.code(),
             tint: m.base_color.to_linear().to_f32_array(),
             ..EnvDraw::new(data.clone(), 3, transform.to_matrix())
         });
@@ -1048,7 +1048,7 @@ fn bind_hand_arms(
     assets: Option<Res<HandAssets>>,
     rig: Option<ResMut<HandRig>>,
     #[cfg(feature = "skins")] mut skins: ResMut<super::skin::SkinTextures>,
-    #[cfg(feature = "skins")] mut materials: ResMut<Assets<StandardMaterial>>,
+    #[cfg(feature = "skins")] mut materials: ResMut<Assets<crate::draw::SimpleMaterial>>,
     #[cfg(feature = "skins")] mut images: ResMut<Assets<Image>>,
     mut meshes: Query<&mut Mesh3d>,
 ) {
@@ -1127,39 +1127,30 @@ fn setup_hand(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<crate::draw::SimpleMaterial>>,
 ) {
     let Some(skin) = super::skin::load_default_skin(&mut images, "first-person hand") else {
         return;
     };
 
-    let base = materials.add(StandardMaterial {
+    let base = materials.add(crate::draw::SimpleMaterial {
         base_color: Color::WHITE,
         base_color_texture: Some(skin.clone()),
-        unlit: true,
-        alpha_mode: AlphaMode::Mask(0.1),
-        double_sided: true,
-        cull_mode: None,
+        alpha_mode: crate::draw::Alpha::Mask(0.1),
         ..default()
     });
-    let overlay = materials.add(StandardMaterial {
+    let overlay = materials.add(crate::draw::SimpleMaterial {
         base_color: Color::WHITE,
         base_color_texture: Some(skin),
-        unlit: true,
-        alpha_mode: AlphaMode::Mask(0.1),
-        double_sided: true,
-        cull_mode: None,
+        alpha_mode: crate::draw::Alpha::Mask(0.1),
         ..default()
     });
 
     let mut map_material = |texture: Option<Handle<Image>>| {
-        materials.add(StandardMaterial {
+        materials.add(crate::draw::SimpleMaterial {
             base_color: Color::WHITE,
             base_color_texture: texture,
-            unlit: true,
-            alpha_mode: AlphaMode::Mask(0.1),
-            double_sided: true,
-            cull_mode: None,
+            alpha_mode: crate::draw::Alpha::Mask(0.1),
             ..default()
         })
     };
@@ -1241,7 +1232,7 @@ fn setup_hand(
         let item = commands
             .spawn((
                 Mesh3d::default(),
-                MeshMaterial3d::<StandardMaterial>::default(),
+                crate::draw::Material3d::<crate::draw::SimpleMaterial>::default(),
                 Transform::default(),
                 Visibility::Inherited,
                 RenderLayers::layer(HAND_LAYER),
@@ -1255,7 +1246,7 @@ fn setup_hand(
         let glint = commands
             .spawn((
                 Mesh3d::default(),
-                MeshMaterial3d::<crate::renderer::glint::GlintMaterial>::default(),
+                crate::draw::Material3d::<crate::renderer::glint::GlintMaterial>::default(),
                 Transform::default(),
                 Visibility::Hidden,
                 RenderLayers::layer(HAND_LAYER),
@@ -1271,7 +1262,7 @@ fn setup_hand(
         let arm = commands
             .spawn((
                 Mesh3d(assets.arm[side].clone()),
-                MeshMaterial3d(assets.base.clone()),
+                crate::draw::Material3d(assets.base.clone()),
                 Transform::default(),
                 Visibility::Hidden,
                 RenderLayers::layer(HAND_LAYER),
@@ -1283,7 +1274,7 @@ fn setup_hand(
         let sleeve = commands
             .spawn((
                 Mesh3d(assets.sleeve[side].clone()),
-                MeshMaterial3d(assets.overlay.clone()),
+                crate::draw::Material3d(assets.overlay.clone()),
                 Transform::default(),
                 Visibility::Inherited,
                 RenderLayers::layer(HAND_LAYER),
@@ -1301,11 +1292,11 @@ fn setup_hand(
                 Name::new(format!("{name}_map")),
             ))
             .id();
-        let mut map_piece = |mesh: Handle<Mesh>, material: Handle<StandardMaterial>, part: &str| {
+        let mut map_piece = |mesh: Handle<Mesh>, material: Handle<crate::draw::SimpleMaterial>, part: &str| {
             let entity = commands
                 .spawn((
                     Mesh3d(mesh),
-                    MeshMaterial3d(material),
+                    crate::draw::Material3d(material),
                     Transform::default(),
                     Visibility::Inherited,
                     RenderLayers::layer(HAND_LAYER),
@@ -1393,7 +1384,7 @@ fn light_hand(
     lightmap: &crate::renderer::systems::LightmapState,
     eye: [f32; 3],
     assets: &HandAssets,
-    materials: &mut Assets<StandardMaterial>,
+    materials: &mut Assets<crate::draw::SimpleMaterial>,
 ) {
     let cell = crate::lighting::lightmap::entity_light(&lightmap.current, eye, false);
 
@@ -1432,12 +1423,12 @@ fn sync_hands(
     map_textures: Res<crate::renderer::maps::MapTextures>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<crate::draw::SimpleMaterial>>,
     lightmap: Res<crate::renderer::systems::LightmapState>,
     mut nodes: NodeQuery,
-    mut item_nodes: Query<(&mut Mesh3d, &mut MeshMaterial3d<StandardMaterial>), With<HandItemNode>>,
+    mut item_nodes: Query<(&mut Mesh3d, &mut crate::draw::Material3d<crate::draw::SimpleMaterial>), With<HandItemNode>>,
     mut map_nodes: Query<
-        (&mut Mesh3d, &mut MeshMaterial3d<StandardMaterial>),
+        (&mut Mesh3d, &mut crate::draw::Material3d<crate::draw::SimpleMaterial>),
         (With<HandMapNode>, Without<HandItemNode>),
     >,
 ) {
@@ -1651,10 +1642,10 @@ fn bind_map(
     map_textures: &crate::renderer::maps::MapTextures,
     assets: Option<&HandAssets>,
     meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
+    materials: &mut Assets<crate::draw::SimpleMaterial>,
     nodes: &mut NodeQuery,
     map_nodes: &mut Query<
-        (&mut Mesh3d, &mut MeshMaterial3d<StandardMaterial>),
+        (&mut Mesh3d, &mut crate::draw::Material3d<crate::draw::SimpleMaterial>),
         (With<HandMapNode>, Without<HandItemNode>),
     >,
 ) {
@@ -1822,18 +1813,18 @@ fn write(nodes: &mut NodeQuery, entity: Entity, transform: Transform, visible: b
 #[allow(clippy::type_complexity)]
 fn sync_hand_glint(
     rig: Option<Res<HandRig>>,
-    items: Query<(&Mesh3d, &MeshMaterial3d<StandardMaterial>, &Visibility), With<HandItemNode>>,
+    items: Query<(&Mesh3d, &crate::draw::Material3d<crate::draw::SimpleMaterial>, &Visibility), With<HandItemNode>>,
     mut glints: Query<
         (
             &HandGlint,
             &ChildOf,
             &mut Mesh3d,
-            &mut MeshMaterial3d<crate::renderer::glint::GlintMaterial>,
+            &mut crate::draw::Material3d<crate::renderer::glint::GlintMaterial>,
             &mut Visibility,
         ),
         Without<HandItemNode>,
     >,
-    standard: Res<Assets<StandardMaterial>>,
+    standard: Res<Assets<crate::draw::SimpleMaterial>>,
     mut materials: ResMut<Assets<crate::renderer::glint::GlintMaterial>>,
     mut cache: ResMut<crate::renderer::glint::GlintMaterials>,
 ) {

@@ -254,44 +254,44 @@ fn setup(
     }
     for kind in KINDS {
         let (texture, mode, alpha) = match kind {
-            Kind::Leash | Kind::Line => (None, LightMode::Flat, AlphaMode::Opaque),
+            Kind::Leash | Kind::Line => (None, LightMode::Flat, crate::draw::Alpha::Opaque),
             Kind::GuardianBeam => (
                 tiled("entity/guardian/guardian_beam", &mut images),
                 LightMode::Emissive,
-                AlphaMode::Mask(0.1),
+                crate::draw::Alpha::Mask(0.1),
             ),
             Kind::CrystalBeam => (
                 tiled("entity/end_crystal/end_crystal_beam", &mut images),
                 LightMode::Emissive,
-                AlphaMode::Mask(0.1),
+                crate::draw::Alpha::Mask(0.1),
             ),
-            Kind::Lightning | Kind::Rays => (None, LightMode::Emissive, AlphaMode::Add),
+            Kind::Lightning | Kind::Rays => (None, LightMode::Emissive, crate::draw::Alpha::Add),
             // Flames light themselves (`withBlock(light, 15)`).
             Kind::Rain => (
                 tiled("environment/rain", &mut images),
                 LightMode::Text,
-                AlphaMode::Blend,
+                crate::draw::Alpha::Blend,
             ),
             Kind::Snow => (
                 tiled("environment/snow", &mut images),
                 LightMode::Text,
-                AlphaMode::Blend,
+                crate::draw::Alpha::Blend,
             ),
             Kind::Shadow => (
                 crate::entities::load_entity_image("misc/shadow", &mut images),
                 // Text mode keeps the vertex alpha the fade lives in.
                 LightMode::Text,
-                AlphaMode::Blend,
+                crate::draw::Alpha::Blend,
             ),
             Kind::Fire0 => (
                 crate::entities::load_entity_image("block/fire_0", &mut images),
                 LightMode::Emissive,
-                AlphaMode::Mask(0.1),
+                crate::draw::Alpha::Mask(0.1),
             ),
             Kind::Fire1 => (
                 crate::entities::load_entity_image("block/fire_1", &mut images),
                 LightMode::Emissive,
-                AlphaMode::Mask(0.1),
+                crate::draw::Alpha::Mask(0.1),
             ),
         };
         let mut mesh = Mesh::new(
@@ -312,7 +312,7 @@ fn setup(
         let entity = commands
             .spawn((
                 Mesh3d(mesh.clone()),
-                MeshMaterial3d(material),
+                crate::draw::Material3d(material),
                 Transform::IDENTITY,
                 Visibility::Hidden,
                 NoFrustumCulling,

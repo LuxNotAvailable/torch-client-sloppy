@@ -45,19 +45,17 @@ struct BoundsOverlay {
 fn spawn(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<crate::draw::SimpleMaterial>>,
     lines: Res<LineMaterial>,
 ) {
-    let fill = materials.add(StandardMaterial {
+    let fill = materials.add(crate::draw::SimpleMaterial {
         base_color: Color::srgba(ERROR_FILL[0], ERROR_FILL[1], ERROR_FILL[2], ERROR_FILL[3]),
-        unlit: true,
-        alpha_mode: AlphaMode::Blend,
-        cull_mode: None,
+        alpha_mode: crate::draw::Alpha::Blend,
         ..default()
     });
     commands.spawn((
         Mesh3d(meshes.add(line_mesh(Vec::new(), Some(Vec::new())))),
-        MeshMaterial3d(lines.0.clone()),
+        crate::draw::Material3d(lines.0.clone()),
         Transform::default(),
         Visibility::Hidden,
         NoFrustumCulling,
@@ -65,7 +63,7 @@ fn spawn(
     ));
     commands.spawn((
         Mesh3d(meshes.add(fill_mesh(&[]))),
-        MeshMaterial3d(fill),
+        crate::draw::Material3d(fill),
         Transform::default(),
         Visibility::Hidden,
         NoFrustumCulling,
