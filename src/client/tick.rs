@@ -999,6 +999,7 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
     let applied_clicks = inv_actions.len();
     let closing = inv_actions.iter().any(|a| matches!(a, InvAction::Close));
     apply_inv_actions(bot, inv_actions, horse);
+    crate::play::inventory_bridge::run_sort(bot);
     if closing {
         shared.lock().unwrap().session.inventory.horse = None;
     }

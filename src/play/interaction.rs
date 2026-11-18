@@ -5,8 +5,8 @@ use std::sync::{
 
 use azalea::Client;
 use azalea::block::BlockState;
-use azalea::movement::ItemUseSlow;
 use azalea::mining::{HOLD_TO_MINE, MineBlockPos, MineProgress, StopMiningBlockEvent};
+use azalea::movement::ItemUseSlow;
 use azalea::physics::collision::BlockWithShape;
 use azalea_core::direction::Direction;
 use azalea_core::game_type::GameMode;
@@ -114,6 +114,7 @@ pub(crate) fn reset_session_state() {
     *WAS_MINING.lock().unwrap() = None;
     HOLD_TO_MINE.store(false, Ordering::Relaxed);
     ItemUseSlow::store(None);
+    crate::play::inventory_sort::cancel();
     let use_item = match USE_ITEM.try_lock() {
         Ok(guard) => Some(guard),
         Err(std::sync::TryLockError::Poisoned(poisoned)) => Some(poisoned.into_inner()),
@@ -1107,7 +1108,9 @@ fn sync_item_use_slow(bot: &Client) {
             };
             let fx = stack
                 .get_component::<azalea_inventory::components::UseEffects>()
-                .map_or_else(azalea_inventory::components::UseEffects::new, |c| c.into_owned());
+                .map_or_else(azalea_inventory::components::UseEffects::new, |c| {
+                    c.into_owned()
+                });
             Some(ItemUseSlow {
                 speed: fx.speed_multiplier,
                 can_sprint: fx.can_sprint,

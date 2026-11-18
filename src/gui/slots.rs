@@ -441,6 +441,8 @@ pub struct SlotState {
 
 impl SlotState {
     pub fn reset_for_screen_change(&mut self) {
+        // The closed menu's cursor went with it.
+        self.cursor = None;
         self.drag.clear();
         self.last_click_slot = None;
         self.menu_preview = MenuPreview::default();

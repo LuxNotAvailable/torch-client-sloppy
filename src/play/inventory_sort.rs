@@ -5,9 +5,16 @@
 //! against a copy of the inventory as it goes, with the same simulation that
 //! later sends each click, so every click is chosen from the state the
 //! server will see. Nothing happens while the cursor holds an item.
+//!
+//! A started request runs a few clicks a tick (`tick`), planning afresh
+//! whenever the cursor is empty, so a server correction mid-way is planned
+//! around. The GUI ignores clicks while one runs (`busy`).
 
 use std::cmp::Reverse;
+use std::collections::VecDeque;
 use std::ops::Range;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use azalea::entity::PlayerAbilities;
 use azalea::entity::inventory::Inventory;
@@ -17,6 +24,101 @@ use azalea_inventory::{ItemStack, ItemStackData, Menu};
 use azalea_registry::Registry as _;
 
 use crate::session::{SortRequest, SortSide};
+
+/// Clicks sent per tick, about what a quick hand manages.
+const CLICKS_PER_TICK: usize = 6;
+/// Clicks after which a request gives up, should the server keep undoing it.
+const MAX_CLICKS: usize = 1500;
+
+struct Job {
+    request: SortRequest,
+    window: i32,
+    /// The rest of the transaction under way (until the cursor empties).
+    pending: VecDeque<ClickOperation>,
+    sent: usize,
+}
+
+static JOB: Mutex<Option<Job>> = Mutex::new(None);
+static BUSY: AtomicBool = AtomicBool::new(false);
+
+/// Whether a sort or transfer is running; the GUI takes no clicks then.
+pub(crate) fn busy() -> bool {
+    BUSY.load(Ordering::Relaxed)
+}
+
+/// Starts `request` in menu `window`, replacing any running one.
+pub(crate) fn start(request: SortRequest, window: i32) {
+    *JOB.lock().unwrap() = Some(Job {
+        request,
+        window,
+        pending: VecDeque::new(),
+        sent: 0,
+    });
+    BUSY.store(true, Ordering::Relaxed);
+}
+
+pub(crate) fn cancel() {
+    *JOB.lock().unwrap() = None;
+    BUSY.store(false, Ordering::Relaxed);
+}
+
+/// The clicks to send this tick; empty once the job is done, which ends it.
+/// `inventory` is the live menu, as each sent click leaves it.
+pub(crate) fn next_click(
+    inventory: &Inventory,
+    abilities: &PlayerAbilities,
+    sent_this_tick: usize,
+) -> Option<ClickOperation> {
+    let mut guard = JOB.lock().unwrap();
+    let job = guard.as_mut()?;
+    let done = |guard: &mut Option<Job>| {
+        *guard = None;
+        BUSY.store(false, Ordering::Relaxed);
+        None
+    };
+    if inventory.id != job.window || job.sent >= MAX_CLICKS {
+        return done(&mut guard);
+    }
+    if sent_this_tick >= CLICKS_PER_TICK {
+        return None;
+    }
+    if job.pending.is_empty() {
+        if inventory.carried.is_present() {
+            // Not ours: the server put something on the cursor.
+            return done(&mut guard);
+        }
+        job.pending = first_transaction(
+            inventory,
+            abilities,
+            plan(inventory, abilities, job.request),
+        );
+    }
+    match job.pending.pop_front() {
+        Some(op) => {
+            job.sent += 1;
+            Some(op)
+        }
+        None => done(&mut guard),
+    }
+}
+
+/// The leading clicks of `ops` up to the first that leaves the cursor empty.
+fn first_transaction(
+    inventory: &Inventory,
+    abilities: &PlayerAbilities,
+    ops: Vec<ClickOperation>,
+) -> VecDeque<ClickOperation> {
+    let mut sim = inventory.clone();
+    let mut out = VecDeque::new();
+    for op in ops {
+        sim.simulate_click(&op, abilities);
+        out.push_back(op);
+        if sim.carried.is_empty() {
+            break;
+        }
+    }
+    out
+}
 
 /// The storage slots of a menu that has them: chests, barrels, ender chests,
 /// shulker boxes, dispensers and hoppers.
@@ -59,6 +161,12 @@ fn player_slots(menu: &Menu) -> Range<usize> {
     *r.start()..*r.end() + 1
 }
 
+fn is_bundle(stack: &ItemStackData) -> bool {
+    stack
+        .get_component::<azalea_inventory::components::BundleContents>()
+        .is_some()
+}
+
 fn max_stack(stack: &ItemStackData) -> i32 {
     stack
         .get_component::<azalea_inventory::components::MaxStackSize>()
@@ -88,7 +196,12 @@ pub(crate) fn plan(
     match request {
         SortRequest::Sort(which) => {
             if let Some(slots) = side(which) {
-                planner.sort(&slots.collect::<Vec<_>>());
+                // A pickup click onto or with a bundle fills the bundle
+                // instead of swapping, so bundles stay where they are.
+                let slots: Vec<usize> = slots
+                    .filter(|&i| !planner.present(i).is_some_and(is_bundle))
+                    .collect();
+                planner.sort(&slots);
             }
         }
         SortRequest::MoveMatching { from } => {
@@ -212,8 +325,14 @@ impl Planner<'_> {
         );
     }
 
+    /// A shift-click, left out when it would move nothing (a full other
+    /// side), so a fresh plan doesn't repeat it forever.
     fn shift(&mut self, slot: usize) {
+        let before = self.sim.menu().slots();
         self.click(QuickMoveClick::Left { slot: slot as u16 }.into());
+        if self.sim.menu().slots() == before {
+            self.ops.pop();
+        }
     }
 
     fn present(&self, slot: usize) -> Option<&ItemStackData> {
@@ -259,34 +378,23 @@ impl Planner<'_> {
         }
     }
 
-    /// Where every stack goes: by item, then by components (in the order
-    /// they first appear), full stacks before the part stack, then empty
-    /// slots.
+    /// Where every stack goes: by item, then by components (an order that
+    /// doesn't depend on where stacks sit, so plans made mid-sort agree),
+    /// full stacks before the part stack, then empty slots.
     fn targets(&self, slots: &[usize]) -> Vec<Option<ItemStackData>> {
-        let mut variants: Vec<ItemStackData> = Vec::new();
-        let mut stacks: Vec<(u32, usize, Reverse<i32>, ItemStackData)> = Vec::new();
+        let mut stacks: Vec<(u32, String, Reverse<i32>, ItemStackData)> = Vec::new();
         for &i in slots {
             let Some(stack) = self.present(i) else {
                 continue;
             };
-            let variant = match variants
-                .iter()
-                .position(|v| v.is_same_item_and_components(stack))
-            {
-                Some(n) => n,
-                None => {
-                    variants.push(stack.clone());
-                    variants.len() - 1
-                }
-            };
             stacks.push((
                 stack.kind.to_u32(),
-                variant,
+                format!("{:?}", stack.component_patch),
                 Reverse(stack.count),
                 stack.clone(),
             ));
         }
-        stacks.sort_by(|a, b| (a.0, a.1, a.2).cmp(&(b.0, b.1, b.2)));
+        stacks.sort_by(|a, b| (a.0, &a.1, a.2).cmp(&(b.0, &b.1, b.2)));
         let mut targets: Vec<Option<ItemStackData>> =
             stacks.into_iter().map(|(.., s)| Some(s)).collect();
         targets.resize(slots.len(), None);
@@ -545,6 +653,90 @@ mod tests {
             }
             assert_eq!(run(&mut inv, SortRequest::Sort(SortSide::Container)), 0);
         }
+    }
+
+    /// Runs `request` as the tick runner does, a transaction at a time from
+    /// a fresh plan; the clicks it took.
+    fn run_paced(inventory: &mut Inventory, request: SortRequest) -> usize {
+        let abilities = PlayerAbilities::default();
+        let mut clicks = 0;
+        loop {
+            let ops =
+                first_transaction(inventory, &abilities, plan(inventory, &abilities, request));
+            if ops.is_empty() {
+                break;
+            }
+            for op in &ops {
+                inventory.simulate_click(op, &abilities);
+            }
+            clicks += ops.len();
+            assert!(clicks < MAX_CLICKS, "the plan never settles");
+        }
+        assert!(inventory.carried.is_empty(), "the cursor ends empty");
+        clicks
+    }
+
+    #[test]
+    fn paced_sorts_settle_where_a_whole_plan_does() {
+        let kinds = [
+            ItemKind::Stone,
+            ItemKind::Dirt,
+            ItemKind::Torch,
+            ItemKind::EnderPearl,
+            ItemKind::DiamondSword,
+        ];
+        let mut rng = crate::util::javarandom::JavaRandom::new(5);
+        for _ in 0..200 {
+            let mut stuff = Vec::new();
+            for slot in 0..27 {
+                if rng.next_int(3) == 0 {
+                    continue;
+                }
+                let kind = kinds[rng.next_int(kinds.len() as u32) as usize];
+                stuff.push((
+                    slot,
+                    kind,
+                    1 + rng.next_int(kind.max_stack_size() as u32) as i32,
+                ));
+            }
+            let mut whole = chest(&stuff);
+            let mut paced = chest(&stuff);
+            run(&mut whole, SortRequest::Sort(SortSide::Container));
+            run_paced(&mut paced, SortRequest::Sort(SortSide::Container));
+            assert_eq!(contents(&whole, 0..27), contents(&paced, 0..27));
+        }
+    }
+
+    #[test]
+    fn paced_transfers_stop_when_nothing_moves() {
+        let mut stuff: Vec<_> = (27..63).map(|i| (i, ItemKind::Dirt, 64)).collect();
+        stuff.push((0, ItemKind::Stone, 5));
+        let mut inv = chest(&stuff);
+        let request = SortRequest::MoveAll {
+            from: SortSide::Container,
+        };
+        assert_eq!(run_paced(&mut inv, request), 0);
+    }
+
+    #[test]
+    fn bundles_stay_put_and_the_rest_sorts_around_them() {
+        let mut inv = chest(&[
+            (0, ItemKind::Stone, 3),
+            (1, ItemKind::Bundle, 1),
+            (2, ItemKind::Dirt, 4),
+            (3, ItemKind::Stone, 2),
+        ]);
+        assert!(
+            inv.menu()
+                .slot(1)
+                .unwrap()
+                .as_present()
+                .is_some_and(is_bundle)
+        );
+        run(&mut inv, SortRequest::Sort(SortSide::Container));
+        assert_eq!(inv.menu().slot(1).unwrap().kind(), ItemKind::Bundle);
+        assert_eq!(total(&inv, ItemKind::Stone), 5);
+        assert_eq!(total(&inv, ItemKind::Dirt), 4);
     }
 
     #[test]

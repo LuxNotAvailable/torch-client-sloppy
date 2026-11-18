@@ -748,23 +748,13 @@ pub(crate) fn apply_inv_actions(bot: &Client, actions: Vec<InvAction>, horse: Op
                 if horse.is_some() {
                     continue;
                 }
-                let Ok(inventory) = bot.component::<azalea::entity::inventory::Inventory>() else {
+                let Ok(window) = bot
+                    .component::<azalea::entity::inventory::Inventory>()
+                    .map(|i| i.id)
+                else {
                     continue;
                 };
-                let abilities = bot
-                    .component::<azalea::entity::PlayerAbilities>()
-                    .map(|a| a.clone())
-                    .unwrap_or_default();
-                let ops = crate::play::inventory_sort::plan(&inventory, &abilities, request);
-                let window_id = inventory.id;
-                drop(inventory);
-                for operation in ops {
-                    bot.ecs.write().trigger(ContainerClickEvent {
-                        entity: bot.entity,
-                        window_id,
-                        operation,
-                    });
-                }
+                crate::play::inventory_sort::start(request, window);
             }
             InvAction::FillRecipe {
                 clear,
@@ -795,6 +785,7 @@ pub(crate) fn apply_inv_actions(bot: &Client, actions: Vec<InvAction>, horse: Op
                 }
             }
             InvAction::Close => {
+                crate::play::inventory_sort::cancel();
                 if let Some(horse) = horse.as_ref() {
                     bot.write_packet(ServerboundContainerClose {
                         container_id: horse.container_id,
@@ -813,6 +804,35 @@ pub(crate) fn apply_inv_actions(bot: &Client, actions: Vec<InvAction>, horse: Op
                     });
             }
         }
+    }
+}
+
+/// This tick's clicks of a running sort or transfer (`inventory_sort`).
+pub(crate) fn run_sort(bot: &Client) {
+    if !crate::play::inventory_sort::busy() {
+        return;
+    }
+    let abilities = bot
+        .component::<azalea::entity::PlayerAbilities>()
+        .map(|a| a.clone())
+        .unwrap_or_default();
+    for sent in 0.. {
+        let (window_id, operation) = {
+            let Ok(inventory) = bot.component::<azalea::entity::inventory::Inventory>() else {
+                crate::play::inventory_sort::cancel();
+                return;
+            };
+            let Some(op) = crate::play::inventory_sort::next_click(&inventory, &abilities, sent)
+            else {
+                return;
+            };
+            (inventory.id, op)
+        };
+        bot.ecs.write().trigger(ContainerClickEvent {
+            entity: bot.entity,
+            window_id,
+            operation,
+        });
     }
 }
 

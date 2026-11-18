@@ -49,6 +49,15 @@ pub fn draw(
         input
     };
 
+    // No clicks while a sort runs; hovering and Escape still work.
+    let sort_lock;
+    let input = if crate::play::inventory_sort::busy() {
+        sort_lock = sort_locked(input);
+        &sort_lock
+    } else {
+        input
+    };
+
     let ctx = ScreenCtx {
         input,
         vw: input.size.x,
@@ -1769,4 +1778,22 @@ settings_screens! {
     ShaderPacks => crate::gui::shaderpacks::draw_packs,
     #[cfg(feature = "shader_support")]
     ShaderOptions => crate::gui::shaderpacks::draw_options,
+}
+
+fn sort_locked(input: &crate::gui::render::GuiInput) -> crate::gui::render::GuiInput {
+    crate::gui::render::GuiInput {
+        left_click: false,
+        right_click: false,
+        middle_click: false,
+        left_down: false,
+        right_down: false,
+        middle_down: false,
+        left_release: false,
+        right_release: false,
+        scroll: 0.0,
+        hotbar_keys: [false; 9],
+        drop_key: false,
+        swap_key: false,
+        ..input.clone()
+    }
 }

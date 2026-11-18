@@ -114,6 +114,9 @@ pub fn handle_client_side_close_container_trigger(
 
     inventory.id = 0;
     inventory.container_menu_title = None;
+    // The cursor belongs to the closed menu; the server puts its stack
+    // back in the inventory (`AbstractContainerMenu.removed`).
+    inventory.carried = ItemStack::Empty;
 }
 
 #[derive(Debug, EntityEvent)]
