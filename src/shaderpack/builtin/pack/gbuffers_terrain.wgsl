@@ -6,16 +6,27 @@
 
 /*
 const int colortex0Format = RGBA16F;
-const int colortex2Format = RGBA32F;
 const int colortex3Format = RGBA16F;
 const int colortex4Format = RGBA16F;
 const vec4 colortex0ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
-const vec4 colortex2ClearColor = vec4(0.0, 0.0, 0.0, -1.0);
+const vec4 colortex2ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
 const vec4 colortex3ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
 const int colortex5Format = RGBA16F;
 const bool colortex4Clear = false;
 const bool colortex5Clear = false;
 */
+
+// The texel target: 8 bytes (see `Texel`). RGBA32F on Android, where
+// RGBA16 may fall back to a float format that can't hold the words.
+#ifdef MC_OS_ANDROID
+/*
+const int colortex2Format = RGBA32F;
+*/
+#else
+/*
+const int colortex2Format = RGBA16;
+*/
+#endif
 
 /* RENDERTARGETS: 0,2 */
 
@@ -94,14 +105,14 @@ fn fragment(v: Varyings) -> Gbuffer {
             let mid = v.player + a * dpx + b * dpy + frame.cameraPositionFract;
             cell = floor(mid * 16.0);
         }
-        out.texel = vec4<f32>(cell, pack_surface(f32(FACE_DIAGONAL), v.material, v.light));
+        out.texel = pack_texel(cell, f32(FACE_DIAGONAL), v.material, v.light);
 #elif FOLIAGE_SHADING == 1
-        out.texel = vec4<f32>(v.foliage, 0.0, 0.0, pack_surface(f32(FACE_DIAGONAL), v.material, v.light));
+        out.texel = pack_foliage_texel(v.foliage, v.material, v.light);
 #else
         // One shade per plant block, taken just above its top middle, where
         // its own blades can't shadow it.
         let cell = floor(local) * 16.0 + vec3<f32>(8.0, 16.0, 8.0);
-        out.texel = vec4<f32>(cell, pack_surface(f32(FACE_DIAGONAL), v.material, v.light));
+        out.texel = pack_texel(cell, f32(FACE_DIAGONAL), v.material, v.light);
 #endif
         return out;
     }
@@ -134,6 +145,6 @@ fn fragment(v: Varyings) -> Gbuffer {
 
     var out: Gbuffer;
     out.albedo = vec4<f32>(to_linear(tex.rgb * color), 1.0);
-    out.texel = vec4<f32>(cell, pack_surface(face, v.material, light));
+    out.texel = pack_texel(cell, face, v.material, light);
     return out;
 }

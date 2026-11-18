@@ -97,6 +97,11 @@ mod tests {
                 );
                 assert_eq!(frame.constants.shadow_map_resolution, 2048);
                 assert!(frame.buffers.iter().any(|b| b.index == 0));
+                // The texel target's 8-byte words.
+                assert_eq!(
+                    frame.targets.settings[2].format,
+                    crate::shaderpack::directives::TargetFormat::Rgba16Unorm
+                );
             }
         }
     }
@@ -195,6 +200,11 @@ SCALED_RESOLVE=1
             assert!(names.contains(&wanted), "{wanted} missing from {names:?}");
         }
         assert!(frame.buffers.iter().all(|b| b.index != 0));
+        // RGBA16 may fall back to a float format there, too narrow for the words.
+        assert_eq!(
+            frame.targets.settings[2].format,
+            crate::shaderpack::directives::TargetFormat::Rgba32Float
+        );
         assert!(
             frame.notes.iter().all(|n| !n.contains("did not compile")),
             "{:?}",

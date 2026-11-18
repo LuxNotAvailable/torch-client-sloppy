@@ -22,6 +22,8 @@ struct CacheRead {
     keys: array<u32, 1048576>,
     values: array<u32, 1048576>,
     work: array<u32, 1048576>,
+    ckeys: array<u32, 1048576>,
+    cvalues: array<u32, 1048576>,
 }
 
 @group(0) @binding(IRIS_BUFFER_0) var<storage, read> cache: CacheRead;
@@ -55,6 +57,24 @@ fn cached(key: u32) -> f32 {
     }
     return -1.0;
 }
+
+/// As `cached`, from the coarse table. A slot still holding its claimer's
+/// offset (COARSE_WORK set) went unshaded.
+fn cached_coarse(key: u32) -> f32 {
+    var slot = cache_hash(key);
+    for (var probe = 0u; probe < CACHE_PROBES; probe++) {
+        let seen = cache.ckeys[slot];
+        if (seen == key) {
+            let value = cache.cvalues[slot];
+            return select(f32(value) / 65535.0, -1.0, (value & COARSE_WORK) != 0u);
+        }
+        if (seen == CACHE_EMPTY) {
+            return -1.0;
+        }
+        slot = (slot + 1u) & CACHE_MASK;
+    }
+    return -1.0;
+}
 #endif
 
 @fragment
@@ -66,11 +86,11 @@ fn fragment(v: Varyings) -> @location(0) vec4<f32> {
         let dir = player_dir(view_pos(v.uv, 0.5));
         return vec4<f32>(sky_color(dir) + base.rgb, 1.0);
     }
-    let texel = textureLoad(colortex2, px, 0);
-    if (texel.w < 0.0) {
+    let texel = read_texel(textureLoad(colortex2, px, 0));
+    if (!texel.terrain) {
         return base;
     }
-    let surface = unpack_surface(texel.w);
+    let surface = texel.surface;
     let n = face_normal(surface.face);
     let material = surface.material;
 
@@ -78,30 +98,35 @@ fn fragment(v: Varyings) -> @location(0) vec4<f32> {
     let diagonal = surface.face == FACE_DIAGONAL;
 #if FOLIAGE_SHADING == 1
     if (diagonal) {
-        vis = texel.x;
+        vis = foliage_of(texel);
     }
 #endif
 #ifdef MC_OS_ANDROID
     if (diagonal && vis < 0.0) {
-        vis = foliage_visibility(texel_centre(texel.xyz, n) - frame.cameraPositionFract, 4u);
+        vis = foliage_visibility(texel_centre(texel.cell, n) - frame.cameraPositionFract, 4u);
     }
     if (vis < 0.0) {
-        let centre = texel_centre(texel.xyz, n) - frame.cameraPositionFract;
-        vis = texel_visibility(centre, n, cell_res(texel.xyz), 8u);
+        let centre = texel_centre(texel.cell, n) - frame.cameraPositionFract;
+        vis = texel_visibility(centre, n, cell_res(texel.cell), 8u);
     }
 #else
     if (vis < 0.0) {
-        let key = cache_key(texel.xyz, f32(surface.face));
+        let key = cache_key(texel.cell, f32(surface.face));
         if (key != CACHE_EMPTY) {
             vis = cached(key);
+        } else {
+            let coarse = coarse_key(texel.cell, surface.face);
+            if (coarse != CACHE_EMPTY) {
+                vis = cached_coarse(coarse);
+            }
         }
     }
     if (diagonal && vis < 0.0) {
-        vis = foliage_visibility(texel_centre(texel.xyz, n) - frame.cameraPositionFract, 2u);
+        vis = foliage_visibility(texel_centre(texel.cell, n) - frame.cameraPositionFract, 2u);
     }
     if (vis < 0.0) {
-        let centre = texel_centre(texel.xyz, n) - frame.cameraPositionFract;
-        vis = texel_visibility(centre, n, cell_res(texel.xyz), 2u);
+        let centre = texel_centre(texel.cell, n) - frame.cameraPositionFract;
+        vis = texel_visibility(centre, n, cell_res(texel.cell), 2u);
     }
 #endif
 

@@ -30,6 +30,6 @@ fn fragment(v: Varyings) -> Lit {
     }
     var out: Lit;
     out.color = vec4<f32>(to_linear(v.color.rgb), v.color.a);
-    out.texel = vec4<f32>(0.0, 0.0, 0.0, -1.0);
+    out.texel = TEXEL_LIT;
     return out;
 }

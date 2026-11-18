@@ -15,5 +15,6 @@ fn compute(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     if (id.x < CACHE_SIZE) {
         atomicStore(&cache.keys[id.x], CACHE_EMPTY);
+        atomicStore(&cache.ckeys[id.x], CACHE_EMPTY);
     }
 }

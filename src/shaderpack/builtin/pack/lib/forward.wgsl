@@ -58,6 +58,6 @@ fn fragment(v: Varyings) -> Lit {
     var out: Lit;
     out.color = vec4<f32>(lit, c.a);
     let hand = v.stage == MC_RENDER_STAGE_HAND_SOLID || v.stage == MC_RENDER_STAGE_HAND_TRANSLUCENT;
-    out.texel = vec4<f32>(0.0, 0.0, 0.0, select(TEXEL_LIT, TEXEL_HAND, hand));
+    out.texel = select(TEXEL_LIT, TEXEL_HAND, hand);
     return out;
 }

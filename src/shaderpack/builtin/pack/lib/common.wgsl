@@ -117,27 +117,65 @@ fn face_normal(face: u32) -> vec3<f32> {
     );
 }
 
-/// A terrain pixel's surface, as the last channel of colortex2 carries it:
-/// face (3 bits), material (2), block and sky light (8 each), an integer an
-/// f32 holds exactly. The normal is the face's.
+/// A terrain pixel's surface: face, material, block and sky light. The
+/// normal is the face's.
 struct Surface {
     face: u32,
     material: f32,
     light: vec2<f32>,
 }
 
-fn pack_surface(face: f32, material: f32, light: vec2<f32>) -> f32 {
-    let l = vec2<u32>(round(clamp(light, vec2<f32>(0.0), vec2<f32>(1.0)) * 255.0));
-    return f32(u32(face) | (u32(material) << 3u) | (l.x << 5u) | (l.y << 13u));
+/// A pixel of the texel target (colortex2): four 16-bit words, stored as
+/// RGBA16 (UNORM), or RGBA32F on Android. Terrain keeps its cell (relative
+/// to the camera's block: x and z in 15 bits, y in 14) and a 20-bit word:
+/// a terrain flag, face (3 bits), material (2), block and sky light (7
+/// each). The word's low 16 bits are the fourth word, its top 4 the cell
+/// words' spare bits. All zero is lit as drawn; 2 in the fourth word alone
+/// is the hand.
+struct Texel {
+    terrain: bool,
+    cell: vec3<f32>,
+    surface: Surface,
 }
 
-fn unpack_surface(word: f32) -> Surface {
-    let w = u32(word);
-    var s: Surface;
-    s.face = w & 7u;
-    s.material = f32((w >> 3u) & 3u);
-    s.light = vec2<f32>(f32((w >> 5u) & 255u), f32((w >> 13u) & 255u)) / 255.0;
-    return s;
+const TEXEL_LIT: vec4<f32> = vec4<f32>(0.0);
+const TEXEL_HAND: vec4<f32> = vec4<f32>(0.0, 0.0, 0.0, 2.0 / 65535.0);
+const TEXEL_BIAS: vec3<i32> = vec3<i32>(16384, 8192, 16384);
+
+fn pack_texel(cell: vec3<f32>, face: f32, material: f32, light: vec2<f32>) -> vec4<f32> {
+    let l = vec2<u32>(round(clamp(light, vec2<f32>(0.0), vec2<f32>(1.0)) * 127.0));
+    let s = 1u | (u32(face) << 1u) | (u32(material) << 4u) | (l.x << 6u) | (l.y << 13u);
+    let c = vec3<u32>(clamp(vec3<i32>(cell) + TEXEL_BIAS, vec3<i32>(0), vec3<i32>(32767, 16383, 32767)));
+    let hi = s >> 16u;
+    let words = vec4<u32>(
+        c.x | ((hi & 1u) << 15u),
+        c.y | ((hi >> 2u) << 14u),
+        c.z | (((hi >> 1u) & 1u) << 15u),
+        s & 65535u,
+    );
+    return vec4<f32>(words) / 65535.0;
+}
+
+/// Fast foliage's texel: its shade in place of the cell.
+fn pack_foliage_texel(vis: f32, material: f32, light: vec2<f32>) -> vec4<f32> {
+    let x = round(clamp(vis, 0.0, 1.0) * 16383.0) - 16384.0;
+    return pack_texel(vec3<f32>(x, 0.0, 0.0), f32(FACE_DIAGONAL), material, light);
+}
+
+fn foliage_of(t: Texel) -> f32 {
+    return (t.cell.x + 16384.0) / 16383.0;
+}
+
+fn read_texel(texel: vec4<f32>) -> Texel {
+    let w = vec4<u32>(round(texel * 65535.0));
+    let s = w.w | ((w.x >> 15u) << 16u) | ((w.z >> 15u) << 17u) | ((w.y >> 14u) << 18u);
+    var t: Texel;
+    t.terrain = (s & 1u) == 1u;
+    t.cell = vec3<f32>(vec3<i32>(vec3<u32>(w.x & 32767u, w.y & 16383u, w.z & 32767u)) - TEXEL_BIAS);
+    t.surface.face = (s >> 1u) & 7u;
+    t.surface.material = f32((s >> 4u) & 3u);
+    t.surface.light = vec2<f32>(f32((s >> 6u) & 127u), f32((s >> 13u) & 127u)) / 127.0;
+    return t;
 }
 
 /// The middle of a block-face texel (1/16 of a block), relative to the block
@@ -256,13 +294,10 @@ fn sky_ambient() -> vec3<f32> {
     return mix(c, vec3<f32>(luma(c)) * 0.75, frame.rainStrength * 0.7);
 }
 
-/// colortex2's last channel: >= 0 terrain for the deferred pass, -1 lit as
-/// drawn, -2 the hand (which no fog or reflection touches).
-const TEXEL_LIT: f32 = -1.0;
-const TEXEL_HAND: f32 = -2.0;
-
+/// Whether colortex2's fourth word marks the hand (which no fog or
+/// reflection touches).
 fn is_hand(texel_w: f32) -> bool {
-    return texel_w < -1.5;
+    return round(texel_w * 65535.0) == 2.0;
 }
 
 const TORCH: vec3<f32> = vec3<f32>(1.0, 0.6, 0.3);
@@ -339,6 +374,50 @@ fn cache_cell(key: u32) -> vec3<f32> {
 
 fn cache_face(key: u32) -> u32 {
     return key >> 29u;
+}
+
+// The coarse table: texels below 16 per block out of the table above's
+// reach, keyed in units of their own texel, so far rings shade once per
+// texel too. Work entries for it carry COARSE_WORK.
+const COARSE_WORK: u32 = 0x80000000u;
+
+/// The coarse key of a texel cell: the cell in units of its texel (9 bits
+/// a side, reaching 16 blocks per texel-per-block halving), face and ring,
+/// or `CACHE_EMPTY` at full detail, out of reach, or off the grid (plants).
+fn coarse_key(cell: vec3<f32>, face: u32) -> u32 {
+    let res = cell_res(cell);
+    if (res > 8.0 || face == FACE_DIAGONAL) {
+        return CACHE_EMPTY;
+    }
+    let level = u32(round(log2(16.0 / res)));
+    let q = vec3<i32>(floor(cell / f32(1u << level))) + vec3<i32>(256);
+    if (any(q < vec3<i32>(0)) || any(q > vec3<i32>(511))) {
+        return CACHE_EMPTY;
+    }
+    return u32(q.x) | (u32(q.z) << 9u) | (u32(q.y) << 18u) | (face << 27u) | ((level - 1u) << 30u);
+}
+
+fn coarse_face(key: u32) -> u32 {
+    return (key >> 27u) & 7u;
+}
+
+/// The offset along the face's normal within its texel unit, which the key
+/// drops; the claimer keeps it beside the key.
+fn coarse_along(cell: vec3<f32>, key: u32) -> u32 {
+    let k = f32(1u << ((key >> 30u) + 1u));
+    let along = cell[coarse_face(key) >> 1u];
+    return u32(along - floor(along / k) * k);
+}
+
+/// The cell a coarse key stands for: across the face the texel's middle
+/// (as `coarse_cell` makes it), along the normal the claimer's offset.
+fn coarse_cell_of(key: u32, along: u32) -> vec3<f32> {
+    let k = i32(1u << ((key >> 30u) + 1u));
+    let q = vec3<i32>(i32(key & 511u), i32((key >> 18u) & 511u), i32((key >> 9u) & 511u)) - vec3<i32>(256);
+    var c = q * k + vec3<i32>(k / 2);
+    let axis = coarse_face(key) >> 1u;
+    c[axis] = q[axis] * k + i32(along);
+    return vec3<f32>(c);
 }
 
 fn cache_hash(key: u32) -> u32 {

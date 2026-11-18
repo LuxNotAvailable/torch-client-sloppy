@@ -77,21 +77,37 @@ fn compute(@builtin(global_invocation_id) id: vec3<u32>) {
     if (id.x >= count) {
         return;
     }
-    let slot = cache.work[id.x];
-    let key = atomicLoad(&cache.keys[slot]);
-    let n = face_normal(cache_face(key));
-    let cell = cache_cell(key);
+    let work = cache.work[id.x];
+    let slot = work & CACHE_MASK;
+    let coarse = (work & COARSE_WORK) != 0u;
+    var face: u32;
+    var cell: vec3<f32>;
+    if (coarse) {
+        let key = atomicLoad(&cache.ckeys[slot]);
+        face = coarse_face(key);
+        cell = coarse_cell_of(key, cache.cvalues[slot] & 15u);
+    } else {
+        let key = atomicLoad(&cache.keys[slot]);
+        face = cache_face(key);
+        cell = cache_cell(key);
+    }
+    let n = face_normal(face);
     let centre = texel_centre(cell, n) - frame.cameraPositionFract;
     let res = cell_res(cell);
     var vis: f32;
-    if (cache_face(key) == FACE_DIAGONAL) {
+    if (face == FACE_DIAGONAL) {
         vis = foliage_visibility(centre, 8u);
     } else if (temporal_texel(res)) {
         let now = u32(frame.frameCounter);
         let fresh = texel_visibility_scattered(centre, n, res, 8u, now);
-        vis = temporal(history_tag(cell, cache_face(key)), fresh, temporal_window(res), now);
+        vis = temporal(history_tag(cell, face), fresh, temporal_window(res), now);
     } else {
         vis = texel_visibility(centre, n, res, 8u);
     }
-    cache.values[slot] = u32(clamp(vis, 0.0, 1.0) * 65535.0 + 0.5);
+    let shade = u32(clamp(vis, 0.0, 1.0) * 65535.0 + 0.5);
+    if (coarse) {
+        cache.cvalues[slot] = shade;
+    } else {
+        cache.values[slot] = shade;
+    }
 }
