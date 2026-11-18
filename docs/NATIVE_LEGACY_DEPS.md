@@ -68,8 +68,8 @@ The whole capture reads Bevy render components: `Mesh3d`, `MeshMaterial3d<_>`, `
 | `blockentities::{BeRigNode, BeamNode}`, `particles::draw::ParticleBatch` (tags) | `src/blockentities`, `src/util/particles/draw.rs` | `entity_dump.rs:611–616` |
 | `sky::{SkyPart, SkyPartMaterial, SKY_SCALE}` | replaced: `draw::Env::sky` (filled by `renderer/sky.rs` `update_sky`; no Bevy sky entities), `draw::SKY_SCALE` | `entity_dump.rs` `write_env` |
 | `clouds::CloudLayer` + `StandardMaterial` | replaced: `draw::Env::clouds` (filled by `renderer/clouds.rs`) | `entity_dump.rs` `write_env` |
-| `screen_effects::Overlay` (screen overlays) | `renderer/screen_effects.rs:36` | `entity_dump.rs:167–175, 656, 986` |
-| `overlays::{BlockOutlineMarker, BreakOverlayMarker, HitboxMarker, ChunkBorderMarker, EspMarker, OUTLINE_WIDTH}` | `renderer/overlays.rs:21, 36, 67, 77, 92, 583` | `entity_dump.rs:176–199, 837` |
+| `screen_effects::Overlay` (screen overlays) | replaced: `draw::Env::screen` (view space; `write_env` applies the hand projection) | `entity_dump.rs` `write_env` |
+| `overlays::{BlockOutlineMarker, BreakOverlayMarker, HitboxMarker, ChunkBorderMarker, EspMarker, OUTLINE_WIDTH}` | replaced: `draw::Env::overlays` (filled by `overlays::fill_draw_list`). ESP and structure-block bounds keep Bevy meshes; `vk` never drew them | `entity_dump.rs` `write_env` |
 | `glint::GlintMaterial` | `renderer/glint.rs:10, 45` | `entity_dump.rs:204, 666, 996` |
 | `weather::{ASSETS, SHEETS, NATIVE}` | replaced: `draw::Env::weather` (filled by `tethers/precipitation.rs`); `NATIVE` stays (set by `live.rs`) | `live.rs:618` |
 | `screenshot::request_numbered` (vkview reference frame) | `renderer/screenshot.rs:16` | `entity_dump.rs:1208` |
@@ -113,4 +113,5 @@ The pack front end lives in `renderer/packdraw`; the native side compiles and ru
    In batches; wgpu may break meanwhile. Textures stay Bevy `Image` handles (`bevy_image`, not the renderer); meshes and materials go. Lists live in `draw` (`EntityVertex`, `EntityInstance`, `ParticleSprite`, `EnvPart`; filled in `draw::DrawSystems`).
    - Batch 1, done: the types moved to `draw`; `renderer/lightmap.rs` is `lighting::lightmap`; particles fill `draw::Particles`.
    - Batch 2, done: sky, clouds and weather fill `draw::Env` with game-side meshes (`draw::MeshData`); `write_env` takes those beside the remaining Bevy meshes. The wgpu path no longer draws the sky or clouds. Producers stay in `renderer/` until step 5 (they read `environment` and `FrameView`).
+   - Batch 3, done: screen overlays (`draw::Env::screen`) and world overlays (`draw::Env::overlays`: outline, cracks, chunk borders, hitboxes). wgpu no longer draws them.
 5. Replace screenshots and GUI images (section 6) with Torch's own image types. Then drop `bevy_render`, `bevy_pbr`, `bevy_core_pipeline` and wgpu.

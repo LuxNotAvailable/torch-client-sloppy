@@ -257,21 +257,6 @@ pub(crate) fn extract_standard_draws(
         )>,
     >,
     hand_camera: Extract<Query<&GlobalTransform, With<crate::renderer::hand::HandCamera>>>,
-    overlays: Extract<
-        Query<
-            (
-                &Mesh3d,
-                &MeshMaterial3d<StandardMaterial>,
-                &GlobalTransform,
-                &ViewVisibility,
-                Has<crate::renderer::overlays::BreakOverlayMarker>,
-            ),
-            Or<(
-                With<crate::renderer::overlays::BreakOverlayMarker>,
-                With<crate::renderer::overlays::BlockOutlineMarker>,
-            )>,
-        >,
-    >,
     materials: Extract<Res<Assets<StandardMaterial>>>,
     render: Option<ResMut<PackRender>>,
 ) {
@@ -322,32 +307,8 @@ pub(crate) fn extract_standard_draws(
         });
     };
 
-    // The sky and clouds are `draw::Env` parts now; the wgpu pack path
-    // no longer draws them.
-
-    for (mesh, material, transform, visible, cracks) in &overlays {
-        let kind = if cracks {
-            EntityKind::DamagedBlock
-        } else {
-            EntityKind::Line
-        };
-        if !visible.get() || !has(kind) {
-            continue;
-        }
-        let Some(material) = materials.get(&material.0) else {
-            continue;
-        };
-        push(
-            kind,
-            mesh,
-            material,
-            transform.to_matrix(),
-            false,
-            kind.render_stage(),
-            0,
-            false,
-        );
-    }
+    // The sky, clouds and world overlays are `draw::Env` parts now; the
+    // wgpu pack path no longer draws them.
 
     if EntityKind::ALL.iter().any(|k| k.is_hand() && has(*k))
         && let Ok(camera) = hand_camera.single()

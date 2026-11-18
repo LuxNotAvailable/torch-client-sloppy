@@ -1,24 +1,30 @@
+//! World overlays: the block outline, breaking cracks, chunk borders and
+//! hitboxes (as `draw::Env::overlays`), ESP, and the line and box meshes
+//! other overlays build from.
+
+use std::sync::Arc;
+
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 
+use crate::draw::{EntityVertex, EnvDraw, MeshData};
+
 use super::frame_view::FrameView;
 use super::systems::BlockTileMap;
-use crate::terrain::{ATLAS_COLS, TILE_PX};
 use crate::session::{BreakingBlock, TargetedBlock};
+use crate::terrain::{ATLAS_COLS, TILE_PX};
 
-#[derive(Resource)]
+#[derive(Resource, Default)]
 pub(super) struct BlockOutline {
-    pub(super) entity: Entity,
-    pub(super) mesh: Handle<Mesh>,
-    pub(super) material: Handle<StandardMaterial>,
+    /// The outline's lines and where they sit.
+    drawn: Option<(Arc<MeshData>, Vec3)>,
+    /// Linear RGBA, from the colour and opacity options.
+    tint: [f32; 4],
     /// The (width, colour, opacity) options last applied.
-    pub(super) style: Option<(u32, u32, u32)>,
-    pub(super) shown: Option<TargetedBlock>,
+    style: Option<(u32, u32, u32)>,
+    shown: Option<TargetedBlock>,
 }
-
-#[derive(Component)]
-pub(crate) struct BlockOutlineMarker;
 
 /// Block outline colours: name, sRGB. Black is vanilla's.
 pub(crate) const OUTLINE_COLORS: [(&str, [f32; 3]); 8] = [
@@ -40,7 +46,6 @@ pub(crate) static OUTLINE_WIDTH: std::sync::atomic::AtomicU32 =
 pub(super) fn update_outline_style(
     state: Res<crate::gui::GuiState>,
     mut outline: ResMut<BlockOutline>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let o = &state.options;
     let style = (o.outline_width, o.outline_color, o.outline_opacity);
@@ -50,31 +55,24 @@ pub(super) fn update_outline_style(
     outline.style = Some(style);
     OUTLINE_WIDTH.store(style.0.max(1), std::sync::atomic::Ordering::Relaxed);
     let [r, g, b] = OUTLINE_COLORS[(style.1 as usize).min(OUTLINE_COLORS.len() - 1)].1;
-    if let Some(m) = materials.get_mut(&outline.material) {
-        m.base_color = Color::srgba(r, g, b, style.2 as f32 / 100.0);
-    }
+    outline.tint = Color::srgba(r, g, b, style.2 as f32 / 100.0)
+        .to_linear()
+        .to_f32_array();
 }
 
-#[derive(Resource)]
-pub struct BreakOverlay {
-    pub(super) entity: Entity,
-    pub(super) mesh: Handle<Mesh>,
-    pub material: Handle<StandardMaterial>,
-    pub(super) shown: Option<BreakingBlock>,
+#[derive(Resource, Default)]
+pub(super) struct BreakOverlay {
+    drawn: Option<(Arc<MeshData>, Vec3)>,
+    shown: Option<BreakingBlock>,
 }
 
-#[derive(Component)]
-pub(crate) struct BreakOverlayMarker;
-
-#[derive(Resource)]
+#[derive(Resource, Default)]
 pub(super) struct ChunkBorderOverlay {
-    pub(super) entity: Entity,
-    pub(super) mesh: Handle<Mesh>,
-    pub(super) shown: Option<(i32, i32, i32, crate::client::dimension::Dimension)>,
+    /// The mesh, for the section base and dimension it was built for.
+    built: Option<(i32, crate::client::dimension::Dimension, Arc<MeshData>)>,
+    at: Option<Vec3>,
+    shown: Option<(i32, i32, i32, crate::client::dimension::Dimension)>,
 }
-
-#[derive(Component)]
-pub(crate) struct ChunkBorderMarker;
 
 #[derive(Resource, Clone)]
 pub(crate) struct LineMaterial(pub(crate) Handle<StandardMaterial>);
@@ -141,7 +139,23 @@ pub(crate) fn line_mesh(positions: Vec<[f32; 3]>, colors: Option<Vec<[f32; 4]>>)
     mesh
 }
 
-pub(super) fn chunk_border_mesh(ymin: f32, ymax: f32, sec_y0: f32) -> Mesh {
+/// A line list as draw-list data (`EnvPart` kind 4), white unless coloured.
+fn line_data(positions: Vec<[f32; 3]>, colors: Option<Vec<[f32; 4]>>) -> Arc<MeshData> {
+    let verts: Vec<EntityVertex> = positions
+        .iter()
+        .enumerate()
+        .map(|(i, &pos)| EntityVertex {
+            pos,
+            normal: [0.0, 1.0, 0.0],
+            color: colors.as_ref().map_or([1.0; 4], |c| c[i]),
+            ..Default::default()
+        })
+        .collect();
+    let indices = (0..verts.len() as u32).collect();
+    MeshData::new(verts, indices, false)
+}
+
+fn chunk_border_mesh(ymin: f32, ymax: f32, sec_y0: f32) -> Arc<MeshData> {
     fn srgba(r: f32, g: f32, b: f32, a: f32) -> [f32; 4] {
         use crate::util::mth::srgb_to_linear;
         [srgb_to_linear(r), srgb_to_linear(g), srgb_to_linear(b), a]
@@ -220,13 +234,13 @@ pub(super) fn chunk_border_mesh(ymin: f32, ymax: f32, sec_y0: f32) -> Mesh {
         line(corners[a], corners[b], major_lines);
     }
 
-    line_mesh(positions, Some(colors))
+    line_data(positions, Some(colors))
 }
 
-pub(super) fn outline_mesh(boxes: &[[f32; 6]]) -> Mesh {
+fn outline_mesh(boxes: &[[f32; 6]]) -> Arc<MeshData> {
     let mut positions = Vec::with_capacity(boxes.len() * 24);
     outline_edges(boxes.iter().copied(), &mut positions);
-    line_mesh(positions, None)
+    line_data(positions, None)
 }
 
 pub(crate) fn outline_edges(boxes: impl IntoIterator<Item = [f32; 6]>, out: &mut Vec<[f32; 3]>) {
@@ -243,7 +257,7 @@ pub(crate) fn outline_edges(boxes: impl IntoIterator<Item = [f32; 6]>, out: &mut
     }
 }
 
-pub(super) fn crumbling_mesh(boxes: &[[f32; 6]], tile: u32, atlas_rows: u32) -> Mesh {
+fn crumbling_mesh(boxes: &[[f32; 6]], tile: u32, atlas_rows: u32) -> Arc<MeshData> {
     let col = tile % ATLAS_COLS;
     let row = tile / ATLAS_COLS;
     let tw = 1.0 / ATLAS_COLS as f32;
@@ -264,27 +278,49 @@ pub(super) fn crumbling_mesh(boxes: &[[f32; 6]], tile: u32, atlas_rows: u32) -> 
         let wrap = |t: f32| t.clamp(0.0, 1.0);
         [u0 + (u1 - u0) * wrap(a), v0 + (v1 - v0) * wrap(b)]
     };
-    box_faces_mesh_with(boxes, 0.002, &decal)
+    let (verts, indices) = box_faces(boxes, 0.002, &decal);
+    MeshData::new(verts, indices, false)
 }
 
 pub(crate) fn box_faces_mesh(boxes: &[[f32; 6]], inflate: f32, face_uv: [[f32; 2]; 4]) -> Mesh {
     let corner_uv = std::cell::Cell::new(0usize);
-    box_faces_mesh_with(boxes, inflate, &|_, _| {
+    let (verts, idx) = box_faces(boxes, inflate, &|_, _| {
         let i = corner_uv.get();
         corner_uv.set((i + 1) % 4);
         face_uv[i]
-    })
+    });
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
+    #[cfg(feature = "shader_support")]
+    mesh.insert_attribute(
+        Mesh::ATTRIBUTE_COLOR,
+        vec![[1.0f32, 1.0, 1.0, 1.0]; verts.len()],
+    );
+    mesh.insert_attribute(
+        Mesh::ATTRIBUTE_POSITION,
+        verts.iter().map(|v| v.pos).collect::<Vec<_>>(),
+    );
+    mesh.insert_attribute(
+        Mesh::ATTRIBUTE_NORMAL,
+        verts.iter().map(|v| v.normal).collect::<Vec<_>>(),
+    );
+    mesh.insert_attribute(
+        Mesh::ATTRIBUTE_UV_0,
+        verts.iter().map(|v| v.uv).collect::<Vec<_>>(),
+    );
+    mesh.insert_indices(Indices::U32(idx));
+    mesh
 }
 
 /// Each box's six faces, inflated, with a UV per corner from `uv`.
-fn box_faces_mesh_with(
+fn box_faces(
     boxes: &[[f32; 6]],
     inflate: f32,
     uv: &dyn Fn([f32; 3], [f32; 3]) -> [f32; 2],
-) -> Mesh {
-    let mut pos: Vec<[f32; 3]> = Vec::new();
-    let mut nrm: Vec<[f32; 3]> = Vec::new();
-    let mut uvs: Vec<[f32; 2]> = Vec::new();
+) -> (Vec<EntityVertex>, Vec<u32>) {
+    let mut verts: Vec<EntityVertex> = Vec::new();
     let mut idx: Vec<u32> = Vec::new();
 
     for b in boxes {
@@ -317,38 +353,27 @@ fn box_faces_mesh_with(
             ),
         ];
         for (corners, normal) in faces {
-            let base = pos.len() as u32;
+            let base = verts.len() as u32;
             for corner in corners {
-                pos.push(corner);
-                nrm.push(normal);
-                uvs.push(uv(corner, normal));
+                verts.push(EntityVertex {
+                    pos: corner,
+                    normal,
+                    uv: uv(corner, normal),
+                    color: [1.0; 4],
+                    part: 0,
+                });
             }
             idx.extend_from_slice(&[base + 2, base + 1, base, base + 3, base + 2, base]);
         }
     }
 
-    let mut mesh = Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::default(),
-    );
-    #[cfg(feature = "shader_support")]
-    mesh.insert_attribute(
-        Mesh::ATTRIBUTE_COLOR,
-        vec![[1.0f32, 1.0, 1.0, 1.0]; pos.len()],
-    );
-    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, nrm);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
-    mesh.insert_indices(Indices::U32(idx));
-    mesh
+    (verts, idx)
 }
 
 pub(super) fn update_break_overlay(
     view: Res<FrameView>,
     mut overlay: ResMut<BreakOverlay>,
-    mut meshes: ResMut<Assets<Mesh>>,
     tile_map: Res<BlockTileMap>,
-    mut targets: Query<(&mut Transform, &mut Visibility), With<BreakOverlayMarker>>,
 ) {
     const STAGE_TEX: [&str; 10] = [
         "destroy_stage_0",
@@ -367,25 +392,19 @@ pub(super) fn update_break_overlay(
         return;
     }
     let breaking = view.breaking.clone();
-    let Ok((mut transform, mut visibility)) = targets.get_mut(overlay.entity) else {
-        return;
-    };
 
     let tile = breaking
         .as_ref()
         .and_then(|b| tile_map.0.get(STAGE_TEX[b.stage.min(9) as usize]).copied());
 
-    match (&breaking, tile) {
+    overlay.drawn = match (&breaking, tile) {
         (Some(b), Some(tile)) => {
             let rows = crate::ATLAS_ROWS.get().copied().unwrap_or(1);
-            if let Some(mesh) = meshes.get_mut(&overlay.mesh) {
-                *mesh = crumbling_mesh(&b.boxes, tile, rows);
-            }
-            transform.translation = Vec3::new(b.pos[0] as f32, b.pos[1] as f32, b.pos[2] as f32);
-            *visibility = Visibility::Visible;
+            let at = Vec3::new(b.pos[0] as f32, b.pos[1] as f32, b.pos[2] as f32);
+            Some((crumbling_mesh(&b.boxes, tile, rows), at))
         }
-        _ => *visibility = Visibility::Hidden,
-    }
+        _ => None,
+    };
     overlay.shown = breaking;
 }
 
@@ -393,8 +412,6 @@ pub(super) fn update_block_outline(
     view: Res<FrameView>,
     state: Res<crate::gui::GuiState>,
     mut outline: ResMut<BlockOutline>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut targets: Query<(&mut Transform, &mut Visibility), With<BlockOutlineMarker>>,
 ) {
     let target = if state.gui_hidden() {
         None
@@ -407,21 +424,15 @@ pub(super) fn update_block_outline(
     if target == outline.shown {
         return;
     }
-    let Ok((mut transform, mut visibility)) = targets.get_mut(outline.entity) else {
-        return;
-    };
-
-    match &target {
-        Some(t) => {
-            let shape_changed = outline.shown.as_ref().map(|s| &s.boxes) != Some(&t.boxes);
-            if shape_changed && let Some(mesh) = meshes.get_mut(&outline.mesh) {
-                *mesh = outline_mesh(&t.boxes);
-            }
-            transform.translation = Vec3::new(t.pos[0] as f32, t.pos[1] as f32, t.pos[2] as f32);
-            *visibility = Visibility::Visible;
+    let same = |t: &TargetedBlock| outline.shown.as_ref().map(|s| &s.boxes) == Some(&t.boxes);
+    let reuse = target.as_ref().is_some_and(same);
+    outline.drawn = target.as_ref().map(|t| {
+        let at = Vec3::new(t.pos[0] as f32, t.pos[1] as f32, t.pos[2] as f32);
+        match outline.drawn.take() {
+            Some((mesh, _)) if reuse => (mesh, at),
+            _ => (outline_mesh(&t.boxes), at),
         }
-        None => *visibility = Visibility::Hidden,
-    }
+    });
     outline.shown = target;
 }
 
@@ -573,14 +584,10 @@ pub(super) fn update_esp(
     overlay.shown = Some(frame);
 }
 
-#[derive(Resource)]
+#[derive(Resource, Default)]
 pub(super) struct HitboxOverlay {
-    pub(super) entity: Entity,
-    pub(super) mesh: Handle<Mesh>,
+    drawn: Option<Arc<MeshData>>,
 }
-
-#[derive(Component)]
-pub(crate) struct HitboxMarker;
 
 /// A modded entity's placeholder: the 0.6 × 1.8 box vanilla gives a
 /// player-sized mob, in magenta, since the server never says how big a type
@@ -597,15 +604,8 @@ fn boxed_placeholder(pos: [f32; 3], positions: &mut Vec<[f32; 3]>, colors: &mut 
     }
 }
 
-fn finish_hitboxes(
-    overlay: &HitboxOverlay,
-    meshes: &mut Assets<Mesh>,
-    positions: Vec<[f32; 3]>,
-    colors: Vec<[f32; 4]>,
-) {
-    if let Some(mesh) = meshes.get_mut(&overlay.mesh) {
-        *mesh = line_mesh(positions, Some(colors));
-    }
+fn finish_hitboxes(overlay: &mut HitboxOverlay, positions: Vec<[f32; 3]>, colors: Vec<[f32; 4]>) {
+    overlay.drawn = (!positions.is_empty()).then(|| line_data(positions, Some(colors)));
 }
 
 /// `EntityHitboxDebugRenderer`: each entity's box in white, a thin red box
@@ -615,14 +615,8 @@ pub(super) fn update_hitboxes(
     state: Res<crate::gui::GuiState>,
     third_person: Res<super::input::ThirdPersonState>,
     sampled: Res<super::frame_view::SampledEntities>,
-    overlay: Option<Res<HitboxOverlay>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut targets: Query<&mut Visibility, With<HitboxMarker>>,
+    mut overlay: ResMut<HitboxOverlay>,
 ) {
-    let Some(overlay) = overlay else { return };
-    let Ok(mut visibility) = targets.get_mut(overlay.entity) else {
-        return;
-    };
     // Modded entities (a type this client doesn't know) always show as a
     // placeholder box; everything else only with the hitbox view on.
     let modded = crate::client::tracking::modded_entity_types()
@@ -631,10 +625,9 @@ pub(super) fn update_hitboxes(
         .clone();
     let any_modded = view.entities.iter().any(|a| modded.contains_key(&a.id));
     if (!state.hitboxes && !any_modded) || !view.in_world {
-        *visibility = Visibility::Hidden;
+        overlay.drawn = None;
         return;
     }
-    *visibility = Visibility::Visible;
     let white = [1.0, 1.0, 1.0, 1.0];
     let red = [1.0, 0.0, 0.0, 1.0];
     let blue = [0.0, 0.0, 1.0, 1.0];
@@ -696,7 +689,7 @@ pub(super) fn update_hitboxes(
         boxed_placeholder(anim.position(partial), &mut positions, &mut colors);
     }
     if !state.hitboxes {
-        return finish_hitboxes(&overlay, &mut meshes, positions, colors);
+        return finish_hitboxes(&mut overlay, positions, colors);
     }
     for (anim, st) in view.entities.iter().zip(&sampled.states) {
         let eye = azalea::entity::dimensions::EntityDimensions::from(anim.kind).eye_height
@@ -743,15 +736,13 @@ pub(super) fn update_hitboxes(
             &mut colors,
         );
     }
-    finish_hitboxes(&overlay, &mut meshes, positions, colors);
+    finish_hitboxes(&mut overlay, positions, colors);
 }
 
 pub(super) fn update_chunk_borders(
     view: Res<FrameView>,
     state: Res<crate::gui::GuiState>,
     mut overlay: ResMut<ChunkBorderOverlay>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut targets: Query<(&mut Transform, &mut Visibility), With<ChunkBorderMarker>>,
 ) {
     let pos = state.chunk_borders.then_some(view.player_pos);
     let dim = crate::client::dimension::current();
@@ -766,21 +757,51 @@ pub(super) fn update_chunk_borders(
     if key == overlay.shown {
         return;
     }
-    let Ok((mut transform, mut visibility)) = targets.get_mut(overlay.entity) else {
-        return;
-    };
-
-    match key {
-        Some((cx, cz, sec_y0, dim)) => {
-            let shape_changed = overlay.shown.map(|(_, _, sy, d)| (sy, d)) != Some((sec_y0, dim));
-            if shape_changed && let Some(mesh) = meshes.get_mut(&overlay.mesh) {
-                let (ymin, ymax) = dim.y_range();
-                *mesh = chunk_border_mesh(ymin as f32, ymax as f32, sec_y0 as f32);
-            }
-            transform.translation = Vec3::new((cx * 16) as f32, 0.0, (cz * 16) as f32);
-            *visibility = Visibility::Visible;
+    overlay.at = key.map(|(cx, cz, sec_y0, dim)| {
+        if !matches!(&overlay.built, Some((sy, d, _)) if (*sy, *d) == (sec_y0, dim)) {
+            let (ymin, ymax) = dim.y_range();
+            let mesh = chunk_border_mesh(ymin as f32, ymax as f32, sec_y0 as f32);
+            overlay.built = Some((sec_y0, dim, mesh));
         }
-        None => *visibility = Visibility::Hidden,
-    }
+        Vec3::new((cx * 16) as f32, 0.0, (cz * 16) as f32)
+    });
     overlay.shown = key;
+}
+
+/// Puts this frame's outline, cracks, chunk borders and hitboxes in
+/// `draw::Env::overlays`: lines kind 4 (`pad[0]` scales their width), the
+/// cracks kind 5 over the terrain atlas.
+pub(super) fn fill_draw_list(
+    outline: Res<BlockOutline>,
+    cracks: Res<BreakOverlay>,
+    borders: Res<ChunkBorderOverlay>,
+    hitboxes: Res<HitboxOverlay>,
+    mut out: ResMut<crate::draw::Env>,
+) {
+    use crate::draw::{ALPHA_BLEND, Texture};
+    out.overlays.clear();
+    let lines = |mesh: &Arc<MeshData>, at: Vec3, tint: [f32; 4], width: f32| EnvDraw {
+        alpha: ALPHA_BLEND,
+        tint,
+        pad: [width, 0.0, 0.0],
+        ..EnvDraw::new(mesh.clone(), 4, Mat4::from_translation(at))
+    };
+    if let Some((mesh, at)) = &outline.drawn {
+        let width = OUTLINE_WIDTH.load(std::sync::atomic::Ordering::Relaxed) as f32;
+        out.overlays.push(lines(mesh, *at, outline.tint, width));
+    }
+    if let (Some((_, _, mesh)), Some(at)) = (&borders.built, borders.at) {
+        out.overlays.push(lines(mesh, at, [1.0; 4], 1.0));
+    }
+    if let Some(mesh) = &hitboxes.drawn {
+        out.overlays.push(lines(mesh, Vec3::ZERO, [1.0; 4], 1.0));
+    }
+    if let Some((mesh, at)) = &cracks.drawn {
+        out.overlays.push(EnvDraw {
+            texture: Texture::Atlas,
+            alpha: ALPHA_BLEND,
+            tint: Color::srgb(2.0, 2.0, 2.0).to_linear().to_f32_array(),
+            ..EnvDraw::new(mesh.clone(), 5, Mat4::from_translation(*at))
+        });
+    }
 }

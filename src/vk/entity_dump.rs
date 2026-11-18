@@ -56,40 +56,6 @@ pub const PARTICLE_VERSION: u32 = 1;
 pub const ENV_MAGIC: &[u8; 4] = b"TVKS";
 pub const ENV_VERSION: u32 = 2;
 
-/// A screen overlay (`renderer::screen_effects`), in the hand camera's view
-/// space.
-type ScreenDrawn<'a> = (
-    &'a Mesh3d,
-    &'a MeshMaterial3d<StandardMaterial>,
-    &'a Transform,
-    &'a InheritedVisibility,
-);
-
-/// World overlays (`renderer::overlays`): lines, and the breaking cracks.
-type OverlayDrawn<'a> = (
-    &'a Mesh3d,
-    &'a MeshMaterial3d<StandardMaterial>,
-    &'a GlobalTransform,
-    &'a InheritedVisibility,
-    Has<crate::renderer::overlays::BreakOverlayMarker>,
-    Has<crate::renderer::overlays::BlockOutlineMarker>,
-);
-#[cfg(feature = "click_gui")]
-type OverlayFilter = Or<(
-    With<crate::renderer::overlays::BlockOutlineMarker>,
-    With<crate::renderer::overlays::BreakOverlayMarker>,
-    With<crate::renderer::overlays::HitboxMarker>,
-    With<crate::renderer::overlays::ChunkBorderMarker>,
-    With<crate::renderer::overlays::EspMarker>,
-)>;
-#[cfg(not(feature = "click_gui"))]
-type OverlayFilter = Or<(
-    With<crate::renderer::overlays::BlockOutlineMarker>,
-    With<crate::renderer::overlays::BreakOverlayMarker>,
-    With<crate::renderer::overlays::HitboxMarker>,
-    With<crate::renderer::overlays::ChunkBorderMarker>,
-)>;
-
 /// A held item's glint (`renderer::hand::HandGlint`).
 type HandGlintDrawn<'a> = (
     &'a Mesh3d,
@@ -555,19 +521,12 @@ fn write_env(
     standard: &Assets<StandardMaterial>,
     lightmap: Option<&crate::renderer::terrain::LightmapPixels>,
     fog: Option<crate::client::view::Fog>,
-    (overlays, hand, atlas, warp, water_alpha): (
-        &Query<ScreenDrawn, With<crate::renderer::screen_effects::Overlay>>,
-        Option<Mat4>,
-        Option<AssetId<Image>>,
-        Mat4,
-        f32,
-    ),
-    (hand_parts, hand_view, hand_glints, glint_materials, world_overlays): (
-        &Query<HandDrawn, Without<crate::renderer::screen_effects::Overlay>>,
+    (hand, atlas, warp, water_alpha): (Option<Mat4>, Option<AssetId<Image>>, Mat4, f32),
+    (hand_parts, hand_view, hand_glints, glint_materials): (
+        &Query<HandDrawn>,
         Option<Mat4>,
         &Query<HandGlintDrawn, With<crate::renderer::hand::HandGlint>>,
         &Assets<crate::renderer::glint::GlintMaterial>,
-        &Query<OverlayDrawn, OverlayFilter>,
     ),
 ) {
     let mut parts = Vec::new();
@@ -619,11 +578,23 @@ fn write_env(
         });
         true
     };
-    for part in env.sky.iter().chain(&env.clouds).chain(&env.weather) {
+    let add_draw = |add: &mut dyn FnMut(
+        MeshRef,
+        Option<AssetId<Image>>,
+        Vec4,
+        AlphaMode,
+        f32,
+        u32,
+        [f32; 4],
+        Mat4,
+        f32,
+    ) -> bool,
+                    part: &crate::draw::EnvDraw| {
         add(
             MeshRef::Draw(part.mesh.clone()),
             match &part.texture {
                 crate::draw::Texture::None => None,
+                crate::draw::Texture::Atlas => atlas,
                 crate::draw::Texture::Image(h) => Some(h.id()),
             },
             Vec4::from_array(part.tint),
@@ -634,33 +605,19 @@ fn write_env(
             part.transform,
             part.pad[0],
         );
+    };
+    for part in env.sky.iter().chain(&env.clouds).chain(&env.weather) {
+        add_draw(&mut add, part);
     }
     // Screen overlays as the hand camera draws them: their transforms are
     // in its view space.
     if let Some(clip_from_view) = hand {
-        for (i, (mesh, material, transform, visible)) in overlays.iter().enumerate() {
-            if !visible.get() {
-                continue;
-            }
-            if let Some(m) = standard.get(&material.0) {
-                let uv = m.uv_transform;
-                add(
-                    MeshRef::Asset(mesh.0.id()),
-                    m.base_color_texture.as_ref().map(Handle::id),
-                    m.base_color.to_linear().to_vec4(),
-                    m.alpha_mode,
-                    i as f32,
-                    2,
-                    [
-                        uv.matrix2.x_axis.x,
-                        uv.matrix2.y_axis.y,
-                        uv.translation.x,
-                        uv.translation.y,
-                    ],
-                    clip_from_view * transform.to_matrix(),
-                    0.0,
-                );
-            }
+        for part in &env.screen {
+            let part = EnvDraw {
+                transform: clip_from_view * part.transform,
+                ..part.clone()
+            };
+            add_draw(&mut add, &part);
         }
     }
 
@@ -688,26 +645,8 @@ fn write_env(
     }
     // The world's overlays: outline, hitboxes and borders as lines, the
     // breaking cracks as faces.
-    let outline_width =
-        crate::renderer::overlays::OUTLINE_WIDTH.load(std::sync::atomic::Ordering::Relaxed) as f32;
-    for (mesh, material, transform, visible, cracks, outline) in world_overlays {
-        if !visible.get() {
-            continue;
-        }
-        if let Some(m) = standard.get(&material.0) {
-            add(
-                MeshRef::Asset(mesh.0.id()),
-                m.base_color_texture.as_ref().map(Handle::id),
-                m.base_color.to_linear().to_vec4(),
-                m.alpha_mode,
-                0.0,
-                if cracks { 5 } else { 4 },
-                [1.0, 1.0, 0.0, 0.0],
-                transform.to_matrix(),
-                // Lines: pad[0] scales the width.
-                if outline { outline_width } else { 1.0 },
-            );
-        }
+    for part in &env.overlays {
+        add_draw(&mut add, part);
     }
     // The held items' glint: their own texture as the mask, added over
     // them (`renderer::glint`); the glint texture's place in pad[2].
@@ -829,16 +768,14 @@ fn write(
         Res<Assets<StandardMaterial>>,
         Option<Res<crate::renderer::terrain::LightmapPixels>>,
     ),
-    (overlays, terrain_textures, terrain_params): (
-        Query<ScreenDrawn, With<crate::renderer::screen_effects::Overlay>>,
+    (terrain_textures, terrain_params): (
         Option<Res<crate::renderer::terrain_pool::TerrainTextures>>,
         Option<Res<crate::renderer::terrain_pool::TerrainParams>>,
     ),
-    (hand_parts, hand_glints, glint_materials, world_overlays): (
-        Query<HandDrawn, Without<crate::renderer::screen_effects::Overlay>>,
+    (hand_parts, hand_glints, glint_materials): (
+        Query<HandDrawn>,
         Query<HandGlintDrawn, With<crate::renderer::hand::HandGlint>>,
         Res<Assets<crate::renderer::glint::GlintMaterial>>,
-        Query<OverlayDrawn, OverlayFilter>,
     ),
     (ancestors, local_roots): (
         Query<&ChildOf>,
@@ -1044,7 +981,6 @@ fn write(
         images.as_deref(),
         view.fog,
         (
-            &overlays,
             view.hand_clip_from_view,
             terrain_textures.as_ref().map(|t| t.atlas.id()),
             view.warp,
@@ -1055,7 +991,6 @@ fn write(
             view.hand_view_from_world,
             &hand_glints,
             &glint_materials,
-            &world_overlays,
         ),
     );
     if !live {

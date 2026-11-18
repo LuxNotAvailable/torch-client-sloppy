@@ -244,7 +244,6 @@ pub(crate) fn adopt_downloaded_assets(
     chunk: Option<Res<crate::renderer::systems::ChunkMaterial>>,
     water: Option<Res<crate::renderer::systems::WaterMaterial>>,
     gui: Option<ResMut<crate::gui::render::GuiAssets>>,
-    break_overlay: Option<Res<crate::renderer::overlays::BreakOverlay>>,
     after: Res<crate::gui::render::AfterDownloadScreen>,
     mut state: ResMut<GuiState>,
 ) {
@@ -266,9 +265,6 @@ pub(crate) fn adopt_downloaded_assets(
     }
     standard.get_mut(&chunk.0);
     standard.get_mut(&water.0);
-    if let Some(overlay) = break_overlay.as_ref() {
-        standard.get_mut(&overlay.material);
-    }
 
     let (image, unihex) = crate::gui::render::atlas_textures(&prepared.gui_atlas);
     if let Err(e) = images.insert(&gui.image, image) {

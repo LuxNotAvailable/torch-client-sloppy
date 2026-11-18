@@ -21,8 +21,7 @@ use super::input::{
     toggle_chunk_borders, toggle_freecam, toggle_screen, toggle_third_person, window_focus_cursor,
 };
 use super::overlays::{
-    BlockOutline, BlockOutlineMarker, BreakOverlay, BreakOverlayMarker, ChunkBorderMarker,
-    ChunkBorderOverlay, LineMaterial, chunk_border_mesh, crumbling_mesh, outline_mesh,
+    BlockOutline, BreakOverlay, ChunkBorderOverlay, HitboxOverlay, LineMaterial,
     update_block_outline, update_break_overlay, update_chunk_borders,
 };
 
@@ -354,7 +353,7 @@ fn setup(
     #[cfg(feature = "click_gui")] mut esp_materials: ResMut<
         Assets<crate::renderer::esp_material::EspMaterial>,
     >,
-    mut meshes: ResMut<Assets<Mesh>>,
+    #[cfg(feature = "click_gui")] mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
     mut cursor_opts: Query<&mut CursorOptions, With<PrimaryWindow>>,
     mut pending_atlas: ResMut<PendingAtlas>,
@@ -404,76 +403,19 @@ fn setup(
         anim: images.add(super::block_anim::table_image()),
     });
 
-    let break_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(2.0, 2.0, 2.0),
-        base_color_texture: Some(atlas.clone()),
-        unlit: true,
-        alpha_mode: AlphaMode::Multiply,
-        ..default()
-    });
-    let (entity, mesh) = spawn_overlay(
-        &mut commands,
-        &mut meshes,
-        crumbling_mesh(&[[0.0, 0.0, 0.0, 1.0, 1.0, 1.0]], 0, 1),
-        break_mat.clone(),
-        BreakOverlayMarker,
-    );
-    commands.insert_resource(BreakOverlay {
-        entity,
-        mesh,
-        material: break_mat,
-        shown: None,
-    });
-
-    let outline_mat = materials.add(StandardMaterial {
-        base_color: Color::srgba(0.0, 0.0, 0.0, 0.4),
-        unlit: true,
-        alpha_mode: AlphaMode::Blend,
-        ..default()
-    });
-    let (entity, mesh) = spawn_overlay(
-        &mut commands,
-        &mut meshes,
-        outline_mesh(&[[0.0, 0.0, 0.0, 1.0, 1.0, 1.0]]),
-        outline_mat.clone(),
-        BlockOutlineMarker,
-    );
-    commands.insert_resource(BlockOutline {
-        entity,
-        mesh,
-        material: outline_mat,
-        style: None,
-        shown: None,
-    });
-
-    let chunk_border_mat = materials.add(StandardMaterial {
+    // Structure block bounds draw their lines with this.
+    let line_mat = materials.add(StandardMaterial {
         base_color: Color::WHITE,
         unlit: true,
         alpha_mode: AlphaMode::Blend,
         cull_mode: None,
         ..default()
     });
-    let (entity, mesh) = spawn_overlay(
-        &mut commands,
-        &mut meshes,
-        chunk_border_mesh(-64.0, 320.0, -64.0),
-        chunk_border_mat.clone(),
-        ChunkBorderMarker,
-    );
-    commands.insert_resource(LineMaterial(chunk_border_mat.clone()));
-    commands.insert_resource(ChunkBorderOverlay {
-        entity,
-        mesh,
-        shown: None,
-    });
-    let (entity, mesh) = spawn_overlay(
-        &mut commands,
-        &mut meshes,
-        super::overlays::line_mesh(Vec::new(), Some(Vec::new())),
-        chunk_border_mat.clone(),
-        super::overlays::HitboxMarker,
-    );
-    commands.insert_resource(super::overlays::HitboxOverlay { entity, mesh });
+    commands.insert_resource(LineMaterial(line_mat));
+    commands.init_resource::<BlockOutline>();
+    commands.init_resource::<BreakOverlay>();
+    commands.init_resource::<ChunkBorderOverlay>();
+    commands.init_resource::<HitboxOverlay>();
 
     #[cfg(feature = "click_gui")]
     {
@@ -669,6 +611,7 @@ pub fn partial_ticks(state: &SharedState) -> f32 {
 
 const TICK_SECS: f32 = 0.05;
 
+#[cfg(feature = "click_gui")]
 fn spawn_overlay<M: bevy::pbr::Material, K: Component>(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -2725,7 +2668,9 @@ pub fn run(
                 update_chunk_borders,
                 super::overlays::update_hitboxes,
                 update_break_overlay,
+                super::overlays::fill_draw_list.in_set(crate::draw::DrawSystems),
             )
+                .chain()
                 .after(FrameViewSystems)
                 .run_if(in_state(AppState::InGame)),
         );

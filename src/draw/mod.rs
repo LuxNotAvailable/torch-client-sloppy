@@ -166,6 +166,8 @@ impl MeshData {
 pub enum Texture {
     #[default]
     None,
+    /// The terrain atlas.
+    Atlas,
     Image(bevy::prelude::Handle<bevy::image::Image>),
 }
 
@@ -210,4 +212,9 @@ pub struct Env {
     pub sky: Vec<EnvDraw>,
     pub clouds: Vec<EnvDraw>,
     pub weather: Vec<EnvDraw>,
+    /// The block outline, cracks, chunk borders and hitboxes.
+    pub overlays: Vec<EnvDraw>,
+    /// Full-view overlays (underwater, inside a wall, fire, pumpkin), their
+    /// transforms in the hand camera's view space.
+    pub screen: Vec<EnvDraw>,
 }
