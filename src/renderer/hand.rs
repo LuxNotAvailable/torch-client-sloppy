@@ -13,7 +13,7 @@ use crate::renderer::anim::{
 use crate::renderer::item_assets::{ItemAssets, ItemGpu};
 use crate::session::Gamemode;
 
-pub const HAND_LAYER: usize = 2;
+use crate::client::view::HAND_LAYER;
 
 const HAND_CAMERA_ORDER: isize = 1;
 

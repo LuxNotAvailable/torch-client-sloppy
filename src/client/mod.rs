@@ -18,6 +18,7 @@ pub(crate) mod dialogs;
 pub(crate) mod envprobe;
 pub(crate) mod languages;
 pub(crate) mod packets;
+pub(crate) mod post_effects;
 pub(crate) mod recipes;
 #[cfg(feature = "skins")]
 pub(crate) mod skins;
@@ -25,6 +26,7 @@ pub(crate) mod tablist;
 pub(crate) mod tick;
 pub(crate) mod timeline;
 pub(crate) mod tracking;
+pub(crate) mod view;
 pub(crate) mod viewwindow;
 pub(crate) mod worker;
 pub(crate) mod worldsync;

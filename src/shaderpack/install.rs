@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::compile::{self, Frame, ProgramKind};
 use super::sources::TextureSource;
-use crate::renderer::packdraw::uniforms;
+use crate::shaderpack::uniforms;
 use crate::shaderpack::directives::{Constants, Targets};
 use crate::shaderpack::expressions::Customs;
 use crate::shaderpack::pipeline::Layout;

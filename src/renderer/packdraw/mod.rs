@@ -6,12 +6,11 @@ macro_rules! gpu_label {
 
 pub(crate) mod center_depth;
 mod depthcopy;
-pub(crate) mod endflash;
 mod entities;
 mod formats;
 mod frame;
 mod fullscreen;
-pub(crate) mod inputs;
+mod gather;
 mod mipmaps;
 mod node;
 mod packatlas;
@@ -109,7 +108,7 @@ const TIMED_STAGES: [&str; 11] = [
 
 fn report_pack_timing(
     diagnostics: Res<bevy::diagnostic::DiagnosticsStore>,
-    inputs: Option<Res<inputs::Inputs>>,
+    inputs: Option<Res<crate::shaderpack::inputs::Inputs>>,
     mut last: Local<Option<std::time::Instant>>,
 ) {
     let now = std::time::Instant::now();
@@ -188,49 +187,11 @@ fn drop_failed_pack(
     GPU_FAILED.store(false, Ordering::Release);
 }
 
-/// The shader pack's render scale in percent, from the options; the render
-/// world reads it when it sizes the pack's targets.
-static RENDER_SCALE: std::sync::atomic::AtomicU32 =
-    std::sync::atomic::AtomicU32::new(crate::gui::PACK_RENDER_SCALE_MAX);
-
 fn sync_render_scale(gui: Res<crate::gui::GuiState>) {
-    RENDER_SCALE.store(gui.options.pack_render_scale, Ordering::Relaxed);
-    SHADOW_EVERY.store(gui.options.shadow_update.clamp(1, 3), Ordering::Relaxed);
-}
-
-/// Shadow Updates (Video Settings): the shadow map is redrawn every this
-/// many frames.
-static SHADOW_EVERY: AtomicU32 = AtomicU32::new(1);
-
-pub(crate) fn shadow_every() -> u32 {
-    SHADOW_EVERY.load(Ordering::Relaxed)
-}
-
-/// The pack's terrain projection and drawing size this frame, for the
-/// terrain cull's occlusion pyramid built from the pack's depth.
-static HIZ_VIEW: std::sync::Mutex<Option<(Mat4, UVec2)>> = std::sync::Mutex::new(None);
-
-pub(super) fn publish_hiz_view(projection: Mat4, size: UVec2) {
-    if let Ok(mut view) = HIZ_VIEW.lock() {
-        *view = Some((projection, size));
-    }
-}
-
-pub(crate) fn hiz_view() -> Option<(Mat4, UVec2)> {
-    HIZ_VIEW.lock().ok().and_then(|view| *view)
-}
-
-/// The size a shader pack draws at for a view of `size`.
-pub(super) fn scaled(size: UVec2) -> UVec2 {
-    let percent = RENDER_SCALE.load(Ordering::Relaxed).clamp(
-        crate::gui::PACK_RENDER_SCALE_MIN,
-        crate::gui::PACK_RENDER_SCALE_MAX,
+    crate::shaderpack::frame_state::set_options(
+        gui.options.pack_render_scale,
+        gui.options.shadow_update,
     );
-    scaled_by(size, percent)
-}
-
-fn scaled_by(size: UVec2, percent: u32) -> UVec2 {
-    ((size.max(UVec2::ONE) * percent + 50) / 100).max(UVec2::ONE)
 }
 
 pub(crate) fn allow_display_view(image: &mut Image) {
@@ -250,11 +211,11 @@ pub(crate) struct ShaderPackPlugin;
 
 impl Plugin for ShaderPackPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<inputs::Inputs>().add_systems(
+        app.init_resource::<crate::shaderpack::inputs::Inputs>().add_systems(
             Update,
             (
                 (sync::sync_compiled_pack, sync::sync_pack_vertices).chain(),
-                inputs::gather_inputs
+                gather::gather_inputs
                     .after(crate::renderer::frame_view::FrameViewSystems)
                     // The native renderer runs packs without the game's compile.
                     .run_if(resource_exists::<sync::CompiledPack>.or(native_renderer)),
@@ -340,17 +301,6 @@ impl Plugin for ShaderPackPlugin {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn the_render_scale_rounds_and_never_reaches_zero() {
-        use bevy::math::UVec2;
-        let window = UVec2::new(1920, 974);
-        assert_eq!(super::scaled_by(window, 100), window);
-        assert_eq!(super::scaled_by(window, 50), UVec2::new(960, 487));
-        assert_eq!(super::scaled_by(window, 75), UVec2::new(1440, 731));
-        assert_eq!(super::scaled_by(UVec2::new(1, 1), 50), UVec2::ONE);
-        assert_eq!(super::scaled_by(UVec2::ZERO, 50), UVec2::ONE);
-    }
-
     use super::*;
 
     #[test]

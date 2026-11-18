@@ -454,7 +454,7 @@ impl Renderer {
                     .and_then(|dir| std::fs::read_to_string(dir.join("inputs.json")).ok())
                     && let Ok(value) = serde_json::from_str(&text)
                 {
-                    screen.inputs = crate::renderer::packdraw::inputs::Inputs::from_json(&value);
+                    screen.inputs = crate::shaderpack::inputs::Inputs::from_json(&value);
                 }
                 println!(
                     "vkview: pack {name}: {programs} programs, {} in {:.0} ms",

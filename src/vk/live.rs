@@ -176,7 +176,7 @@ struct Live {
     /// When the chosen pack was last looked up, and the name found.
     pack_checked: Option<(std::time::Instant, Option<String>)>,
     /// The frame's pack inputs (time of day, weather, the eye's light).
-    pack_inputs: Option<crate::renderer::packdraw::inputs::Inputs>,
+    pack_inputs: Option<crate::shaderpack::inputs::Inputs>,
     started: std::time::Instant,
     /// In a menu: the panorama draws.
     menu: bool,
@@ -459,13 +459,21 @@ fn draw_frame(
     }
     // In menus the title panorama shows instead of the world, as the game
     // switches its cameras.
-    let menu = world
-        .query_filtered::<&bevy::camera::Camera, With<crate::renderer::panorama::PanoramaCamera>>()
-        .iter(world)
-        .next()
-        .is_some_and(|c| c.is_active);
-    let camera = if menu { None } else { world_camera(world) };
-    let figure_view = figure_view(world);
+    let (menu, camera, figure_view) = match world.get_resource::<crate::client::view::View>() {
+        Some(view) => (
+            view.menu,
+            if view.menu {
+                None
+            } else {
+                view.world.map(world_camera)
+            },
+            view.figure.map(|f| {
+                let [width, height] = f.size;
+                (f.clip_from_world, f.eye, vk::Extent2D { width, height })
+            }),
+        ),
+        None => (false, None, None),
+    };
     // Screenshots the game asked for (`renderer::screenshot`): captured by
     // the renderer, answered with the event Bevy's renderer would send.
     let mut requests = world.query_filtered::<Entity, (
@@ -482,7 +490,7 @@ fn draw_frame(
         .map_or(100, |g| g.options.pack_render_scale);
     let (post, vsync) = match world.get_resource::<crate::gui::GuiState>() {
         Some(gui) => {
-            use crate::renderer::antialias::{AaMode, SSAA_SCALES};
+            use crate::gui::antialias::{AaMode, SSAA_SCALES};
             let aa = gui.options.antialiasing;
             let post = super::post::Settings {
                 // MSAA has no native path: FXAA stands in.
@@ -657,58 +665,15 @@ fn publish_block_ids(ids: Option<std::sync::Arc<crate::shaderpack::packvertex::B
     crate::client::bus::request(crate::client::bus::ClientRequest::ReloadChunks);
 }
 
-/// The figure camera's view-projection, eye and the texture size the GUI
-/// wants, while the inventory shows the figure.
-fn figure_view(world: &mut World) -> Option<(bevy::math::Mat4, bevy::math::Vec3, vk::Extent2D)> {
-    use crate::renderer::inventory_figure::{FigureCamera, FigureImage, ready};
-    if !ready() {
-        return None;
-    }
-    let handle = world.get_resource::<FigureImage>()?.0.clone()?;
-    let size = world
-        .get_resource::<Assets<bevy::image::Image>>()?
-        .get(&handle)?
-        .texture_descriptor
-        .size;
-    let mut q = world.query_filtered::<(&GlobalTransform, &Projection), With<FigureCamera>>();
-    let (transform, projection) = q.iter(world).next()?;
-    let Projection::Orthographic(o) = projection else {
-        return None;
-    };
-    let (w, h) = match o.scaling_mode {
-        bevy::camera::ScalingMode::Fixed { width, height } => (width, height),
-        _ => return None,
-    };
-    // Bevy's orthographic projection, depth reversed as the world's.
-    let proj =
-        bevy::math::Mat4::orthographic_rh(-w / 2.0, w / 2.0, -h / 2.0, h / 2.0, o.far, o.near);
-    let view = transform.to_matrix().inverse();
-    Some((
-        proj * view,
-        transform.translation(),
-        vk::Extent2D {
-            width: size.width,
-            height: size.height,
-        },
-    ))
-}
-
 /// The world camera as `terrain::Camera` (as `TerrainScene::game_camera`).
-fn world_camera(world: &mut World) -> Option<Camera> {
-    let mut q = world.query_filtered::<(&GlobalTransform, &Projection), With<crate::renderer::systems::WorldCamera>>();
-    let (transform, projection) = q.iter(world).next()?;
-    let Projection::Perspective(p) = projection else {
-        return None;
-    };
-    let eye = transform.translation();
-    // The camera looks down its -z.
-    let forward = transform.forward().as_vec3();
-    Some(Camera {
-        eye,
+fn world_camera(eye: crate::client::view::Eye) -> Camera {
+    let forward = eye.forward();
+    Camera {
+        eye: eye.position(),
         yaw: (-forward.x).atan2(forward.z).to_degrees(),
         pitch: forward.y.clamp(-1.0, 1.0).asin().to_degrees(),
-        fov: p.fov.to_degrees(),
-    })
+        fov: eye.fov.to_degrees(),
+    }
 }
 
 type TextureData = (u32, u32, vk::Format, Vec<u8>);
@@ -905,7 +870,7 @@ impl Live {
         if let Some(bytes) = dump::take_live("inputs.json")
             && let Ok(value) = serde_json::from_slice(&bytes)
         {
-            self.pack_inputs = Some(crate::renderer::packdraw::inputs::Inputs::from_json(&value));
+            self.pack_inputs = Some(crate::shaderpack::inputs::Inputs::from_json(&value));
         }
         // A pack draws the sky and hand as its own entities: renewed with
         // the environment.
@@ -999,7 +964,9 @@ impl Live {
                 // The mesher's pack quads (normals, block ids) for this pack,
                 // as the game's own compile would publish them.
                 publish_block_ids(screen.block_ids());
-                crate::shaderpack::packvertex::set_native_player_shadow(screen.casts_player_shadow());
+                crate::shaderpack::packvertex::set_native_player_shadow(
+                    screen.casts_player_shadow(),
+                );
                 self.pack = Some((name, screen, extent));
                 self.pack_revision = revision;
             }

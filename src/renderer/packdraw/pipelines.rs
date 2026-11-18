@@ -826,7 +826,7 @@ pub(crate) fn prepare_blit(
         process.scaled_out = process.upscale.target(
             &device,
             process.scaled_out.take(),
-            super::scaled(full),
+            crate::shaderpack::frame_state::scaled(full),
             full,
             format,
         );

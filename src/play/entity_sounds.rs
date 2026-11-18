@@ -567,7 +567,7 @@ impl EndFlashes {
             self.pending.clear();
             return;
         }
-        if let Some((x, y)) = crate::renderer::packdraw::endflash::started(clock_tick) {
+        if let Some((x, y)) = crate::shaderpack::endflash::started(clock_tick) {
             self.pending.push((30, x, y));
         }
         self.pending.retain_mut(|(left, x_angle, y_angle)| {

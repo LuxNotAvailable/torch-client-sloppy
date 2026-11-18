@@ -38,6 +38,7 @@ pub mod terrain;
 pub mod terrain_pool;
 pub mod tethers;
 pub mod view_bob;
+mod view_sync;
 pub mod weather;
 pub mod world_text;
 

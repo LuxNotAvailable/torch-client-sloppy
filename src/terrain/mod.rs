@@ -17,6 +17,10 @@ pub use mesh::{
 };
 pub use occupancy::Occupancy;
 
+/// Section origins per row of the terrain origins texture (`terrain.wgsl`
+/// and the pack preludes read it at this width).
+pub const ORIGIN_ROW: u32 = 256;
+
 /// Block atlas width in tiles.
 pub const ATLAS_COLS: u32 = 16;
 pub const TILE_PX: u32 = 16;

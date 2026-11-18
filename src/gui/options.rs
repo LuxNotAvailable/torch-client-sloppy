@@ -685,7 +685,7 @@ struct QualityPreset {
     biome_blend: u32,
     clouds: crate::renderer::clouds::CloudStatus,
     smooth_lighting: bool,
-    antialiasing: crate::renderer::antialias::AaMode,
+    antialiasing: crate::gui::antialias::AaMode,
     particles: crate::util::particles::ParticleStatus,
     entity_shadows: bool,
     /// The lighting engine: off is fullbright, with no light computed.
@@ -709,7 +709,7 @@ struct QualityPreset {
 }
 
 const QUALITY_PRESETS: [QualityPreset; 6] = {
-    use crate::renderer::antialias::AaMode;
+    use crate::gui::antialias::AaMode;
     use crate::renderer::clouds::CloudStatus;
     use crate::util::particles::ParticleStatus;
     [
@@ -898,7 +898,7 @@ fn reset_video_options(o: &mut crate::gui::GuiOptions) {
     };
     o.render_distance = crate::gui::RENDER_DISTANCE_DEFAULT;
     o.gamma = crate::gui::GAMMA_DEFAULT;
-    o.antialiasing = crate::renderer::antialias::Antialiasing::default();
+    o.antialiasing = crate::gui::antialias::Antialiasing::default();
     o.smooth_lighting = crate::gui::SMOOTH_LIGHTING_DEFAULT;
     o.lighting_enabled = crate::gui::LIGHTING_ENABLED_DEFAULT;
     o.max_fps = crate::gui::MAX_FPS_DEFAULT;
@@ -1311,8 +1311,8 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
             && crate::shaderpack::packvertex::active()
             && matches!(
                 o.antialiasing.mode,
-                crate::renderer::antialias::AaMode::Msaa
-                    | crate::renderer::antialias::AaMode::Supersample
+                crate::gui::antialias::AaMode::Msaa
+                    | crate::gui::antialias::AaMode::Supersample
             )
         {
             note = Some("Off while a shader pack is on; FXAA still works.");

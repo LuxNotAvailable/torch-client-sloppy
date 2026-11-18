@@ -32,7 +32,7 @@ pub fn stream(geometry: crate::shaderpack::programs::Geometry) -> u32 {
 
 pub const SLOTS_INITIAL: u32 = 8192;
 
-pub const ORIGIN_ROW: u32 = 256;
+use crate::terrain::ORIGIN_ROW;
 
 pub const MAX_VIEWS: u32 = 5;
 

@@ -1,7 +1,7 @@
 //! The frame's last full-screen pass (VULKAN_REWRITE_CHECKLIST.md 5.3,
 //! `shaders/post.slang`): the scene is drawn into an image of its own,
 //! larger under SSAA, and this pass reads it into the output with the
-//! server's post effects (`renderer::post_effects` flags) and FXAA.
+//! server's post effects (`client::post_effects` flags) and FXAA.
 
 use ash::vk;
 

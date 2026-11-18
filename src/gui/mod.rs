@@ -3,6 +3,7 @@
 
 pub mod accountlist;
 pub mod advancements;
+pub mod antialias;
 #[cfg(feature = "asset_download")]
 pub mod assetdownload;
 pub mod atlas;
@@ -529,8 +530,8 @@ crate::options! {
         /// (1 to 3); between, the last one is reused, moved with the camera.
         pub shadow_update: u32 = 1 => key("torchShadowUpdate").clamp(1, 3),
         pub gamma: u32 = GAMMA_DEFAULT => key("gamma").clamp(0, GAMMA_MAX),
-        pub antialiasing: crate::renderer::antialias::Antialiasing = Default::default()
-            => custom(|v| crate::renderer::antialias::Antialiasing::read(v), |m, a| a.write(m)),
+        pub antialiasing: crate::gui::antialias::Antialiasing = Default::default()
+            => custom(|v| crate::gui::antialias::Antialiasing::read(v), |m, a| a.write(m)),
         pub smooth_lighting: bool = SMOOTH_LIGHTING_DEFAULT => key("ao"),
         /// Entities and block entities behind solid blocks are not drawn
         /// (`entities::cull`).

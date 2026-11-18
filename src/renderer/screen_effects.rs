@@ -12,7 +12,8 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
 use super::AppState;
-use super::hand::{HAND_LAYER, HandCamera};
+use super::hand::HandCamera;
+use crate::client::view::HAND_LAYER;
 use super::input::{FreecamState, ThirdPersonState};
 use super::systems::{LightmapState, Shared};
 use crate::session::Gamemode;

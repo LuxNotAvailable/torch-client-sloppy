@@ -7,7 +7,7 @@
 //! lands a frame or two later, which the smoothing hides.
 
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use bevy::prelude::*;
 use bevy::render::render_resource::{
@@ -19,13 +19,6 @@ use bevy::render::render_resource::{
 use bevy::render::renderer::RenderDevice;
 
 use super::fullscreen::{fullscreen_corner, fullscreen_pass, fullscreen_pipeline};
-
-/// The latest read-back depth, as `f32` bits; the far plane until one lands.
-static SAMPLE: AtomicU32 = AtomicU32::new(0x3F80_0000);
-
-pub(crate) fn sample() -> f32 {
-    f32::from_bits(SAMPLE.load(Ordering::Relaxed))
-}
 
 const SHADER: &str = concat!(
     fullscreen_corner!(),
@@ -227,7 +220,7 @@ pub(super) fn read_back(center: Option<Res<CenterDepth>>, device: Res<RenderDevi
                 drop(bytes);
                 slot.buffer.unmap();
                 if depth.is_finite() {
-                    SAMPLE.store(depth.to_bits(), Ordering::Relaxed);
+                    crate::shaderpack::frame_state::set_center_depth(depth);
                 }
                 slot.state.store(IDLE, Ordering::Release);
             }

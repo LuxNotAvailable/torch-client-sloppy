@@ -54,7 +54,7 @@ pub struct EnvScene {
     pub water_alpha: f32,
     /// The portal and nausea warp, after the projection's view.
     pub warp: Mat4,
-    /// The server's post effects (`renderer::post_effects` flags).
+    /// The server's post effects (`client::post_effects` flags).
     pub post: u32,
     module: vk::ShaderModule,
     pipes: Option<Pipes>,

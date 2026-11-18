@@ -1,9 +1,8 @@
 use bevy::math::{IVec2, IVec3, Mat4, Vec2, Vec3, Vec4};
-use bevy::render::view::ExtractedView;
 
 use super::builtins::{BUILTINS, Builtin, Value};
 use super::{BlockHead, MatrixSet};
-use crate::renderer::packdraw::inputs::{Inputs, MAX_ARMOR, MAX_HUNGER};
+use crate::shaderpack::inputs::{EyeIn, Inputs, MAX_ARMOR, MAX_HUNGER};
 use crate::shaderpack::directives::Constants;
 use crate::shaderpack::expressions::Smooth;
 
@@ -102,7 +101,7 @@ pub(crate) struct FrameValues {
     sun_position: Vec3,
     moon_position: Vec3,
     up_position: Vec3,
-    end_flash: crate::renderer::packdraw::endflash::EndFlash,
+    end_flash: crate::shaderpack::endflash::EndFlash,
     is_day: bool,
     shadow_model_view: Mat4,
     shadow_projection: Mat4,
@@ -118,33 +117,8 @@ fn celestial_fraction(angle: f32) -> f32 {
 }
 
 impl FrameValues {
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn of(
-        view: &ExtractedView,
-        time_counter: f32,
-        frame_time: f32,
-        frames: u32,
-        far: f32,
-        inputs: Inputs,
-        constants: &Constants,
-        history: &mut History,
-    ) -> FrameValues {
-        Self::of_camera(
-            view.world_from_view.to_matrix(),
-            view.clip_from_view.y_axis.y,
-            bevy::math::UVec2::new(view.viewport.z, view.viewport.w),
-            time_counter,
-            frame_time,
-            frames,
-            far,
-            inputs,
-            constants,
-            history,
-        )
-    }
-
-    /// As `of`, from the camera's transform, its projection's y focal length
-    /// and the viewport size (the native renderer has no `ExtractedView`).
+    /// From the camera's transform, its projection's y focal length and the
+    /// viewport size.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn of_camera(
         world_from_view: Mat4,
@@ -160,13 +134,13 @@ impl FrameValues {
     ) -> FrameValues {
         let mut view_rotation = world_from_view.inverse();
         view_rotation.w_axis = Vec4::W;
-        let size = super::super::scaled(viewport).as_vec2();
+        let size = crate::shaderpack::frame_state::scaled(viewport).as_vec2();
         let focal = focal_y.max(f32::EPSILON);
         let fov = 2.0 * (1.0 / focal).atan();
         let far_plane = (far * FAR_PLANE_PER_BLOCK).max(NEAR * 2.0);
         let projection =
             Mat4::perspective_rh_gl(fov, size.x / size.y, NEAR, far_plane) * inputs.warp;
-        super::super::publish_hiz_view(projection, size.as_uvec2());
+        crate::shaderpack::frame_state::publish_hiz_view(projection, size.as_uvec2());
         let camera = world_from_view.w_axis.truncate();
 
         let (previous_view_rotation, previous_projection) =
@@ -211,7 +185,7 @@ impl FrameValues {
         });
 
         let center_depth_smooth = history.center_depth.update(
-            crate::renderer::packdraw::center_depth::sample(),
+            crate::shaderpack::frame_state::center_depth(),
             constants.center_depth_half_life,
             constants.center_depth_half_life,
             frame_time,
@@ -219,7 +193,7 @@ impl FrameValues {
         // Shadow Updates: on a frame the shadow map is not redrawn, its last
         // view stays, moved by how far the camera has gone since (shadow
         // space is relative to the camera), so the old map still lines up.
-        let every = crate::renderer::packdraw::shadow_every();
+        let every = crate::shaderpack::frame_state::shadow_every();
         let shadow_reused = every > 1 && frames % every != 0 && history.shadow_drawn.is_some();
         let shadow_model_view = match history.shadow_drawn {
             Some((drawn, at)) if shadow_reused => drawn * Mat4::from_translation(camera - at),
@@ -267,7 +241,7 @@ impl FrameValues {
             end_flash: if crate::client::dimension::current()
                 == crate::client::dimension::Dimension::End
             {
-                crate::renderer::packdraw::endflash::at(inputs.day_ticks)
+                crate::shaderpack::endflash::at(inputs.day_ticks)
             } else {
                 Default::default()
             },
@@ -389,7 +363,7 @@ impl FrameValues {
             B::AtlasSize => Value::IVec2(inputs.atlas_size),
             B::Biome => Value::Int(inputs.biome.map_or(-1, i32::from)),
             // Vanilla fogs terrain in a cylinder unless the eye is in a fluid.
-            B::FogShape => Value::Int(i32::from(inputs.eye_in == super::super::inputs::EyeIn::Air)),
+            B::FogShape => Value::Int(i32::from(inputs.eye_in == EyeIn::Air)),
             // Vanilla's darkness pulse on the lightmap.
             B::DarknessLightFactor => Value::Float(
                 (self.time_counter * 20.0 * std::f32::consts::PI * 0.025)

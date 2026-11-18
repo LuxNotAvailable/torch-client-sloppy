@@ -43,15 +43,15 @@ These keep the native renderer fed. They must move to the game-side code that su
 
 | Data | Defined | Used (vk) |
 |---|---|---|
-| `systems::WorldCamera` + `GlobalTransform` + `Projection::Perspective` | `renderer/systems.rs:44` | `live.rs:697–715` `world_camera`; `entity_dump.rs:976, 983, 1450` |
-| `DistanceFog` (`FogFalloff::Linear`) on the world camera | Bevy (`bevy_pbr`) | `entity_dump.rs:907, 983` |
-| `panorama::PanoramaCamera` + `Camera::is_active` (menu?) | `renderer/panorama.rs:29` | `live.rs:461–466` |
+| `systems::WorldCamera` + `GlobalTransform` + `Projection::Perspective` | replaced: `client::view::View::world` (filled by `renderer/view_sync.rs`) | `live.rs:697–715` `world_camera`; `entity_dump.rs:976, 983, 1450` |
+| `DistanceFog` (`FogFalloff::Linear`) on the world camera | replaced: `View::fog` | `entity_dump.rs:907, 983` |
+| `panorama::PanoramaCamera` + `Camera::is_active` (menu?) | replaced: `View::menu` | `live.rs:461–466` |
 | `panorama` lens constants (copied) | `renderer/panorama.rs` | `vk/panorama.rs:18–25` |
-| `inventory_figure::{FigureCamera, FigureImage, ready, FIGURE_LAYER}` + ortho `ScalingMode::Fixed` | `renderer/inventory_figure.rs:19, 106, 112, 117` | `live.rs:662–695` `figure_view`; `entity_dump.rs:1189–1199` |
-| `hand::{HandCamera, HandGlint, HAND_LAYER}` | `renderer/hand.rs:16, 832, 848` | `entity_dump.rs:201–220, 786, 987, 994–995` |
-| `frame_view::FrameView`, `view_bob::current_warp` | `renderer/frame_view.rs:14`; `renderer/view_bob.rs:134` | `entity_dump.rs:989, 1223` |
-| `antialias::{AaMode, SSAA_SCALES}` (GUI option) | `renderer/antialias.rs:21, 78` | `live.rs:485–495` |
-| `post_effects::active()` (server flags) | `renderer/post_effects.rs:28` | `entity_dump.rs:959`; carried in `vk/env.rs:57` |
+| `inventory_figure::{FigureCamera, FigureImage, ready, FIGURE_LAYER}` + ortho `ScalingMode::Fixed` | replaced: `View::{figure, figure_ready}`, `client::view::FIGURE_LAYER` | `live.rs:662–695` `figure_view`; `entity_dump.rs:1189–1199` |
+| `hand::{HandCamera, HandGlint, HAND_LAYER}` | replaced: `View::hand_*`, `client::view::HAND_LAYER`; `HandGlint` (a mesh tag) goes with step 4 | `entity_dump.rs:201–220, 786, 987, 994–995` |
+| `frame_view::FrameView`, `view_bob::current_warp` | replaced: `View::warp` | `entity_dump.rs:989, 1223` |
+| `antialias::{AaMode, SSAA_SCALES}` (GUI option) | moved: `gui/antialias.rs` (wgpu cameras: `renderer/antialias.rs`) | `live.rs:485–495` |
+| `post_effects::active()` (server flags) | moved: `client/post_effects.rs` | `entity_dump.rs:959`; carried in `vk/env.rs:57` |
 
 ## 4. Entities, sky, overlays (`entity_dump.rs`, from Bevy meshes)
 
@@ -86,9 +86,9 @@ The pack front end lives in `renderer/packdraw`; the native side compiles and ru
 | `packdraw::compile::{EntityKind, ScreenStage, Step, geometry_alpha}` | moved: `shaderpack/compile/` | `pack/screen.rs:16, 755` |
 | `packdraw::install::{install, Installed, InstalledProgram, Module}` | moved: `shaderpack/install.rs` (Bevy systems: `renderer/packdraw/sync.rs`) | `pack/mod.rs:18`; `pack/screen.rs:17, 788`; `pack/targets.rs:163` |
 | `packdraw::sources::{Depth, Stub, TextureSource}` | moved: `shaderpack/sources.rs` | `pack/screen.rs:18` |
-| `packdraw::uniforms::{BlockSpec, FrameValues, History, UniformBytes, MatrixSet}` | `uniforms/mod.rs:32, 69, 81`; `uniforms/values.rs:64, 77` | `pack/screen.rs:19, 937` |
+| `packdraw::uniforms::{BlockSpec, FrameValues, History, UniformBytes, MatrixSet}` | moved: `shaderpack/uniforms/` (wgpu buffer: `renderer/packdraw/uniforms.rs`) | `pack/screen.rs:19, 937` |
 | `packdraw::usage::mip_targets` | moved: `shaderpack/usage.rs` | `pack/targets.rs:171` |
-| `packdraw::inputs::Inputs` (+ `from_json`) | `renderer/packdraw/inputs.rs:85, 167` | `pack/screen.rs:156`; `live.rs:179, 908`; `viewer.rs:457`; `entity_dump.rs:1451` |
+| `packdraw::inputs::Inputs` (+ `from_json`) | moved: `shaderpack/inputs.rs` (gathered by `renderer/packdraw/gather.rs`) | `pack/screen.rs:156`; `live.rs:179, 908`; `viewer.rs:457`; `entity_dump.rs:1451` |
 | `dimension::Dimension` | moved: `client/dimension.rs` | `pack/mod.rs:17`; `pack/bindless.rs:499` |
 | `packvertex::{BlockIds, current, set_current}` | moved: `shaderpack/packvertex.rs` | `live.rs:651–658`; `pack/screen.rs:1953` |
 | `packvertex::{player_shadow, set_native_player_shadow}` | moved: `shaderpack/packvertex.rs` | `live.rs:972, 1002`; `entity_dump.rs:1030` |
@@ -107,6 +107,7 @@ The pack front end lives in `renderer/packdraw`; the native side compiles and ru
 1. Move the shared data types out of `renderer/`. Done: `mesh`, `visgraph`, the `occlusion` flood fill, `block_anim` data, `packvertex`, `dimension` (+ `timeline`), and the `packdraw` front end (`compile`, `install`, `sources`, `usage`, `images` as `shaderpack/textures.rs`). Pack blends and texture dimensions are now pack-side types; wgpu converts in `renderer/packdraw/pipelines.rs`. `ShadowCullMode` and `SLOT_TABLE_BINDING` live in `shaderpack::compile`.
    Still pointing back into `renderer/`, to go with step 3: `shaderpack` uses `packdraw::uniforms` (`MatrixSet`, `unsupplied`, `builtin_type`, `resolve_input`) and `terrain_pool::ORIGIN_ROW` (wgpu `direct` prelude branch only).
 2. Move section 1's hooks into the mesher and asset loading, so `terrain_dump` no longer depends on `ChunkIndex` or `setup`. Done: `terrain::stream` takes the world's section changes (budgets, dedup) and fires every listener (the dump and the block entity caches); `ChunkIndex` only applies them to wgpu slots. The atlas goes to `terrain_dump::atlas` from `lib.rs`. The plugin and backend rows stay with `renderer::run` until the app setup leaves `renderer/` (step 5).
-3. Replace the cameras (section 3) with a plain game-side `View` resource: eye, rotation, fov, fog, hand/figure matrices.
+3. Replace the cameras (section 3) with a plain game-side `View` resource: eye, rotation, fov, fog, hand/figure matrices. Done: `client::view::View`, filled each frame in `PostUpdate` (`ViewSystems`, after transforms) by `renderer/view_sync.rs`; `vk::live` and `entity_dump` read only it. The Antialiasing option is `gui::antialias`, the server's post effects `client::post_effects`. The pack uniforms and inputs moved to `shaderpack` (`uniforms/`, `inputs`, `endflash`, and `frame_state` for render scale, shadow rate, centre depth and the Hi-Z view); `ORIGIN_ROW` is in `terrain`. `shaderpack` no longer uses `renderer/`.
+   Still in `renderer/`: the camera systems that fill `View`, and `gather_inputs` (it reads `renderer::environment`, `FrameView` and the input states). Both leave with the app setup (step 5).
 4. Replace `entity_dump` capture (section 4): the game hands draw lists to the native renderer directly instead of spawning Bevy meshes. This is the biggest step.
 5. Replace screenshots and GUI images (section 6) with Torch's own image types. Then drop `bevy_render`, `bevy_pbr`, `bevy_core_pipeline` and wgpu.

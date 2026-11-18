@@ -1,5 +1,5 @@
 use super::TERRAIN_SET;
-use crate::renderer::terrain_pool::ORIGIN_ROW;
+use crate::terrain::ORIGIN_ROW;
 use super::SLOT_TABLE_BINDING;
 
 thread_local! {

@@ -16,7 +16,7 @@ use bevy::render::render_resource::TextureFormat;
 
 use super::anim::AnimSample;
 
-pub const FIGURE_LAYER: usize = 4;
+use crate::client::view::FIGURE_LAYER;
 const FIGURE_CAMERA_ORDER: isize = -2;
 /// Where the figure stands on its layer.
 pub const FIGURE_ORIGIN: Vec3 = Vec3::ZERO;

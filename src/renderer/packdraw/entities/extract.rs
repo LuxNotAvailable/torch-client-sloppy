@@ -442,7 +442,7 @@ pub(crate) fn extract_standard_draws(
     {
         let view = camera.to_matrix().inverse();
         let layer =
-            bevy::camera::visibility::RenderLayers::layer(crate::renderer::hand::HAND_LAYER);
+            bevy::camera::visibility::RenderLayers::layer(crate::client::view::HAND_LAYER);
         for (entity, mesh, material, transform, visible, layers) in &hand {
             if !visible.get() || !layers.intersects(&layer) {
                 continue;

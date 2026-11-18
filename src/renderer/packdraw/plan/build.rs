@@ -80,7 +80,7 @@ pub(crate) fn prepare_plan(
     else {
         return;
     };
-    let size = super::super::scaled(UVec2::new(view.viewport.z, view.viewport.w));
+    let size = crate::shaderpack::frame_state::scaled(UVec2::new(view.viewport.z, view.viewport.w));
     let key = PlanKey {
         generation: installed.generation,
         size,

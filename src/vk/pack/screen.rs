@@ -16,7 +16,7 @@ use super::targets::{DEPTH_FORMAT, PackTargets};
 use crate::shaderpack::compile::{EntityKind, ScreenStage, Step};
 use crate::shaderpack::install::{Installed, InstalledProgram};
 use crate::shaderpack::sources::{Depth, Stub, TextureSource};
-use crate::renderer::packdraw::uniforms::{BlockSpec, FrameValues, History, UniformBytes};
+use crate::shaderpack::uniforms::{BlockSpec, FrameValues, History, UniformBytes};
 use crate::shaderpack::directives::{MAX_COLOR_TARGETS, SampleKind};
 use crate::shaderpack::expressions::CustomState;
 use crate::vk::bindless::{self as bl, Bindless};
@@ -153,7 +153,7 @@ pub(crate) struct PackScreen {
     frames: u32,
     last: Option<f32>,
     /// The game's frame inputs (time of day, sky), from the snapshot.
-    pub(crate) inputs: crate::renderer::packdraw::inputs::Inputs,
+    pub(crate) inputs: crate::shaderpack::inputs::Inputs,
     pub(crate) skipped_computes: usize,
 }
 
@@ -934,7 +934,7 @@ impl PackScreen {
                             layout: &program.layout.uniforms,
                             // The hand draws with its own projection.
                             set: if self.building_hand {
-                                crate::renderer::packdraw::uniforms::MatrixSet::Hand
+                                crate::shaderpack::uniforms::MatrixSet::Hand
                             } else {
                                 program.kind.matrices()
                             },

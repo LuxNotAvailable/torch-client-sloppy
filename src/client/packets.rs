@@ -651,7 +651,7 @@ fn animations(packet: &ClientboundGamePacket) {
             }
         }
         ClientboundGamePacket::PostEffects(p) => {
-            crate::renderer::post_effects::set(p.post_effects.iter().map(|id| id.path()));
+            crate::client::post_effects::set(p.post_effects.iter().map(|id| id.path()));
         }
         ClientboundGamePacket::AddTransientBlock(p) => {
             crate::blockentities::transient::add(
@@ -1399,13 +1399,13 @@ fn level_lifecycle(world: &WorldHolder, shared: &Arc<SharedMutex>, packet: &Clie
             crate::renderer::view_bob::reset_hurt();
             crate::items::dispatch::set_death(global_pos(p.common.last_death_location.as_ref()));
             worldsync::set_dimension(world, &p.common);
-            crate::renderer::post_effects::set([]);
+            crate::client::post_effects::set([]);
             worldsync::reset_level(shared);
         }
         ClientboundGamePacket::Login(p) => {
             crate::items::dispatch::set_death(global_pos(p.common.last_death_location.as_ref()));
             worldsync::set_dimension(world, &p.common);
-            crate::renderer::post_effects::set([]);
+            crate::client::post_effects::set([]);
             worldsync::reset_level(shared);
             crate::renderer::environment::set_server_chunk_radius(p.chunk_radius);
         }

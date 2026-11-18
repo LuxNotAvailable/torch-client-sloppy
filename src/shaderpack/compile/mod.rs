@@ -9,7 +9,7 @@ use crate::shaderpack::{discover, features, include, properties};
 
 use super::textures::{CustomTexture, CustomTextures};
 use super::sources::TextureSource;
-use crate::renderer::packdraw::uniforms::MatrixSet;
+use crate::shaderpack::uniforms::MatrixSet;
 use crate::client::dimension::Dimension;
 
 mod kinds;
@@ -221,7 +221,7 @@ pub(crate) fn compile_frame(
         .map(|(p, e)| (p.to_owned(), e.to_owned()))
         .collect();
     let (customs, custom_problems) =
-        Customs::compile(props.other.iter(), &crate::renderer::packdraw::uniforms::resolve_input);
+        Customs::compile(props.other.iter(), &crate::shaderpack::uniforms::resolve_input);
     let mut notes: Vec<String> = custom_problems
         .into_iter()
         .map(|p| format!("custom uniform skipped: {p}"))
@@ -899,7 +899,7 @@ mod tests {
                                 program.kind,
                                 program.draw_buffers,
                                 program.textures.len(),
-                                crate::renderer::packdraw::uniforms::unsupplied(
+                                crate::shaderpack::uniforms::unsupplied(
                                     &program.layout.uniforms,
                                     &frame.customs
                                 )
@@ -917,7 +917,7 @@ mod tests {
                             .programs
                             .iter()
                             .flat_map(|p| {
-                                crate::renderer::packdraw::uniforms::unsupplied(
+                                crate::shaderpack::uniforms::unsupplied(
                                     &p.layout.uniforms,
                                     &frame.customs,
                                 )

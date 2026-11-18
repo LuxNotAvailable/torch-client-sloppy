@@ -1139,7 +1139,7 @@ fn setup_player_model(
         &mut commands,
         &assets,
         &mut materials,
-        RenderLayers::layer(super::inventory_figure::FIGURE_LAYER),
+        RenderLayers::layer(crate::client::view::FIGURE_LAYER),
     ));
     commands.insert_resource(assets);
 }

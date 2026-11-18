@@ -821,7 +821,7 @@ pub fn prepare_cull(
     #[cfg(feature = "shader_support")]
     let pack_source = takeover
         .is_some_and(|t| t.0)
-        .then(crate::renderer::packdraw::hiz_view);
+        .then(crate::shaderpack::frame_state::hiz_view);
     #[cfg(not(feature = "shader_support"))]
     let pack_source: Option<Option<(Mat4, UVec2)>> = None;
     let hiz_source = match pack_source {

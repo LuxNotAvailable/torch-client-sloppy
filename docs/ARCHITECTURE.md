@@ -20,11 +20,11 @@ meshes chunk sections (on `client`'s worker). `renderer` (Bevy/wgpu,
 | `audio` | sound engine, categories, music, ambience, subtitles | `mod.rs` |
 | `blockentities` | block entity models (`render/`) and client sim (`sim/`) | `mod.rs` |
 | `blocks` | blockstate registry, model baking, per-state `info` | `info.rs`, `bake.rs` |
-| `client` | connection, packet handlers, game tick, GUI bus, chunk meshing worker, dimension types, sky timelines | `tick.rs`, `bus.rs`, `packets.rs` |
+| `client` | connection, packet handlers, game tick, GUI bus, chunk meshing worker, dimension types, sky timelines, server post effects; the frame's `View` (cameras, fog) renderers read | `tick.rs`, `bus.rs`, `packets.rs`, `view.rs` |
 | `diag` | logging, profiler (`prof_span!`), perf reports, watchdog | `perf_report.rs` |
 | `eagler` | Eaglercraft websocket transport, server query | `mod.rs` |
 | `entities` | entity state, kind facts, models (`models/` by family), rigs, posing | `mod.rs`, `facts.rs` |
-| `gui` | every screen, HUD, forms, options, click GUI | `screens.rs`, `form.rs`, `option_codec.rs` |
+| `gui` | every screen, HUD, forms, options (incl. `antialias`), click GUI | `screens.rs`, `form.rs`, `option_codec.rs` |
 | `items` | item model definitions, dispatch, icons, meshes | `model.rs`, `dispatch.rs` |
 | `lighting` | client light engine (sky + block), light thread | `level.rs`, `engine.rs` |
 | `mobile` | touch controls (`mobile_ui`) | `mod.rs` |
@@ -34,7 +34,7 @@ meshes chunk sections (on `client`'s worker). `renderer` (Bevy/wgpu,
 | `protocol` | multi-version support: packet tables, id remaps, hops | `hop.rs` (recipe at top) |
 | `renderer` | Bevy/wgpu renderer: terrain, entities, sky, post, shader-pack draw | `systems.rs`, `terrain.rs` |
 | `resourcepacks` | pack list, mounting, Modrinth, Torch Default pack | `mod.rs`, `TORCH_DEFAULT_PACK.md` |
-| `shaderpack` | Iris/OptiFine pack loading: properties, preprocess, programs; compiling to WGSL (`compile/`, `install`) for both renderers; pack block ids and vertex data | `pipeline.rs`, `compile/mod.rs`, `install.rs` |
+| `shaderpack` | Iris/OptiFine pack loading: properties, preprocess, programs; compiling to WGSL (`compile/`, `install`) for both renderers; pack block ids and vertex data; uniforms (`uniforms/`, `inputs`, `frame_state`) | `pipeline.rs`, `compile/mod.rs`, `install.rs` |
 | `terrain` | section meshing for both renderers: block geometry, light, CTM, vertex layout, cave visibility, block animations; streaming section changes to the renderer and its listeners (`stream`) | `mod.rs`, `mesh.rs`, `stream.rs` |
 | `text` | fonts, glyph layout, text components | `mod.rs` |
 | `util` | vanilla-parity helpers (`mth`, `javarandom`), particles, packs, zip | `mth.rs` |

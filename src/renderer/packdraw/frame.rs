@@ -13,7 +13,7 @@ use super::GPU_LABEL;
 use crate::shaderpack::compile::EntityKind;
 use super::entities::{EntityBatch, EntityDraw, EntityInstance};
 use super::fullscreen::Blit;
-use super::inputs::Inputs;
+use crate::shaderpack::inputs::Inputs;
 use super::sync::CompiledPack;
 use crate::shaderpack::install::Installed;
 use super::packatlas::PackAtlas;
@@ -23,7 +23,8 @@ use super::targets::{
     ShadowTargets, Statics, Target, Targets, custom_target, image_stub, image_target, noise_target,
     storage_buffer,
 };
-use super::uniforms::{BlockSpec, FrameValues, History, MatrixSet, PackUniforms};
+use super::uniforms::{PackUniforms, frame_values};
+use crate::shaderpack::uniforms::{BlockSpec, History, MatrixSet};
 pub(super) use crate::shaderpack::usage::Usage;
 use crate::renderer::terrain_pool::TerrainView;
 use crate::renderer::terrain_pool::cull::{PackCullView, ShadowCullInput, shadow_cull_shape};
@@ -403,7 +404,7 @@ pub(crate) fn prepare_uniforms(
         return;
     };
     let installed = &install.installed;
-    let values = FrameValues::of(
+    let values = frame_values(
         view,
         time.elapsed_secs_wrapped(),
         time.delta_secs(),

@@ -483,8 +483,12 @@ pub fn plugin(app: &mut App) {
     if super::terrain_dump::folder().is_none() && !super::live::wanted() {
         return;
     }
-    app.init_resource::<Cache>()
-        .add_systems(PostUpdate, (capture, write, write_particles).chain());
+    app.init_resource::<Cache>().add_systems(
+        PostUpdate,
+        (capture, write, write_particles)
+            .chain()
+            .after(crate::client::view::ViewSystems),
+    );
 }
 
 fn mesh_data(mesh: &Mesh) -> Option<(Vec<EntityVertex>, Vec<u32>, bool)> {
@@ -651,7 +655,7 @@ fn write_env(
     sky_materials: &Assets<crate::renderer::sky::SkyPartMaterial>,
     standard: &Assets<StandardMaterial>,
     lightmap: Option<&crate::renderer::terrain::LightmapPixels>,
-    fog: Option<(&DistanceFog, &Camera)>,
+    fog: Option<crate::client::view::Fog>,
     (overlays, hand, atlas, warp, water_alpha): (
         &Query<ScreenDrawn, With<crate::renderer::screen_effects::Overlay>>,
         Option<Mat4>,
@@ -782,8 +786,7 @@ fn write_env(
 
     // The first-person hand, in the hand camera's view space.
     if let Some(view) = hand_view {
-        let layer =
-            bevy::camera::visibility::RenderLayers::layer(crate::renderer::hand::HAND_LAYER);
+        let layer = bevy::camera::visibility::RenderLayers::layer(crate::client::view::HAND_LAYER);
         for (mesh, material, transform, visible, layers) in hand_parts {
             if !visible.get() || !layers.intersects(&layer) {
                 continue;
@@ -898,22 +901,11 @@ fn write_env(
     put(ENV_MAGIC);
     put(&ENV_VERSION.to_le_bytes());
     let (clear, fog_color, ranges) = match fog {
-        Some((fog, camera)) => {
-            let clear = match camera.clear_color {
-                ClearColorConfig::Custom(c) => c.to_linear().to_f32_array(),
-                _ => fog.color.to_linear().to_f32_array(),
-            };
-            let (start, end) = match fog.falloff {
-                bevy::pbr::FogFalloff::Linear { start, end } => (start, end),
-                _ => (0.0, f32::MAX),
-            };
-            let env = fog.directional_light_color.to_linear();
-            (
-                clear,
-                fog.color.to_linear().to_f32_array(),
-                [env.red, env.green, start, end],
-            )
-        }
+        Some(fog) => (
+            fog.clear,
+            fog.color,
+            [fog.env[0], fog.env[1], fog.start, fog.end],
+        ),
         None => ([0.0; 4], [0.0; 4], [0.0, f32::MAX, 0.0, f32::MAX]),
     };
     put(bytemuck::cast_slice(&clear));
@@ -951,12 +943,12 @@ fn write_env(
     put(&(parts.len() as u32).to_le_bytes());
     put(bytemuck::cast_slice(&parts));
     // The portal and nausea warp on the world's projection, the server's
-    // post effects (`renderer::post_effects` flags), and the Water Clarity
+    // post effects (`client::post_effects` flags), and the Water Clarity
     // setting's scale on the translucent layer's alpha (in what was
     // padding; older snapshots read it as 0, meaning unscaled).
     put(bytemuck::cast_slice(&warp.to_cols_array()));
     put(bytemuck::cast_slice(&[
-        crate::renderer::post_effects::active(),
+        crate::client::post_effects::active(),
         water_alpha.to_bits(),
         0,
         0,
@@ -973,25 +965,21 @@ fn write(
     drawn: Query<Drawn>,
     materials: Res<Assets<EntityMaterial>>,
     parts: Res<crate::renderer::rig_parts::RigParts>,
-    camera: Query<(&GlobalTransform, &Projection), With<crate::renderer::systems::WorldCamera>>,
-    (sky, clouds, sky_materials, standard, images, fog): (
+    view: Res<crate::client::view::View>,
+    (sky, clouds, sky_materials, standard, images): (
         Query<SkyDrawn>,
         Query<CloudDrawn, With<crate::renderer::clouds::CloudLayer>>,
         Res<Assets<crate::renderer::sky::SkyPartMaterial>>,
         Res<Assets<StandardMaterial>>,
         Option<Res<crate::renderer::terrain::LightmapPixels>>,
-        Query<(&DistanceFog, &Camera), With<crate::renderer::systems::WorldCamera>>,
     ),
-    (overlays, hand, terrain_textures, frame_view, terrain_params): (
+    (overlays, terrain_textures, terrain_params): (
         Query<ScreenDrawn, With<crate::renderer::screen_effects::Overlay>>,
-        Query<&Projection, With<crate::renderer::hand::HandCamera>>,
         Option<Res<crate::renderer::terrain_pool::TerrainTextures>>,
-        Res<crate::renderer::frame_view::FrameView>,
         Option<Res<crate::renderer::terrain_pool::TerrainParams>>,
     ),
-    (hand_parts, hand_camera, hand_glints, glint_materials, world_overlays): (
+    (hand_parts, hand_glints, glint_materials, world_overlays): (
         Query<HandDrawn, Without<crate::renderer::screen_effects::Overlay>>,
-        Query<&GlobalTransform, With<crate::renderer::hand::HandCamera>>,
         Query<HandGlintDrawn, With<crate::renderer::hand::HandGlint>>,
         Res<Assets<crate::renderer::glint::GlintMaterial>>,
         Query<OverlayDrawn, OverlayFilter>,
@@ -1009,24 +997,10 @@ fn write(
     // Out of a world (the title screen after leaving a server) the camera
     // sits at the origin with nothing to draw: keep the last snapshot taken
     // in the world rather than overwrite it.
-    if camera
-        .iter()
-        .next()
-        .is_none_or(|(t, _)| t.translation() == Vec3::ZERO)
-    {
+    let Some(eye) = view.world.filter(|e| e.position() != Vec3::ZERO) else {
         return;
-    }
-    let world_camera = camera
-        .iter()
-        .next()
-        .map(|(t, p)| {
-            let fov = match p {
-                Projection::Perspective(p) => p.fov,
-                _ => 70f32.to_radians(),
-            };
-            (t.to_matrix(), fov)
-        })
-        .unwrap_or((Mat4::IDENTITY, 70f32.to_radians()));
+    };
+    let world_camera = (eye.world_from_view, eye.fov);
     let player_shadow = crate::shaderpack::packvertex::player_shadow();
     // Whether a mesh sits in the local player's rig.
     let under_local_rig = |mut at: Entity| {
@@ -1186,10 +1160,9 @@ fn write(
         snapshot(collect(world_layer), world_camera)
     };
     // The inventory's player figure, on its own layer, for the native GUI.
-    if live && crate::renderer::inventory_figure::ready() {
-        let figure = bevy::camera::visibility::RenderLayers::layer(
-            crate::renderer::inventory_figure::FIGURE_LAYER,
-        );
+    if live && view.figure_ready {
+        let figure =
+            bevy::camera::visibility::RenderLayers::layer(crate::client::view::FIGURE_LAYER);
         to_live(
             LIVE_FIGURE,
             &cache,
@@ -1215,17 +1188,17 @@ fn write(
         &sky_materials,
         &standard,
         images.as_deref(),
-        fog.iter().next(),
+        view.fog,
         (
             &overlays,
-            hand.iter().next().map(|p| p.get_clip_from_view()),
+            view.hand_clip_from_view,
             terrain_textures.as_ref().map(|t| t.atlas.id()),
-            crate::renderer::view_bob::current_warp(&frame_view),
+            view.warp,
             terrain_params.as_ref().map_or(1.0, |p| p.water_alpha),
         ),
         (
             &hand_parts,
-            hand_camera.iter().next().map(|c| c.to_matrix().inverse()),
+            view.hand_view_from_world,
             &hand_glints,
             &glint_materials,
             &world_overlays,
@@ -1373,7 +1346,7 @@ pub struct Environment {
     pub parts: Vec<EnvPart>,
     /// The portal and nausea warp, applied after the projection's view.
     pub warp: [f32; 16],
-    /// The server's post effects (`renderer::post_effects` flags).
+    /// The server's post effects (`client::post_effects` flags).
     pub post: u32,
     /// The Water Clarity scale on the translucent layer's alpha.
     pub water_alpha: f32,
@@ -1447,8 +1420,8 @@ fn write_particles(
     live: Option<Res<crate::util::particles::LiveParticles>>,
     atlas: Option<Res<crate::util::particles::ParticleAtlas>>,
     gui: Option<Res<crate::gui::render::GuiAssets>>,
-    camera: Query<&GlobalTransform, With<crate::renderer::systems::WorldCamera>>,
-    inputs: Option<Res<crate::renderer::packdraw::inputs::Inputs>>,
+    view: Res<crate::client::view::View>,
+    inputs: Option<Res<crate::shaderpack::inputs::Inputs>>,
 ) {
     use crate::util::particles::draw::{SpriteTexture, live_sprites};
     if !due(&mut since, time.delta_secs()) {
@@ -1457,11 +1430,7 @@ fn write_particles(
     let _timed = super::live::Timed::new(1);
     let dir = super::terrain_dump::folder();
     // Out of a world: keep the last snapshot taken in one (see `write`).
-    if camera
-        .iter()
-        .next()
-        .is_none_or(|t| t.translation() == Vec3::ZERO)
-    {
+    if view.world.is_none_or(|e| e.position() == Vec3::ZERO) {
         return;
     }
     // The frame's pack inputs (time of day, sky, weather), for packs.

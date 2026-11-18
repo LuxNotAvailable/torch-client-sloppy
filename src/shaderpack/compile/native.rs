@@ -20,7 +20,7 @@
 use super::pack::Pack;
 use super::program::{texture_sources, undeclared_buffer, used_bindings};
 use super::{AlphaTest, Dispatch, PACK_SET, Program, ProgramKind, TERRAIN_SET};
-use crate::renderer::terrain_pool::ORIGIN_ROW;
+use crate::terrain::ORIGIN_ROW;
 use super::SLOT_TABLE_BINDING;
 use crate::shaderpack::directives;
 use crate::shaderpack::pipeline::{self, Layout};
@@ -118,7 +118,7 @@ fn declare(pack: &Pack, program: &str, text: &str, outputs: u32) -> Result<Decla
             if UNIFORMS.iter().any(|(n, _)| *n == name) || uniforms.iter().any(|u| u.name == name) {
                 continue;
             }
-            let ty = crate::renderer::packdraw::uniforms::builtin_type(name)
+            let ty = crate::shaderpack::uniforms::builtin_type(name)
                 .ok_or_else(|| format!("frame.{name} is not a uniform this client supplies"))?;
             uniforms.push(PackUniform {
                 name: name.to_owned(),
