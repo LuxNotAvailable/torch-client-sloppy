@@ -5,6 +5,7 @@ use std::sync::{
 
 use azalea::Client;
 use azalea::block::BlockState;
+use azalea::movement::ItemUseSlow;
 use azalea::mining::{HOLD_TO_MINE, MineBlockPos, MineProgress, StopMiningBlockEvent};
 use azalea::physics::collision::BlockWithShape;
 use azalea_core::direction::Direction;
@@ -112,6 +113,7 @@ pub(crate) fn reset_session_state() {
     SERVER_USING_ITEM.store(false, Ordering::Relaxed);
     *WAS_MINING.lock().unwrap() = None;
     HOLD_TO_MINE.store(false, Ordering::Relaxed);
+    ItemUseSlow::store(None);
     let use_item = match USE_ITEM.try_lock() {
         Ok(guard) => Some(guard),
         Err(std::sync::TryLockError::Poisoned(poisoned)) => Some(poisoned.into_inner()),
@@ -508,6 +510,7 @@ fn apply_place(bot: &Client, shared: &Arc<SharedMutex>, held: bool, clicks: u8) 
     finish_completed_use(bot, shared);
     sync_server_using_item(bot);
     updating_using_item(bot, shared);
+    sync_item_use_slow(bot);
 
     let was_using = is_using_item();
     if was_using && !held {
@@ -641,7 +644,12 @@ fn use_item(bot: &Client, shared: &Arc<SharedMutex>) -> bool {
     }
 
     let duration = held_use_duration(bot);
-    if duration == 0 || !can_consume(bot) {
+    if duration == 0 {
+        return false;
+    }
+    if !can_consume(bot, false) {
+        // Vanilla's FAIL tries the other hand.
+        use_offhand_item(bot, shared);
         return false;
     }
     start_using_item(kind, duration);
@@ -653,13 +661,20 @@ fn use_item(bot: &Client, shared: &Arc<SharedMutex>) -> bool {
     false
 }
 
-fn can_consume(bot: &Client) -> bool {
-    use azalea_inventory::components::Food;
+/// Whether the hand's item can start its use: food only below full
+/// hunger, unless it can always be eaten.
+fn can_consume(bot: &Client, offhand: bool) -> bool {
+    use azalea_inventory::components::{EquipmentSlot, Food};
 
     let Ok(inventory) = bot.component::<azalea::entity::inventory::Inventory>() else {
         return false;
     };
-    let Some(food) = inventory.held_item().get_component::<Food>() else {
+    let stack = if offhand {
+        inventory.get_equipment(EquipmentSlot::Offhand)
+    } else {
+        Some(inventory.held_item())
+    };
+    let Some(food) = stack.and_then(|s| s.get_component::<Food>()) else {
         return true;
     };
     let can_always_eat = food.can_always_eat;
@@ -1067,6 +1082,38 @@ fn updating_using_item(bot: &Client, shared: &Arc<SharedMutex>) {
     if let Some(fx) = tick_using_item(in_hand == item) {
         emit_consume_fx(bot, shared, &fx, 5);
     }
+}
+
+/// Tells azalea's movement how the item in use slows the player
+/// (`modifyInput`), unless Features > No Item Slowdown is on.
+fn sync_item_use_slow(bot: &Client) {
+    let slow = (!crate::gui::current_options().no_item_slowdown)
+        .then(|| {
+            let (started, offhand) = {
+                let use_item = USE_ITEM.lock().unwrap();
+                (use_item.started, use_item.offhand)
+            };
+            started.then_some(offhand)
+        })
+        .flatten()
+        .and_then(|offhand| {
+            let inventory = bot
+                .component::<azalea::entity::inventory::Inventory>()
+                .ok()?;
+            let stack = if offhand {
+                inventory.get_equipment(azalea_inventory::components::EquipmentSlot::Offhand)?
+            } else {
+                inventory.held_item()
+            };
+            let fx = stack
+                .get_component::<azalea_inventory::components::UseEffects>()
+                .map_or_else(azalea_inventory::components::UseEffects::new, |c| c.into_owned());
+            Some(ItemUseSlow {
+                speed: fx.speed_multiplier,
+                can_sprint: fx.can_sprint,
+            })
+        });
+    ItemUseSlow::store(slow);
 }
 
 /// One tick of the use; the effects to play this tick (`onUseTick`), if any.
@@ -1604,7 +1651,7 @@ fn use_offhand_item(bot: &Client, shared: &Arc<SharedMutex>) {
         x_rot,
         y_rot,
     });
-    if duration > 0 {
+    if duration > 0 && can_consume(bot, true) {
         start_using_item(kind, duration);
         {
             let mut use_item = USE_ITEM.lock().unwrap();

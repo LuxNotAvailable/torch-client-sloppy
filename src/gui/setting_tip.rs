@@ -35,10 +35,6 @@ pub enum Risk {
     /// Sends what a player could, but faster or in patterns a check may flag.
     Risky,
     /// Sends what no fair player could; anticheats look for it.
-    #[cfg_attr(
-        not(feature = "click_gui"),
-        allow(dead_code, reason = "only click_gui modules are dangerous")
-    )]
     Dangerous,
 }
 

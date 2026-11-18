@@ -98,6 +98,7 @@ const FEATURES_TITLE: &str = "Features";
 const INVENTORY_SORT: &str = "Inventory Sorting...";
 const RECIPE_VIEWER: &str = "Recipe Viewer";
 const FREECAM: &str = "Freecam";
+const NO_ITEM_SLOWDOWN: &str = "No Item Slowdown";
 const KEY_NOT_SET: &str = "Not Set";
 const INVENTORY_SORT_TITLE: &str = "Inventory Sorting";
 const SORT_BUTTONS: &str = "Sort Buttons";
@@ -1581,11 +1582,11 @@ pub fn draw_features(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         }
         f.tip(&ft::FREECAM);
 
+        header(f, Risk::Dangerous);
+        f.toggle(NO_ITEM_SLOWDOWN, &mut o.no_item_slowdown);
+        f.tip(&ft::NO_ITEM_SLOWDOWN);
         #[cfg(feature = "click_gui")]
-        {
-            header(f, Risk::Dangerous);
-            open(f, "Modules...", Screen::ClickGui, &ft::MODULES);
-        }
+        open(f, "Modules...", Screen::ClickGui, &ft::MODULES);
         hovered = f.hovered_tip();
     });
     if changed {

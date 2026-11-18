@@ -585,6 +585,8 @@ crate::options! {
         pub recipe_viewer: bool = true => key("recipeViewer"),
         /// Whether the freecam key works.
         pub freecam: bool = true => key("freecam"),
+        /// Eating, drinking, drawing a bow and blocking don't slow walking.
+        pub no_item_slowdown: bool = true => key("noItemSlowdown"),
         /// The sort and transfer buttons on inventories.
         pub sort_buttons: bool = true => key("sortButtons"),
         /// Whether sorting and storing take in the hotbar.

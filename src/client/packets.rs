@@ -1315,6 +1315,16 @@ fn sounds(packet: &ClientboundGamePacket) {
                 p.seed,
             );
         }
+        ClientboundGamePacket::Explode(p) if p.play_sound => {
+            let r = || crate::audio::random_unit();
+            crate::audio::play_at(
+                &name(&p.explosion_sound),
+                SoundCategory::Blocks,
+                [p.center.x as f32, p.center.y as f32, p.center.z as f32],
+                4.0,
+                (1.0 + (r() - r()) * 0.2) * 0.7,
+            );
+        }
         ClientboundGamePacket::TakeItemEntity(p) => {
             crate::audio::on_take_item(p.item_id as i32);
         }

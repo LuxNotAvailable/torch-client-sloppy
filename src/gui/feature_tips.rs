@@ -31,6 +31,10 @@ pub const FREECAM: Tip = Tip::risk(
     "Press the Detached Camera key (set it in Controls) to leave your body and fly the camera anywhere, through walls too; press it again to return. Your player stands still and the server sees nothing, but it lets you look inside bases, so many servers ban it and staff may notice you standing idle.",
     Risk::Risky,
 );
+pub const NO_ITEM_SLOWDOWN: Tip = Tip::risk(
+    "Walk and sprint at full speed while eating, drinking, drawing a bow or blocking with a shield. Off gives vanilla's slow walk. The server sees you move too fast while using an item, and most anticheats check exactly this (\"NoSlow\").",
+    Risk::Dangerous,
+);
 #[cfg(feature = "click_gui")]
 pub const MODULES: Tip = Tip::risk(
     "Cheat modules: aim assist, triggerbot, flight, no fall, ESP and more (also on the Click GUI key). Most send movement or attacks no fair player could, and anticheats are built to catch them. Use only where they are allowed.",

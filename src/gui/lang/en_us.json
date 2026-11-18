@@ -204,6 +204,7 @@
   "torch.options.modules": "Modules...",
   "torch.options.music_sounds": "Music & Sounds",
   "torch.options.needs_a_microsoft_account": "Needs a Microsoft account",
+  "torch.options.no_item_slowdown": "No Item Slowdown",
   "torch.options.no_other_players_have_voice_chat_here": "No other players have voice chat here",
   "torch.options.nothing_is_missing": "Nothing is missing",
   "torch.options.off_while_a_shader_pack_is_on_fxaa_still": "Off while a shader pack is on; FXAA still works",

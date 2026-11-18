@@ -277,6 +277,35 @@ pub(crate) fn tick_controls(mut query: Query<&mut ClientMovementState>) {
 }
 
 #[allow(clippy::type_complexity)]
+/// Set by the game every tick: the item in use slows the player
+/// (`UseEffects`), or `None` when nothing slows it.
+static ITEM_USE_SLOW: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ItemUseSlow {
+    /// `UseEffects::speed_multiplier`.
+    pub speed: f32,
+    /// `UseEffects::can_sprint`.
+    pub can_sprint: bool,
+}
+
+impl ItemUseSlow {
+    pub fn store(slow: Option<Self>) {
+        let bits = slow.map_or(0, |s| {
+            1 << 33 | u64::from(s.can_sprint) << 32 | u64::from(s.speed.to_bits())
+        });
+        ITEM_USE_SLOW.store(bits, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn load() -> Option<Self> {
+        let bits = ITEM_USE_SLOW.load(std::sync::atomic::Ordering::Relaxed);
+        (bits & 1 << 33 != 0).then(|| Self {
+            speed: f32::from_bits(bits as u32),
+            can_sprint: bits & 1 << 32 != 0,
+        })
+    }
+}
+
 pub fn local_player_ai_step(
     mut query: Query<
         (
@@ -357,7 +386,8 @@ pub fn local_player_ai_step(
         let is_fall_flying = false;
         let is_passenger = false;
         let vehicle_can_sprint = false;
-        let using_item = false;
+        let item_use = ItemUseSlow::load();
+        let using_item = item_use.is_some_and(|u| !u.can_sprint);
         let has_blindness = false;
 
         let has_forward_impulse = has_forward_impulse(physics_state);
@@ -401,7 +431,7 @@ pub fn local_player_ai_step(
 
         let move_vector = modify_input(
             physics_state.move_vector,
-            false,
+            item_use.map(|u| u.speed),
             false,
             **crouching,
             &attributes,
@@ -417,7 +447,7 @@ fn is_moving_slowly(crouching: &Crouching) -> bool {
 
 fn modify_input(
     mut move_vector: Vec2,
-    is_using_item: bool,
+    item_use_speed: Option<f32>,
     is_passenger: bool,
     moving_slowly: bool,
     attributes: &Attributes,
@@ -427,8 +457,10 @@ fn modify_input(
     }
 
     move_vector *= 0.98;
-    if is_using_item && !is_passenger {
-        move_vector *= 0.2;
+    if let Some(speed) = item_use_speed
+        && !is_passenger
+    {
+        move_vector *= speed;
     }
 
     if moving_slowly {

@@ -26,6 +26,8 @@ Treat as our code. History: `git log -- vendor/azalea`. Main areas:
 - `azalea-entity`: metadata, inventory, particles.
 - `azalea-client`: `handle_walk` no longer stops a sprint; the vanilla stop
   rules in `local_player_ai_step` do (`plugins/movement.rs`).
+- `azalea-client`: `ItemUseSlow`, set by the game each tick, scales input
+  and blocks starting a sprint while an item is in use (`plugins/movement.rs`).
 - `azalea-client`: `queue_held_instant_mine` breaks instant blocks in the
   same tick while the game sets `HOLD_TO_MINE` (`plugins/mining.rs`).
 - `codegen/`: Python generators for the tables above. Edit these, then
