@@ -37,7 +37,7 @@ pub(super) fn draw_shadows(
         };
         let light = |p: azalea_core::position::BlockPos| {
             let (block, sky) =
-                crate::renderer::lightmap::levels_at([p.x as f32, p.y as f32, p.z as f32]);
+                crate::lighting::lightmap::levels_at([p.x as f32, p.y as f32, p.z as f32]);
             block.max(sky)
         };
         let mut cast = |pos: Vec3, radius: f32, strength: f32| {

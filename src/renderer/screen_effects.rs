@@ -13,9 +13,9 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
 use super::AppState;
 use super::hand::HandCamera;
-use crate::client::view::HAND_LAYER;
 use super::input::{FreecamState, ThirdPersonState};
 use super::systems::{LightmapState, Shared};
+use crate::client::view::HAND_LAYER;
 use crate::session::Gamemode;
 use crate::util::block_model::{EyeFluid, eye_fluid_at, is_solid};
 
@@ -288,7 +288,7 @@ fn update(
     drop(state);
 
     let eye_f = eye.map(|v| v as f32);
-    let (block, sky) = super::lightmap::levels_at(eye_f);
+    let (block, sky) = crate::lighting::lightmap::levels_at(eye_f);
     let lm = &lightmap.current;
     let level = f32::from(block).max(f32::from(sky) * lm.sky_factor);
     // Dimension `ambient_light`: only the nether's is non-zero.

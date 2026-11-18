@@ -30,12 +30,12 @@ const SKY_COLOR: Color = Color::srgb(0.753, 0.847, 1.0);
 
 pub const VANILLA_FOV_DEGREES: f32 = 70.0;
 
+use super::AppState;
 use super::frame_view::{FrameView, FrameViewSystems};
 use super::terrain_pool::{TerrainOp, TerrainOps};
-use crate::terrain::visgraph::VisibilitySet;
-use super::AppState;
 use crate::session::SharedMutex;
 use crate::session::SharedState;
+use crate::terrain::visgraph::VisibilitySet;
 
 #[derive(Resource)]
 pub struct Shared(pub Arc<SharedMutex>);
@@ -60,7 +60,7 @@ pub struct LightmapState {
     /// 20 a second, whatever the framerate), and the ticks run so far.
     tick_debt: f32,
     ticks: u64,
-    pub current: super::lightmap::State,
+    pub current: crate::lighting::lightmap::State,
 }
 
 fn update_environment(
@@ -85,7 +85,10 @@ fn update_environment(
         &layer,
         super::environment::effective_render_distance(gui.options.render_distance as i32),
         delta_ticks,
-        || super::lightmap::levels_at([eye[0] as f32, eye[1] as f32, eye[2] as f32]).1 as f32,
+        || {
+            crate::lighting::lightmap::levels_at([eye[0] as f32, eye[1] as f32, eye[2] as f32]).1
+                as f32
+        },
         crate::client::envprobe::camera_has_precipitation(),
     );
 }
@@ -105,7 +108,7 @@ impl LightmapState {
                 (t * 78.233).sin().abs(),
                 (t * 37.719).sin().abs(),
             ];
-            self.flicker = super::lightmap::tick_flicker(self.flicker, noise);
+            self.flicker = crate::lighting::lightmap::tick_flicker(self.flicker, noise);
         }
     }
 }
@@ -121,10 +124,14 @@ fn update_lightmap(
     state.advance_flicker(time.delta_secs());
 
     let gamma = gui.options.gamma as f32 / 100.0;
-    let lm =
-        super::lightmap::State::sample(crate::client::dimension::current(), &env.sky, state.flicker, gamma);
+    let lm = crate::lighting::lightmap::State::sample(
+        crate::client::dimension::current(),
+        &env.sky,
+        state.flicker,
+        gamma,
+    );
     state.current = lm;
-    super::lightmap::write_image_data(&lm, &mut pixels.data);
+    crate::lighting::lightmap::write_image_data(&lm, &mut pixels.data);
 }
 
 #[derive(Resource)]

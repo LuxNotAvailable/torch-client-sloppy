@@ -4,6 +4,7 @@
 pub mod data_layer;
 pub mod engine;
 pub mod level;
+pub mod lightmap;
 pub mod props;
 pub mod sources;
 pub mod storage;

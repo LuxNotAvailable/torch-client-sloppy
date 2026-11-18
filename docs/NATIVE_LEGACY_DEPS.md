@@ -73,7 +73,7 @@ The whole capture reads Bevy render components: `Mesh3d`, `MeshMaterial3d<_>`, `
 | `glint::GlintMaterial` | `renderer/glint.rs:10, 45` | `entity_dump.rs:204, 666, 996` |
 | `weather::{ASSETS, SHEETS, NATIVE}` | `renderer/weather.rs:155–161` | `entity_dump.rs:808–812`; `live.rs:618` |
 | `screenshot::request_numbered` (vkview reference frame) | `renderer/screenshot.rs:16` | `entity_dump.rs:1208` |
-| Particles: `util::particles::{LiveParticles, ParticleAtlas}`, `live_sprites` | `src/util/particles` | `entity_dump.rs:1443–1460` `write_particles` |
+| Particles: `util::particles::{LiveParticles, ParticleAtlas}`, `live_sprites` | replaced: `draw::Particles` (filled by `util/particles/draw.rs` `fill_draw_list`) | `entity_dump.rs` `write_particles` |
 | `write` system (all of the above) | — | `entity_dump.rs:968–1235`; `write_env` 646–966 |
 
 ## 5. Shader packs (`vk/pack/*`)
@@ -110,4 +110,6 @@ The pack front end lives in `renderer/packdraw`; the native side compiles and ru
 3. Replace the cameras (section 3) with a plain game-side `View` resource: eye, rotation, fov, fog, hand/figure matrices. Done: `client::view::View`, filled each frame in `PostUpdate` (`ViewSystems`, after transforms) by `renderer/view_sync.rs`; `vk::live` and `entity_dump` read only it. The Antialiasing option is `gui::antialias`, the server's post effects `client::post_effects`. The pack uniforms and inputs moved to `shaderpack` (`uniforms/`, `inputs`, `endflash`, and `frame_state` for render scale, shadow rate, centre depth and the Hi-Z view); `ORIGIN_ROW` is in `terrain`. `shaderpack` no longer uses `renderer/`.
    Still in `renderer/`: the camera systems that fill `View`, and `gather_inputs` (it reads `renderer::environment`, `FrameView` and the input states). Both leave with the app setup (step 5).
 4. Replace `entity_dump` capture (section 4): the game hands draw lists to the native renderer directly instead of spawning Bevy meshes. This is the biggest step.
+   In batches; wgpu may break meanwhile. Textures stay Bevy `Image` handles (`bevy_image`, not the renderer); meshes and materials go. Lists live in `draw` (`EntityVertex`, `EntityInstance`, `ParticleSprite`, `EnvPart`; filled in `draw::DrawSystems`).
+   - Batch 1, done: the types moved to `draw`; `renderer/lightmap.rs` is `lighting::lightmap`; particles fill `draw::Particles`.
 5. Replace screenshots and GUI images (section 6) with Torch's own image types. Then drop `bevy_render`, `bevy_pbr`, `bevy_core_pipeline` and wgpu.

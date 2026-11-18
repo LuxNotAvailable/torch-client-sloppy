@@ -62,7 +62,7 @@ impl Default for EntityParams {
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Lit {
     pub tint: [f32; 4],
-    pub light: super::lightmap::CellLight,
+    pub light: crate::lighting::lightmap::CellLight,
     pub dirs: [Vec3; 2],
     pub overlay_alpha: f32,
     pub overlay_white: bool,
@@ -74,7 +74,7 @@ impl Lit {
     pub fn full_bright() -> Lit {
         Lit {
             tint: [1.0; 4],
-            light: super::lightmap::CellLight::full_bright(),
+            light: crate::lighting::lightmap::CellLight::full_bright(),
             dirs: diffuse_lights(Dimension::Overworld),
             overlay_alpha: 1.0,
             overlay_white: false,
@@ -103,7 +103,7 @@ impl EntityParams {
         self.tint = Vec4::from(lit.tint);
         self.light0 = lit.dirs[0].extend(if lit.overlay_white { 1.0 } else { 0.0 });
         self.light1 = lit.dirs[1].extend(lit.overlay_alpha);
-        let from_lightmap = lit.light != super::lightmap::CellLight::full_bright();
+        let from_lightmap = lit.light != crate::lighting::lightmap::CellLight::full_bright();
         self.switches = Vec4::new(
             if from_lightmap { 1.0 } else { 0.0 },
             0.0,
@@ -367,7 +367,7 @@ mod tests {
 
     #[test]
     fn a_new_light_colour_at_the_same_levels_leaves_the_material_alone() {
-        use crate::renderer::lightmap::{State, cell_light};
+        use crate::lighting::lightmap::{State, cell_light};
         let noon = State {
             sky_factor: 1.0,
             block_factor: 1.5,

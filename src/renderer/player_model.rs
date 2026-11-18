@@ -1970,7 +1970,7 @@ fn update_skin(
 }
 
 fn player_lit(
-    lm: &crate::renderer::lightmap::State,
+    lm: &crate::lighting::lightmap::State,
     feet: [f32; 3],
     sample: &AnimSample,
     dirs: [Vec3; 2],
@@ -1983,7 +1983,7 @@ fn player_lit(
     let eye = [feet[0], feet[1] + eye_height, feet[2]];
     Lit {
         tint: [1.0; 4],
-        light: crate::renderer::lightmap::entity_light(lm, eye, false),
+        light: crate::lighting::lightmap::entity_light(lm, eye, false),
         dirs,
         overlay_alpha: if sample.has_red_overlay { 0.698 } else { 1.0 },
         overlay_white: false,

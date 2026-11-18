@@ -9,6 +9,7 @@ mod blocks;
 mod client;
 mod diag;
 mod direction;
+mod draw;
 #[cfg(feature = "eagler")]
 mod eagler;
 mod entities;

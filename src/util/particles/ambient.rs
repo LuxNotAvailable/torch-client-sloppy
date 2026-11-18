@@ -889,7 +889,7 @@ fn plants(
             let below = [cell[0], cell[1] - 1, cell[2]];
             let open = !ctx.solid(below);
             let exposed = crate::renderer::environment::rain_level() > 0.0
-                && crate::renderer::lightmap::levels_at([
+                && crate::lighting::lightmap::levels_at([
                     cell[0] as f32 + 0.5,
                     cell[1] as f32 + 1.5,
                     cell[2] as f32 + 0.5,
@@ -953,7 +953,7 @@ fn plants(
                     1.0,
                 );
             }
-            let (block_light, sky_light) = crate::renderer::lightmap::levels_at([
+            let (block_light, sky_light) = crate::lighting::lightmap::levels_at([
                 cell[0] as f32 + 0.5,
                 cell[1] as f32 + 0.5,
                 cell[2] as f32 + 0.5,

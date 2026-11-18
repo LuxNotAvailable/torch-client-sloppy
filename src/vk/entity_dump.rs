@@ -41,6 +41,7 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 
+use crate::draw::*;
 use crate::renderer::entity_material::EntityMaterial;
 
 pub const MAGIC: &[u8; 4] = b"TVKE";
@@ -49,120 +50,11 @@ pub const VERSION: u32 = 2;
 /// Seconds between rewrites; the last one stands when the game stops.
 const EVERY: f32 = 3.0;
 
-/// One mesh vertex: what `entity.wgsl` reads, and the rig part.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct EntityVertex {
-    pub pos: [f32; 3],
-    pub normal: [f32; 3],
-    pub uv: [f32; 2],
-    pub color: [f32; 4],
-    /// The part matrix offset from the instance's tag; 0 for static meshes.
-    pub part: u32,
-}
-
-const _: () = assert!(std::mem::size_of::<EntityVertex>() == 52);
-
-/// One drawn entity mesh.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct EntityInstance {
-    pub mesh: u32,
-    /// The texture's id, or `u32::MAX` for none.
-    pub texture: u32,
-    /// The first part matrix of a GPU-posed rig (its `MeshTag`).
-    pub tag: u32,
-    /// 0 opaque, 1 cutout (alpha mask), 2 blended, 3 additive.
-    pub alpha: u32,
-    pub depth_bias: i32,
-    /// 0 entity, 1 block entity, 2 particle batch, 3 beam, 4 weather.
-    pub kind: u32,
-    /// `EntityParams` as the shader has it (mode last).
-    pub tint: [f32; 4],
-    pub light: [f32; 4],
-    pub light0: [f32; 4],
-    pub light1: [f32; 4],
-    pub switches: [f32; 4],
-    pub levels: [f32; 2],
-    pub mode: u32,
-    pub see_through: u32,
-    /// The world transform, columns.
-    pub transform: [f32; 16],
-}
-
-const _: () = assert!(std::mem::size_of::<EntityInstance>() == 184);
-
 pub const PARTICLE_MAGIC: &[u8; 4] = b"TVKP";
 pub const PARTICLE_VERSION: u32 = 1;
 
-/// One live particle, billboarded in the vertex shader.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct ParticleSprite {
-    /// The world position of its centre.
-    pub centre: [f32; 3],
-    /// Half its side, in blocks.
-    pub half: f32,
-    /// Its sprite's UV rectangle: u0, v0, u1, v1.
-    pub uv: [f32; 4],
-    pub color: [f32; 4],
-    /// Its roll about the view axis (falling leaves), in radians.
-    pub roll: f32,
-    /// The texture's id, `TEXTURE_ATLAS` for the block atlas.
-    pub texture: u32,
-    /// Block and sky light levels, times 16 (as entities' `levels`).
-    pub levels: [f32; 2],
-    /// `PARTICLE_TRANSLUCENT` when it blends.
-    pub flags: u32,
-    pub pad: [u32; 3],
-}
-
-const _: () = assert!(std::mem::size_of::<ParticleSprite>() == 80);
-
-/// The sprite blends (vanilla's translucent particle layer).
-pub const PARTICLE_TRANSLUCENT: u32 = 1;
-
 pub const ENV_MAGIC: &[u8; 4] = b"TVKS";
 pub const ENV_VERSION: u32 = 2;
-
-/// A screen part's texture that is the terrain atlas (the wall overlay),
-/// which vkview has from the terrain dump.
-pub const TEXTURE_ATLAS: u32 = u32::MAX - 1;
-
-/// One sky part, the cloud layer, or a screen overlay.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct EnvPart {
-    pub mesh: u32,
-    /// The texture's id, or `u32::MAX` for none.
-    pub texture: u32,
-    /// 0 opaque, 1 cutout, 2 blended, 3 additive.
-    pub alpha: u32,
-    /// 0 a sky part (pinned to the far plane), 1 the clouds (at their
-    /// depth), 2 a screen overlay (its transform straight to clip space,
-    /// drawn over everything), 3 a first-person hand part (its transform
-    /// in the hand camera's view space), 4 world lines (block outline,
-    /// hitboxes, chunk borders: a line list), 5 the block-breaking cracks
-    /// (multiplied over the block).
-    pub kind: u32,
-    /// Drawing order among the parts, lowest first.
-    pub bias: f32,
-    /// pad[0]: the sky piece (`SKY_PIECES` index + 1), 0 for none.
-    pub pad: [f32; 3],
-    /// The texture coordinates' scale (xy) and offset (zw).
-    pub uv: [f32; 4],
-    pub tint: [f32; 4],
-    /// The world transform (clip from local for overlays), columns.
-    pub transform: [f32; 16],
-}
-
-const _: () = assert!(std::mem::size_of::<EnvPart>() == 128);
-
-/// Sky pieces as `EnvPart::pad[0]` - 1 names them.
-pub const SKY_PIECES: [&str; 7] = ["SKY", "VOID", "SUN", "MOON", "STARS", "SUNSET", "END_SKY"];
-
-/// `renderer::sky::SKY_SCALE`: the sky root's scale.
-pub const SKY_SCALE: f32 = 16.0;
 
 /// A screen overlay (`renderer::screen_effects`), in the hand camera's view
 /// space.
@@ -463,12 +355,6 @@ struct Cache {
     repeat: std::collections::HashSet<AssetId<Image>>,
 }
 
-/// Set in an instance's `kind` when its texture repeats.
-pub const KIND_REPEAT: u32 = 1 << 31;
-/// Set in an instance's `kind` when only a pack's shadow pass draws it (the
-/// local player in first person).
-pub const KIND_SHADOW_ONLY: u32 = 1 << 30;
-
 fn repeats(image: &Image) -> bool {
     match &image.sampler {
         bevy::image::ImageSampler::Descriptor(d) => {
@@ -487,7 +373,8 @@ pub fn plugin(app: &mut App) {
         PostUpdate,
         (capture, write, write_particles)
             .chain()
-            .after(crate::client::view::ViewSystems),
+            .after(crate::client::view::ViewSystems)
+            .after(crate::draw::DrawSystems),
     );
 }
 
@@ -1417,13 +1304,10 @@ fn write_particles(
     time: Res<Time>,
     mut since: Local<f32>,
     cache: Res<Cache>,
-    live: Option<Res<crate::util::particles::LiveParticles>>,
-    atlas: Option<Res<crate::util::particles::ParticleAtlas>>,
-    gui: Option<Res<crate::gui::render::GuiAssets>>,
+    particles: Res<crate::draw::Particles>,
     view: Res<crate::client::view::View>,
     inputs: Option<Res<crate::shaderpack::inputs::Inputs>>,
 ) {
-    use crate::util::particles::draw::{SpriteTexture, live_sprites};
     if !due(&mut since, time.delta_secs()) {
         return;
     }
@@ -1441,54 +1325,29 @@ fn write_particles(
             inputs.to_json().to_string().into_bytes(),
         );
     }
-    let (Some(live), Some(atlas)) = (live, atlas) else {
-        return;
-    };
-    let sheet = atlas.image().map(|h| h.id());
-    let items = gui.as_ref().map(|g| g.image.id());
+    // Textures not readable yet drop their sprites; the rest renumber.
     let mut used_images: Vec<AssetId<Image>> = Vec::new();
-    let mut sprites = Vec::new();
-    for sprite in live_sprites(&live, &atlas) {
-        let texture = match sprite.texture {
-            SpriteTexture::Terrain => TEXTURE_ATLAS,
-            SpriteTexture::Sheet | SpriteTexture::Items => {
-                let id = if sprite.texture == SpriteTexture::Sheet {
-                    sheet
-                } else {
-                    items
-                };
-                let Some(id) = id.filter(|id| cache.images.contains_key(id)) else {
-                    continue;
-                };
-                match used_images.iter().position(|u| *u == id) {
-                    Some(at) => at as u32,
-                    None => {
-                        used_images.push(id);
-                        used_images.len() as u32 - 1
-                    }
-                }
+    let remap: Vec<Option<u32>> = particles
+        .textures
+        .iter()
+        .map(|h| {
+            cache.images.contains_key(&h.id()).then(|| {
+                used_images.push(h.id());
+                used_images.len() as u32 - 1
+            })
+        })
+        .collect();
+    let sprites: Vec<ParticleSprite> = particles
+        .sprites
+        .iter()
+        .filter_map(|s| {
+            if s.texture == TEXTURE_ATLAS {
+                return Some(*s);
             }
-        };
-        let shape = &sprite.shape;
-        sprites.push(ParticleSprite {
-            centre: shape.centre.to_array(),
-            half: shape.half,
-            uv: shape.uv,
-            color: shape.color,
-            roll: shape.roll,
-            texture,
-            levels: [
-                f32::from(sprite.levels.0) * 16.0,
-                f32::from(sprite.levels.1) * 16.0,
-            ],
-            flags: if sprite.translucent {
-                PARTICLE_TRANSLUCENT
-            } else {
-                0
-            },
-            pad: [0; 3],
-        });
-    }
+            let texture = remap[s.texture as usize]?;
+            Some(ParticleSprite { texture, ..*s })
+        })
+        .collect();
     if super::live::wanted() {
         particles_to_live(&cache, sprites, &used_images);
         return;

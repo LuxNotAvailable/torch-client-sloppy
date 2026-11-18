@@ -17,12 +17,13 @@ use gpu_allocator::MemoryLocation;
 
 use super::bindless::Bindless;
 use super::depth::DEPTH_FORMAT;
-use super::entity_dump::{PARTICLE_TRANSLUCENT, ParticleSnapshot, ParticleSprite};
+use super::entity_dump::ParticleSnapshot;
 use super::frame::FRAMES_IN_FLIGHT;
 use super::graph::{Graph, Use};
 use super::memory::{Buffer, Image, Memory};
 use super::pipeline::{GraphicsSpec, Pending, Pipelines, Push, Spec, push};
 use super::{Context, SetupError};
+use crate::draw::{PARTICLE_TRANSLUCENT, ParticleSprite};
 
 /// What the particles drew, for the viewer's summary.
 #[derive(Clone, Copy, Debug, Default)]
@@ -638,7 +639,7 @@ impl ParticleScene {
         self.translucent = translucent.len() as u32;
         sprites.extend(translucent);
         for sprite in &mut sprites {
-            if sprite.texture != super::entity_dump::TEXTURE_ATLAS {
+            if sprite.texture != crate::draw::TEXTURE_ATLAS {
                 sprite.texture = live
                     .textures
                     .get(sprite.texture as usize)

@@ -61,7 +61,7 @@ pub(super) fn draw_precipitation(view: Res<FrameView>, camera: CameraQuery, mut 
         );
         for column in &columns {
             let sample_y = camera[1].max(terrain(column.x, column.z));
-            let (block, sky) = crate::renderer::lightmap::levels_at([
+            let (block, sky) = crate::lighting::lightmap::levels_at([
                 column.x as f32,
                 sample_y as f32,
                 column.z as f32,

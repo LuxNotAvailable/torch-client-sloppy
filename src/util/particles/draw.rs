@@ -81,7 +81,7 @@ pub(super) fn draw_particles(
             let (block_light, sky_light) = if particle.flags & FULLBRIGHT != 0 {
                 (15, 15)
             } else {
-                crate::renderer::lightmap::levels_at([
+                crate::lighting::lightmap::levels_at([
                     particle.pos.x,
                     particle.pos.y,
                     particle.pos.z,
@@ -192,7 +192,7 @@ pub(super) fn draw_particles(
             handle,
             Lit {
                 tint: [1.0; 4],
-                light: crate::renderer::lightmap::cell_light(
+                light: crate::lighting::lightmap::cell_light(
                     &lightmap.current,
                     key.block_light,
                     key.sky_light,
@@ -230,7 +230,7 @@ pub(super) fn hide_from(
 pub(super) fn batch_material(
     cache: &mut ParticleMaterialCache,
     materials: &mut Assets<EntityMaterial>,
-    lightmap: &crate::renderer::lightmap::State,
+    lightmap: &crate::lighting::lightmap::State,
     image: &Handle<Image>,
     dirs: [Vec3; 2],
     key: BatchKey,
@@ -249,7 +249,7 @@ pub(super) fn batch_material(
             cutoff,
             Lit {
                 tint: [1.0; 4],
-                light: crate::renderer::lightmap::cell_light(
+                light: crate::lighting::lightmap::cell_light(
                     lightmap,
                     key.block_light,
                     key.sky_light,
@@ -424,52 +424,67 @@ pub(crate) fn shape(p: &Particle, sheet: Option<&Atlas>) -> Option<Shape> {
     })
 }
 
-/// Which texture a sprite samples.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SpriteTexture {
-    Terrain,
-    Items,
-    Sheet,
-}
-
-/// One live particle for a renderer that billboards in its vertex shader
-/// (the Vulkan renderer, VULKAN_REWRITE_CHECKLIST.md 4.6): its shape, its
-/// texture, its light levels and whether it blends.
-pub(crate) struct LiveSprite {
-    pub(crate) shape: Shape,
-    pub(crate) texture: SpriteTexture,
-    pub(crate) levels: (u8, u8),
-    pub(crate) translucent: bool,
-}
-
-/// Every live particle drawn this frame, oldest first (vanilla's order).
-pub(crate) fn live_sprites(live: &LiveParticles, atlas: &ParticleAtlas) -> Vec<LiveSprite> {
+/// Fills `draw::Particles` with every live particle, oldest first
+/// (vanilla's order), for the renderer to billboard.
+pub(super) fn fill_draw_list(
+    live: Res<LiveParticles>,
+    atlas: Res<ParticleAtlas>,
+    gui: Option<Res<crate::gui::render::GuiAssets>>,
+    mut out: ResMut<crate::draw::Particles>,
+) {
+    use crate::draw::{PARTICLE_TRANSLUCENT, ParticleSprite, TEXTURE_ATLAS};
+    out.sprites.clear();
+    out.textures.clear();
     let sheet = atlas.0.as_ref();
-    live.0
-        .iter()
-        .filter(|p| p.tick_acc >= 0.0)
-        .filter_map(|p| {
-            let shape = shape(p, sheet)?;
-            let texture = if p.flags & TERRAIN != 0 {
-                SpriteTexture::Terrain
-            } else if p.flags & ITEMS != 0 {
-                SpriteTexture::Items
-            } else {
-                SpriteTexture::Sheet
-            };
-            let levels = if p.flags & FULLBRIGHT != 0 {
-                (15, 15)
-            } else {
-                crate::renderer::lightmap::levels_at([p.pos.x, p.pos.y, p.pos.z])
-            };
-            Some(LiveSprite {
-                shape,
-                texture,
-                levels,
-                translucent: p.flags & TRANSLUCENT != 0,
-            })
+    let slot = |image: Option<&Handle<Image>>, textures: &mut Vec<Handle<Image>>| {
+        let image = image?;
+        Some(match textures.iter().position(|t| t == image) {
+            Some(at) => at as u32,
+            None => {
+                textures.push(image.clone());
+                textures.len() as u32 - 1
+            }
         })
-        .collect()
+    };
+    let out = &mut *out;
+    for p in live.0.iter().filter(|p| p.tick_acc >= 0.0) {
+        let Some(shape) = shape(p, sheet) else {
+            continue;
+        };
+        let texture = if p.flags & TERRAIN != 0 {
+            TEXTURE_ATLAS
+        } else if p.flags & ITEMS != 0 {
+            let Some(t) = slot(gui.as_ref().map(|g| &g.image), &mut out.textures) else {
+                continue;
+            };
+            t
+        } else {
+            let Some(t) = slot(atlas.image(), &mut out.textures) else {
+                continue;
+            };
+            t
+        };
+        let levels = if p.flags & FULLBRIGHT != 0 {
+            (15, 15)
+        } else {
+            crate::lighting::lightmap::levels_at([p.pos.x, p.pos.y, p.pos.z])
+        };
+        out.sprites.push(ParticleSprite {
+            centre: shape.centre.to_array(),
+            half: shape.half,
+            uv: shape.uv,
+            color: shape.color,
+            roll: shape.roll,
+            texture,
+            levels: [f32::from(levels.0) * 16.0, f32::from(levels.1) * 16.0],
+            flags: if p.flags & TRANSLUCENT != 0 {
+                PARTICLE_TRANSLUCENT
+            } else {
+                0
+            },
+            pad: [0; 3],
+        });
+    }
 }
 
 pub(super) fn empty_particle_mesh() -> Mesh {

@@ -21,12 +21,13 @@ meshes chunk sections (on `client`'s worker). `renderer` (Bevy/wgpu,
 | `blockentities` | block entity models (`render/`) and client sim (`sim/`) | `mod.rs` |
 | `blocks` | blockstate registry, model baking, per-state `info` | `info.rs`, `bake.rs` |
 | `client` | connection, packet handlers, game tick, GUI bus, chunk meshing worker, dimension types, sky timelines, server post effects; the frame's `View` (cameras, fog) renderers read | `tick.rs`, `bus.rs`, `packets.rs`, `view.rs` |
+| `draw` | the frame's non-terrain draw lists as plain data (entity meshes and instances, particle sprites, env parts) the game fills and `vk` reads | `mod.rs` |
 | `diag` | logging, profiler (`prof_span!`), perf reports, watchdog | `perf_report.rs` |
 | `eagler` | Eaglercraft websocket transport, server query | `mod.rs` |
 | `entities` | entity state, kind facts, models (`models/` by family), rigs, posing | `mod.rs`, `facts.rs` |
 | `gui` | every screen, HUD, forms, options (incl. `antialias`), click GUI | `screens.rs`, `form.rs`, `option_codec.rs` |
 | `items` | item model definitions, dispatch, icons, meshes | `model.rs`, `dispatch.rs` |
-| `lighting` | client light engine (sky + block), light thread | `level.rs`, `engine.rs` |
+| `lighting` | client light engine (sky + block), light thread, lightmap colours and levels (`lightmap`) | `level.rs`, `engine.rs` |
 | `mobile` | touch controls (`mobile_ui`) | `mod.rs` |
 | `modules` | click-GUI modules (ESP, zoom, freecam, ...) and their store | `list.rs`, `registry.rs` |
 | `platform` | OS/web/Android abstraction: env, storage, http, input, time | `mod.rs` |

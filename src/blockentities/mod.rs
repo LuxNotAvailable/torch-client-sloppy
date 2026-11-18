@@ -396,7 +396,7 @@ impl Submit<'_> {
     }
 
     pub fn light_at(&self, pos: [i32; 3]) -> (u8, u8) {
-        crate::renderer::lightmap::resolved_levels(self.light_map.at(pos[0], pos[1], pos[2]))
+        crate::lighting::lightmap::resolved_levels(self.light_map.at(pos[0], pos[1], pos[2]))
     }
 
     pub fn set_light(&mut self, levels: (u8, u8)) {
@@ -702,7 +702,7 @@ struct BeRig {
 #[derive(Resource, Default)]
 pub struct BeRigs {
     live: HashMap<[i32; 3], BeRig>,
-    lights: crate::renderer::lightmap::LightCells,
+    lights: crate::lighting::lightmap::LightCells,
     preview: Option<(u64, u64, Arc<BlockEntityData>)>,
     submits: SubmitCache,
 }
@@ -1078,13 +1078,13 @@ const SIGN_OUTLINE_DISTANCE: f32 = 16.0;
 fn lit_for(
     spec: &BeSpec,
     st: &BeState,
-    cell: crate::renderer::lightmap::CellLight,
+    cell: crate::lighting::lightmap::CellLight,
     dirs: [Vec3; 2],
 ) -> Lit {
     Lit {
         tint: (spec.tint)(st),
         light: if (spec.full_bright)(st) {
-            crate::renderer::lightmap::CellLight::full_bright()
+            crate::lighting::lightmap::CellLight::full_bright()
         } else {
             cell
         },
@@ -1172,7 +1172,7 @@ fn block_entity_levels(
     pos: [i32; 3],
 ) -> (u8, u8) {
     let at = |pos: [i32; 3]| {
-        crate::renderer::lightmap::resolved_levels(light.at(pos[0], pos[1], pos[2]))
+        crate::lighting::lightmap::resolved_levels(light.at(pos[0], pos[1], pos[2]))
     };
     let (mut block, mut sky) = at(pos);
     if let Some(partner) = info.partner {

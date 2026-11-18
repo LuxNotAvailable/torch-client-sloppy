@@ -9,8 +9,8 @@ use bevy::prelude::*;
 use bevy::transform::TransformSystems;
 
 use super::AppState;
-use crate::client::dimension::{self, Skybox};
 use super::systems::WorldCamera;
+use crate::client::dimension::{self, Skybox};
 use crate::client::timeline::{self, Argb, SkyState};
 
 const SKY_SCALE: f32 = 16.0;
@@ -202,7 +202,7 @@ pub(crate) enum SkyPart {
 }
 
 impl SkyPart {
-    /// Its place in `vk::entity_dump::SKY_PIECES`.
+    /// Its place in `draw::SKY_PIECES`.
     pub(crate) fn index(self) -> usize {
         self as usize
     }

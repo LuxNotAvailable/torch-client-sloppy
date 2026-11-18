@@ -1326,7 +1326,7 @@ fn light_hand(
     assets: &HandAssets,
     materials: &mut Assets<StandardMaterial>,
 ) {
-    let cell = crate::renderer::lightmap::entity_light(&lightmap.current, eye, false);
+    let cell = crate::lighting::lightmap::entity_light(&lightmap.current, eye, false);
 
     let lit = cell.color;
 

@@ -937,7 +937,7 @@ fn world_sounds(
         })
         .map(|e| (e.id, e.pos))
         .collect();
-    let light = |p: [i32; 3]| crate::renderer::lightmap::levels_at(p.map(|v| v as f32));
+    let light = |p: [i32; 3]| crate::lighting::lightmap::levels_at(p.map(|v| v as f32));
     let surroundings = crate::audio::ambience::Surroundings {
         dimension,
         biome,

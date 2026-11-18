@@ -176,7 +176,7 @@ pub(crate) fn gather_inputs(
         bevy::math::Vec2::new(c.red, c.green)
     });
     let [r, g, b, _] = environment.sky.sky_color.to_rgba_f32();
-    let (block, sky) = crate::renderer::lightmap::levels_at(eye.to_array());
+    let (block, sky) = crate::lighting::lightmap::levels_at(eye.to_array());
     let eye_in =
         match crate::util::block_model::eye_fluid_at(eye.x as f64, eye.y as f64, eye.z as f64) {
             Some(crate::util::block_model::EyeFluid::Water) => EyeIn::Water,

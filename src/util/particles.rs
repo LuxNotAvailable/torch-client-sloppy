@@ -46,6 +46,7 @@ impl Plugin for ParticlePlugin {
             .init_resource::<LiveParticles>()
             .init_resource::<ParticleAtlas>()
             .init_resource::<ParticleBatches>()
+            .init_resource::<crate::draw::Particles>()
             .init_resource::<AmbientClock>()
             .add_systems(OnEnter(AppState::InGame), load_particle_atlas)
             .add_systems(
@@ -58,6 +59,7 @@ impl Plugin for ParticlePlugin {
                     tick_fireworks,
                     tick_particles,
                     draw_particles,
+                    fill_draw_list.in_set(crate::draw::DrawSystems),
                 )
                     .chain()
                     .after(crate::renderer::FrameViewSystems)

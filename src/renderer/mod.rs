@@ -16,7 +16,6 @@ pub mod input;
 pub mod intent;
 pub mod inventory_figure;
 pub mod item_assets;
-pub mod lightmap;
 pub mod maps;
 pub mod occlusion;
 pub mod overlays;

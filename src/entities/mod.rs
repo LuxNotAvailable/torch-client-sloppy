@@ -639,7 +639,7 @@ pub struct EntityAssets {
     built_meshes: HashMap<(usize, String), Handle<Mesh>>,
     materials: HashMap<MaterialKey, SharedMaterial>,
     epoch: u64,
-    lights: crate::renderer::lightmap::LightCells,
+    lights: crate::lighting::lightmap::LightCells,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -991,7 +991,7 @@ fn entity_levels(light: &crate::lighting::level::LightMap, st: &EntityState) -> 
         let packed = st.extras.brightness_override;
         return (((packed >> 4) & 15) as u8, ((packed >> 20) & 15) as u8);
     }
-    let (block, sky) = crate::renderer::lightmap::resolved_levels(light.at(
+    let (block, sky) = crate::lighting::lightmap::resolved_levels(light.at(
         st.pos[0].floor() as i32,
         (st.pos[1] + st.eye_height).floor() as i32,
         st.pos[2].floor() as i32,
@@ -1012,7 +1012,7 @@ fn block_model_levels(light: &crate::lighting::level::LightMap, st: &EntityState
         (x, y, z + 1),
         (x, y, z - 1),
     ];
-    crate::renderer::lightmap::resolved_levels(light.avg_at(&cells))
+    crate::lighting::lightmap::resolved_levels(light.avg_at(&cells))
 }
 
 fn block_light_level(st: &EntityState, cell: u8) -> u8 {

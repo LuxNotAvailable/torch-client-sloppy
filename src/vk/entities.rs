@@ -1226,7 +1226,7 @@ impl EntityScene {
                 }
                 None => (Vec3::ZERO, Vec3::ZERO),
             };
-            let shadow_only = instance.kind & super::entity_dump::KIND_SHADOW_ONLY != 0;
+            let shadow_only = instance.kind & crate::draw::KIND_SHADOW_ONLY != 0;
             // Shadow-only instances: a box out of every view, so the
             // world's own cull drops them.
             let (lo, hi) = if shadow_only {

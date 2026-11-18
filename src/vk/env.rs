@@ -15,12 +15,13 @@ use gpu_allocator::MemoryLocation;
 
 use super::bindless::Bindless;
 use super::depth::DEPTH_FORMAT;
-use super::entity_dump::{EnvPart, Environment};
+use super::entity_dump::Environment;
 use super::frame::FRAMES_IN_FLIGHT;
 use super::graph::{Graph, Use};
 use super::memory::{Buffer, Image, Memory};
 use super::pipeline::{GraphicsSpec, Pending, Pipelines, Push, Spec, push};
 use super::{Context, SetupError};
+use crate::draw::EnvPart;
 
 #[derive(Clone, Copy)]
 struct Pipes {
@@ -336,7 +337,7 @@ impl EnvScene {
             {
                 part.pad[2] = f32::from_bits(*index);
             }
-            if part.texture == super::entity_dump::TEXTURE_ATLAS {
+            if part.texture == crate::draw::TEXTURE_ATLAS {
                 part.texture = atlas_index;
             } else if let Some((_, index, _, _)) = textures.get(part.texture as usize) {
                 part.texture = *index;
@@ -444,7 +445,7 @@ impl EnvScene {
         bindless: &mut Bindless,
         sun_path_rotation: f32,
     ) -> Result<(), SetupError> {
-        use super::entity_dump::{EntityInstance, SKY_PIECES, SKY_SCALE};
+        use crate::draw::{EntityInstance, SKY_PIECES, SKY_SCALE};
         let tilt = Mat4::from_rotation_y((-90.0f32).to_radians())
             * Mat4::from_rotation_z(sun_path_rotation.to_radians())
             * Mat4::from_rotation_y(90.0f32.to_radians());
@@ -522,7 +523,7 @@ impl EnvScene {
         bindless: &mut Bindless,
         eye_light: [f32; 2],
     ) -> Result<(), SetupError> {
-        use super::entity_dump::EntityInstance;
+        use crate::draw::EntityInstance;
         let stage = |name| crate::shaderpack::features::render_stage(name) as u32;
         let mut instances = Vec::new();
         let mut meshes: Vec<[u32; 4]> = Vec::new();
@@ -1133,9 +1134,9 @@ fn started() -> std::time::Instant {
 /// A line list as quads the vertex shader widens: per segment four corners,
 /// each with the other end in `normal` and its side in `uv.x`.
 fn line_quads(
-    verts: &[super::entity_dump::EntityVertex],
+    verts: &[crate::draw::EntityVertex],
     indices: &[u32],
-) -> (Vec<super::entity_dump::EntityVertex>, Vec<u32>) {
+) -> (Vec<crate::draw::EntityVertex>, Vec<u32>) {
     let mut out = Vec::with_capacity(indices.len() * 2);
     let mut quads = Vec::with_capacity(indices.len() * 3);
     for pair in indices.chunks_exact(2) {
