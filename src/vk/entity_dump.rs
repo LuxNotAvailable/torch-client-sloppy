@@ -56,23 +56,6 @@ pub const PARTICLE_VERSION: u32 = 1;
 pub const ENV_MAGIC: &[u8; 4] = b"TVKS";
 pub const ENV_VERSION: u32 = 2;
 
-/// A held item's glint (`renderer::hand::HandGlint`).
-type HandGlintDrawn<'a> = (
-    &'a Mesh3d,
-    &'a MeshMaterial3d<crate::renderer::glint::GlintMaterial>,
-    &'a GlobalTransform,
-    &'a InheritedVisibility,
-);
-
-/// A first-person hand part (`renderer::hand`, the hand layer).
-type HandDrawn<'a> = (
-    &'a Mesh3d,
-    &'a MeshMaterial3d<StandardMaterial>,
-    &'a GlobalTransform,
-    &'a InheritedVisibility,
-    &'a bevy::camera::visibility::RenderLayers,
-);
-
 /// Snapshots for the live renderer (`vk::live`), by file name, as the dump
 /// would write them; each taken once.
 static LIVE: std::sync::Mutex<Vec<(&'static str, Vec<u8>)>> = std::sync::Mutex::new(Vec::new());
@@ -473,27 +456,6 @@ type Drawn<'a> = (
     ),
 );
 
-/// An env part's mesh: a Bevy asset (overlays, the hand) or a draw list's.
-enum MeshRef {
-    Asset(AssetId<Mesh>),
-    Draw(std::sync::Arc<crate::draw::MeshData>),
-}
-
-#[derive(PartialEq, Eq, Hash)]
-enum MeshKey {
-    Asset(AssetId<Mesh>),
-    Draw(u64),
-}
-
-impl MeshRef {
-    fn key(&self) -> MeshKey {
-        match self {
-            MeshRef::Asset(id) => MeshKey::Asset(*id),
-            MeshRef::Draw(m) => MeshKey::Draw(m.id),
-        }
-    }
-}
-
 fn alpha_mode(code: u32) -> AlphaMode {
     match code {
         0 => AlphaMode::Opaque,
@@ -518,21 +480,15 @@ fn write_env(
     dir: Option<&std::path::Path>,
     cache: &Cache,
     env: &crate::draw::Env,
-    standard: &Assets<StandardMaterial>,
     lightmap: Option<&crate::renderer::terrain::LightmapPixels>,
     fog: Option<crate::client::view::Fog>,
     (hand, atlas, warp, water_alpha): (Option<Mat4>, Option<AssetId<Image>>, Mat4, f32),
-    (hand_parts, hand_view, hand_glints, glint_materials): (
-        &Query<HandDrawn>,
-        Option<Mat4>,
-        &Query<HandGlintDrawn, With<crate::renderer::hand::HandGlint>>,
-        &Assets<crate::renderer::glint::GlintMaterial>,
-    ),
+    hand_view: Option<Mat4>,
 ) {
     let mut parts = Vec::new();
     let (mut mesh_ids, mut image_ids) = (HashMap::new(), HashMap::new());
     let (mut used_meshes, mut used_images) = (Vec::new(), Vec::new());
-    let mut add = |mesh: MeshRef,
+    let mut add = |mesh: std::sync::Arc<crate::draw::MeshData>,
                    texture: Option<AssetId<Image>>,
                    tint: Vec4,
                    alpha: AlphaMode,
@@ -542,13 +498,8 @@ fn write_env(
                    transform: Mat4,
                    piece: f32|
      -> bool {
-        if let MeshRef::Asset(id) = &mesh
-            && !cache.meshes.contains_key(id)
-        {
-            return false;
-        }
         let next = mesh_ids.len() as u32;
-        let mesh_id = *mesh_ids.entry(mesh.key()).or_insert_with(|| {
+        let mesh_id = *mesh_ids.entry(mesh.id).or_insert_with(|| {
             used_meshes.push(mesh);
             next
         });
@@ -579,7 +530,7 @@ fn write_env(
         true
     };
     let add_draw = |add: &mut dyn FnMut(
-        MeshRef,
+        std::sync::Arc<crate::draw::MeshData>,
         Option<AssetId<Image>>,
         Vec4,
         AlphaMode,
@@ -589,9 +540,10 @@ fn write_env(
         Mat4,
         f32,
     ) -> bool,
-                    part: &crate::draw::EnvDraw| {
+                    part: &crate::draw::EnvDraw|
+     -> bool {
         add(
-            MeshRef::Draw(part.mesh.clone()),
+            part.mesh.clone(),
             match &part.texture {
                 crate::draw::Texture::None => None,
                 crate::draw::Texture::Atlas => atlas,
@@ -604,7 +556,7 @@ fn write_env(
             part.uv,
             part.transform,
             part.pad[0],
-        );
+        )
     };
     for part in env.sky.iter().chain(&env.clouds).chain(&env.weather) {
         add_draw(&mut add, part);
@@ -623,24 +575,12 @@ fn write_env(
 
     // The first-person hand, in the hand camera's view space.
     if let Some(view) = hand_view {
-        let layer = bevy::camera::visibility::RenderLayers::layer(crate::client::view::HAND_LAYER);
-        for (mesh, material, transform, visible, layers) in hand_parts {
-            if !visible.get() || !layers.intersects(&layer) {
-                continue;
-            }
-            if let Some(m) = standard.get(&material.0) {
-                add(
-                    MeshRef::Asset(mesh.0.id()),
-                    m.base_color_texture.as_ref().map(Handle::id),
-                    m.base_color.to_linear().to_vec4(),
-                    m.alpha_mode,
-                    0.0,
-                    3,
-                    [1.0, 1.0, 0.0, 0.0],
-                    view * transform.to_matrix(),
-                    0.0,
-                );
-            }
+        for part in &env.hand {
+            let part = EnvDraw {
+                transform: view * part.transform,
+                ..part.clone()
+            };
+            add_draw(&mut add, &part);
         }
     }
     // The world's overlays: outline, hitboxes and borders as lines, the
@@ -652,23 +592,12 @@ fn write_env(
     // them (`renderer::glint`); the glint texture's place in pad[2].
     let mut glints = 0;
     if let Some(view) = hand_view {
-        for (mesh, material, transform, visible) in hand_glints {
-            if !visible.get() {
-                continue;
-            }
-            if let Some(m) = glint_materials.get(&material.0)
-                && add(
-                    MeshRef::Asset(mesh.0.id()),
-                    Some(m.mask.id()),
-                    Vec4::ONE,
-                    AlphaMode::Add,
-                    0.0,
-                    3,
-                    [1.0, 1.0, 0.0, 0.0],
-                    view * transform.to_matrix(),
-                    0.0,
-                )
-            {
+        for part in &env.hand_glints {
+            let part = EnvDraw {
+                transform: view * part.transform,
+                ..part.clone()
+            };
+            if add_draw(&mut add, &part) {
                 glints += 1;
             }
         }
@@ -719,13 +648,7 @@ fn write_env(
     }
     put(&(used_meshes.len() as u32).to_le_bytes());
     for (i, mesh) in used_meshes.iter().enumerate() {
-        let (verts, indices, rigged) = match mesh {
-            MeshRef::Asset(id) => {
-                let (v, i, r) = &cache.meshes[id];
-                (v.as_slice(), i.as_slice(), *r)
-            }
-            MeshRef::Draw(m) => (m.verts.as_slice(), m.indices.as_slice(), m.rigged),
-        };
+        let (verts, indices, rigged) = (&mesh.verts, &mesh.indices, mesh.rigged);
         for n in [
             i as u32,
             verts.len() as u32,
@@ -763,19 +686,13 @@ fn write(
     materials: Res<Assets<EntityMaterial>>,
     parts: Res<crate::renderer::rig_parts::RigParts>,
     view: Res<crate::client::view::View>,
-    (env, standard, images): (
+    (env, images): (
         Res<crate::draw::Env>,
-        Res<Assets<StandardMaterial>>,
         Option<Res<crate::renderer::terrain::LightmapPixels>>,
     ),
     (terrain_textures, terrain_params): (
         Option<Res<crate::renderer::terrain_pool::TerrainTextures>>,
         Option<Res<crate::renderer::terrain_pool::TerrainParams>>,
-    ),
-    (hand_parts, hand_glints, glint_materials): (
-        Query<HandDrawn>,
-        Query<HandGlintDrawn, With<crate::renderer::hand::HandGlint>>,
-        Res<Assets<crate::renderer::glint::GlintMaterial>>,
     ),
     (ancestors, local_roots): (
         Query<&ChildOf>,
@@ -977,7 +894,6 @@ fn write(
         dir.as_deref(),
         &cache,
         &env,
-        &standard,
         images.as_deref(),
         view.fog,
         (
@@ -986,12 +902,7 @@ fn write(
             view.warp,
             terrain_params.as_ref().map_or(1.0, |p| p.water_alpha),
         ),
-        (
-            &hand_parts,
-            view.hand_view_from_world,
-            &hand_glints,
-            &glint_materials,
-        ),
+        view.hand_view_from_world,
     );
     if !live {
         deliver(dir.as_deref(), "entities.bin", out);

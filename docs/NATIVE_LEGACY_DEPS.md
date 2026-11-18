@@ -48,7 +48,7 @@ These keep the native renderer fed. They must move to the game-side code that su
 | `panorama::PanoramaCamera` + `Camera::is_active` (menu?) | replaced: `View::menu` | `live.rs:461–466` |
 | `panorama` lens constants (copied) | `renderer/panorama.rs` | `vk/panorama.rs:18–25` |
 | `inventory_figure::{FigureCamera, FigureImage, ready, FIGURE_LAYER}` + ortho `ScalingMode::Fixed` | replaced: `View::{figure, figure_ready}`, `client::view::FIGURE_LAYER` | `live.rs:662–695` `figure_view`; `entity_dump.rs:1189–1199` |
-| `hand::{HandCamera, HandGlint, HAND_LAYER}` | replaced: `View::hand_*`, `client::view::HAND_LAYER`; `HandGlint` (a mesh tag) goes with step 4 | `entity_dump.rs:201–220, 786, 987, 994–995` |
+| `hand::{HandCamera, HandGlint, HAND_LAYER}` | replaced: `View::hand_*`, `client::view::HAND_LAYER`; the hand and its glints are `draw::Env::{hand, hand_glints}` (filled by `hand.rs` `fill_draw_list`) | `entity_dump.rs` `write_env` |
 | `frame_view::FrameView`, `view_bob::current_warp` | replaced: `View::warp` | `entity_dump.rs:989, 1223` |
 | `antialias::{AaMode, SSAA_SCALES}` (GUI option) | moved: `gui/antialias.rs` (wgpu cameras: `renderer/antialias.rs`) | `live.rs:485–495` |
 | `post_effects::active()` (server flags) | moved: `client/post_effects.rs` | `entity_dump.rs:959`; carried in `vk/env.rs:57` |
@@ -59,7 +59,7 @@ The whole capture reads Bevy render components: `Mesh3d`, `MeshMaterial3d<_>`, `
 
 | Data | Defined | Used (vk) |
 |---|---|---|
-| Mesh/image cache from `AssetEvent<Mesh/Image>` | Bevy | `entity_dump.rs:459–545` `Cache`, `capture` (545–600), `mesh_data` (490–528), `image_data` (530–543), `repeats` (472–481) |
+| Mesh/image cache from `AssetEvent<Mesh/Image>` | meshes: `draw::bridge::Meshes` (game side, for producers still building Bevy meshes); the env path uses only `MeshData`. Entities still read `vk`'s `Cache` | `entity_dump.rs` `Cache`, `capture`, `mesh_data`, `image_data`, `repeats` |
 | `entity_material::EntityMaterial` (per-entity params) | `renderer/entity_material.rs:124, 144` | `entity_dump.rs:44, 603–617` `Drawn`, `:974` |
 | `entity_material::GLINT_ITEM` (glint image handle) | `renderer/entity_material.rs:247` | `entity_dump.rs:882`; `live.rs:724` |
 | `rig_parts::{RigParts, ATTRIBUTE_PART}` (GPU pose rows, part attribute) | `renderer/rig_parts.rs:21, 56` | `entity_dump.rs:516, 975, 1197` |
@@ -114,4 +114,5 @@ The pack front end lives in `renderer/packdraw`; the native side compiles and ru
    - Batch 1, done: the types moved to `draw`; `renderer/lightmap.rs` is `lighting::lightmap`; particles fill `draw::Particles`.
    - Batch 2, done: sky, clouds and weather fill `draw::Env` with game-side meshes (`draw::MeshData`); `write_env` takes those beside the remaining Bevy meshes. The wgpu path no longer draws the sky or clouds. Producers stay in `renderer/` until step 5 (they read `environment` and `FrameView`).
    - Batch 3, done: screen overlays (`draw::Env::screen`) and world overlays (`draw::Env::overlays`: outline, cracks, chunk borders, hitboxes). wgpu no longer draws them.
+   - Batch 4, done: the hand and held-item glints fill `draw::Env`; their Bevy meshes go through `draw::bridge` (moved from `vk`'s capture). `write_env` reads no Bevy meshes or materials now. The hand's entity tree stays until step 5.
 5. Replace screenshots and GUI images (section 6) with Torch's own image types. Then drop `bevy_render`, `bevy_pbr`, `bevy_core_pipeline` and wgpu.

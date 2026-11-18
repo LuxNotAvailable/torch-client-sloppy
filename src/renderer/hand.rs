@@ -970,7 +970,76 @@ impl Plugin for HandPlugin {
             sync_hand_glint
                 .after(sync_hands)
                 .run_if(in_state(AppState::InGame)),
+        )
+        .add_systems(
+            PostUpdate,
+            fill_draw_list
+                .in_set(crate::draw::DrawSystems)
+                .after(TransformSystems::Propagate)
+                .after(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate),
         );
+    }
+}
+
+/// Puts the hand's parts in `draw::Env::hand` and their glints in
+/// `hand_glints`, transforms in world space.
+#[allow(clippy::type_complexity)]
+fn fill_draw_list(
+    parts: Query<(
+        &Mesh3d,
+        &MeshMaterial3d<StandardMaterial>,
+        &GlobalTransform,
+        &InheritedVisibility,
+        &RenderLayers,
+    )>,
+    glints: Query<
+        (
+            &Mesh3d,
+            &MeshMaterial3d<crate::renderer::glint::GlintMaterial>,
+            &GlobalTransform,
+            &InheritedVisibility,
+        ),
+        With<HandGlint>,
+    >,
+    meshes: Res<crate::draw::bridge::Meshes>,
+    standard: Res<Assets<StandardMaterial>>,
+    glint_materials: Res<Assets<crate::renderer::glint::GlintMaterial>>,
+    mut out: ResMut<crate::draw::Env>,
+) {
+    use crate::draw::{ALPHA_ADD, EnvDraw, Texture};
+    out.hand.clear();
+    out.hand_glints.clear();
+    let layer = RenderLayers::layer(HAND_LAYER);
+    for (mesh, material, transform, visible, layers) in &parts {
+        if !visible.get() || !layers.intersects(&layer) {
+            continue;
+        }
+        let (Some(data), Some(m)) = (meshes.get(mesh.0.id()), standard.get(&material.0)) else {
+            continue;
+        };
+        out.hand.push(EnvDraw {
+            texture: m
+                .base_color_texture
+                .clone()
+                .map_or(Texture::None, Texture::Image),
+            alpha: crate::draw::alpha_of(m.alpha_mode),
+            tint: m.base_color.to_linear().to_f32_array(),
+            ..EnvDraw::new(data.clone(), 3, transform.to_matrix())
+        });
+    }
+    for (mesh, material, transform, visible) in &glints {
+        if !visible.get() {
+            continue;
+        }
+        let (Some(data), Some(m)) = (meshes.get(mesh.0.id()), glint_materials.get(&material.0))
+        else {
+            continue;
+        };
+        out.hand_glints.push(EnvDraw {
+            texture: Texture::Image(m.mask.clone()),
+            alpha: ALPHA_ADD,
+            ..EnvDraw::new(data.clone(), 3, transform.to_matrix())
+        });
     }
 }
 

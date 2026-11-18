@@ -2439,6 +2439,7 @@ pub fn run(
     .add_plugins(crate::renderer::screen_effects::ScreenEffectsPlugin)
     .add_plugins(crate::renderer::post_effects::PostEffectsPlugin)
     .add_plugins(crate::renderer::esp_material::EspMaterialPlugin)
+    .add_plugins(crate::draw::bridge::plugin)
     .add_plugins(crate::renderer::sky::SkyPlugin)
     .add_plugins(crate::renderer::ssaa::SsaaPlugin)
     .add_plugins(crate::renderer::antialias::AntialiasPlugin)

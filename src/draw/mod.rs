@@ -2,6 +2,8 @@
 //! their instances, particle sprites, and sky, cloud, overlay and hand
 //! parts. The game builds these; the native renderer uploads them.
 
+pub mod bridge;
+
 /// One mesh vertex: what `entity.wgsl` reads, and the rig part.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
@@ -134,6 +136,17 @@ pub const ALPHA_OPAQUE: u32 = 0;
 pub const ALPHA_BLEND: u32 = 2;
 pub const ALPHA_ADD: u32 = 3;
 
+/// A Bevy alpha mode as `ALPHA_*`.
+pub fn alpha_of(mode: bevy::prelude::AlphaMode) -> u32 {
+    use bevy::prelude::AlphaMode;
+    match mode {
+        AlphaMode::Opaque => ALPHA_OPAQUE,
+        AlphaMode::Mask(_) => 1,
+        AlphaMode::Add => ALPHA_ADD,
+        _ => ALPHA_BLEND,
+    }
+}
+
 /// A mesh the game built. `id` is new for every build, so a renderer can
 /// tell a rebuilt mesh from the one it holds.
 #[derive(Debug)]
@@ -217,4 +230,10 @@ pub struct Env {
     /// Full-view overlays (underwater, inside a wall, fire, pumpkin), their
     /// transforms in the hand camera's view space.
     pub screen: Vec<EnvDraw>,
+    /// The first-person hand's parts, in world space (drawn through the hand
+    /// camera).
+    pub hand: Vec<EnvDraw>,
+    /// Glints over held items, each textured with its item's texture as the
+    /// mask.
+    pub hand_glints: Vec<EnvDraw>,
 }
