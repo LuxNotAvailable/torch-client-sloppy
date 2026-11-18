@@ -2,14 +2,12 @@
 //! post, shader-pack draw (`packdraw`).
 
 pub mod anim;
-pub mod antialias;
 pub(crate) mod atlas;
 pub(crate) mod block_anim;
 pub mod clouds;
 mod entity_draw;
 pub mod entity_material;
 pub mod environment;
-pub mod esp_material;
 pub mod frame_view;
 pub mod glint;
 pub mod hand;
@@ -24,15 +22,12 @@ pub mod overlays;
 pub mod packdraw;
 pub mod panorama;
 pub mod player_model;
-pub mod post;
-pub mod post_effects;
 pub mod rig_parts;
 pub mod screen_effects;
 pub(crate) mod screenshot;
 pub mod shadows;
 pub mod skin;
 pub mod sky;
-pub mod ssaa;
 pub mod systems;
 pub mod terrain;
 pub mod terrain_pool;

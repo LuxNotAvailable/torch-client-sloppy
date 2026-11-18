@@ -152,7 +152,6 @@ const VSYNC: &str = "VSync";
 #[cfg(not(target_os = "android"))]
 const FULLSCREEN: &str = "Fullscreen";
 
-const RENDERER: &str = "Renderer";
 
 #[cfg(feature = "mobile_ui")]
 const TOUCH_MOVEMENT: &str = "Movement";
@@ -1225,24 +1224,6 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         f.tip(&tips::GUI_SCALE);
         f.slider(&mut o.gamma, 0, GAMMA_MAX, brightness_label);
         f.tip(&tips::BRIGHTNESS);
-
-        {
-            let backend = o.render_backend;
-            let pending = backend != crate::renderer::systems::started_backend();
-            let label = format!(
-                "{RENDERER}: {}{}",
-                backend.caption(),
-                if pending { "*" } else { "" }
-            );
-            if f.button(&label) {
-                o.render_backend = backend.next();
-                f.mark_changed();
-            }
-            f.tip(&tips::RENDERER);
-            if pending && f.hovered_tip() == Some(&tips::RENDERER) {
-                note = Some("Restart to switch renderer.");
-            }
-        }
 
         f.header_colored(PERFORMANCE_HEADER, PERFORMANCE_COLOR);
         f.slider(
@@ -2417,9 +2398,9 @@ mod tests {
 
     #[test]
     fn video_grid_stacks_like_the_options_list() {
-        // Six headers, then: the preset (1 row); Display (5: frame cap and
+        // Six headers, then: the preset (1 row); Display (4: frame cap and
         // GUI frame cap, VSync, window size and fullscreen, GUI scale and
-        // brightness, the renderer); Performance (3: render distance and culling, lighting
+        // brightness); Performance (3: render distance and culling, lighting
         // and shader scale, shader shadows); Quality (7, the last the
         // Leaves button); Camera (1); Details (3: sign outline and block
         // outline, shader packs, reset).
@@ -2435,9 +2416,7 @@ mod tests {
         draw_video(&mut p, &mut state, &ctx);
         let shader = cfg!(feature = "shader_support") as u32 as f32;
         let desktop = cfg!(not(target_os = "android")) as u32 as f32;
-        // The renderer choice shows wherever Vulkan runs.
-        let native = true as u32 as f32;
-        let rows = 1.0 + (3.0 + desktop + native) + (2.0 + shader) + 7.0 + 1.0 + (2.0 + shader);
+        let rows = 1.0 + (3.0 + desktop) + (2.0 + shader) + 7.0 + 1.0 + (2.0 + shader);
         assert_eq!(
             state.video_list.content_h,
             6.0 * HEADER_H + 5.0 * HEADER_PAD_TOP + rows * ROW_H + LIST_PAD_BOTTOM

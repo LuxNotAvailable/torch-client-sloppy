@@ -993,7 +993,6 @@ fn describe(
         ("render distance".to_owned(), o.render_distance.to_string()),
         ("fps cap".to_owned(), fps_cap),
         ("vsync".to_owned(), o.vsync.to_string()),
-        ("renderer".to_owned(), o.render_backend.caption().to_owned()),
         (
             "antialiasing".to_owned(),
             o.antialiasing.mode.caption().to_owned(),

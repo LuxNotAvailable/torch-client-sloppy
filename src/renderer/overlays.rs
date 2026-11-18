@@ -1,5 +1,5 @@
 //! World overlays: the block outline, breaking cracks, chunk borders and
-//! hitboxes (as `draw::Env::overlays`), ESP, and the line and box meshes
+//! hitboxes (as `draw::Env::overlays`), and the line and box meshes
 //! other overlays build from.
 
 use std::sync::Arc;
@@ -76,18 +76,6 @@ pub(super) struct ChunkBorderOverlay {
 
 #[derive(Resource, Clone)]
 pub(crate) struct LineMaterial(pub(crate) Handle<StandardMaterial>);
-
-#[cfg(feature = "click_gui")]
-#[derive(Resource)]
-pub(super) struct EspOverlay {
-    pub(super) entity: Entity,
-    pub(super) mesh: Handle<Mesh>,
-    pub(super) shown: Option<std::sync::Arc<crate::modules::esp::EspFrame>>,
-}
-
-#[cfg(feature = "click_gui")]
-#[derive(Component)]
-pub(crate) struct EspMarker;
 
 pub(super) const OUTLINE_INFLATE: f32 = 0.002;
 
@@ -434,154 +422,6 @@ pub(super) fn update_block_outline(
         }
     });
     outline.shown = target;
-}
-
-#[cfg(feature = "click_gui")]
-struct Face {
-    bit: u32,
-    corners: [[f32; 3]; 4],
-    borders: [(u32, u32); 4],
-}
-
-#[cfg(feature = "click_gui")]
-const FACES: [Face; 6] = {
-    use crate::modules::esp::scan::*;
-    [
-        Face {
-            bit: TO,
-            corners: [[0., 1., 0.], [1., 1., 0.], [0., 1., 1.], [1., 1., 1.]],
-            borders: [(LE, TO_LE), (RI, TO_RI), (BA, TO_BA), (FO, TO_FO)],
-        },
-        Face {
-            bit: BO,
-            corners: [[0., 0., 0.], [1., 0., 0.], [0., 0., 1.], [1., 0., 1.]],
-            borders: [(LE, BO_LE), (RI, BO_RI), (BA, BO_BA), (FO, BO_FO)],
-        },
-        Face {
-            bit: FO,
-            corners: [[0., 0., 1.], [1., 0., 1.], [0., 1., 1.], [1., 1., 1.]],
-            borders: [(LE, FO_LE), (RI, FO_RI), (BO, BO_FO), (TO, TO_FO)],
-        },
-        Face {
-            bit: BA,
-            corners: [[0., 0., 0.], [1., 0., 0.], [0., 1., 0.], [1., 1., 0.]],
-            borders: [(LE, BA_LE), (RI, BA_RI), (BO, BO_BA), (TO, TO_BA)],
-        },
-        Face {
-            bit: RI,
-            corners: [[1., 0., 0.], [1., 0., 1.], [1., 1., 0.], [1., 1., 1.]],
-            borders: [(BA, BA_RI), (FO, FO_RI), (BO, BO_RI), (TO, TO_RI)],
-        },
-        Face {
-            bit: LE,
-            corners: [[0., 0., 0.], [0., 0., 1.], [0., 1., 0.], [0., 1., 1.]],
-            borders: [(BA, BA_LE), (FO, FO_LE), (BO, BO_LE), (TO, TO_LE)],
-        },
-    ]
-};
-
-#[cfg(feature = "click_gui")]
-fn esp_mesh(frame: &crate::modules::esp::EspFrame) -> Mesh {
-    use crate::renderer::esp_material::{ATTRIBUTE_COLOR, ATTRIBUTE_PACKED};
-    use bevy::mesh::VertexAttributeValues;
-
-    let guess = frame.boxes.len() * 3;
-    let mut positions: Vec<[f32; 3]> = Vec::with_capacity(guess * 4);
-    let mut colors: Vec<[u8; 4]> = Vec::with_capacity(guess * 4);
-    let mut packed: Vec<u32> = Vec::with_capacity(guess * 4);
-    let mut indices: Vec<u32> = Vec::with_capacity(guess * 6);
-
-    for b in &frame.boxes {
-        let Some(slot) = frame.slots.get(b.slot as usize) else {
-            continue;
-        };
-        let color = [
-            (slot.rgb >> 16) as u8,
-            (slot.rgb >> 8) as u8,
-            slot.rgb as u8,
-            slot.alpha,
-        ];
-        let i = OUTLINE_INFLATE;
-        let (x, y, z) = (b.x as f32 - i, b.y as f32 - i, b.z as f32 - i);
-        let size = 1.0 + 2.0 * i;
-
-        for (f, face) in FACES.iter().enumerate() {
-            if b.neigh & face.bit != 0 {
-                continue;
-            }
-            let mut edges = 0u32;
-            if slot.lines {
-                for (e, (dir, diag)) in face.borders.iter().enumerate() {
-                    if b.neigh & dir == 0 || b.neigh & diag != 0 {
-                        edges |= 1 << e;
-                    }
-                }
-            }
-            let base = positions.len() as u32;
-            for (c, corner) in face.corners.iter().enumerate() {
-                positions.push([
-                    x + corner[0] * size,
-                    y + corner[1] * size,
-                    z + corner[2] * size,
-                ]);
-                colors.push(color);
-                packed.push(c as u32 | edges << 2 | (f as u32) << 6);
-            }
-            indices.extend_from_slice(&[base, base + 1, base + 2, base + 2, base + 1, base + 3]);
-        }
-    }
-
-    let mut mesh = empty_esp_mesh();
-    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-    mesh.insert_attribute(ATTRIBUTE_COLOR, VertexAttributeValues::Unorm8x4(colors));
-    mesh.insert_attribute(ATTRIBUTE_PACKED, VertexAttributeValues::Uint32(packed));
-    mesh.insert_indices(Indices::U32(indices));
-    mesh
-}
-
-#[cfg(feature = "click_gui")]
-pub(super) fn empty_esp_mesh() -> Mesh {
-    use crate::renderer::esp_material::{ATTRIBUTE_COLOR, ATTRIBUTE_PACKED};
-    use bevy::mesh::VertexAttributeValues;
-
-    let mut mesh = Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
-    );
-    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, Vec::<[f32; 3]>::new());
-    mesh.insert_attribute(ATTRIBUTE_COLOR, VertexAttributeValues::Unorm8x4(Vec::new()));
-    mesh.insert_attribute(ATTRIBUTE_PACKED, VertexAttributeValues::Uint32(Vec::new()));
-    mesh.insert_indices(Indices::U32(Vec::new()));
-    mesh
-}
-
-#[cfg(feature = "click_gui")]
-pub(super) fn update_esp(
-    view: Res<FrameView>,
-    mut overlay: ResMut<EspOverlay>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut targets: Query<&mut Visibility, With<EspMarker>>,
-) {
-    if overlay
-        .shown
-        .as_ref()
-        .is_some_and(|shown| std::sync::Arc::ptr_eq(shown, &view.esp))
-    {
-        return;
-    }
-    let frame = view.esp.clone();
-    let Ok(mut visibility) = targets.get_mut(overlay.entity) else {
-        return;
-    };
-    if frame.boxes.is_empty() {
-        *visibility = Visibility::Hidden;
-    } else {
-        if let Some(mesh) = meshes.get_mut(&overlay.mesh) {
-            *mesh = esp_mesh(&frame);
-        }
-        *visibility = Visibility::Visible;
-    }
-    overlay.shown = Some(frame);
 }
 
 #[derive(Resource, Default)]

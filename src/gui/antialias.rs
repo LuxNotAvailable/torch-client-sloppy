@@ -125,12 +125,6 @@ impl Antialiasing {
             .unwrap_or(1)
     }
 
-    /// Supersampling's per-axis scale, when it is the mode.
-    pub fn supersample(&self) -> Option<f32> {
-        (self.mode == AaMode::Supersample)
-            .then(|| SSAA_SCALES[self.ssaa.min(SSAA_SCALES.len() - 1)])
-    }
-
     /// Reads the saved settings. Before modes there was a single
     /// `antialiasing` switch, which was 2x supersampling.
     pub fn read(value: impl Fn(&str) -> Option<serde_json::Value>) -> Antialiasing {
@@ -172,11 +166,6 @@ pub fn supports(samples: u8) -> bool {
     samples <= 1 || SUPPORTED.load(Ordering::Relaxed) & (1 << samples.trailing_zeros()) != 0
 }
 
-/// Records the counts the renderer found (bits as `SUPPORTED`).
-pub fn set_supported(bits: u8) {
-    SUPPORTED.store(bits, Ordering::Relaxed);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,7 +174,7 @@ mod tests {
     fn the_old_switch_reads_as_supersampling() {
         let aa = Antialiasing::read(|k| (k == "antialiasing").then(|| serde_json::json!(true)));
         assert_eq!(aa.mode, AaMode::Supersample);
-        assert_eq!(aa.supersample(), Some(2.0));
+        assert_eq!(SSAA_SCALES[aa.ssaa], 2.0);
         let aa = Antialiasing::read(|k| (k == "antialiasing").then(|| serde_json::json!(false)));
         assert_eq!(aa.mode, AaMode::Off);
     }

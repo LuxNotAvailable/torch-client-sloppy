@@ -116,4 +116,6 @@ The pack front end lives in `renderer/packdraw`; the native side compiles and ru
    - Batch 3, done: screen overlays (`draw::Env::screen`) and world overlays (`draw::Env::overlays`: outline, cracks, chunk borders, hitboxes). wgpu no longer draws them.
    - Batch 4, done: the hand and held-item glints fill `draw::Env`; their Bevy meshes go through `draw::bridge` (moved from `vk`'s capture). `write_env` reads no Bevy meshes or materials now. The hand's entity tree stays until step 5.
    - Batch 5, done: entities fill `draw::Entities` (`renderer/entity_draw.rs`); `vk` dropped its mesh cache, and its live registry keys meshes by `MeshData::slot`. Still in `vk` from `renderer/`: `LightmapPixels`, `TerrainTextures`/`TerrainParams`, `GLINT_ITEM`, `screenshot` (sections 2, 6).
-5. Replace screenshots and GUI images (section 6) with Torch's own image types. Then drop `bevy_render`, `bevy_pbr`, `bevy_core_pipeline` and wgpu.
+5. Remove wgpu (order: wgpu deletion first, then materials, cameras and fog, images and screenshots, then `Cargo.toml` and the folder moves).
+   - Part 1, done: Vulkan is the only renderer (the Renderer option is gone, `vk::live::wanted` is always true). Deleted: the wgpu GUI pass (`gui/draw.rs`; `gui/pool.rs` keeps the CPU frame), `post`, `ssaa`, `antialias` (cameras), `post_effects`, `esp_material`. ESP is not drawn until it reaches the draw lists.
+6. Replace screenshots and GUI images (section 6) with Torch's own image types. Then drop `bevy_render`, `bevy_pbr`, `bevy_core_pipeline` and wgpu.

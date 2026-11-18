@@ -23,6 +23,7 @@ options! {
 }
 
 #[derive(Default)]
+#[allow(dead_code, reason = "no renderer draws ESP until it reaches the draw lists")]
 pub struct EspFrame {
     pub boxes: Vec<Found>,
     pub slots: Vec<Slot>,

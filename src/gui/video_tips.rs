@@ -28,10 +28,6 @@ pub const BRIGHTNESS: Tip = Tip::new(
     "How bright dark places look, from Moody (vanilla's darkest) to Bright.",
     Impact::None,
 );
-pub const RENDERER: Tip = Tip::new(
-    "The graphics backend. Native is Torch's Vulkan renderer; Legacy is the old fallback. Takes effect after a restart.",
-    Impact::None,
-);
 pub const RENDER_DISTANCE: Tip = Tip::new(
     "How many chunks out the world is drawn. The biggest single cost to frame rate and memory.",
     Impact::High,

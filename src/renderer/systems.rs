@@ -350,10 +350,6 @@ pub(crate) struct RendererSetup;
 fn setup(
     mut commands: Commands,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    #[cfg(feature = "click_gui")] mut esp_materials: ResMut<
-        Assets<crate::renderer::esp_material::EspMaterial>,
-    >,
-    #[cfg(feature = "click_gui")] mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
     mut cursor_opts: Query<&mut CursorOptions, With<PrimaryWindow>>,
     mut pending_atlas: ResMut<PendingAtlas>,
@@ -417,22 +413,6 @@ fn setup(
     commands.init_resource::<ChunkBorderOverlay>();
     commands.init_resource::<HitboxOverlay>();
 
-    #[cfg(feature = "click_gui")]
-    {
-        let esp_mat = esp_materials.add(crate::renderer::esp_material::EspMaterial::default());
-        let (entity, mesh) = spawn_overlay(
-            &mut commands,
-            &mut meshes,
-            super::overlays::empty_esp_mesh(),
-            esp_mat,
-            super::overlays::EspMarker,
-        );
-        commands.insert_resource(super::overlays::EspOverlay {
-            entity,
-            mesh,
-            shown: None,
-        });
-    }
 
     if let Ok(opts) = cursor_opts.single_mut() {
         let open = start_screen.0.is_open();
@@ -610,28 +590,6 @@ pub fn partial_ticks(state: &SharedState) -> f32 {
 }
 
 const TICK_SECS: f32 = 0.05;
-
-#[cfg(feature = "click_gui")]
-fn spawn_overlay<M: bevy::pbr::Material, K: Component>(
-    commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    mesh: Mesh,
-    material: Handle<M>,
-    marker: K,
-) -> (Entity, Handle<Mesh>) {
-    let mesh = meshes.add(mesh);
-    let entity = commands
-        .spawn((
-            Mesh3d(mesh.clone()),
-            MeshMaterial3d(material),
-            Transform::default(),
-            Visibility::Hidden,
-            marker,
-        ))
-        .id();
-
-    (entity, mesh)
-}
 
 pub fn scene_camera(order: isize, clear_color: ClearColorConfig, layer: usize) -> impl Bundle {
     (
@@ -2197,46 +2155,9 @@ fn wgpu_settings() -> bevy::render::settings::WgpuSettings {
         constrained_limits: constrained_limits(),
         ..default()
     };
-    if let Some(backends) = chosen_backends() {
-        settings.backends = Some(backends);
-    }
     // The native renderer owns the window: Bevy's starts with no backend.
-    if crate::vk::live::wanted() {
-        settings.backends = None;
-    }
+    settings.backends = None;
     settings
-}
-
-static STARTED_BACKEND: std::sync::OnceLock<crate::gui::RenderBackend> = std::sync::OnceLock::new();
-
-/// The Renderer setting this run started with, after any fallback.
-pub(crate) fn started_backend() -> crate::gui::RenderBackend {
-    STARTED_BACKEND.get().copied().unwrap_or_default()
-}
-
-/// The Renderer setting as wgpu backends; `None` leaves wgpu's own choice.
-/// A backend with no adapter falls back to that too, since starting on it
-/// would fail before any menu could undo the setting.
-fn chosen_backends() -> Option<bevy::render::settings::Backends> {
-    let chosen = resolve_backend();
-    let _ = STARTED_BACKEND.set(chosen.0);
-    chosen.1
-}
-
-fn resolve_backend() -> (
-    crate::gui::RenderBackend,
-    Option<bevy::render::settings::Backends>,
-) {
-    use crate::gui::RenderBackend;
-
-    // Legacy is the only wgpu path left: wgpu's own backend pick.
-    let started = if crate::vk::live::wanted() {
-        RenderBackend::Native
-    } else {
-        RenderBackend::Legacy
-    };
-    crate::log_info!("render", "renderer: {}", started.caption());
-    (started, None)
 }
 
 /// Render-graph passes from Bevy's render diagnostics: smoothed GPU time
@@ -2416,7 +2337,6 @@ pub fn run(
             .disable::<bevy::anti_alias::AntiAliasPlugin>()
             .set::<bevy::pbr::PbrPlugin>(pbr_plugin()),
     )
-    .add_plugins(bevy::anti_alias::fxaa::FxaaPlugin)
     .add_plugins(crate::diag::frame_profile::FrameProfilePlugin)
     .insert_resource(bevy::winit::WinitSettings {
         focused_mode: bevy::winit::UpdateMode::Continuous,
@@ -2437,18 +2357,13 @@ pub fn run(
     .add_plugins(crate::renderer::entity_material::EntityMaterialPlugin)
     .add_plugins(crate::renderer::glint::GlintPlugin)
     .add_plugins(crate::renderer::screen_effects::ScreenEffectsPlugin)
-    .add_plugins(crate::renderer::post_effects::PostEffectsPlugin)
-    .add_plugins(crate::renderer::esp_material::EspMaterialPlugin)
     .add_plugins(crate::draw::bridge::plugin)
     .add_plugins(crate::renderer::sky::SkyPlugin)
-    .add_plugins(crate::renderer::ssaa::SsaaPlugin)
-    .add_plugins(crate::renderer::antialias::AntialiasPlugin)
     .add_plugins(crate::renderer::view_bob::ViewBobPlugin)
     .add_plugins(crate::renderer::view_sync::ViewSyncPlugin)
     .add_plugins(crate::renderer::inventory_figure::InventoryFigurePlugin)
     .add_plugins(crate::renderer::tethers::TethersPlugin)
     .add_plugins(crate::renderer::clouds::CloudPlugin)
-    .add_plugins(crate::renderer::post::PostPlugin)
     .add_plugins(crate::entities::EntityPlugin)
     .add_plugins(crate::vk::live::LivePlugin)
     .add_plugins(crate::util::particles::ParticlePlugin)
@@ -2573,18 +2488,6 @@ pub fn run(
             Update,
             crate::platform::fullscreen::apply_desktop.after(fullscreen_key),
         )
-        .add_systems(Update, {
-            #[cfg(feature = "click_gui")]
-            {
-                super::overlays::update_esp
-                    .after(FrameViewSystems)
-                    .run_if(in_state(AppState::InGame))
-            }
-            #[cfg(not(feature = "click_gui"))]
-            {
-                || {}
-            }
-        })
         .add_systems(Update, toggle_freecam.run_if(in_state(AppState::InGame)))
         .add_systems(
             Update,

@@ -1,8 +1,4 @@
 use bevy::prelude::*;
-use bevy::render::Extract;
-use bevy::render::extract_resource::ExtractResource;
-use bevy::render::render_resource::{Buffer, BufferDescriptor, BufferUsages};
-use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bytemuck::{Pod, Zeroable};
 use parking_lot::Mutex;
 
@@ -19,7 +15,6 @@ const _: () = assert!(size_of::<GuiVertex>() as u64 == GUI_VERTEX_STRIDE);
 
 #[derive(Clone, Copy)]
 pub struct GuiRange {
-    pub window: Entity,
     pub first_index: u32,
     pub index_count: u32,
     pub base_vertex: i32,
@@ -39,7 +34,6 @@ impl GuiFrames {
     #[allow(clippy::too_many_arguments, reason = "one range's whole description")]
     pub fn push(
         &self,
-        window: Entity,
         positions: &[[f32; 3]],
         uvs: &[[f32; 2]],
         colors: &[[f32; 4]],
@@ -62,7 +56,6 @@ impl GuiFrames {
         }
         frame.indices.extend_from_slice(indices);
         frame.ranges.push(GuiRange {
-            window,
             first_index,
             index_count: indices.len() as u32,
             base_vertex,
@@ -73,81 +66,8 @@ impl GuiFrames {
 /// Quads the GUI drew last frame, for the performance report.
 pub static QUADS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-#[derive(Resource, Clone, ExtractResource)]
+#[derive(Resource, Clone)]
 pub struct GuiTextures {
     pub atlas: Handle<Image>,
     pub unihex: Handle<Image>,
-}
-
-#[derive(Resource, Default)]
-pub struct GuiPool {
-    pub vertices: Option<Buffer>,
-    pub indices: Option<Buffer>,
-    pub vertex_capacity: usize,
-    pub index_capacity: usize,
-    pub ranges: Vec<GuiRange>,
-}
-
-const INITIAL_VERTICES: usize = 16384;
-const INITIAL_INDICES: usize = INITIAL_VERTICES / 4 * 6;
-
-impl GuiPool {
-    fn ensure(&mut self, device: &RenderDevice, verts: usize, indices: usize) {
-        if self.vertices.is_none() || self.vertex_capacity < verts {
-            let mut cap = self.vertex_capacity.max(INITIAL_VERTICES);
-            while cap < verts {
-                cap *= 2;
-            }
-            self.vertices = Some(device.create_buffer(&BufferDescriptor {
-                label: Some("gui_vertices"),
-                size: cap as u64 * GUI_VERTEX_STRIDE,
-                usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }));
-            self.vertex_capacity = cap;
-        }
-        if self.indices.is_none() || self.index_capacity < indices {
-            let mut cap = self.index_capacity.max(INITIAL_INDICES);
-            while cap < indices {
-                cap *= 2;
-            }
-            self.indices = Some(device.create_buffer(&BufferDescriptor {
-                label: Some("gui_indices"),
-                size: cap as u64 * 4,
-                usage: BufferUsages::INDEX | BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }));
-            self.index_capacity = cap;
-        }
-    }
-}
-
-pub fn extract_gui(
-    frames: Extract<Res<GuiFrames>>,
-    gate: Extract<Option<Res<crate::renderer::systems::FrameGate>>>,
-    device: Res<RenderDevice>,
-    queue: Res<RenderQueue>,
-    mut pool: ResMut<GuiPool>,
-) {
-    crate::prof_span!("gui:upload");
-    let mut frame = frames.0.lock();
-    pool.ranges.clear();
-    let render = gate.as_ref().is_none_or(|g| g.render);
-    QUADS.store(
-        frame.indices.len() / 6,
-        std::sync::atomic::Ordering::Relaxed,
-    );
-
-    if render && !frame.indices.is_empty() {
-        pool.ensure(&device, frame.vertices.len(), frame.indices.len());
-        if let (Some(vertices), Some(indices)) = (&pool.vertices, &pool.indices) {
-            queue.write_buffer(vertices, 0, bytemuck::cast_slice(&frame.vertices));
-            queue.write_buffer(indices, 0, bytemuck::cast_slice(&frame.indices));
-            pool.ranges.extend_from_slice(&frame.ranges);
-        }
-    }
-
-    frame.vertices.clear();
-    frame.indices.clear();
-    frame.ranges.clear();
 }

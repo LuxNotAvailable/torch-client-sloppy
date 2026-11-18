@@ -37,15 +37,9 @@ pub fn pack_changed() {
     PACK_CHANGED.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// The native renderer always draws now; kept until its callers go.
 pub fn wanted() -> bool {
-    static WANTED: OnceLock<bool> = OnceLock::new();
-    // Native by default on desktop; `MC_RENDERER=wgpu` (or `legacy`) for the old one.
-    *WANTED.get_or_init(|| match std::env::var("MC_RENDERER") {
-        Ok(v) if v.eq_ignore_ascii_case("native") => true,
-        Ok(v) if v.eq_ignore_ascii_case("wgpu") || v.eq_ignore_ascii_case("legacy") => false,
-        // Else the Renderer setting, on desktop.
-        _ => crate::gui::RenderBackend::stored() == crate::gui::RenderBackend::Native,
-    })
+    true
 }
 
 /// Where the native renderer's frame goes, in nanoseconds summed since
@@ -434,6 +428,10 @@ fn draw_frame(
         .get_resource::<crate::gui::pool::GuiFrames>()
         .map(|f| std::mem::take(&mut *f.0.lock()))
         .unwrap_or_default();
+    crate::gui::pool::QUADS.store(
+        gui.indices.len() / 6,
+        std::sync::atomic::Ordering::Relaxed,
+    );
     let wanted = world
         .get_non_send_resource::<RenderThread>()
         .map_or((true, true), |t| {

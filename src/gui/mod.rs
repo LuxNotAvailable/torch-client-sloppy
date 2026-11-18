@@ -25,7 +25,6 @@ pub mod credits;
 pub mod death;
 pub mod dialog;
 pub mod disconnected;
-pub mod draw;
 #[cfg(explore_modrinth)]
 pub mod explore_packs;
 pub mod feature_tips;
@@ -339,60 +338,6 @@ impl Screen {
 /// Which renderer the game starts on. Read once at startup, so a change
 /// applies on the next launch.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum RenderBackend {
-    /// The native Vulkan renderer (`vk::live`).
-    #[default]
-    Native,
-    /// The old wgpu renderer: an unsupported fallback.
-    Legacy,
-}
-
-impl RenderBackend {
-    pub const ALL: [RenderBackend; 2] = [RenderBackend::Native, RenderBackend::Legacy];
-
-    pub fn caption(self) -> &'static str {
-        match self {
-            RenderBackend::Native => "Native",
-            RenderBackend::Legacy => "Legacy",
-        }
-    }
-
-    pub fn serialized_name(self) -> &'static str {
-        match self {
-            RenderBackend::Native => "native",
-            RenderBackend::Legacy => "legacy",
-        }
-    }
-
-    pub fn from_serialized_name(name: &str) -> Option<RenderBackend> {
-        match name {
-            // The old wgpu backend choices predate the native renderer.
-            "native" | "auto" | "vulkan" => Some(RenderBackend::Native),
-            "legacy" => Some(RenderBackend::Legacy),
-            _ => None,
-        }
-    }
-
-    pub fn next(self) -> RenderBackend {
-        let i = RenderBackend::ALL
-            .iter()
-            .position(|b| *b == self)
-            .unwrap_or(0);
-        RenderBackend::ALL[(i + 1) % RenderBackend::ALL.len()]
-    }
-
-    /// The setting as saved on disk, without building the other options.
-    pub fn stored() -> RenderBackend {
-        load_options()
-            .as_ref()
-            .and_then(|json| json.get("renderBackend"))
-            .and_then(|v| v.as_str())
-            .and_then(RenderBackend::from_serialized_name)
-            .unwrap_or_default()
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum TouchMovement {
     #[default]
     Buttons,
@@ -497,7 +442,6 @@ pub fn touch_active(o: &GuiOptions) -> bool {
 crate::serialized_option!(
     crate::renderer::clouds::CloudStatus,
     crate::util::particles::ParticleStatus,
-    RenderBackend,
     TouchMovement,
     InputMode,
 );
@@ -573,7 +517,6 @@ crate::options! {
         pub vsync: bool = VSYNC_DEFAULT => key("vsync"),
         /// Exclusive fullscreen on desktop (F11, Video Settings).
         pub fullscreen: bool = false => key("fullscreen"),
-        pub render_backend: RenderBackend = RenderBackend::default() => key("renderBackend"),
         pub auto_jump: bool = AUTO_JUMP_DEFAULT => key("autoJump"),
         pub view_bobbing: bool = true => key("bobView"),
         pub zoom: ZoomOptions = ZoomOptions::defaults() => group(),

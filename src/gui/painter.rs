@@ -1,7 +1,15 @@
 use crate::gui::atlas::{GuiAtlas, Region, Scaling};
-use crate::gui::draw::{FIGURE_UV_BIAS, UNIHEX_UV_BIAS};
 use crate::text::{Glyph, Span, Style};
 use crate::util::mth::srgb_to_linear;
+
+/// Added to `u` on unifont quads (sampled from the unihex texture).
+pub const UNIHEX_UV_BIAS: f32 = 2.0;
+
+/// Added to `v` on the quads the GUI shader shades as enchantment glint.
+pub const GLINT_UV_BIAS: f32 = 2.0;
+
+/// Taken from `u` on the quad that shows the inventory's player figure.
+pub const FIGURE_UV_BIAS: f32 = 2.0;
 
 pub const ITEM_SIZE: f32 = 16.0;
 #[allow(dead_code, reason = "the slot geometry")]
@@ -779,7 +787,7 @@ impl<'a> Painter<'a> {
         for (uv, color) in self.uvs[first..].iter_mut().zip(&mut self.colors[first..]) {
             color[2] = (uv[0] - u.0) / (u.1 - u.0).max(f32::EPSILON);
             color[3] = (uv[1] - v.0) / (v.1 - v.0).max(f32::EPSILON);
-            uv[1] += crate::gui::draw::GLINT_UV_BIAS;
+            uv[1] += GLINT_UV_BIAS;
         }
     }
 

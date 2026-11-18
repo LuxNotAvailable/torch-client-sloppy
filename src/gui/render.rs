@@ -149,10 +149,7 @@ impl Plugin for GuiPlugin {
         crate::audio::set_output_device(options.sound_device.clone());
         #[cfg(voice)]
         options.voice.apply();
-        app.init_resource::<GuiFrames>().add_plugins(
-            bevy::render::extract_resource::ExtractResourcePlugin::<GuiTextures>::default(),
-        );
-        crate::gui::draw::build(app);
+        app.init_resource::<GuiFrames>();
         app.insert_resource(GuiShared(self.shared.clone()))
             .insert_resource(PendingGuiAtlas(self.atlas.clone()))
             .insert_resource(StartScreen(self.startup.screen))
@@ -207,10 +204,6 @@ impl Plugin for GuiPlugin {
                 bevy::prelude::resource_exists::<crate::renderer::systems::AssetsReady>,
             )),
         );
-    }
-
-    fn finish(&self, app: &mut App) {
-        crate::gui::draw::finish(app);
     }
 }
 
@@ -698,7 +691,9 @@ pub(crate) fn draw_gui(
     let _t = crate::diag::budget::timed(crate::diag::budget::Slot::Gui);
     crate::prof_span!("gui:draw");
     let Some(assets) = assets else { return };
-    let Ok(window) = primary.single() else { return };
+    if primary.single().is_err() {
+        return;
+    }
     let (vw, vh) = (input.size.x, input.size.y);
     if vw <= 0.0 || vh <= 0.0 {
         return;
@@ -724,7 +719,6 @@ pub(crate) fn draw_gui(
     let bufs = painter.into_buffers();
 
     frames.push(
-        window,
         &bufs.positions,
         &bufs.uvs,
         &bufs.colors,
