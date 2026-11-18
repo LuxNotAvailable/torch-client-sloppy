@@ -117,7 +117,7 @@ pub fn draw_debug(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     form.toggle("Chunk Borders", &mut state.chunk_borders);
     form.toggle("Hitboxes", &mut state.hitboxes);
     form.toggle("Advanced Tooltips", &mut state.advanced_tooltips);
-    // The terrain's occlusion pyramid (`terrain_pool::hiz`), for comparing
+    // The terrain's occlusion pyramid (`terrain::hiz`), for comparing
     // with it off.
     let mut culling = !state.occlusion_culling_off;
     if form.toggle("Occlusion Culling", &mut culling) {
@@ -251,5 +251,5 @@ pub fn draw_language(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
 
 fn set_hiz_debug(enabled: bool) {
     use std::sync::atomic::Ordering;
-    crate::renderer::terrain_pool::hiz::ENABLED.store(enabled, Ordering::Relaxed);
+    crate::terrain::hiz::ENABLED.store(enabled, Ordering::Relaxed);
 }

@@ -8,8 +8,8 @@ Searches skip data files (`.ignore`); use `rg --no-ignore` to reach them.
 Network (`eagler`/azalea, `protocol` hops) feeds `client` (packets, tick,
 `bus`). `client` updates the session and world. `play` predicts player
 actions. `entities` and `blockentities` turn state into models; `terrain`
-meshes chunk sections (on `client`'s worker). `renderer` (Bevy/wgpu,
-`MC_RENDERER=wgpu`) or `vk` (native Vulkan, desktop default) draws them.
+meshes chunk sections (on `client`'s worker). `vk` (native Vulkan) draws them;
+`renderer` holds the game's Bevy-side scene (cameras, models, sky) that fills `draw`.
 `gui` draws screens and HUD and talks back through `client::bus`.
 
 ## `src/`
@@ -33,10 +33,10 @@ meshes chunk sections (on `client`'s worker). `renderer` (Bevy/wgpu,
 | `platform` | OS/web/Android abstraction: env, storage, http, input, time | `mod.rs` |
 | `play` | player actions: interaction, placement, riding, vehicles, commands | `interaction.rs`, `placement.rs` |
 | `protocol` | multi-version support: packet tables, id remaps, hops | `hop.rs` (recipe at top) |
-| `renderer` | Bevy/wgpu renderer: terrain, entities, sky, post, shader-pack draw | `systems.rs`, `terrain.rs` |
+| `renderer` | app setup and the Bevy-side scene: cameras, input, entity and hand models, sky, clouds, overlays; fills `draw` and `View` (leaving in 10.4 step 5) | `systems.rs` |
 | `resourcepacks` | pack list, mounting, Modrinth, Torch Default pack | `mod.rs`, `TORCH_DEFAULT_PACK.md` |
 | `shaderpack` | Iris/OptiFine pack loading: properties, preprocess, programs; compiling to WGSL (`compile/`, `install`) for both renderers; pack block ids and vertex data; uniforms (`uniforms/`, `inputs`, `frame_state`) | `pipeline.rs`, `compile/mod.rs`, `install.rs` |
-| `terrain` | section meshing for both renderers: block geometry, light, CTM, vertex layout, cave visibility, block animations; streaming section changes to the renderer and its listeners (`stream`) | `mod.rs`, `mesh.rs`, `stream.rs` |
+| `terrain` | section meshing for both renderers: block geometry, light, CTM, vertex layout, cave visibility, block animations; streaming section changes to the renderer and its listeners (`stream`); the renderer's terrain inputs (`textures`) and occlusion switch (`hiz`) | `mod.rs`, `mesh.rs`, `stream.rs` |
 | `text` | fonts, glyph layout, text components | `mod.rs` |
 | `util` | vanilla-parity helpers (`mth`, `javarandom`), particles, packs, zip | `mth.rs` |
 | `vk` | native Vulkan renderer and `vkview` | `mod.rs`, `live.rs` |
@@ -47,7 +47,7 @@ meshes chunk sections (on `client`'s worker). `renderer` (Bevy/wgpu,
 | Path | What |
 |---|---|
 | `shaders/*.slang` | Vulkan shaders (`build.rs` compiles them) |
-| `src/**/*.wgsl` | wgpu shaders, next to their Rust |
+| `src/**/*.wgsl` | the built-in shader pack (`shaderpack/builtin`); the wgpu material shaders left in `renderer/` and `blockentities` go in 10.4 step 5 |
 | `tools/` | generators (`gen_*.py`, `protogen.py`), asset and build scripts |
 | `vendor/` | patched crates; read `vendor/PATCHES.md` first |
 | `crates/torch-opus` | safe Opus bindings |

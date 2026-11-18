@@ -451,10 +451,6 @@ fn draw_frame(
         let taken = std::mem::take(&mut writes.pending);
         GUI_ATLAS_WRITES.lock().unwrap().extend(taken);
     }
-    // Bevy's render world would take these; nothing does now.
-    if let Some(ops) = world.get_resource::<crate::renderer::terrain_pool::TerrainOps>() {
-        ops.0.lock().clear();
-    }
     // In menus the title panorama shows instead of the world, as the game
     // switches its cameras.
     let (menu, camera, figure_view) = match world.get_resource::<crate::client::view::View>() {
@@ -1212,7 +1208,7 @@ impl Live {
             // Under a pack the terrain only culls; the pack draws.
             terrain.set_cull_only(self.pack.is_some());
             // Debug Options > Occlusion Culling.
-            terrain.set_hiz(!crate::renderer::terrain_pool::hiz::disabled());
+            terrain.set_hiz(!crate::terrain::hiz::disabled());
             let _timed = Timed::new(9);
             match terrain.record(
                 &self.ctx,

@@ -17,7 +17,7 @@ use crate::util::particle_assets;
 
 // What the rest of the client reaches by `crate::util::particles::...`.
 pub(crate) use ambient::{Emitter, block_at, rel};
-pub(crate) use draw::{ParticleBatch, particle_uv};
+pub(crate) use draw::particle_uv;
 pub(crate) use fireworks::{FireworkExplosion, reset_fireworks, start_firework};
 
 mod recipes;

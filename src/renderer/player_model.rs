@@ -1054,13 +1054,6 @@ struct SlotScratch {
     free: Vec<usize>,
 }
 
-impl PlayerRigs {
-    #[cfg(feature = "shader_support")]
-    pub(crate) fn local_root(&self) -> Option<Entity> {
-        self.local.as_ref().map(|rig| rig.root)
-    }
-}
-
 const POOL_SLACK: usize = 4;
 
 pub struct PlayerModelPlugin;

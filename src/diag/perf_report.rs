@@ -411,7 +411,6 @@ fn sample(
         Phase::Settling { until } => {
             if now >= until {
                 frame_profile::set_capturing(true);
-                count_terrain_sections(true);
                 capture.counts_at_start = super::counts();
                 capture.traffic_at_start = traffic();
                 capture.process = ProcessSampler::spawn();
@@ -434,7 +433,6 @@ fn sample(
             capture.record_assets(&uploads);
             if now >= until {
                 frame_profile::set_capturing(false);
-                count_terrain_sections(false);
                 let capture = slot.take().expect("checked above");
                 let secs = now.duration_since(started).as_secs_f32();
                 finish(capture, secs, &context);
@@ -557,65 +555,6 @@ impl Capture {
         }
         self.push(Section::World, "entities", view.entities.len() as f32);
         self.push(Section::World, "other players", view.players.len() as f32);
-        if let Some(terrain) = crate::renderer::terrain_pool::stats() {
-            use std::sync::atomic::Ordering::Relaxed;
-            let t = &terrain.0;
-            self.push(
-                Section::World,
-                "terrain sections resident",
-                t.live_slots.load(Relaxed) as f32,
-            );
-            self.push(
-                Section::World,
-                "terrain sections drawn",
-                t.drawn.load(Relaxed) as f32,
-            );
-            // The GPU's occlusion test: sections it tested (in the frustum,
-            // past the cave visibility) and those it hid. "drawn" above is
-            // counted before this test.
-            let tested = t.hiz_tested.load(Relaxed) as f32;
-            let culled = t.hiz_culled.load(Relaxed) as f32;
-            self.push(Section::World, "Hi-Z sections tested", tested);
-            self.push(Section::World, "Hi-Z sections culled", culled);
-            self.push(
-                Section::World,
-                "Hi-Z culled (% of tested)",
-                if tested > 0.0 {
-                    culled * 100.0 / tested
-                } else {
-                    0.0
-                },
-            );
-            // Counted on the CPU in the frustum and past cave visibility,
-            // before the GPU's Hi-Z and facing tests; the GPU's own count
-            // is main_opaque_pass_3d/clipper_invocations.
-            self.push(
-                Section::World,
-                "terrain triangles in view (thousands, before Hi-Z)",
-                t.triangles.load(Relaxed) as f32 / 1000.0,
-            );
-            for (name, n) in [
-                "terrain solid triangles (thousands)",
-                "terrain solid triangles facing the eye (thousands)",
-                "terrain cutout triangles (thousands)",
-                "terrain water triangles (thousands)",
-            ]
-            .into_iter()
-            .zip(&t.triangle_split)
-            {
-                self.push(Section::World, name, n.load(Relaxed) as f32 / 1000.0);
-            }
-            self.push(
-                Section::World,
-                "terrain draw calls",
-                t.draws.load(Relaxed) as f32,
-            );
-            self.push(
-                Section::World,
-                "terrain buffer used (MiB)",
-                t.used_bytes.load(Relaxed) as f32 / 1048576.0,
-            );
-        }
     }
 
     /// How many of each asset exist: each material is a bind group, each
@@ -633,31 +572,12 @@ impl Capture {
     }
 
     fn record_memory(&mut self, (image_bytes, mesh_bytes): (usize, usize)) {
-        use std::sync::atomic::Ordering::Relaxed;
         let mib = |bytes: u64| bytes as f32 / 1048576.0;
         if let Some(heap) = super::alloc::heap_live() {
             self.push(Section::Memory, "heap live", mib(heap));
         }
         self.push(Section::Memory, "CPU image data", mib(image_bytes as u64));
         self.push(Section::Memory, "CPU mesh data", mib(mesh_bytes as u64));
-        if let Some(terrain) = crate::renderer::terrain_pool::stats() {
-            let t = &terrain.0;
-            self.push(
-                Section::Memory,
-                "terrain buffers used",
-                mib(t.used_bytes.load(Relaxed)),
-            );
-            self.push(
-                Section::Memory,
-                "terrain buffers allocated",
-                mib(t.capacity_bytes.load(Relaxed)),
-            );
-            self.push(
-                Section::Memory,
-                "terrain pack quads",
-                mib(t.pack_bytes.load(Relaxed)),
-            );
-        }
         #[cfg(audio)]
         {
             let (decoded, encoded) = crate::audio::cache_bytes();
@@ -684,17 +604,6 @@ impl Capture {
             "image bytes uploaded (KiB)",
             kib(image_bytes),
         );
-        if let Some(terrain) = crate::renderer::terrain_pool::stats() {
-            let bytes = terrain
-                .0
-                .uploaded
-                .load(std::sync::atomic::Ordering::Relaxed);
-            self.push(
-                Section::RenderWork,
-                "terrain bytes uploaded (KiB)",
-                bytes as f32 / 1024.0,
-            );
-        }
         self.push(
             Section::RenderWork,
             "GUI quads",
@@ -744,16 +653,6 @@ impl Capture {
                 );
             }
         }
-    }
-}
-
-/// The GPU-culled terrain path counts the sections it draws only on request.
-fn count_terrain_sections(on: bool) {
-    if let Some(terrain) = crate::renderer::terrain_pool::stats() {
-        terrain
-            .0
-            .count_sections
-            .store(on, std::sync::atomic::Ordering::Relaxed);
     }
 }
 

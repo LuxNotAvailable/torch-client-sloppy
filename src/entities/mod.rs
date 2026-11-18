@@ -1255,15 +1255,6 @@ impl EntityRigs {
         self.live.len()
     }
 
-    #[cfg(feature = "shader_support")]
-    pub(crate) fn roots(&self) -> impl Iterator<Item = (Entity, EntityKind)> + '_ {
-        self.live.values().flat_map(|rig| {
-            rig.layers
-                .iter()
-                .flatten()
-                .map(move |layer| (layer.pose_root, rig.kind))
-        })
-    }
 }
 
 #[derive(Component)]

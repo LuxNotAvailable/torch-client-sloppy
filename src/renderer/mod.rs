@@ -3,7 +3,6 @@
 
 pub mod anim;
 pub(crate) mod atlas;
-pub(crate) mod block_anim;
 pub mod clouds;
 mod entity_draw;
 pub mod entity_material;
@@ -19,7 +18,7 @@ pub mod maps;
 pub mod occlusion;
 pub mod overlays;
 #[cfg(feature = "shader_support")]
-pub mod packdraw;
+mod pack_inputs;
 pub mod panorama;
 pub mod player_model;
 pub mod rig_parts;
@@ -29,8 +28,6 @@ pub mod shadows;
 pub mod skin;
 pub mod sky;
 pub mod systems;
-pub mod terrain;
-pub mod terrain_pool;
 pub mod tethers;
 pub mod view_bob;
 mod view_sync;

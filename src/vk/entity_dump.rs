@@ -387,7 +387,7 @@ fn write_env(
     dir: Option<&std::path::Path>,
     cache: &Cache,
     env: &crate::draw::Env,
-    lightmap: Option<&crate::renderer::terrain::LightmapPixels>,
+    lightmap: Option<&crate::terrain::textures::LightmapPixels>,
     fog: Option<crate::client::view::Fog>,
     (hand, atlas, warp, water_alpha): (Option<Mat4>, Option<AssetId<Image>>, Mat4, f32),
     hand_view: Option<Mat4>,
@@ -593,11 +593,11 @@ fn write(
     view: Res<crate::client::view::View>,
     (env, images): (
         Res<crate::draw::Env>,
-        Option<Res<crate::renderer::terrain::LightmapPixels>>,
+        Option<Res<crate::terrain::textures::LightmapPixels>>,
     ),
     (terrain_textures, terrain_params): (
-        Option<Res<crate::renderer::terrain_pool::TerrainTextures>>,
-        Option<Res<crate::renderer::terrain_pool::TerrainParams>>,
+        Option<Res<crate::terrain::textures::TerrainTextures>>,
+        Option<Res<crate::terrain::textures::TerrainParams>>,
     ),
 ) {
     if !due(&mut since, time.delta_secs()) {

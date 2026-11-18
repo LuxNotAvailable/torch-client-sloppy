@@ -377,7 +377,6 @@ mod tests {
         assert!(!targets.shadow[1].clear);
         assert_eq!(targets.settings[2].format, TargetFormat::Rgba16Float);
         assert_eq!(targets.settings[0].format, TargetFormat::Rgba8Unorm);
-        assert_eq!(targets.shadow[0].shadow_clear_color(), [1.0; 4]);
         assert_eq!(shadow_index("shadowcolor"), Some(0));
         assert_eq!(shadow_index("shadowcolor8"), None);
         let constants = read_constants(["const int shadowMapResolution = 2048;"].into_iter());

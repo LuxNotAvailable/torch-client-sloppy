@@ -94,21 +94,15 @@ pub fn active() -> bool {
     ACTIVE.load(Ordering::Acquire)
 }
 
-static PLAYER_SHADOW: AtomicBool = AtomicBool::new(false);
-
-/// The native renderer's pack, which `sync_pack_vertices` never sees.
+/// The native renderer's pack casts the player's shadow.
 static NATIVE_PLAYER_SHADOW: AtomicBool = AtomicBool::new(false);
 
 pub fn player_shadow() -> bool {
-    PLAYER_SHADOW.load(Ordering::Relaxed) || NATIVE_PLAYER_SHADOW.load(Ordering::Relaxed)
+    NATIVE_PLAYER_SHADOW.load(Ordering::Relaxed)
 }
 
 pub fn set_native_player_shadow(on: bool) {
     NATIVE_PLAYER_SHADOW.store(on, Ordering::Relaxed);
-}
-
-pub fn set_player_shadow(on: bool) {
-    PLAYER_SHADOW.store(on, Ordering::Relaxed);
 }
 
 pub fn current() -> Option<Arc<BlockIds>> {
@@ -123,10 +117,6 @@ pub fn set_current(ids: Option<Arc<BlockIds>>) {
         ACTIVE.store(ids.is_some(), Ordering::Release);
         *slot = ids;
     }
-}
-
-pub fn quad_texel(index: u32) -> [u32; 2] {
-    [index % QUAD_ROW, index / QUAD_ROW]
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -331,13 +321,6 @@ mod tests {
         assert_eq!(q.id, UNMAPPED);
         assert_eq!(q.cell, [15, 0, 15]);
         assert_eq!(q.emission, 15);
-    }
-
-    #[test]
-    fn quads_wrap_onto_the_next_row() {
-        assert_eq!(quad_texel(0), [0, 0]);
-        assert_eq!(quad_texel(QUAD_ROW - 1), [QUAD_ROW - 1, 0]);
-        assert_eq!(quad_texel(QUAD_ROW + 3), [3, 1]);
     }
 
     #[test]

@@ -76,10 +76,6 @@ impl Menu {
 }
 
 impl Loaded {
-    pub(crate) fn values(&self) -> &Values {
-        &self.values
-    }
-
     fn option_label(&self, name: &str) -> String {
         self.lang
             .option(name)

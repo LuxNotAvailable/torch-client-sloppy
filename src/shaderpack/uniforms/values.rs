@@ -75,6 +75,7 @@ pub(crate) struct History {
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct FrameValues {
     /// This frame keeps the last shadow map rather than drawing one.
+    #[allow(dead_code, reason = "the native pack rewrite picks it up")]
     pub(crate) shadow_reused: bool,
     view_rotation: Mat4,
     view_rotation_inverse: Mat4,
@@ -140,7 +141,6 @@ impl FrameValues {
         let far_plane = (far * FAR_PLANE_PER_BLOCK).max(NEAR * 2.0);
         let projection =
             Mat4::perspective_rh_gl(fov, size.x / size.y, NEAR, far_plane) * inputs.warp;
-        crate::shaderpack::frame_state::publish_hiz_view(projection, size.as_uvec2());
         let camera = world_from_view.w_axis.truncate();
 
         let (previous_view_rotation, previous_projection) =
@@ -258,12 +258,6 @@ impl FrameValues {
 
     pub(crate) fn camera_clip(&self) -> Mat4 {
         self.projection * self.view_rotation
-    }
-
-    pub(crate) fn toward_light(&self) -> Vec3 {
-        self.shadow_model_view_inverse
-            .transform_vector3(Vec3::Z)
-            .normalize_or_zero()
     }
 
     pub(crate) fn camera(&self) -> Vec3 {

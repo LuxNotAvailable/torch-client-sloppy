@@ -7,9 +7,6 @@
 
 use std::sync::{Arc, RwLock};
 
-/// Table row width; the shader indexes it the same way.
-pub(crate) const ROW: u32 = 256;
-
 pub(crate) const TICKS_PER_SECOND: f64 = 20.0;
 
 pub(crate) struct BlockAnimation {
@@ -68,12 +65,6 @@ pub(crate) fn publish(tile_count: u32, animations: Vec<BlockAnimation>) {
             tile_count,
             animations,
         }));
-    }
-}
-
-impl AnimationSet {
-    pub(crate) fn animations(&self) -> &[BlockAnimation] {
-        &self.animations
     }
 }
 

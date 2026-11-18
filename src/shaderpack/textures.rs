@@ -6,6 +6,7 @@ const MAX_SIDE: u32 = 8192;
 
 const MAX_BYTES: usize = 256 << 20;
 
+#[allow(dead_code, reason = "pack data the wgpu path read; the native pack rewrite picks it up")]
 pub(crate) struct CustomTexture {
     pub(crate) path: String,
     pub(crate) width: u32,

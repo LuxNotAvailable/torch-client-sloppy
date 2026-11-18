@@ -52,6 +52,8 @@ fn source(name: &str, ty: &str, customs: &Customs) -> Option<Source> {
         .or_else(|| builtin(name, ty).map(Source::Builtin))
 }
 
+/// The uniforms nothing supplies (they read zero), for the compile report.
+#[cfg(test)]
 pub(crate) fn unsupplied(layout: &UniformLayout, customs: &Customs) -> Vec<String> {
     layout
         .members
@@ -75,7 +77,6 @@ pub(crate) struct UniformBytes {
 
 struct Block {
     offset: u32,
-    size: u32,
     set: MatrixSet,
 }
 
@@ -117,7 +118,6 @@ impl UniformBytes {
             }
             blocks.push(Block {
                 offset,
-                size: spec.layout.size,
                 set: spec.set,
             });
         }
@@ -134,12 +134,6 @@ impl UniformBytes {
             sources,
             blocks,
         }
-    }
-
-    /// Block `index`'s offset and size.
-    pub(crate) fn range(&self, index: usize) -> (u64, u64) {
-        let block = &self.blocks[index];
-        (u64::from(block.offset), u64::from(block.size))
     }
 
     /// Fills every block with this frame's values.

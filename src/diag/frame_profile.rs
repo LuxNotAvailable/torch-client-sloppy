@@ -343,21 +343,6 @@ fn render_probe(stage: Option<&'static str>) {
     stamp(&RENDER_AT, Group::Render, stage);
 }
 
-/// Wraps a custom render-graph node in a diagnostics span, so its CPU and GPU
-/// time show next to Bevy's own passes.
-pub fn timed<'w, R>(
-    render_context: &mut bevy::render::renderer::RenderContext<'w>,
-    name: &'static str,
-    body: impl FnOnce(&mut bevy::render::renderer::RenderContext<'w>) -> R,
-) -> R {
-    use bevy::render::diagnostic::RecordDiagnostics;
-    let diagnostics = render_context.diagnostic_recorder();
-    let span = diagnostics.time_span(render_context.command_encoder(), name);
-    let out = body(render_context);
-    span.end(render_context.command_encoder());
-    out
-}
-
 pub struct FrameProfilePlugin;
 
 impl Plugin for FrameProfilePlugin {

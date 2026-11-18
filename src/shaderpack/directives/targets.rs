@@ -206,9 +206,6 @@ impl TargetSettings {
         })
     }
 
-    pub(crate) fn shadow_clear_color(&self) -> [f32; 4] {
-        self.clear_color.unwrap_or([1.0; 4])
-    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

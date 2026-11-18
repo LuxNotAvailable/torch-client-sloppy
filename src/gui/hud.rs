@@ -832,17 +832,9 @@ fn world_items(info: &HudInfo, d: &DebugInfo) -> Vec<Item<'static>> {
             "Terrain mesh",
             in_world,
             format!(
-                "{} in {} slots{}",
+                "{} in {} slots",
                 bytes(mem.terrain_bytes),
                 mem.sections,
-                crate::renderer::terrain_pool::stats()
-                    .map(|s| &s.0)
-                    .filter(|s| s.indirect.load(std::sync::atomic::Ordering::Relaxed) == 0)
-                    .map_or(String::new(), |s| format!(
-                        ", {} drawn in {} draws",
-                        s.drawn.load(std::sync::atomic::Ordering::Relaxed),
-                        s.draws.load(std::sync::atomic::Ordering::Relaxed)
-                    ))
             ),
         ),
         na_row(

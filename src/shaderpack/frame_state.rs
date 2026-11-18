@@ -1,11 +1,10 @@
 //! Pack state shared between the renderers and the uniforms, set from the
-//! options and the GPU: render scale, shadow update rate, the centre depth
-//! read back, and the projection the terrain cull's pyramid uses.
+//! options and the GPU: render scale, shadow update rate, and the centre
+//! depth read back.
 
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use bevy::math::{Mat4, UVec2};
+use bevy::math::UVec2;
 
 /// The shader pack's render scale in percent, from the options; the render
 /// world reads it when it sizes the pack's targets.
@@ -46,23 +45,6 @@ pub(crate) fn center_depth() -> f32 {
     f32::from_bits(CENTER_DEPTH.load(Ordering::Relaxed))
 }
 
-pub(crate) fn set_center_depth(depth: f32) {
-    CENTER_DEPTH.store(depth.to_bits(), Ordering::Relaxed);
-}
-
-/// The pack's terrain projection and drawing size this frame, for the
-/// terrain cull's occlusion pyramid built from the pack's depth.
-static HIZ_VIEW: Mutex<Option<(Mat4, UVec2)>> = Mutex::new(None);
-
-pub(crate) fn publish_hiz_view(projection: Mat4, size: UVec2) {
-    if let Ok(mut view) = HIZ_VIEW.lock() {
-        *view = Some((projection, size));
-    }
-}
-
-pub(crate) fn hiz_view() -> Option<(Mat4, UVec2)> {
-    HIZ_VIEW.lock().ok().and_then(|view| *view)
-}
 
 #[cfg(test)]
 mod tests {

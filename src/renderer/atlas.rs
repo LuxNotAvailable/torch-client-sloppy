@@ -94,58 +94,6 @@ fn decode_dir(dir: &str) -> BTreeMap<String, image::RgbaImage> {
     }
 }
 
-#[cfg(feature = "shader_support")]
-pub(crate) type UntintedTiles = Vec<(u32, Vec<Vec<u8>>)>;
-
-#[cfg(feature = "shader_support")]
-static UNTINTED: std::sync::RwLock<Option<std::sync::Arc<UntintedTiles>>> =
-    std::sync::RwLock::new(None);
-
-#[cfg(feature = "shader_support")]
-pub(crate) fn untinted_tiles() -> Option<std::sync::Arc<UntintedTiles>> {
-    UNTINTED.read().ok().and_then(|t| t.clone())
-}
-
-#[cfg(feature = "shader_support")]
-fn publish_untinted(
-    entries: &[(&str, &image::RgbaImage)],
-    biome_tinted: &[&str],
-    tiles: &HashMap<String, u32>,
-    n_mips: u32,
-    biases: &[f32],
-) {
-    let (level0, atlas_w, atlas_h, _) = pack_tiles(entries);
-    let tile_px = atlas_w / ATLAS_COLS;
-    let chain = if n_mips > 1 {
-        build_mip_chain(&level0, atlas_w, atlas_h, n_mips, biases)
-    } else {
-        level0
-    };
-    let mut out: UntintedTiles = Vec::with_capacity(biome_tinted.len());
-    for stem in biome_tinted {
-        let Some(&tile) = tiles.get(*stem) else {
-            continue;
-        };
-        let (tx, ty) = (tile % ATLAS_COLS, tile / ATLAS_COLS);
-        let mut offset = 0usize;
-        let mut levels = Vec::with_capacity(n_mips as usize);
-        for level in 0..n_mips {
-            let (lw, lh, ts) = (atlas_w >> level, atlas_h >> level, tile_px >> level);
-            let mut bytes = Vec::with_capacity((ts * ts * 4) as usize);
-            for row in 0..ts {
-                let start = offset + (((ty * ts + row) * lw + tx * ts) * 4) as usize;
-                bytes.extend_from_slice(&chain[start..start + (ts * 4) as usize]);
-            }
-            levels.push(bytes);
-            offset += (lw * lh * 4) as usize;
-        }
-        out.push((tile, levels));
-    }
-    if let Ok(mut slot) = UNTINTED.write() {
-        *slot = Some(std::sync::Arc::new(out));
-    }
-}
-
 pub fn build_block_atlas(textures: &Textures, textures_dir: &str) -> (Image, HashMap<String, u32>) {
     use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
@@ -162,13 +110,11 @@ pub fn build_block_atlas(textures: &Textures, textures_dir: &str) -> (Image, Has
     }
     let mut opaque: HashSet<String> = HashSet::new();
     let mut recoloured: BTreeMap<&str, image::RgbaImage> = BTreeMap::new();
-    #[cfg(feature = "shader_support")]
-    let mut biome_tinted: Vec<&str> = Vec::new();
     for (stem, rgba) in &textures.block {
         if stem == "grass_block_side_overlay" {
             continue;
         }
-        if let Some((new, biome)) = tinted(
+        if let Some((new, _biome)) = tinted(
             rgba,
             stem,
             grass_tint,
@@ -177,12 +123,6 @@ pub fn build_block_atlas(textures: &Textures, textures_dir: &str) -> (Image, Has
             &textures.block,
         ) {
             recoloured.insert(stem.as_str(), new);
-            #[cfg(feature = "shader_support")]
-            if biome {
-                biome_tinted.push(stem.as_str());
-            }
-            #[cfg(not(feature = "shader_support"))]
-            let _ = biome;
         }
     }
     let mut entries: Vec<(&str, &image::RgbaImage)> = Vec::with_capacity(textures.block.len());
@@ -213,14 +153,6 @@ pub fn build_block_atlas(textures: &Textures, textures_dir: &str) -> (Image, Has
     let (atlas_data, atlas_h, regions) =
         append_regions(atlas_data, atlas_w, atlas_h, &entity_textures);
     crate::blockentities::bake::set_regions(regions);
-    #[cfg(feature = "shader_support")]
-    let untinted_entries: Vec<(&str, &image::RgbaImage)> = entries
-        .iter()
-        .map(|(stem, rgba)| match textures.block.get(*stem) {
-            Some(source) if biome_tinted.contains(stem) => (*stem, source),
-            _ => (*stem, *rgba),
-        })
-        .collect();
 
     let n_mips = (atlas_w / ATLAS_COLS).trailing_zeros() + 1;
     let mip_data = if n_mips > 1 {
@@ -228,14 +160,6 @@ pub fn build_block_atlas(textures: &Textures, textures_dir: &str) -> (Image, Has
     } else {
         atlas_data
     };
-    #[cfg(feature = "shader_support")]
-    publish_untinted(
-        &untinted_entries,
-        &biome_tinted,
-        &tex_to_tile,
-        n_mips,
-        &biases,
-    );
 
     let mut image = Image::new_uninit(
         Extent3d {
@@ -251,7 +175,6 @@ pub fn build_block_atlas(textures: &Textures, textures_dir: &str) -> (Image, Has
     image.data = Some(mip_data);
     image.sampler = block_atlas_sampler();
     #[cfg(feature = "shader_support")]
-    super::packdraw::allow_display_view(&mut image);
     println!(
         "[Atlas] {} block textures loaded ({} fully opaque), atlas {}×{}, {} mip levels",
         entries.len(),
@@ -738,16 +661,10 @@ fn blit_gray_placeholder(atlas: &mut [u8], tile: u32, atlas_w: u32, tile_px: u32
 }
 
 pub fn placeholder_atlas() -> Image {
-    #[cfg(feature = "shader_support")]
-    if let Ok(mut slot) = UNTINTED.write() {
-        *slot = None;
-    }
     let mut data = vec![0u8; (TILE_PX * TILE_PX * 4) as usize];
     blit_gray_placeholder(&mut data, 0, TILE_PX, TILE_PX);
-    #[cfg_attr(not(feature = "shader_support"), allow(unused_mut))]
-    let mut image = super::rgba_image(TILE_PX, TILE_PX, data, RenderAssetUsages::RENDER_WORLD);
+    let image = super::rgba_image(TILE_PX, TILE_PX, data, RenderAssetUsages::RENDER_WORLD);
     #[cfg(feature = "shader_support")]
-    super::packdraw::allow_display_view(&mut image);
     image
 }
 

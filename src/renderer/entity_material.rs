@@ -133,8 +133,6 @@ pub struct EntityMaterial {
     #[texture(4)]
     #[sampler(5)]
     pub glint: Handle<Image>,
-    #[texture(6)]
-    pub lightmap: Handle<Image>,
     pub alpha_mode: AlphaMode,
     pub depth_bias: i32,
     pub see_through: bool,
@@ -170,7 +168,6 @@ impl EntityMaterial {
 
             rig_parts: super::rig_parts::PARTS,
             glint: GLINT,
-            lightmap: super::terrain::LIGHTMAP,
             alpha_mode,
             depth_bias,
             see_through: false,

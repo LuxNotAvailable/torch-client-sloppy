@@ -1,4 +1,5 @@
-//! Gathers the frame's pack `Inputs` from the session, cameras and options.
+//! Gathers the frame's pack `Inputs` from the session, cameras and options,
+//! for the native renderer's shader packs.
 
 use bevy::math::{IVec2, Vec3};
 use bevy::pbr::DistanceFog;
@@ -59,16 +60,14 @@ pub(crate) fn gather_inputs(
     atlas: Option<Res<BlockAtlasHandle>>,
     images: Res<Assets<Image>>,
     gui: Res<crate::gui::GuiState>,
-    compiled: Option<Res<super::sync::CompiledPack>>,
     third_person: Res<crate::renderer::input::ThirdPersonState>,
     freecam: Res<crate::renderer::input::FreecamState>,
     mut inputs: ResMut<Inputs>,
 ) {
-    let item_ids = compiled.as_deref().map(|c| &c.installed.item_ids);
-    let entity_ids = compiled.as_deref().map(|c| &c.installed.entity_ids);
-    let old_hand_light = compiled
-        .as_deref()
-        .is_none_or(|c| c.installed.old_hand_light);
+    // The native renderer fills pack ids from its own install.
+    let item_ids: Option<&std::collections::HashMap<String, i32>> = None;
+    let entity_ids: Option<&std::collections::HashMap<String, i32>> = None;
+    let old_hand_light = true;
     let partial = view.partial;
     let day_ticks = view.day_ticks;
     let pos = Vec3::from(view.player_lerp);
@@ -281,4 +280,25 @@ mod tests {
         assert_eq!(night_vision_scale(400, 0.0), 1.0);
         assert!(night_vision_scale(100, 0.0) <= 1.0);
     }
+}
+
+pub(crate) struct PackInputsPlugin;
+
+impl Plugin for PackInputsPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<Inputs>().add_systems(
+            Update,
+            (
+                gather_inputs.after(crate::renderer::frame_view::FrameViewSystems),
+                sync_render_scale,
+            ),
+        );
+    }
+}
+
+fn sync_render_scale(gui: Res<crate::gui::GuiState>) {
+    crate::shaderpack::frame_state::set_options(
+        gui.options.pack_render_scale,
+        gui.options.shadow_update,
+    );
 }

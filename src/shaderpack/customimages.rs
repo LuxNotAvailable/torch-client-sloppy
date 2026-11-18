@@ -56,6 +56,7 @@ impl ImageFormat {
             .find(|f| f.glsl().eq_ignore_ascii_case(name))
     }
 
+    #[allow(dead_code, reason = "the native pack rewrite picks it up")]
     pub(crate) fn sample_kind(self) -> SampleKind {
         match self {
             ImageFormat::R8Ui

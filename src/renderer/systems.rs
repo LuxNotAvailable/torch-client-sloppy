@@ -1,7 +1,7 @@
 use crate::platform::time::Instant;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::time::Duration;
 
 use bevy::asset::RenderAssetUsages;
@@ -31,7 +31,6 @@ pub const VANILLA_FOV_DEGREES: f32 = 70.0;
 
 use super::AppState;
 use super::frame_view::{FrameView, FrameViewSystems};
-use super::terrain_pool::{TerrainOp, TerrainOps};
 use crate::session::SharedMutex;
 use crate::session::SharedState;
 use crate::terrain::visgraph::VisibilitySet;
@@ -114,7 +113,7 @@ impl LightmapState {
 
 fn update_lightmap(
     env: Res<super::environment::Environment>,
-    mut pixels: ResMut<super::terrain::LightmapPixels>,
+    mut pixels: ResMut<crate::terrain::textures::LightmapPixels>,
     mut state: ResMut<LightmapState>,
     time: Res<Time>,
     gui: Res<crate::gui::GuiState>,
@@ -169,6 +168,7 @@ pub struct SectionSlot {
 
 #[cfg(test)]
 pub const LAYER_OPAQUE: usize = 0;
+#[cfg(test)]
 pub const LAYER_WATER: usize = 1;
 
 impl Default for SectionSlot {
@@ -192,9 +192,7 @@ impl ChunkIndex {
         sec_y: i32,
         vis: VisibilitySet,
         meshes: [crate::terrain::mesh::MeshBuf; 2],
-        ops: &TerrainOps,
     ) {
-        let origin = [cx * 16, sec_y, cz * 16];
         let Self {
             columns,
             free_slots,
@@ -217,7 +215,6 @@ impl ChunkIndex {
             let held = entry.slots[layer];
             if mesh.is_empty() {
                 if let Some(slot) = held {
-                    ops.push(TerrainOp::Free { slot });
                     free_slots.push(slot);
                 }
                 entry.slots[layer] = None;
@@ -231,12 +228,6 @@ impl ChunkIndex {
                     slot
                 }
             };
-            ops.push(TerrainOp::Upload {
-                slot,
-                origin,
-                water: layer == LAYER_WATER,
-                mesh,
-            });
             entry.slots[layer] = Some(slot);
         }
         *generation += 1;
@@ -294,8 +285,7 @@ impl ChunkIndex {
         })
     }
 
-    pub fn clear(&mut self, ops: &TerrainOps) {
-        ops.push(TerrainOp::ClearAll);
+    pub fn clear(&mut self) {
         self.columns.clear();
         self.free_slots.clear();
         self.next_slot = 0;
@@ -304,12 +294,11 @@ impl ChunkIndex {
         self.generation += 1;
     }
 
-    pub fn drop_column(&mut self, key: (i32, i32), ops: &TerrainOps) {
+    pub fn drop_column(&mut self, key: (i32, i32)) {
         let Some(column) = self.columns.remove(&key) else {
             return;
         };
         for slot in column.sections.values().flat_map(|s| s.slots).flatten() {
-            ops.push(TerrainOp::Free { slot });
             self.free_slots.push(slot);
         }
         self.generation += 1;
@@ -381,22 +370,10 @@ fn setup(
     });
     commands.insert_resource(WaterMaterial(water_material));
 
-    let lightmap = super::terrain::LIGHTMAP;
-    images
-        .insert(&lightmap, super::terrain::new_lightmap_image())
-        .expect("a uuid handle has no generation to go stale");
-    commands.insert_resource(super::terrain_pool::TerrainParams {
-        cutoff: if no_cutout() { 0.0 } else { 0.1 },
-        ..default()
-    });
-    commands.insert_resource(super::terrain::LightmapPixels {
-        image: lightmap.clone(),
-        data: Vec::new(),
-    });
-    commands.insert_resource(super::terrain_pool::TerrainTextures {
+    commands.init_resource::<crate::terrain::textures::TerrainParams>();
+    commands.init_resource::<crate::terrain::textures::LightmapPixels>();
+    commands.insert_resource(crate::terrain::textures::TerrainTextures {
         atlas: atlas.clone(),
-        lightmap,
-        anim: images.add(super::block_anim::table_image()),
     });
 
     // Structure block bounds draw their lines with this.
@@ -426,7 +403,6 @@ fn setup(
 
     commands.spawn((
         WorldCamera,
-        super::terrain_pool::TerrainView,
         // Readable, so the terrain cull can build its occlusion pyramid.
         Camera3d {
             depth_texture_usages: (bevy::render::render_resource::TextureUsages::RENDER_ATTACHMENT
@@ -483,7 +459,6 @@ fn poll_shared_state(
     freecam: Res<FreecamState>,
     third_person: Res<ThirdPersonState>,
     angles: Res<CameraAngles>,
-    ops: Res<TerrainOps>,
     mut index: ResMut<ChunkIndex>,
     mut camera: Query<&mut Transform, With<WorldCamera>>,
     mut last_poll_ms: Local<f32>,
@@ -545,10 +520,10 @@ fn poll_shared_state(
     crate::terrain::stream::finish(&mut batch, &mut scratch);
 
     if batch.clear_all {
-        index.clear(&ops);
+        index.clear();
     } else {
         for key in batch.unloaded {
-            index.drop_column(key, &ops);
+            index.drop_column(key);
         }
     }
     {
@@ -560,7 +535,6 @@ fn poll_shared_state(
                 sec.sec_y,
                 sec.vis,
                 [sec.opaque, sec.water],
-                &ops,
             );
             crate::diag::bump(crate::diag::Stat::SectionsUploaded);
         }
@@ -644,16 +618,6 @@ fn skip_redundant_blits(
             };
         }
     }
-}
-
-fn no_cutout() -> bool {
-    static OFF: OnceLock<bool> = OnceLock::new();
-    *OFF.get_or_init(|| {
-        matches!(
-            crate::platform::env::var("MC_NO_CUTOUT").as_deref(),
-            Ok("1") | Ok("true")
-        )
-    })
 }
 
 /// A player's eye height standing, crouching or crawling.
@@ -916,7 +880,7 @@ fn collect_hud_info(
     angles: Res<CameraAngles>,
     input: Res<crate::gui::GuiInput>,
     camera_q: Query<(&Camera, &Transform, &Projection), With<WorldCamera>>,
-    terrain_stats: Res<super::terrain_pool::TerrainStats>,
+    index: Res<ChunkIndex>,
     rig_node_q: Query<(), With<crate::entities::EntityRigNode>>,
     rigs: Res<crate::entities::EntityRigs>,
     block_entity_rigs: Res<crate::blockentities::BeRigs>,
@@ -1047,7 +1011,7 @@ fn collect_hud_info(
             memory_cache.is_none_or(|(at, _)| now.duration_since(at) >= MEMORY_SAMPLE_WINDOW);
         if stale {
             let fresh = measure_memory(
-                &terrain_stats,
+                &index,
                 &rig_node_q,
                 &rigs,
                 &block_entity_rigs,
@@ -1114,14 +1078,15 @@ fn collect_hud_info(
 const MEMORY_SAMPLE_WINDOW: Duration = Duration::from_millis(500);
 
 fn measure_memory(
-    terrain: &super::terrain_pool::TerrainStats,
+    index: &ChunkIndex,
     rig_nodes: &Query<(), With<crate::entities::EntityRigNode>>,
     rigs: &crate::entities::EntityRigs,
     block_entity_rigs: &crate::blockentities::BeRigs,
     images: &Assets<Image>,
 ) -> crate::gui::hud::MemoryUse {
-    let terrain_bytes = terrain.0.used_bytes.load(AtomicOrdering::Relaxed);
-    let sections = terrain.0.live_slots.load(AtomicOrdering::Relaxed);
+    // The native renderer doesn't report its terrain buffers yet.
+    let terrain_bytes = 0;
+    let sections = index.len();
 
     let (world_bytes, world_chunks) = measure_world_bytes();
     let (light_bytes, light_sections) = crate::client::worldsync::light_map().read().bytes();
@@ -1229,7 +1194,6 @@ fn log_frame_rate(
     time: Res<Time>,
     windows: Query<&Window, With<PrimaryWindow>>,
     index: Res<ChunkIndex>,
-    terrain_stats: Res<super::terrain_pool::TerrainStats>,
     gui: Res<crate::gui::GuiState>,
     // Absent under the native renderer (Bevy's has no backend).
     device: Option<Res<bevy::render::renderer::RenderDevice>>,
@@ -1260,13 +1224,9 @@ fn log_frame_rate(
         );
     }
     let focused = windows.single().map(|w| w.focused).unwrap_or(false);
-    let drawn = terrain_stats.0.drawn.load(AtomicOrdering::Relaxed);
-    let live = terrain_stats.0.live_slots.load(AtomicOrdering::Relaxed);
-    let draws = terrain_stats.0.draws.load(AtomicOrdering::Relaxed);
     crate::log_info!(
         "render",
-        "{:.1} fps ({:.1} ms a frame) over {:.0}s, focused {focused}, {} sections indexed, \
-         {drawn}/{live} slots drawn in {draws} draws",
+        "{:.1} fps ({:.1} ms a frame) over {:.0}s, focused {focused}, {} sections indexed",
         *frames as f32 / *since,
         *since * 1000.0 / *frames as f32,
         *since,
@@ -2352,8 +2312,6 @@ pub fn run(
     .add_plugins(crate::renderer::hand::HandPlugin)
     .add_plugins(crate::renderer::panorama::PanoramaPlugin)
     .add_plugins(crate::renderer::occlusion::OcclusionPlugin)
-    .add_plugins(crate::renderer::terrain::TerrainMaterialPlugin)
-    .add_plugins(crate::renderer::terrain_pool::TerrainPoolPlugin)
     .add_plugins(crate::renderer::entity_material::EntityMaterialPlugin)
     .add_plugins(crate::renderer::glint::GlintPlugin)
     .add_plugins(crate::renderer::screen_effects::ScreenEffectsPlugin)
@@ -2643,7 +2601,7 @@ pub fn run(
         }
     }
     #[cfg(feature = "shader_support")]
-    app.add_plugins(crate::renderer::packdraw::ShaderPackPlugin);
+    app.add_plugins(crate::renderer::pack_inputs::PackInputsPlugin);
     #[cfg(feature = "perf_report")]
     app.add_plugins(crate::diag::perf_report::PerfReportPlugin);
 

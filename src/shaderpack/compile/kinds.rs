@@ -130,6 +130,8 @@ pub(crate) enum EntityKind {
     ArmorGlint,
 }
 
+/// Where Iris draws an entity kind in the frame.
+#[allow(dead_code, reason = "Iris's frame order, which the wgpu path used; the native pack rewrite picks it up")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum Segment {
     Shadow,
@@ -260,10 +262,12 @@ impl EntityKind {
         }
     }
 
+    #[allow(dead_code, reason = "the native pack rewrite picks it up")]
     pub(crate) fn resolve(self, has: impl Fn(&str) -> bool) -> Option<&'static str> {
         self.programs().iter().copied().find(|n| has(n))
     }
 
+    #[allow(dead_code, reason = "Iris's entity passes, for the native pack rewrite")]
     pub(crate) fn segment(self) -> Segment {
         match self {
             EntityKind::Entity | EntityKind::Block | EntityKind::Particle => Segment::World,
@@ -288,6 +292,7 @@ impl EntityKind {
         }
     }
 
+    #[allow(dead_code, reason = "Iris's entity passes, for the native pack rewrite")]
     pub(crate) fn render_stage(self) -> i32 {
         crate::shaderpack::features::render_stage(match self {
             EntityKind::Entity
@@ -310,6 +315,7 @@ impl EntityKind {
         })
     }
 
+    #[allow(dead_code, reason = "Iris's entity passes, for the native pack rewrite")]
     pub(crate) fn fallback(self) -> Option<EntityKind> {
         match self {
             EntityKind::Block | EntityKind::Particle => Some(EntityKind::Entity),
@@ -320,6 +326,7 @@ impl EntityKind {
         }
     }
 
+    #[allow(dead_code, reason = "Iris's entity passes, for the native pack rewrite")]
     pub(crate) fn translucent(self) -> EntityKind {
         match self {
             EntityKind::Entity => EntityKind::EntityTranslucent,
@@ -339,6 +346,7 @@ impl EntityKind {
         }
     }
 
+    #[allow(dead_code, reason = "Iris's entity passes, for the native pack rewrite")]
     pub(crate) fn is_hand(self) -> bool {
         matches!(self, EntityKind::Hand | EntityKind::HandWater)
     }
@@ -370,6 +378,7 @@ pub(crate) enum ShadowCulling {
 }
 
 impl ShadowCulling {
+    #[allow(dead_code, reason = "the native pack rewrite picks it up")]
     pub(crate) fn mode(
         self,
         voxelizes: bool,
@@ -554,6 +563,7 @@ impl Blends {
 
     /// The pack's blend for `program` writing `buffer`: `None` where it
     /// sets none (the draw's default applies), `Some(None)` for `off`.
+    #[allow(dead_code, reason = "the native pack rewrite picks it up")]
     pub(crate) fn resolve(&self, program: &str, buffer: u8) -> Option<Option<Blend>> {
         let entry = self.programs.get(program)?;
         entry.buffers.get(&buffer).copied().or(entry.all)
@@ -561,6 +571,7 @@ impl Blends {
 }
 
 /// How shadow terrain is culled against the light's view.
+#[allow(dead_code, reason = "pack data the wgpu path read; the native pack rewrite picks it up")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ShadowCullMode {
     Distance,

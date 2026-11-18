@@ -1,12 +1,11 @@
 use crate::platform::time::Instant;
 
-use std::sync::{Arc, OnceLock};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use bevy::prelude::*;
 
 use super::systems::{ChunkIndex, SectionSlot, WorldCamera};
-use super::terrain_pool::{TerrainOp, TerrainOps};
 use crate::terrain::cave::{Grid, section_of};
 use crate::terrain::visgraph::VisibilitySet;
 
@@ -235,19 +234,12 @@ pub fn update_occlusion(
     index: Res<ChunkIndex>,
     gui: Res<crate::gui::GuiState>,
     camera: Query<&GlobalTransform, With<WorldCamera>>,
-    ops: Res<TerrainOps>,
     mut hiding_everything: Local<bool>,
-    mut disabled_pushed: Local<bool>,
 ) {
     crate::prof_span!("render:update_occlusion");
     #[cfg(feature = "budget")]
     let _t = crate::diag::budget::timed(crate::diag::budget::Slot::Occlusion);
     if disabled() {
-        if !*disabled_pushed && index.next_slot() > 0 {
-            let words = (index.next_slot() as usize).div_ceil(32).max(1);
-            ops.push(TerrainOp::Visibility(Arc::from(vec![u32::MAX; words])));
-            *disabled_pushed = true;
-        }
         return;
     }
     let Ok(transform) = camera.single() else {
@@ -297,12 +289,7 @@ pub fn update_occlusion(
         return;
     }
 
-    // Slots made after the snapshot lie past the bits' end, which the cull
-    // treats as visible until the next fill.
     let reached_sections = state.reached;
-    ops.push(TerrainOp::Visibility(Arc::from(std::mem::take(
-        &mut state.bits,
-    ))));
 
     crate::log_debug!(
         "render",

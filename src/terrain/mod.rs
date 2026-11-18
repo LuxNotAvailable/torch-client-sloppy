@@ -4,11 +4,13 @@
 
 pub(crate) mod block_anim;
 pub mod cave;
+pub mod hiz;
 pub(crate) mod ctm;
 pub mod lighter;
 pub(crate) mod mesh;
 pub(crate) mod occupancy;
 pub mod stream;
+pub mod textures;
 pub mod visgraph;
 
 pub use mesh::{

@@ -5,7 +5,6 @@ use super::sources::TextureSource;
 use crate::shaderpack::directives::{Constants, Targets};
 use crate::shaderpack::expressions::Customs;
 use crate::shaderpack::pipeline::Layout;
-use crate::shaderpack::uniforms;
 
 /// Labels every pack shader module and GPU object, so errors name the pack.
 pub(crate) const GPU_LABEL: &str = "shaderpack";
@@ -36,12 +35,14 @@ pub(crate) struct InstalledProgram {
     pub(crate) kind: ProgramKind,
     pub(crate) vertex: Module,
     /// An entity program's vertex stage for GPU-posed rigs' meshes.
+    #[allow(dead_code, reason = "the native pack rewrite picks it up")]
     pub(crate) vertex_skinned: Option<Module>,
     pub(crate) fragment: Module,
     pub(crate) fragment_tests: Vec<(compile::AlphaTest, Module)>,
     pub(crate) alpha_override: Option<Option<compile::AlphaTest>>,
     pub(crate) fragment_linear: Option<Module>,
     pub(crate) compute: Option<Module>,
+    #[allow(dead_code, reason = "the native pack rewrite picks it up")]
     pub(crate) compute_used: Option<Vec<u32>>,
     pub(crate) compute_parity: Option<[(Module, Vec<u32>); 2]>,
     pub(crate) dispatch: compile::Dispatch,
@@ -51,6 +52,7 @@ pub(crate) struct InstalledProgram {
     pub(crate) mipmapped: u16,
 }
 
+#[allow(dead_code, reason = "pack data the wgpu path read; the native pack rewrite picks it up")]
 pub(crate) struct Installed {
     pub(crate) generation: u32,
     pub(crate) direct: bool,
@@ -156,31 +158,3 @@ pub(crate) fn install(pack: &str, generation: u32, direct: bool, frame: Frame) -
     }
 }
 
-pub(crate) fn report(name: &str, installed: &Installed, notes: &[String]) {
-    crate::log_info!(
-        "shaders",
-        "compiled {name}: {} programs (begin {}, prepare {}, deferred {}, composite {} steps, final {}, setup {}), generation {}",
-        installed.programs.len(),
-        installed.stages[0].len(),
-        installed.stages[1].len(),
-        installed.stages[2].len(),
-        installed.stages[3].len(),
-        installed.final_pass.is_some(),
-        installed.setup.len(),
-        installed.generation
-    );
-    for program in &installed.programs {
-        let zero = uniforms::unsupplied(&program.layout.uniforms, &installed.customs);
-        if !zero.is_empty() {
-            crate::log_info!(
-                "shaders",
-                "{name}/{}: uniforms reading zero: {}",
-                program.name,
-                zero.join(", ")
-            );
-        }
-    }
-    for note in notes {
-        crate::log_info!("shaders", "{name}: {note}");
-    }
-}
