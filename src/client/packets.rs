@@ -49,6 +49,9 @@ pub(crate) fn handle_packet(
         });
     }
     if let ClientboundGamePacket::Login(p) = packet {
+        // Set now: the op-level entity event follows Login before the tick runs.
+        crate::client::tracking::LOCAL_ENTITY_ID
+            .store(p.player_id.0, std::sync::atomic::Ordering::Relaxed);
         let mut s = shared.lock().unwrap();
         s.session.chat.enforces_secure_chat = p.enforces_secure_chat;
         s.session.hardcore = p.hardcore;
