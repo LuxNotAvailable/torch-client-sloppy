@@ -27,6 +27,10 @@ pub const RECIPE_VIEWER: Tip = Tip::risk(
     "A searchable list of every item beside your inventory. Click an item for its recipes, right-click for its uses, A to bookmark. Browsing is display only, but a recipe's \"+\" fills the crafting grid with a quick burst of clicks.",
     Risk::Risky,
 );
+pub const FREECAM: Tip = Tip::risk(
+    "Press the Detached Camera key (set it in Controls) to leave your body and fly the camera anywhere, through walls too; press it again to return. Your player stands still and the server sees nothing, but it lets you look inside bases, so many servers ban it and staff may notice you standing idle.",
+    Risk::Risky,
+);
 #[cfg(feature = "click_gui")]
 pub const MODULES: Tip = Tip::risk(
     "Cheat modules: aim assist, triggerbot, flight, no fall, ESP and more (also on the Click GUI key). Most send movement or attacks no fair player could, and anticheats are built to catch them. Use only where they are allowed.",

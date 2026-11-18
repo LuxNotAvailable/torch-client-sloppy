@@ -97,6 +97,8 @@ const FEATURES: &str = "Features...";
 const FEATURES_TITLE: &str = "Features";
 const INVENTORY_SORT: &str = "Inventory Sorting...";
 const RECIPE_VIEWER: &str = "Recipe Viewer";
+const FREECAM: &str = "Freecam";
+const KEY_NOT_SET: &str = "Not Set";
 const INVENTORY_SORT_TITLE: &str = "Inventory Sorting";
 const SORT_BUTTONS: &str = "Sort Buttons";
 const SORT_HOTBAR: &str = "Include Hotbar";
@@ -1531,6 +1533,10 @@ pub fn draw_features(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     use crate::gui::feature_tips as ft;
     use crate::gui::setting_tip::Risk;
     draw_title(p, ctx, FEATURES_TITLE);
+    let freecam_key = match state.keybinds.bound(keybinds::Action::Freecam) {
+        keybinds::Bound::Unbound => KEY_NOT_SET,
+        key => key.display_name(),
+    };
     let o = &mut state.options;
     let mut next: Option<Screen> = None;
     let mut hovered: Option<&'static Tip> = None;
@@ -1568,6 +1574,12 @@ pub fn draw_features(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         );
         f.toggle(RECIPE_VIEWER, &mut o.recipe_viewer);
         f.tip(&ft::RECIPE_VIEWER);
+        let on = if o.freecam { ON } else { OFF };
+        if f.wide_button(&format!("{FREECAM}: {on} (Key: {freecam_key})")) {
+            o.freecam = !o.freecam;
+            f.mark_changed();
+        }
+        f.tip(&ft::FREECAM);
 
         #[cfg(feature = "click_gui")]
         {

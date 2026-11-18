@@ -583,6 +583,8 @@ crate::options! {
         pub pause_on_lost_focus: bool = true => key("pauseOnLostFocus"),
         /// The recipe viewer (item list, recipes, bookmarks) beside inventories.
         pub recipe_viewer: bool = true => key("recipeViewer"),
+        /// Whether the freecam key works.
+        pub freecam: bool = true => key("freecam"),
         /// The sort and transfer buttons on inventories.
         pub sort_buttons: bool = true => key("sortButtons"),
         /// Whether sorting and storing take in the hotbar.

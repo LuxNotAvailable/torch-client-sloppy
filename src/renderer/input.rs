@@ -816,7 +816,11 @@ pub(super) fn toggle_freecam(
     if state.screen.is_open() {
         return;
     }
-    if state.keybinds.just(Action::Freecam, &keys, &buttons) {
+    if state.keybinds.just(Action::Freecam, &keys, &buttons) && state.options.freecam {
+        crate::modules::freecam::toggle();
+    }
+    // Turned off in Features: leave freecam.
+    if !state.options.freecam && crate::modules::freecam::active() {
         crate::modules::freecam::toggle();
     }
     if state.keybinds.just(Action::ToggleLighting, &keys, &buttons) {
