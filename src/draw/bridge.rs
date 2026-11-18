@@ -37,7 +37,7 @@ fn capture(
     for event in events.read() {
         match *event {
             AssetEvent::Added { id } | AssetEvent::Modified { id } => {
-                if let Some(data) = meshes.get(id).and_then(mesh_data) {
+                if let Some(data) = meshes.get(id).and_then(|m| mesh_data(m, Some(slot(id)))) {
                     cache.0.insert(id, data);
                 }
             }
@@ -47,19 +47,25 @@ fn capture(
             _ => {}
         }
     }
-    // Meshes made before the first frame (the loading screen's) sent their
-    // events unseen.
-    if cache.0.is_empty() {
-        let missed: Vec<_> = meshes
-            .iter()
-            .filter_map(|(id, mesh)| Some((id, mesh_data(mesh)?)))
-            .collect();
-        cache.0.extend(missed);
-    }
+    // Meshes made before this system first ran sent their events unseen.
+    let missed: Vec<_> = meshes
+        .iter()
+        .filter(|(id, _)| !cache.0.contains_key(id))
+        .filter_map(|(id, mesh)| Some((id, mesh_data(mesh, Some(slot(id)))?)))
+        .collect();
+    cache.0.extend(missed);
+}
+
+/// An asset's mesh slot: the same across its rebuilds.
+fn slot(id: AssetId<Mesh>) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    id.hash(&mut h);
+    h.finish()
 }
 
 /// A mesh's position, normal, uv, colour and rig part attributes.
-pub fn mesh_data(mesh: &Mesh) -> Option<Arc<MeshData>> {
+pub fn mesh_data(mesh: &Mesh, slot: Option<u64>) -> Option<Arc<MeshData>> {
     use bevy::mesh::VertexAttributeValues as V;
     // A mesh kept only in the render world panics on attribute access once
     // extracted; until then (its first frame) it can still be read.
@@ -96,5 +102,5 @@ pub fn mesh_data(mesh: &Mesh) -> Option<Arc<MeshData>> {
         Some(i) => i.iter().map(|i| i as u32).collect(),
         None => (0..verts.len() as u32).collect(),
     };
-    Some(MeshData::new(verts, indices, rigged))
+    Some(MeshData::in_slot(slot, verts, indices, rigged))
 }

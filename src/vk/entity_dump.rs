@@ -42,7 +42,6 @@ use std::collections::HashMap;
 use bevy::prelude::*;
 
 use crate::draw::*;
-use crate::renderer::entity_material::EntityMaterial;
 
 pub const MAGIC: &[u8; 4] = b"TVKE";
 pub const VERSION: u32 = 2;
@@ -102,7 +101,11 @@ fn due(since: &mut f32, dt: f32) -> bool {
 
 /// What a layer draws: instances naming meshes and textures by place in
 /// the two lists that follow.
-type Collected = (Vec<EntityInstance>, Vec<AssetId<Mesh>>, Vec<AssetId<Image>>);
+type Collected = (
+    Vec<EntityInstance>,
+    Vec<std::sync::Arc<crate::draw::MeshData>>,
+    Vec<AssetId<Image>>,
+);
 
 /// A frame's entities for the live renderer (`vk::live`): meshes and
 /// textures new since the last frame taken, by stable index, then this
@@ -115,12 +118,13 @@ pub struct LiveEntities {
     pub instances: Vec<EntityInstance>,
 }
 
-/// Stable indices for what a live channel has sent: by asset, with the
-/// address of the cached data so a modified asset is sent anew.
+/// Stable indices for what a live channel has sent: meshes by slot, with
+/// the data's id so a rebuilt mesh is sent anew; images by asset, with the
+/// cached data's address.
 #[derive(Default)]
 struct Registry {
-    /// Index, the cached data's address, and a hash of its contents.
-    meshes: HashMap<AssetId<Mesh>, (u32, usize, u64)>,
+    /// Index, the mesh data's id, and a hash of its contents.
+    meshes: HashMap<u64, (u32, u64, u64)>,
     images: HashMap<AssetId<Image>, (u32, usize)>,
     next_mesh: u32,
     next_image: u32,
@@ -232,10 +236,10 @@ fn to_live(
     let mut frame = pending.take().unwrap_or_default();
     let mesh_index: Vec<u32> = used_meshes
         .iter()
-        .map(|id| {
-            let (verts, indices, rigged) = &cache.meshes[id];
-            let key = verts.as_ptr() as usize;
-            match registry.meshes.get_mut(id) {
+        .map(|mesh| {
+            let (verts, indices, rigged) = (&mesh.verts, &mesh.indices, &mesh.rigged);
+            let key = mesh.id;
+            match registry.meshes.get_mut(&mesh.slot) {
                 Some((index, at, _)) if *at == key => *index,
                 // Rebuilt (the same asset, new data): sent again only when
                 // its contents changed, under the same index.
@@ -254,9 +258,10 @@ fn to_live(
                 None => {
                     let index = registry.next_mesh;
                     registry.next_mesh += 1;
-                    registry
-                        .meshes
-                        .insert(*id, (index, key, content_hash(verts, indices, *rigged)));
+                    registry.meshes.insert(
+                        mesh.slot,
+                        (index, key, content_hash(verts, indices, *rigged)),
+                    );
                     frame
                         .meshes
                         .push((index, verts.clone(), indices.clone(), *rigged));
@@ -295,10 +300,9 @@ fn to_live(
     *pending = Some(frame);
 }
 
-/// Mesh and image data copied while they still sit in the main world.
+/// Image data copied while it still sits in the main world.
 #[derive(Resource, Default)]
 struct Cache {
-    meshes: HashMap<AssetId<Mesh>, (Vec<EntityVertex>, Vec<u32>, bool)>,
     images: HashMap<AssetId<Image>, (u32, u32, Vec<u8>)>,
     /// Images sampled with repeat (rain, beams); the rest clamp.
     repeat: std::collections::HashSet<AssetId<Image>>,
@@ -327,46 +331,6 @@ pub fn plugin(app: &mut App) {
     );
 }
 
-fn mesh_data(mesh: &Mesh) -> Option<(Vec<EntityVertex>, Vec<u32>, bool)> {
-    use bevy::mesh::VertexAttributeValues as V;
-    // A mesh kept only in the render world panics on attribute access once
-    // extracted; until then (its first frame) it can still be read.
-    mesh.try_attribute_option(Mesh::ATTRIBUTE_POSITION).ok()?;
-    let positions = match mesh.attribute(Mesh::ATTRIBUTE_POSITION)? {
-        V::Float32x3(p) => p,
-        _ => return None,
-    };
-    let mut verts: Vec<EntityVertex> = positions
-        .iter()
-        .map(|&pos| EntityVertex {
-            pos,
-            color: [1.0; 4],
-            ..Default::default()
-        })
-        .collect();
-    if let Some(V::Float32x3(n)) = mesh.attribute(Mesh::ATTRIBUTE_NORMAL) {
-        verts.iter_mut().zip(n).for_each(|(v, n)| v.normal = *n);
-    }
-    if let Some(V::Float32x2(uv)) = mesh.attribute(Mesh::ATTRIBUTE_UV_0) {
-        verts.iter_mut().zip(uv).for_each(|(v, uv)| v.uv = *uv);
-    }
-    if let Some(V::Float32x4(c)) = mesh.attribute(Mesh::ATTRIBUTE_COLOR) {
-        verts.iter_mut().zip(c).for_each(|(v, c)| v.color = *c);
-    }
-    let rigged = match mesh.attribute(crate::renderer::rig_parts::ATTRIBUTE_PART) {
-        Some(V::Uint32(p)) => {
-            verts.iter_mut().zip(p).for_each(|(v, p)| v.part = *p);
-            true
-        }
-        _ => false,
-    };
-    let indices = match mesh.indices() {
-        Some(i) => i.iter().map(|i| i as u32).collect(),
-        None => (0..verts.len() as u32).collect(),
-    };
-    Some((verts, indices, rigged))
-}
-
 fn image_data(image: &Image) -> Option<(u32, u32, Vec<u8>)> {
     use bevy::render::render_resource::TextureFormat as F;
     if !matches!(
@@ -381,35 +345,12 @@ fn image_data(image: &Image) -> Option<(u32, u32, Vec<u8>)> {
     (data.len() >= bytes).then(|| (size.width, size.height, data[..bytes].to_vec()))
 }
 
-/// Copies meshes and images as they arrive, before the upload drops them.
+/// Copies images as they arrive, before the upload drops them.
 fn capture(
     mut cache: ResMut<Cache>,
-    mut mesh_events: MessageReader<AssetEvent<Mesh>>,
     mut image_events: MessageReader<AssetEvent<Image>>,
-    meshes: Res<Assets<Mesh>>,
     images: Res<Assets<Image>>,
 ) {
-    for event in mesh_events.read() {
-        match *event {
-            AssetEvent::Added { id } | AssetEvent::Modified { id } => {
-                if let Some(data) = meshes.get(id).and_then(mesh_data) {
-                    cache.meshes.insert(id, data);
-                }
-            }
-            AssetEvent::Removed { id } | AssetEvent::Unused { id } => {
-                cache.meshes.remove(&id);
-            }
-            _ => {}
-        }
-    }
-    // Meshes made before the dump's first frame (the sky's stars and
-    // moon at the loading screen) sent their events unseen too.
-    let missed: Vec<_> = meshes
-        .iter()
-        .filter(|(id, _)| !cache.meshes.contains_key(id))
-        .filter_map(|(id, mesh)| Some((id, mesh_data(mesh)?)))
-        .collect();
-    cache.meshes.extend(missed);
     // Images made before the dump's first frame (weather at the loading
     // screen) sent their events unseen: pick up any still readable.
     let missed: Vec<_> = images
@@ -440,40 +381,6 @@ fn capture(
     }
 }
 
-type Drawn<'a> = (
-    Entity,
-    &'a Mesh3d,
-    &'a MeshMaterial3d<EntityMaterial>,
-    &'a GlobalTransform,
-    &'a InheritedVisibility,
-    Option<&'a bevy::camera::visibility::RenderLayers>,
-    Option<&'a bevy::mesh::MeshTag>,
-    (
-        Has<crate::blockentities::BeRigNode>,
-        Has<crate::util::particles::draw::ParticleBatch>,
-        Has<crate::blockentities::BeamNode>,
-        Has<crate::renderer::tethers::WeatherLayer>,
-    ),
-);
-
-fn alpha_mode(code: u32) -> AlphaMode {
-    match code {
-        0 => AlphaMode::Opaque,
-        1 => AlphaMode::Mask(0.5),
-        3 => AlphaMode::Add,
-        _ => AlphaMode::Blend,
-    }
-}
-
-fn alpha_code(mode: AlphaMode) -> u32 {
-    match mode {
-        AlphaMode::Opaque => 0,
-        AlphaMode::Mask(_) => 1,
-        AlphaMode::Add => 3,
-        _ => 2,
-    }
-}
-
 /// Writes `env.bin`: fog, clear colour, lightmap, sky parts and clouds.
 #[allow(clippy::too_many_arguments, reason = "a system's queries")]
 fn write_env(
@@ -491,7 +398,7 @@ fn write_env(
     let mut add = |mesh: std::sync::Arc<crate::draw::MeshData>,
                    texture: Option<AssetId<Image>>,
                    tint: Vec4,
-                   alpha: AlphaMode,
+                   alpha: u32,
                    bias: f32,
                    kind: u32,
                    uv: [f32; 4],
@@ -519,7 +426,7 @@ fn write_env(
         parts.push(EnvPart {
             mesh: mesh_id,
             texture,
-            alpha: alpha_code(alpha),
+            alpha,
             kind,
             bias,
             pad: [piece, 0.0, 0.0],
@@ -533,7 +440,7 @@ fn write_env(
         std::sync::Arc<crate::draw::MeshData>,
         Option<AssetId<Image>>,
         Vec4,
-        AlphaMode,
+        u32,
         f32,
         u32,
         [f32; 4],
@@ -550,7 +457,7 @@ fn write_env(
                 crate::draw::Texture::Image(h) => Some(h.id()),
             },
             Vec4::from_array(part.tint),
-            alpha_mode(part.alpha),
+            part.alpha,
             part.bias,
             part.kind,
             part.uv,
@@ -682,9 +589,7 @@ fn write(
     time: Res<Time>,
     mut since: Local<f32>,
     cache: Res<Cache>,
-    drawn: Query<Drawn>,
-    materials: Res<Assets<EntityMaterial>>,
-    parts: Res<crate::renderer::rig_parts::RigParts>,
+    entities: Res<crate::draw::Entities>,
     view: Res<crate::client::view::View>,
     (env, images): (
         Res<crate::draw::Env>,
@@ -693,10 +598,6 @@ fn write(
     (terrain_textures, terrain_params): (
         Option<Res<crate::renderer::terrain_pool::TerrainTextures>>,
         Option<Res<crate::renderer::terrain_pool::TerrainParams>>,
-    ),
-    (ancestors, local_roots): (
-        Query<&ChildOf>,
-        Query<(), With<crate::renderer::player_model::LocalRigRoot>>,
     ),
 ) {
     if !due(&mut since, time.delta_secs()) {
@@ -711,110 +612,38 @@ fn write(
         return;
     };
     let world_camera = (eye.world_from_view, eye.fov);
-    let player_shadow = crate::shaderpack::packvertex::player_shadow();
-    // Whether a mesh sits in the local player's rig.
-    let under_local_rig = |mut at: Entity| {
-        for _ in 0..8 {
-            if local_roots.contains(at) {
-                return true;
-            }
-            match ancestors.get(at) {
-                Ok(parent) => at = parent.parent(),
-                Err(_) => return false,
-            }
-        }
-        false
-    };
-    // One snapshot of what a layer draws, seen from `(cam, fov)`.
-    let collect = |world: bevy::camera::visibility::RenderLayers| -> Collected {
-        let mut instances = Vec::new();
+    // One snapshot of a list: meshes and textures numbered by first use.
+    let collect = |list: &[crate::draw::EntityDraw]| -> Collected {
+        let mut instances = Vec::with_capacity(list.len());
         let mut used_meshes = Vec::new();
         let mut used_images = Vec::new();
         let (mut mesh_ids, mut image_ids) = (HashMap::new(), HashMap::new());
-        for (
-            entity,
-            mesh,
-            material,
-            transform,
-            visible,
-            layers,
-            tag,
-            (block, particle, beam, weather),
-        ) in &drawn
-        {
-            if layers.is_some_and(|l| !l.intersects(&world)) {
-                continue;
-            }
-            // The hidden local player still casts a pack's shadow.
-            let shadow_only = !visible.get();
-            if shadow_only && !(player_shadow && under_local_rig(entity)) {
-                continue;
-            }
-            // Particles go to `particles.bin`, as sprites.
-            if particle {
-                continue;
-            }
-            let Some(material) = materials.get(&material.0) else {
-                continue;
-            };
-            if !cache.meshes.contains_key(&mesh.0.id()) {
-                continue;
-            }
+        for draw in list {
             let next = mesh_ids.len() as u32;
-            let mesh_id = *mesh_ids.entry(mesh.0.id()).or_insert_with(|| {
-                used_meshes.push(mesh.0.id());
+            let mesh = *mesh_ids.entry(draw.mesh.id).or_insert_with(|| {
+                used_meshes.push(draw.mesh.clone());
                 next
             });
-            let texture = material
+            let image = draw
                 .texture
                 .as_ref()
-                .filter(|t| cache.images.contains_key(&t.id()))
-                .map_or(u32::MAX, |t| {
-                    let next = image_ids.len() as u32;
-                    *image_ids.entry(t.id()).or_insert_with(|| {
-                        used_images.push(t.id());
-                        next
-                    })
-                });
-            let p = &material.params;
+                .map(|t| t.id())
+                .filter(|id| cache.images.contains_key(id));
+            let texture = image.map_or(u32::MAX, |id| {
+                let next = image_ids.len() as u32;
+                *image_ids.entry(id).or_insert_with(|| {
+                    used_images.push(id);
+                    next
+                })
+            });
+            let repeat = image.is_some_and(|id| cache.repeat.contains(&id));
             instances.push(EntityInstance {
-                mesh: mesh_id,
+                mesh,
                 texture,
-                tag: tag.map_or(0, |t| t.0),
-                alpha: match material.alpha_mode {
-                    AlphaMode::Opaque => 0,
-                    AlphaMode::Mask(_) => 1,
-                    AlphaMode::Add => 3,
-                    _ => 2,
-                },
-                depth_bias: material.depth_bias,
-                kind: match (block, particle, beam, weather) {
-                    (true, ..) => 1,
-                    (_, true, ..) => 2,
-                    (_, _, true, _) => 3,
-                    (.., true) => 4,
-                    _ => 0,
-                } | if material
-                    .texture
-                    .as_ref()
-                    .is_some_and(|t| cache.repeat.contains(&t.id()))
-                {
-                    KIND_REPEAT
-                } else {
-                    0
-                } | if shadow_only { KIND_SHADOW_ONLY } else { 0 },
-                tint: p.tint.to_array(),
-                light: p.light.to_array(),
-                light0: p.light0.to_array(),
-                light1: p.light1.to_array(),
-                switches: p.switches.to_array(),
-                levels: [p.light_block.w, p.light_sky.w],
-                mode: p.mode,
-                see_through: u32::from(material.see_through),
-                transform: transform.to_matrix().to_cols_array(),
+                kind: draw.instance.kind | if repeat { KIND_REPEAT } else { 0 },
+                ..draw.instance
             });
         }
-
         (instances, used_meshes, used_images)
     };
     let snapshot =
@@ -834,20 +663,20 @@ fn write(
                 put(rgba);
             }
             put(&(used_meshes.len() as u32).to_le_bytes());
-            for (i, id) in used_meshes.iter().enumerate() {
-                let (verts, indices, rigged) = &cache.meshes[id];
+            for (i, mesh) in used_meshes.iter().enumerate() {
+                let (verts, indices, rigged) = (&mesh.verts, &mesh.indices, mesh.rigged);
                 for n in [
                     i as u32,
                     verts.len() as u32,
                     indices.len() as u32,
-                    u32::from(*rigged),
+                    u32::from(rigged),
                 ] {
                     put(&n.to_le_bytes());
                 }
                 put(bytemuck::cast_slice(verts));
                 put(bytemuck::cast_slice(indices));
             }
-            let rows = parts.rows();
+            let rows = &entities.rows;
             put(&(rows.len() as u32).to_le_bytes());
             put(bytemuck::cast_slice(rows));
             put(&(instances.len() as u32).to_le_bytes());
@@ -857,27 +686,19 @@ fn write(
     // Live, entities go straight across (`LiveEntities`): new meshes and
     // textures once, then each frame's instances and pose rows.
     let live = super::live::wanted();
-    let world_layer = bevy::camera::visibility::RenderLayers::default();
     let out = if live {
-        to_live(
-            LIVE_WORLD,
-            &cache,
-            collect(world_layer),
-            bytemuck::cast_slice(parts.rows()),
-        );
+        to_live(LIVE_WORLD, &cache, collect(&entities.world), &entities.rows);
         Vec::new()
     } else {
-        snapshot(collect(world_layer), world_camera)
+        snapshot(collect(&entities.world), world_camera)
     };
     // The inventory's player figure, on its own layer, for the native GUI.
     if live && view.figure_ready {
-        let figure =
-            bevy::camera::visibility::RenderLayers::layer(crate::client::view::FIGURE_LAYER);
         to_live(
             LIVE_FIGURE,
             &cache,
-            collect(figure),
-            bytemuck::cast_slice(parts.rows()),
+            collect(&entities.figure),
+            &entities.rows,
         );
     }
 

@@ -6,6 +6,7 @@ pub mod antialias;
 pub(crate) mod atlas;
 pub(crate) mod block_anim;
 pub mod clouds;
+mod entity_draw;
 pub mod entity_material;
 pub mod environment;
 pub mod esp_material;

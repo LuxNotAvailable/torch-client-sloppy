@@ -55,26 +55,26 @@ These keep the native renderer fed. They must move to the game-side code that su
 
 ## 4. Entities, sky, overlays (`entity_dump.rs`, from Bevy meshes)
 
-The whole capture reads Bevy render components: `Mesh3d`, `MeshMaterial3d<_>`, `GlobalTransform`, `InheritedVisibility`, `RenderLayers`, `MeshTag`, `Assets<Mesh>`, `Assets<Image>`, `AssetEvent`. That is the biggest thing to replace.
+Done (step 4): `entity_dump` reads only `draw` lists, `View` and Bevy `Image`s. The game-side collectors (`renderer/entity_draw.rs`, `hand.rs`, `sky.rs`, `clouds.rs`, `overlays.rs`, `screen_effects.rs`, `tethers/precipitation.rs`) still read the Bevy entity trees, and leave `renderer/` with them in step 5.
 
 | Data | Defined | Used (vk) |
 |---|---|---|
-| Mesh/image cache from `AssetEvent<Mesh/Image>` | meshes: `draw::bridge::Meshes` (game side, for producers still building Bevy meshes); the env path uses only `MeshData`. Entities still read `vk`'s `Cache` | `entity_dump.rs` `Cache`, `capture`, `mesh_data`, `image_data`, `repeats` |
-| `entity_material::EntityMaterial` (per-entity params) | `renderer/entity_material.rs:124, 144` | `entity_dump.rs:44, 603–617` `Drawn`, `:974` |
+| Mesh/image cache from `AssetEvent<Mesh/Image>` | meshes: replaced by `draw::bridge::Meshes` (game side; `MeshData::slot` keeps a rebuilt asset's GPU index). Images stay Bevy `Image`s; `vk` keeps their pixel cache (`Cache`, `image_data`, `repeats`) | `entity_dump.rs` `Cache`, `capture` |
+| `entity_material::EntityMaterial` (per-entity params) | replaced: `draw::Entities` (filled by `renderer/entity_draw.rs`) | `entity_dump.rs` `write` |
 | `entity_material::GLINT_ITEM` (glint image handle) | `renderer/entity_material.rs:247` | `entity_dump.rs:882`; `live.rs:724` |
-| `rig_parts::{RigParts, ATTRIBUTE_PART}` (GPU pose rows, part attribute) | `renderer/rig_parts.rs:21, 56` | `entity_dump.rs:516, 975, 1197` |
-| `player_model::LocalRigRoot` | `renderer/player_model.rs:1997` | `entity_dump.rs:1001` |
-| `tethers::WeatherLayer` | `renderer/tethers/mod.rs:196` | `entity_dump.rs:615` |
-| `blockentities::{BeRigNode, BeamNode}`, `particles::draw::ParticleBatch` (tags) | `src/blockentities`, `src/util/particles/draw.rs` | `entity_dump.rs:611–616` |
+| `rig_parts::{RigParts, ATTRIBUTE_PART}` (GPU pose rows, part attribute) | rows: `draw::Entities::rows`; `ATTRIBUTE_PART` read by `draw::bridge` | — |
+| `player_model::LocalRigRoot` | moved to the collector (`renderer/entity_draw.rs`) | — |
+| `tethers::WeatherLayer` | moved to the collector | — |
+| `blockentities::{BeRigNode, BeamNode}`, `particles::draw::ParticleBatch` (tags) | moved to the collector | — |
 | `sky::{SkyPart, SkyPartMaterial, SKY_SCALE}` | replaced: `draw::Env::sky` (filled by `renderer/sky.rs` `update_sky`; no Bevy sky entities), `draw::SKY_SCALE` | `entity_dump.rs` `write_env` |
 | `clouds::CloudLayer` + `StandardMaterial` | replaced: `draw::Env::clouds` (filled by `renderer/clouds.rs`) | `entity_dump.rs` `write_env` |
 | `screen_effects::Overlay` (screen overlays) | replaced: `draw::Env::screen` (view space; `write_env` applies the hand projection) | `entity_dump.rs` `write_env` |
 | `overlays::{BlockOutlineMarker, BreakOverlayMarker, HitboxMarker, ChunkBorderMarker, EspMarker, OUTLINE_WIDTH}` | replaced: `draw::Env::overlays` (filled by `overlays::fill_draw_list`). ESP and structure-block bounds keep Bevy meshes; `vk` never drew them | `entity_dump.rs` `write_env` |
-| `glint::GlintMaterial` | `renderer/glint.rs:10, 45` | `entity_dump.rs:204, 666, 996` |
+| `glint::GlintMaterial` | moved to `hand.rs` `fill_draw_list` | — |
 | `weather::{ASSETS, SHEETS, NATIVE}` | replaced: `draw::Env::weather` (filled by `tethers/precipitation.rs`); `NATIVE` stays (set by `live.rs`) | `live.rs:618` |
 | `screenshot::request_numbered` (vkview reference frame) | `renderer/screenshot.rs:16` | `entity_dump.rs:1208` |
 | Particles: `util::particles::{LiveParticles, ParticleAtlas}`, `live_sprites` | replaced: `draw::Particles` (filled by `util/particles/draw.rs` `fill_draw_list`) | `entity_dump.rs` `write_particles` |
-| `write` system (all of the above) | — | `entity_dump.rs:968–1235`; `write_env` 646–966 |
+| `write` system | reads `draw::{Entities, Env, Particles}`, `View`, the lightmap pixels, `TerrainTextures`/`TerrainParams`, `GLINT_ITEM`, `screenshot` | `entity_dump.rs` |
 
 ## 5. Shader packs (`vk/pack/*`)
 
@@ -115,4 +115,5 @@ The pack front end lives in `renderer/packdraw`; the native side compiles and ru
    - Batch 2, done: sky, clouds and weather fill `draw::Env` with game-side meshes (`draw::MeshData`); `write_env` takes those beside the remaining Bevy meshes. The wgpu path no longer draws the sky or clouds. Producers stay in `renderer/` until step 5 (they read `environment` and `FrameView`).
    - Batch 3, done: screen overlays (`draw::Env::screen`) and world overlays (`draw::Env::overlays`: outline, cracks, chunk borders, hitboxes). wgpu no longer draws them.
    - Batch 4, done: the hand and held-item glints fill `draw::Env`; their Bevy meshes go through `draw::bridge` (moved from `vk`'s capture). `write_env` reads no Bevy meshes or materials now. The hand's entity tree stays until step 5.
+   - Batch 5, done: entities fill `draw::Entities` (`renderer/entity_draw.rs`); `vk` dropped its mesh cache, and its live registry keys meshes by `MeshData::slot`. Still in `vk` from `renderer/`: `LightmapPixels`, `TerrainTextures`/`TerrainParams`, `GLINT_ITEM`, `screenshot` (sections 2, 6).
 5. Replace screenshots and GUI images (section 6) with Torch's own image types. Then drop `bevy_render`, `bevy_pbr`, `bevy_core_pipeline` and wgpu.

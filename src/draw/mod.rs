@@ -148,10 +148,12 @@ pub fn alpha_of(mode: bevy::prelude::AlphaMode) -> u32 {
 }
 
 /// A mesh the game built. `id` is new for every build, so a renderer can
-/// tell a rebuilt mesh from the one it holds.
+/// tell a rebuilt mesh from the one it holds; `slot` stays with whatever
+/// the mesh is rebuilt for, so a renderer can replace it in place.
 #[derive(Debug)]
 pub struct MeshData {
     pub id: u64,
+    pub slot: u64,
     pub verts: Vec<EntityVertex>,
     pub indices: Vec<u32>,
     /// Vertices name rig parts (`EntityVertex::part`).
@@ -159,14 +161,28 @@ pub struct MeshData {
 }
 
 impl MeshData {
+    /// A mesh in a slot of its own.
     pub fn new(
         verts: Vec<EntityVertex>,
         indices: Vec<u32>,
         rigged: bool,
     ) -> std::sync::Arc<MeshData> {
+        Self::in_slot(None, verts, indices, rigged)
+    }
+
+    /// A mesh in `slot` (a fresh one when `None`). Slots the caller picks
+    /// have the top bit set; fresh ones never do.
+    pub fn in_slot(
+        slot: Option<u64>,
+        verts: Vec<EntityVertex>,
+        indices: Vec<u32>,
+        rigged: bool,
+    ) -> std::sync::Arc<MeshData> {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         std::sync::Arc::new(MeshData {
-            id: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            id,
+            slot: slot.map_or(id, |s| s | 1 << 63),
             verts,
             indices,
             rigged,
@@ -236,4 +252,24 @@ pub struct Env {
     /// Glints over held items, each textured with its item's texture as the
     /// mask.
     pub hand_glints: Vec<EnvDraw>,
+}
+
+/// One entity mesh to draw: `instance` as the renderer uploads it, except
+/// `mesh` and `texture`, which the renderer fills from these.
+#[derive(Clone, Debug)]
+pub struct EntityDraw {
+    pub mesh: std::sync::Arc<MeshData>,
+    pub texture: Option<bevy::prelude::Handle<bevy::image::Image>>,
+    pub instance: EntityInstance,
+}
+
+/// This frame's entities (mobs, players, block entities, dropped items,
+/// beams): the world's, the inventory figure's, and the rig pose rows
+/// (`EntityInstance::tag` indexes them).
+#[derive(bevy::prelude::Resource, Default)]
+pub struct Entities {
+    pub world: Vec<EntityDraw>,
+    pub figure: Vec<EntityDraw>,
+    /// The top three rows of each part matrix.
+    pub rows: Vec<[f32; 12]>,
 }
