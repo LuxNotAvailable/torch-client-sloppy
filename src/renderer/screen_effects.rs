@@ -322,7 +322,9 @@ fn update(
             Overlay::Water => (
                 Texture::Image(water_tex.clone()),
                 {
-                    let offset = Vec2::new(yaw, pitch) / WATER_SCROLL;
+                    // Vanilla's (-yRot, xRot) / 64; ours are yaw = -yRot - 180,
+                    // pitch = -xRot.
+                    let offset = Vec2::new(yaw, -pitch) / WATER_SCROLL;
                     [WATER_TILES, WATER_TILES, offset.x, offset.y]
                 },
                 Color::srgba(water_light, water_light, water_light, WATER_ALPHA),
