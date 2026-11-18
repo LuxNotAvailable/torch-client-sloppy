@@ -165,21 +165,10 @@ fn mobile_input(
                         .close_button
                         .contains(xf.to_local(ElementId::ChatButton, p.pos))
             });
-        let swapped = gui.screen == Screen::Chat
-            && crate::platform::orientation::SUPPORTED
-            && ui.pointers.iter().any(|p| {
-                p.pressed
-                    && layout
-                        .texting_button
-                        .contains(xf.to_local(ElementId::ChatButton, p.pos))
-            });
         ui.release_all();
         if closed {
             let next = close_target(gui);
             gui.nav = Some(next);
-            swallow_click(&mut gui_input);
-        } else if swapped {
-            crate::gui::chat::set_texting(!crate::gui::chat::texting());
             swallow_click(&mut gui_input);
         }
         return;
@@ -439,17 +428,6 @@ pub fn draw(p: &mut Painter, ctx: &ScreenCtx, view: View, hud: &mut Hud) {
             hud.draw(p, vw, vh, ElementId::ChatButton, |p| {
                 button(p, layout.close_button, "X", false, false);
             });
-            if view.screen == Screen::Chat && crate::platform::orientation::SUPPORTED {
-                hud.follow(p, vw, vh, ElementId::ChatButton, |p| {
-                    button(
-                        p,
-                        layout.texting_button,
-                        "SWAP",
-                        false,
-                        crate::gui::chat::texting(),
-                    );
-                });
-            }
         }
         return;
     }

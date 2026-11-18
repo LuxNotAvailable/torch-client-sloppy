@@ -1441,7 +1441,8 @@ fn log_frame_rate(
     index: Res<ChunkIndex>,
     terrain_stats: Res<super::terrain_pool::TerrainStats>,
     gui: Res<crate::gui::GuiState>,
-    device: Res<bevy::render::renderer::RenderDevice>,
+    // Absent under the native renderer (Bevy's has no backend).
+    device: Option<Res<bevy::render::renderer::RenderDevice>>,
     mut frames: Local<u32>,
     mut since: Local<f32>,
     mut limits_logged: Local<bool>,
@@ -1452,7 +1453,7 @@ fn log_frame_rate(
     if *since < REPORT_EVERY {
         return;
     }
-    if !*limits_logged {
+    if !*limits_logged && let Some(device) = device {
         *limits_logged = true;
         let limits = device.limits();
         crate::log_info!(

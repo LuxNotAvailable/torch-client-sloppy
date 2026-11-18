@@ -669,7 +669,6 @@ pub fn set_texting(on: bool) {
     if TEXTING.swap(on, std::sync::atomic::Ordering::Relaxed) == on {
         return;
     }
-    crate::platform::orientation::set_portrait(on);
     crate::platform::keyboard::pin(on);
 }
 

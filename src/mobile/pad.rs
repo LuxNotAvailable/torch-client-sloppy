@@ -162,7 +162,6 @@ pub struct Layout {
     pub round_cells: Option<[(Cell, Vec2); 4]>,
     pub use_button: Rect,
     pub close_button: Rect,
-    pub texting_button: Rect,
     pub no_attack: NoAttackZone,
     hotbar: HotbarGeom,
     vh: f32,
@@ -241,12 +240,6 @@ impl Layout {
                 w: cell,
                 h: cell,
             },
-            texting_button: Rect {
-                x: vw - margin - cell * 2.0 - margin,
-                y: margin,
-                w: cell,
-                h: cell,
-            },
             no_attack: NoAttackZone::around(use_button),
             hotbar: HotbarGeom::new(vw, vh),
             vh,
@@ -274,7 +267,7 @@ impl Layout {
 
     #[cfg(test)]
     pub fn hit(&self, p: Vec2) -> Control {
-        self.hit_in(p, &Transforms::IDENTITY)
+        self.hit_in(p, &Transforms::default())
     }
 
     pub fn hit_in(&self, screen: Vec2, xf: &Transforms) -> Control {
@@ -570,17 +563,6 @@ mod tests {
                 !slow.jump_double_tap(i as f32, 0.35),
                 "press {i} should not double"
             );
-        }
-    }
-
-    #[test]
-    fn texting_button_sits_left_of_close() {
-        for (vw, vh) in [(VW, VH), (VH, VW)] {
-            let l = Layout::new(vw, vh, 0.0, Movement::Buttons);
-            let (s, c) = (l.texting_button, l.close_button);
-            assert!(s.x + s.w < c.x);
-            assert_eq!((s.y, s.h), (c.y, c.h));
-            assert!(s.x > 0.0);
         }
     }
 

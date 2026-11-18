@@ -14,7 +14,6 @@ pub(crate) mod keyboard;
 #[cfg(target_os = "android")]
 pub(crate) mod logcat;
 pub(crate) mod notify;
-pub(crate) mod orientation;
 pub(crate) mod pointer;
 pub(crate) mod screenshot;
 pub(crate) mod storage;

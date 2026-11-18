@@ -336,6 +336,11 @@ target_sdk_version = 36
 [[package.metadata.android.uses_permission]]
 name = "android.permission.INTERNET"
 
+# Landscape only, either way up (as android/AndroidManifest.xml).
+[package.metadata.android.application.activity]
+orientation = "sensorLandscape"
+config_changes = "orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|navigation|uiMode|density|touchscreen"
+
 [[package.metadata.android.uses_feature]]
 name = "android.hardware.touchscreen"
 required = true

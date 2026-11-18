@@ -172,7 +172,7 @@ const VSYNC: &str = "VSync";
 #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
 const FULLSCREEN: &str = "Fullscreen";
 
-#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+#[cfg(not(target_arch = "wasm32"))]
 const RENDERER: &str = "Renderer";
 
 #[cfg(feature = "mobile_ui")]
@@ -1250,7 +1250,7 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         f.tip(&tips::GUI_SCALE);
         f.slider(&mut o.gamma, 0, GAMMA_MAX, brightness_label);
         f.tip(&tips::BRIGHTNESS);
-        #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+        #[cfg(not(target_arch = "wasm32"))]
         {
             let backend = o.render_backend;
             let pending = backend != crate::renderer::systems::started_backend();
@@ -2500,7 +2500,9 @@ mod tests {
         let shader = cfg!(feature = "shader_support") as u32 as f32;
         let desktop =
             cfg!(all(not(target_arch = "wasm32"), not(target_os = "android"))) as u32 as f32;
-        let rows = 1.0 + (3.0 + 2.0 * desktop) + (2.0 + shader) + 7.0 + 1.0 + (2.0 + shader);
+        // The renderer choice shows wherever Vulkan runs.
+        let native = cfg!(not(target_arch = "wasm32")) as u32 as f32;
+        let rows = 1.0 + (3.0 + desktop + native) + (2.0 + shader) + 7.0 + 1.0 + (2.0 + shader);
         assert_eq!(
             state.video_list.content_h,
             6.0 * HEADER_H + 5.0 * HEADER_PAD_TOP + rows * ROW_H + LIST_PAD_BOTTOM

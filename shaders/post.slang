@@ -4,7 +4,9 @@
 //
 // Push: more.x the scene's texture index, more.y the effect flags, more.z
 // 1 for FXAA; params.xy the scene's texel size, params.zw the output's
-// size in pixels.
+// size in pixels; ids.x 1 to turn the scene by the angle whose cosine and
+// sine are ids.y and ids.z (as floats): the pre-rotation of a frame drawn
+// upright onto a turned swapchain.
 
 import common;
 
@@ -191,6 +193,12 @@ float3 fxaa(float2 uv) {
 [shader("fragment")]
 float4 post_fragment(float4 position: SV_Position): SV_Target {
     float2 uv = position.xy / pc.params.zw;
+    if (pc.ids.x != 0) {
+        float c = asfloat(pc.ids.y);
+        float s = asfloat(pc.ids.z);
+        float2 n = uv * 2 - 1;
+        uv = float2(c * n.x - s * n.y, s * n.x + c * n.y) * 0.5 + 0.5;
+    }
     float3 color = pc.more.z != 0 ? fxaa(uv) : graded(uv);
     return float4(color, 1);
 }

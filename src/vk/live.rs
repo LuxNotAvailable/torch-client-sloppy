@@ -45,7 +45,7 @@ pub fn wanted() -> bool {
         Ok(v) if v.eq_ignore_ascii_case("wgpu") || v.eq_ignore_ascii_case("legacy") => false,
         // Else the Renderer setting, on desktop.
         _ => {
-            cfg!(not(any(target_os = "android", target_arch = "wasm32")))
+            cfg!(not(target_arch = "wasm32"))
                 && crate::gui::RenderBackend::stored() == crate::gui::RenderBackend::Native
         }
     })
@@ -187,6 +187,9 @@ struct Live {
     panorama: Option<super::panorama::PanoramaScene>,
     /// FXAA over a pack's frame (the pack draws into its scene image).
     pack_post: Option<super::post::PostPass>,
+    /// On a turned display (Android): the frame drawn upright, then turned
+    /// onto the swapchain in one pass (pre-rotation for every pass at once).
+    upright: Option<super::post::PostPass>,
     /// The shader render scale (percent): packs draw at that share of the
     /// window, final scaling up.
     pack_scale: u32,
@@ -235,7 +238,7 @@ fn setup(world: &mut World) -> Result<Live, SetupError> {
     let frames = Frames::new(&ctx)?;
     let memory = Memory::new(&ctx)?;
     let mut bindless = Bindless::new(&ctx)?;
-    let cache = std::env::temp_dir().join("torch-native-pipelines.bin");
+    let cache = pipeline_cache_path();
     let pipelines = Pipelines::new(&ctx, bindless.layout, Some(cache))?;
     let format = swapchain
         .as_ref()
@@ -268,6 +271,7 @@ fn setup(world: &mut World) -> Result<Live, SetupError> {
         pack_scale: 100,
         post: Default::default(),
         pack_post: None,
+        upright: None,
         frame: 0,
         size,
         stale: false,
@@ -275,8 +279,23 @@ fn setup(world: &mut World) -> Result<Live, SetupError> {
     })
 }
 
+/// Where the pipeline cache lives: the temp folder, or on Android (where
+/// that isn't the app's) the game's own data folder.
+fn pipeline_cache_path() -> std::path::PathBuf {
+    #[cfg(target_os = "android")]
+    {
+        crate::platform::storage::dir().join("native-pipelines.bin")
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        std::env::temp_dir().join("torch-native-pipelines.bin")
+    }
+}
+
 /// What the main thread hands the render thread each frame.
 struct FrameInput {
+    /// The window's surface came or went (Android pause and resume).
+    surface: Option<SurfaceChange>,
     size: Option<(u32, u32)>,
     gui: crate::gui::pool::GuiFrame,
     textures: (Option<[TextureData; 2]>, Option<TextureData>),
@@ -287,6 +306,23 @@ struct FrameInput {
     post: super::post::Settings,
     vsync: bool,
     pack_scale: u32,
+}
+
+/// The window's raw handles, sent to the render thread for a new surface.
+struct Handles(
+    raw_window_handle::RawDisplayHandle,
+    raw_window_handle::RawWindowHandle,
+);
+// SAFETY: the handles name a window that outlives the surface made from
+// them: the main thread waits for the render thread to drop the surface
+// before the window goes (`SurfaceChange::Lost`).
+unsafe impl Send for Handles {}
+
+enum SurfaceChange {
+    /// The window went (the app paused): drop the swapchain and surface.
+    Lost,
+    /// A new window (resumed): make a surface for it.
+    New(Handles),
 }
 
 /// The render thread (8.5): it owns the renderer and draws frame N while
@@ -353,13 +389,31 @@ fn spawn(mut live: Live) -> RenderThread {
     }
 }
 
-fn draw_frame(world: &mut World, mut last: Local<Option<std::time::Instant>>) {
+fn draw_frame(
+    world: &mut World,
+    mut last: Local<Option<std::time::Instant>>,
+    mut window_id: Local<Option<u64>>,
+) {
     use std::sync::atomic::Ordering;
     report_times(&mut last);
     let _timed = Timed::new(4);
+    let handles = world
+        .query_filtered::<&RawHandleWrapper, With<PrimaryWindow>>()
+        .iter(world)
+        .next()
+        .map(|h| Handles(h.get_display_handle(), h.get_window_handle()));
+    let id = handles.as_ref().map(|h| {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        h.1.hash(&mut hasher);
+        hasher.finish()
+    });
     if world.get_non_send_resource::<RenderThread>().is_none() {
         match setup(world) {
-            Ok(live) => world.insert_non_send_resource(spawn(live)),
+            Ok(live) => {
+                *window_id = id;
+                world.insert_non_send_resource(spawn(live));
+            }
             Err(e) => {
                 // No window yet is normal on the first frames; the rest is fatal.
                 if e.0 != "no window yet" {
@@ -453,7 +507,19 @@ fn draw_frame(world: &mut World, mut last: Local<Option<std::time::Instant>>) {
         }
         None => (Default::default(), true),
     };
+    // Android drops the window on pause and makes a new one on resume.
+    let surface = if id == *window_id {
+        None
+    } else {
+        *window_id = id;
+        Some(match handles {
+            Some(h) => SurfaceChange::New(h),
+            None => SurfaceChange::Lost,
+        })
+    };
+    let lost = matches!(surface, Some(SurfaceChange::Lost));
     let input = FrameInput {
+        surface,
         size,
         gui,
         textures,
@@ -493,8 +559,9 @@ fn draw_frame(world: &mut World, mut last: Local<Option<std::time::Instant>>) {
     while thread.done.try_recv().is_ok() {
         thread.outstanding -= 1;
     }
-    // In step: this frame is drawn before the main thread goes on.
-    while thread.in_step && thread.outstanding > 0 {
+    // In step: this frame is drawn before the main thread goes on. A lost
+    // window waits too, so the surface is gone before the window is.
+    while (thread.in_step || lost) && thread.outstanding > 0 {
         if thread.done.recv().is_err() {
             break;
         }
@@ -512,6 +579,30 @@ fn draw_frame(world: &mut World, mut last: Local<Option<std::time::Instant>>) {
 impl Live {
     /// One frame on the render thread, from what the main thread gathered.
     fn frame(&mut self, f: FrameInput) {
+        match f.surface {
+            Some(SurfaceChange::Lost) => {
+                self.ctx.idle();
+                if let Some(old) = self.swapchain.take() {
+                    old.destroy(&self.ctx);
+                }
+                if let Err(e) = self.ctx.set_surface(None) {
+                    error!("native renderer: surface: {}", e.0);
+                }
+                info!("native renderer: window lost, paused");
+            }
+            Some(SurfaceChange::New(Handles(display, window))) => {
+                self.ctx.idle();
+                if let Some(old) = self.swapchain.take() {
+                    old.destroy(&self.ctx);
+                }
+                match self.ctx.set_surface(Some((display, window))) {
+                    Ok(()) => info!("native renderer: new window, resumed"),
+                    Err(e) => error!("native renderer: surface: {}", e.0),
+                }
+                self.stale = true;
+            }
+            None => {}
+        }
         if let Some(size) = f.size
             && size != self.size
         {
@@ -676,6 +767,9 @@ impl Drop for Live {
                 p.destroy(&self.ctx, &memory);
             }
             if let Some(p) = self.pack_post.take() {
+                p.destroy(&self.ctx, &memory);
+            }
+            if let Some(p) = self.upright.take() {
                 p.destroy(&self.ctx, &memory);
             }
             for (b, ..) in self.readbacks.drain(..) {
@@ -961,6 +1055,10 @@ impl Live {
     }
 
     fn recreate(&mut self) {
+        // Paused: no surface until the window comes back.
+        if self.ctx.surface == vk::SurfaceKHR::null() {
+            return;
+        }
         self.ctx.idle();
         match Swapchain::new(&self.ctx, self.size, self.vsync, self.swapchain.as_ref()) {
             Ok(Some(new)) => {
@@ -1019,10 +1117,13 @@ impl Live {
             scene.destroy(&self.ctx, &self.memory);
         }
         self.uploads.begin(slot);
-        let rotation = swapchain.pre_rotation();
-        let image = swapchain.images[recording.image_index as usize];
-        let view = swapchain.views[recording.image_index as usize];
-        let extent = swapchain.extent;
+        let mut rotation = swapchain.pre_rotation();
+        let present = (
+            swapchain.images[recording.image_index as usize],
+            swapchain.views[recording.image_index as usize],
+        );
+        let (mut image, mut view) = present;
+        let mut extent = swapchain.extent;
         if self.gpu_timing.is_none()
             && crate::platform::env::var("MC_NATIVE_GPU_TIMING").is_ok_and(|v| v == "1")
         {
@@ -1072,6 +1173,34 @@ impl Live {
             vk::ImageAspectFlags::COLOR,
             vk::ImageLayout::UNDEFINED,
         );
+        // A turned display: every pass draws upright into the upright
+        // image, turned onto the swapchain at the end.
+        let mut turn = None;
+        if let Some((angle, upright)) = swapchain.upright() {
+            if self.upright.is_none() {
+                match super::post::PostPass::new(&self.ctx, &self.pipelines, swapchain.format.format) {
+                    Ok(p) => self.upright = Some(p),
+                    Err(e) => error!("native renderer: pre-rotation: {}", e.0),
+                }
+            }
+            if let Some(p) = &mut self.upright {
+                match p.scene(
+                    &self.ctx,
+                    &self.memory,
+                    &mut self.bindless,
+                    &mut graph,
+                    upright,
+                    self.frame,
+                ) {
+                    Ok((i, v)) => {
+                        (image, view, extent) = (i, v, upright);
+                        rotation = super::swapchain::PreRotation::none(upright);
+                        turn = Some(angle);
+                    }
+                    Err(e) => error!("native renderer: pre-rotation: {}", e.0),
+                }
+            }
+        }
         // The world, when there's one to see; in menus, the panorama.
         let mut drew_world = false;
         if self.menu {
@@ -1224,6 +1353,7 @@ impl Live {
                         extent,
                         0,
                         true,
+                        None,
                     );
                 }
                 // The screen overlays over the pack's frame, as without one.
@@ -1325,7 +1455,20 @@ impl Live {
                 Err(e) => error!("native renderer: screenshot: {}", e.0),
             }
         }
-        graph.pass("present", &[(image, Use::Present)], &[], |_| {});
+        if let (Some(angle), Some(p)) = (turn, &self.upright) {
+            p.record(
+                &self.ctx,
+                &self.bindless,
+                &self.pipelines,
+                &mut graph,
+                present,
+                swapchain.extent,
+                0,
+                false,
+                Some(angle),
+            );
+        }
+        graph.pass("present", &[(present.0, Use::Present)], &[], |_| {});
         drop(graph);
         let timed = Timed::new(11);
         let ended = self.frames.end(&self.ctx, swapchain, recording);

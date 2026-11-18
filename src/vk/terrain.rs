@@ -2173,6 +2173,7 @@ impl TerrainScene {
                 extent,
                 effects,
                 settings.fxaa,
+                None,
             );
         } else {
             self.record_scene(

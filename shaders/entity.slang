@@ -185,6 +185,8 @@ float3 glint(float2 uv) {
     return texture_at(pc.more.z).SampleLevel(g_samplers[SAMPLER_LINEAR], st, 0).rgb * 0.75;
 }
 
+// A cut-out texel returns alpha -1, for the entry point to discard: the
+// PowerVR compiler fails on a discard inside a called function.
 float4 entity_shade(VertexOut in, bool front, bool blend) {
     ByteAddressBuffer instances = buffer_ro(pc.ids.x);
     uint at = in.instance * INSTANCE_SIZE;
@@ -203,7 +205,7 @@ float4 entity_shade(VertexOut in, bool front, bool blend) {
     // Blended draws skip empty texels too: nothing to blend (rain is
     // mostly empty sheets).
     if (color.a < (blend ? max(light.a, 1.0 / 255.0) : light.a)) {
-        discard;
+        return float4(0, 0, 0, -1);
     }
     float4 tint = asfloat(instances.Load4(at + I_TINT));
     float4 light0 = asfloat(instances.Load4(at + I_LIGHT0));
@@ -234,12 +236,20 @@ float4 entity_shade(VertexOut in, bool front, bool blend) {
 
 [shader("fragment")]
 float4 entity_solid(VertexOut in, bool front: SV_IsFrontFace): SV_Target {
-    return float4(entity_shade(in, front, false).rgb, 1);
+    float4 color = entity_shade(in, front, false);
+    if (color.a < 0) {
+        discard;
+    }
+    return float4(color.rgb, 1);
 }
 
 [shader("fragment")]
 float4 entity_blend(VertexOut in, bool front: SV_IsFrontFace): SV_Target {
-    return entity_shade(in, front, true);
+    float4 color = entity_shade(in, front, true);
+    if (color.a < 0) {
+        discard;
+    }
+    return color;
 }
 
 // Additive (Bevy's `AlphaMode::Add`, as the game draws beams and
@@ -247,5 +257,8 @@ float4 entity_blend(VertexOut in, bool front: SV_IsFrontFace): SV_Target {
 [shader("fragment")]
 float4 entity_add(VertexOut in, bool front: SV_IsFrontFace): SV_Target {
     float4 color = entity_shade(in, front, true);
+    if (color.a < 0) {
+        discard;
+    }
     return float4(color.rgb * color.a, 0);
 }

@@ -238,14 +238,44 @@ impl Swapchain {
     /// The turn this swapchain's frames need. The image keeps the display's
     /// native orientation, so the picture is turned the other way from the
     /// transform the display will apply.
-    pub fn pre_rotation(&self) -> PreRotation {
+    fn angle(&self) -> f32 {
         use std::f32::consts::FRAC_PI_2;
-        let angle = match self.transform {
+        match self.transform {
             vk::SurfaceTransformFlagsKHR::ROTATE_90 => FRAC_PI_2,
             vk::SurfaceTransformFlagsKHR::ROTATE_180 => 2.0 * FRAC_PI_2,
             vk::SurfaceTransformFlagsKHR::ROTATE_270 => 3.0 * FRAC_PI_2,
             _ => 0.0,
+        }
+    }
+
+    /// For a frame drawn upright and turned onto the swapchain in one
+    /// pass: the cosine and sine that take a swapchain position (in clip
+    /// space) back to the upright frame's, and that frame's extent. `None`
+    /// with no turn.
+    pub fn upright(&self) -> Option<((f32, f32), vk::Extent2D)> {
+        let angle = self.angle();
+        if angle == 0.0 {
+            return None;
+        }
+        // The same turn as `pre_rotation`'s: sampling the upright frame
+        // through it (checked on the Pixel; the inverse is 180° out).
+        let back = ROTATION_SIGN * angle;
+        let quarter = self.transform.intersects(
+            vk::SurfaceTransformFlagsKHR::ROTATE_90 | vk::SurfaceTransformFlagsKHR::ROTATE_270,
+        );
+        let extent = if quarter {
+            vk::Extent2D {
+                width: self.extent.height,
+                height: self.extent.width,
+            }
+        } else {
+            self.extent
         };
+        Some(((back.cos(), back.sin()), extent))
+    }
+
+    pub fn pre_rotation(&self) -> PreRotation {
+        let angle = self.angle();
         let quarter = self.transform.intersects(
             vk::SurfaceTransformFlagsKHR::ROTATE_90 | vk::SurfaceTransformFlagsKHR::ROTATE_270,
         );

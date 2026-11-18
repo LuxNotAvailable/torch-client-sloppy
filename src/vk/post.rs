@@ -105,7 +105,10 @@ impl PostPass {
                 "post scene",
                 extent,
                 self.format,
-                vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
+                // Transfer: screenshots read a pre-rotated frame's scene.
+                vk::ImageUsageFlags::COLOR_ATTACHMENT
+                    | vk::ImageUsageFlags::SAMPLED
+                    | vk::ImageUsageFlags::TRANSFER_SRC,
                 vk::ImageAspectFlags::COLOR,
             )?;
             let index = bindless
@@ -134,12 +137,16 @@ impl PostPass {
         extent: vk::Extent2D,
         flags: u32,
         fxaa: bool,
+        turn: Option<(f32, f32)>,
     ) {
         let Some((scene, index)) = &self.scene else {
             return;
         };
         let values = Push {
-            ids: [0; 4],
+            ids: match turn {
+                Some((c, s)) => [1, c.to_bits(), s.to_bits(), 0],
+                None => [0; 4],
+            },
             more: [*index, flags, u32::from(fxaa), 0],
             params: [
                 1.0 / scene.extent.width as f32,
