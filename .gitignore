@@ -6,3 +6,6 @@ __pycache__/
 /keystore/
 /screenshot-dump/
 /acquired-profiles/
+
+# Local mod jars
+/Mods/
