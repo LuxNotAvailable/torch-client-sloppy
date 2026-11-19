@@ -712,7 +712,11 @@ impl Renderer {
                 }
                 _ => (bevy::math::Mat4::IDENTITY, 70f32.to_radians()),
             };
-            let light = pack.begin_frame(pack_camera, extent, seconds);
+            let generation = match &*scene {
+                Scene::Terrain(terrain, _) => terrain.shadow_generation(),
+                _ => 0,
+            };
+            let light = pack.begin_frame(pack_camera, extent, seconds, generation);
             if let (Some((view_proj, eye)), Scene::Terrain(terrain, _)) = (light, &mut *scene)
                 && let Err(e) = terrain.record_shadow_cull(
                     &self.ctx, memory, bindless, pipelines, &mut graph, slot, self.frame,

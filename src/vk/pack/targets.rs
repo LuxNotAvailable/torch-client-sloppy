@@ -139,6 +139,9 @@ pub(crate) struct ShadowTargets {
     pub size: u32,
     pub depth: Image,
     pub depth_opaque: Image,
+    /// With the shadow cache (`torchShadowCache`): the terrain's depth,
+    /// kept between frames, before entities cast.
+    pub depth_cache: Option<Image>,
     pub color: [Option<Image>; MAX_SHADOW_COLORS],
 }
 
@@ -239,6 +242,11 @@ impl PackTargets {
                     size: side,
                     depth: depth("shadowtex0", square)?,
                     depth_opaque: depth("shadowtex1", square)?,
+                    depth_cache: if installed.constants.shadow_cache {
+                        Some(depth("shadow terrain cache", square)?)
+                    } else {
+                        None
+                    },
                     color: colors,
                 })
             }
@@ -268,6 +276,7 @@ impl PackTargets {
         if let Some(shadow) = self.shadow {
             images.push(shadow.depth);
             images.push(shadow.depth_opaque);
+            images.extend(shadow.depth_cache);
             images.extend(shadow.color.into_iter().flatten());
         }
         for image in images {

@@ -151,6 +151,10 @@ pub(crate) struct Constants {
     pub(crate) shadow_nearest: [bool; 2],
     pub(crate) voxel_distance: f32,
     pub(crate) shadow_distance_render_mul: f32,
+    /// Torch's own `torchShadowCache` (the built-in pack only): keep the
+    /// terrain's shadow map between frames, redrawn on a sun step, a move
+    /// to another cell, or a terrain change (`uniforms::values`).
+    pub(crate) shadow_cache: bool,
 }
 
 impl Default for Constants {
@@ -170,6 +174,7 @@ impl Default for Constants {
             shadow_nearest: [false; 2],
             voxel_distance: 0.0,
             shadow_distance_render_mul: -1.0,
+            shadow_cache: false,
         }
     }
 }
@@ -201,6 +206,7 @@ pub(crate) fn read_constants<'a>(sources: impl Iterator<Item = &'a str>) -> Cons
                 match name {
                     "shadowtex0Nearest" => constants.shadow_nearest[0] = on,
                     "shadowtex1Nearest" => constants.shadow_nearest[1] = on,
+                    "torchShadowCache" => constants.shadow_cache = on,
                     _ => {}
                 }
                 continue;

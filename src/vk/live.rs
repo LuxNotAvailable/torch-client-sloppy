@@ -1233,7 +1233,7 @@ impl Live {
                         .inverse();
                 let pack_view = (world_from_view, camera.fov.to_radians());
                 let seconds = self.started.elapsed().as_secs_f32();
-                if let Some((light, eye)) = pack.begin_frame(pack_view, pack_extent, seconds)
+                if let Some((light, eye)) = pack.begin_frame(pack_view, pack_extent, seconds, terrain.shadow_generation())
                     && let Err(e) = terrain.record_shadow_cull(
                         &self.ctx,
                         &self.memory,

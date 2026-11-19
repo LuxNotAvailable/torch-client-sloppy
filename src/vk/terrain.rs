@@ -467,6 +467,8 @@ pub struct PackGeometry {
     pub atlas: (vk::Image, u32),
     /// The shadow cull's commands and counts (same lists), when it ran.
     pub shadow: Option<(vk::Buffer, vk::Buffer)>,
+    /// Section changes so far (`TerrainScene::shadow_generation`).
+    pub shadow_generation: u64,
     /// The game's lightmap, when the snapshot has one.
     pub lightmap: Option<(vk::Image, u32)>,
     /// The snapshot's entities, when it has some.
@@ -516,6 +518,9 @@ pub struct TerrainScene {
     visible_dirty: bool,
     fill_for: Option<IVec3>,
     sections_changed: bool,
+    /// Bumped on every section upload or removal: a cached shadow map
+    /// drawn at an older one is stale.
+    shadow_generation: u64,
     frames_since_fill: u32,
 
     ranks: Grown,
@@ -875,6 +880,7 @@ impl TerrainScene {
             visible_dirty: true,
             fill_for: None,
             sections_changed: false,
+            shadow_generation: 0,
             frames_since_fill: 0,
             ranks,
             rank_of: vec![0; slot_capacity as usize],
@@ -1306,6 +1312,7 @@ impl TerrainScene {
             ),
             atlas: (self.atlas.raw, self.atlas_raw_index),
             shadow: self.shadow.as_ref().map(|s| (s.commands.raw, s.counts.raw)),
+            shadow_generation: self.shadow_generation,
             lightmap: self.env.as_ref().map(|e| (e.lightmap.0.raw, e.lightmap.1)),
             entities: self.entities.as_ref().map(|e| e.pack_entities()),
             sky: self.env.as_ref().and_then(|e| e.pack_entities()),
@@ -1330,6 +1337,11 @@ impl TerrainScene {
             }
             None => Ok(()),
         }
+    }
+
+    /// Section changes so far (`shadow_generation`).
+    pub fn shadow_generation(&self) -> u64 {
+        self.shadow_generation
     }
 
     /// Culls the terrain for a pack's shadow pass, from the light's
@@ -1540,6 +1552,7 @@ impl TerrainScene {
         self.stats.indices -= entry.index_count as u64;
         self.release_slot(entry.slot);
         self.sections_changed = true;
+        self.shadow_generation += 1;
     }
 
     /// A new pool, when every pool is too full for a section.
@@ -1871,6 +1884,7 @@ impl TerrainScene {
                 },
             );
             self.sections_changed = true;
+            self.shadow_generation += 1;
         }
         self.stats.sections = self.entries.len();
         self.stats.pools = self.pools.len();

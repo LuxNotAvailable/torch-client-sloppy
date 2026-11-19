@@ -70,7 +70,19 @@ pub(crate) struct History {
     center_depth: Smooth,
     /// The shadow map's view when it was last drawn, and the camera then.
     shadow_drawn: Option<(Mat4, Vec3)>,
+    /// With the shadow cache: the stepped sun angle, the camera's cell and
+    /// the terrain generation the cached map was drawn for.
+    shadow_key: Option<(i32, bevy::math::IVec3, u64)>,
 }
+
+/// Shadow cache: the sun's angle is held in steps of this many degrees,
+/// so the map stays put between steps (0.1 is a redraw about every third
+/// of a second; at sunset a tall caster's tip jumps about 4 texels).
+const SHADOW_STEP_DEGREES: f32 = 0.1;
+
+/// Shadow cache: the map is centred on the middle of the camera's cell,
+/// this many blocks a side, and redrawn on moving to another.
+const SHADOW_CELL: f32 = 8.0;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct FrameValues {
@@ -132,6 +144,7 @@ impl FrameValues {
         inputs: Inputs,
         constants: &Constants,
         history: &mut History,
+        terrain_generation: u64,
     ) -> FrameValues {
         let mut view_rotation = world_from_view.inverse();
         view_rotation.w_axis = Vec4::W;
@@ -194,8 +207,33 @@ impl FrameValues {
         // view stays, moved by how far the camera has gone since (shadow
         // space is relative to the camera), so the old map still lines up.
         let every = crate::shaderpack::frame_state::shadow_every();
-        let shadow_reused = every > 1 && frames % every != 0 && history.shadow_drawn.is_some();
+        let mut shadow_reused =
+            every > 1 && frames % every != 0 && history.shadow_drawn.is_some();
+        // Shadow cache: the map is drawn for a stepped sun angle about the
+        // middle of the camera's cell, and kept while neither those nor the
+        // terrain change. Held as the Shadow Updates view is, moved by how
+        // far the camera has gone since.
+        if constants.shadow_cache {
+            let steps = 360.0 / SHADOW_STEP_DEGREES;
+            let step = (shadow_angle * steps).round() as i32;
+            let cell = (camera / SHADOW_CELL).floor().as_ivec3();
+            let key = (step, cell, terrain_generation);
+            shadow_reused = history.shadow_key == Some(key) && history.shadow_drawn.is_some();
+            if !shadow_reused {
+                let centre = (cell.as_vec3() + 0.5) * SHADOW_CELL;
+                let held = Constants {
+                    shadow_interval: 0.0,
+                    ..*constants
+                };
+                let view = shadow_model_view(step as f32 / steps, &held, centre);
+                history.shadow_drawn = Some((view, centre));
+                history.shadow_key = Some(key);
+            }
+        }
         let shadow_model_view = match history.shadow_drawn {
+            Some((drawn, at)) if constants.shadow_cache => {
+                drawn * Mat4::from_translation(camera - at)
+            }
             Some((drawn, at)) if shadow_reused => drawn * Mat4::from_translation(camera - at),
             _ => {
                 let fresh = shadow_model_view(shadow_angle, constants, camera);

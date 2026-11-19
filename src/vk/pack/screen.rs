@@ -122,6 +122,14 @@ pub(crate) struct PackScreen {
     plans: Vec<(std::ops::Range<usize>, Flips)>,
     /// Before which pass `shadowtex0` is copied to `shadowtex1`.
     copy_shadow_at: Option<usize>,
+    /// Before which pass (the entity casters) the shadow cache is saved
+    /// from, or restored into, `shadowtex0`.
+    shadow_cache_at: Option<usize>,
+    /// The shadow cache holds a map, drawn since the targets were made.
+    shadow_cache_filled: bool,
+    /// This frame keeps the cached terrain shadow (`begin_frame`): its
+    /// cull and terrain shadow passes are skipped.
+    shadow_reuse: bool,
     /// This frame's values, from `begin_frame`.
     values: Option<FrameValues>,
     /// The block atlas (`gtexture` for terrain) and the game's lightmap.
@@ -333,6 +341,9 @@ impl PackScreen {
             copy_no_hand_at: None,
             plans: Vec::new(),
             copy_shadow_at: None,
+            shadow_cache_at: None,
+            shadow_cache_filled: false,
+            shadow_reuse: false,
             values: None,
             atlas: terrain.map(|t| t.atlas),
             lightmap: terrain.and_then(|t| t.lightmap),
@@ -372,6 +383,9 @@ impl PackScreen {
                         // Entities (the player too) cast with the opaque
                         // terrain, before shadowtex1 is copied.
                         let casters = screen.installed.shadow_casters;
+                        if slot == 2 {
+                            screen.shadow_cache_at = Some(screen.passes.len() - first);
+                        }
                         if slot == 2
                             && (casters.entities || casters.player)
                             && let Some(index) =
@@ -1167,6 +1181,7 @@ impl PackScreen {
         camera: (Mat4, f32),
         extent: vk::Extent2D,
         seconds: f32,
+        terrain_generation: u64,
     ) -> Option<(Mat4, bevy::math::Vec3)> {
         let dt = self.last.map_or(1.0 / 60.0, |l| (seconds - l).max(0.0));
         self.last = Some(seconds);
@@ -1188,14 +1203,17 @@ impl PackScreen {
             self.inputs,
             &self.installed.constants,
             &mut self.history,
+            terrain_generation,
         );
         self.installed
             .customs
             .evaluate(&mut self.customs, dt, &|id| values.input(id));
-        let shadow = self
-            .passes
-            .iter()
-            .any(|p| p.shadow.is_some())
+        // The cached map's cull is the last one: the light's world-to-clip
+        // is fixed while the cache holds.
+        self.shadow_reuse = values.shadow_reused
+            && self.shadow_cache_filled
+            && self.installed.constants.shadow_cache;
+        let shadow = (!self.shadow_reuse && self.passes.iter().any(|p| p.shadow.is_some()))
             .then(|| (values.shadow_world_clip(), values.camera()));
         self.values = Some(values);
         shadow
@@ -1314,6 +1332,12 @@ impl PackScreen {
                 }
             }
         }
+        // This frame's values first: whether the shadow cache holds
+        // decides what is cleared.
+        if self.values.is_none() {
+            let generation = terrain.map_or(0, |t| t.shadow_generation);
+            self.begin_frame(camera, output.2, seconds, generation);
+        }
         let t = &self.targets;
         clears.push((t.depth.raw, None));
         clears.push((t.depth_opaque.raw, None));
@@ -1321,7 +1345,10 @@ impl PackScreen {
         clears.push((self.stubs.depth.0.raw, None));
         clears.push((self.stubs.uint.0.raw, Some([0.0; 4])));
         if let Some(s) = &t.shadow {
-            clears.push((s.depth.raw, None));
+            // A kept map is restored over shadowtex0, not drawn into it.
+            if !self.shadow_reuse {
+                clears.push((s.depth.raw, None));
+            }
             clears.push((s.depth_opaque.raw, None));
             clears.extend(s.color.iter().flatten().map(|c| (c.raw, Some([1.0; 4]))));
         }
@@ -1398,9 +1425,6 @@ impl PackScreen {
         }
 
         // This frame's uniforms and slot table.
-        if self.values.is_none() {
-            self.begin_frame(camera, output.2, seconds);
-        }
         let Some(values) = self.values.take() else {
             return;
         };
@@ -1499,6 +1523,45 @@ impl PackScreen {
                         );
                     }
                 });
+            }
+            if self.shadow_cache_at == Some(at)
+                && let Some(s) = &self.targets.shadow
+                && let Some(cache) = &s.depth_cache
+            {
+                // The terrain's shadow is done: keep it, or put the kept
+                // one back, before entities cast over it.
+                let (from, to) = if self.shadow_reuse {
+                    (cache.raw, s.depth.raw)
+                } else {
+                    (s.depth.raw, cache.raw)
+                };
+                self.shadow_cache_filled = true;
+                let side = s.size;
+                graph.pass(
+                    "pack shadow cache copy",
+                    &[(from, Use::TransferSrc), (to, Use::TransferDst)],
+                    &[],
+                    |cmd| unsafe {
+                        // SAFETY: a copy between depth images in transfer layouts.
+                        device.cmd_copy_image(
+                            cmd,
+                            from,
+                            vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                            to,
+                            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                            &[vk::ImageCopy {
+                                src_subresource: layers(vk::ImageAspectFlags::DEPTH),
+                                dst_subresource: layers(vk::ImageAspectFlags::DEPTH),
+                                extent: vk::Extent3D {
+                                    width: side,
+                                    height: side,
+                                    depth: 1,
+                                },
+                                ..Default::default()
+                            }],
+                        );
+                    },
+                );
             }
             if self.copy_shadow_at == Some(at)
                 && let Some(s) = &self.targets.shadow
@@ -1611,6 +1674,12 @@ impl PackScreen {
                 continue;
             }
             let draw = match (pass.geometry, terrain) {
+                // The kept terrain shadow stands in for the opaque streams.
+                (Some(0 | 1), _)
+                    if self.shadow_reuse && pass.shadow.is_some() && pass.entity.is_none() =>
+                {
+                    continue
+                }
                 (Some(_), Some(t)) if pass.entity.is_some() && t.entities.is_none() => continue,
                 (Some(_), Some(t)) if pass.sky.is_some() && t.sky.is_none() => continue,
                 (Some(_), Some(t)) if pass.hand && t.hand.is_none() => continue,
