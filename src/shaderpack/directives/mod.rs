@@ -159,6 +159,8 @@ pub(crate) struct Constants {
     pub(crate) shadow_step: f32,
     /// `torchShadowLerp`: fade each step in from the last one's map.
     pub(crate) shadow_lerp: bool,
+    /// `torchCloudUpper`: a second cloud layer above the first.
+    pub(crate) cloud_upper: bool,
 }
 
 impl Default for Constants {
@@ -181,6 +183,7 @@ impl Default for Constants {
             shadow_cache: false,
             shadow_step: 0.02,
             shadow_lerp: false,
+            cloud_upper: false,
         }
     }
 }
@@ -214,6 +217,7 @@ pub(crate) fn read_constants<'a>(sources: impl Iterator<Item = &'a str>) -> Cons
                     "shadowtex1Nearest" => constants.shadow_nearest[1] = on,
                     "torchShadowCache" => constants.shadow_cache = on,
                     "torchShadowLerp" => constants.shadow_lerp = on,
+                    "torchCloudUpper" => constants.cloud_upper = on,
                     _ => {}
                 }
                 continue;

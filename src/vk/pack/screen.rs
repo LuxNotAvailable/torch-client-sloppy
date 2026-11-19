@@ -2120,6 +2120,10 @@ impl PackScreen {
         self.installed.constants.sun_path_rotation
     }
 
+    pub(crate) fn cloud_upper(&self) -> bool {
+        self.installed.constants.cloud_upper
+    }
+
     pub(crate) fn describe(&self) -> String {
         let names: Vec<&str> = self.passes[self.plans[0].0.clone()]
             .iter()

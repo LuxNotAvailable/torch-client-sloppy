@@ -428,6 +428,7 @@ impl Renderer {
                         &mut bindless,
                         installed.constants.sun_path_rotation,
                         eye_light,
+                        installed.constants.cloud_upper,
                     )?;
                 }
                 let screen = crate::vk::pack::screen::PackScreen::new(

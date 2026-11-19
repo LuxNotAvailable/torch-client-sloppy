@@ -4,8 +4,18 @@
 // looking toward the sun through the cloud. Far off, clouds melt into the
 // sky behind them instead of fading out, and low on the horizon into its
 // haze. CLOUD_STYLE 1 keeps the plain forward lighting.
+//
+// Clouds here stand 8 blocks tall, not vanilla's 4 (`scene::clouds`'s
+// PACK_CELL_HEIGHT). torchCloudUpper adds a second, thinner layer 30
+// blocks above the first's top, from other
+// cells of the cloud map (`scene::clouds`). The mesh's uv carries the
+// layer (x) and the height up the cell (y).
 
 /* RENDERTARGETS: 0,2 */
+
+/*
+const bool torchCloudUpper = true; // [true false]
+*/
 
 #include "lib/common.slang"
 
@@ -46,7 +56,7 @@ float3 classic(float3 albedo, float3 player) {
     return albedo * (direct_light() * 0.55 + above * 0.5 + around * 0.6 + float3(0.01));
 }
 
-float3 soft(float3 albedo, float3 n, float3 dir) {
+float3 soft(float3 albedo, float3 n, float3 dir, float rise) {
     float3 l = light_dir();
     // How much open sky the face sees: all of it on top, little underneath.
     float sky_share = lerp(0.42, 1.0, n.y * 0.5 + 0.5);
@@ -62,6 +72,10 @@ float3 soft(float3 albedo, float3 n, float3 dir) {
     float3 sun = direct_light() * (0.12 + 0.75 * facing + glow);
 
     float3 c = albedo * (ambient + sun);
+    // Walls darken toward their base, as light thins into the cloud.
+    if (abs(n.y) < 0.5) {
+        c *= lerp(0.72, 1.0, rise);
+    }
     float y = luma(c);
     if (y < CLOUD_FLOOR) {
         c *= CLOUD_FLOOR / max(y, 1e-4);
@@ -69,7 +83,21 @@ float3 soft(float3 albedo, float3 n, float3 dir) {
     return lerp(c, float3(luma(c)) * 0.8, frame.rainStrength * 0.6);
 }
 
+/// The face's normal from the screen-space slope of its position (the
+/// cloud mesh carries none), snapped to the nearest axis and turned toward
+/// the camera.
+float3 face_from_slope(float3 player) {
+    float3 n = cross(ddx(player), ddy(player));
+    float3 a = abs(n);
+    float3 axis = a.x > a.y && a.x > a.z ? float3(sign(n.x), 0.0, 0.0)
+                : a.y > a.z             ? float3(0.0, sign(n.y), 0.0)
+                                        : float3(0.0, 0.0, sign(n.z));
+    return dot(axis, player) > 0.0 ? -axis : axis;
+}
+
 Lit fragment(Varyings v) {
+    // Before any discard: derivatives need the whole quad.
+    float3 slope_n = face_from_slope(v.player);
     float4 c = gtexture.Sample(gtexture_sampler, v.uv);
     float alpha = c.a * v.color.a;
     if (!iris_alpha_pass(alpha)) {
@@ -82,8 +110,14 @@ Lit fragment(Varyings v) {
     if (CLOUD_STYLE == 1) {
         lit = classic(albedo * to_linear(v.color.rgb), v.player);
     } else {
-        float3 n = dot(v.normal, v.normal) > 1e-6 ? normalize(v.normal) : float3(0.0, 1.0, 0.0);
-        lit = soft(albedo, n, dir);
+        float3 n = slope_n;
+        bool upper = v.uv.x > 0.5;
+        float rise = saturate(v.uv.y);
+        lit = soft(albedo, n, dir, rise);
+        if (upper) {
+            lit *= 0.85;
+            alpha *= 0.8;
+        }
         // Far away, and low toward the horizon, the cloud turns into the sky
         // behind it.
         float reach = saturate(1.0 - length(v.player.xz) / CLOUD_BLEND_DISTANCE);

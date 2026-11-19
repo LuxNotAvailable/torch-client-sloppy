@@ -156,7 +156,23 @@ struct CloudAssets {
     texture: Option<CloudTexture>,
     mesh: Arc<crate::draw::MeshData>,
     built: Option<(i32, i32, RelativeCameraPos, CloudStatus)>,
+    /// The upper layer packs may draw (`UPPER_GAP` up, other cells).
+    upper: Arc<crate::draw::MeshData>,
+    upper_built: Option<(i32, i32, RelativeCameraPos, CloudStatus)>,
 }
+
+/// A pack's clouds stand this tall: the pack stretches the mesh (built
+/// `CELL_HEIGHT` tall) up from its base (`EnvScene::pack_clouds`).
+pub(crate) const PACK_CELL_HEIGHT: f32 = 8.0;
+pub(crate) const PACK_STRETCH: f32 = PACK_CELL_HEIGHT / CELL_HEIGHT;
+
+/// The upper layer, for packs that draw one (Torch Vibrant's Upper Cloud
+/// Layer; marked by `pad[0]`, which the native renderer skips): its base
+/// this many blocks above the pack's lower layer's top, from cells this
+/// far along the texture, so the two patterns differ.
+const UPPER_GAP: f32 = 30.0;
+const UPPER_LIFT: f32 = PACK_CELL_HEIGHT + UPPER_GAP;
+const UPPER_SHIFT: (i32, i32) = (97, 151);
 
 fn setup(mut commands: Commands) {
     let path = crate::textures_dir().join("environment/clouds.png");
@@ -171,6 +187,8 @@ fn setup(mut commands: Commands) {
         texture,
         mesh: crate::draw::MeshData::new(Vec::new(), Vec::new(), false),
         built: None,
+        upper: crate::draw::MeshData::new(Vec::new(), Vec::new(), false),
+        upper_built: None,
     });
 }
 
@@ -255,6 +273,7 @@ fn build_mesh(
     center_z: i32,
     relative: RelativeCameraPos,
     status: CloudStatus,
+    layer: f32,
 ) -> Arc<crate::draw::MeshData> {
     let radius_cells = (CLOUD_RANGE_CHUNKS * 16) as f32 / CELL_SIZE;
     let radius_cells = radius_cells.ceil() as i32;
@@ -297,6 +316,8 @@ fn build_mesh(
         .map(|(&pos, &color)| crate::draw::EntityVertex {
             pos,
             normal: [0.0, 1.0, 0.0],
+            // For packs: the layer, and the height up the cell.
+            uv: [layer, pos[1] / CELL_HEIGHT],
             color,
             ..Default::default()
         })
@@ -414,7 +435,29 @@ fn update_clouds(
         let Some(texture) = assets.texture.as_ref() else {
             return;
         };
-        assets.mesh = build_mesh(texture, cell_x, cell_z, relative, status);
+        assets.mesh = build_mesh(texture, cell_x, cell_z, relative, status, 0.0);
+    }
+    let upper_bottom = relative_bottom + UPPER_LIFT as f64;
+    let upper_relative = if upper_bottom + (PACK_CELL_HEIGHT as f64) < 0.0 {
+        RelativeCameraPos::AboveClouds
+    } else if upper_bottom > 0.0 {
+        RelativeCameraPos::BelowClouds
+    } else {
+        RelativeCameraPos::InsideClouds
+    };
+    let upper_key = (cell_x, cell_z, upper_relative, status);
+    if assets.upper_built != Some(upper_key) {
+        assets.upper_built = Some(upper_key);
+        if let Some(texture) = assets.texture.as_ref() {
+            assets.upper = build_mesh(
+                texture,
+                cell_x + UPPER_SHIFT.0,
+                cell_z + UPPER_SHIFT.1,
+                upper_relative,
+                status,
+                1.0,
+            );
+        }
     }
 
     let at = Vec3::new(
@@ -427,6 +470,17 @@ fn update_clouds(
         bias: crate::scene::sky::BIAS_CLOUDS,
         tint: color.to_color().to_linear().to_f32_array(),
         ..crate::draw::EnvDraw::new(assets.mesh.clone(), 1, Mat4::from_translation(at))
+    });
+    out.clouds.push(crate::draw::EnvDraw {
+        alpha: crate::draw::ALPHA_BLEND,
+        bias: crate::scene::sky::BIAS_CLOUDS,
+        tint: color.to_color().to_linear().to_f32_array(),
+        pad: [1.0, 0.0, 0.0],
+        ..crate::draw::EnvDraw::new(
+            assets.upper.clone(),
+            1,
+            Mat4::from_translation(at + Vec3::Y * UPPER_LIFT),
+        )
     });
 }
 
@@ -454,8 +508,8 @@ mod tests {
     #[test]
     fn fast_clouds_are_one_quad_per_cell() {
         let t = checkerboard();
-        let fast = build_mesh(&t, 0, 0, RelativeCameraPos::BelowClouds, CloudStatus::Fast);
-        let fancy = build_mesh(&t, 0, 0, RelativeCameraPos::BelowClouds, CloudStatus::Fancy);
+        let fast = build_mesh(&t, 0, 0, RelativeCameraPos::BelowClouds, CloudStatus::Fast, 0.0);
+        let fancy = build_mesh(&t, 0, 0, RelativeCameraPos::BelowClouds, CloudStatus::Fancy, 0.0);
         assert!(fast.verts.len() > 0);
         assert!(fancy.verts.len() > fast.verts.len());
         assert_eq!(fast.verts.len() % 4, 0);
@@ -464,13 +518,14 @@ mod tests {
     #[test]
     fn the_far_side_of_the_layer_is_not_built() {
         let t = checkerboard();
-        let below = build_mesh(&t, 0, 0, RelativeCameraPos::BelowClouds, CloudStatus::Fancy);
+        let below = build_mesh(&t, 0, 0, RelativeCameraPos::BelowClouds, CloudStatus::Fancy, 0.0);
         let inside = build_mesh(
             &t,
             0,
             0,
             RelativeCameraPos::InsideClouds,
             CloudStatus::Fancy,
+            0.0,
         );
         assert!(inside.verts.len() > below.verts.len());
     }
@@ -478,7 +533,7 @@ mod tests {
     #[test]
     fn the_fade_reaches_zero_at_the_rim() {
         let t = checkerboard();
-        let mesh = build_mesh(&t, 0, 0, RelativeCameraPos::BelowClouds, CloudStatus::Fast);
+        let mesh = build_mesh(&t, 0, 0, RelativeCameraPos::BelowClouds, CloudStatus::Fast, 0.0);
         for (p, c) in mesh.verts.iter().map(|v| (v.pos, v.color)) {
             let d = (p[0] * p[0] + p[2] * p[2]).sqrt();
             assert!(c[3] >= 0.0 && c[3] <= 1.0);

@@ -874,6 +874,7 @@ impl Live {
                 self.pack_inputs.as_ref().map_or([0.0, 15.0], |i| {
                     [i.eye_light.x as f32, i.eye_light.y as f32]
                 }),
+                pack.cloud_upper(),
             )
         {
             fail("pack sky", e.0);

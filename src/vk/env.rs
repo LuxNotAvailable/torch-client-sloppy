@@ -249,6 +249,8 @@ impl EnvScene {
             .parts
             .iter()
             .enumerate()
+            // The upper cloud layer is a pack's alone.
+            .filter(|(_, p)| !(p.kind == 1 && p.pad[0] > 0.5))
             .filter_map(|(i, p)| {
                 let (first, count, base) = *ranges.get(p.mesh as usize)?;
                 let pipe = match (p.kind, p.alpha) {
@@ -595,15 +597,17 @@ impl EnvScene {
     }
 
     /// Builds a pack's clouds: one blended entity instance per part, at
-    /// its world place, drawn by gbuffers_clouds.
+    /// its world place, drawn by gbuffers_clouds. The upper layer's parts
+    /// (`pad[0]`, `scene::clouds`) only with `upper`.
     pub fn pack_clouds(
         &mut self,
         ctx: &Context,
         memory: &Memory,
         bindless: &mut Bindless,
+        upper: bool,
     ) -> Result<(), SetupError> {
         use crate::draw::EntityInstance;
-        if self.clouds.is_empty() {
+        if !self.clouds.iter().any(|(p, _)| upper || p.pad[0] < 0.5) {
             self.pack_clouds = None;
             return Ok(());
         }
@@ -612,6 +616,9 @@ impl EnvScene {
         let mut meshes: Vec<[u32; 4]> = Vec::new();
         let mut draws = Vec::new();
         for (part, (first, count, base)) in &self.clouds {
+            if part.pad[0] > 0.5 && !upper {
+                continue;
+            }
             meshes.push([*first, *count, *base, 0]);
             instances.push(EntityInstance {
                 mesh: meshes.len() as u32 - 1,
@@ -622,7 +629,10 @@ impl EnvScene {
                 light0: [0.0, 0.0, 0.0, 1.0],
                 light1: [0.0, 0.0, 0.0, 1.0],
                 levels: [240.0, 240.0],
-                transform: part.transform,
+                // Taller than vanilla's, up from the base.
+                transform: (Mat4::from_cols_array(&part.transform)
+                    * Mat4::from_scale(Vec3::new(1.0, crate::scene::clouds::PACK_STRETCH, 1.0)))
+                .to_cols_array(),
                 ..Default::default()
             });
             let texture = self

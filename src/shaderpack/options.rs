@@ -21,6 +21,7 @@ const CONST_OPTIONS: &[&str] = &[
     "torchShadowCache",
     "torchShadowStep",
     "torchShadowLerp",
+    "torchCloudUpper",
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]

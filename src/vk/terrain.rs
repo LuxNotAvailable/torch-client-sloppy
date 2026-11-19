@@ -1383,11 +1383,12 @@ impl TerrainScene {
         bindless: &mut Bindless,
         sun_path_rotation: f32,
         eye_light: [f32; 2],
+        cloud_upper: bool,
     ) -> Result<(), SetupError> {
         match &mut self.env {
             Some(env) => {
                 env.pack_sky(ctx, memory, bindless, sun_path_rotation)?;
-                env.pack_clouds(ctx, memory, bindless)?;
+                env.pack_clouds(ctx, memory, bindless, cloud_upper)?;
                 env.pack_hand(ctx, memory, bindless, eye_light)
             }
             None => Ok(()),
