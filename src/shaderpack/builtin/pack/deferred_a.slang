@@ -76,6 +76,11 @@ void compute(uint3 id : SV_DispatchThreadID) {
     if (face == FACE_DIAGONAL && FOLIAGE_SHADING == 1) {
         return;
     }
+    // No direct light here: deferred skips the lookup, so shade nothing.
+    bool foliage = face == FACE_DIAGONAL || texel.surface.material == MATERIAL_FOLIAGE;
+    if (!direct_reaches(face_normal(face), texel.surface.light.y, foliage)) {
+        return;
+    }
     uint key = cache_key(texel.cell, float(face));
     if (key != CACHE_EMPTY) {
         claim(key);

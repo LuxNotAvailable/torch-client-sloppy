@@ -75,7 +75,7 @@ Lit fragment(Varyings v) {
         float3 around = sky_color(normalize(float3(v.player.x, 0.05, v.player.z)));
         lit = albedo * (direct_light() * 0.55 + above * 0.5 + around * 0.6 + float3(0.01));
     } else {
-        float vis = shadow_visibility(texel_point(v, dpx, dpy, dux, duy), n, 2);
+        float vis = direct_reaches(n, v.light.y, false) ? shadow_visibility(texel_point(v, dpx, dpy, dux, duy), n, 2) : 0.0;
         lit = surface_light(albedo, n, v.light, vis, false);
     }
     Lit o;

@@ -92,6 +92,11 @@ float4 fragment(Varyings v) : SV_Target0 {
 
     float vis = -1.0;
     bool diagonal = surface.face == FACE_DIAGONAL;
+    // No direct light: the shade would be multiplied away, so skip it
+    // (deferred_a skipped claiming it too).
+    if (!direct_reaches(n, surface.light.y, diagonal || material == MATERIAL_FOLIAGE)) {
+        vis = 0.0;
+    }
     if (FOLIAGE_SHADING == 1 && diagonal) {
         vis = foliage_of(texel);
     }

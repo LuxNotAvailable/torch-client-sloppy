@@ -357,6 +357,20 @@ float3 sky_color(float3 dir) {
     return c * 1.35;
 }
 
+/// Sky light at or under which `surface_light` drops the direct light.
+static const float DIRECT_MIN_SKY = 0.05;
+
+/// Whether any direct light reaches a surface, so its shadow lookup counts:
+/// not without a sky, under cover (sky light too low), or on a face turned
+/// from the light, unless it is foliage, which light passes through. Where
+/// this is false `surface_light` zeroes the direct term whatever `vis` is.
+bool direct_reaches(float3 n, float sky, bool foliage) {
+    if (!has_sky() || sky <= DIRECT_MIN_SKY) {
+        return false;
+    }
+    return foliage || dot(n, light_dir()) > 0.0;
+}
+
 /// Light on a surface. `light` is the block and sky light, 0..1; `vis` the
 /// share of the direct light reaching it; `foliage` lets light through.
 float3 surface_light(float3 albedo, float3 n, float2 light, float vis, bool foliage) {
@@ -367,7 +381,7 @@ float3 surface_light(float3 albedo, float3 n, float2 light, float vis, bool foli
     }
     float sky = light.y;
     // Shadow maps reach so far; past that, sky light decides.
-    float open = smoothstep(0.05, 0.45, sky);
+    float open = smoothstep(DIRECT_MIN_SKY, 0.45, sky);
     float3 direct = direct_light() * ndl * vis * open;
     float3 ambient = sky_ambient() * sky * sky * (0.7 + 0.3 * n.y);
     float3 torch = TORCH * pow(light.x, 2.6) * TORCH_BRIGHTNESS;
