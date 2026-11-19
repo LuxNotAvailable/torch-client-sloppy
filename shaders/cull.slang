@@ -23,6 +23,8 @@ static const uint CULL_BUCKETS = 4;
 static const uint CULL_FRUSTUM = 8;
 // One atomic per lane instead of per subgroup (`vkview --no-wave`).
 static const uint CULL_NO_WAVE = 16;
+// Drop boxes wholly under camera.w (the shadow pass's caster floor).
+static const uint CULL_BELOW = 32;
 
 // VkDrawIndexedIndirectCommand.
 struct DrawCommand {

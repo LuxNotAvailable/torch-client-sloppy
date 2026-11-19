@@ -61,6 +61,9 @@ void cull(uint3 id: SV_DispatchThreadID) {
         uint word = buffer_at(pc.ids.y).Load((index / 32) * 4);
         keep = ((word >> (index % 32)) & 1) != 0;
     }
+    if (keep && (flags & CULL_BELOW) != 0) {
+        keep = hi.y >= asfloat(view.Load(VIEW_CAMERA + 12));
+    }
     if (keep && (flags & CULL_FRUSTUM) != 0) {
         keep = in_frustum(load_columns(view, VIEW_VIEW_PROJ), lo, hi);
     }

@@ -80,6 +80,12 @@ const CULL_VISIBILITY: u32 = 2;
 const CULL_BUCKETS: u32 = 4;
 const CULL_FRUSTUM: u32 = 8;
 const CULL_NO_WAVE: u32 = 16;
+const CULL_BELOW: u32 = 32;
+
+/// Shadow casters wholly this far under the eye are skipped: light falls
+/// down, so they only shade what lies lower still, out of most views.
+/// Looking down a deep ravine loses its lowest shadows.
+const SHADOW_CASTER_BELOW: f32 = 48.0;
 
 /// The camera moved farther than this (blocks) since the pyramid was
 /// built: skip Hi-Z for a frame, as newly uncovered sections would pop in
@@ -1399,9 +1405,9 @@ impl TerrainScene {
         let cull_view = CullView {
             view_proj: view_proj.to_cols_array_2d(),
             prev_view_proj: view_proj.to_cols_array_2d(),
-            camera: [eye.x, eye.y, eye.z, 0.0],
+            camera: [eye.x, eye.y, eye.z, eye.y - SHADOW_CASTER_BELOW],
             hiz: [0; 4],
-            flags: [CULL_FRUSTUM, 0, 0, 0],
+            flags: [CULL_FRUSTUM | CULL_BELOW, 0, 0, 0],
             pad: [0; 4],
             fog_color: [0.0; 4],
             fog_ranges: [0.0, f32::MAX, 0.0, f32::MAX],
