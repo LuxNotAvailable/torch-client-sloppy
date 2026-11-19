@@ -99,6 +99,45 @@ float3 wave_normal(float3 world, float footprint) {
     return normalize(float3(-slope.x, 1.0, -slope.y));
 }
 
+/// Two hashes for a cell, for a feature point that moves within it.
+float2 hash2(int2 i) {
+    return float2(hash(i), hash(i + int2(113, 271)));
+}
+
+/// Bright where two moving cell points are near equally close: the web
+/// lines of a Voronoi pattern, which read as caustic light.
+float caustic_cells(float2 p, float t) {
+    float2 cell = floor(p);
+    float2 f = p - cell;
+    float d1 = 8.0;
+    float d2 = 8.0;
+    for (int y = -1; y <= 1; y++) {
+        for (int x = -1; x <= 1; x++) {
+            int2 g = int2(x, y);
+            float2 o = 0.5 + 0.4 * sin(t + 6.2831853 * hash2(int2(cell) + g));
+            float2 r = float2(g) + o - f;
+            float d = dot(r, r);
+            if (d < d1) {
+                d2 = d1;
+                d1 = d;
+            } else if (d < d2) {
+                d2 = d;
+            }
+        }
+    }
+    return 1.0 - smoothstep(0.0, 0.2, sqrt(d2) - sqrt(d1));
+}
+
+/// Caustic light on the floor at `floor_world`, `deep` blocks under the
+/// surface. Traced up along the light to where it entered, then snapped to
+/// the block-texel grid so the pattern stays pixel art and holds still.
+float caustic(float2 floor_world, float3 l, float deep, float t) {
+    float2 entry = floor_world + l.xz / max(l.y, 0.2) * deep;
+    float2 p = (floor(entry * 16.0) + 0.5) / 16.0;
+    float c = caustic_cells(p * 0.75, t * 0.7) * 0.65 + caustic_cells(p * 1.35 + float2(7.3, 2.9), t * 1.05) * 0.35;
+    return c * c * 1.3 + c * 0.15;
+}
+
 float ggx(float3 n, float3 v, float3 l, float roughness) {
     float3 h = normalize(v + l);
     float ndh = max(dot(n, h), 0.0);
@@ -128,7 +167,7 @@ Lit fragment(Varyings v) {
 
     float3 world = v.player + frame.cameraPosition;
     float3 n = face;
-    if (face.y > 0.5) {
+    if (face.y > 0.5 && WATER_STYLE == 0) {
         n = wave_normal(world, footprint);
     }
     float3 view_dir = normalize(-v.player);
@@ -152,7 +191,20 @@ Lit fragment(Varyings v) {
     float sky = v.light.y;
     float3 ambient = sky_ambient() * (sky * sky) + TORCH * pow(v.light.x, 2.6) * TORCH_BRIGHTNESS * 0.5;
     float3 scatter = tint * 0.45 * (ambient + direct_light() * vis * 0.2);
-    float3 shine = direct_light() * ggx(n, view_dir, light_dir(), 0.28) * vis * smoothstep(0.05, 0.45, sky) * 0.5;
+    float3 shine;
+    if (WATER_STYLE == 0) {
+        shine = direct_light() * ggx(n, view_dir, light_dir(), 0.28) * vis * smoothstep(0.05, 0.45, sky) * 0.5;
+    } else {
+        // Flat: the texture's bright texels carry the glint, wider like a
+        // sun disc, strongest looking straight down.
+        float3 texel = tex.rgb / max(v.color.rgb, float3(0.001));
+        float power = dot(texel, texel) * 0.4;
+        power *= power;
+        power *= power;
+        float edge = 1.0 - max(dot(n, view_dir), 0.0);
+        float mask = min(power, 0.5) * (2.0 - 1.8 * edge * edge);
+        shine = direct_light() * ggx(n, view_dir, light_dir(), 0.42) * mask * vis * smoothstep(0.05, 0.45, sky) * 1.5;
+    }
 
     // Murkier water starts less see-through and can close up entirely.
     float murk = clamp(1.0 / WATER_CLARITY, 0.5, 4.0);
@@ -163,6 +215,36 @@ Lit fragment(Varyings v) {
     // Blending scales the colour by alpha; the glint is light off the
     // surface, so undo that, but not without bound for clear water.
     o.color = float4(scatter + min(shine, 2.0) / max(alpha, 0.35), alpha);
+
+    // Caustics: light the surface focuses on the floor. Blending keeps
+    // (1 - alpha) of the floor, so light added as (1 - alpha) / alpha lands
+    // on it at full strength. Near the player only, where it can be seen.
+    // Taken outside the branch: derivatives need every pixel of the quad.
+    float3 floor_n = cross(ddx(floor_pos), ddy(floor_pos));
+    float deep = v.player.y - floor_pos.y;
+    float reach = 1.0 - smoothstep(20.0, 32.0, length(v.player.xz));
+    if (WATER_CAUSTICS_ENABLED != 0 && WATER_CAUSTICS > 0.0 && face.y > 0.5 && behind < 1.0 && deep > 0.0 && reach > 0.0) {
+        float3 l = light_dir();
+        float lit = 0.0;
+        if (dot(floor_n, floor_n) > 1e-12) {
+            floor_n = normalize(floor_n);
+            floor_n = dot(floor_n, floor_pos) > 0.0 ? -floor_n : floor_n;
+            // Floors only, as in still water light pools on the bed; walls
+            // under water would show the pattern smeared down them.
+            lit = smoothstep(0.7, 0.9, floor_n.y) * smoothstep(0.0, 0.3, dot(floor_n, l));
+        }
+        float fade = pow(max(1.0 - deep / WATER_CAUSTICS_DEPTH, 0.0), 1.4);
+        // Shade cuts the light by WATER_CAUSTICS_SHADE, not to nothing: the
+        // shadow map is coarse next to the pattern, and vanilla-like ponds
+        // under trees would go flat.
+        float shade = lerp(1.0 - WATER_CAUSTICS_SHADE, 1.0, vis);
+        float strength = WATER_CAUSTICS * fade * lit * reach * shade * smoothstep(0.3, 0.8, sky);
+        if (strength > 0.002) {
+            float c = caustic(floor_pos.xz + frame.cameraPosition.xz, l, deep, frame.frameTimeCounter);
+            float3 light = direct_light() * absorbed * c * strength;
+            o.color.rgb += light * (1.0 - alpha) / max(alpha, 0.05);
+        }
+    }
     o.surface = float4(oct_encode(n), 1.0, sky);
     return o;
 }

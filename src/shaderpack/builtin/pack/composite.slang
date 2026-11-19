@@ -33,10 +33,12 @@ Varyings vertex(IrisVertexIn input) {
     return o;
 }
 
-float3 screen_of(float3 view) {
-    float4 clip = mul(frame.gbufferProjection, float4(view, 1.0));
-    float3 ndc = clip.xyz / clip.w;
-    return float3(ndc.xy * 0.5 + 0.5, ndc.z * 0.5 + 0.5);
+/// Turns a depth-buffer value into distance along the view axis. `a` and `b`
+/// are the inverse projection's last two columns' worth, taken once per pixel
+/// so a lookup is a multiply-add, not a matrix.
+float linear_depth(float depth, float4 a, float4 b) {
+    float4 v = a + b * (depth * 2.0 - 1.0);
+    return -v.z / v.w;
 }
 
 /// The screen position the ray from `start` along `dir` (view space) hits,
@@ -46,51 +48,91 @@ float3 screen_of(float3 view) {
 /// the hit lies from the ray (a thin edge it grazed), how much of the march
 /// it took, how near the screen's edge it is, and how directly the ray
 /// heads back at the eye, where the screen holds nothing it could see.
+///
+/// The ray marches in clip space: projection is linear there, so a step is
+/// an add, not a matrix. It is first cut to where it leaves the screen or
+/// crosses the near plane, so no step lands off screen. Steps grow while the
+/// ray is clear of the scene, and a hit is halved back to its contact.
 float3 trace(float3 start, float3 dir, float2 size, float dither) {
     float toward_eye = 1.0 - smoothstep(0.1, 0.7, dir.z);
     if (toward_eye <= 0.0) {
         return float3(0.0);
     }
-    float3 step = dir * (0.15 + 0.03 * length(start));
-    float3 p = start + step * dither;
+    float4 c0 = mul(frame.gbufferProjection, float4(start, 1.0));
+    float4 cd = mul(frame.gbufferProjection, float4(dir, 0.0));
+    float4 inv_a = mul(frame.gbufferProjectionInverse, float4(0.0, 0.0, 0.0, 1.0));
+    float4 inv_b = mul(frame.gbufferProjectionInverse, float4(0.0, 0.0, 1.0, 0.0));
+
+    // Where the ray leaves: each screen edge is |x| = w, the near plane w = 0.05.
+    float reach = 512.0;
+    if (cd.w < 0.0) {
+        reach = min(reach, (c0.w - 0.05) / -cd.w);
+    }
+    float4 grow = float4(cd.x - cd.w, -cd.x - cd.w, cd.y - cd.w, -cd.y - cd.w);
+    float4 room = float4(c0.w - c0.x, c0.w + c0.x, c0.w - c0.y, c0.w + c0.y);
+    float4 exits = select(grow > 0.0, room / max(grow, 1e-6), float4(1e6));
+    reach = min(reach, min(min(exits.x, exits.y), min(exits.z, exits.w)));
+    if (reach <= 0.0) {
+        return float3(0.0);
+    }
+
+    float span = 0.15 + 0.03 * length(start);
+    float lo = span * dither;
+    float hi = -1.0;
+    float thickness = 0.0;
+    float gap = 0.0;
+    int steps = 0;
     for (int i = 0; i < REFLECTION_STEPS; i++) {
-        p += step;
-        float3 s = screen_of(p);
-        if (any(s.xy < 0.0) || any(s.xy > 1.0) || s.z >= 1.0) {
+        float probe = min(lo + span, reach);
+        float4 c = c0 + cd * probe;
+        float2 s = c.xy / c.w * 0.5 + 0.5;
+        float scene = depthtex0.Load(int3(int2(s * size), 0)).r;
+        float behind = scene >= 1.0 ? -1e6 : c.w - linear_depth(scene, inv_a, inv_b);
+        // A step's worth of slack, so a long step cannot skip a thin wall.
+        thickness = abs(cd.w) * (probe - lo) * 1.5 + 0.2 + c.w * 0.015;
+        steps = i;
+        if (behind > 0.0 && behind < thickness) {
+            hi = probe;
+            gap = behind;
+            break;
+        }
+        if (probe >= reach) {
             return float3(0.0);
         }
-        float scene = depthtex0.Load(int3(int2(s.xy * size), 0)).r;
-        if (s.z > scene) {
-            float gap = length(view_pos(s.xy, scene)) - length(p);
-            float thickness = length(step) * 1.5 + 0.2;
-            if (abs(gap) < thickness) {
-                // Halve back toward the surface for a sharper contact.
-                float3 lo = p - step;
-                float3 hi = p;
-                for (int j = 0; j < 4; j++) {
-                    float3 mid = (lo + hi) * 0.5;
-                    float3 m = screen_of(mid);
-                    float d = depthtex0.Load(int3(int2(m.xy * size), 0)).r;
-                    if (m.z > d) {
-                        hi = mid;
-                    } else {
-                        lo = mid;
-                    }
-                }
-                float2 hit = screen_of(hi).xy;
-                if (is_hand(colortex2.Load(int3(int2(hit * size), 0)).w)) {
-                    return float3(0.0);
-                }
-                float contact = 1.0 - smoothstep(0.4, 1.0, abs(gap) / thickness);
-                float march = 1.0 - smoothstep(0.55, 1.0, float(i) / float(REFLECTION_STEPS));
-                float edge = min(min(hit.x, 1.0 - hit.x), min(hit.y, 1.0 - hit.y));
-                float border = smoothstep(0.0, 0.1, edge);
-                return float3(hit, contact * march * border * toward_eye);
-            }
+        // Well clear of the scene: stride out.
+        if (behind < -2.0 * thickness) {
+            span *= 1.6;
         }
-        step *= 1.12;
+        lo = probe;
     }
-    return float3(0.0);
+    if (hi < 0.0) {
+        return float3(0.0);
+    }
+
+    // Halve back toward the surface for a sharper contact.
+    for (int j = 0; j < 4; j++) {
+        float mid = (lo + hi) * 0.5;
+        float4 c = c0 + cd * mid;
+        float2 s = c.xy / c.w * 0.5 + 0.5;
+        float scene = depthtex0.Load(int3(int2(s * size), 0)).r;
+        float behind = scene >= 1.0 ? -1e6 : c.w - linear_depth(scene, inv_a, inv_b);
+        if (behind > 0.0) {
+            hi = mid;
+            gap = behind;
+        } else {
+            lo = mid;
+        }
+    }
+    float4 ch = c0 + cd * hi;
+    float2 hit = ch.xy / ch.w * 0.5 + 0.5;
+    if (is_hand(colortex2.Load(int3(int2(hit * size), 0)).w)) {
+        return float3(0.0);
+    }
+    float contact = 1.0 - smoothstep(0.4, 1.0, gap / thickness);
+    float march = 1.0 - smoothstep(0.55, 1.0, float(steps) / float(REFLECTION_STEPS));
+    float edge = min(min(hit.x, 1.0 - hit.x), min(hit.y, 1.0 - hit.y));
+    float border = smoothstep(0.0, 0.1, edge);
+    return float3(hit, contact * march * border * toward_eye);
 }
 
 /// Last frame's reflection where this surface point was on screen then,

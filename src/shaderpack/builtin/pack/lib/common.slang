@@ -11,6 +11,11 @@
 [SpecializationConstant] const float FOG_DENSITY = 1.0;
 [SpecializationConstant] const float WATER_CLARITY = 1.0;
 [SpecializationConstant] const float WATER_SURFACE_OPACITY = 0.2;
+[SpecializationConstant] const int WATER_CAUSTICS_ENABLED = 1;
+[SpecializationConstant] const float WATER_CAUSTICS = 0.1;
+[SpecializationConstant] const float WATER_CAUSTICS_DEPTH = 20.0;
+[SpecializationConstant] const float WATER_CAUSTICS_SHADE = 0.5;
+[SpecializationConstant] const int WATER_STYLE = 0;
 [SpecializationConstant] const float EXPOSURE = 1.0;
 [SpecializationConstant] const int SCALED_RESOLVE = 0;
 [SpecializationConstant] const int TEXEL_FULL_DISTANCE = 24;
@@ -26,6 +31,17 @@
 // How much of the water's surface is its own colour however shallow it is,
 // so a pool a block deep still reads as water.
 #define WATER_SURFACE_OPACITY 0.2 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8]
+// Light the surface focuses on the floor: 0 off, 1 on.
+#define WATER_CAUSTICS_ENABLED 1 // [0 1]
+// Strength of that light.
+#define WATER_CAUSTICS 0.1 // [0.0 0.02 0.05 0.08 0.1 0.15 0.2 0.25 0.3 0.4 0.5]
+// Depth in blocks by which caustics have faded out.
+#define WATER_CAUSTICS_DEPTH 20.0 // [2.0 4.0 6.0 8.0 12.0 16.0 20.0 28.0 40.0]
+// How much shadow on the surface dims caustics: 0 not at all, 1 fully.
+#define WATER_CAUSTICS_SHADE 0.5 // [0.0 0.25 0.5 0.75 1.0]
+// 0 Waves, rippled normals; 1 Flat, a still surface glinting on the
+// texture's bright texels (cheaper).
+#define WATER_STYLE 0 // [0 1]
 #define EXPOSURE 1.0 // [0.6 0.8 1.0 1.2 1.4]
 // The fraction of the screen reflections and light shafts are traced at
 // (1/1 to 1/4; shaders.properties sizes their targets), and how that is
