@@ -1,10 +1,10 @@
 use bevy::camera::visibility::NoFrustumCulling;
 use bevy::prelude::*;
 
+use crate::app::systems::WorldCamera;
 use crate::blockentities::feed::BlockEntityData;
 use crate::blockentities::sim::bounds::{Data, Mode};
 use crate::scene::overlays::{LineMaterial, box_faces_mesh, line_mesh, outline_edges};
-use crate::app::systems::WorldCamera;
 use crate::session::Gamemode;
 
 const VIEW_DISTANCE: f64 = 96.0;
@@ -15,10 +15,7 @@ const GAME_MASTER_LEVEL: u8 = 2;
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<BoundsOverlay>()
-        .add_systems(
-            Startup,
-            spawn.after(crate::app::systems::RendererSetup),
-        )
+        .add_systems(Startup, spawn.after(crate::app::systems::RendererSetup))
         .add_systems(
             Update,
             update

@@ -45,7 +45,6 @@ pub(crate) fn center_depth() -> f32 {
     f32::from_bits(CENTER_DEPTH.load(Ordering::Relaxed))
 }
 
-
 #[cfg(test)]
 mod tests {
     #[test]

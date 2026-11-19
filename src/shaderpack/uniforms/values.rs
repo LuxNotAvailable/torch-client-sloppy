@@ -2,9 +2,9 @@ use bevy::math::{IVec2, IVec3, Mat4, Vec2, Vec3, Vec4};
 
 use super::builtins::{BUILTINS, Builtin, Value};
 use super::{BlockHead, MatrixSet};
-use crate::shaderpack::inputs::{EyeIn, Inputs, MAX_ARMOR, MAX_HUNGER};
 use crate::shaderpack::directives::Constants;
 use crate::shaderpack::expressions::Smooth;
+use crate::shaderpack::inputs::{EyeIn, Inputs, MAX_ARMOR, MAX_HUNGER};
 
 const FRAME_COUNTER_WRAP: u32 = 720_720;
 

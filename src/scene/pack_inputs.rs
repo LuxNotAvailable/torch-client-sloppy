@@ -4,9 +4,9 @@
 use bevy::math::{IVec2, Vec3};
 use bevy::prelude::*;
 
-use crate::scene::environment::Environment;
 use crate::app::frame_view::FrameView;
 use crate::app::systems::{BlockAtlasHandle, Shared, WorldCamera};
+use crate::scene::environment::Environment;
 use crate::shaderpack::inputs::{EyeIn, Inputs, Vehicle, Vitals, view_vector};
 
 fn in_shallow_water(feet: Vec3, eye_height: f32) -> bool {

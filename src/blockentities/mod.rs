@@ -357,12 +357,7 @@ pub struct Submit<'a> {
 }
 
 impl Submit<'_> {
-    pub fn item(
-        &mut self,
-        carried: Carried,
-        item: &crate::scene::anim::HeldItem,
-        pose: Transform,
-    ) {
+    pub fn item(&mut self, carried: Carried, item: &crate::scene::anim::HeldItem, pose: Transform) {
         if item.is_empty() {
             return;
         }

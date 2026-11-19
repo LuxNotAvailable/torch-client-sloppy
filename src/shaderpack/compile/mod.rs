@@ -7,10 +7,10 @@ use crate::shaderpack::programs::{self, Geometry};
 use crate::shaderpack::{backend, pipeline, transform};
 use crate::shaderpack::{discover, features, include, properties};
 
-use super::textures::{CustomTexture, CustomTextures};
 use super::sources::TextureSource;
-use crate::shaderpack::uniforms::MatrixSet;
+use super::textures::{CustomTexture, CustomTextures};
 use crate::client::dimension::Dimension;
+use crate::shaderpack::uniforms::MatrixSet;
 
 mod kinds;
 mod native;
@@ -220,8 +220,10 @@ pub(crate) fn compile_frame(
     let enable = programs::enable_expressions(props.other.iter())
         .map(|(p, e)| (p.to_owned(), e.to_owned()))
         .collect();
-    let (customs, custom_problems) =
-        Customs::compile(props.other.iter(), &crate::shaderpack::uniforms::resolve_input);
+    let (customs, custom_problems) = Customs::compile(
+        props.other.iter(),
+        &crate::shaderpack::uniforms::resolve_input,
+    );
     let mut notes: Vec<String> = custom_problems
         .into_iter()
         .map(|p| format!("custom uniform skipped: {p}"))

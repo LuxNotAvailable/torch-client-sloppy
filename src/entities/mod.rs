@@ -1254,7 +1254,6 @@ impl EntityRigs {
     pub fn len(&self) -> usize {
         self.live.len()
     }
-
 }
 
 #[derive(Component)]
@@ -1665,8 +1664,7 @@ fn sync_entities(
                             let mesh = assets.built_mesh(layer.spec, &key, geom, st, &mut meshes);
                             let image = match &texture {
                                 Some(path)
-                                    if path
-                                        .starts_with(crate::scene::maps::MAP_TEXTURE_PREFIX) =>
+                                    if path.starts_with(crate::scene::maps::MAP_TEXTURE_PREFIX) =>
                                 {
                                     map_textures.get(path)
                                 }
@@ -1763,9 +1761,10 @@ fn insert_copies(
     material: &Handle<EntityMaterial>,
 ) {
     for &copy in copies {
-        commands
-            .entity(copy)
-            .insert((Mesh3d(mesh.clone()), crate::draw::Material3d(material.clone())));
+        commands.entity(copy).insert((
+            Mesh3d(mesh.clone()),
+            crate::draw::Material3d(material.clone()),
+        ));
     }
 }
 

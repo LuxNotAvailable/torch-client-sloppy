@@ -8,10 +8,8 @@ use bevy::prelude::*;
 use azalea::entity::particle::Particle as P;
 
 use crate::app::AppState;
-use crate::scene::entity_material::{
-    EntityMaterial, EntityParams, LightMode, Lit, diffuse_lights,
-};
 use crate::app::systems::{ChunkMaterial, LightmapState, Shared, WorldCamera};
+use crate::scene::entity_material::{EntityMaterial, EntityParams, LightMode, Lit, diffuse_lights};
 use crate::util::javarandom::JavaRandom;
 use crate::util::particle_assets;
 

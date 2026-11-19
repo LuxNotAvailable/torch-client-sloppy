@@ -5,14 +5,14 @@ use bevy::camera::visibility::NoFrustumCulling;
 use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
 use bevy::prelude::*;
 
+use crate::app::AppState;
+use crate::app::frame_view::{FrameView, FrameViewSystems};
+use crate::app::systems::WorldCamera;
 use crate::entities::state::Display;
 use crate::entities::{CameraView, VIEW_RANGE_BLOCKS, display_orientation, display_quat};
 use crate::gui::painter::{Painter, PainterBuffers};
 use crate::gui::render::GuiAssets;
-use crate::app::AppState;
 use crate::scene::entity_material::{EntityMaterial, EntityParams, LightMode, Lit};
-use crate::app::frame_view::{FrameView, FrameViewSystems};
-use crate::app::systems::WorldCamera;
 use crate::text::{Font, LINE_HEIGHT, Span};
 
 pub struct WorldTextPlugin;

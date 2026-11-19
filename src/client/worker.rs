@@ -13,8 +13,8 @@ use azalea_world::{Chunk, World};
 use parking_lot::RwLock;
 
 use crate::ATLAS_ROWS;
-use crate::terrain::{self, Occupancy, PendingSection, RenderedBlock, build_section_mesh};
 use crate::session::{SharedMutex, SideMutex};
+use crate::terrain::{self, Occupancy, PendingSection, RenderedBlock, build_section_mesh};
 use crate::util::block_model::block_visual;
 
 struct BlockCache(Vec<Option<RenderedBlock>>);

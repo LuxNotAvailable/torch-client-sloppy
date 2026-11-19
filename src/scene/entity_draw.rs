@@ -5,8 +5,8 @@
 use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
 
-use crate::scene::entity_material::EntityMaterial;
 use crate::draw::{EntityDraw, EntityInstance, KIND_SHADOW_ONLY};
+use crate::scene::entity_material::EntityMaterial;
 
 type Drawn<'a> = (
     Entity,

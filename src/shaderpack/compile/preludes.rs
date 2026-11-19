@@ -1,6 +1,6 @@
+use super::SLOT_TABLE_BINDING;
 use super::TERRAIN_SET;
 use crate::terrain::ORIGIN_ROW;
-use super::SLOT_TABLE_BINDING;
 
 thread_local! {
     static VULKAN_TERRAIN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };

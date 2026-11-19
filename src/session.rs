@@ -224,6 +224,8 @@ pub struct SessionTargeting {
     pub attack_strength: f32,
     pub attack_delay: f32,
     pub breaking: Option<BreakingBlock>,
+    /// The tick's block interaction range, for the per-frame pick.
+    pub block_reach: f64,
 }
 
 /// Advancements and statistics.

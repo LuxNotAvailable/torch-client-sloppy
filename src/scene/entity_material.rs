@@ -205,9 +205,9 @@ impl Plugin for EntityMaterialPlugin {
             .init_asset::<crate::draw::SimpleMaterial>()
             .init_resource::<crate::scene::rig_parts::RigParts>()
             .add_systems(
-            Update,
-            load_glint.run_if(resource_added::<crate::app::systems::AssetsReady>),
-        );
+                Update,
+                load_glint.run_if(resource_added::<crate::app::systems::AssetsReady>),
+            );
         crate::scene::entity_draw::plugin(app);
         #[cfg(feature = "vulkan")]
         crate::vk::entity_dump::plugin(app);

@@ -6,15 +6,15 @@ use bevy::camera::visibility::RenderLayers;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 
-use crate::scene::anim::{AnimSample, ArmPose, Armor, HeldItem};
-use crate::scene::entity_material::{EntityMaterial, LightMode, Lit, diffuse_lights};
-use crate::scene::item_assets::ItemAssets;
 use crate::entities::geom;
 use crate::entities::models::humanoid::armor as armor_mesh;
 use crate::entities::render::humanoid::armor as armor_tex;
 use crate::entities::{refresh_params, refresh_texture};
 use crate::items::mesh::Transform as ItemTransform;
 use crate::items::model::DisplayContext;
+use crate::scene::anim::{AnimSample, ArmPose, Armor, HeldItem};
+use crate::scene::entity_material::{EntityMaterial, LightMode, Lit, diffuse_lights};
+use crate::scene::item_assets::ItemAssets;
 
 use crate::util::mth::ease::{in_out_expo, in_out_sine, in_quad, out_quart};
 use crate::util::mth::{DEG_TO_RAD, RAD_TO_DEG, lerp, progress, rot_lerp_rad};

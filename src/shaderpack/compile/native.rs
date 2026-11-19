@@ -17,16 +17,16 @@
 //! Iris's text directives (`RENDERTARGETS`, `const int colortex0Format`,
 //! `const ivec3 workGroups`, ...) are read from the file's comments.
 
+use super::SLOT_TABLE_BINDING;
 use super::pack::Pack;
 use super::program::{texture_sources, undeclared_buffer, used_bindings};
 use super::{AlphaTest, Dispatch, PACK_SET, Program, ProgramKind, TERRAIN_SET};
-use crate::terrain::ORIGIN_ROW;
-use super::SLOT_TABLE_BINDING;
 use crate::shaderpack::directives;
 use crate::shaderpack::pipeline::{self, Layout};
 use crate::shaderpack::transform::declarations::{PackUniform, std140_size};
 use crate::shaderpack::transform::lexer::{self, Kind};
 use crate::shaderpack::transform::{Interface, Sampler, StorageBuffer, UNIFORM_BINDING, UNIFORMS};
+use crate::terrain::ORIGIN_ROW;
 
 pub(super) const EXTENSION: &str = ".wgsl";
 

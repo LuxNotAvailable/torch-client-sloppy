@@ -152,7 +152,6 @@ const VSYNC: &str = "VSync";
 #[cfg(not(target_os = "android"))]
 const FULLSCREEN: &str = "Fullscreen";
 
-
 #[cfg(feature = "mobile_ui")]
 const TOUCH_MOVEMENT: &str = "Movement";
 #[cfg(feature = "mobile_ui")]
@@ -1292,8 +1291,7 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
             && crate::shaderpack::packvertex::active()
             && matches!(
                 o.antialiasing.mode,
-                crate::gui::antialias::AaMode::Msaa
-                    | crate::gui::antialias::AaMode::Supersample
+                crate::gui::antialias::AaMode::Msaa | crate::gui::antialias::AaMode::Supersample
             )
         {
             note = Some("Off while a shader pack is on; FXAA still works.");

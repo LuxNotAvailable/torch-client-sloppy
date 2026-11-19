@@ -205,7 +205,6 @@ impl TargetSettings {
             _ => [0.0; 4],
         })
     }
-
 }
 
 #[derive(Clone, Debug, PartialEq)]

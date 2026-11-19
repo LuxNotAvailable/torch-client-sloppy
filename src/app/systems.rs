@@ -1,7 +1,7 @@
 use crate::platform::time::Instant;
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::time::Duration;
 
 use bevy::asset::RenderAssetUsages;
@@ -377,7 +377,6 @@ fn setup(
     commands.init_resource::<BreakOverlay>();
     commands.init_resource::<ChunkBorderOverlay>();
     commands.init_resource::<HitboxOverlay>();
-
 
     if let Ok(opts) = cursor_opts.single_mut() {
         let open = start_screen.0.is_open();
@@ -980,13 +979,7 @@ fn collect_hud_info(
         let stale =
             memory_cache.is_none_or(|(at, _)| now.duration_since(at) >= MEMORY_SAMPLE_WINDOW);
         if stale {
-            let fresh = measure_memory(
-                &index,
-                &rig_node_q,
-                &rigs,
-                &block_entity_rigs,
-                &images,
-            );
+            let fresh = measure_memory(&index, &rig_node_q, &rigs, &block_entity_rigs, &images);
             *memory_cache = Some((now, fresh));
         }
         crate::gui::hud::DebugInfo {

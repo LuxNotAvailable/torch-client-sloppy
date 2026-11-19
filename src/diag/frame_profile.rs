@@ -345,7 +345,6 @@ impl Plugin for FrameProfilePlugin {
             order.insert_after(PostUpdate, AfterPostUpdate);
             order.insert_after(Last, AfterLast);
         }
-
     }
 }
 

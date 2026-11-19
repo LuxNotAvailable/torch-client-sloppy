@@ -724,7 +724,10 @@ fn describe(
         device.extend([
             ("gpu".to_owned(), info.name.clone()),
             ("gpu type".to_owned(), format!("{:?}", info.kind)),
-            ("gpu vendor id".to_owned(), format!("{:#06x}", info.vendor_id)),
+            (
+                "gpu vendor id".to_owned(),
+                format!("{:#06x}", info.vendor_id),
+            ),
             (
                 "graphics api".to_owned(),
                 format!("Vulkan {}.{}.{}", info.api.0, info.api.1, info.api.2),
@@ -820,9 +823,7 @@ fn describe(
         ),
         (
             "dimension".to_owned(),
-            crate::client::dimension::current()
-                .registry_id()
-                .to_owned(),
+            crate::client::dimension::current().registry_id().to_owned(),
         ),
     ];
     vec![("Device", device), ("Build", build), ("Settings", settings)]

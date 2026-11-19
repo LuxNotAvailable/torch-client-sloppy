@@ -43,7 +43,6 @@ pub fn register_all(registry: &mut BeRegistry) {
 }
 
 pub fn plugins(app: &mut bevy::prelude::App) {
-
     bounds::plugin(app);
 }
 

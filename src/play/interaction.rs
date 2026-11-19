@@ -138,31 +138,40 @@ pub(crate) fn reset_session_state() {
     }
 }
 
+/// The outline of `state` at `pos`, as the targeted block.
+pub fn targeted_block(state: BlockState, pos: BlockPos) -> TargetedBlock {
+    let boxes = state
+        .outline_shape(pos)
+        .to_aabbs()
+        .iter()
+        .map(|a| {
+            [
+                a.min.x as f32,
+                a.min.y as f32,
+                a.min.z as f32,
+                a.max.x as f32,
+                a.max.y as f32,
+                a.max.z as f32,
+            ]
+        })
+        .collect();
+    TargetedBlock {
+        pos: [pos.x, pos.y, pos.z],
+        boxes,
+    }
+}
+
 pub fn handle_interaction(bot: &Client, shared: &Arc<SharedMutex>) {
     let hit = block_hit(bot);
 
     let target = hit.as_ref().and_then(|h| {
         let state = bot.world().ok()?.read().get_block_state(h.block_pos)?;
-        let boxes = state
-            .outline_shape(h.block_pos)
-            .to_aabbs()
-            .iter()
-            .map(|a| {
-                [
-                    a.min.x as f32,
-                    a.min.y as f32,
-                    a.min.z as f32,
-                    a.max.x as f32,
-                    a.max.y as f32,
-                    a.max.z as f32,
-                ]
-            })
-            .collect();
-        Some(TargetedBlock {
-            pos: [h.block_pos.x, h.block_pos.y, h.block_pos.z],
-            boxes,
-        })
+        Some(targeted_block(state, h.block_pos))
     });
+    let reach = bot
+        .component::<azalea::entity::Attributes>()
+        .map(|a| a.block_interaction_range.calculate())
+        .unwrap_or(4.5);
 
     let (breaking, mining_particle) = mining_overlay(bot);
     let targeted_entity = living_target(bot);
@@ -172,6 +181,7 @@ pub fn handle_interaction(bot: &Client, shared: &Arc<SharedMutex>) {
     let (attack_held, attack_clicked, use_held, use_clicked, pick, attack_ready) = {
         let mut s = shared.lock().unwrap();
         s.session.targeting.targeted_block = target;
+        s.session.targeting.block_reach = reach;
         s.session.targeting.targeted_entity = targeted_entity;
         s.session.targeting.crosshair_entity = crosshair_entity;
         let attack_ready = s.session.targeting.attack_strength >= 1.0;

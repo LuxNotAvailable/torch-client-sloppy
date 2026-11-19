@@ -11,10 +11,10 @@ use bevy::prelude::*;
 use wgpu_types::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::app::AppState;
-use crate::scene::hand::HandCamera;
 use crate::app::input::{FreecamState, ThirdPersonState};
 use crate::app::systems::{LightmapState, Shared};
 use crate::draw::{ALPHA_BLEND, EntityVertex, EnvDraw, MeshData, Texture};
+use crate::scene::hand::HandCamera;
 use crate::session::Gamemode;
 use crate::util::block_model::{EyeFluid, eye_fluid_at, is_solid};
 

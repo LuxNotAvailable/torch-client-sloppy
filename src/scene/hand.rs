@@ -1282,23 +1282,24 @@ fn setup_hand(
                 Name::new(format!("{name}_map")),
             ))
             .id();
-        let mut map_piece = |mesh: Handle<Mesh>, material: Handle<crate::draw::SimpleMaterial>, part: &str| {
-            let entity = commands
-                .spawn((
-                    Mesh3d(mesh),
-                    crate::draw::Material3d(material),
-                    Transform::default(),
-                    Visibility::Inherited,
-                    RenderLayers::layer(HAND_LAYER),
-                    NoFrustumCulling,
-                    HandNode,
-                    HandMapNode,
-                    Name::new(format!("{name}_map_{part}")),
-                ))
-                .id();
-            commands.entity(map).add_child(entity);
-            entity
-        };
+        let mut map_piece =
+            |mesh: Handle<Mesh>, material: Handle<crate::draw::SimpleMaterial>, part: &str| {
+                let entity = commands
+                    .spawn((
+                        Mesh3d(mesh),
+                        crate::draw::Material3d(material),
+                        Transform::default(),
+                        Visibility::Inherited,
+                        RenderLayers::layer(HAND_LAYER),
+                        NoFrustumCulling,
+                        HandNode,
+                        HandMapNode,
+                        Name::new(format!("{name}_map_{part}")),
+                    ))
+                    .id();
+                commands.entity(map).add_child(entity);
+                entity
+            };
         let map_background = map_piece(
             paper_mesh.clone(),
             assets.map_background.clone(),
@@ -1346,10 +1347,7 @@ pub(crate) fn follow_world_camera(
     world: Query<&Transform, With<crate::app::systems::WorldCamera>>,
     mut hand: Query<
         (&mut Transform, &mut Projection),
-        (
-            With<HandCamera>,
-            Without<crate::app::systems::WorldCamera>,
-        ),
+        (With<HandCamera>, Without<crate::app::systems::WorldCamera>),
     >,
 ) {
     let Ok(world_transform) = world.single() else {
@@ -1416,9 +1414,18 @@ fn sync_hands(
     mut materials: ResMut<Assets<crate::draw::SimpleMaterial>>,
     lightmap: Res<crate::app::systems::LightmapState>,
     mut nodes: NodeQuery,
-    mut item_nodes: Query<(&mut Mesh3d, &mut crate::draw::Material3d<crate::draw::SimpleMaterial>), With<HandItemNode>>,
+    mut item_nodes: Query<
+        (
+            &mut Mesh3d,
+            &mut crate::draw::Material3d<crate::draw::SimpleMaterial>,
+        ),
+        With<HandItemNode>,
+    >,
     mut map_nodes: Query<
-        (&mut Mesh3d, &mut crate::draw::Material3d<crate::draw::SimpleMaterial>),
+        (
+            &mut Mesh3d,
+            &mut crate::draw::Material3d<crate::draw::SimpleMaterial>,
+        ),
         (With<HandMapNode>, Without<HandItemNode>),
     >,
 ) {
@@ -1635,7 +1642,10 @@ fn bind_map(
     materials: &mut Assets<crate::draw::SimpleMaterial>,
     nodes: &mut NodeQuery,
     map_nodes: &mut Query<
-        (&mut Mesh3d, &mut crate::draw::Material3d<crate::draw::SimpleMaterial>),
+        (
+            &mut Mesh3d,
+            &mut crate::draw::Material3d<crate::draw::SimpleMaterial>,
+        ),
         (With<HandMapNode>, Without<HandItemNode>),
     >,
 ) {
@@ -1803,7 +1813,14 @@ fn write(nodes: &mut NodeQuery, entity: Entity, transform: Transform, visible: b
 #[allow(clippy::type_complexity)]
 fn sync_hand_glint(
     rig: Option<Res<HandRig>>,
-    items: Query<(&Mesh3d, &crate::draw::Material3d<crate::draw::SimpleMaterial>, &Visibility), With<HandItemNode>>,
+    items: Query<
+        (
+            &Mesh3d,
+            &crate::draw::Material3d<crate::draw::SimpleMaterial>,
+            &Visibility,
+        ),
+        With<HandItemNode>,
+    >,
     mut glints: Query<
         (
             &HandGlint,

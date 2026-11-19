@@ -5,10 +5,10 @@ use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use wgpu_types::{Extent3d, TextureDimension, TextureFormat};
 
-use crate::gui::GuiState;
 use crate::app::AppState;
-use crate::scene::hand::HandCamera;
 use crate::app::systems::WorldCamera;
+use crate::gui::GuiState;
+use crate::scene::hand::HandCamera;
 
 const PANORAMA_LAYER: usize = 3;
 

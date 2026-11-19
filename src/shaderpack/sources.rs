@@ -33,10 +33,7 @@ pub(crate) enum TextureSource {
     ShadowCompare(Depth),
     ShadowColor(u8),
     EntityTexture,
-    Image {
-        index: u8,
-        dimension: Dimension,
-    },
+    Image { index: u8, dimension: Dimension },
 }
 
 impl TextureSource {

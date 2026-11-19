@@ -52,7 +52,10 @@ pub(crate) struct InstalledProgram {
     pub(crate) mipmapped: u16,
 }
 
-#[allow(dead_code, reason = "pack data the wgpu path read; the native pack rewrite picks it up")]
+#[allow(
+    dead_code,
+    reason = "pack data the wgpu path read; the native pack rewrite picks it up"
+)]
 pub(crate) struct Installed {
     pub(crate) generation: u32,
     pub(crate) direct: bool,
@@ -157,4 +160,3 @@ pub(crate) fn install(pack: &str, generation: u32, direct: bool, frame: Frame) -
         buffers: frame.buffers,
     }
 }
-

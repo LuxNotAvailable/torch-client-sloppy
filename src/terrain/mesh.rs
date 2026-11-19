@@ -328,8 +328,9 @@ impl MeshBuf {
                 e3[2] * e1[0] - e3[0] * e1[2],
                 e3[0] * e1[1] - e3[1] * e1[0],
             ];
-            self.pack
-                .push(crate::shaderpack::packvertex::quad(block, corners, face_uvs, normal));
+            self.pack.push(crate::shaderpack::packvertex::quad(
+                block, corners, face_uvs, normal,
+            ));
         }
         self.idx
             .extend_from_slice(&[base + 2, base + 1, base, base + 3, base + 2, base]);
@@ -791,6 +792,13 @@ fn emit_baked(
             if material == MATERIAL_LEAF && fast_leaves() {
                 // Fast leaves cull as solid; the shader fills their holes.
                 buf.push_baked(quad, wx, wy, wz, &lit, quad_tint, material);
+                #[cfg(feature = "shader_support")]
+                if buf.pack_block.is_some() && !quad.opaque {
+                    // Packs can't fill holes; their solid pass skips the alpha test.
+                    let n = buf.cutout_idx.len() - 6;
+                    let moved: Vec<u32> = buf.cutout_idx.drain(n..).collect();
+                    buf.idx.extend_from_slice(&moved);
+                }
                 continue;
             }
             // Connected textures: the quad moved onto the rule's tile.

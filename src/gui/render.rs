@@ -7,8 +7,8 @@ use bevy::input::mouse::AccumulatedMouseScroll;
 #[cfg(feature = "mobile_ui")]
 use bevy::input::touch::Touches;
 use bevy::prelude::*;
-use wgpu_types::{Extent3d, TextureDimension, TextureFormat};
 use bevy::window::PrimaryWindow;
+use wgpu_types::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::gui::atlas::GuiAtlas;
 use crate::gui::painter::Painter;
@@ -436,11 +436,8 @@ pub(crate) fn collect_input(
     input.left_release = buttons.just_released(MouseButton::Left) || touch_release;
     input.right_release = buttons.just_released(MouseButton::Right);
     let notches = crate::app::input::wheel_notches(&wheel, &state.options);
-    let (_, wy) = crate::app::input::accumulate_scroll(
-        &mut wheel_acc,
-        notches.x as f64,
-        notches.y as f64,
-    );
+    let (_, wy) =
+        crate::app::input::accumulate_scroll(&mut wheel_acc, notches.x as f64, notches.y as f64);
     input.scroll = wy as f32;
 
     input.ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);

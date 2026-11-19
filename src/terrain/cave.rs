@@ -50,8 +50,14 @@ impl Grid {
         Some((y * self.dim_z + z) * self.dim_x + x)
     }
 
-    pub(crate) fn fill<F>(&mut self, here: (i32, i32, i32), radius: i32, y_lo: i32, y_hi: i32, vis_at: F)
-    where
+    pub(crate) fn fill<F>(
+        &mut self,
+        here: (i32, i32, i32),
+        radius: i32,
+        y_lo: i32,
+        y_hi: i32,
+        vis_at: F,
+    ) where
         F: Fn((i32, i32, i32)) -> VisibilitySet,
     {
         self.resize(here, radius, y_lo, y_hi);
@@ -179,4 +185,3 @@ fn step(pos: (i32, i32, i32), face: Direction) -> (i32, i32, i32) {
         Direction::East => (x + 1, y, z),
     }
 }
-

@@ -17,6 +17,7 @@ use azalea_protocol::packets::game::{
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use crate::blockentities;
 use crate::client::tracking::{
     GAME_TIME, LOCAL_ANIM_ID, anim_states, equipment, head_yaws, set_current_world,
 };
@@ -30,7 +31,6 @@ use crate::scene::{AnimInput, HumanoidAnim};
 use crate::session::{
     ContainerKind, DropRequest, Gamemode, InvAction, OtherPlayerInfo, SharedMutex, SlotStack,
 };
-use crate::blockentities;
 
 struct TickSnapshot {
     pos: azalea::Vec3,

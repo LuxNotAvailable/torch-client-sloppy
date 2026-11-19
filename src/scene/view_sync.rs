@@ -4,11 +4,11 @@ use bevy::camera::{ClearColorConfig, ScalingMode};
 use bevy::prelude::*;
 
 use crate::app::frame_view::FrameView;
+use crate::app::systems::WorldCamera;
+use crate::client::view::{Eye, Figure, Fog, View, ViewSystems};
 use crate::scene::hand::HandCamera;
 use crate::scene::inventory_figure::{FigureCamera, FigureImage};
 use crate::scene::panorama::PanoramaCamera;
-use crate::app::systems::WorldCamera;
-use crate::client::view::{Eye, Figure, Fog, View, ViewSystems};
 
 pub struct ViewSyncPlugin;
 

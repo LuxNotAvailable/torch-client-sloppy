@@ -291,10 +291,46 @@ impl FrameView {
             if self.breaking != session.targeting.breaking {
                 self.breaking = session.targeting.breaking.clone();
             }
-            if self.targeted_block != session.targeting.targeted_block {
-                self.targeted_block = session.targeting.targeted_block.clone();
+            let target = self
+                .frame_pick(session.targeting.block_reach)
+                .unwrap_or_else(|| session.targeting.targeted_block.clone());
+            if self.targeted_block != target {
+                self.targeted_block = target;
             }
         }
+    }
+
+    /// The block under the crosshair from this frame's eye and look, as
+    /// vanilla picks each frame; `None` when the world isn't at hand (the
+    /// tick's pick stands). An entity under the crosshair hides it.
+    fn frame_pick(&self, reach: f64) -> Option<Option<TargetedBlock>> {
+        if reach <= 0.0 {
+            return None;
+        }
+        if self.crosshair_entity.is_some() {
+            return Some(None);
+        }
+        let world = crate::client::tracking::current_world()
+            .lock()
+            .ok()?
+            .clone()?;
+        let world = crate::client::tracking::read_world(&world);
+        let eye = azalea::Vec3::new(
+            f64::from(self.player_lerp[0]),
+            f64::from(self.player_lerp[1] + self.eye_height),
+            f64::from(self.player_lerp[2]),
+        );
+        // Camera angles to vanilla's (`input.rs`): yaw -y - 180, pitch -p.
+        let look = azalea::entity::LookDirection::new(-self.camera_yaw - 180.0, -self.camera_pitch);
+        let hit = azalea::interact::pick::pick_block(look, eye, &world.chunks, reach);
+        if hit.miss {
+            return Some(None);
+        }
+        let state = world.get_block_state(hit.block_pos)?;
+        Some(Some(crate::play::interaction::targeted_block(
+            state,
+            hit.block_pos,
+        )))
     }
 
     pub fn tick_eye(&self) -> [f64; 3] {

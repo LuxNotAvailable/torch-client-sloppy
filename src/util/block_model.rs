@@ -60,6 +60,8 @@ fn cull_group(name: &str, block: &dyn BlockTrait) -> u32 {
 pub fn emissive_rendering(name: &str, props: &HashMap<&str, &str>) -> bool {
     match name {
         "magma_block" => true,
+        // Not vanilla: fire draws full bright so it reads as a light source.
+        "fire" | "soul_fire" => true,
         "sculk_sensor" | "calibrated_sculk_sensor" => {
             props.get("sculk_sensor_phase").copied() == Some("active")
         }
@@ -260,8 +262,7 @@ fn modded_visual(state: azalea::block::BlockState) -> RenderedBlock {
         };
         let rows = crate::blocks::registry().atlas_rows();
         let from = crate::blocks::bake::tile_uv_rect(tex("stone"), rows);
-        let to =
-            crate::blocks::bake::tile_uv_rect(tex(crate::scene::atlas::MISSING_TEXTURE), rows);
+        let to = crate::blocks::bake::tile_uv_rect(tex(crate::scene::atlas::MISSING_TEXTURE), rows);
         let remap = |uv: [f32; 2]| {
             let u = (uv[0] - from[0]) / (from[2] - from[0]);
             let v = (uv[1] - from[1]) / (from[3] - from[1]);

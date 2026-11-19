@@ -4,8 +4,8 @@
 
 pub(crate) mod block_anim;
 pub mod cave;
-pub mod hiz;
 pub(crate) mod ctm;
+pub mod hiz;
 pub mod lighter;
 pub(crate) mod mesh;
 pub(crate) mod occupancy;
@@ -84,4 +84,3 @@ pub struct PendingSection {
     pub water: MeshBuf,
     pub vis: visgraph::VisibilitySet,
 }
-

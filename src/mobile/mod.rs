@@ -11,12 +11,12 @@ use bevy::math::Vec2;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
+use crate::app::input::{CameraAngles, apply_look};
+use crate::app::systems::{Shared, WorldCamera};
 use crate::gui::hud_layout::{ElementId, Hud, Transforms};
 use crate::gui::painter::Painter;
 use crate::gui::render::effective_gui_scale;
 use crate::gui::{GuiState, Screen, ScreenCtx};
-use crate::app::input::{CameraAngles, apply_look};
-use crate::app::systems::{Shared, WorldCamera};
 use crate::session::{
     Gamemode, MOVE_BACK, MOVE_DESCEND, MOVE_FORWARD, MOVE_JUMP, MOVE_LEFT, MOVE_RIGHT, MOVE_SNEAK,
     MOVE_SPRINT,

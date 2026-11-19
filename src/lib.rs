@@ -2,6 +2,7 @@
 // each such place says so with `#[allow(unsafe_code)]` and why.
 #![deny(unsafe_code)]
 
+mod app;
 #[cfg(audio)]
 mod audio;
 mod blockentities;
@@ -26,10 +27,9 @@ mod platform;
 mod play;
 #[cfg(feature = "multiversion")]
 mod protocol;
-mod app;
-mod scene;
 #[cfg(resource_packs)]
 mod resourcepacks;
+mod scene;
 mod session;
 #[cfg(feature = "shader_support")]
 mod shaderpack;

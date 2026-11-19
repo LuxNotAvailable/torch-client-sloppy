@@ -831,11 +831,7 @@ fn world_items(info: &HudInfo, d: &DebugInfo) -> Vec<Item<'static>> {
         na_row(
             "Terrain mesh",
             in_world,
-            format!(
-                "{} in {} slots",
-                bytes(mem.terrain_bytes),
-                mem.sections,
-            ),
+            format!("{} in {} slots", bytes(mem.terrain_bytes), mem.sections,),
         ),
         na_row(
             "Light",
