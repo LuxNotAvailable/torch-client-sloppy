@@ -504,7 +504,7 @@ pub fn draw_block_outline(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx
     let mut form = crate::gui::form::Form::new(p, ctx, OUTLINE_TITLE, 3, OUTLINE_SLIDER_ID);
     let o = &mut state.options;
     form.slider(&mut o.outline_width, 1, 10, outline_width_label);
-    let colors = crate::renderer::overlays::OUTLINE_COLORS;
+    let colors = crate::scene::overlays::OUTLINE_COLORS;
     let color = colors[(o.outline_color as usize).min(colors.len() - 1)].0;
     if form.button(&format!("{OUTLINE_COLOR}: {color}")) {
         o.outline_color = (o.outline_color + 1) % colors.len() as u32;
@@ -682,7 +682,7 @@ struct QualityPreset {
     render_distance: u32,
     pack_render_scale: u32,
     biome_blend: u32,
-    clouds: crate::renderer::clouds::CloudStatus,
+    clouds: crate::scene::clouds::CloudStatus,
     smooth_lighting: bool,
     antialiasing: crate::gui::antialias::AaMode,
     particles: crate::util::particles::ParticleStatus,
@@ -709,7 +709,7 @@ struct QualityPreset {
 
 const QUALITY_PRESETS: [QualityPreset; 6] = {
     use crate::gui::antialias::AaMode;
-    use crate::renderer::clouds::CloudStatus;
+    use crate::scene::clouds::CloudStatus;
     use crate::util::particles::ParticleStatus;
     [
         QualityPreset {
@@ -886,7 +886,7 @@ fn reset_video_options(o: &mut crate::gui::GuiOptions) {
     o.shadow_opacity = 50;
     reset_outline(o);
     o.clouds = if cfg!(feature = "mobile_ui") {
-        crate::renderer::clouds::CloudStatus::Fast
+        crate::scene::clouds::CloudStatus::Fast
     } else {
         Default::default()
     };
@@ -1068,7 +1068,7 @@ pub fn draw_manage_storage(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCt
         reset_video_options(&mut state.options);
         reset_chat_options(&mut state.options);
         let o = &mut state.options;
-        o.fov = crate::renderer::systems::VANILLA_FOV_DEGREES as u32;
+        o.fov = crate::app::systems::VANILLA_FOV_DEGREES as u32;
         o.auto_jump = crate::gui::AUTO_JUMP_DEFAULT;
         o.main_hand_left = false;
         #[cfg(feature = "skins")]

@@ -828,7 +828,7 @@ fn emit_consume_fx(bot: &Client, shared: &Arc<SharedMutex>, fx: &ConsumeFx, coun
 
     if fx.particles && !fx.item.is_empty() {
         let mut s = shared.lock().unwrap();
-        let eye_y = pos.y + crate::renderer::systems::eye_height(s.session.crouching) as f64;
+        let eye_y = pos.y + crate::app::systems::eye_height(s.session.crouching) as f64;
         let (pitch_rad, yaw_rad) = ((-pitch).to_radians(), (-yaw).to_radians());
         // `Vec3.xRot`, then `Vec3.yRot`.
         let turn = |[x, y, z]: [f32; 3]| {
@@ -966,7 +966,7 @@ fn in_water_or_rain(bot: &Client) -> bool {
     if bot.component::<Physics>().is_ok_and(|p| p.is_in_water()) {
         return true;
     }
-    if crate::renderer::environment::rain_level() <= 0.2 {
+    if crate::scene::environment::rain_level() <= 0.2 {
         return false;
     }
     let Some(biome) = crate::client::envprobe::camera_biome() else {
@@ -1013,7 +1013,7 @@ fn looks_at_water_source(bot: &Client) -> bool {
     let pose = bot.component::<azalea::entity::Pose>().ok().map(|p| *p);
     let eye = azalea_core::position::Vec3::new(
         pos.x,
-        pos.y + f64::from(crate::renderer::systems::pose_eye_height(pose)),
+        pos.y + f64::from(crate::app::systems::pose_eye_height(pose)),
         pos.z,
     );
     let (yaw, pitch) = (look.y_rot().to_radians(), look.x_rot().to_radians());

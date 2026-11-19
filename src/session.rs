@@ -1,4 +1,4 @@
-use crate::renderer::HumanoidAnim;
+use crate::scene::HumanoidAnim;
 use crate::terrain::PendingSection;
 
 pub const MOVE_FORWARD: u8 = 1 << 0;
@@ -109,7 +109,7 @@ impl ChunkProfiling {
 pub struct SessionInventory {
     pub menu_slots: std::sync::Arc<[SlotStack]>,
     pub hotbar: std::sync::Arc<[SlotStack]>,
-    pub armor: crate::renderer::Armor,
+    pub armor: crate::scene::Armor,
     pub carried: SlotStack,
     pub horse: Option<HorseMenu>,
     pub horse_published_state_id: u32,
@@ -251,8 +251,8 @@ pub struct SessionWorld {
     pub map_updates: Vec<MapUpdate>,
     pub clear_maps: bool,
     pub day_clock: WorldClock,
-    pub env: Option<crate::renderer::environment::BiomeLayer>,
-    pub env_prev: Option<crate::renderer::environment::BiomeLayer>,
+    pub env: Option<crate::scene::environment::BiomeLayer>,
+    pub env_prev: Option<crate::scene::environment::BiomeLayer>,
     pub block_entities: std::sync::Arc<
         std::collections::HashMap<[i32; 3], crate::blockentities::feed::BlockEntityInfo>,
     >,

@@ -212,7 +212,7 @@ fn snapshot(state: &GuiState, shared: &Arc<SharedMutex>) -> Snapshot {
         } else {
             Default::default()
         };
-        eye_height = crate::renderer::systems::session_eye_height(&s.session) as f64;
+        eye_height = crate::app::systems::session_eye_height(&s.session) as f64;
         eye_pos = s.session.player_pos;
 
         Snapshot {
@@ -1054,7 +1054,7 @@ fn draw_hud(
 ) {
     let (vw, vh) = (ctx.vw, ctx.vh);
 
-    let vignette = crate::renderer::screen_effects::vignette_strength();
+    let vignette = crate::scene::screen_effects::vignette_strength();
     if vignette > 0.0 {
         let alpha = (vignette * 255.0).round() as u32;
         p.sprite_tinted("vignette", 0.0, 0.0, vw, vh, alpha << 24 | 0x00FF_FFFF);
@@ -1481,7 +1481,7 @@ fn draw_inventory(
     let (left, top) = container::window_origin(Layout::PlayerMenu, ctx);
     dim_background(p, ctx.vw, ctx.vh);
     p.blit_sheet("container/inventory", 0.0, 0.0, INV_W, INV_H, left, top);
-    p.figure(crate::renderer::inventory_figure::Figure {
+    p.figure(crate::scene::inventory_figure::Figure {
         x0: left + 26.0,
         y0: top + 8.0,
         x1: left + 75.0,

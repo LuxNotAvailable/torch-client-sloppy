@@ -566,7 +566,7 @@ fn reset_session_side_tables(blocking: bool) {
     crate::play::riding::reset(blocking);
     crate::play::interaction::reset_session_state();
     crate::play::screen_warp::reset();
-    crate::renderer::view_bob::reset_hurt();
+    crate::scene::view_bob::reset_hurt();
     // Per-session state kept outside the session struct.
     crate::client::bus::reset();
     crate::play::event_particles::reset();

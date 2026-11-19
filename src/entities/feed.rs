@@ -2717,16 +2717,16 @@ mod tests {
     fn an_allay_raises_its_arms_to_a_held_item_over_five_ticks() {
         let mut anim = EntityAnim::new(1, EntityKind::Allay);
         let mut input = TickInput::new();
-        input.shared_mut().equipment.main_hand = crate::renderer::anim::HeldItem {
+        input.shared_mut().equipment.main_hand = crate::scene::anim::HeldItem {
             id: "amethyst_shard",
             count: 1,
-            ..crate::renderer::anim::HeldItem::default()
+            ..crate::scene::anim::HeldItem::default()
         };
         for _ in 0..5 {
             anim.tick(input.clone());
         }
         assert!((anim.sample(1.0).extras.holding_progress - 1.0).abs() < 1e-6);
-        input.shared_mut().equipment.main_hand = crate::renderer::anim::HeldItem::default();
+        input.shared_mut().equipment.main_hand = crate::scene::anim::HeldItem::default();
         for _ in 0..5 {
             anim.tick(input.clone());
         }

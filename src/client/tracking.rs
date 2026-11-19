@@ -5,7 +5,7 @@ use bevy::platform::collections::{HashMap, HashSet};
 
 use crate::{
     entities,
-    renderer::{self, HumanoidAnim},
+    scene::{self, HumanoidAnim},
 };
 
 static MESHED: OnceLock<SideMutex<HashSet<(i32, i32)>>> = OnceLock::new();
@@ -69,8 +69,8 @@ pub(crate) fn crit_hits() -> &'static SideMutex<Vec<(i32, bool)>> {
 
 #[derive(Clone, Debug, Default)]
 pub struct Equipment {
-    pub main_hand: renderer::HeldItem,
-    pub off_hand: renderer::HeldItem,
+    pub main_hand: scene::HeldItem,
+    pub off_hand: scene::HeldItem,
     pub helmet: Option<&'static str>,
     pub chestplate: Option<&'static str>,
     pub leggings: Option<&'static str>,

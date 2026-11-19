@@ -3,7 +3,7 @@ use simdnbt::owned::{NbtCompound, NbtTag};
 
 use crate::blocks::facing;
 use crate::items::potions::{self, PotionContents};
-use crate::renderer::anim::HeldItem;
+use crate::scene::anim::HeldItem;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Container<const N: usize> {

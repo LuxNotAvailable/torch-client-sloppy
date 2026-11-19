@@ -495,7 +495,7 @@ pub fn draw(
 
     draw_tab(p, &info, true, left, top);
     if st.tab == TAB_INVENTORY {
-        p.figure(crate::renderer::inventory_figure::Figure {
+        p.figure(crate::scene::inventory_figure::Figure {
             x0: left + 73.0,
             y0: top + 6.0,
             x1: left + 105.0,

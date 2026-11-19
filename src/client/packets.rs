@@ -21,8 +21,8 @@ use crate::lighting::ServerLight;
 use crate::lighting::data_layer::{DataLayer, SIZE as LAYER_SIZE};
 use crate::play::commands;
 use crate::play::entity_feed::{METADATA_INDEX_18, entity_event};
-use crate::renderer::HumanoidAnim;
-use crate::renderer::environment;
+use crate::scene::HumanoidAnim;
+use crate::scene::environment;
 use crate::session::{
     MapDecoration, MapUpdate, SharedMutex, WaypointInfo, WaypointKey, WaypointPos,
 };
@@ -678,13 +678,13 @@ fn animations(packet: &ClientboundGamePacket) {
         ClientboundGamePacket::HurtAnimation(p) => {
             on_living_anim(p.id.0, HumanoidAnim::hurt, EntityAnim::hurt);
             if p.id.0 == crate::client::tracking::local_entity_id() {
-                crate::renderer::view_bob::note_local_hurt(Some(p.yaw));
+                crate::scene::view_bob::note_local_hurt(Some(p.yaw));
             }
         }
         ClientboundGamePacket::DamageEvent(p) => {
             on_living_anim(p.entity_id.0, HumanoidAnim::damage, EntityAnim::damage);
             if p.entity_id.0 == crate::client::tracking::local_entity_id() {
-                crate::renderer::view_bob::note_local_hurt(None);
+                crate::scene::view_bob::note_local_hurt(None);
             }
         }
         ClientboundGamePacket::EntityEvent(p) => {
@@ -1396,7 +1396,7 @@ fn level_lifecycle(world: &WorldHolder, shared: &Arc<SharedMutex>, packet: &Clie
             worldsync::forget_chunk(world, shared, p.pos.x, p.pos.z);
         }
         ClientboundGamePacket::Respawn(p) => {
-            crate::renderer::view_bob::reset_hurt();
+            crate::scene::view_bob::reset_hurt();
             crate::items::dispatch::set_death(global_pos(p.common.last_death_location.as_ref()));
             worldsync::set_dimension(world, &p.common);
             crate::client::post_effects::set([]);
@@ -1407,10 +1407,10 @@ fn level_lifecycle(world: &WorldHolder, shared: &Arc<SharedMutex>, packet: &Clie
             worldsync::set_dimension(world, &p.common);
             crate::client::post_effects::set([]);
             worldsync::reset_level(shared);
-            crate::renderer::environment::set_server_chunk_radius(p.chunk_radius);
+            crate::scene::environment::set_server_chunk_radius(p.chunk_radius);
         }
         ClientboundGamePacket::SetChunkCacheRadius(p) => {
-            crate::renderer::environment::set_server_chunk_radius(p.radius);
+            crate::scene::environment::set_server_chunk_radius(p.radius);
         }
         ClientboundGamePacket::AwardStats(p) => {
             if let Some(shared) = crate::SHARED.get() {

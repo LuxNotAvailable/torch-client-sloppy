@@ -15,7 +15,7 @@ pub fn step(err: f32, rate: f32, dt: f32) -> f32 {
 }
 
 pub fn quantise(deg: f32) -> f32 {
-    let grid = crate::renderer::input::LOOK_SCALE;
+    let grid = crate::app::input::LOOK_SCALE;
     (deg / grid).round() * grid
 }
 
@@ -28,7 +28,7 @@ pub fn look_toward(
     aim: [f32; 3],
     rate: f32,
 ) -> (f32, f32) {
-    let partial = crate::renderer::systems::partial_ticks(s);
+    let partial = crate::app::systems::partial_ticks(s);
     let (want_yaw, want_pitch) =
         super::aim_assist::look_at(super::aim_assist::eye(s, partial), aim);
     (
@@ -43,7 +43,7 @@ mod tests {
 
     #[test]
     fn a_turn_lands_on_the_pointer_grid() {
-        let grid = crate::renderer::input::LOOK_SCALE;
+        let grid = crate::app::input::LOOK_SCALE;
         for deg in [0.0, 0.01, 0.37, -2.4, 17.9] {
             let q = quantise(deg);
             assert!(

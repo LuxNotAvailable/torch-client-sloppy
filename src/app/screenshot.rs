@@ -1,0 +1,69 @@
+use bevy::prelude::*;
+
+use crate::app::systems::Shared;
+
+/// Asks the renderer to capture the next frame of the window.
+#[derive(Component)]
+pub struct Screenshot;
+
+/// The captured frame, sent to the requesting entity before it despawns.
+#[derive(EntityEvent)]
+pub struct ScreenshotCaptured {
+    pub entity: Entity,
+    pub image: Image,
+}
+
+/// Saves the next frame as `<dir>/<n>.png`, quietly, for capture runs
+/// frames (`MC_AUTO_SHOT_MS`), for comparing culling settings.
+pub(crate) fn request_numbered(commands: &mut Commands, dir: std::path::PathBuf, n: u32) {
+    commands.spawn(Screenshot).observe(
+        move |captured: On<ScreenshotCaptured>| {
+            if let Ok(image) = captured.image.clone().try_into_dynamic() {
+                let _ = std::fs::create_dir_all(&dir);
+                let _ = image.to_rgb8().save(dir.join(format!("{n:04}.png")));
+            }
+        },
+    );
+}
+
+pub(crate) fn request(commands: &mut Commands) {
+    commands.spawn(Screenshot).observe(store);
+}
+
+fn store(captured: On<ScreenshotCaptured>, shared: Res<Shared>) {
+    let result = match captured.image.clone().try_into_dynamic() {
+        Ok(image) => crate::platform::screenshot::save(&image.to_rgb8()),
+        Err(e) => Err(format!("could not read the frame back: {e}")),
+    };
+
+    let (text, tag, style) = match result {
+        Ok(name) => (
+            format!("Captured screenshot as {name}"),
+            crate::session::ChatTag::System,
+            crate::text::Style::default(),
+        ),
+        Err(reason) => (
+            format!("Could not capture a screenshot: {reason}"),
+            crate::session::ChatTag::Error,
+            crate::text::Style {
+                italic: true,
+                ..crate::text::Style::colored(0xFF5555)
+            },
+        ),
+    };
+    crate::log_info!("render", "{text}");
+
+    shared
+        .0
+        .lock()
+        .unwrap()
+        .session
+        .chat
+        .chat_incoming
+        .push(crate::session::ChatEntry {
+            spans: vec![crate::text::Span { text, style }],
+            events: None,
+            tag,
+            original: None,
+        });
+}

@@ -216,7 +216,7 @@ fn exit_when_written() -> bool {
 }
 
 fn autostart(
-    shared: Res<crate::renderer::Shared>,
+    shared: Res<crate::app::Shared>,
     mut entered: Local<Option<Instant>>,
     mut started: Local<bool>,
 ) {
@@ -269,7 +269,7 @@ struct Uploads<'w, 's> {
     image_events: MessageReader<'w, 's, AssetEvent<Image>>,
     meshes: Res<'w, Assets<Mesh>>,
     images: Res<'w, Assets<Image>>,
-    entity_materials: Res<'w, Assets<crate::renderer::entity_material::EntityMaterial>>,
+    entity_materials: Res<'w, Assets<crate::scene::entity_material::EntityMaterial>>,
     standard_materials: Res<'w, Assets<crate::draw::SimpleMaterial>>,
 }
 
@@ -336,14 +336,14 @@ impl Uploads<'_, '_> {
 struct Context<'w, 's> {
     window: Query<'w, 's, &'static Window, With<PrimaryWindow>>,
     state: Res<'w, crate::gui::GuiState>,
-    shared: Res<'w, crate::renderer::Shared>,
+    shared: Res<'w, crate::app::Shared>,
 }
 
 fn sample(
     mut uploads: Uploads,
     time: Res<Time<Real>>,
     diagnostics: Option<Res<DiagnosticsStore>>,
-    view: Res<crate::renderer::frame_view::FrameView>,
+    view: Res<crate::app::frame_view::FrameView>,
     context: Context,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -404,7 +404,7 @@ impl Capture {
     fn record_frame(
         &mut self,
         diagnostics: Option<&DiagnosticsStore>,
-        view: &crate::renderer::frame_view::FrameView,
+        view: &crate::app::frame_view::FrameView,
     ) {
         for (group, name, ns) in frame_profile::last_frame() {
             let section = match group {
@@ -582,7 +582,7 @@ fn traffic() -> (u64, u64) {
     )
 }
 
-fn toast(shared: &crate::renderer::Shared, title: &str, message: &str) {
+fn toast(shared: &crate::app::Shared, title: &str, message: &str) {
     use crate::gui::toast::{SystemId, ToastEvent};
     let plain = |s: &str| crate::text::styled(s, crate::text::Style::default());
     crate::session::queue_toasts(

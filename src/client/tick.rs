@@ -26,11 +26,11 @@ use crate::play::interaction;
 use crate::play::inventory_bridge::{
     apply_inv_actions, container_kind, potion_contents, slot_stack,
 };
-use crate::renderer::{AnimInput, HumanoidAnim};
+use crate::scene::{AnimInput, HumanoidAnim};
 use crate::session::{
     ContainerKind, DropRequest, Gamemode, InvAction, OtherPlayerInfo, SharedMutex, SlotStack,
 };
-use crate::{blockentities, renderer};
+use crate::blockentities;
 
 struct TickSnapshot {
     pos: azalea::Vec3,
@@ -41,7 +41,7 @@ struct TickSnapshot {
     entity_anims: std::sync::Arc<Vec<crate::entities::feed::EntityAnim>>,
     menu_slots: Arc<[SlotStack]>,
     hotbar: Arc<[SlotStack]>,
-    armor: crate::renderer::Armor,
+    armor: crate::scene::Armor,
     carried: SlotStack,
     container_id: i32,
     container_kind: ContainerKind,
@@ -108,7 +108,7 @@ fn read_tick_snapshot(bot: &Client, shared: &Arc<SharedMutex>) -> Option<TickSna
     #[cfg(voice)]
     {
         use azalea::entity::{EntityUuid, Pose, Position};
-        let eye = |pose: Option<Pose>| crate::renderer::systems::pose_eye_height(pose) as f64;
+        let eye = |pose: Option<Pose>| crate::app::systems::pose_eye_height(pose) as f64;
         let mut eyes = std::collections::HashMap::new();
         for player in bot.nearby_players().unwrap_or_default() {
             let (Some(id), Some(at)) = (
@@ -236,7 +236,7 @@ fn read_tick_snapshot(bot: &Client, shared: &Arc<SharedMutex>) -> Option<TickSna
         });
         let under_water = crate::util::block_model::eye_fluid_at(
             pos.x,
-            pos.y + f64::from(crate::renderer::systems::pose_eye_height(pose)),
+            pos.y + f64::from(crate::app::systems::pose_eye_height(pose)),
             pos.z,
         ) == Some(crate::util::block_model::EyeFluid::Water);
         RIDING.lock().unwrap().tick(vehicle, under_water, false);
@@ -278,7 +278,7 @@ fn read_tick_snapshot(bot: &Client, shared: &Arc<SharedMutex>) -> Option<TickSna
             .get(36..46)
             .map(|slots| caches.hotbar.convert(slots, registries, advanced_tooltips))
             .unwrap_or_default();
-        let armor = crate::renderer::Armor {
+        let armor = crate::scene::Armor {
             worn: std::array::from_fn(|i| player_slots.get(5 + i).and_then(item_id)),
             glint: (0..4)
                 .filter(|&i| {
@@ -512,7 +512,7 @@ fn fov_target(
     first_person: bool,
     effect_scale: f32,
 ) -> f32 {
-    use crate::renderer::anim::{UseAnimation, use_animation};
+    use crate::scene::anim::{UseAnimation, use_animation};
 
     let mut modifier = 1.0;
 
@@ -550,8 +550,8 @@ fn tick_fov(bot: &Client, reads: &TickReads, main_hand: &str, use_ticks: u32) ->
     SCOPING.store(
         first_person
             && interaction::is_using_item()
-            && crate::renderer::anim::use_animation(main_hand)
-                == crate::renderer::anim::UseAnimation::Spyglass,
+            && crate::scene::anim::use_animation(main_hand)
+                == crate::scene::anim::UseAnimation::Spyglass,
         std::sync::atomic::Ordering::Relaxed,
     );
     (previous + (target - previous) * FOV_SMOOTHING).clamp(FOV_MODIFIER_MIN, FOV_MODIFIER_MAX)
@@ -854,7 +854,7 @@ fn block_distance_sqr(pos: AzBlockPos, point: [f64; 3]) -> f64 {
 fn rain_spot(eye: [f64; 3]) -> Option<([f32; 3], bool)> {
     use azalea_core::position::BlockPos;
     const RADIUS: i32 = 10;
-    let rain = crate::renderer::environment::rain_level();
+    let rain = crate::scene::environment::rain_level();
     if rain <= 0.0 {
         return None;
     }
@@ -911,7 +911,7 @@ fn world_sounds(
     use azalea::entity::{Physics, PlayerAbilities, Pose};
     use azalea_registry::builtin::EntityKind;
     let pose = bot.component::<Pose>().ok().map(|p| *p);
-    let eye_y = pos.y + crate::renderer::systems::pose_eye_height(pose) as f64;
+    let eye_y = pos.y + crate::app::systems::pose_eye_height(pose) as f64;
     let feet = [pos.x, pos.y, pos.z];
     let eye = [pos.x, eye_y, pos.z];
     let underwater = eye_fluid_at(eye[0], eye[1], eye[2]) == Some(EyeFluid::Water);
@@ -1048,7 +1048,7 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
         bot,
         [
             pos.x,
-            pos.y + crate::renderer::systems::crawl_eye_height(crouching, crawling) as f64,
+            pos.y + crate::app::systems::crawl_eye_height(crouching, crawling) as f64,
             pos.z,
         ],
     );
@@ -1245,7 +1245,7 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
         s.session.crawling = crawling;
         // Vanilla's `Camera.tick`: the camera's eye closes half the gap to
         // the pose's eye height each tick, so crouching and crawling glide.
-        let target = crate::renderer::systems::session_eye_height(&s.session);
+        let target = crate::app::systems::session_eye_height(&s.session);
         s.session.camera_eye = match s.session.camera_eye {
             // Unset, as on joining: start at the pose.
             [_, 0.0] => [target, target],
@@ -1388,7 +1388,7 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
             + 4.0;
         let eye = [
             pos.x,
-            pos.y + crate::renderer::systems::crawl_eye_height(crouching, crawling) as f64,
+            pos.y + crate::app::systems::crawl_eye_height(crouching, crawling) as f64,
             pos.z,
         ];
         if !still_sign || block_distance_sqr(sign_pos, eye) >= range * range {
@@ -1583,7 +1583,7 @@ fn spectated_view(bot: &Client) -> Option<([f64; 3], f32, f32, f32)> {
     let at = ecs.get::<azalea::entity::Position>(entity)?;
     let kind = **ecs.get::<azalea::entity::EntityKindComponent>(entity)?;
     let eye = if kind == azalea_registry::builtin::EntityKind::Player {
-        crate::renderer::systems::pose_eye_height(ecs.get::<azalea::entity::Pose>(entity).copied())
+        crate::app::systems::pose_eye_height(ecs.get::<azalea::entity::Pose>(entity).copied())
     } else {
         azalea::entity::dimensions::EntityDimensions::from(kind).eye_height
     };
@@ -1648,7 +1648,7 @@ fn collect_other_players(bot: &Client) -> (Vec<OtherPlayerInfo>, HashSet<i32>) {
                 interpolated: true,
                 main_hand: worn.main_hand,
                 off_hand: worn.off_hand,
-                armor: crate::renderer::Armor {
+                armor: crate::scene::Armor {
                     worn: [worn.helmet, worn.chestplate, worn.leggings, worn.boots],
                     glint: worn.armor_glint & 0xF,
                     trims: worn.armor_trims,
@@ -1788,7 +1788,7 @@ fn tick_local_anim(
                 .inventory
                 .hotbar
                 .get(i)
-                .map(|st| renderer::HeldItem {
+                .map(|st| crate::scene::HeldItem {
                     id: st.item,
                     charged: st.charged,
                     count: st.count,
@@ -1923,13 +1923,13 @@ pub(crate) fn swing_local_player(left_arm: bool, shared: &Arc<SharedMutex>) {
     shared.lock().unwrap().session.local_anim = snapshot;
 }
 
-pub(crate) fn held_item(stack: &ItemStack) -> renderer::HeldItem {
+pub(crate) fn held_item(stack: &ItemStack) -> crate::scene::HeldItem {
     use azalea_inventory::components as comp;
     let ItemStack::Present(data) = stack else {
-        return renderer::HeldItem::default();
+        return crate::scene::HeldItem::default();
     };
     let id = data.kind.to_str().trim_start_matches("minecraft:");
-    renderer::HeldItem {
+    crate::scene::HeldItem {
         tint: potion_contents(data).map(|c| c.color()),
         id,
         charged: data

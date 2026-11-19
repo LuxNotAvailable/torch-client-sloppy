@@ -187,7 +187,7 @@ impl Plugin for GuiPlugin {
         app.add_systems(
             Update,
             crate::gui::assetdownload::adopt_downloaded_assets.run_if(bevy::prelude::not(
-                bevy::prelude::resource_exists::<crate::renderer::systems::AssetsReady>,
+                bevy::prelude::resource_exists::<crate::app::systems::AssetsReady>,
             )),
         );
     }
@@ -282,7 +282,7 @@ fn setup_gui(
 
 fn upload_banner_icons(
     assets: Option<Res<GuiAssets>>,
-    items: Option<Res<crate::renderer::item_assets::ItemAssets>>,
+    items: Option<Res<crate::scene::item_assets::ItemAssets>>,
     mut writes: ResMut<crate::gui::atlas_writes::AtlasWrites>,
 ) {
     let (Some(assets), Some(items)) = (assets, items) else {
@@ -435,8 +435,8 @@ pub(crate) fn collect_input(
     input.middle_down = buttons.pressed(MouseButton::Middle);
     input.left_release = buttons.just_released(MouseButton::Left) || touch_release;
     input.right_release = buttons.just_released(MouseButton::Right);
-    let notches = crate::renderer::input::wheel_notches(&wheel, &state.options);
-    let (_, wy) = crate::renderer::input::accumulate_scroll(
+    let notches = crate::app::input::wheel_notches(&wheel, &state.options);
+    let (_, wy) = crate::app::input::accumulate_scroll(
         &mut wheel_acc,
         notches.x as f64,
         notches.y as f64,
@@ -670,7 +670,7 @@ pub(crate) fn draw_gui(
     time: Res<Time>,
     frames: Res<GuiFrames>,
     mut scratch: Local<crate::gui::painter::PainterBuffers>,
-    mut figure: ResMut<crate::renderer::inventory_figure::InventoryFigure>,
+    mut figure: ResMut<crate::scene::inventory_figure::InventoryFigure>,
     #[cfg(feature = "skins")] mut faces: ResMut<crate::gui::player_faces::PlayerFaces>,
 ) {
     #[cfg(feature = "budget")]

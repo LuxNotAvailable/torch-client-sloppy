@@ -141,7 +141,7 @@ pub fn nudge(s: &SharedState, yaw: f32, pitch: f32, dx: f32, dy: f32) -> (f32, f
     if pull.gain <= 0.0 && pull.friction <= 0.0 {
         return (dx, dy);
     }
-    let partial = crate::renderer::systems::partial_ticks(s);
+    let partial = crate::app::systems::partial_ticks(s);
     let Some(point) = target_point(s, id, partial) else {
         return (dx, dy);
     };
@@ -190,7 +190,7 @@ fn target_point(s: &SharedState, id: i32, partial: f32) -> Option<[f32; 3]> {
 fn player_point(pos: [f32; 3], discrete: bool) -> [f32; 3] {
     [
         pos[0],
-        pos[1] + crate::renderer::systems::eye_height(discrete),
+        pos[1] + crate::app::systems::eye_height(discrete),
         pos[2],
     ]
 }
@@ -204,7 +204,7 @@ pub(super) fn eye(s: &SharedState, partial: f32) -> [f32; 3] {
     let at = |i: usize| prev[i] + (cur[i] - prev[i]) * partial;
     [
         at(0),
-        at(1) + crate::renderer::systems::session_eye_height(&s.session),
+        at(1) + crate::app::systems::session_eye_height(&s.session),
         at(2),
     ]
 }

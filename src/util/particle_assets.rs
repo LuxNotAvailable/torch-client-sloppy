@@ -108,7 +108,7 @@ pub(crate) fn build_atlas() -> ParticleAtlasData {
     );
 
     ParticleAtlasData {
-        image: crate::renderer::rgba_image(
+        image: crate::scene::rgba_image(
             atlas_w,
             atlas_h,
             data,

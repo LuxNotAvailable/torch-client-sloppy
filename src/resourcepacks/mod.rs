@@ -25,7 +25,7 @@ pub(crate) fn dir() -> PathBuf {
 }
 
 /// The pack built into the client: Torch's own visual tweaks (connected
-/// glass so far, `renderer::ctm`). It has no files: selecting it switches
+/// glass so far, `terrain::ctm`). It has no files: selecting it switches
 /// the tweaks on. See `TORCH_DEFAULT_PACK.md` beside this file.
 pub(crate) const BUILTIN: &str = "Torch Default (built-in)";
 

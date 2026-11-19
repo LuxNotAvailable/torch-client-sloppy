@@ -3,8 +3,8 @@ use bevy::prelude::*;
 
 use crate::blockentities::feed::BlockEntityData;
 use crate::blockentities::sim::bounds::{Data, Mode};
-use crate::renderer::overlays::{LineMaterial, box_faces_mesh, line_mesh, outline_edges};
-use crate::renderer::systems::WorldCamera;
+use crate::scene::overlays::{LineMaterial, box_faces_mesh, line_mesh, outline_edges};
+use crate::app::systems::WorldCamera;
 use crate::session::Gamemode;
 
 const VIEW_DISTANCE: f64 = 96.0;
@@ -17,15 +17,15 @@ pub fn plugin(app: &mut App) {
     app.init_resource::<BoundsOverlay>()
         .add_systems(
             Startup,
-            spawn.after(crate::renderer::systems::RendererSetup),
+            spawn.after(crate::app::systems::RendererSetup),
         )
         .add_systems(
             Update,
             update
-                .after(crate::renderer::FrameViewSystems)
-                .run_if(in_state(crate::renderer::AppState::InGame)),
+                .after(crate::app::FrameViewSystems)
+                .run_if(in_state(crate::app::AppState::InGame)),
         )
-        .add_systems(OnExit(crate::renderer::AppState::InGame), clear);
+        .add_systems(OnExit(crate::app::AppState::InGame), clear);
 }
 
 #[derive(Component)]
@@ -102,7 +102,7 @@ fn in_range(pos: [i32; 3], data: &Data, camera: Vec3) -> bool {
 }
 
 fn update(
-    view: Res<crate::renderer::FrameView>,
+    view: Res<crate::app::FrameView>,
     mut overlay: ResMut<BoundsOverlay>,
     mut meshes: ResMut<Assets<Mesh>>,
     camera: Query<&GlobalTransform, With<WorldCamera>>,

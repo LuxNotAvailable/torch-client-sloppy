@@ -69,9 +69,9 @@ impl PlayerFaces {
 }
 
 pub fn update_player_faces(
-    shared: Res<crate::renderer::systems::Shared>,
+    shared: Res<crate::app::systems::Shared>,
     assets: Option<Res<super::render::GuiAssets>>,
-    skins: Res<crate::renderer::skin::SkinTextures>,
+    skins: Res<crate::scene::skin::SkinTextures>,
     images: Res<Assets<Image>>,
     mut faces: ResMut<PlayerFaces>,
     mut writes: ResMut<AtlasWrites>,

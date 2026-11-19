@@ -4,7 +4,7 @@ use crate::entities::geom::{
     BakedModel, CubeList, Grow, LayerDef, MeshDef, PartDef, PartPose, PartState,
 };
 use crate::entities::state::EntityState;
-use crate::renderer::anim::ArmPose;
+use crate::scene::anim::ArmPose;
 
 use super::humanoid::{self, ArmPoses, Limbs};
 

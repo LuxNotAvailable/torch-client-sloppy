@@ -7,11 +7,11 @@ use bevy::prelude::*;
 
 use azalea::entity::particle::Particle as P;
 
-use crate::renderer::AppState;
-use crate::renderer::entity_material::{
+use crate::app::AppState;
+use crate::scene::entity_material::{
     EntityMaterial, EntityParams, LightMode, Lit, diffuse_lights,
 };
-use crate::renderer::systems::{ChunkMaterial, LightmapState, Shared, WorldCamera};
+use crate::app::systems::{ChunkMaterial, LightmapState, Shared, WorldCamera};
 use crate::util::javarandom::JavaRandom;
 use crate::util::particle_assets;
 
@@ -62,7 +62,7 @@ impl Plugin for ParticlePlugin {
                     fill_draw_list.in_set(crate::draw::DrawSystems),
                 )
                     .chain()
-                    .after(crate::renderer::FrameViewSystems)
+                    .after(crate::app::FrameViewSystems)
                     .run_if(in_state(AppState::InGame)),
             );
     }
@@ -686,7 +686,7 @@ pub(crate) fn spawn_block_break(
 }
 
 fn spawn_crit_particles(
-    view: Res<crate::renderer::FrameView>,
+    view: Res<crate::app::FrameView>,
     gui: Res<crate::gui::GuiState>,
     atlas: Res<ParticleAtlas>,
     mut live: ResMut<LiveParticles>,

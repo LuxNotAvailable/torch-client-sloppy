@@ -9,7 +9,8 @@ Network (`eagler`/azalea, `protocol` hops) feeds `client` (packets, tick,
 `bus`). `client` updates the session and world. `play` predicts player
 actions. `entities` and `blockentities` turn state into models; `terrain`
 meshes chunk sections (on `client`'s worker). `vk` (native Vulkan) draws them;
-`renderer` holds the game's Bevy-side scene (cameras, models, sky) that fills `draw`.
+`scene` holds the game's Bevy-side scene (cameras, models, sky) that fills `draw`;
+`app` sets up Bevy and runs input and the frame view.
 `gui` draws screens and HUD and talks back through `client::bus`.
 
 ## `src/`
@@ -17,6 +18,7 @@ meshes chunk sections (on `client`'s worker). `vk` (native Vulkan) draws them;
 | Module | Owns | Start at |
 |---|---|---|
 | `lib.rs` | crate root, `run()`, shared statics | `run` |
+| `app` | Bevy app setup (`systems::run`), input and keybind actions, intents, the frame's `FrameView`, app state, screenshots | `systems.rs`, `input.rs` |
 | `audio` | sound engine, categories, music, ambience, subtitles | `mod.rs` |
 | `blockentities` | block entity models (`render/`) and client sim (`sim/`) | `mod.rs` |
 | `blocks` | blockstate registry, model baking, per-state `info` | `info.rs`, `bake.rs` |
@@ -33,7 +35,7 @@ meshes chunk sections (on `client`'s worker). `vk` (native Vulkan) draws them;
 | `platform` | OS/web/Android abstraction: env, storage, http, input, time | `mod.rs` |
 | `play` | player actions: interaction, placement, riding, vehicles, commands | `interaction.rs`, `placement.rs` |
 | `protocol` | multi-version support: packet tables, id remaps, hops | `hop.rs` (recipe at top) |
-| `renderer` | app setup and the Bevy-side scene: cameras, input, entity and hand models, sky, clouds, overlays; fills `draw` and `View` (leaving in 10.4 step 5) | `systems.rs` |
+| `scene` | the Bevy-side scene: cameras, entity and hand models, anims, skins, sky, clouds, weather, tethers, overlays, world text, block atlas; fills `draw` and `View` (`view_sync`) | `mod.rs`, `entity_draw.rs`, `hand.rs` |
 | `resourcepacks` | pack list, mounting, Modrinth, Torch Default pack | `mod.rs`, `TORCH_DEFAULT_PACK.md` |
 | `shaderpack` | Iris/OptiFine pack loading: properties, preprocess, programs; compiling to WGSL (`compile/`, `install`) for both renderers; pack block ids and vertex data; uniforms (`uniforms/`, `inputs`, `frame_state`) | `pipeline.rs`, `compile/mod.rs`, `install.rs` |
 | `terrain` | section meshing for both renderers: block geometry, light, CTM, vertex layout, cave visibility, block animations; streaming section changes to the renderer and its listeners (`stream`); the renderer's terrain inputs (`textures`) and occlusion switch (`hiz`) | `mod.rs`, `mesh.rs`, `stream.rs` |
@@ -47,7 +49,7 @@ meshes chunk sections (on `client`'s worker). `vk` (native Vulkan) draws them;
 | Path | What |
 |---|---|
 | `shaders/*.slang` | Vulkan shaders (`build.rs` compiles them) |
-| `src/**/*.wgsl` | the built-in shader pack (`shaderpack/builtin`); the wgpu material shaders left in `renderer/` and `blockentities` go in 10.4 step 5 |
+| `src/shaderpack/builtin/**/*.wgsl` | the built-in shader pack |
 | `tools/` | generators (`gen_*.py`, `protogen.py`), asset and build scripts |
 | `vendor/` | patched crates; read `vendor/PATCHES.md` first |
 | `crates/torch-opus` | safe Opus bindings |

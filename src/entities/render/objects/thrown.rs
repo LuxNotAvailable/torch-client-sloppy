@@ -89,7 +89,7 @@ fn carried_root(_st: &EntityState) -> RootPose {
     RootPose::default()
 }
 
-pub(crate) fn item_key(item: &crate::renderer::anim::HeldItem) -> TexturePath {
+pub(crate) fn item_key(item: &crate::scene::anim::HeldItem) -> TexturePath {
     let has_layers = item
         .layers
         .as_ref()

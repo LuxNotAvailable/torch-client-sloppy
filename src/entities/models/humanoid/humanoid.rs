@@ -4,7 +4,7 @@ use crate::entities::geom::{
     BakedModel, CubeList, Grow, LayerDef, MeshDef, PartDef, PartId, PartPose, PartState,
 };
 use crate::entities::state::EntityState;
-use crate::renderer::anim::{ArmPose, HeldItem, UseAnimation, use_animation};
+use crate::scene::anim::{ArmPose, HeldItem, UseAnimation, use_animation};
 
 use crate::util::mth::ease::{in_out_expo, in_out_sine, in_quad, out_quart};
 pub use crate::util::mth::rot_lerp_rad;

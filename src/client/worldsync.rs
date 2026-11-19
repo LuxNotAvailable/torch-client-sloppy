@@ -320,7 +320,7 @@ pub(crate) fn forget_chunk(
 pub(crate) fn reset_level(shared: &Arc<SharedMutex>) {
     reset_chunk_tracking();
     bump_chunk_generation();
-    crate::renderer::environment::reset_weather();
+    crate::scene::environment::reset_weather();
     crate::client::envprobe::reset();
     send_light(lighting::LightJob::Reset);
     server_light_stash().lock().unwrap().clear();

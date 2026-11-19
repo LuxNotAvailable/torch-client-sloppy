@@ -127,4 +127,6 @@ Done (step 5): screenshots are `renderer::screenshot::{Screenshot, ScreenshotCap
    - Part 4, done: cameras are plain entities; fog is `sky::WorldFog`.
    - Part 5, done: own screenshot request and event; GUI atlas writes main-world only; image types from `wgpu-types`.
    - Part 6, done: `bevy_render`, `bevy_pbr`, `bevy_core_pipeline` (and its vendored fork), `bevy_light`, `bevy_anti_alias`, wgpu and `bevy_render_trace` are out of `Cargo.toml`. The perf report reads the Vulkan device (`vk::context::ACTIVE`); its wgpu counters, Bevy phase draws and render-stage timings are gone.
-6. Move the game logic out of `renderer/` and remove the folder.
+6. Done: `renderer/` is gone. App setup, input, intents, `FrameView` and screenshots are in `app/`; the Bevy-side scene (cameras, models, sky, clouds, weather, overlays, world text, atlas) is in `scene/`. Paths in the tables above still say `renderer/`: read `app/` or `scene/`.
+
+Open after 10.4: ESP and end portals/gateways draw nothing; the HUD's terrain bytes read 0; packs get no held-item or vehicle ids; clouds are missing with a shader pack.

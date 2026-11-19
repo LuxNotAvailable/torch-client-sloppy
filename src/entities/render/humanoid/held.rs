@@ -67,7 +67,7 @@ fn model(kind: EntityKind, baby: bool, layer: fn() -> LayerDef) -> &'static Bake
 
 /// The item in the right (`left`: left) hand: the main hand's unless the
 /// mob is left-handed.
-fn hand_item(st: &EntityState, left: bool) -> &crate::renderer::anim::HeldItem {
+fn hand_item(st: &EntityState, left: bool) -> &crate::scene::anim::HeldItem {
     let equipment = &st.extras.equipment;
     if left != equipment.left_handed {
         &equipment.off_hand

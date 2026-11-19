@@ -3,7 +3,7 @@ use std::sync::{Mutex, OnceLock};
 use azalea::Client;
 use azalea_core::position::{ChunkPos as AzChunkPos, ChunkSectionBiomePos};
 
-use crate::renderer::environment::{
+use crate::scene::environment::{
     BREADTH, Bases, BiomeLayer, Blend, RADIUS, SAMPLE_COUNT, axis_weights, sample_index,
 };
 

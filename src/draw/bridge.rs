@@ -91,7 +91,7 @@ pub fn mesh_data(mesh: &Mesh, slot: Option<u64>) -> Option<Arc<MeshData>> {
     if let Some(V::Float32x4(c)) = mesh.attribute(Mesh::ATTRIBUTE_COLOR) {
         verts.iter_mut().zip(c).for_each(|(v, c)| v.color = *c);
     }
-    let rigged = match mesh.attribute(crate::renderer::rig_parts::ATTRIBUTE_PART) {
+    let rigged = match mesh.attribute(crate::scene::rig_parts::ATTRIBUTE_PART) {
         Some(V::Uint32(p)) => {
             verts.iter_mut().zip(p).for_each(|(v, p)| v.part = *p);
             true

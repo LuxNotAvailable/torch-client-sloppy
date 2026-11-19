@@ -26,7 +26,8 @@ mod platform;
 mod play;
 #[cfg(feature = "multiversion")]
 mod protocol;
-mod renderer;
+mod app;
+mod scene;
 #[cfg(resource_packs)]
 mod resourcepacks;
 mod session;
@@ -81,7 +82,7 @@ macro_rules! prof_span {
 use crate::session::SharedMutex;
 use azalea_protocol::packets::PROTOCOL_VERSION;
 use client::worker::JobQueue;
-use renderer::build_block_atlas;
+use scene::build_block_atlas;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -434,7 +435,7 @@ fn run(args: platform::cli::Args) -> eyre::Result<()> {
         };
         let block_work = || {
             let t = platform::time::Instant::now();
-            let textures = renderer::Textures::blocks(&textures_dir);
+            let textures = scene::Textures::blocks(&textures_dir);
             let decoded = t.elapsed();
             let (atlas_image, tex_map) = build_block_atlas(&textures, &textures_dir);
             log_info!(
@@ -464,7 +465,7 @@ fn run(args: platform::cli::Args) -> eyre::Result<()> {
         log_info!("assets", "no asset set found; opening the download screen");
         step("no assets: building the boot atlas");
         (
-            renderer::placeholder_atlas(),
+            scene::placeholder_atlas(),
             HashMap::new(),
             Arc::new(gui::atlas::GuiAtlas::boot()),
         )
@@ -477,7 +478,7 @@ fn run(args: platform::cli::Args) -> eyre::Result<()> {
     }
     if have_assets {
         TEXTURE_MAP.set(tex_map.clone()).ok();
-        ATLAS_ROWS.set(renderer::atlas_rows(&atlas_image)).ok();
+        ATLAS_ROWS.set(scene::atlas_rows(&atlas_image)).ok();
     }
 
     let address = args.address;
@@ -545,7 +546,7 @@ fn run(args: platform::cli::Args) -> eyre::Result<()> {
     };
 
     step("handing off to the renderer");
-    renderer::run(
+    app::run(
         shared,
         atlas_image,
         tex_map,

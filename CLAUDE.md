@@ -12,7 +12,7 @@ Rust Minecraft client (Bevy + native Vulkan). Rules: `STYLE_GUIDE.md`.
   `src/generated_*.rs`, `*_anim.rs`, `entities/models/aquatic/animation/`,
   `protocol/data/*.json`. `.ignore` keeps them out of searches; use
   `rg --no-ignore` to reach them.
-- Big files (2K+ lines: `vk/terrain.rs`, `renderer/systems.rs`, `gui/slots.rs`,
+- Big files (2K+ lines: `vk/terrain.rs`, `app/systems.rs`, `gui/slots.rs`,
   `gui/options.rs`, `protocol/hop.rs`, ...): grep for the symbol and read
   that range, never the whole file.
 - Protocol: recipe at top of `src/protocol/hop.rs`.

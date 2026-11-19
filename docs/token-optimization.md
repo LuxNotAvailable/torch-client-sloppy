@@ -46,12 +46,12 @@ Patched `bevy_camera`, `simdnbt`, `azalea`. Patches ~10–50 lines/file; rest is
 
 ## 4. Module Boundaries
 
-`src/` flat, 25 modules. `entities/` 19K+, `renderer/` 10K+, `vk/` 5K+, `protocol/` 5K+, `gui/` 5K+.
+`src/` flat, 25 modules. `entities/` 19K+, `scene/` 15K+, `app/` 5K+, `vk/` 5K+, `protocol/` 5K+, `gui/` 5K+.
 
 **Fix:**
 - `//!` doc on every `mod.rs`: responsibility + entry points + what it does NOT do
 - `docs/ARCHITECTURE.md` — 40 lines, module → responsibility → key types
-- Split `renderer/` + `vk/` into separate crates (long-term)
+- Split `scene/` + `vk/` into separate crates (long-term)
 
 ## 5. Quick Wins (zero code change)
 

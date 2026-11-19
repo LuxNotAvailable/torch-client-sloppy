@@ -1,6 +1,6 @@
 use azalea_registry::builtin::EntityKind;
 
-use crate::renderer::anim::HeldItem;
+use crate::scene::anim::HeldItem;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Pose {

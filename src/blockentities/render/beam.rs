@@ -12,7 +12,7 @@ use crate::blockentities::{BeRegistry, BeSpec, BeState, BuiltTexture};
 use crate::entities::Blend;
 use crate::entities::quads::quad_indices;
 use crate::gui::atlas::GuiAtlas;
-use crate::renderer::entity_material::LightMode;
+use crate::scene::entity_material::LightMode;
 use crate::util::dye::DYES;
 use crate::util::mth::rgb_to_linear;
 

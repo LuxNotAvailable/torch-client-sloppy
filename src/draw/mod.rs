@@ -119,7 +119,7 @@ const _: () = assert!(std::mem::size_of::<EnvPart>() == 128);
 /// Sky pieces as `EnvPart::pad[0]` - 1 names them.
 pub const SKY_PIECES: [&str; 7] = ["SKY", "VOID", "SUN", "MOON", "STARS", "SUNSET", "END_SKY"];
 
-/// `renderer::sky::SKY_SCALE`: the sky root's scale.
+/// `scene::sky::SKY_SCALE`: the sky root's scale.
 pub const SKY_SCALE: f32 = 16.0;
 
 /// Fills the frame's draw lists; readers run after it.

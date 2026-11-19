@@ -6,7 +6,7 @@ use crate::entities::TexturePath;
 use crate::entities::registry::Registry;
 use crate::entities::state::{Direction, EntityState};
 use crate::entities::{BlockRef, FrameModel, LightMode, RenderSpec, RootPose};
-use crate::renderer::maps::MAP_TEXTURE_PREFIX;
+use crate::scene::maps::MAP_TEXTURE_PREFIX;
 
 const OFFSET_TO_WALL: f32 = 0.46875;
 

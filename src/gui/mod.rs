@@ -440,7 +440,7 @@ pub fn touch_active(o: &GuiOptions) -> bool {
 }
 
 crate::serialized_option!(
-    crate::renderer::clouds::CloudStatus,
+    crate::scene::clouds::CloudStatus,
     crate::util::particles::ParticleStatus,
     TouchMovement,
     InputMode,
@@ -450,12 +450,12 @@ crate::options! {
     #[derive(Clone, Debug)]
     pub struct GuiOptions {
         pub gui_scale: u32 = 0 => key("guiScale"),
-        pub fov: u32 = crate::renderer::systems::VANILLA_FOV_DEGREES as u32 => key("fov"),
+        pub fov: u32 = crate::app::systems::VANILLA_FOV_DEGREES as u32 => key("fov"),
         pub fov_effects: u32 = FOV_EFFECTS_DEFAULT => key("fovEffectScale").clamp(0, FOV_EFFECTS_DEFAULT),
-        pub clouds: crate::renderer::clouds::CloudStatus = if cfg!(feature = "mobile_ui") {
-            crate::renderer::clouds::CloudStatus::Fast
+        pub clouds: crate::scene::clouds::CloudStatus = if cfg!(feature = "mobile_ui") {
+            crate::scene::clouds::CloudStatus::Fast
         } else {
-            crate::renderer::clouds::CloudStatus::default()
+            crate::scene::clouds::CloudStatus::default()
         } => key("renderClouds"),
         pub particles: crate::util::particles::ParticleStatus = if cfg!(feature = "mobile_ui") {
             crate::util::particles::ParticleStatus::Decreased
@@ -465,7 +465,7 @@ crate::options! {
         pub render_distance: u32 = RENDER_DISTANCE_DEFAULT => key("renderDistance"),
         /// How clear water looks, 0 to 100, vanilla at 50: the surface's
         /// alpha and the underwater fog's reach scale together
-        /// (`renderer::environment::water_opacity`).
+        /// (`scene::environment::water_opacity`).
         pub water_clarity: u32 = WATER_CLARITY_DEFAULT => key("waterClarity").clamp(0, WATER_CLARITY_MAX),
         /// Percent of the window's size a shader pack draws at, scaled up at
         /// the end: full-screen passes cost per pixel.
@@ -845,7 +845,7 @@ impl GuiOptions {
     pub fn look_scale(&self) -> Vec2 {
         let s = self.mouse_sensitivity as f32 / MOUSE_SENSITIVITY_MAX as f32;
         let f = s * 0.6 + 0.2;
-        let k = f * f * f * 8.0 * crate::renderer::input::LOOK_SCALE;
+        let k = f * f * f * 8.0 * crate::app::input::LOOK_SCALE;
         let sign = |invert: bool| if invert { -1.0 } else { 1.0 };
         Vec2::new(k * sign(self.invert_x), k * sign(self.invert_y))
     }

@@ -106,7 +106,7 @@ pub struct Painter<'a> {
     /// The cosine and sine of the turn `rotated` applies about `xform`'s origin.
     turn: (f32, f32),
     /// The inventory's player figure, when this frame draws one.
-    pub figure: Option<crate::renderer::inventory_figure::Figure>,
+    pub figure: Option<crate::scene::inventory_figure::Figure>,
 }
 
 #[derive(Clone, Copy)]
@@ -341,9 +341,9 @@ impl<'a> Painter<'a> {
     /// The player figure in its box (`extractEntityInInventoryFollowsMouse`).
     /// The renderer draws it into its own texture for the next frames; the
     /// quad that shows it is drawn once that texture holds it.
-    pub fn figure(&mut self, figure: crate::renderer::inventory_figure::Figure) {
+    pub fn figure(&mut self, figure: crate::scene::inventory_figure::Figure) {
         self.figure = Some(figure);
-        if !crate::renderer::inventory_figure::ready() {
+        if !crate::scene::inventory_figure::ready() {
             return;
         }
         let (x, y) = (figure.x0, figure.y0);

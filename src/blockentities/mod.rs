@@ -18,8 +18,8 @@ use bevy::prelude::*;
 
 use crate::entities::geom::{BakedModel, LayerDef, PartState, bake};
 use crate::entities::{Blend, CameraView, Carried, CarriedEntities, Carrier, EntityState};
-use crate::renderer::entity_material::{EntityMaterial, LightMode, Lit, diffuse_lights};
-use crate::renderer::rig_parts::{PartSlot, RigParts};
+use crate::scene::entity_material::{EntityMaterial, LightMode, Lit, diffuse_lights};
+use crate::scene::rig_parts::{PartSlot, RigParts};
 use bevy::camera::primitives::Aabb;
 use feed::{BlockEntityData, BlockEntityInfo, BlockStateInfo};
 use sim::Anim;
@@ -360,7 +360,7 @@ impl Submit<'_> {
     pub fn item(
         &mut self,
         carried: Carried,
-        item: &crate::renderer::anim::HeldItem,
+        item: &crate::scene::anim::HeldItem,
         pose: Transform,
     ) {
         if item.is_empty() {
@@ -427,7 +427,7 @@ struct Shown<'a> {
 }
 
 enum What<'a> {
-    Item(&'a crate::renderer::anim::HeldItem),
+    Item(&'a crate::scene::anim::HeldItem),
     Block(u32),
     Entity,
 }
@@ -568,7 +568,7 @@ impl BeAssets {
     ) -> &GpuModel {
         self.models.entry(key).or_insert_with(|| {
             let mut baked = bake(&(geom.layer)(st));
-            let rigged = crate::renderer::rig_parts::enabled().then(|| RiggedModel {
+            let rigged = crate::scene::rig_parts::enabled().then(|| RiggedModel {
                 mesh: meshes.add(crate::entities::bake::rigged_mesh(&baked)),
                 bounds: crate::entities::bake::part_bounds(&baked),
             });
@@ -731,9 +731,9 @@ impl Plugin for BlockEntityPlugin {
             .add_systems(
                 Update,
                 sync_block_entities
-                    .after(crate::renderer::FrameViewSystems)
+                    .after(crate::app::FrameViewSystems)
                     .before(crate::entities::EntitySync)
-                    .run_if(in_state(crate::renderer::AppState::InGame)),
+                    .run_if(in_state(crate::app::AppState::InGame)),
             );
     }
 }
@@ -741,7 +741,7 @@ impl Plugin for BlockEntityPlugin {
 #[allow(clippy::too_many_arguments)]
 fn sync_block_entities(
     mut commands: Commands,
-    view: Res<crate::renderer::FrameView>,
+    view: Res<crate::app::FrameView>,
     registry: Res<BeRegistry>,
     mut assets: ResMut<BeAssets>,
     mut rigs: ResMut<BeRigs>,
@@ -749,23 +749,23 @@ fn sync_block_entities(
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<EntityMaterial>>,
     gui: Option<Res<crate::gui::render::GuiAssets>>,
-    camera_q: Query<&GlobalTransform, With<crate::renderer::systems::WorldCamera>>,
+    camera_q: Query<&GlobalTransform, With<crate::app::systems::WorldCamera>>,
     mut nodes: Query<(&mut Transform, &mut Visibility), With<BeRigNode>>,
     mut mats: Query<&mut crate::draw::Material3d<EntityMaterial>>,
     (lightmap, occlusion, mut rig_parts, mut aabbs, mut gpu_rigs_were): (
-        Res<crate::renderer::systems::LightmapState>,
-        Res<crate::renderer::occlusion::OcclusionState>,
+        Res<crate::app::systems::LightmapState>,
+        Res<crate::scene::occlusion::OcclusionState>,
         ResMut<RigParts>,
         Query<&mut Aabb, With<BeRigNode>>,
         Local<Option<bool>>,
     ),
     gui_state: Option<Res<crate::gui::GuiState>>,
     mut carried: ResMut<CarriedEntities>,
-    #[cfg(feature = "skins")] skins: Res<crate::renderer::skin::SkinTextures>,
+    #[cfg(feature = "skins")] skins: Res<crate::scene::skin::SkinTextures>,
 ) {
     crate::prof_span!("render:sync_block_entities");
     let Some(gui) = gui else { return };
-    let gpu_rigs = crate::renderer::rig_parts::enabled();
+    let gpu_rigs = crate::scene::rig_parts::enabled();
     if gpu_rigs_were
         .replace(gpu_rigs)
         .is_some_and(|was| was != gpu_rigs)
@@ -1064,7 +1064,7 @@ const DESPAWN_MARGIN: f32 = 1.1;
 fn in_open_view(
     kind: BlockEntityKind,
     pos: [i32; 3],
-    occlusion: &crate::renderer::occlusion::OcclusionState,
+    occlusion: &crate::scene::occlusion::OcclusionState,
 ) -> bool {
     if matches!(kind, BlockEntityKind::Beacon | BlockEntityKind::EndGateway) {
         return true;
@@ -1222,7 +1222,7 @@ fn spawn_layer(
             let slot = gpu
                 .rigged
                 .as_ref()
-                .filter(|_| crate::renderer::rig_parts::enabled())
+                .filter(|_| crate::scene::rig_parts::enabled())
                 .and_then(|rigged| Some((rigged, rig_parts.alloc(states.len() as u32)?)));
             if let Some((rigged, slot)) = slot {
                 let aabb = pose_slot(rig_parts, slot, &gpu.model, rigged, &states);

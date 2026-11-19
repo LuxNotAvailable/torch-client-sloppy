@@ -261,7 +261,7 @@ fn modded_visual(state: azalea::block::BlockState) -> RenderedBlock {
         let rows = crate::blocks::registry().atlas_rows();
         let from = crate::blocks::bake::tile_uv_rect(tex("stone"), rows);
         let to =
-            crate::blocks::bake::tile_uv_rect(tex(crate::renderer::atlas::MISSING_TEXTURE), rows);
+            crate::blocks::bake::tile_uv_rect(tex(crate::scene::atlas::MISSING_TEXTURE), rows);
         let remap = |uv: [f32; 2]| {
             let u = (uv[0] - from[0]) / (from[2] - from[0]);
             let v = (uv[1] - from[1]) / (from[3] - from[1]);

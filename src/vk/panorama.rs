@@ -1,5 +1,5 @@
 //! The title screen's panorama on the native renderer
-//! (VULKAN_REWRITE_CHECKLIST.md 4.6): `renderer::panorama`'s six faces,
+//! (VULKAN_REWRITE_CHECKLIST.md 4.6): `scene::panorama`'s six faces,
 //! each with its own image, drawn in one 36-vertex draw from the vertex
 //! index (`shaders/panorama.slang`). The camera sits at the cube's centre,
 //! turning at vanilla's speed with its downward pitch, through an 85
@@ -17,7 +17,7 @@ use super::pipeline::{GraphicsSpec, Pending, Pipelines, Push, Spec, push};
 use super::{Context, SetupError};
 
 const FACES: usize = 6;
-/// `renderer::panorama`'s lens, pitch and turn.
+/// `scene::panorama`'s lens, pitch and turn.
 const FOV_DEGREES: f32 = 85.0;
 const PITCH_DEGREES: f32 = -10.0;
 const SPIN_DEGREES_PER_SECOND: f32 = 2.0;

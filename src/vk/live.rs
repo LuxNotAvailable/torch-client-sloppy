@@ -468,10 +468,10 @@ fn draw_frame(
         ),
         None => (false, None, None),
     };
-    // Screenshots the game asked for (`renderer::screenshot`): captured by
+    // Screenshots the game asked for (`app::screenshot`): captured by
     // the renderer, answered with `ScreenshotCaptured`.
     let mut requests = world.query_filtered::<Entity, (
-        With<crate::renderer::screenshot::Screenshot>,
+        With<crate::app::screenshot::Screenshot>,
         Without<NativeCapture>,
     )>();
     let shots: Vec<Entity> = requests.iter(world).collect();
@@ -572,7 +572,7 @@ fn draw_frame(
     }
     let captured: Vec<_> = thread.captures.try_iter().flatten().collect();
     for (entity, image) in captured {
-        world.trigger(crate::renderer::screenshot::ScreenshotCaptured { entity, image });
+        world.trigger(crate::app::screenshot::ScreenshotCaptured { entity, image });
         if let Ok(e) = world.get_entity_mut(entity) {
             e.despawn();
         }
@@ -617,7 +617,7 @@ impl Live {
         }
         self.feed_terrain();
         self.update_pack();
-        crate::renderer::weather::NATIVE
+        crate::scene::weather::NATIVE
             .store(self.pack.is_none(), std::sync::atomic::Ordering::Relaxed);
         self.shots.extend(f.shots);
         if (self.post.fxaa, self.post.ssaa) != (f.post.fxaa, f.post.ssaa) {
@@ -680,7 +680,7 @@ static GUI_ATLAS_WRITES: std::sync::Mutex<Vec<crate::gui::atlas_writes::AtlasWri
 /// then the item glint (the game assets' `GLINT_ITEM`) once it has loaded.
 fn gui_textures(world: &World) -> (Option<[TextureData; 2]>, Option<TextureData>) {
     let images = world.get_resource::<Assets<bevy::image::Image>>();
-    let glint = images.and_then(|i| image_data(i, &crate::renderer::entity_material::GLINT_ITEM));
+    let glint = images.and_then(|i| image_data(i, &crate::scene::entity_material::GLINT_ITEM));
     (gui_atlas(world), glint)
 }
 

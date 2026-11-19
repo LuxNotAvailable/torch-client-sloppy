@@ -26,9 +26,9 @@ use bevy::prelude::*;
 pub use registry::Registry;
 pub use state::{Billboard, Carried, Carrier, Direction, EntityState, Pose};
 
-pub use crate::renderer::entity_material::LightMode;
-use crate::renderer::entity_material::{EntityMaterial, Lit, diffuse_lights};
-use crate::renderer::rig_parts::{PartSlot, RigParts};
+pub use crate::scene::entity_material::LightMode;
+use crate::scene::entity_material::{EntityMaterial, Lit, diffuse_lights};
+use crate::scene::rig_parts::{PartSlot, RigParts};
 use bevy::camera::primitives::Aabb;
 use geom::{BakedModel, LayerDef, PartState, PosedPart};
 
@@ -209,7 +209,7 @@ pub fn display_quat(q: [f32; 4]) -> Quat {
 
 /// Entity culling: skip anything whose box only overlaps sections the
 /// terrain flood fill could not reach from the camera.
-fn in_open_view(st: &EntityState, occlusion: &crate::renderer::occlusion::OcclusionState) -> bool {
+fn in_open_view(st: &EntityState, occlusion: &crate::scene::occlusion::OcclusionState) -> bool {
     let half = st.bounding_box_width.max(1.0) * 0.5;
     let feet = Vec3::from(st.pos);
     occlusion.reaches_box(
@@ -776,7 +776,7 @@ impl EntityAssets {
 
     fn block_atlas(
         &mut self,
-        chunk_material: &crate::renderer::systems::ChunkMaterial,
+        chunk_material: &crate::app::systems::ChunkMaterial,
         materials: &Assets<crate::draw::SimpleMaterial>,
     ) -> Option<Handle<Image>> {
         if self.block_atlas.is_none() {
@@ -792,7 +792,7 @@ impl EntityAssets {
         spec: &RenderSpec,
         lit: Lit,
         levels: (u8, u8),
-        chunk_material: &crate::renderer::systems::ChunkMaterial,
+        chunk_material: &crate::app::systems::ChunkMaterial,
         standard: &Assets<crate::draw::SimpleMaterial>,
         materials: &mut Assets<EntityMaterial>,
     ) -> Option<(Handle<EntityMaterial>, Handle<Image>)> {
@@ -1273,17 +1273,17 @@ impl Plugin for EntityPlugin {
         app.init_resource::<EntityAssets>()
             .init_resource::<EntityRigs>()
             .init_resource::<CarriedEntities>()
-            .init_resource::<crate::renderer::maps::MapTextures>()
+            .init_resource::<crate::scene::maps::MapTextures>()
             .insert_resource(Registry::build())
             .add_systems(
                 Update,
                 (
-                    crate::renderer::maps::upload_maps,
+                    crate::scene::maps::upload_maps,
                     sync_entities.in_set(EntitySync),
                 )
                     .chain()
-                    .after(crate::renderer::FrameViewSystems)
-                    .run_if(in_state(crate::renderer::AppState::InGame)),
+                    .after(crate::app::FrameViewSystems)
+                    .run_if(in_state(crate::app::AppState::InGame)),
             );
     }
 }
@@ -1292,8 +1292,8 @@ impl Plugin for EntityPlugin {
 fn sync_entities(
     mut commands: Commands,
     (view, sampled): (
-        Res<crate::renderer::FrameView>,
-        Res<crate::renderer::frame_view::SampledEntities>,
+        Res<crate::app::FrameView>,
+        Res<crate::app::frame_view::SampledEntities>,
     ),
     registry: Res<Registry>,
     mut assets: ResMut<EntityAssets>,
@@ -1302,19 +1302,19 @@ fn sync_entities(
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<EntityMaterial>>,
     mut standard_materials: ResMut<Assets<crate::draw::SimpleMaterial>>,
-    mut item_assets: ResMut<crate::renderer::item_assets::ItemAssets>,
+    mut item_assets: ResMut<crate::scene::item_assets::ItemAssets>,
     (map_textures, chunk_material, lightmap, carried, occlusion, mut rig_parts): (
-        Res<crate::renderer::maps::MapTextures>,
-        Res<crate::renderer::systems::ChunkMaterial>,
-        Res<crate::renderer::systems::LightmapState>,
+        Res<crate::scene::maps::MapTextures>,
+        Res<crate::app::systems::ChunkMaterial>,
+        Res<crate::app::systems::LightmapState>,
         Res<CarriedEntities>,
-        Res<crate::renderer::occlusion::OcclusionState>,
+        Res<crate::scene::occlusion::OcclusionState>,
         ResMut<RigParts>,
     ),
     camera_q: Query<
         &GlobalTransform,
         (
-            With<crate::renderer::systems::WorldCamera>,
+            With<crate::app::systems::WorldCamera>,
             Without<EntityRigNode>,
         ),
     >,
@@ -1333,7 +1333,7 @@ fn sync_entities(
     ),
 ) {
     crate::prof_span!("render:sync_entities");
-    let gpu_rigs = crate::renderer::rig_parts::enabled();
+    let gpu_rigs = crate::scene::rig_parts::enabled();
     if gpu_rigs_were
         .replace(gpu_rigs)
         .is_some_and(|was| was != gpu_rigs)
@@ -1666,7 +1666,7 @@ fn sync_entities(
                             let image = match &texture {
                                 Some(path)
                                     if path
-                                        .starts_with(crate::renderer::maps::MAP_TEXTURE_PREFIX) =>
+                                        .starts_with(crate::scene::maps::MAP_TEXTURE_PREFIX) =>
                                 {
                                     map_textures.get(path)
                                 }
@@ -1837,7 +1837,7 @@ fn spawn_layer(
                     None => (None, None),
                 };
             let states = assets.spec(idx, model).model.rest_pose();
-            let slot = crate::renderer::rig_parts::enabled()
+            let slot = crate::scene::rig_parts::enabled()
                 .then(|| rig_parts.alloc(states.len() as u32))
                 .flatten();
             let mesh = match slot {

@@ -1,7 +1,7 @@
 use simdnbt::owned::NbtCompound;
 
 use super::TickCtx;
-use crate::renderer::anim::HeldItem;
+use crate::scene::anim::HeldItem;
 use crate::util::mth;
 
 #[derive(Clone, Debug, Default, PartialEq)]

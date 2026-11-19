@@ -14,9 +14,9 @@ pub(crate) fn atlas_once() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
         let dir = crate::textures_dir().to_string_lossy().into_owned();
-        let textures = crate::renderer::Textures::blocks(&dir);
-        let (image, map) = crate::renderer::build_block_atlas(&textures, &dir);
-        let rows = crate::renderer::atlas_rows(&image);
+        let textures = crate::scene::Textures::blocks(&dir);
+        let (image, map) = crate::scene::build_block_atlas(&textures, &dir);
+        let rows = crate::scene::atlas_rows(&image);
         crate::TEXTURE_MAP.set(map).ok();
         crate::ATLAS_ROWS.set(rows).ok();
     });

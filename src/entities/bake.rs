@@ -109,7 +109,7 @@ pub fn rigged_mesh(model: &BakedModel) -> Mesh {
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
     mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
-    mesh.insert_attribute(crate::renderer::rig_parts::ATTRIBUTE_PART, parts);
+    mesh.insert_attribute(crate::scene::rig_parts::ATTRIBUTE_PART, parts);
     mesh.insert_indices(Indices::U32(indices));
     mesh
 }
@@ -195,7 +195,7 @@ fn f32x4(values: Option<VertexAttributeValues>) -> Vec<[f32; 4]> {
 mod tests {
     use super::*;
     use crate::entities::geom::{CubeList, LayerDef, MeshDef, PartPose, bake};
-    use crate::renderer::rig_parts::{ATTRIBUTE_PART, part_rows};
+    use crate::scene::rig_parts::{ATTRIBUTE_PART, part_rows};
 
     fn model() -> BakedModel {
         let mut mesh = MeshDef::new();

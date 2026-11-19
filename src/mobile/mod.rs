@@ -15,8 +15,8 @@ use crate::gui::hud_layout::{ElementId, Hud, Transforms};
 use crate::gui::painter::Painter;
 use crate::gui::render::effective_gui_scale;
 use crate::gui::{GuiState, Screen, ScreenCtx};
-use crate::renderer::input::{CameraAngles, apply_look};
-use crate::renderer::systems::{Shared, WorldCamera};
+use crate::app::input::{CameraAngles, apply_look};
+use crate::app::systems::{Shared, WorldCamera};
 use crate::session::{
     Gamemode, MOVE_BACK, MOVE_DESCEND, MOVE_FORWARD, MOVE_JUMP, MOVE_LEFT, MOVE_RIGHT, MOVE_SNEAK,
     MOVE_SPRINT,
@@ -88,8 +88,8 @@ pub fn register(app: &mut App) {
     app.add_systems(
         Update,
         mobile_input
-            .before(crate::renderer::intent::publish)
-            .before(crate::renderer::FrameViewSystems)
+            .before(crate::app::intent::publish)
+            .before(crate::app::FrameViewSystems)
             .after(crate::gui::render::collect_input)
             .before(crate::gui::render::draw_gui)
             .run_if(pad_is_drawn),
@@ -118,7 +118,7 @@ fn mobile_input(
     mut gui_input: ResMut<crate::gui::render::GuiInput>,
     mut angles: ResMut<CameraAngles>,
     mut camera: Query<&mut Transform, With<WorldCamera>>,
-    mut intent: ResMut<crate::renderer::intent::Intent>,
+    mut intent: ResMut<crate::app::intent::Intent>,
 ) {
     let Ok(window) = windows.single() else { return };
     let gui = &mut *gui;

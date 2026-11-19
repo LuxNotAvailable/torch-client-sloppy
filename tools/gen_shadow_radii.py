@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate the `shadowRadius` table in `src/renderer/shadows.rs` from the
+"""Regenerate the `shadowRadius` table in `src/scene/shadows.rs` from the
 decompiled client in `reference/minecraft-<version>/`.
 
     python3 tools/gen_shadow_radii.py           # rewrite the table

@@ -888,7 +888,7 @@ fn plants(
         Ambient::Leaves { leaf, chance } => {
             let below = [cell[0], cell[1] - 1, cell[2]];
             let open = !ctx.solid(below);
-            let exposed = crate::renderer::environment::rain_level() > 0.0
+            let exposed = crate::scene::environment::rain_level() > 0.0
                 && crate::lighting::lightmap::levels_at([
                     cell[0] as f32 + 0.5,
                     cell[1] as f32 + 1.5,

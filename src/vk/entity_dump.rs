@@ -496,7 +496,7 @@ fn write_env(
         add_draw(&mut add, part);
     }
     // The held items' glint: their own texture as the mask, added over
-    // them (`renderer::glint`); the glint texture's place in pad[2].
+    // them (`scene::glint`); the glint texture's place in pad[2].
     let mut glints = 0;
     if let Some(view) = hand_view {
         for part in &env.hand_glints {
@@ -509,7 +509,7 @@ fn write_env(
             }
         }
     }
-    let glint_id = crate::renderer::entity_material::GLINT_ITEM.id();
+    let glint_id = crate::scene::entity_material::GLINT_ITEM.id();
     if glints > 0 && cache.images.contains_key(&glint_id) {
         let next = image_ids.len() as u32;
         let index = *image_ids.entry(glint_id).or_insert_with(|| {
@@ -709,7 +709,7 @@ fn write(
         && !super::live::wanted()
     {
         let _ = std::fs::create_dir_all(dir);
-        crate::renderer::screenshot::request_numbered(&mut commands, dir.join("frames"), 0);
+        crate::app::screenshot::request_numbered(&mut commands, dir.join("frames"), 0);
     }
     write_env(
         dir.as_deref(),

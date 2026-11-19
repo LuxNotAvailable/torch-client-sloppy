@@ -31,7 +31,7 @@ fn tile_of(path: &str) -> Option<u32> {
 
 fn texture_is_opaque(path: &str) -> bool {
     match path.rsplit('/').next() {
-        Some(stem) => crate::renderer::texture_is_opaque(stem),
+        Some(stem) => crate::scene::texture_is_opaque(stem),
         None => false,
     }
 }

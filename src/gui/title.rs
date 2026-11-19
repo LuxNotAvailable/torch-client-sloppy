@@ -31,7 +31,7 @@ fn first_row_y(vh: f32) -> f32 {
 }
 
 pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
-    if crate::renderer::panorama::absent() {
+    if crate::scene::panorama::absent() {
         menu::background(p, ctx.vw, ctx.vh);
     }
 

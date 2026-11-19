@@ -2780,7 +2780,7 @@ impl TerrainScene {
             if let Some(env) = &self.env {
                 env.draw_clouds(ctx, cmd, pipelines, view_index, view_proj_cols);
                 env.draw_world_overlays(ctx, cmd, pipelines, view_index, view_proj_cols, extent);
-                // The hand camera's projection (`renderer::hand`: 70° fov,
+                // The hand camera's projection (`scene::hand`: 70° fov,
                 // near 0.05, reversed depth as the world's).
                 let hand = rotation.clip
                     * Mat4::perspective_infinite_reverse_rh(

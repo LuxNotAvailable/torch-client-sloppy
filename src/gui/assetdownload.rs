@@ -224,8 +224,8 @@ fn build() {
         return;
     }
     let textures_dir = crate::textures_dir().to_string_lossy().into_owned();
-    let textures = crate::renderer::Textures::blocks(&textures_dir);
-    let (block_atlas, block_tiles) = crate::renderer::build_block_atlas(&textures, &textures_dir);
+    let textures = crate::scene::Textures::blocks(&textures_dir);
+    let (block_atlas, block_tiles) = crate::scene::build_block_atlas(&textures, &textures_dir);
     let gui_atlas = crate::gui::atlas::build_gui_atlas(&crate::assets_root());
     *PREPARED.lock().unwrap() = Some(Prepared {
         block_atlas,
@@ -240,9 +240,9 @@ pub(crate) fn adopt_downloaded_assets(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
     mut standard: ResMut<Assets<crate::draw::SimpleMaterial>>,
-    block: Option<Res<crate::renderer::systems::BlockAtlasHandle>>,
-    chunk: Option<Res<crate::renderer::systems::ChunkMaterial>>,
-    water: Option<Res<crate::renderer::systems::WaterMaterial>>,
+    block: Option<Res<crate::app::systems::BlockAtlasHandle>>,
+    chunk: Option<Res<crate::app::systems::ChunkMaterial>>,
+    water: Option<Res<crate::app::systems::WaterMaterial>>,
     gui: Option<ResMut<crate::gui::render::GuiAssets>>,
     after: Res<crate::gui::render::AfterDownloadScreen>,
     mut state: ResMut<GuiState>,
@@ -255,10 +255,10 @@ pub(crate) fn adopt_downloaded_assets(
         return;
     };
 
-    let rows = crate::renderer::atlas_rows(&prepared.block_atlas);
+    let rows = crate::scene::atlas_rows(&prepared.block_atlas);
     crate::TEXTURE_MAP.set(prepared.block_tiles.clone()).ok();
     crate::ATLAS_ROWS.set(rows).ok();
-    commands.insert_resource(crate::renderer::systems::BlockTileMap(prepared.block_tiles));
+    commands.insert_resource(crate::app::systems::BlockTileMap(prepared.block_tiles));
 
     if let Err(e) = images.insert(&block.0, prepared.block_atlas) {
         log_warn!("assets", "the block atlas could not be replaced: {e}");
@@ -275,7 +275,7 @@ pub(crate) fn adopt_downloaded_assets(
     }
     gui.atlas = std::sync::Arc::new(prepared.gui_atlas);
 
-    commands.insert_resource(crate::renderer::systems::AssetsReady);
+    commands.insert_resource(crate::app::systems::AssetsReady);
     state.screen = after.0;
     log_info!("assets", "the downloaded set is live");
 }

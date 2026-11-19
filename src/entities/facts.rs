@@ -27,8 +27,8 @@ impl KindFacts {
     fn of(kind: EntityKind) -> Self {
         use EntityKind as K;
         KindFacts {
-            shadow_radius: crate::renderer::shadows::radius(kind),
-            shadow_strength: crate::renderer::shadows::strength(kind),
+            shadow_radius: crate::scene::shadows::radius(kind),
+            shadow_strength: crate::scene::shadows::strength(kind),
             walk_factor: crate::entities::feed::walk_factor(kind),
             boat: crate::play::boat::is_boat(kind),
             tamable: matches!(
