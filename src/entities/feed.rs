@@ -616,9 +616,56 @@ pub struct EntityAnim {
     sampled: Sampled,
     started: bool,
     kind_state: Option<Box<KindAnim>>,
+    /// Being picked up: flies to its collector, frozen otherwise.
+    pickup: Option<Box<PickupPath>>,
 }
 
+/// `ItemPickupParticle`: three ticks from where the item lay to the
+/// collector's middle, `(y + eyeY) / 2`.
+#[derive(Clone, Debug)]
+struct PickupPath {
+    life: u32,
+    target_old: [f64; 3],
+    target: [f64; 3],
+}
+
+/// `ItemPickupParticle.LIFE_TIME`.
+const PICKUP_LIFE: u32 = 3;
+
 impl EntityAnim {
+    /// This item as a pickup flying to `target` under `id`, frozen as it
+    /// was drawn at the end of its last tick (`extractEntity(from, 1.0F)`).
+    pub(crate) fn into_pickup(mut self, id: i32, target: [f64; 3]) -> EntityAnim {
+        self.id = id;
+        self.pos_old = self.pos;
+        self.pickup = Some(Box::new(PickupPath {
+            life: 0,
+            target_old: target,
+            target,
+        }));
+        self
+    }
+
+    /// Where a pickup flies to when this entity collects it: `(y + eyeY) / 2`.
+    pub(crate) fn pickup_target(&self) -> [f64; 3] {
+        let [x, y, z] = self.pos;
+        [x, y + f64::from(self.sampled.eye_height) / 2.0, z]
+    }
+
+    /// One pickup tick toward `target` (`None` keeps the last); false once
+    /// its life is up.
+    pub(crate) fn tick_pickup(&mut self, target: Option<[f64; 3]>) -> bool {
+        let Some(p) = self.pickup.as_deref_mut() else {
+            return false;
+        };
+        p.life += 1;
+        p.target_old = p.target;
+        if let Some(t) = target {
+            p.target = t;
+        }
+        p.life < PICKUP_LIFE
+    }
+
     /// Ticks since this client started animating it (`tickCount`).
     pub(crate) fn ticks(&self) -> u32 {
         self.ticks
@@ -680,6 +727,7 @@ impl EntityAnim {
             speed_sqr: 0.0,
             sampled: Sampled::from_input(&TickInput::new()),
             started: false,
+            pickup: None,
             kind_state: has_kind_state(kind).then(|| {
                 Box::new(KindAnim {
                     attach_pos: None,
@@ -1628,6 +1676,20 @@ impl EntityAnim {
     }
 
     pub fn sample(&self, partial: f32) -> EntityState {
+        let Some(p) = self.pickup.as_deref() else {
+            return self.sample_live(partial);
+        };
+        // `ItemPickupParticleGroup`: t² from the item to the moving target.
+        let mut state = self.sample_live(1.0);
+        let t = ((p.life as f32 + partial) / PICKUP_LIFE as f32).powi(2);
+        state.pos = std::array::from_fn(|i| {
+            let target = lerp_f64(partial, p.target_old[i], p.target[i]);
+            lerp_f64(t, self.pos[i], target) as f32
+        });
+        state
+    }
+
+    fn sample_live(&self, partial: f32) -> EntityState {
         let head_rot = rot_lerp(partial, self.head_rot_old, self.head_rot);
         let body_rot = self.solve_body_rot(head_rot, partial);
         let x_rot = lerp(partial, self.x_rot_old, self.x_rot);
@@ -2816,6 +2878,21 @@ mod tests {
         input.pos = [0.0, 10.0, 0.0];
         anim.tick(input);
         assert!(anim.sample(1.0).extras.head_x_rots[1] > 0.0);
+    }
+
+    #[test]
+    fn pickup_flies_from_the_item_to_the_target_over_three_ticks() {
+        let mut anim = EntityAnim::new(1, EntityKind::Item);
+        anim.pos = [0.0, 64.0, 0.0];
+        let mut anim = anim.into_pickup(-2, [3.0, 65.0, 0.0]);
+        assert_eq!(anim.sample(0.0).pos, [0.0, 64.0, 0.0]);
+        // Two ticks in, halfway through the third: t = (2.5 / 3)².
+        assert!(anim.tick_pickup(None));
+        assert!(anim.tick_pickup(None));
+        let t = (2.5f32 / 3.0).powi(2);
+        let x = anim.sample(0.5).pos[0];
+        assert!((x - 3.0 * t).abs() < 1e-4, "{x}");
+        assert!(!anim.tick_pickup(None));
     }
 
     #[test]

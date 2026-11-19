@@ -133,20 +133,6 @@ fn read_tick_snapshot(bot: &Client, shared: &Arc<SharedMutex>) -> Option<TickSna
 
     #[cfg(audio)]
     {
-        use azalea_registry::builtin::EntityKind;
-        crate::audio::remember_items(entity_anims.iter().filter_map(|e| {
-            let orb = match e.kind {
-                EntityKind::ExperienceOrb => true,
-                EntityKind::Item => false,
-                _ => return None,
-            };
-            let at = e.pos.map(|v| v as f32);
-            Some((e.id, crate::audio::EntityAt { at, orb }))
-        }));
-    }
-
-    #[cfg(audio)]
-    {
         let ecs = bot.ecs.read();
         let index = ecs.get::<azalea::entity::indexing::EntityIdIndex>(bot.entity);
         crate::audio::tick_entities(|id| {
@@ -161,6 +147,21 @@ fn read_tick_snapshot(bot: &Client, shared: &Arc<SharedMutex>) -> Option<TickSna
                 orb,
             })
         });
+    }
+
+    #[cfg(audio)]
+    {
+        // After the pickups: they look up last tick's items.
+        use azalea_registry::builtin::EntityKind;
+        crate::audio::remember_items(entity_anims.iter().filter_map(|e| {
+            let orb = match e.kind {
+                EntityKind::ExperienceOrb => true,
+                EntityKind::Item => false,
+                _ => return None,
+            };
+            let at = e.pos.map(|v| v as f32);
+            Some((e.id, crate::audio::EntityAt { at, orb }))
+        }));
     }
 
     #[cfg(audio)]

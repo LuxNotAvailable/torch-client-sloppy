@@ -1315,6 +1315,7 @@ fn sounds(packet: &ClientboundGamePacket) {
         }
         ClientboundGamePacket::TakeItemEntity(p) => {
             crate::audio::on_take_item(p.item_id as i32);
+            crate::play::entity_feed::on_take_item(p.item_id as i32, p.player_id.0);
         }
         ClientboundGamePacket::StopSound(p) => {
             let event = p.name.as_ref().map(|id| id.to_string());

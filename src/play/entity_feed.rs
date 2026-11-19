@@ -409,6 +409,66 @@ type PlayerPose = ([f64; 3], [f64; 3], f32);
 static PLAYER_POSES: std::sync::Mutex<Option<HashMap<i32, PlayerPose>>> =
     std::sync::Mutex::new(None);
 
+/// `handleTakeItemEntity`s since the last entity tick: item, collector.
+static TAKEN: std::sync::Mutex<Vec<(i32, i32)>> = std::sync::Mutex::new(Vec::new());
+
+/// Items flying to whoever picked them up (`ItemPickupParticle`).
+static PICKUPS: std::sync::Mutex<Vec<(i32, crate::entities::feed::EntityAnim)>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// Player eye height standing (`Player.STANDING_DIMENSIONS`), for targets.
+const PLAYER_EYE: f64 = 1.62;
+
+/// `ClientboundTakeItemEntity`: `collector` picked up entity `item`.
+pub(crate) fn on_take_item(item: i32, collector: i32) {
+    if let Ok(mut taken) = TAKEN.lock() {
+        taken.push((item, collector));
+    }
+}
+
+/// Where a pickup flies to: the collector's middle, this tick.
+fn pickup_target(
+    anims: &bevy::platform::collections::HashMap<i32, entities::feed::EntityAnim>,
+    players: Option<&HashMap<i32, PlayerPose>>,
+    collector: i32,
+) -> Option<[f64; 3]> {
+    if let Some((_, [x, y, z], _)) = players.and_then(|p| p.get(&collector)) {
+        return Some([*x, y + PLAYER_EYE / 2.0, *z]);
+    }
+    anims.get(&collector).map(|a| a.pickup_target())
+}
+
+/// Ticks the flying pickups, starts this tick's, and adds them to `out`
+/// under ids of their own (below the local player's).
+fn tick_pickups(
+    anims: &bevy::platform::collections::HashMap<i32, entities::feed::EntityAnim>,
+    out: &mut Vec<entities::feed::EntityAnim>,
+) {
+    static NEXT_ID: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+    let taken = TAKEN
+        .lock()
+        .map(|mut t| std::mem::take(&mut *t))
+        .unwrap_or_default();
+    let Ok(mut pickups) = PICKUPS.lock() else {
+        return;
+    };
+    if taken.is_empty() && pickups.is_empty() {
+        return;
+    }
+    let players = PLAYER_POSES.lock().ok().and_then(|p| p.clone());
+    let target = |collector| pickup_target(anims, players.as_ref(), collector);
+    pickups.retain_mut(|(collector, anim)| anim.tick_pickup(target(*collector)));
+    for (item, collector) in taken {
+        let (Some(anim), Some(at)) = (anims.get(&item), target(collector)) else {
+            continue;
+        };
+        let n = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 1_000_000;
+        let id = crate::client::tracking::LOCAL_ANIM_ID - 1 - n;
+        pickups.push((collector, anim.clone().into_pickup(id, at)));
+    }
+    out.extend(pickups.iter().map(|(_, anim)| anim.clone()));
+}
+
 pub(crate) fn publish_player_poses(poses: HashMap<i32, PlayerPose>) {
     if let Ok(mut slot) = PLAYER_POSES.lock() {
         *slot = Some(poses);
@@ -1527,7 +1587,9 @@ pub(crate) fn collect_entities(
         .filter(|id| Some(**id) != spectated)
         .filter_map(|id| anims.get(id))
         .collect();
-    let out = std::sync::Arc::new(par_map(&live, |anim| (*anim).clone()));
+    let mut out = par_map(&live, |anim| (*anim).clone());
+    tick_pickups(&anims, &mut out);
+    let out = std::sync::Arc::new(out);
 
     drop(_snap_timer);
     anims.retain(|id, _| seen.contains(id));
