@@ -160,6 +160,17 @@ SCALED_RESOLVE=1
     }
 
     #[test]
+    fn a_bubble_column_shades_as_water() {
+        use azalea::block::BlockState;
+        use azalea_registry::builtin::BlockKind;
+        let frame = compile_frame(super::NAME, false, None, Dimension::Overworld).expect("built-in");
+        let ids = frame.block_ids.expect("the pack draws terrain");
+        let water = ids.of(BlockState::from(BlockKind::Water).id() as u16);
+        assert_ne!(water, crate::shaderpack::packvertex::UNMAPPED);
+        assert_eq!(ids.of(BlockState::from(BlockKind::BubbleColumn).id() as u16), water);
+    }
+
+    #[test]
     fn every_foliage_shading_mode_compiles() {
         let source = crate::shaderpack::discover::open(super::NAME).expect("embedded");
         let texts = crate::shaderpack::include::option_texts(&source);
