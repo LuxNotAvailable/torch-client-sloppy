@@ -52,7 +52,6 @@ static TICKS: AtomicU64 = AtomicU64::new(0);
 
 static OURS_AT: AtomicU64 = AtomicU64::new(0);
 static BOT_AT: AtomicU64 = AtomicU64::new(0);
-static RENDER_AT: AtomicU64 = AtomicU64::new(0);
 static POST_AT: AtomicU64 = AtomicU64::new(0);
 static WINDOW_AT: AtomicU64 = AtomicU64::new(0);
 
@@ -68,16 +67,6 @@ pub fn frame_end(rendered: bool) {
     if rendered {
         RENDERED.fetch_add(1, Relaxed);
     }
-}
-
-pub fn render_begin() {
-    RENDER_AT.store(now_us(), Relaxed);
-}
-
-pub fn render_mark(phase: Phase) {
-    let now = now_us();
-    close_at(now, &RENDER_AT, &PHASES[phase as usize]);
-    RENDER_AT.store(now, Relaxed);
 }
 
 pub fn bot_start() {
@@ -128,11 +117,6 @@ pub fn note_visible_columns(n: usize) {
 
 pub fn note_drawn_entities(n: usize) {
     DRAWN_ENTITIES.store(n as u64, Relaxed);
-}
-
-pub fn note_render_work(views: usize, draws: usize) {
-    VIEWS.store(views as u64, Relaxed);
-    DRAWS.store(draws as u64, Relaxed);
 }
 
 fn close(open: &AtomicU64, total: &AtomicU64) {

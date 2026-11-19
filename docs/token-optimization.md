@@ -37,7 +37,7 @@ Uniform pattern: `HopSpec` per version, rewrite fns 10–40 lines each.
 
 ## 3. Vendor (145K lines — keep out of context)
 
-Patched `bevy_camera`, `simdnbt`, `bevy_core_pipeline`, `azalea`. Patches ~10–50 lines/file; rest is upstream.
+Patched `bevy_camera`, `simdnbt`, `azalea`. Patches ~10–50 lines/file; rest is upstream.
 
 **Fix (pick one or combo):**
 - `vendor/PATCHES.md` — which files, why, diff/PR link

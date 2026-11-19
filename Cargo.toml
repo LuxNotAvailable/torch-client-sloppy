@@ -68,7 +68,7 @@ explore_modrinth = ["resourcepacks", "dep:reqwest", "dep:rustls", "dep:sha1", "i
 # --- Rendering ---
 
 # Iris/OptiFine-style shader packs.
-shader_support = ["dep:flate2", "dep:naga", "dep:wgpu"]
+shader_support = ["dep:flate2", "dep:naga"]
 # The native Vulkan renderer, being built alongside the current one
 # (VULKAN_REWRITE_CHECKLIST.md). For now it only drives the `vkview`
 # development viewer; the game still renders through Bevy.
@@ -101,7 +101,7 @@ mobile_ui = ["bevy/touch"]
 # A Debug Options button that records ten seconds of play and writes a
 # report: frame times, every timed stage and span, GPU passes, counters,
 # process use and the machine it ran on.
-perf_report = ["dep:sysinfo", "dep:wgpu", "wgpu/counters", "dep:bevy_render_trace", "bevy_render_trace/trace"]
+perf_report = ["dep:sysinfo"]
 # Bevy's tracing spans, for a profiler.
 profiling = ["bevy/trace"]
 # parking_lot's deadlock detector, reported by the watchdog.
@@ -145,30 +145,18 @@ bevy = { version = "0.18", default-features = false, features = [
     "keyboard",
     "mouse",
     "bevy_camera",
-    "bevy_render",
-    "bevy_shader",
     "bevy_mesh",
     "bevy_image",
-    "bevy_core_pipeline",
-    "bevy_pbr",
-    "bevy_light",
-    "bevy_anti_alias",
-    "tonemapping_luts",
     "ktx2",
     "zstd_rust",
     "reflect_auto_register",
 ] }
-# Only for its `trace` feature (perf_report), which marks each render graph
-# node and the queue submit. Renamed so Bevy's derive macros, which look
-# for a `bevy_render` dependency, keep using `bevy::render`.
-bevy_render_trace = { package = "bevy_render", version = "0.18", default-features = false, optional = true }
 
 # Image formats and sizes, as `bevy_image` takes them.
 wgpu-types = { version = "27", default-features = false }
 
-# Shader packs: GLSL in, WGSL out, and wgpu directly.
+# Shader packs: GLSL in, SPIR-V out.
 naga = { version = "27", default-features = false, features = ["glsl-in", "wgsl-out", "wgsl-in", "spv-out"], optional = true }
-wgpu = { version = "27", default-features = false, optional = true }
 
 # The Vulkan renderer (feature `vulkan`).
 ash = { version = "0.38", optional = true }
@@ -217,9 +205,6 @@ tokio = { version = "1", features = ["full"] }
 bevy = { version = "0.18", default-features = false, features = ["multi_threaded", "x11", "wayland"] }
 arboard = { version = "3.6", default-features = false }
 mimalloc = { version = "0.1", default-features = false }
-# Bevy's wgpu, for the startup probe that checks the Renderer setting's
-# backend has an adapter.
-wgpu = { version = "27", default-features = false, features = ["vulkan"] }
 # Sound and voice chat.
 rodio = { version = "0.20", default-features = false, features = ["vorbis"], optional = true }
 aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc", "getrandom"], optional = true }
@@ -315,8 +300,3 @@ required = true
 [patch.crates-io]
 bevy_camera = { path = "vendor/bevy_camera" }
 simdnbt = { path = "vendor/simdnbt" }
-# PowerVR (Pixel 10 Pro) aborts inside vkCreateComputePipelines on Bevy's
-# mip-generation downsample-depth compute shader (texture_depth_multisampled_2d
-# + 12 storage textures). This fork skips pipeline creation; see
-# create_downsample_depth_pipelines in the forked file.
-bevy_core_pipeline = { path = "vendor/bevy_core_pipeline" }

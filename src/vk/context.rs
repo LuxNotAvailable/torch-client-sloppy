@@ -31,6 +31,9 @@ pub struct DeviceInfo {
     pub indirect_count: bool,
 }
 
+/// The device the last context opened, for the performance report.
+pub static ACTIVE: std::sync::OnceLock<DeviceInfo> = std::sync::OnceLock::new();
+
 pub struct Context {
     pub entry: ash::Entry,
     pub instance: ash::Instance,
@@ -184,6 +187,7 @@ impl Context {
         let queue = unsafe { device.get_device_queue(queue_family, 0) };
         let swapchain_fn = ash::khr::swapchain::Device::new(&instance, &device);
 
+        let _ = ACTIVE.set(info.clone());
         Ok(Context {
             entry,
             instance,

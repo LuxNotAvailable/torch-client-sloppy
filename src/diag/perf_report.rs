@@ -26,10 +26,8 @@ use std::fmt::Write as _;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use bevy::core_pipeline::core_3d::{AlphaMask3d, Opaque3d, Transparent3d};
 use bevy::diagnostic::DiagnosticsStore;
 use bevy::prelude::*;
-use bevy::render::render_phase::{BinnedPhaseItem, ViewBinnedRenderPhases, ViewSortedRenderPhases};
 use bevy::window::PrimaryWindow;
 
 use super::frame_profile::{self, Group};
@@ -259,55 +257,8 @@ pub struct PerfReportPlugin;
 
 impl Plugin for PerfReportPlugin {
     fn build(&self, app: &mut App) {
-        use bevy::render::{Render, RenderApp, RenderSystems};
         app.add_systems(Last, (autostart, sample).chain());
-        if let Some(render) = app.get_sub_app_mut(RenderApp) {
-            render.add_systems(
-                Render,
-                count_phase_draws
-                    .in_set(RenderSystems::Render)
-                    .before(bevy::render::renderer::render_system),
-            );
-        }
     }
-}
-
-/// The draws queued in Bevy's render phases for the frame the render
-/// thread last encoded. A multi-draw batch or an instanced bin counts once.
-static PHASE_DRAWS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
-fn count_phase_draws(
-    opaque: Option<Res<ViewBinnedRenderPhases<Opaque3d>>>,
-    alpha: Option<Res<ViewBinnedRenderPhases<AlphaMask3d>>>,
-    shadow: Option<Res<ViewBinnedRenderPhases<bevy::pbr::Shadow>>>,
-    transparent: Option<Res<ViewSortedRenderPhases<Transparent3d>>>,
-) {
-    if !frame_profile::enabled() {
-        return;
-    }
-    let draws = binned_draws(opaque.as_deref())
-        + binned_draws(alpha.as_deref())
-        + binned_draws(shadow.as_deref())
-        + transparent.map_or(0, |phases| phases.values().map(|p| p.items.len()).sum());
-    PHASE_DRAWS.store(draws, std::sync::atomic::Ordering::Relaxed);
-}
-
-fn binned_draws<T: BinnedPhaseItem>(phases: Option<&ViewBinnedRenderPhases<T>>) -> usize {
-    phases.map_or(0, |phases| {
-        phases
-            .values()
-            .map(|phase| {
-                phase.multidrawable_meshes.len()
-                    + phase.batchable_meshes.len()
-                    + phase
-                        .unbatchable_meshes
-                        .values()
-                        .map(|bin| bin.entities.len())
-                        .sum::<usize>()
-                    + phase.non_mesh_items.len()
-            })
-            .sum()
-    })
 }
 
 /// Meshes and images added or changed this frame, and their bytes: each is
@@ -320,7 +271,6 @@ struct Uploads<'w, 's> {
     images: Res<'w, Assets<Image>>,
     entity_materials: Res<'w, Assets<crate::renderer::entity_material::EntityMaterial>>,
     standard_materials: Res<'w, Assets<crate::draw::SimpleMaterial>>,
-    device: Option<Res<'w, bevy::render::renderer::RenderDevice>>,
 }
 
 fn changed<A: Asset>(event: &AssetEvent<A>) -> Option<AssetId<A>> {
@@ -385,7 +335,6 @@ impl Uploads<'_, '_> {
 #[derive(bevy::ecs::system::SystemParam)]
 struct Context<'w, 's> {
     window: Query<'w, 's, &'static Window, With<PrimaryWindow>>,
-    adapter: Option<Res<'w, bevy::render::renderer::RenderAdapterInfo>>,
     state: Res<'w, crate::gui::GuiState>,
     shared: Res<'w, crate::renderer::Shared>,
 }
@@ -428,7 +377,7 @@ fn sample(
         Phase::Recording { started, until } => {
             capture.frame_ms.push(time.delta_secs() * 1000.0);
             capture.record_frame(diagnostics.as_deref(), &view);
-            capture.record_render_work(upload, uploads.device.as_deref());
+            capture.record_render_work(upload);
             capture.record_memory(uploads.cpu_bytes());
             capture.record_assets(&uploads);
             if now >= until {
@@ -589,7 +538,6 @@ impl Capture {
     fn record_render_work(
         &mut self,
         (meshes, mesh_bytes, images, image_bytes): (usize, usize, usize, usize),
-        device: Option<&bevy::render::renderer::RenderDevice>,
     ) {
         let kib = |bytes: usize| bytes as f32 / 1024.0;
         self.push(Section::RenderWork, "meshes uploaded", meshes as f32);
@@ -608,35 +556,6 @@ impl Capture {
             Section::RenderWork,
             "GUI quads",
             crate::gui::pool::QUADS.load(std::sync::atomic::Ordering::Relaxed) as f32,
-        );
-        self.push(
-            Section::RenderWork,
-            "Bevy phase draws",
-            PHASE_DRAWS.load(std::sync::atomic::Ordering::Relaxed) as f32,
-        );
-        // Live counts, not how many were made this frame: wgpu counts
-        // objects alive, so churn shows only as these moving.
-        let Some(device) = device else {
-            return;
-        };
-        let hal = device.wgpu_device().get_internal_counters().hal;
-        let mib = |bytes: isize| bytes as f32 / 1048576.0;
-        for (name, value) in [
-            ("GPU bind groups alive", hal.bind_groups.read() as f32),
-            ("GPU buffers alive", hal.buffers.read() as f32),
-            ("GPU textures alive", hal.textures.read() as f32),
-        ] {
-            self.push(Section::RenderWork, name, value);
-        }
-        self.push(
-            Section::Memory,
-            "GPU buffers",
-            mib(hal.buffer_memory.read()),
-        );
-        self.push(
-            Section::Memory,
-            "GPU textures",
-            mib(hal.texture_memory.read()),
         );
     }
 
@@ -800,25 +719,17 @@ fn describe(
             gib(system.available_memory()),
         ),
     ];
-    if let Some(adapter) = &context.adapter {
+    #[cfg(feature = "vulkan")]
+    if let Some(info) = crate::vk::context::ACTIVE.get() {
         device.extend([
-            ("gpu".to_owned(), adapter.name.clone()),
-            ("gpu type".to_owned(), format!("{:?}", adapter.device_type)),
+            ("gpu".to_owned(), info.name.clone()),
+            ("gpu type".to_owned(), format!("{:?}", info.kind)),
+            ("gpu vendor id".to_owned(), format!("{:#06x}", info.vendor_id)),
             (
-                "gpu vendor id".to_owned(),
-                format!("{:#06x}", adapter.vendor),
+                "graphics api".to_owned(),
+                format!("Vulkan {}.{}.{}", info.api.0, info.api.1, info.api.2),
             ),
-            (
-                "gpu device id".to_owned(),
-                format!("{:#06x}", adapter.device),
-            ),
-            ("graphics api".to_owned(), format!("{:?}", adapter.backend)),
-            (
-                "driver".to_owned(),
-                format!("{} {}", adapter.driver, adapter.driver_info)
-                    .trim()
-                    .to_owned(),
-            ),
+            ("driver".to_owned(), info.driver.trim().to_owned()),
         ]);
     }
     if let Ok(window) = context.window.single() {

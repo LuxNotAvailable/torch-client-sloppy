@@ -7,7 +7,6 @@ when debugging it.
 | Crate | Upstream | Why vendored | Changed files |
 |---|---|---|---|
 | `azalea/` | azalea (git) | Real fork. Protocol, physics, inventory and registry changes the client needs. | ~120 files; see below |
-| `bevy_core_pipeline/` | 0.18.1 | PowerVR (Pixel 10 Pro) aborts in `vkCreateComputePipelines` on the mip-generation downsample-depth shader. Fork skips that pipeline. | `src/experimental/mip_generation/mod.rs` (`create_downsample_depth_pipelines`) |
 | `simdnbt/` | crates.io | Bounds checks: overflow-safe length math, `skip` checks before moving. Malformed NBT can't read past the buffer. | `src/common.rs` (`read_with_u32_length`), `src/reader.rs` (`ensure_can_read`, `skip`) |
 | `bevy_camera/` | 0.18.1 | Reason not recorded. Diff against the crates.io 0.18.1 source to find it. | unknown |
 

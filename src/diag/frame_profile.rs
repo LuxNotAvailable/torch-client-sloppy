@@ -1,14 +1,9 @@
 //! Live per-frame timings for the F3 profiler page (F3+7).
 //!
-//! Three sources, averaged per frame over half-second windows:
+//! Two sources, averaged per frame over half-second windows:
 //! - the main world's schedules, timed by probe schedules slotted between
 //!   them in [`MainScheduleOrder`];
-//! - the render world's stages, timed by probe systems on the boundaries of
-//!   Bevy's chained [`RenderSystems`] sets;
 //! - named CPU spans, from every `prof_span!` (including worker threads).
-//!
-//! GPU and render-graph pass times come from Bevy's render diagnostics and are
-//! read straight from the [`DiagnosticsStore`] when the page is drawn.
 //!
 //! Everything is a single atomic load while the page is closed.
 
@@ -19,7 +14,6 @@ use std::sync::{Arc, LazyLock, Mutex};
 use bevy::app::MainScheduleOrder;
 use bevy::ecs::schedule::ScheduleLabel;
 use bevy::prelude::*;
-use bevy::render::{Render, RenderApp, RenderSystems};
 
 use crate::platform::time::{Instant, epoch};
 
@@ -327,22 +321,6 @@ fn main_probe(probe: MainProbe) {
     }
 }
 
-fn render_probe(stage: Option<&'static str>) {
-    if !enabled() {
-        return;
-    }
-    if stage.is_none() {
-        // The render frame's first probe: the gap before it is the render
-        // thread waiting for the next frame, not work.
-        RENDER_AT.store(now_ns(), Relaxed);
-        if let Ok(mut window) = WINDOW.lock() {
-            window.render_frames += 1;
-        }
-        return;
-    }
-    stamp(&RENDER_AT, Group::Render, stage);
-}
-
 pub struct FrameProfilePlugin;
 
 impl Plugin for FrameProfilePlugin {
@@ -368,45 +346,6 @@ impl Plugin for FrameProfilePlugin {
             order.insert_after(Last, AfterLast);
         }
 
-        app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
-
-        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
-            return;
-        };
-        use RenderSystems as S;
-        render_app.add_systems(
-            Render,
-            (
-                (|| render_probe(None)).before(S::ExtractCommands),
-                (|| render_probe(Some("Extract commands")))
-                    .after(S::ExtractCommands)
-                    .before(S::PrepareAssets),
-                (|| render_probe(Some("Prepare assets")))
-                    .after(S::PrepareAssets)
-                    .before(S::PrepareMeshes),
-                (|| render_probe(Some("Prepare meshes")))
-                    .after(S::PrepareMeshes)
-                    .before(S::ManageViews),
-                (|| render_probe(Some("Manage views")))
-                    .after(S::ManageViews)
-                    .before(S::Queue),
-                (|| render_probe(Some("Queue")))
-                    .after(S::Queue)
-                    .before(S::PhaseSort),
-                (|| render_probe(Some("Phase sort")))
-                    .after(S::PhaseSort)
-                    .before(S::Prepare),
-                (|| render_probe(Some("Prepare (buffers, bind groups)")))
-                    .after(S::Prepare)
-                    .before(S::Render),
-                (|| render_probe(Some("Render graph (encode, submit)")))
-                    .after(S::Render)
-                    .before(S::Cleanup),
-                (|| render_probe(Some("Cleanup")))
-                    .after(S::Cleanup)
-                    .before(S::PostCleanup),
-            ),
-        );
     }
 }
 

@@ -1165,33 +1165,14 @@ fn log_frame_rate(
     windows: Query<&Window, With<PrimaryWindow>>,
     index: Res<ChunkIndex>,
     gui: Res<crate::gui::GuiState>,
-    // Absent under the native renderer (Bevy's has no backend).
-    device: Option<Res<bevy::render::renderer::RenderDevice>>,
     mut frames: Local<u32>,
     mut since: Local<f32>,
-    mut limits_logged: Local<bool>,
 ) {
     const REPORT_EVERY: f32 = 5.0;
     *frames += 1;
     *since += time.delta_secs();
     if *since < REPORT_EVERY {
         return;
-    }
-    if !*limits_logged && let Some(device) = device {
-        *limits_logged = true;
-        let limits = device.limits();
-        crate::log_info!(
-            "render",
-            "gpu limits: texture 2d {}, texture layers {}, uniform binding {}, storage binding \
-             {}, buffer {}, vertex buffers {}, vertex attributes {}",
-            limits.max_texture_dimension_2d,
-            limits.max_texture_array_layers,
-            limits.max_uniform_buffer_binding_size,
-            limits.max_storage_buffer_binding_size,
-            limits.max_buffer_size,
-            limits.max_vertex_buffers,
-            limits.max_vertex_attributes,
-        );
     }
     let focused = windows.single().map(|w| w.focused).unwrap_or(false);
     crate::log_info!(
@@ -1459,28 +1440,6 @@ fn frame_gate_decision(
     }
 }
 
-/// Bevy's PBR plugin: its defaults, except on Android.
-///
-/// A PowerVR driver (Pixel 10 Pro) aborts inside `vkCreateComputePipelines`
-/// on a compute shader that binds a depth or image type. The client renders
-/// forward with its own terrain culling, so on Android Bevy's PBR compute
-/// paths go: the GPU mesh-uniform builder (`mesh_preprocess.wgsl` binds the
-/// depth pyramid), the deferred-lighting compute and the prepass. Elsewhere
-/// they stay, since building mesh uniforms on the CPU instead would cost the
-/// render thread every frame.
-fn pbr_plugin() -> bevy::pbr::PbrPlugin {
-    if cfg!(target_os = "android") {
-        bevy::pbr::PbrPlugin {
-            use_gpu_instance_buffer_builder: false,
-            add_default_deferred_lighting_plugin: false,
-            prepass_enabled: false,
-            ..Default::default()
-        }
-    } else {
-        bevy::pbr::PbrPlugin::default()
-    }
-}
-
 fn unfocused_update_mode() -> bevy::winit::UpdateMode {
     bevy::winit::UpdateMode::reactive_low_power(std::time::Duration::from_secs_f64(1. / 30.))
 }
@@ -1536,77 +1495,6 @@ fn budget_post_start() {
 #[cfg(feature = "budget")]
 fn budget_post_end() {
     crate::diag::budget::post_end();
-}
-
-#[cfg(feature = "budget")]
-fn budget_render_begin() {
-    crate::diag::budget::render_begin();
-}
-
-#[cfg(feature = "budget")]
-fn budget_mark_upload() {
-    crate::diag::budget::render_mark(crate::diag::budget::Phase::Upload);
-}
-
-#[cfg(feature = "budget")]
-fn budget_mark_acquire() {
-    crate::diag::budget::render_mark(crate::diag::budget::Phase::Acquire);
-}
-
-#[cfg(feature = "budget")]
-fn budget_mark_prepare() {
-    crate::diag::budget::render_mark(crate::diag::budget::Phase::Prepare);
-}
-
-#[cfg(feature = "budget")]
-fn budget_mark_draw() {
-    crate::diag::budget::render_mark(crate::diag::budget::Phase::Draw);
-}
-
-#[cfg(feature = "budget")]
-fn budget_count_render_work(
-    opaque: Res<
-        bevy::render::render_phase::ViewBinnedRenderPhases<bevy::core_pipeline::core_3d::Opaque3d>,
-    >,
-    alpha_mask: Res<
-        bevy::render::render_phase::ViewBinnedRenderPhases<
-            bevy::core_pipeline::core_3d::AlphaMask3d,
-        >,
-    >,
-    transparent: Res<
-        bevy::render::render_phase::ViewSortedRenderPhases<
-            bevy::core_pipeline::core_3d::Transparent3d,
-        >,
-    >,
-) {
-    fn binned<I: bevy::render::render_phase::BinnedPhaseItem>(
-        phases: &bevy::render::render_phase::ViewBinnedRenderPhases<I>,
-    ) -> usize {
-        phases
-            .values()
-            .map(|phase| {
-                phase.batchable_meshes.len()
-                    + phase
-                        .unbatchable_meshes
-                        .values()
-                        .map(|bin| bin.entities.len())
-                        .sum::<usize>()
-                    + phase
-                        .non_mesh_items
-                        .values()
-                        .map(|bin| bin.entities.len())
-                        .sum::<usize>()
-            })
-            .sum()
-    }
-
-    let draws = binned(&opaque)
-        + binned(&alpha_mask)
-        + transparent
-            .values()
-            .map(|phase| phase.items.len())
-            .sum::<usize>();
-    crate::diag::budget::note_render_work(opaque.len(), draws);
 }
 
 fn note_frame() {
@@ -2079,17 +1967,6 @@ fn dump_flamegraph(
     }
 }
 
-fn wgpu_settings() -> bevy::render::settings::WgpuSettings {
-    let mut settings = bevy::render::settings::WgpuSettings {
-        disabled_features: withheld_features(),
-        constrained_limits: constrained_limits(),
-        ..default()
-    };
-    // The native renderer owns the window: Bevy's starts with no backend.
-    settings.backends = None;
-    settings
-}
-
 /// Render-graph passes from Bevy's render diagnostics: smoothed GPU time
 /// (when the device has timestamp queries) and CPU encode time, in ms.
 fn render_passes(
@@ -2142,21 +2019,6 @@ fn render_passes(
             .total_cmp(&a.gpu_ms.unwrap_or(a.cpu_ms))
     });
     passes
-}
-
-fn withheld_features() -> Option<bevy::render::settings::WgpuFeatures> {
-    #[cfg(target_os = "android")]
-    {
-        Some(bevy::render::settings::WgpuFeatures::BUFFER_BINDING_ARRAY)
-    }
-    #[cfg(not(target_os = "android"))]
-    {
-        None
-    }
-}
-
-fn constrained_limits() -> Option<bevy::render::settings::WgpuLimits> {
-    None
 }
 
 fn toggle_prof_overlay(
@@ -2249,15 +2111,7 @@ pub fn run(
                 custom_layer: crate::diag::custom_layers,
                 ..default()
             })
-            .set(bevy::render::RenderPlugin {
-                render_creation: bevy::render::settings::RenderCreation::Automatic(wgpu_settings()),
-                ..default()
-            })
-            .disable::<bevy::app::PanicHandlerPlugin>()
-            // Only FXAA is used. The bundle's TAA needs bevy_post_process's
-            // MotionBlur node, which the default build leaves out.
-            .disable::<bevy::anti_alias::AntiAliasPlugin>()
-            .set::<bevy::pbr::PbrPlugin>(pbr_plugin()),
+            .disable::<bevy::app::PanicHandlerPlugin>(),
     )
     .add_plugins(crate::diag::frame_profile::FrameProfilePlugin)
     .insert_resource(bevy::winit::WinitSettings {
@@ -2512,27 +2366,6 @@ pub fn run(
                 budget_post_end.after(bevy::camera::visibility::VisibilitySystems::CheckVisibility),
             ),
         );
-    #[cfg(feature = "budget")]
-    if let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) {
-        use bevy::render::RenderSystems as Set;
-        render_app.add_systems(
-            bevy::render::Render,
-            (
-                budget_render_begin.before(Set::ExtractCommands),
-                budget_mark_upload
-                    .after(Set::PrepareMeshes)
-                    .before(Set::ManageViews),
-                budget_mark_acquire
-                    .after(Set::ManageViews)
-                    .before(Set::Queue),
-                budget_mark_prepare.after(Set::Prepare).before(Set::Render),
-                budget_mark_draw.in_set(Set::PostCleanup),
-                budget_count_render_work
-                    .after(Set::PhaseSort)
-                    .before(Set::Render),
-            ),
-        );
-    }
 
     #[cfg(target_os = "android")]
     app.add_systems(Update, track_native_window_size.before(log_window_geometry))
@@ -2548,14 +2381,6 @@ pub fn run(
             .resource_mut::<bevy::ecs::schedule::Schedules>();
         for (_, schedule) in schedules.iter_mut() {
             schedule.set_executor_kind(ExecutorKind::SingleThreaded);
-        }
-        if let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) {
-            let mut schedules = render_app
-                .world_mut()
-                .resource_mut::<bevy::ecs::schedule::Schedules>();
-            for (_, schedule) in schedules.iter_mut() {
-                schedule.set_executor_kind(ExecutorKind::SingleThreaded);
-            }
         }
     }
     #[cfg(feature = "shader_support")]
