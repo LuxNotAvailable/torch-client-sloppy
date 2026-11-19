@@ -83,27 +83,33 @@ const USE_CONFIRM_TICKS: u32 = 20;
 /// break (it's gone now) from one given up.
 static WAS_MINING: Mutex<Option<BlockPos>> = Mutex::new(None);
 
-static LOCAL_BREAK: Mutex<Option<(BlockPos, crate::platform::time::Instant)>> = Mutex::new(None);
+/// Blocks this client just broke, waiting for their block change to play
+/// the break effects. A list: held instamining breaks one a tick.
+static LOCAL_BREAK: Mutex<Vec<(BlockPos, crate::platform::time::Instant)>> = Mutex::new(Vec::new());
 
 const LOCAL_BREAK_TTL: std::time::Duration = std::time::Duration::from_secs(1);
 
+/// Registers azalea's predicted-break hook (`mining::ON_LOCAL_BREAK`).
+pub(crate) fn install_local_break_hook() {
+    let _ = azalea::mining::ON_LOCAL_BREAK.set(note_local_break);
+}
+
 fn note_local_break(pos: BlockPos) {
-    if let Ok(mut slot) = LOCAL_BREAK.lock() {
-        *slot = Some((pos, crate::platform::time::Instant::now()));
+    if let Ok(mut breaks) = LOCAL_BREAK.lock() {
+        breaks.retain(|(p, at)| *p != pos && at.elapsed() <= LOCAL_BREAK_TTL);
+        breaks.push((pos, crate::platform::time::Instant::now()));
     }
 }
 
 pub(crate) fn take_local_break(pos: BlockPos) -> bool {
-    let Ok(mut slot) = LOCAL_BREAK.lock() else {
+    let Ok(mut breaks) = LOCAL_BREAK.lock() else {
         return false;
     };
-    let Some((named, at)) = *slot else {
+    breaks.retain(|(_, at)| at.elapsed() <= LOCAL_BREAK_TTL);
+    let Some(i) = breaks.iter().position(|(p, _)| *p == pos) else {
         return false;
     };
-    if named != pos || at.elapsed() > LOCAL_BREAK_TTL {
-        return false;
-    }
-    *slot = None;
+    breaks.swap_remove(i);
     true
 }
 
@@ -134,7 +140,7 @@ pub(crate) fn reset_session_state() {
         Err(std::sync::TryLockError::WouldBlock) => None,
     };
     if let Some(mut local_break) = local_break {
-        *local_break = None;
+        local_break.clear();
     }
 }
 

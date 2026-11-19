@@ -13,6 +13,7 @@ use crate::session::SharedMutex;
 use crate::{CHUNK_Q, blockentities, lighting};
 
 pub(crate) fn install_block_change_hook() {
+    crate::play::interaction::install_local_break_hook();
     let hook_installed =
         azalea_world::block_change::set_block_change_hook(Box::new(|pos, old, new| {
             crate::blockentities::feed::on_block_change(pos, new);

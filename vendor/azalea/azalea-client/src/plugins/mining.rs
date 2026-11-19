@@ -148,6 +148,10 @@ fn handle_auto_mine(
 
 /// Set by the game every tick: attack is held and nothing (a destroy delay,
 /// an open screen) holds the break back.
+/// Called with each block this client breaks by prediction, before the world
+/// changes, so the game can play that break's effects.
+pub static ON_LOCAL_BREAK: std::sync::OnceLock<fn(BlockPos)> = std::sync::OnceLock::new();
+
 pub static HOLD_TO_MINE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Whether the held item breaks this block on the first hit
@@ -594,6 +598,9 @@ pub fn handle_finish_mining_block_observer(
         return;
     }
 
+    if let Some(hook) = ON_LOCAL_BREAK.get() {
+        hook(event.position);
+    }
     let fluid_state = FluidState::from(block_state);
     let block_state_for_fluid = BlockState::from(fluid_state);
     let old_state = world

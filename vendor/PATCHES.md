@@ -31,6 +31,9 @@ Treat as our code. History: `git log -- vendor/azalea`. Main areas:
   menu's carried stack goes with it (`plugins/inventory/mod.rs`).
 - `azalea-client`: `queue_held_instant_mine` breaks instant blocks in the
   same tick while the game sets `HOLD_TO_MINE` (`plugins/mining.rs`).
+- `azalea-client`: `ON_LOCAL_BREAK` is called with each predicted break
+  before the world changes, so every local break plays its effects
+  (`plugins/mining.rs`).
 - `codegen/`: Python generators for the tables above. Edit these, then
   regenerate; never edit generated tables by hand.
 
