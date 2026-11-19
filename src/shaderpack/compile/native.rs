@@ -1,38 +1,96 @@
-//! Native programs: a pack's `<program>.wgsl`, written in WGSL against this
-//! engine instead of in GLSL for Iris. Nothing is translated. The file names
-//! the uniforms it reads as `frame.<name>`, samples targets by their Iris
-//! names (`colortex0`, `depthtex1`, `shadowtex0HW`, ...), and binds a
-//! `bufferObject.<n>` with `@binding(IRIS_BUFFER_<n>)`; the engine declares
-//! those, prepends the prelude for the program's kind, and lays the bindings
-//! out exactly as a translated program's, so everything after compiling
-//! (pipelines, targets, flips, uniforms) is shared.
+//! Native programs: the built-in pack's `<program>.slang`, written in Slang
+//! against this engine instead of in GLSL for Iris, and compiled to SPIR-V
+//! by build.rs (`compile_torch_pack`) behind the engine's prelude
+//! (`builtin/iris`). Nothing is translated or compiled at run time. The
+//! file names the uniforms it reads as `frame.<name>`, samples targets by
+//! their Iris names (`colortex0`, `depthtex1`, `shadowtex0HW`, ...), and
+//! reads a `bufferObject.<n>` through `IRIS_BUFFER_<n>`. The engine scans
+//! the file for those as it would a translated program's, so the layout,
+//! targets, flips and uniforms are shared; what it finds becomes WGSL
+//! declarations (the slot manifest `vk::pack::bindless` reads), and the
+//! module's specialization constants take the values: options, uniform
+//! offsets, the alpha test, and later each resource's slot.
 //!
-//! Entry points are `fn vertex(input: IrisVertexIn)` and `fn fragment(...)`
-//! for drawing programs, `fn compute(...)` for compute ones. A file with a
-//! `@compute` entry is a compute program. The prelude gives every drawing
-//! program `iris_attributes(input)`, the vertex in the kind's model space
-//! (camera-relative for terrain and entities, view space for the hand),
-//! `iris_clip` for the clip-space conventions, `iris_alpha_pass` for the
-//! alpha test of the layer drawn, and `iris_output` for the final pass.
+//! Entry points are `vertex(IrisVertexIn input)` and `fragment(...)` for
+//! drawing programs, `compute(...)` for compute ones. A file with a
+//! `[numthreads(...)]` entry is a compute program. The prelude gives every
+//! drawing program `iris_attributes(input)`, the vertex in the kind's model
+//! space (camera-relative for terrain and entities, view space for the
+//! hand), `iris_clip` for the clip-space conventions, `iris_alpha_pass` for
+//! the alpha test of the layer drawn, and `iris_output` for the final pass.
 //! Iris's text directives (`RENDERTARGETS`, `const int colortex0Format`,
 //! `const ivec3 workGroups`, ...) are read from the file's comments.
 
-use super::SLOT_TABLE_BINDING;
 use super::pack::Pack;
-use super::program::{texture_sources, undeclared_buffer, used_bindings};
-use super::{AlphaTest, Dispatch, PACK_SET, Program, ProgramKind, TERRAIN_SET};
+use super::program::{texture_sources, undeclared_buffer};
+use super::{AlphaTest, Dispatch, PACK_SET, Precompiled, Program, ProgramKind};
 use crate::shaderpack::directives;
 use crate::shaderpack::pipeline::{self, Layout};
+use crate::shaderpack::preprocess::Defines;
 use crate::shaderpack::transform::declarations::{PackUniform, std140_size};
 use crate::shaderpack::transform::lexer::{self, Kind};
 use crate::shaderpack::transform::{Interface, Sampler, StorageBuffer, UNIFORM_BINDING, UNIFORMS};
-use crate::terrain::ORIGIN_ROW;
 
-pub(super) const EXTENSION: &str = ".wgsl";
+pub(super) const EXTENSION: &str = ".slang";
 
 pub(super) fn is_compute(text: &str) -> bool {
-    text.contains("@compute")
+    text.contains("[numthreads(")
 }
+
+#[cfg(feature = "vulkan")]
+mod modules {
+    include!(concat!(env!("OUT_DIR"), "/torch_pack/modules.rs"));
+}
+
+/// Built without the native renderer: no modules, so no native program
+/// compiles.
+#[cfg(not(feature = "vulkan"))]
+mod modules {
+    pub(crate) const MODULES: &[(&str, &[u8])] = &[];
+}
+
+/// The input a program of `kind` is built for (build.rs names modules by it).
+fn input(kind: ProgramKind) -> &'static str {
+    match kind {
+        ProgramKind::Geometry | ProgramKind::Shadow => "terrain",
+        ProgramKind::Entity | ProgramKind::ShadowEntity => "entity",
+        ProgramKind::Screen => "screen",
+        ProgramKind::Compute => "compute",
+    }
+}
+
+/// `program`'s module for `input` and `stage`, as built.
+fn module(program: &str, input: &str, stage: &str) -> Result<Vec<u32>, String> {
+    let key = format!("{program}.{input}.{stage}");
+    let (_, bytes) = modules::MODULES
+        .iter()
+        .find(|(k, _)| *k == key)
+        .ok_or_else(|| {
+            format!("{key}: not built into this client (only the built-in pack is native)")
+        })?;
+    crate::shaderpack::spirv::words(bytes).map_err(|e| format!("{key}: {e}"))
+}
+
+/// The prelude's own resources for a kind, as `iris/terrain.slang` and
+/// `iris/entity.slang` read them, so their slots are laid out. A terrain
+/// section's pools are read by the bindless index its slot holds, so they
+/// take no slot.
+fn kind_slots(kind: ProgramKind) -> &'static str {
+    match kind {
+        ProgramKind::Geometry | ProgramKind::Shadow => {
+            "@group(2) @binding(7) var<storage, read> iris_vk_slots: IrisVkSlots;\n\
+             @group(2) @binding(12) var<storage, read> iris_vk_anim: IrisVkAnim;\n"
+        }
+        ProgramKind::Entity | ProgramKind::ShadowEntity => {
+            "@group(2) @binding(10) var<storage, read> iris_vk_inst: IrisVkInstances;\n\
+             @group(2) @binding(11) var<storage, read> iris_vk_mesh: IrisVkMeshes;\n\
+             @group(2) @binding(12) var<storage, read> iris_vk_vert: IrisVkVertices;\n\
+             @group(2) @binding(13) var<storage, read> iris_vk_part: IrisVkParts;\n"
+        }
+        ProgramKind::Screen | ProgramKind::Compute => "",
+    }
+}
+
 
 /// What the file reads, declared for it.
 struct Declarations {
@@ -61,7 +119,7 @@ fn wgsl_type(ty: &str) -> Option<&'static str> {
 }
 
 /// A sampler name a native program may read. Iris's legacy aliases (`gcolor`,
-/// `composite`, `shadow`, `tex`, ...) are left out: in WGSL they are as likely
+/// `composite`, `shadow`, `tex`, ...) are left out: in Slang they are as likely
 /// to be a variable's name.
 fn sampled(pack: &Pack, program: &str, name: &str) -> Option<&'static str> {
     let numbered = |prefix: &str, count: usize| {
@@ -191,10 +249,15 @@ fn declare(pack: &Pack, program: &str, text: &str, outputs: u32) -> Result<Decla
         if buffers.iter().any(|b: &StorageBuffer| b.index == index) {
             return Err(format!("bufferObject.{index} is bound twice"));
         }
+        let read_only = !line.contains("read_write");
+        let access = if read_only { "read" } else { "read_write" };
+        header.push_str(&format!(
+            "@group({PACK_SET}) @binding({next}) var<storage, {access}> iris_buffer_{index}: array<u32>;\n"
+        ));
         buffers.push(StorageBuffer {
             index,
             binding: next,
-            read_only: !line.contains("read_write"),
+            read_only,
         });
         next += 1;
     }
@@ -212,507 +275,55 @@ fn declare(pack: &Pack, program: &str, text: &str, outputs: u32) -> Result<Decla
     })
 }
 
-/// `text` with each `IRIS_BUFFER_<n>` replaced by its binding.
-fn bind_buffers(text: &str, buffers: &[StorageBuffer]) -> String {
-    let mut out = text.to_owned();
-    // Longest index first, so `IRIS_BUFFER_1` does not eat `IRIS_BUFFER_12`.
-    let mut sorted: Vec<&StorageBuffer> = buffers.iter().collect();
-    sorted.sort_by_key(|b| std::cmp::Reverse(b.index));
-    for buffer in sorted {
-        out = out.replace(
-            &format!("IRIS_BUFFER_{}", buffer.index),
-            &buffer.binding.to_string(),
-        );
-    }
-    out
-}
-
+/// What a stage's specialization constants take, but its slots (those are
+/// the pass's, `vk::pack::bindless::bind_precompiled`).
 #[derive(Clone, Copy)]
-struct Variant {
+struct Values<'a> {
+    /// The program's defines after preprocessing: its options as chosen,
+    /// and the engine's (`MC_RENDER_STAGE_*`, ...).
+    defines: &'a Defines,
+    layout: &'a Layout,
     upright: bool,
     linear: bool,
     alpha: Option<AlphaTest>,
-    /// An entity program's vertex stage for GPU-posed rigs' meshes.
-    skinned: bool,
 }
 
-const PLAIN: Variant = Variant {
-    upright: false,
-    linear: false,
-    alpha: None,
-    skinned: false,
-};
-
-fn common_prelude(variant: Variant) -> String {
-    let (reference, test) = match variant.alpha {
-        Some(test) => (
-            test.wrapper_reference(),
-            format!("a {} IRIS_ALPHA_REF", test.function.operator()),
-        ),
-        None => (-1.0, "true".to_owned()),
-    };
-    let mut out = format!(
-        "// Inserted by the engine for a native program.\n\
-         const IRIS_UPRIGHT: bool = {};\n\
-         const IRIS_LINEAR_OUTPUT: bool = {};\n\
-         const IRIS_ALPHA_REF: f32 = {reference:.6};\n\
-         fn iris_alpha_pass(a: f32) -> bool {{ return {test}; }}\n\
-         fn iris_clip(p: vec4<f32>) -> vec4<f32> {{\n    \
-             var o = p;\n    \
-             if (!IRIS_UPRIGHT) {{ o.y = -o.y; }}\n    \
-             o.z = (o.z + o.w) * 0.5;\n    \
-             return o;\n\
-         }}\n\
-         fn iris_output(c: vec4<f32>) -> vec4<f32> {{\n    \
-             if (!IRIS_LINEAR_OUTPUT) {{ return c; }}\n    \
-             let d = clamp(c.rgb, vec3<f32>(0.0), vec3<f32>(1.0));\n    \
-             let high = pow((d + 0.055) / 1.055, vec3<f32>(2.4));\n    \
-             return vec4<f32>(select(high, d / 12.92, d <= vec3<f32>(0.04045)), c.a);\n\
-         }}\n\
-         struct IrisAttributes {{\n    \
-             position: vec3<f32>,\n    \
-             uv: vec2<f32>,\n    \
-             light: vec2<f32>,\n    \
-             color: vec4<f32>,\n    \
-             normal: vec3<f32>,\n    \
-             entity: vec4<f32>,\n    \
-             mid_block: vec4<f32>,\n    \
-             entity_color: vec4<f32>,\n    \
-             entity_id: i32,\n    \
-             block_entity_id: i32,\n    \
-             item_id: i32,\n    \
-             render_stage: i32,\n\
-         }}\n",
-        variant.upright, variant.linear
-    );
-    for (id, name) in crate::shaderpack::features::RENDER_STAGES
-        .iter()
-        .enumerate()
-    {
-        out.push_str(&format!("const MC_RENDER_STAGE_{name}: i32 = {id};\n"));
+impl Values<'_> {
+    fn get(&self, name: &str) -> Option<f64> {
+        if let Some(uniform) = name.strip_prefix("IRIS_OFF_") {
+            return self.layout.uniforms.offset(uniform).map(f64::from);
+        }
+        let flag = |b: bool| if b { 1.0 } else { 0.0 };
+        match name {
+            "IRIS_UPRIGHT" => Some(flag(self.upright)),
+            "IRIS_LINEAR_OUTPUT" => Some(flag(self.linear)),
+            "IRIS_ALPHA_FUNC" => Some(match self.alpha {
+                None => 0.0,
+                Some(test) => match test.function.operator() {
+                    "<" => 1.0,
+                    "==" => 2.0,
+                    "<=" => 3.0,
+                    ">" => 4.0,
+                    "!=" => 5.0,
+                    _ => 6.0,
+                },
+            }),
+            "IRIS_ALPHA_REF" => Some(self.alpha.map_or(-1.0, |t| f64::from(t.wrapper_reference()))),
+            _ => self.defines.get(name)?.trim().parse().ok(),
+        }
     }
-    out
-}
 
-/// The native renderer's terrain input, as `preludes::VK_TERRAIN`.
-const VK_TERRAIN: &str = "struct IrisVkSlots { s: array<vec4<u32>> }
-struct IrisVkPool { w: array<u32> }
-struct IrisVkQuads { q: array<vec4<u32>> }
-@group(2) @binding(7) var<storage, read> iris_vk_slots: IrisVkSlots;
-@group(2) @binding(8) var<storage, read> iris_vk_pool: IrisVkPool;
-@group(2) @binding(9) var<storage, read> iris_vk_quads: IrisVkQuads;
-struct IrisVkAnim { w: array<u32> }
-@group(2) @binding(12) var<storage, read> iris_vk_anim: IrisVkAnim;
-// The block animation table (`block_anim`): the shift from the tile a quad
-// names (by its mid UV) to the frame showing.
-fn iris_anim_shift(quad: vec4<u32>) -> vec2<f32> {
-    let rows = iris_vk_anim.w[0];
-    let count = iris_vk_anim.w[1];
-    if (rows == 0u) { return vec2<f32>(0.0); }
-    let tiles = vec2<f32>(16.0, f32(rows));
-    let mid = vec2<f32>(f32(quad.z & 65535u), f32(quad.z >> 16u)) / 65535.0;
-    let cell = floor(mid * tiles);
-    let tile = u32(cell.y) * 16u + u32(cell.x);
-    if (tile >= count) { return vec2<f32>(0.0); }
-    let a = iris_vk_anim.w[2u + tile * 2u] & 65535u;
-    return (vec2<f32>(f32(a % 16u), f32(a / 16u)) - cell) / tiles;
-}
-var<private> iris_VkPool: u32;
-var<private> iris_VkQuadPool: u32;
-fn iris_vk_quad(input: IrisVertexIn) -> vec4<u32> {
-    iris_VkQuadPool = iris_vk_slots.s[input.instance_index * 8u + 3u].w;
-    if (iris_VkQuadPool == 4294967295u) { return vec4<u32>(0u, 0u, 0u, 65535u); }
-    let base = iris_vk_slots.s[input.instance_index * 8u + 2u].w;
-    return iris_vk_quads.q[base + ((input.vertex_index - base) >> 2u)];
-}
-fn iris_origin(input: IrisVertexIn) -> vec3<i32> {
-    return bitcast<vec3<i32>>(iris_vk_slots.s[input.instance_index * 8u + 2u].xyz);
-}
-fn iris_raw(input: IrisVertexIn) -> IrisRaw {
-    iris_VkPool = iris_vk_slots.s[input.instance_index * 8u + 3u].y;
-    let v = input.vertex_index * 5u;
-    let x = iris_vk_pool.w[v];
-    let y = iris_vk_pool.w[v + 1u];
-    let z = iris_vk_pool.w[v + 2u];
-    let l = iris_vk_pool.w[v + 3u];
-    let c = iris_vk_pool.w[v + 4u];
-    let p = vec4<i32>(bitcast<i32>(x << 16u) >> 16u, bitcast<i32>(x) >> 16u, bitcast<i32>(y << 16u) >> 16u, bitcast<i32>(y) >> 16u);
-    let uv = vec2<f32>(f32(z & 65535u), f32(z >> 16u)) / 65535.0;
-    let light = vec4<f32>(f32(l & 255u), f32((l >> 8u) & 255u), f32((l >> 16u) & 255u), f32(l >> 24u)) / 255.0;
-    let color = vec4<f32>(f32(c & 255u), f32((c >> 8u) & 255u), f32((c >> 16u) & 255u), f32(c >> 24u)) / 255.0;
-    return IrisRaw(p, uv, light, color);
-}
-";
-
-fn terrain_prelude(direct: bool) -> String {
-    let origin = if direct {
-        format!(
-            "@group({TERRAIN_SET}) @binding({SLOT_TABLE_BINDING}) var iris_Origins: texture_2d<i32>;\n\
-             fn iris_origin(input: IrisVertexIn) -> vec3<i32> {{\n    \
-                 let slot = bitcast<u32>(input.raw_position.w) & 0xFFFFu;\n    \
-                 return textureLoad(iris_Origins, vec2<i32>(i32(slot % {ORIGIN_ROW}u), i32(slot / {ORIGIN_ROW}u)), 0).xyz;\n\
-             }}\n"
-        )
-    } else {
-        format!(
-            "@group({TERRAIN_SET}) @binding({SLOT_TABLE_BINDING}) var<storage, read> iris_SlotWords: array<vec4<i32>>;\n\
-             fn iris_origin(input: IrisVertexIn) -> vec3<i32> {{\n    \
-                 return iris_SlotWords[input.instance_index * 6u + 2u].xyz;\n\
-             }}\n"
-        )
-    };
-    let vulkan = super::preludes::vulkan_terrain();
-    let row = crate::shaderpack::packvertex::QUAD_ROW;
-    let shift = if vulkan {
-        " + iris_anim_shift(quad)"
-    } else {
-        ""
-    };
-    let quad = if vulkan {
-        "let quad = iris_vk_quad(input);".to_owned()
-    } else {
-        format!(
-            "let quad_index = input.vertex_index >> 2u;\n    \
-             let quad = textureLoad(iris_PackQuads, vec2<i32>(i32(quad_index % {row}u), i32(quad_index / {row}u)), 0);"
-        )
-    };
-    let (input, origin) = if vulkan {
-        (
-            "struct IrisVertexIn {\n    \
-                 @builtin(vertex_index) vertex_index: u32,\n    \
-                 @builtin(instance_index) instance_index: u32,\n\
-             }\n"
-            .to_owned(),
-            VK_TERRAIN.to_owned(),
-        )
-    } else {
-        (
-            "struct IrisVertexIn {\n    \
-                 @builtin(vertex_index) vertex_index: u32,\n    \
-                 @builtin(instance_index) instance_index: u32,\n    \
-                 @location(0) raw_position: vec4<i32>,\n    \
-                 @location(1) raw_uv: vec2<f32>,\n    \
-                 @location(2) raw_light: vec4<f32>,\n    \
-                 @location(3) raw_color: vec4<f32>,\n\
-             }\n\
-             fn iris_raw(input: IrisVertexIn) -> IrisRaw {\n    \
-                 return IrisRaw(input.raw_position, input.raw_uv, input.raw_light, input.raw_color);\n\
-             }\n"
-                .to_owned(),
-            origin,
-        )
-    };
-    format!(
-        "struct IrisRaw {{ position: vec4<i32>, uv: vec2<f32>, light: vec4<f32>, color: vec4<f32> }}\n\
-         {input}\
-         {origin}\
-         @group({}) @binding(0) var iris_PackQuads: texture_2d<u32>;\n\
-         fn iris_snorm3(v: u32) -> vec3<f32> {{\n    \
-             let b = vec3<i32>(bitcast<i32>(v << 24u) >> 24u, bitcast<i32>(v << 16u) >> 24u, bitcast<i32>(v << 8u) >> 24u);\n    \
-             return max(vec3<f32>(b) / 127.0, vec3<f32>(-1.0));\n\
-         }}\n\
-         fn iris_attributes(input: IrisVertexIn) -> IrisAttributes {{\n    \
-             let r = iris_raw(input);\n    \
-             {quad}\n    \
-             let camera_block = floor(frame.iris_CameraPosition.xyz);\n    \
-             let raw = vec3<f32>(r.position.xyz) / 256.0;\n    \
-             var a: IrisAttributes;\n    \
-             a.position = vec3<f32>(iris_origin(input) - vec3<i32>(camera_block)) - (frame.iris_CameraPosition.xyz - camera_block) + raw;\n    \
-             a.uv = r.uv{shift};\n    \
-             a.light = r.light.xy * 255.0;\n    \
-             a.color = r.color;\n    \
-             let n = iris_snorm3(quad.x);\n    \
-             a.normal = select(vec3<f32>(0.0, 1.0, 0.0), normalize(n), dot(n, n) > 0.25);\n    \
-             let id = quad.w & 65535u;\n    \
-             a.entity = vec4<f32>(select(f32(id), -1.0, id == 65535u), 0.0, 0.0, 1.0);\n    \
-             let cell = vec3<f32>(f32((quad.w >> 16u) & 15u), f32((quad.w >> 20u) & 15u), f32((quad.w >> 24u) & 15u));\n    \
-             a.mid_block = vec4<f32>((cell + 0.5 - raw) * 64.0, f32(quad.w >> 28u));\n    \
-             a.entity_color = vec4<f32>(0.0);\n    \
-             a.entity_id = -1;\n    \
-             a.block_entity_id = -1;\n    \
-             a.item_id = -1;\n    \
-             a.render_stage = MC_RENDER_STAGE_TERRAIN_SOLID;\n    \
-             return a;\n\
-         }}\n",
-        super::PACK_QUADS_SET,
-    )
-}
-
-/// A native entity program's vertex prelude. `skinned` is the variant for a
-/// GPU-posed rig's mesh, as `preludes::entity_prelude` explains.
-/// The native renderer's entity input (`preludes::VK_ENTITY`'s WGSL form):
-/// the entry point keeps only the builtins, and `iris_vk_in` builds the
-/// fields the attributes held from vkview's buffers (posed meshes posed).
-const VK_ENTITY_INPUT: &str = "struct IrisVertexIn {
-    @builtin(vertex_index) vertex_index: u32,
-    @builtin(instance_index) instance_index: u32,
-}
-struct IrisVkIn {
-    vertex_index: u32,
-    instance_index: u32,
-    position: vec3<f32>,
-    normal: vec3<f32>,
-    uv: vec2<f32>,
-    color: vec4<f32>,
-    model0: vec4<f32>,
-    model1: vec4<f32>,
-    model2: vec4<f32>,
-    tint: vec4<f32>,
-    overlay: vec4<f32>,
-    light: vec2<f32>,
-    entity_id: i32,
-    block_entity_id: i32,
-    item_id: i32,
-    render_stage: i32,
-    flags: u32,
-    part_base: u32,
-    glint: vec4<f32>,
-}
-struct IrisVkInstances { w: array<u32> }
-struct IrisVkMeshes { m: array<vec4<u32>> }
-struct IrisVkVertices { w: array<u32> }
-struct IrisVkParts { p: array<vec4<f32>> }
-@group(2) @binding(10) var<storage, read> iris_vk_inst: IrisVkInstances;
-@group(2) @binding(11) var<storage, read> iris_vk_mesh: IrisVkMeshes;
-@group(2) @binding(12) var<storage, read> iris_vk_vert: IrisVkVertices;
-@group(2) @binding(13) var<storage, read> iris_vk_part: IrisVkParts;
-fn iris_vk_f4(w: u32) -> vec4<f32> {
-    return bitcast<vec4<f32>>(vec4<u32>(iris_vk_inst.w[w], iris_vk_inst.w[w + 1u], iris_vk_inst.w[w + 2u], iris_vk_inst.w[w + 3u]));
-}
-fn iris_vk_in(raw: IrisVertexIn) -> IrisVkIn {
-    let at = raw.instance_index * 46u;
-    let v = raw.vertex_index * 13u;
-    var e: IrisVkIn;
-    e.vertex_index = raw.vertex_index;
-    e.instance_index = raw.instance_index;
-    var p = bitcast<vec3<f32>>(vec3<u32>(iris_vk_vert.w[v], iris_vk_vert.w[v + 1u], iris_vk_vert.w[v + 2u]));
-    var n = bitcast<vec3<f32>>(vec3<u32>(iris_vk_vert.w[v + 3u], iris_vk_vert.w[v + 4u], iris_vk_vert.w[v + 5u]));
-    if (iris_vk_mesh.m[iris_vk_inst.w[at]].w != 0u) {
-        let row = (iris_vk_inst.w[at + 2u] + iris_vk_vert.w[v + 12u]) * 3u;
-        let r0 = iris_vk_part.p[row];
-        let r1 = iris_vk_part.p[row + 1u];
-        let r2 = iris_vk_part.p[row + 2u];
-        let h = vec4<f32>(p, 1.0);
-        p = vec3<f32>(dot(r0, h), dot(r1, h), dot(r2, h));
-        let c0 = vec3<f32>(r0.x, r1.x, r2.x);
-        let c1 = vec3<f32>(r0.y, r1.y, r2.y);
-        let c2 = vec3<f32>(r0.z, r1.z, r2.z);
-        let sn = mat3x3<f32>(cross(c1, c2), cross(c2, c0), cross(c0, c1)) * n;
-        let det = dot(c0, cross(c1, c2));
-        n = select(n, normalize(sn) * sign(det), dot(sn, sn) > 1e-12);
-    }
-    e.position = p;
-    e.normal = n;
-    e.uv = bitcast<vec2<f32>>(vec2<u32>(iris_vk_vert.w[v + 6u], iris_vk_vert.w[v + 7u]));
-    e.color = bitcast<vec4<f32>>(vec4<u32>(iris_vk_vert.w[v + 8u], iris_vk_vert.w[v + 9u], iris_vk_vert.w[v + 10u], iris_vk_vert.w[v + 11u]));
-    e.tint = iris_vk_f4(at + 6u);
-    let light0 = iris_vk_f4(at + 14u);
-    let light1 = iris_vk_f4(at + 18u);
-    e.overlay = vec4<f32>(select(vec3<f32>(1.0), vec3<f32>(1.0, 0.0, 0.0), light0.w < 0.5), clamp(1.0 - light1.w, 0.0, 1.0));
-    let mode = iris_vk_inst.w[at + 28u];
-    e.light = select(bitcast<vec2<f32>>(vec2<u32>(iris_vk_inst.w[at + 26u], iris_vk_inst.w[at + 27u])), vec2<f32>(240.0), mode == 2u);
-    e.flags = select(0u, 1u, mode == 1u || mode == 2u);
-    let c0 = iris_vk_f4(at + 30u);
-    let c1 = iris_vk_f4(at + 34u);
-    let c2 = iris_vk_f4(at + 38u);
-    let c3 = iris_vk_f4(at + 42u);
-    let eye = frame.iris_CameraPosition.xyz;
-    e.model0 = vec4<f32>(c0.x, c1.x, c2.x, c3.x - eye.x);
-    e.model1 = vec4<f32>(c0.y, c1.y, c2.y, c3.y - eye.y);
-    e.model2 = vec4<f32>(c0.z, c1.z, c2.z, c3.z - eye.z);
-    e.entity_id = -1;
-    e.block_entity_id = -1;
-    e.item_id = 0;
-    let kind = iris_vk_inst.w[at + 5u] & 0xFFFFu;
-    e.render_stage = select(0, i32(kind) - 16, kind >= 16u);
-    return e;
-}
-";
-
-fn entity_prelude(skinned: bool) -> String {
-    if super::preludes::vulkan_terrain() {
-        let head_end = ENTITY_PRELUDE
-            .find("{part_input}}\n")
-            .expect("the struct's end")
-            + "{part_input}}\n".len();
-        return format!("{VK_ENTITY_INPUT}{}", &ENTITY_PRELUDE[head_end..])
-            .replace("fn iris_model(input: IrisVertexIn,", "fn iris_model(input: IrisVkIn,")
-            .replace(
-                "fn iris_attributes(input: IrisVertexIn) -> IrisAttributes {\n{local}",
-                &format!("fn iris_attributes(raw: IrisVertexIn) -> IrisAttributes {{\n    let input = iris_vk_in(raw);\n{ENTITY_LOCAL}"),
-            );
-    }
-    if !skinned {
-        return ENTITY_PRELUDE
-            .replace("{part_input}", "")
-            .replace("{local}", ENTITY_LOCAL);
-    }
-    format!(
-        "{SKINNED_PARTS}{}",
-        ENTITY_PRELUDE
-            .replace(
-                "{part_input}",
-                "    @location(16) part: u32,
-"
-            )
-            .replace("{local}", SKINNED_LOCAL)
-    )
-}
-
-const ENTITY_LOCAL: &str = "    let local_position = input.position;
-    let local_normal = input.normal;
-";
-
-const SKINNED_PARTS: &str =
-    "@group(1) @binding(0) var<storage, read> iris_rig_parts: array<vec4<f32>>;
-";
-
-/// The part's matrix, stored as its top three rows; the normal goes through
-/// the cofactor matrix, the inverse transpose up to the determinant.
-const SKINNED_LOCAL: &str = "    let row = (input.part_base + input.part) * 3u;
-    let r0 = iris_rig_parts[row];
-    let r1 = iris_rig_parts[row + 1u];
-    let r2 = iris_rig_parts[row + 2u];
-    let p = vec4<f32>(input.position, 1.0);
-    let local_position = vec3<f32>(dot(r0, p), dot(r1, p), dot(r2, p));
-    let c0 = vec3<f32>(r0.x, r1.x, r2.x);
-    let c1 = vec3<f32>(r0.y, r1.y, r2.y);
-    let c2 = vec3<f32>(r0.z, r1.z, r2.z);
-    let skinned_n = mat3x3<f32>(cross(c1, c2), cross(c2, c0), cross(c0, c1)) * input.normal;
-    let det = dot(c0, cross(c1, c2));
-    let local_normal = select(input.normal, normalize(skinned_n) * sign(det), dot(skinned_n, skinned_n) > 1e-12);
-";
-
-const ENTITY_PRELUDE: &str = "struct IrisVertexIn {
-    @builtin(vertex_index) vertex_index: u32,
-    @builtin(instance_index) instance_index: u32,
-    @location(0) position: vec3<f32>,
-    @location(1) normal: vec3<f32>,
-    @location(2) uv: vec2<f32>,
-    @location(3) color: vec4<f32>,
-    @location(4) model0: vec4<f32>,
-    @location(5) model1: vec4<f32>,
-    @location(6) model2: vec4<f32>,
-    @location(7) tint: vec4<f32>,
-    @location(8) overlay: vec4<f32>,
-    @location(9) light: vec2<f32>,
-    @location(10) entity_id: i32,
-    @location(11) block_entity_id: i32,
-    @location(12) item_id: i32,
-    @location(13) render_stage: i32,
-    @location(14) flags: u32,
-    @location(15) part_base: u32,
-    @location(17) glint: vec4<f32>,
-{part_input}}
-fn iris_model(input: IrisVertexIn, v: vec4<f32>) -> vec3<f32> {
-    return vec3<f32>(dot(input.model0, v), dot(input.model1, v), dot(input.model2, v));
-}
-fn iris_attributes(input: IrisVertexIn) -> IrisAttributes {
-{local}    var a: IrisAttributes;
-    a.position = iris_model(input, vec4<f32>(local_position, 1.0));
-    a.uv = input.uv;
-    if ((input.flags & 2u) != 0u) {
-        // A glint layer: vanilla's glint texture matrix (`ENTITY_GLINT`).
-        let g = input.glint;
-        a.uv = vec2<f32>(g.x * input.uv.x - g.y * input.uv.y, g.y * input.uv.x + g.x * input.uv.y) + g.zw;
-    }
-    a.light = input.light;
-    var color = input.color;
-    if ((input.flags & 1u) != 0u) { color.a = 1.0; }
-    // Engine colours are linear; packs expect sRGB (`gl_Color`).
-    let lin = color * input.tint;
-    let lo = lin.rgb * 12.92;
-    let hi = 1.055 * pow(max(lin.rgb, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4)) - 0.055;
-    a.color = vec4<f32>(select(hi, lo, lin.rgb <= vec3<f32>(0.0031308)), lin.a);
-    let n = iris_model(input, vec4<f32>(local_normal, 0.0));
-    a.normal = select(vec3<f32>(0.0, 1.0, 0.0), normalize(n), dot(n, n) > 1e-8);
-    a.entity = vec4<f32>(-1.0, 0.0, 0.0, 1.0);
-    a.mid_block = vec4<f32>(0.0);
-    a.entity_color = input.overlay;
-    a.entity_id = input.entity_id;
-    a.block_entity_id = input.block_entity_id;
-    a.item_id = input.item_id;
-    a.render_stage = input.render_stage;
-    return a;
-}
-";
-
-const SCREEN_PRELUDE: &str = "struct IrisVertexIn {
-    @builtin(vertex_index) vertex_index: u32,
-}
-fn iris_attributes(input: IrisVertexIn) -> IrisAttributes {
-    let corner = vec2<f32>(f32((input.vertex_index << 1u) & 2u), f32(input.vertex_index & 2u));
-    var a: IrisAttributes;
-    a.position = vec3<f32>(corner, 0.0);
-    a.uv = corner;
-    a.light = vec2<f32>(240.0);
-    a.color = vec4<f32>(1.0);
-    a.normal = vec3<f32>(0.0, 0.0, 1.0);
-    a.entity = vec4<f32>(-1.0, 0.0, 0.0, 1.0);
-    a.mid_block = vec4<f32>(0.0);
-    a.entity_color = vec4<f32>(0.0);
-    a.entity_id = -1;
-    a.block_entity_id = -1;
-    a.item_id = -1;
-    a.render_stage = MC_RENDER_STAGE_NONE;
-    return a;
-}
-/// The whole screen, for a pass's vertex stage.
-fn iris_screen(input: IrisVertexIn) -> vec4<f32> {
-    let corner = iris_attributes(input).uv;
-    return iris_clip(vec4<f32>(corner * 2.0 - 1.0, 0.0, 1.0));
-}
-";
-
-fn kind_prelude(kind: ProgramKind, direct: bool, skinned: bool) -> String {
-    match kind {
-        ProgramKind::Geometry | ProgramKind::Shadow => terrain_prelude(direct),
-        ProgramKind::Entity | ProgramKind::ShadowEntity => entity_prelude(skinned),
-        ProgramKind::Screen => SCREEN_PRELUDE.to_owned(),
-        ProgramKind::Compute => String::new(),
-    }
-}
-
-/// `text` with the entry point `from` renamed `main`, the name pipelines use.
-fn entry(text: &str, from: &str) -> Result<String, String> {
-    let needle = format!("fn {from}(");
-    if text.matches(&needle).count() != 1 {
-        return Err(format!("needs exactly one `{needle}...)` entry point"));
-    }
-    Ok(text.replacen(&needle, "fn main(", 1))
-}
-
-fn validate(name: &str, wgsl: &str) -> Result<(), String> {
-    let module = naga::front::wgsl::parse_str(wgsl)
-        .map_err(|e| format!("{name}: {}", e.emit_to_string(wgsl)))?;
-    naga::valid::Validator::new(
-        naga::valid::ValidationFlags::all(),
-        naga::valid::Capabilities::all(),
-    )
-    .validate(&module)
-    .map_err(|e| format!("{name}: {}", e.emit_to_string(wgsl)))?;
-    Ok(())
-}
-
-struct Source<'a> {
-    name: &'a str,
-    kind: ProgramKind,
-    direct: bool,
-    header: &'a str,
-    body: &'a str,
-}
-
-impl Source<'_> {
-    fn module(&self, stage: &str, variant: Variant) -> Result<String, String> {
-        let wgsl = format!(
-            "{}{}{}\n{}",
-            common_prelude(variant),
-            self.header,
-            kind_prelude(self.kind, self.direct, variant.skinned),
-            entry(self.body, stage).map_err(|e| format!("{}: {e}", self.name))?
-        );
-        validate(&format!("{}.wgsl ({stage})", self.name), &wgsl)?;
-        Ok(wgsl)
+    /// `words` with every constant but the slots set.
+    fn apply(&self, mut words: Vec<u32>, label: &str) -> Result<Vec<u32>, String> {
+        let missing: Vec<String> = crate::shaderpack::spirv::specialize(&mut words, |n| self.get(n))
+            .into_iter()
+            .filter(|n| !n.starts_with("IRIS_SLOT_"))
+            .collect();
+        if missing.is_empty() {
+            Ok(words)
+        } else {
+            Err(format!("{label}: no value for {}", missing.join(", ")))
+        }
     }
 }
 
@@ -721,10 +332,10 @@ pub(super) fn compile_draw(
     name: &str,
     kind: ProgramKind,
     tests: &[AlphaTest],
-    direct: bool,
+    _direct: bool,
 ) -> Result<(Program, [String; 2]), String> {
     let path = format!("{}{name}{EXTENSION}", pack.folder);
-    let text = pack.stage_at(&path)?;
+    let (text, defines) = pack.stage_with_defines(&path)?;
     let is_final = name == "final";
     let draw_buffers = if is_final {
         vec![0]
@@ -745,67 +356,62 @@ pub(super) fn compile_draw(
     let layout: Layout = pipeline::describe(&declared.interface);
     undeclared_buffer(pack, name, &layout)?;
     let textures = texture_sources(pack, name, kind, &layout)?;
-    let body = bind_buffers(&text, &declared.interface.buffers);
-    let source = Source {
-        name,
-        kind,
-        direct,
-        header: &declared.header,
-        body: &body,
-    };
-    let plain = Variant {
+    let manifest = format!("{}{}", declared.header, kind_slots(kind));
+
+    let input = input(kind);
+    let vertex_words = module(name, input, "vertex")?;
+    let fragment_words = module(name, input, "fragment")?;
+    let plain = Values {
+        defines: &defines,
+        layout: &layout,
         upright: is_final,
-        ..PLAIN
+        linear: false,
+        alpha: None,
     };
-    let vertex = source.module("vertex", plain)?;
-    let vertex_skinned = if kind.draws_entities() {
-        Some(source.module(
-            "vertex",
-            Variant {
-                skinned: true,
-                ..plain
-            },
-        )?)
-    } else {
-        None
-    };
-    let fragment = source.module("fragment", plain)?;
+    let label = |stage: &str| format!("{name}.{input}.{stage}");
+    let vertex = plain.apply(vertex_words, &label("vertex"))?;
+    let fragment = plain.apply(fragment_words.clone(), &label("fragment"))?;
     let fragment_linear = if is_final {
-        Some(source.module(
-            "fragment",
-            Variant {
-                linear: true,
-                ..plain
-            },
-        )?)
+        let linear = Values {
+            linear: true,
+            ..plain
+        };
+        Some(linear.apply(fragment_words.clone(), &label("fragment"))?)
     } else {
         None
     };
-    let mut fragment_tests: Vec<(AlphaTest, String)> = Vec::with_capacity(tests.len());
+    let mut fragment_tests: Vec<(AlphaTest, Vec<u32>)> = Vec::with_capacity(tests.len());
     for test in tests {
         if fragment_tests.iter().any(|(t, _)| t == test) {
             continue;
         }
-        let wgsl = source.module(
-            "fragment",
-            Variant {
-                alpha: Some(*test),
-                ..plain
-            },
-        )?;
-        fragment_tests.push((*test, wgsl));
+        let tested = Values {
+            alpha: Some(*test),
+            ..plain
+        };
+        fragment_tests.push((*test, tested.apply(fragment_words.clone(), &label("fragment"))?));
     }
     let mipmapped = directives::mipmapped([text.as_str()]);
+    let precompiled = Precompiled {
+        vertex: Some(vertex),
+        fragment: Some(fragment),
+        fragment_tests: fragment_tests.iter().map(|(_, w)| w.clone()).collect(),
+        fragment_linear,
+        compute: None,
+    };
     Ok((
         Program {
             name: name.to_owned(),
             kind,
-            vertex,
-            vertex_skinned,
-            fragment,
-            fragment_tests,
+            vertex: manifest.clone(),
+            vertex_skinned: None,
+            fragment: manifest.clone(),
+            fragment_tests: fragment_tests
+                .into_iter()
+                .map(|(t, _)| (t, manifest.clone()))
+                .collect(),
             alpha_override: pack.alpha_tests.get(name).copied(),
-            fragment_linear,
+            fragment_linear: is_final.then(|| manifest.clone()),
             compute: None,
             compute_used: None,
             compute_parity: None,
@@ -814,22 +420,24 @@ pub(super) fn compile_draw(
             draw_buffers,
             textures,
             mipmapped,
+            spirv: Some(Box::new(precompiled)),
         },
         [text, String::new()],
     ))
 }
 
+/// The local size a `[numthreads(x, y, z)]` entry names.
 fn workgroup_size(text: &str) -> [u32; 3] {
     let mut size = [1u32; 3];
-    let Some(at) = text.find("@workgroup_size(") else {
+    let Some(at) = text.find("[numthreads(") else {
         return size;
     };
-    let rest = &text[at + "@workgroup_size(".len()..];
+    let rest = &text[at + "[numthreads(".len()..];
     let Some(close) = rest.find(')') else {
         return size;
     };
     for (axis, value) in rest[..close].split(',').take(3).enumerate() {
-        if let Ok(n) = value.trim().trim_end_matches('u').parse::<u32>() {
+        if let Ok(n) = value.trim().parse::<u32>() {
             size[axis] = n.max(1);
         }
     }
@@ -841,7 +449,7 @@ pub(super) fn compile_compute(
     name: &str,
     path: &str,
 ) -> Result<(Program, String), String> {
-    let text = pack.stage_at(path)?;
+    let (text, defines) = pack.stage_with_defines(path)?;
     let dispatch = match directives::work_groups(&text) {
         Some(groups) => Dispatch::Fixed(groups),
         None => {
@@ -856,16 +464,17 @@ pub(super) fn compile_compute(
     let layout = pipeline::describe_program(pipeline::Program::Compute(&declared.interface));
     undeclared_buffer(pack, name, &layout)?;
     let textures = texture_sources(pack, name, ProgramKind::Compute, &layout)?;
-    let body = bind_buffers(&text, &declared.interface.buffers);
-    let source = Source {
-        name,
-        kind: ProgramKind::Compute,
-        direct: false,
-        header: &declared.header,
-        body: &body,
+    let values = Values {
+        defines: &defines,
+        layout: &layout,
+        upright: false,
+        linear: false,
+        alpha: None,
     };
-    let wgsl = source.module("compute", PLAIN)?;
-    let used = used_bindings(&wgsl);
+    let compute = values.apply(
+        module(name, "compute", "compute")?,
+        &format!("{name}.compute.compute"),
+    )?;
     let mipmapped = directives::mipmapped([text.as_str()]);
     Ok((
         Program {
@@ -877,14 +486,18 @@ pub(super) fn compile_compute(
             fragment_tests: Vec::new(),
             alpha_override: None,
             fragment_linear: None,
-            compute: Some(wgsl),
-            compute_used: used,
+            compute: Some(declared.header),
+            compute_used: None,
             compute_parity: None,
             dispatch,
             layout,
             draw_buffers: Vec::new(),
             textures,
             mipmapped,
+            spirv: Some(Box::new(Precompiled {
+                compute: Some(compute),
+                ..Precompiled::default()
+            })),
         },
         text,
     ))
@@ -897,68 +510,56 @@ mod tests {
     #[test]
     fn workgroup_sizes_read_from_the_attribute() {
         assert_eq!(
-            workgroup_size("@compute @workgroup_size(8, 4)\nfn compute() {}"),
+            workgroup_size("[numthreads(8, 4, 1)]\nvoid compute() {}"),
             [8, 4, 1]
         );
-        assert_eq!(workgroup_size("@compute @workgroup_size(64u)"), [64, 1, 1]);
+        assert_eq!(workgroup_size("[numthreads(64, 1, 1)]"), [64, 1, 1]);
+        assert_eq!(workgroup_size("void compute() {}"), [1, 1, 1]);
     }
 
+    /// The prelude's `frame` members are typed as the engine supplies them
+    /// (`iris/frame.slang`'s trailing comments).
     #[test]
-    fn buffers_bind_by_index_without_prefix_clashes() {
-        let buffers = [
-            StorageBuffer {
-                index: 1,
-                binding: 7,
-                read_only: true,
-            },
-            StorageBuffer {
-                index: 12,
-                binding: 8,
-                read_only: false,
-            },
-        ];
-        let out = bind_buffers(
-            "@binding(IRIS_BUFFER_12) x; @binding(IRIS_BUFFER_1) y;",
-            &buffers,
-        );
-        assert_eq!(out, "@binding(8) x; @binding(7) y;");
-    }
-
-    #[test]
-    fn the_entry_must_be_unique() {
-        assert!(entry("fn vertex() {} fn vertex() {}", "vertex").is_err());
-        assert_eq!(
-            entry("@vertex fn vertex() {}", "vertex").as_deref(),
-            Ok("@vertex fn main() {}")
-        );
-    }
-
-    #[test]
-    fn every_prelude_validates() {
-        let header = "struct IrisFrame {\n".to_owned()
-            + &UNIFORMS
+    fn frame_members_match_the_engine_types() {
+        let text = include_str!("../builtin/iris/frame.slang");
+        let mut members = 0;
+        for line in text.lines() {
+            let Some(rest) = line.trim().strip_prefix("property ") else {
+                continue;
+            };
+            let mut words = rest.split_whitespace();
+            let (_, name) = (words.next(), words.next().expect("a name"));
+            let glsl = line.rsplit("// ").next().expect("a type comment").trim();
+            let engine = UNIFORMS
                 .iter()
-                .map(|(n, t)| format!("    {n}: {},\n", wgsl_type(t).unwrap()))
-                .collect::<String>()
-            + "}\n@group(0) @binding(0) var<uniform> frame: IrisFrame;\n";
-        let body = "@vertex fn main(input: IrisVertexIn) -> @builtin(position) vec4<f32> {\n    \
-                    let a = iris_attributes(input);\n    \
-                    return iris_clip(frame.iris_ModelViewProjectionMatrix * vec4<f32>(a.position, 1.0));\n}\n";
-        for kind in [
-            ProgramKind::Geometry,
-            ProgramKind::Entity,
-            ProgramKind::Screen,
-        ] {
-            for direct in [false, true] {
-                for skinned in [false, true] {
-                    let wgsl = format!(
-                        "{}{header}{}{body}",
-                        common_prelude(PLAIN),
-                        kind_prelude(kind, direct, skinned)
-                    );
-                    validate(&format!("{kind:?} skinned {skinned}"), &wgsl)
-                        .unwrap_or_else(|e| panic!("{e}"));
-                }
+                .find(|(n, _)| *n == name)
+                .map(|(_, t)| *t)
+                .or_else(|| crate::shaderpack::uniforms::builtin_type(name))
+                .unwrap_or_else(|| panic!("frame.{name} is not a uniform the engine supplies"));
+            assert_eq!(glsl, engine, "frame.{name}");
+            members += 1;
+        }
+        assert!(members > 20, "{members} members");
+    }
+
+    /// The manifest's own slots are those the preludes name.
+    #[test]
+    fn kind_slots_match_the_preludes() {
+        let preludes = [
+            (ProgramKind::Geometry, include_str!("../builtin/iris/terrain.slang")),
+            (ProgramKind::Entity, include_str!("../builtin/iris/entity.slang")),
+        ];
+        for (kind, prelude) in preludes {
+            for line in kind_slots(kind).lines() {
+                let name = line
+                    .split("var<storage, read> ")
+                    .nth(1)
+                    .and_then(|r| r.split(':').next())
+                    .expect("a declaration");
+                assert!(
+                    prelude.contains(&format!("IRIS_SLOT_{name} ")),
+                    "{kind:?}: {name}"
+                );
             }
         }
     }

@@ -1,8 +1,10 @@
 //! Torch Vibrant, the pack built into the client: Bedrock's Vibrant Visuals
-//! as a lightweight native pack. Its programs are WGSL written against the
-//! engine (see `shaderpack::compile::native`), so nothing is
-//! translated, and its terrain is shaded per block-face texel through a
-//! cache instead of per pixel.
+//! as a lightweight native pack. Its programs are Slang written against the
+//! engine (`iris/`, see `shaderpack::compile::native`), compiled to SPIR-V
+//! by build.rs, so nothing is translated at run time, and its terrain is
+//! shaded per block-face texel through a cache instead of per pixel. The
+//! sources are embedded too: the engine reads their directives, options
+//! and the resources they name.
 
 pub(crate) const NAME: &str = "Torch Vibrant (built-in)";
 
@@ -15,30 +17,30 @@ macro_rules! files {
 pub(crate) const FILES: &[(&str, &str)] = files![
     "shaders.properties",
     "block.properties",
-    "lib/common.wgsl",
-    "lib/shadow.wgsl",
-    "lib/forward.wgsl",
-    "lib/cache.wgsl",
-    "lib/resolve.wgsl",
+    "lib/common.slang",
+    "lib/shadow.slang",
+    "lib/forward.slang",
+    "lib/cache.slang",
+    "lib/resolve.slang",
     "lang/en_us.lang",
-    "shadow.wgsl",
-    "gbuffers_terrain.wgsl",
-    "gbuffers_water.wgsl",
-    "gbuffers_textured.wgsl",
-    "gbuffers_block.wgsl",
-    "gbuffers_basic.wgsl",
-    "gbuffers_damagedblock.wgsl",
-    "gbuffers_weather.wgsl",
-    "gbuffers_skybasic.wgsl",
-    "gbuffers_skytextured.wgsl",
-    "prepare.wgsl",
-    "deferred_a.wgsl",
-    "deferred_b.wgsl",
-    "deferred.wgsl",
-    "composite.wgsl",
-    "composite1.wgsl",
-    "composite2.wgsl",
-    "final.wgsl",
+    "shadow.slang",
+    "gbuffers_terrain.slang",
+    "gbuffers_water.slang",
+    "gbuffers_textured.slang",
+    "gbuffers_block.slang",
+    "gbuffers_basic.slang",
+    "gbuffers_damagedblock.slang",
+    "gbuffers_weather.slang",
+    "gbuffers_skybasic.slang",
+    "gbuffers_skytextured.slang",
+    "prepare.slang",
+    "deferred_a.slang",
+    "deferred_b.slang",
+    "deferred.slang",
+    "composite.slang",
+    "composite1.slang",
+    "composite2.slang",
+    "final.slang",
 ];
 
 #[cfg(test)]

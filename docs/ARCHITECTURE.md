@@ -37,7 +37,7 @@ meshes chunk sections (on `client`'s worker). `vk` (native Vulkan) draws them;
 | `protocol` | multi-version support: packet tables, id remaps, hops | `hop.rs` (recipe at top) |
 | `scene` | the Bevy-side scene: cameras, entity and hand models, anims, skins, sky, clouds, weather, tethers, overlays, world text, block atlas; fills `draw` and `View` (`view_sync`) | `mod.rs`, `entity_draw.rs`, `hand.rs` |
 | `resourcepacks` | pack list, mounting, Modrinth, Torch Default pack | `mod.rs`, `TORCH_DEFAULT_PACK.md` |
-| `shaderpack` | Iris/OptiFine pack loading: properties, preprocess, programs; compiling to WGSL (`compile/`, `install`) for both renderers; pack block ids and vertex data; uniforms (`uniforms/`, `inputs`, `frame_state`) | `pipeline.rs`, `compile/mod.rs`, `install.rs` |
+| `shaderpack` | Iris/OptiFine pack loading: properties, preprocess, programs; compiling GLSL packs to WGSL, and binding the built-in pack's precompiled SPIR-V (`compile/`, `install`, `spirv`); pack block ids and vertex data; uniforms (`uniforms/`, `inputs`, `frame_state`) | `pipeline.rs`, `compile/mod.rs`, `install.rs` |
 | `terrain` | section meshing for both renderers: block geometry, light, CTM, vertex layout, cave visibility, block animations; streaming section changes to the renderer and its listeners (`stream`); the renderer's terrain inputs (`textures`) and occlusion switch (`hiz`) | `mod.rs`, `mesh.rs`, `stream.rs` |
 | `text` | fonts, glyph layout, text components | `mod.rs` |
 | `util` | vanilla-parity helpers (`mth`, `javarandom`), particles, packs, zip | `mth.rs` |
@@ -49,7 +49,7 @@ meshes chunk sections (on `client`'s worker). `vk` (native Vulkan) draws them;
 | Path | What |
 |---|---|
 | `shaders/*.slang` | Vulkan shaders (`build.rs` compiles them) |
-| `src/shaderpack/builtin/**/*.wgsl` | the built-in shader pack |
+| `src/shaderpack/builtin/pack/**/*.slang` | the built-in shader pack, in Slang; `build.rs` compiles it to SPIR-V behind the engine prelude in `builtin/iris/` |
 | `tools/` | generators (`gen_*.py`, `protogen.py`), asset and build scripts |
 | `vendor/` | patched crates; read `vendor/PATCHES.md` first |
 | `crates/torch-opus` | safe Opus bindings |

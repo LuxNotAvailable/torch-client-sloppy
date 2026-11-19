@@ -801,9 +801,17 @@ impl PackScreen {
                         .iter()
                         .any(|(b, s)| *b == slot.binding && *s == TextureSource::EntityTexture)
             };
-            let wgsl = super::bindless::rewrite_shared(&module.wgsl, &mut slots, &per_draw);
-            let words = crate::shaderpack::backend::wgsl_to_spirv_aliased(&wgsl)
-                .map_err(|e| failed(format!("{}: {e}", module.label)))?;
+            let words = match &module.spirv {
+                Some(words) => {
+                    super::bindless::bind_precompiled(words, &module.wgsl, &mut slots, &per_draw)
+                }
+                None => {
+                    let wgsl =
+                        super::bindless::rewrite_shared(&module.wgsl, &mut slots, &per_draw);
+                    crate::shaderpack::backend::wgsl_to_spirv_aliased(&wgsl)
+                }
+            }
+            .map_err(|e| failed(format!("{}: {e}", module.label)))?;
             modules.push(pipelines.module(ctx, bytemuck::cast_slice(&words))?);
         }
 

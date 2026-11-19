@@ -19,7 +19,6 @@ pub(crate) struct UniformLayout {
 }
 
 impl UniformLayout {
-    #[cfg(test)]
     pub(crate) fn offset(&self, name: &str) -> Option<u32> {
         self.members
             .iter()

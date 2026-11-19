@@ -173,6 +173,7 @@ pub(super) fn compile_program(
             draw_buffers,
             textures,
             mipmapped: directives::mipmapped([vertex_glsl.as_str(), fragment_glsl.as_str()]),
+            spirv: None,
         },
         [vertex_glsl, fragment_glsl],
     ))
@@ -249,6 +250,7 @@ pub(super) fn compile_compute(pack: &mut Pack, name: &str) -> Result<(Program, S
             draw_buffers: Vec::new(),
             textures,
             mipmapped,
+            spirv: None,
         },
         glsl,
     ))

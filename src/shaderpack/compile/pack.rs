@@ -97,7 +97,7 @@ impl Pack {
         (glsl || self.native_draw(name).is_some()) && self.enabled(&key)
     }
 
-    /// `name`'s native drawing program, if the pack writes it in WGSL.
+    /// `name`'s native drawing program, if the pack writes it in Slang.
     pub(super) fn native_draw(&self, name: &str) -> Option<String> {
         self.native(name)
             .filter(|(_, compute)| !compute)
@@ -183,6 +183,15 @@ impl Pack {
     }
 
     pub(super) fn stage_at(&mut self, path: &str) -> Result<String, String> {
+        self.stage_with_defines(path).map(|(text, _)| text)
+    }
+
+    /// As `stage_at`, with the defines in force at the file's end: the
+    /// options as chosen and the engine's own.
+    pub(super) fn stage_with_defines(
+        &mut self,
+        path: &str,
+    ) -> Result<(String, preprocess::Defines), String> {
         let path = path.to_owned();
         let expanded =
             include::expand(&self.source, &path, &mut self.cache).map_err(|e| e.to_string())?;
@@ -194,9 +203,7 @@ impl Pack {
             Some((file, line)) => format!("{file}:{line}: {}", e.message),
             None => format!("{path}: {e}"),
         })?;
-        Ok(crate::shaderpack::macros::expand(
-            &decided,
-            &self.environment,
-        ))
+        let text = crate::shaderpack::macros::expand(&decided, &self.environment);
+        Ok((text, defines))
     }
 }

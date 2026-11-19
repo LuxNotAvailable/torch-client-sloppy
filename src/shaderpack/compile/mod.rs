@@ -21,7 +21,7 @@ mod program;
 pub(crate) use kinds::*;
 use pack::Pack;
 pub(crate) use pack::program_folder;
-pub(crate) use preludes::{PACK_QUADS_SET, SCREEN_PRELUDE, terrain_prelude, with_vulkan_terrain};
+pub(crate) use preludes::{SCREEN_PRELUDE, terrain_prelude, with_vulkan_terrain};
 use program::{compile_compute, compile_program};
 
 pub(crate) const PACK_SET: u32 = 0;
@@ -109,6 +109,21 @@ pub(crate) struct Program {
     pub(crate) draw_buffers: Vec<u8>,
     pub(crate) textures: Vec<(u32, TextureSource)>,
     pub(crate) mipmapped: u16,
+    /// A native program's stages, precompiled (`native`). Its WGSL stages
+    /// then only declare the resources, for the slot table.
+    pub(crate) spirv: Option<Box<Precompiled>>,
+}
+
+/// A native program's SPIR-V, one module per stage `Program` holds, with
+/// every specialization constant set but the slots.
+#[derive(Default)]
+pub(crate) struct Precompiled {
+    pub(crate) vertex: Option<Vec<u32>>,
+    pub(crate) fragment: Option<Vec<u32>>,
+    /// In `Program::fragment_tests`' order.
+    pub(crate) fragment_tests: Vec<Vec<u32>>,
+    pub(crate) fragment_linear: Option<Vec<u32>>,
+    pub(crate) compute: Option<Vec<u32>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -685,6 +700,7 @@ mod tests {
             draw_buffers: draw_buffers.to_vec(),
             textures: Vec::new(),
             mipmapped: 0,
+            spirv: None,
         }
     }
 
@@ -782,7 +798,7 @@ mod tests {
                 else {
                     continue;
                 };
-                for program in &frame.programs {
+                for program in frame.programs.iter().filter(|p| p.spirv.is_none()) {
                     let sources = std::iter::once(("vertex", &program.vertex))
                         .chain(program.vertex_skinned.iter().map(|s| ("vertex skinned", s)))
                         .chain(std::iter::once(("fragment", &program.fragment)))

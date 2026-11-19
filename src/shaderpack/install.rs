@@ -28,6 +28,9 @@ impl InstalledProgram {
 pub(crate) struct Module {
     pub(crate) label: String,
     pub(crate) wgsl: String,
+    /// A native program's stage, precompiled: `wgsl` then only declares its
+    /// resources (`vk::pack::bindless::bind_precompiled`).
+    pub(crate) spirv: Option<Vec<u32>>,
 }
 
 pub(crate) struct InstalledProgram {
@@ -91,42 +94,54 @@ pub(crate) struct Installed {
 /// renderer. Device free, so the native renderer installs packs the same
 /// way (`vk::pack`).
 pub(crate) fn install(pack: &str, generation: u32, direct: bool, frame: Frame) -> Installed {
-    let add = |program: &str, stage: &str, wgsl: String| Module {
+    let add = |program: &str, stage: &str, wgsl: String, spirv: Option<Vec<u32>>| Module {
         label: format!("{GPU_LABEL}/{pack}/{generation}/{program}.{stage}.wgsl"),
         wgsl,
+        spirv,
     };
     let programs = frame
         .programs
         .into_iter()
-        .map(|p| InstalledProgram {
-            vertex: add(&p.name, "vsh", p.vertex),
-            vertex_skinned: p.vertex_skinned.map(|v| add(&p.name, "skinned.vsh", v)),
-            fragment: add(&p.name, "fsh", p.fragment),
-            compute: p.compute.map(|c| add(&p.name, "csh", c)),
-            compute_used: p.compute_used,
-            compute_parity: p
-                .compute_parity
-                .map(|[(even, even_used), (odd, odd_used)]| {
-                    [
-                        (add(&p.name, "even.csh", even), even_used),
-                        (add(&p.name, "odd.csh", odd), odd_used),
-                    ]
-                }),
-            dispatch: p.dispatch,
-            fragment_tests: p
-                .fragment_tests
-                .into_iter()
-                .enumerate()
-                .map(|(n, (test, f))| (test, add(&p.name, &format!("alpha{n}.fsh"), f)))
-                .collect(),
-            alpha_override: p.alpha_override,
-            fragment_linear: p.fragment_linear.map(|f| add(&p.name, "linear.fsh", f)),
-            name: p.name,
-            kind: p.kind,
-            layout: p.layout,
-            draw_buffers: p.draw_buffers,
-            textures: p.textures,
-            mipmapped: p.mipmapped,
+        .map(|p| {
+            let mut spirv = p.spirv.map(|s| *s).unwrap_or_default();
+            let mut tests = std::mem::take(&mut spirv.fragment_tests).into_iter();
+            InstalledProgram {
+                vertex: add(&p.name, "vsh", p.vertex, spirv.vertex),
+                vertex_skinned: p
+                    .vertex_skinned
+                    .map(|v| add(&p.name, "skinned.vsh", v, None)),
+                fragment: add(&p.name, "fsh", p.fragment, spirv.fragment),
+                compute: p.compute.map(|c| add(&p.name, "csh", c, spirv.compute)),
+                compute_used: p.compute_used,
+                compute_parity: p
+                    .compute_parity
+                    .map(|[(even, even_used), (odd, odd_used)]| {
+                        [
+                            (add(&p.name, "even.csh", even, None), even_used),
+                            (add(&p.name, "odd.csh", odd, None), odd_used),
+                        ]
+                    }),
+                dispatch: p.dispatch,
+                fragment_tests: p
+                    .fragment_tests
+                    .into_iter()
+                    .enumerate()
+                    .map(|(n, (test, f))| {
+                        let name = format!("alpha{n}.fsh");
+                        (test, add(&p.name, &name, f, tests.next()))
+                    })
+                    .collect(),
+                alpha_override: p.alpha_override,
+                fragment_linear: p
+                    .fragment_linear
+                    .map(|f| add(&p.name, "linear.fsh", f, spirv.fragment_linear)),
+                name: p.name,
+                kind: p.kind,
+                layout: p.layout,
+                draw_buffers: p.draw_buffers,
+                textures: p.textures,
+                mipmapped: p.mipmapped,
+            }
         })
         .collect();
     Installed {

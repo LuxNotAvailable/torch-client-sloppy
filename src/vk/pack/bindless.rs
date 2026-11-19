@@ -373,6 +373,48 @@ pub(crate) fn rewrite(source: &str) -> (String, Vec<Slot>) {
 /// stages: a resource both declare gets one index.
 /// `per_draw` marks textures each draw names in its push (an entity's own
 /// texture) rather than the slot table.
+/// A precompiled stage (`shaderpack::compile::native`) bound as
+/// `rewrite_shared` binds a WGSL one: `manifest` declares its resources,
+/// which join `shared`, and each `IRIS_SLOT_<name>` constant takes its
+/// resource's slot (a per-draw texture's, `u32::MAX`, reads the push
+/// constants' instead).
+pub(crate) fn bind_precompiled(
+    words: &[u32],
+    manifest: &str,
+    shared: &mut Vec<Slot>,
+    per_draw: &dyn Fn(&Slot) -> bool,
+) -> Result<Vec<u32>, String> {
+    let mut slots = std::collections::HashMap::new();
+    for d in declarations(manifest) {
+        let at = shared
+            .iter()
+            .position(|s| (s.group, s.binding) == (d.slot.group, d.slot.binding))
+            .unwrap_or_else(|| {
+                shared.push(d.slot.clone());
+                shared.len() - 1
+            });
+        let slot = if matches!(d.slot.kind, SlotKind::Texture(_)) && per_draw(&d.slot) {
+            u32::MAX
+        } else {
+            at as u32
+        };
+        slots.insert(d.slot.name, slot);
+    }
+    let mut words = words.to_vec();
+    let missing: Vec<String> = crate::shaderpack::spirv::specialize(&mut words, |name| {
+        let resource = name.strip_prefix("IRIS_SLOT_")?;
+        slots.get(resource).map(|s| f64::from(*s))
+    })
+    .into_iter()
+    .filter(|n| n.starts_with("IRIS_SLOT_"))
+    .collect();
+    if missing.is_empty() {
+        Ok(words)
+    } else {
+        Err(format!("reads what it does not declare: {}", missing.join(", ")))
+    }
+}
+
 pub(crate) fn rewrite_shared(
     source: &str,
     shared: &mut Vec<Slot>,
@@ -521,8 +563,15 @@ mod tests {
                     .filter(|m| !m.wgsl.is_empty());
                 for module in modules {
                     stages += 1;
-                    let (wgsl, _) = rewrite(&module.wgsl);
-                    match crate::shaderpack::backend::wgsl_to_spirv_aliased(&wgsl) {
+                    let words = match &module.spirv {
+                        Some(words) => {
+                            bind_precompiled(words, &module.wgsl, &mut Vec::new(), &|_| false)
+                        }
+                        None => crate::shaderpack::backend::wgsl_to_spirv_aliased(
+                            &rewrite(&module.wgsl).0,
+                        ),
+                    };
+                    match words {
                         Err(e) => failures.push(format!(
                             "{}: {}",
                             module.label,
@@ -543,6 +592,51 @@ mod tests {
         }
         assert!(stages > 0);
         assert!(failures.is_empty());
+    }
+
+    /// Every stage of the built-in pack, in each dimension, binds: each
+    /// slot it reads is one the engine declared, and (with `SPIRV_VAL`) the
+    /// result is valid SPIR-V.
+    #[test]
+    fn the_built_in_pack_binds_every_stage() {
+        use crate::client::dimension::Dimension;
+        use crate::shaderpack::{builtin, compile, install};
+        let mut stages = 0usize;
+        let mut failures = Vec::new();
+        for dimension in [Dimension::Overworld, Dimension::Nether, Dimension::End] {
+            let frame = compile::with_vulkan_terrain(|| {
+                compile::compile_frame(builtin::NAME, false, None, dimension)
+            })
+            .unwrap_or_else(|e| panic!("{dimension:?}: {e}"));
+            let installed = install::install(builtin::NAME, 0, false, frame);
+            for program in &installed.programs {
+                let modules = std::iter::once(&program.vertex)
+                    .chain(std::iter::once(&program.fragment))
+                    .chain(program.fragment_tests.iter().map(|(_, m)| m))
+                    .chain(program.fragment_linear.iter())
+                    .chain(program.compute.iter())
+                    .filter(|m| !m.wgsl.is_empty());
+                for module in modules {
+                    let Some(words) = &module.spirv else {
+                        failures.push(format!("{}: not precompiled", module.label));
+                        continue;
+                    };
+                    stages += 1;
+                    // The entity texture as the passes pass it: per draw.
+                    let per_draw = |slot: &Slot| slot.name == "gtexture";
+                    match bind_precompiled(words, &module.wgsl, &mut Vec::new(), &per_draw) {
+                        Err(e) => failures.push(format!("{}: {e}", module.label)),
+                        Ok(words) => {
+                            if let Some(problem) = spirv_val(&words) {
+                                failures.push(format!("{}: spirv-val: {problem}", module.label));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(stages > 30, "{stages} stages");
+        assert!(failures.is_empty(), "{failures:#?}");
     }
 
     fn installed_error(name: &str) -> String {

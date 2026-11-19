@@ -3,7 +3,7 @@
 
 pub(crate) const ROOT: &str = "shaders";
 
-pub(crate) const SOURCE_EXTENSIONS: &[&str] = &[".glsl", ".vsh", ".fsh", ".gsh", ".csh", ".wgsl"];
+pub(crate) const SOURCE_EXTENSIONS: &[&str] = &[".glsl", ".vsh", ".fsh", ".gsh", ".csh", ".slang"];
 
 pub(crate) mod backend;
 pub(crate) mod blockids;
@@ -28,6 +28,7 @@ pub(crate) mod pipeline;
 pub(crate) mod preprocess;
 pub(crate) mod programs;
 pub(crate) mod properties;
+pub(crate) mod spirv;
 pub(crate) mod sources;
 pub(crate) mod textures;
 pub(crate) mod transform;
