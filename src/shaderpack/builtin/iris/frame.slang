@@ -58,6 +58,8 @@ float4x4 iris_load_mat4(uint at) {
 [SpecializationConstant] const uint IRIS_OFF_shadowModelView = 0;
 [SpecializationConstant] const uint IRIS_OFF_shadowProjection = 0;
 [SpecializationConstant] const uint IRIS_OFF_sunPosition = 0;
+[SpecializationConstant] const uint IRIS_OFF_torchShadowBlend = 0;
+[SpecializationConstant] const uint IRIS_OFF_torchShadowModelViewPrevious = 0;
 
 struct IrisFrame {
     property float4x4 iris_ModelViewMatrix { get { return iris_load_mat4(IRIS_OFF_iris_ModelViewMatrix); } } // mat4
@@ -93,6 +95,8 @@ struct IrisFrame {
     property float4x4 shadowModelView { get { return iris_load_mat4(IRIS_OFF_shadowModelView); } } // mat4
     property float4x4 shadowProjection { get { return iris_load_mat4(IRIS_OFF_shadowProjection); } } // mat4
     property float3 sunPosition { get { return iris_load_vec3(IRIS_OFF_sunPosition); } } // vec3
+    property float torchShadowBlend { get { return iris_load_float(IRIS_OFF_torchShadowBlend); } } // float
+    property float4x4 torchShadowModelViewPrevious { get { return iris_load_mat4(IRIS_OFF_torchShadowModelViewPrevious); } } // mat4
 };
 
 static IrisFrame frame;

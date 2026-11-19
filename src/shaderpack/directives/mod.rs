@@ -155,6 +155,10 @@ pub(crate) struct Constants {
     /// terrain's shadow map between frames, redrawn on a sun step, a move
     /// to another cell, or a terrain change (`uniforms::values`).
     pub(crate) shadow_cache: bool,
+    /// `torchShadowStep`: the cache's sun step, in degrees.
+    pub(crate) shadow_step: f32,
+    /// `torchShadowLerp`: fade each step in from the last one's map.
+    pub(crate) shadow_lerp: bool,
 }
 
 impl Default for Constants {
@@ -175,6 +179,8 @@ impl Default for Constants {
             voxel_distance: 0.0,
             shadow_distance_render_mul: -1.0,
             shadow_cache: false,
+            shadow_step: 0.02,
+            shadow_lerp: false,
         }
     }
 }
@@ -207,6 +213,7 @@ pub(crate) fn read_constants<'a>(sources: impl Iterator<Item = &'a str>) -> Cons
                     "shadowtex0Nearest" => constants.shadow_nearest[0] = on,
                     "shadowtex1Nearest" => constants.shadow_nearest[1] = on,
                     "torchShadowCache" => constants.shadow_cache = on,
+                    "torchShadowLerp" => constants.shadow_lerp = on,
                     _ => {}
                 }
                 continue;
@@ -229,6 +236,7 @@ pub(crate) fn read_constants<'a>(sources: impl Iterator<Item = &'a str>) -> Cons
                 "shadowFarPlane" => constants.shadow_far_plane = value,
                 "voxelDistance" => constants.voxel_distance = value,
                 "shadowDistanceRenderMul" => constants.shadow_distance_render_mul = value,
+                "torchShadowStep" if value > 0.0 => constants.shadow_step = value,
                 _ => {}
             }
         }

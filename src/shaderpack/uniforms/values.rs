@@ -70,15 +70,13 @@ pub(crate) struct History {
     center_depth: Smooth,
     /// The shadow map's view when it was last drawn, and the camera then.
     shadow_drawn: Option<(Mat4, Vec3)>,
-    /// With the shadow cache: the stepped sun angle, the camera's cell and
-    /// the terrain generation the cached map was drawn for.
-    shadow_key: Option<(i32, bevy::math::IVec3, u64)>,
+    /// With the shadow cache: the stepped sun angle and the camera's cell
+    /// the cached map was drawn for.
+    shadow_key: Option<(i32, bevy::math::IVec3)>,
+    /// Sun Step Blending: the last step's view and camera, and the step
+    /// position the fade from it began at.
+    shadow_previous: Option<(Mat4, Vec3, f32)>,
 }
-
-/// Shadow cache: the sun's angle is held in steps of this many degrees,
-/// so the map stays put between steps (0.1 is a redraw about every third
-/// of a second; at sunset a tall caster's tip jumps about 4 texels).
-const SHADOW_STEP_DEGREES: f32 = 0.1;
 
 /// Shadow cache: the map is centred on the middle of the camera's cell,
 /// this many blocks a side, and redrawn on moving to another.
@@ -89,6 +87,11 @@ pub(crate) struct FrameValues {
     /// This frame keeps the last shadow map rather than drawing one.
     #[allow(dead_code, reason = "the native pack rewrite picks it up")]
     pub(crate) shadow_reused: bool,
+    /// Sun Step Blending: copy the last frame's map to shadowtex1 before
+    /// this one is drawn.
+    pub(crate) shadow_snapshot: bool,
+    shadow_blend: f32,
+    shadow_previous_view: Mat4,
     view_rotation: Mat4,
     view_rotation_inverse: Mat4,
     projection_inverse: Mat4,
@@ -144,7 +147,7 @@ impl FrameValues {
         inputs: Inputs,
         constants: &Constants,
         history: &mut History,
-        terrain_generation: u64,
+        terrain_changed: bool,
     ) -> FrameValues {
         let mut view_rotation = world_from_view.inverse();
         view_rotation.w_axis = Vec4::W;
@@ -210,15 +213,37 @@ impl FrameValues {
         let mut shadow_reused =
             every > 1 && frames % every != 0 && history.shadow_drawn.is_some();
         // Shadow cache: the map is drawn for a stepped sun angle about the
-        // middle of the camera's cell, and kept while neither those nor the
-        // terrain change. Held as the Shadow Updates view is, moved by how
+        // middle of the camera's cell, and kept while neither those change
+        // nor terrain inside it (`terrain_changed`). Held as the Shadow Updates view is, moved by how
         // far the camera has gone since.
+        // The sun step is `torchShadowStep` degrees (0.02 is a redraw about
+        // every 15th of a second).
+        let mut shadow_snapshot = false;
+        let mut shadow_blend = 1.0;
+        let mut shadow_previous_view = Mat4::IDENTITY;
         if constants.shadow_cache {
-            let steps = 360.0 / SHADOW_STEP_DEGREES;
-            let step = (shadow_angle * steps).round() as i32;
+            let steps = 360.0 / constants.shadow_step;
+            let along = shadow_angle * steps;
+            let step = along.round() as i32;
             let cell = (camera / SHADOW_CELL).floor().as_ivec3();
-            let key = (step, cell, terrain_generation);
-            shadow_reused = history.shadow_key == Some(key) && history.shadow_drawn.is_some();
+            let key = (step, cell);
+            shadow_reused = history.shadow_key == Some(key)
+                && !terrain_changed
+                && history.shadow_drawn.is_some();
+            let stepped = history.shadow_key.is_some_and(|(s, _)| s != step);
+            if constants.shadow_lerp && stepped {
+                // The outgoing map (shown in full by now) fades out over
+                // the next step.
+                shadow_snapshot = true;
+                history.shadow_previous = history.shadow_drawn.map(|(v, at)| (v, at, along));
+            }
+            if !constants.shadow_lerp {
+                history.shadow_previous = None;
+            }
+            if let Some((view, at, from)) = history.shadow_previous {
+                shadow_blend = (along - from).abs().min(1.0);
+                shadow_previous_view = view * Mat4::from_translation(camera - at);
+            }
             if !shadow_reused {
                 let centre = (cell.as_vec3() + 0.5) * SHADOW_CELL;
                 let held = Constants {
@@ -251,6 +276,9 @@ impl FrameValues {
         );
         FrameValues {
             shadow_reused,
+            shadow_snapshot,
+            shadow_blend,
+            shadow_previous_view,
             view_rotation,
             view_rotation_inverse: view_rotation.inverse(),
             projection_inverse: projection.inverse(),
@@ -421,6 +449,8 @@ impl FrameValues {
             ),
             B::ShadowModelView => Value::Mat4(self.shadow_model_view),
             B::ShadowModelViewInverse => Value::Mat4(self.shadow_model_view_inverse),
+            B::TorchShadowModelViewPrevious => Value::Mat4(self.shadow_previous_view),
+            B::TorchShadowBlend => Value::Float(self.shadow_blend),
             B::ShadowProjection => Value::Mat4(self.shadow_projection),
             B::ShadowProjectionInverse => Value::Mat4(self.shadow_projection_inverse),
             B::BedrockLevel => Value::Int(inputs.bedrock_level),

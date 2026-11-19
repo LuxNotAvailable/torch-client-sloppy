@@ -18,6 +18,9 @@ const CONST_OPTIONS: &[&str] = &[
     "drynessHalflife",
     "eyeBrightnessHalflife",
     "centerDepthHalflife",
+    "torchShadowCache",
+    "torchShadowStep",
+    "torchShadowLerp",
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]

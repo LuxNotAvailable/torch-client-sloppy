@@ -87,6 +87,61 @@ const CULL_BELOW: u32 = 32;
 /// Looking down a deep ravine loses its lowest shadows.
 const SHADOW_CASTER_BELOW: f32 = 48.0;
 
+/// Section changes kept for the shadow cache's in-map test; more since a
+/// redraw than this and the map is redrawn regardless.
+const SHADOW_CHANGE_LOG: usize = 1024;
+
+/// Section uploads and removals, for the shadow cache: a map drawn at an
+/// older generation is stale if a later change lands in it.
+#[derive(Default)]
+struct ShadowChanges {
+    /// Bumped on every change.
+    generation: u64,
+    /// The latest changes: each one's generation and section origin.
+    log: VecDeque<(u64, [i32; 3])>,
+}
+
+impl ShadowChanges {
+    fn note(&mut self, origin: [i32; 3]) {
+        self.generation += 1;
+        if self.log.len() == SHADOW_CHANGE_LOG {
+            self.log.pop_front();
+        }
+        self.log.push_back((self.generation, origin));
+    }
+
+    /// Whether a change after `since` lands in `world_clip` (the light's
+    /// world-to-clip, z 0..1). Changes older than the log count as landing.
+    fn since(&self, since: u64, world_clip: Mat4) -> bool {
+        if since >= self.generation {
+            return false;
+        }
+        let logged_from = self.log.front().map_or(u64::MAX, |c| c.0);
+        if since + 1 < logged_from {
+            return true;
+        }
+        self.log
+            .iter()
+            .filter(|c| c.0 > since)
+            .any(|c| section_in_clip(c.1, world_clip))
+    }
+}
+
+/// Whether the 16-block section at `origin` overlaps clip space x, y in
+/// -1..1 and z in 0..1 (its box against the clip box, by corners' bounds).
+fn section_in_clip(origin: [i32; 3], world_clip: Mat4) -> bool {
+    let lo = Vec3::from_array(origin.map(|v| v as f32));
+    let (mut min, mut max) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+    for i in 0..8 {
+        let corner = lo + Vec3::new((i & 1) as f32, ((i >> 1) & 1) as f32, (i >> 2) as f32) * 16.0;
+        let c = world_clip * corner.extend(1.0);
+        let p = c.truncate() / c.w;
+        min = min.min(p);
+        max = max.max(p);
+    }
+    max.x >= -1.0 && min.x <= 1.0 && max.y >= -1.0 && min.y <= 1.0 && max.z >= 0.0 && min.z <= 1.0
+}
+
 /// The camera moved farther than this (blocks) since the pyramid was
 /// built: skip Hi-Z for a frame, as newly uncovered sections would pop in
 /// a frame late (the game's camera-motion guard).
@@ -467,8 +522,6 @@ pub struct PackGeometry {
     pub atlas: (vk::Image, u32),
     /// The shadow cull's commands and counts (same lists), when it ran.
     pub shadow: Option<(vk::Buffer, vk::Buffer)>,
-    /// Section changes so far (`TerrainScene::shadow_generation`).
-    pub shadow_generation: u64,
     /// The game's lightmap, when the snapshot has one.
     pub lightmap: Option<(vk::Image, u32)>,
     /// The snapshot's entities, when it has some.
@@ -518,9 +571,8 @@ pub struct TerrainScene {
     visible_dirty: bool,
     fill_for: Option<IVec3>,
     sections_changed: bool,
-    /// Bumped on every section upload or removal: a cached shadow map
-    /// drawn at an older one is stale.
-    shadow_generation: u64,
+    /// Section uploads and removals, for the shadow cache.
+    shadow_changes: ShadowChanges,
     frames_since_fill: u32,
 
     ranks: Grown,
@@ -880,7 +932,7 @@ impl TerrainScene {
             visible_dirty: true,
             fill_for: None,
             sections_changed: false,
-            shadow_generation: 0,
+            shadow_changes: ShadowChanges::default(),
             frames_since_fill: 0,
             ranks,
             rank_of: vec![0; slot_capacity as usize],
@@ -1312,7 +1364,6 @@ impl TerrainScene {
             ),
             atlas: (self.atlas.raw, self.atlas_raw_index),
             shadow: self.shadow.as_ref().map(|s| (s.commands.raw, s.counts.raw)),
-            shadow_generation: self.shadow_generation,
             lightmap: self.env.as_ref().map(|e| (e.lightmap.0.raw, e.lightmap.1)),
             entities: self.entities.as_ref().map(|e| e.pack_entities()),
             sky: self.env.as_ref().and_then(|e| e.pack_entities()),
@@ -1339,9 +1390,15 @@ impl TerrainScene {
         }
     }
 
-    /// Section changes so far (`shadow_generation`).
+    /// Section changes so far (`ShadowChanges::generation`).
     pub fn shadow_generation(&self) -> u64 {
-        self.shadow_generation
+        self.shadow_changes.generation
+    }
+
+    /// Whether a section changed after `since` lands in the shadow map
+    /// `world_clip` sees (`ShadowChanges::since`).
+    pub fn shadow_changed_since(&self, since: u64, world_clip: Mat4) -> bool {
+        self.shadow_changes.since(since, world_clip)
     }
 
     /// Culls the terrain for a pack's shadow pass, from the light's
@@ -1552,7 +1609,7 @@ impl TerrainScene {
         self.stats.indices -= entry.index_count as u64;
         self.release_slot(entry.slot);
         self.sections_changed = true;
-        self.shadow_generation += 1;
+        self.shadow_changes.note(key.0);
     }
 
     /// A new pool, when every pool is too full for a section.
@@ -1884,7 +1941,7 @@ impl TerrainScene {
                 },
             );
             self.sections_changed = true;
-            self.shadow_generation += 1;
+            self.shadow_changes.note(key.0);
         }
         self.stats.sections = self.entries.len();
         self.stats.pools = self.pools.len();
@@ -3200,6 +3257,38 @@ impl TerrainScene {
 
 #[cfg(test)]
 mod tests {
+    use super::{SHADOW_CHANGE_LOG, ShadowChanges};
+    use bevy::math::Mat4;
+
+    /// Clip x, y -1..1 over world x, z -32..32, depth 0..1 over y 0..256.
+    fn map() -> Mat4 {
+        Mat4::from_cols_array_2d(&[
+            [1.0 / 32.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0 / 256.0, 0.0],
+            [0.0, 1.0 / 32.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ])
+    }
+
+    #[test]
+    fn only_changes_in_the_map_make_it_stale() {
+        let mut changes = ShadowChanges::default();
+        changes.note([400, 64, 400]);
+        assert!(!changes.since(0, map()), "out of the map");
+        changes.note([-16, 64, 0]);
+        assert!(changes.since(0, map()), "in the map");
+        assert!(!changes.since(changes.generation, map()), "nothing newer");
+    }
+
+    #[test]
+    fn changes_past_the_log_count_as_landing() {
+        let mut changes = ShadowChanges::default();
+        for _ in 0..SHADOW_CHANGE_LOG + 1 {
+            changes.note([400, 64, 400]);
+        }
+        assert!(changes.since(0, map()));
+        assert!(!changes.since(1, map()));
+    }
     use super::*;
 
     fn vertex(x: i16, y: i16, z: i16) -> PackedVertex {

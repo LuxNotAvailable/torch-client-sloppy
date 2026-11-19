@@ -5,7 +5,9 @@
 const int shadowMapResolution = 2048; // [512 1024 1536 2048 3072 4096]
 const float shadowDistance = 128.0; // [48.0 64.0 96.0 128.0 160.0 192.0 256.0]
 const float sunPathRotation = -25.0;
-const bool torchShadowCache = true;
+const bool torchShadowCache = true; // [true false]
+const float torchShadowStep = 0.02; // [0.02 0.05 0.1 0.2 0.5 1.0 2.0]
+const bool torchShadowLerp = false; // [true false]
 */
 
 #include "lib/common.slang"

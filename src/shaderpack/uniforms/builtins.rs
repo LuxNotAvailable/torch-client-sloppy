@@ -137,6 +137,8 @@ pub(crate) enum Builtin {
     Biome,
     ShadowModelView,
     ShadowModelViewInverse,
+    TorchShadowModelViewPrevious,
+    TorchShadowBlend,
     ShadowProjection,
     ShadowProjectionInverse,
     BedrockLevel,
@@ -364,6 +366,12 @@ pub(crate) const BUILTINS: &[(&str, &str, Builtin)] = &[
         Builtin::ShadowModelViewInverse,
     ),
     ("shadowProjection", "mat4", Builtin::ShadowProjection),
+    (
+        "torchShadowModelViewPrevious",
+        "mat4",
+        Builtin::TorchShadowModelViewPrevious,
+    ),
+    ("torchShadowBlend", "float", Builtin::TorchShadowBlend),
     (
         "shadowProjectionInverse",
         "mat4",

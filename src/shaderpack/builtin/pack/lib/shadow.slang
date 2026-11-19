@@ -72,6 +72,15 @@ float2 scattered_point(uint i, uint frame_index) {
     return frac(float2(0.5) + float(i) * float2(0.7548776662, 0.5698402910) + turn) - 0.5;
 }
 
+/// One comparison in the current map (`previous` false) or the last sun
+/// step's (shadowtex1, kept for Sun Step Blending).
+float shadow_compare(bool previous, float2 uv, float reference) {
+    if (previous) {
+        return shadowtex1HW.SampleCmpLevelZero(shadowtex1HW_sampler, uv, reference);
+    }
+    return shadowtex0HW.SampleCmpLevelZero(shadowtex0HW_sampler, uv, reference);
+}
+
 /// One hardware-filtered lookup at a point already in the shadow map's clip
 /// space (before the warp); 1 outside the map.
 float shadow_at(float3 clip) {
@@ -82,10 +91,9 @@ float shadow_at(float3 clip) {
     return shadowtex0HW.SampleCmpLevelZero(shadowtex0HW_sampler, uv, clip.z * 0.5 + 0.5 - 0.00005);
 }
 
-/// How much of the direct light reaches `player` (camera-relative), from
-/// `taps` comparisons; 1 outside the shadow map.
-float shadow_visibility(float3 player, float3 n, uint taps) {
-    float4x4 to_shadow = mul(frame.shadowProjection, frame.shadowModelView);
+/// As `shadow_visibility`, in one map, seen through `view`.
+float shadow_visibility_in(float4x4 view, bool previous, float3 player, float3 n, uint taps) {
+    float4x4 to_shadow = mul(frame.shadowProjection, view);
     float3 clip = mul(to_shadow, float4(player, 1.0)).xyz;
     float reach = length(clip.xy);
     if (reach > 0.98 || abs(clip.z) > 0.98) {
@@ -100,15 +108,28 @@ float shadow_visibility(float3 player, float3 n, uint taps) {
     float2 texel = 1.0 / float2(iris_size(shadowtex0HW));
     float radius = SHADOW_SOFTNESS * (1.0 + reach * 2.0);
     if (taps <= 1) {
-        return shadowtex0HW.SampleCmpLevelZero(shadowtex0HW_sampler, uv, reference);
+        return shadow_compare(previous, uv, reference);
     }
     float lit = 0.0;
     uint count = min(taps, 8u);
     for (uint i = 0; i < count; i++) {
         float2 offset = SHADOW_TAPS[i] * texel * radius;
-        lit += shadowtex0HW.SampleCmpLevelZero(shadowtex0HW_sampler, uv + offset, reference);
+        lit += shadow_compare(previous, uv + offset, reference);
     }
     return lit / float(count);
+}
+
+/// How much of the direct light reaches `player` (camera-relative), from
+/// `taps` comparisons; 1 outside the shadow map. With Sun Step Blending,
+/// faded in from the last step's map (`torchShadowBlend` below 1).
+float shadow_visibility(float3 player, float3 n, uint taps) {
+    float now = shadow_visibility_in(frame.shadowModelView, false, player, n, taps);
+    float blend = frame.torchShadowBlend;
+    if (blend >= 1.0) {
+        return now;
+    }
+    float before = shadow_visibility_in(frame.torchShadowModelViewPrevious, true, player, n, taps);
+    return lerp(before, now, blend);
 }
 
 /// A texel's shade from TEXEL_TEMPORAL_POINTS points scattered for

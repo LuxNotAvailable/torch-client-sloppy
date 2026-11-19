@@ -127,6 +127,9 @@ pub(crate) struct PackScreen {
     shadow_cache_at: Option<usize>,
     /// The shadow cache holds a map, drawn since the targets were made.
     shadow_cache_filled: bool,
+    /// The terrain generation and light world-to-clip the cached map was
+    /// drawn at, to test later section changes against.
+    shadow_cache_drawn: (u64, Mat4),
     /// This frame keeps the cached terrain shadow (`begin_frame`): its
     /// cull and terrain shadow passes are skipped.
     shadow_reuse: bool,
@@ -343,6 +346,7 @@ impl PackScreen {
             copy_shadow_at: None,
             shadow_cache_at: None,
             shadow_cache_filled: false,
+            shadow_cache_drawn: (0, Mat4::IDENTITY),
             shadow_reuse: false,
             values: None,
             atlas: terrain.map(|t| t.atlas),
@@ -1181,12 +1185,15 @@ impl PackScreen {
         camera: (Mat4, f32),
         extent: vk::Extent2D,
         seconds: f32,
-        terrain_generation: u64,
+        terrain: Option<&crate::vk::terrain::TerrainScene>,
     ) -> Option<(Mat4, bevy::math::Vec3)> {
         let dt = self.last.map_or(1.0 / 60.0, |l| (seconds - l).max(0.0));
         self.last = Some(seconds);
         self.frames += 1;
         let (world_from_view, fov) = camera;
+        // Without the terrain to ask, assume it changed.
+        let (since, clip) = self.shadow_cache_drawn;
+        let terrain_changed = terrain.is_none_or(|t| t.shadow_changed_since(since, clip));
         let values = FrameValues::of_camera(
             world_from_view,
             1.0 / (fov * 0.5).tan(),
@@ -1203,7 +1210,7 @@ impl PackScreen {
             self.inputs,
             &self.installed.constants,
             &mut self.history,
-            terrain_generation,
+            terrain_changed,
         );
         self.installed
             .customs
@@ -1213,6 +1220,10 @@ impl PackScreen {
         self.shadow_reuse = values.shadow_reused
             && self.shadow_cache_filled
             && self.installed.constants.shadow_cache;
+        if !self.shadow_reuse {
+            let generation = terrain.map_or(0, |t| t.shadow_generation());
+            self.shadow_cache_drawn = (generation, values.shadow_world_clip());
+        }
         let shadow = (!self.shadow_reuse && self.passes.iter().any(|p| p.shadow.is_some()))
             .then(|| (values.shadow_world_clip(), values.camera()));
         self.values = Some(values);
@@ -1335,8 +1346,39 @@ impl PackScreen {
         // This frame's values first: whether the shadow cache holds
         // decides what is cleared.
         if self.values.is_none() {
-            let generation = terrain.map_or(0, |t| t.shadow_generation);
-            self.begin_frame(camera, output.2, seconds, generation);
+            self.begin_frame(camera, output.2, seconds, None);
+        }
+        // Sun Step Blending keeps the last step's map in shadowtex1: on a
+        // step, last frame's shadowtex0 goes there before it is redrawn.
+        let blending = self.installed.constants.shadow_cache && self.installed.constants.shadow_lerp;
+        let snapshot = blending && self.values.as_ref().is_some_and(|v| v.shadow_snapshot);
+        if snapshot && let Some(s) = &self.targets.shadow {
+            let (from, to, side) = (s.depth.raw, s.depth_opaque.raw, s.size);
+            graph.pass(
+                "pack shadow step snapshot",
+                &[(from, Use::TransferSrc), (to, Use::TransferDst)],
+                &[],
+                |cmd| unsafe {
+                    // SAFETY: a copy between depth images in transfer layouts.
+                    device.cmd_copy_image(
+                        cmd,
+                        from,
+                        vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                        to,
+                        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                        &[vk::ImageCopy {
+                            src_subresource: layers(vk::ImageAspectFlags::DEPTH),
+                            dst_subresource: layers(vk::ImageAspectFlags::DEPTH),
+                            extent: vk::Extent3D {
+                                width: side,
+                                height: side,
+                                depth: 1,
+                            },
+                            ..Default::default()
+                        }],
+                    );
+                },
+            );
         }
         let t = &self.targets;
         clears.push((t.depth.raw, None));
@@ -1349,7 +1391,9 @@ impl PackScreen {
             if !self.shadow_reuse {
                 clears.push((s.depth.raw, None));
             }
-            clears.push((s.depth_opaque.raw, None));
+            if !blending {
+                clears.push((s.depth_opaque.raw, None));
+            }
             clears.extend(s.color.iter().flatten().map(|c| (c.raw, Some([1.0; 4]))));
         }
         let uses: Vec<_> = clears.iter().map(|c| (c.0, Use::TransferDst)).collect();
@@ -1564,6 +1608,7 @@ impl PackScreen {
                 );
             }
             if self.copy_shadow_at == Some(at)
+                && !blending
                 && let Some(s) = &self.targets.shadow
             {
                 let (from, to, side) = (s.depth.raw, s.depth_opaque.raw, s.size);
