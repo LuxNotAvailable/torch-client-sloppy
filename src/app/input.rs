@@ -1458,7 +1458,19 @@ pub(crate) fn handle_keybinds(
     mut state: ResMut<crate::gui::GuiState>,
     shared: Res<Shared>,
     mut commands: Commands,
+    mut key_events: MessageReader<bevy::input::keyboard::KeyboardInput>,
 ) {
+    // The OS's key repeats, which vanilla counts as clicks (GLFW `REPEAT`):
+    // holding drop drops on after the repeat delay.
+    let drop_repeat = match state.keybinds.bound(Action::Drop) {
+        crate::gui::keybinds::Bound::Key(code) => key_events.read().any(|e| {
+            e.key_code == code && e.repeat && e.state == bevy::input::ButtonState::Pressed
+        }),
+        _ => {
+            key_events.clear();
+            false
+        }
+    };
     let held = state.keybinds.down(Action::PlayerList, &keys, &buttons) && !state.screen.is_open();
     if state.tab_list_held != held {
         state.tab_list_held = held;
@@ -1506,7 +1518,7 @@ pub(crate) fn handle_keybinds(
         shared.0.lock().unwrap().session.inventory.swap_hands = true;
     }
 
-    if state.keybinds.just(Action::Drop, &keys, &buttons) {
+    if state.keybinds.just(Action::Drop, &keys, &buttons) || drop_repeat {
         let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
         shared.0.lock().unwrap().session.inventory.pending_drop = Some(if ctrl {
             DropRequest::HeldStack
