@@ -85,6 +85,10 @@ pub struct EnvScene {
     hand: Vec<(EnvPart, (u32, u32, u32))>,
     /// A pack's hand instances (`pack_hand`).
     pack_hand: Option<PackSky>,
+    /// Cloud parts (world space): part, index range.
+    clouds: Vec<(EnvPart, (u32, u32, u32))>,
+    /// A pack's cloud instances (`pack_clouds`).
+    pack_clouds: Option<PackSky>,
     /// The snapshot's eye.
     eye: Vec3,
     /// Each texture's bindless index and its UNORM view's, for packs.
@@ -354,6 +358,11 @@ impl EnvScene {
             .filter(|p| p.kind == 3 && p.pad[1] < 0.5)
             .filter_map(|p| Some((*p, *ranges.get(p.mesh as usize)?)))
             .collect();
+        let clouds = parts
+            .iter()
+            .filter(|p| p.kind == 1)
+            .filter_map(|p| Some((*p, *ranges.get(p.mesh as usize)?)))
+            .collect();
         let parts_bytes: &[u8] = bytemuck::cast_slice(&parts);
 
         let mut total = 0u64;
@@ -431,6 +440,8 @@ impl EnvScene {
             pack: None,
             hand,
             pack_hand: None,
+            clouds,
+            pack_clouds: None,
             eye,
             raw_indices,
         })
@@ -581,6 +592,83 @@ impl EnvScene {
             textured: blended,
         });
         Ok(())
+    }
+
+    /// Builds a pack's clouds: one blended entity instance per part, at
+    /// its world place, drawn by gbuffers_clouds.
+    pub fn pack_clouds(
+        &mut self,
+        ctx: &Context,
+        memory: &Memory,
+        bindless: &mut Bindless,
+    ) -> Result<(), SetupError> {
+        use crate::draw::EntityInstance;
+        if self.clouds.is_empty() {
+            self.pack_clouds = None;
+            return Ok(());
+        }
+        let stage = crate::shaderpack::features::render_stage("CLOUDS") as u32;
+        let mut instances = Vec::new();
+        let mut meshes: Vec<[u32; 4]> = Vec::new();
+        let mut draws = Vec::new();
+        for (part, (first, count, base)) in &self.clouds {
+            meshes.push([*first, *count, *base, 0]);
+            instances.push(EntityInstance {
+                mesh: meshes.len() as u32 - 1,
+                texture: part.texture,
+                alpha: part.alpha,
+                kind: 16 + stage,
+                tint: part.tint,
+                light0: [0.0, 0.0, 0.0, 1.0],
+                light1: [0.0, 0.0, 0.0, 1.0],
+                levels: [240.0, 240.0],
+                transform: part.transform,
+                ..Default::default()
+            });
+            let texture = self
+                .raw_indices
+                .iter()
+                .find(|(s, _)| *s == part.texture)
+                .map_or(part.texture, |(_, r)| *r);
+            draws.push((*first, *count, *base as i32, texture, true));
+        }
+        let all = (0..draws.len() as u32).collect();
+        self.pack_clouds = Some(PackSky {
+            instances: upload(
+                ctx,
+                memory,
+                bindless,
+                "pack cloud instances",
+                bytemuck::cast_slice(&instances),
+            )?,
+            meshes: upload(
+                ctx,
+                memory,
+                bindless,
+                "pack cloud meshes",
+                bytemuck::cast_slice(&meshes),
+            )?,
+            draws,
+            textured: all,
+        });
+        Ok(())
+    }
+
+    /// The pack's clouds as entity draws (`pack_clouds` first), all
+    /// blended.
+    pub fn pack_cloud_entities(&self) -> Option<super::entities::PackEntities> {
+        let pack = self.pack_clouds.as_ref()?;
+        Some(super::entities::PackEntities {
+            instances: (pack.instances.0.raw, pack.instances.1),
+            meshes: (pack.meshes.0.raw, pack.meshes.1),
+            vertices: (self.vertices.0.raw, self.vertices.1),
+            parts: (pack.instances.0.raw, pack.instances.1),
+            indices: self.indices.raw,
+            draws: pack.draws.clone(),
+            blended: pack.textured.clone(),
+            textures: self.textures.iter().map(|t| t.0.raw).collect(),
+            shadow_only: Vec::new(),
+        })
     }
 
     /// The pack's hand as entity draws (`pack_hand` first); `blended`
@@ -1048,7 +1136,7 @@ impl EnvScene {
         bindless.remove_texture(self.lightmap.1, frame);
         bindless.remove_buffer(self.vertices.1, frame);
         bindless.remove_buffer(self.parts.1, frame);
-        for p in [&self.pack, &self.pack_hand].into_iter().flatten() {
+        for p in [&self.pack, &self.pack_hand, &self.pack_clouds].into_iter().flatten() {
             bindless.remove_buffer(p.instances.1, frame);
             bindless.remove_buffer(p.meshes.1, frame);
         }
@@ -1091,7 +1179,7 @@ impl EnvScene {
         for b in [self.parts.0, self.vertices.0, self.indices] {
             memory.free_buffer(ctx, b);
         }
-        for p in [self.pack, self.pack_hand].into_iter().flatten() {
+        for p in [self.pack, self.pack_hand, self.pack_clouds].into_iter().flatten() {
             memory.free_buffer(ctx, p.instances.0);
             memory.free_buffer(ctx, p.meshes.0);
         }

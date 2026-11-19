@@ -530,6 +530,8 @@ pub struct PackGeometry {
     pub sky: Option<super::entities::PackEntities>,
     /// The first-person hand as entities (`TerrainScene::pack_sky`).
     pub hand: Option<super::entities::PackEntities>,
+    /// The cloud layer as entities (`TerrainScene::pack_sky`).
+    pub clouds: Option<super::entities::PackEntities>,
 }
 
 pub const PACK_COMMAND_SIZE: u64 = COMMAND_SIZE;
@@ -1368,6 +1370,7 @@ impl TerrainScene {
             entities: self.entities.as_ref().map(|e| e.pack_entities()),
             sky: self.env.as_ref().and_then(|e| e.pack_entities()),
             hand: self.env.as_ref().and_then(|e| e.pack_hand_entities()),
+            clouds: self.env.as_ref().and_then(|e| e.pack_cloud_entities()),
         }
     }
 
@@ -1384,6 +1387,7 @@ impl TerrainScene {
         match &mut self.env {
             Some(env) => {
                 env.pack_sky(ctx, memory, bindless, sun_path_rotation)?;
+                env.pack_clouds(ctx, memory, bindless)?;
                 env.pack_hand(ctx, memory, bindless, eye_light)
             }
             None => Ok(()),

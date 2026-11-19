@@ -22,6 +22,9 @@
 [SpecializationConstant] const int TEXEL_RING_WIDTH = 16;
 [SpecializationConstant] const int TEXEL_MIN_RES = 2;
 [SpecializationConstant] const int FOLIAGE_SHADING = 0;
+[SpecializationConstant] const int CLOUD_STYLE = 0;
+[SpecializationConstant] const float CLOUD_BLEND_DISTANCE = 384.0;
+[SpecializationConstant] const float CLOUD_SCATTER = 1.0;
 #else
 #define SUN_BRIGHTNESS 2.4 // [1.6 2.0 2.4 2.8 3.2]
 #define TORCH_BRIGHTNESS 2.2 // [1.4 1.8 2.2 2.6 3.0]
@@ -60,6 +63,13 @@
 // 0 Fancy, texels on the plant's own plane through the texel cache; 1 Fast,
 // a lookup per vertex; 2 Potato, one shade per plant block.
 #define FOLIAGE_SHADING 0 // [0 1 2]
+// Clouds: 0 Soft, lit by the sky around them and melting into it far off;
+// 1 Classic, lit as a plain surface.
+#define CLOUD_STYLE 0 // [0 1]
+// Blocks out by which Soft clouds have melted into the sky.
+#define CLOUD_BLEND_DISTANCE 384.0 // [128.0 192.0 256.0 384.0 512.0 768.0]
+// Strength of the glow looking toward the sun through a cloud.
+#define CLOUD_SCATTER 1.0 // [0.0 0.5 1.0 1.5 2.0]
 #endif
 
 static const float PI = 3.14159265;

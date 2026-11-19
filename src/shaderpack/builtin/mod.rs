@@ -27,6 +27,7 @@ pub(crate) const FILES: &[(&str, &str)] = files![
     "gbuffers_terrain.slang",
     "gbuffers_water.slang",
     "gbuffers_textured.slang",
+    "gbuffers_clouds.slang",
     "gbuffers_block.slang",
     "gbuffers_basic.slang",
     "gbuffers_damagedblock.slang",

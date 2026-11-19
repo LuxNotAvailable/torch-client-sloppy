@@ -96,6 +96,8 @@ struct Pass {
     mipmaps: Vec<(u8, usize)>,
     /// Draws the first-person hand (with `entity`).
     hand: bool,
+    /// Draws the cloud layer (with `entity`, blended).
+    clouds: bool,
 }
 
 /// Which instance set an entity-style pass draws.
@@ -104,6 +106,7 @@ enum Source {
     Entities,
     Sky,
     Hand,
+    Clouds,
 }
 
 pub(crate) struct PackScreen {
@@ -149,6 +152,7 @@ pub(crate) struct PackScreen {
     building_entity: Option<bool>,
     /// While building a hand pass.
     building_hand: bool,
+    building_clouds: bool,
     /// While building a sky pass: its kind, and whether it adds.
     building_sky: Option<(EntityKind, bool)>,
     /// While building a compute pass.
@@ -356,6 +360,7 @@ impl PackScreen {
             entity_slots: Vec::new(),
             building_entity: None,
             building_hand: false,
+            building_clouds: false,
             building_sky: None,
             building_compute: false,
             uniforms: Vec::new(),
@@ -502,6 +507,19 @@ impl PackScreen {
                     let mut pass =
                         screen.pass_entity(ctx, memory, bindless, pipelines, index, flips, true)?;
                     pass.entity = Some(true);
+                    screen.passes.push(pass);
+                }
+                // Clouds after the translucent layer, as vanilla.
+                if stage == ScreenStage::Composite
+                    && let Some(index) = screen.installed.entities[EntityKind::Clouds.index()]
+                {
+                    screen.building_clouds = true;
+                    let pass =
+                        screen.pass_entity(ctx, memory, bindless, pipelines, index, flips, true);
+                    screen.building_clouds = false;
+                    let mut pass = pass?;
+                    pass.entity = Some(true);
+                    pass.clouds = true;
                     screen.passes.push(pass);
                 }
                 if stage == ScreenStage::Composite
@@ -929,6 +947,8 @@ impl PackScreen {
                         Source::Sky
                     } else if self.building_hand {
                         Source::Hand
+                    } else if self.building_clouds {
+                        Source::Clouds
                     } else {
                         Source::Entities
                     };
@@ -1095,6 +1115,7 @@ impl PackScreen {
                 sky: None,
                 mipmaps: mipmaps.clone(),
                 hand: false,
+                clouds: false,
             });
         }
         let pipeline = pipelines.graphics(
@@ -1143,6 +1164,7 @@ impl PackScreen {
             sky: None,
             mipmaps: mipmaps.clone(),
             hand: false,
+            clouds: false,
         })
     }
 
@@ -1494,6 +1516,7 @@ impl PackScreen {
                     Source::Entities => &t.entities,
                     Source::Sky => &t.sky,
                     Source::Hand => &t.hand,
+                    Source::Clouds => &t.clouds,
                 };
                 if let Some(e) = set {
                     table[at] =
@@ -1725,7 +1748,12 @@ impl PackScreen {
                 {
                     continue
                 }
-                (Some(_), Some(t)) if pass.entity.is_some() && t.entities.is_none() => continue,
+                (Some(_), Some(t)) if pass.clouds && t.clouds.is_none() => continue,
+                (Some(_), Some(t))
+                    if pass.entity.is_some() && !pass.clouds && t.entities.is_none() =>
+                {
+                    continue
+                }
                 (Some(_), Some(t)) if pass.sky.is_some() && t.sky.is_none() => continue,
                 (Some(_), Some(t)) if pass.hand && t.hand.is_none() => continue,
                 (Some(slot), Some(t)) => Some((slot, t)),
@@ -1802,6 +1830,8 @@ impl PackScreen {
                         &t.sky
                     } else if pass.hand {
                         &t.hand
+                    } else if pass.clouds {
+                        &t.clouds
                     } else {
                         &t.entities
                     };
@@ -1830,6 +1860,7 @@ impl PackScreen {
             let entity_pass = pass.entity;
             let shadow_pass = pass.shadow.is_some();
             let hand_pass = pass.hand;
+            let clouds_pass = pass.clouds;
             let sky_pass = pass.sky;
             let white = self.stubs.white.1;
             let name = intern(&self.installed.programs[pass.program].name);
@@ -1935,7 +1966,14 @@ impl PackScreen {
                     }
                     // Entities: one draw each, its texture in the push.
                     Some((_, t)) if entity_pass.is_some() => {
-                        let Some(e) = (if hand_pass { &t.hand } else { &t.entities }) else {
+                        let set = if hand_pass {
+                            &t.hand
+                        } else if clouds_pass {
+                            &t.clouds
+                        } else {
+                            &t.entities
+                        };
+                        let Some(e) = set else {
                             return;
                         };
                         device.cmd_bind_index_buffer(cmd, e.indices, 0, vk::IndexType::UINT32);
@@ -1954,6 +1992,8 @@ impl PackScreen {
                         };
                         for i in order {
                             let (first, count, base_vertex, texture, _) = e.draws[i as usize];
+                            // Untextured parts (the clouds) sample white.
+                            let texture = if texture == u32::MAX { white } else { texture };
                             push(
                                 ctx,
                                 cmd,
