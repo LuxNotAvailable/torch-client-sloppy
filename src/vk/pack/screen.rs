@@ -14,11 +14,11 @@ use gpu_allocator::MemoryLocation;
 use super::bindless::{Slot, SlotKind};
 use super::targets::{DEPTH_FORMAT, PackTargets};
 use crate::shaderpack::compile::{EntityKind, ScreenStage, Step};
+use crate::shaderpack::directives::{MAX_COLOR_TARGETS, SampleKind};
+use crate::shaderpack::expressions::CustomState;
 use crate::shaderpack::install::{Installed, InstalledProgram};
 use crate::shaderpack::sources::{Depth, Stub, TextureSource};
 use crate::shaderpack::uniforms::{BlockSpec, FrameValues, History, UniformBytes};
-use crate::shaderpack::directives::{MAX_COLOR_TARGETS, SampleKind};
-use crate::shaderpack::expressions::CustomState;
 use crate::vk::bindless::{self as bl, Bindless};
 use crate::vk::frame::FRAMES_IN_FLIGHT;
 use crate::vk::graph::{Graph, Use};
@@ -785,12 +785,11 @@ impl PackScreen {
             .as_ref()
             .map(|v| &v[0].0)
             .or(program.compute.as_ref());
-        let stages: Vec<&crate::shaderpack::install::Module> =
-            match (compute, compute_module) {
-                (true, Some(m)) => vec![m],
-                (true, None) => return Err(failed(format!("{}: no compute module", program.name))),
-                _ => vec![&program.vertex, fragment],
-            };
+        let stages: Vec<&crate::shaderpack::install::Module> = match (compute, compute_module) {
+            (true, Some(m)) => vec![m],
+            (true, None) => return Err(failed(format!("{}: no compute module", program.name))),
+            _ => vec![&program.vertex, fragment],
+        };
         for module in stages {
             // An entity's own texture comes with its draw.
             let per_draw = |slot: &Slot| {

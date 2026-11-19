@@ -1,7 +1,5 @@
-//! The native Vulkan renderer (VULKAN_REWRITE_CHECKLIST.md), built
-//! alongside the current Bevy/wgpu one behind the `vulkan` feature.
-//!
-//! Desktop default; `MC_RENDERER=wgpu` for the old one. Game path: `live`.
+//! The native Vulkan renderer (VULKAN_REWRITE_CHECKLIST.md), the game's
+//! only renderer. Game path: `live`.
 //! Dev viewer: `viewer` (`src/bin/vkview.rs`), runs each piece alone with
 //! debug views.
 

@@ -1,6 +1,5 @@
-//! The native renderer in the game (VULKAN_REWRITE_CHECKLIST.md phase 8),
-//! the desktop default (`MC_RENDERER=wgpu` for the old renderer): Bevy's renderer starts with no backend,
-//! and this plugin takes the primary window, draws each frame and presents.
+//! The native renderer in the game (VULKAN_REWRITE_CHECKLIST.md phase 8):
+//! this plugin takes the primary window, draws each frame and presents.
 //!
 //! Drawn: the terrain (`TerrainScene`, fed the game's section stream by
 //! `terrain_dump::take_live`, seen from the world camera), then the GUI
@@ -23,7 +22,6 @@ use super::terrain::{Camera, TerrainScene};
 use super::upload::Uploads;
 use super::{Context, SetupError, Swapchain};
 
-/// Whether this run draws with the native renderer (`MC_RENDERER=native`).
 /// Set when the chosen pack changes (menu or toggle key): the renderer
 /// re-reads `shaderpack.txt` once.
 static PACK_CHANGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
@@ -428,10 +426,7 @@ fn draw_frame(
         .get_resource::<crate::gui::pool::GuiFrames>()
         .map(|f| std::mem::take(&mut *f.0.lock()))
         .unwrap_or_default();
-    crate::gui::pool::QUADS.store(
-        gui.indices.len() / 6,
-        std::sync::atomic::Ordering::Relaxed,
-    );
+    crate::gui::pool::QUADS.store(gui.indices.len() / 6, std::sync::atomic::Ordering::Relaxed);
     let wanted = world
         .get_non_send_resource::<RenderThread>()
         .map_or((true, true), |t| {

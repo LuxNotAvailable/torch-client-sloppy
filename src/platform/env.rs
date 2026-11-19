@@ -192,12 +192,6 @@ const ALL: &[Var] = &[
         enabled: cfg!(feature = "vulkan"),
     },
     Var {
-        name: "MC_RENDERER",
-        what: "which renderer draws the game: native (Vulkan, the desktop default) or wgpu/legacy (the old one)",
-        default: "native on desktop",
-        enabled: cfg!(feature = "vulkan"),
-    },
-    Var {
         name: "MC_NATIVE_PIPELINE",
         what: "the native renderer's pipelining: always, never, or (unset) only above about 200 fps",
         default: "automatic",

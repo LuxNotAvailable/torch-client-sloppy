@@ -16,9 +16,21 @@ Please go use and contribute to the original ^^^
 - **Accounts:** a Microsoft account, or an offline name for servers that allow it.
 - **Game assets:** downloaded from Mojang's servers on first launch. None are shipped in this repository.
 
+## Platforms
+
+Windows, Linux and Android. macOS and the browser are not supported.
+
+The client draws with its own Vulkan renderer. It needs a GPU and driver with **Vulkan 1.3**, or Vulkan 1.1 with the matching extensions (most Android phones take this path). Without one, the client stops at startup and logs which pieces are missing, for example:
+
+```
+native renderer: No graphics card here can run Torch's renderer. Missing: Intel(R) HD Graphics 520: Vulkan 1.1 (it has 1.0), multiDrawIndirect
+```
+
+Each GPU found gets its own entry after `Missing:`, listing what it lacks, by Vulkan feature name. Searching the GPU on [gpuinfo.org](https://vulkan.gpuinfo.org/) shows what its driver reports. `No Vulkan device was found` or `no Vulkan loader on this system` mean the driver has no Vulkan support at all: update the graphics driver first.
+
 ## Build from source
 
-The pinned nightly toolchain in `rust-toolchain.toml` is installed by `rustup` on the first build.
+The pinned nightly toolchain in `rust-toolchain.toml` is installed by `rustup` on the first build. The shaders need `slangc` from the [Vulkan SDK](https://vulkan.lunarg.com/); see [CONTRIBUTING.md](.github/CONTRIBUTING.md#shaders).
 
 ```sh
 git clone https://github.com/LuxNotAvailable/torch-client-sloppy.git
@@ -60,7 +72,6 @@ See [CONTRIBUTING.md](.github/CONTRIBUTING.md).
 This project vendors modified source from:
 - azalea: [vendor/azalea/LICENSE.md](vendor/azalea/LICENSE.md)
 - bevy_camera: [vendor/bevy_camera/LICENSE-MIT](vendor/bevy_camera/LICENSE-MIT) or [vendor/bevy_camera/LICENSE-APACHE](vendor/bevy_camera/LICENSE-APACHE)
-- bevy_core_pipeline: [vendor/bevy_core_pipeline/LICENSE-MIT](vendor/bevy_core_pipeline/LICENSE-MIT) or [vendor/bevy_core_pipeline/LICENSE-APACHE](vendor/bevy_core_pipeline/LICENSE-APACHE)
 - simdnbt: [vendor/simdnbt/LICENSE](vendor/simdnbt/LICENSE)
 
 Torch is not affiliated with Mojang Studios or Microsoft.
