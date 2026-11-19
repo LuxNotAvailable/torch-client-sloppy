@@ -2329,10 +2329,6 @@ pub fn run(
     .add_systems(Update, update_lightmap.after(FrameViewSystems))
     .add_systems(Update, sync_app_state.after(FrameViewSystems))
     .add_systems(Update, note_frame)
-    .add_systems(
-        Update,
-        super::screenshot::warm_up.run_if(resource_added::<AssetsReady>),
-    )
     .add_systems(First, limit_framerate.before(bevy::time::TimeSystems))
     .add_systems(
         Update,

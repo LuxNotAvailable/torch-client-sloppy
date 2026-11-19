@@ -3,7 +3,7 @@ use bevy::camera::visibility::RenderLayers;
 use bevy::camera::{Camera, ClearColorConfig, PerspectiveProjection, Projection};
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
-use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use wgpu_types::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::gui::GuiState;
 use crate::renderer::AppState;

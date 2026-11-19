@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use bevy::camera::{ClearColorConfig, RenderTarget, ScalingMode};
 use bevy::image::ImageSampler;
 use bevy::prelude::*;
-use bevy::render::render_resource::TextureFormat;
+use wgpu_types::TextureFormat;
 
 use super::anim::AnimSample;
 

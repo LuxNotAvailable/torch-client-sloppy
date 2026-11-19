@@ -8,7 +8,7 @@ use std::sync::Arc;
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::prelude::*;
-use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use wgpu_types::{Extent3d, TextureDimension, TextureFormat};
 
 use super::AppState;
 use super::hand::HandCamera;

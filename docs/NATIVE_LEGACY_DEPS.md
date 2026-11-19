@@ -97,11 +97,13 @@ The pack front end lives in `renderer/packdraw`; the native side compiles and ru
 
 ## 6. GUI textures, screenshots (Bevy images)
 
+Done (step 5): screenshots are `renderer::screenshot::{Screenshot, ScreenshotCaptured}`, captured only by `vk`. `AtlasWrites` lives in the main world only; `vk` drains it. Image formats and sizes come from `wgpu-types` (what `bevy_image` takes), not `bevy_render`.
+
 | Data | Defined | Used (vk) |
 |---|---|---|
 | `gui::pool::GuiTextures` (atlas, unihex handles) + `Assets<Image>` | `src/gui/pool.rs` | `live.rs:745–752` `gui_atlas`, `729–743` `image_data` |
-| `gui::atlas_writes::AtlasWrites` | `src/gui/atlas_writes.rs` | `live.rs:447–453` |
-| Bevy `Screenshot` → native `NativeCapture` → `ScreenshotCaptured` | Bevy `bevy_render` | `live.rs:469–477`, `573`, `1014–1050` `take_captures` |
+| `gui::atlas_writes::AtlasWrites` (main world only) | `src/gui/atlas_writes.rs` | `live.rs:447–453` |
+| `Screenshot` → native `NativeCapture` → `ScreenshotCaptured` | `renderer/screenshot.rs` | `live.rs:469–477`, `573`, `1014–1050` `take_captures` |
 | `TextureFormat` → `vk::Format` | Bevy `bevy_render` | `live.rs:733–739`; `entity_dump.rs:531` |
 
 ## Replacement order (suggested)

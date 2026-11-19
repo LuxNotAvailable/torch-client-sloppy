@@ -469,9 +469,9 @@ fn draw_frame(
         None => (false, None, None),
     };
     // Screenshots the game asked for (`renderer::screenshot`): captured by
-    // the renderer, answered with the event Bevy's renderer would send.
+    // the renderer, answered with `ScreenshotCaptured`.
     let mut requests = world.query_filtered::<Entity, (
-        With<bevy::render::view::screenshot::Screenshot>,
+        With<crate::renderer::screenshot::Screenshot>,
         Without<NativeCapture>,
     )>();
     let shots: Vec<Entity> = requests.iter(world).collect();
@@ -572,7 +572,7 @@ fn draw_frame(
     }
     let captured: Vec<_> = thread.captures.try_iter().flatten().collect();
     for (entity, image) in captured {
-        world.trigger(bevy::render::view::screenshot::ScreenshotCaptured { entity, image });
+        world.trigger(crate::renderer::screenshot::ScreenshotCaptured { entity, image });
         if let Ok(e) = world.get_entity_mut(entity) {
             e.despawn();
         }
@@ -689,7 +689,7 @@ fn image_data(
     images: &Assets<bevy::image::Image>,
     handle: &Handle<bevy::image::Image>,
 ) -> Option<TextureData> {
-    use bevy::render::render_resource::TextureFormat as F;
+    use wgpu_types::TextureFormat as F;
     let image = images.get(handle)?;
     let format = match image.texture_descriptor.format {
         F::Rgba8UnormSrgb => vk::Format::R8G8B8A8_SRGB,
@@ -998,14 +998,14 @@ impl Live {
                 }
                 for entity in entities {
                     let image = bevy::image::Image::new(
-                        bevy::render::render_resource::Extent3d {
+                        wgpu_types::Extent3d {
                             width: extent.width,
                             height: extent.height,
                             depth_or_array_layers: 1,
                         },
-                        bevy::render::render_resource::TextureDimension::D2,
+                        wgpu_types::TextureDimension::D2,
                         rgba.clone(),
-                        bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+                        wgpu_types::TextureFormat::Rgba8UnormSrgb,
                         bevy::asset::RenderAssetUsages::MAIN_WORLD,
                     );
                     out.push((entity, image));

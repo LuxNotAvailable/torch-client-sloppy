@@ -1,20 +1,22 @@
 use bevy::prelude::*;
-use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
 
 use super::systems::Shared;
 
-pub(super) fn warm_up(mut commands: Commands) {
-    commands
-        .spawn(Screenshot::primary_window())
-        .observe(discard);
-}
+/// Asks the renderer to capture the next frame of the window.
+#[derive(Component)]
+pub struct Screenshot;
 
-fn discard(_captured: On<ScreenshotCaptured>) {}
+/// The captured frame, sent to the requesting entity before it despawns.
+#[derive(EntityEvent)]
+pub struct ScreenshotCaptured {
+    pub entity: Entity,
+    pub image: Image,
+}
 
 /// Saves the next frame as `<dir>/<n>.png`, quietly, for capture runs
 /// frames (`MC_AUTO_SHOT_MS`), for comparing culling settings.
 pub(crate) fn request_numbered(commands: &mut Commands, dir: std::path::PathBuf, n: u32) {
-    commands.spawn(Screenshot::primary_window()).observe(
+    commands.spawn(Screenshot).observe(
         move |captured: On<ScreenshotCaptured>| {
             if let Ok(image) = captured.image.clone().try_into_dynamic() {
                 let _ = std::fs::create_dir_all(&dir);
@@ -25,7 +27,7 @@ pub(crate) fn request_numbered(commands: &mut Commands, dir: std::path::PathBuf,
 }
 
 pub(super) fn request(commands: &mut Commands) {
-    commands.spawn(Screenshot::primary_window()).observe(store);
+    commands.spawn(Screenshot).observe(store);
 }
 
 fn store(captured: On<ScreenshotCaptured>, shared: Res<Shared>) {

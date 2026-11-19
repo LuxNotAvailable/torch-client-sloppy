@@ -7,7 +7,7 @@ use bevy::input::mouse::AccumulatedMouseScroll;
 #[cfg(feature = "mobile_ui")]
 use bevy::input::touch::Touches;
 use bevy::prelude::*;
-use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use wgpu_types::{Extent3d, TextureDimension, TextureFormat};
 use bevy::window::PrimaryWindow;
 
 use crate::gui::atlas::GuiAtlas;
@@ -175,20 +175,6 @@ impl Plugin for GuiPlugin {
                 Update,
                 (collect_input, draw_gui, upload_banner_icons).chain(),
             );
-
-        if let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) {
-            render_app
-                .init_resource::<crate::gui::atlas_writes::AtlasWrites>()
-                .add_systems(
-                    bevy::render::ExtractSchedule,
-                    crate::gui::atlas_writes::extract_atlas_writes,
-                )
-                .add_systems(
-                    bevy::render::Render,
-                    crate::gui::atlas_writes::upload_atlas_writes
-                        .in_set(bevy::render::RenderSystems::PrepareResources),
-                );
-        }
 
         #[cfg(feature = "skins")]
         app.init_resource::<crate::gui::player_faces::PlayerFaces>()

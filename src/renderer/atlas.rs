@@ -95,7 +95,7 @@ fn decode_dir(dir: &str) -> BTreeMap<String, image::RgbaImage> {
 }
 
 pub fn build_block_atlas(textures: &Textures, textures_dir: &str) -> (Image, HashMap<String, u32>) {
-    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+    use wgpu_types::{Extent3d, TextureDimension, TextureFormat};
 
     let colormap_dir = format!("{}/colormap", textures_dir);
 

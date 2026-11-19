@@ -152,7 +152,7 @@ pub const GLINT_ITEM: Handle<Image> =
 fn glint_image(name: &str) -> Image {
     use bevy::asset::RenderAssetUsages;
     use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
-    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+    use wgpu_types::{Extent3d, TextureDimension, TextureFormat};
 
     let file = crate::assets_root().join(format!("textures/misc/{name}.png"));
     let (w, h, data) = match crate::platform::assets::open_image(&file) {

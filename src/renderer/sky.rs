@@ -132,7 +132,7 @@ fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
 
 fn load_celestial(path: &std::path::Path) -> Image {
     use bevy::image::ImageSampler;
-    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+    use wgpu_types::{Extent3d, TextureDimension, TextureFormat};
 
     let (w, h, data) = match crate::platform::assets::open_image(path) {
         Ok(img) => {

@@ -920,7 +920,7 @@ fn entity_image_usage() -> bevy::asset::RenderAssetUsages {
 
 pub(crate) fn load_entity_image(path: &str, images: &mut Assets<Image>) -> Option<Handle<Image>> {
     use bevy::image::ImageSampler;
-    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+    use wgpu_types::{Extent3d, TextureDimension, TextureFormat};
 
     let (path, frame) = match path.rsplit_once('#') {
         Some((sheet, frame)) => (sheet, frame.parse::<u32>().ok()),

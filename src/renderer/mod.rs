@@ -51,7 +51,7 @@ pub(crate) fn rgba_image(
     data: Vec<u8>,
     usage: bevy::asset::RenderAssetUsages,
 ) -> bevy::image::Image {
-    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+    use wgpu_types::{Extent3d, TextureDimension, TextureFormat};
 
     let mut image = bevy::image::Image::new(
         Extent3d {

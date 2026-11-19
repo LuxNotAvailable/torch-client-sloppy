@@ -163,6 +163,9 @@ bevy = { version = "0.18", default-features = false, features = [
 # for a `bevy_render` dependency, keep using `bevy::render`.
 bevy_render_trace = { package = "bevy_render", version = "0.18", default-features = false, optional = true }
 
+# Image formats and sizes, as `bevy_image` takes them.
+wgpu-types = { version = "27", default-features = false }
+
 # Shader packs: GLSL in, WGSL out, and wgpu directly.
 naga = { version = "27", default-features = false, features = ["glsl-in", "wgsl-out", "wgsl-in", "spv-out"], optional = true }
 wgpu = { version = "27", default-features = false, optional = true }

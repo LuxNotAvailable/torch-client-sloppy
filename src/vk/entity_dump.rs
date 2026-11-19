@@ -332,7 +332,7 @@ pub fn plugin(app: &mut App) {
 }
 
 fn image_data(image: &Image) -> Option<(u32, u32, Vec<u8>)> {
-    use bevy::render::render_resource::TextureFormat as F;
+    use wgpu_types::TextureFormat as F;
     if !matches!(
         image.texture_descriptor.format,
         F::Rgba8UnormSrgb | F::Rgba8Unorm
