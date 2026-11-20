@@ -129,7 +129,8 @@ impl ShadowChanges {
         if self.log.len() == SHADOW_CHANGE_LOG {
             self.log.pop_front();
         }
-        self.log.push_back((self.generation, origin, Instant::now()));
+        self.log
+            .push_back((self.generation, origin, Instant::now()));
     }
 
     /// Whether a change after `since` lands in `world_clip` (the light's
@@ -1441,6 +1442,15 @@ impl TerrainScene {
     /// Section changes so far (`ShadowChanges::generation`).
     pub fn shadow_generation(&self) -> u64 {
         self.shadow_changes.generation
+    }
+
+    /// The origins of sections changed after `since`, or `None` when some
+    /// fell out of the log.
+    pub fn shadow_changes_since(&self, since: u64) -> Option<Vec<[i32; 3]>> {
+        let c = &self.shadow_changes;
+        let logged_from = c.log.front().map_or(u64::MAX, |e| e.0);
+        (since >= c.generation || since + 1 >= logged_from)
+            .then(|| c.log.iter().filter(|e| e.0 > since).map(|e| e.1).collect())
     }
 
     /// Whether a section changed after `since` lands in the shadow map

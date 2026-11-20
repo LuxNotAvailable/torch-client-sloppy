@@ -8,7 +8,7 @@
 //! commands (6.3). Compute steps are skipped for now.
 
 use ash::vk;
-use bevy::math::{Mat4, UVec2};
+use bevy::math::{Mat4, UVec2, Vec2, Vec3};
 use gpu_allocator::MemoryLocation;
 
 use super::bindless::{Slot, SlotKind};
@@ -139,6 +139,10 @@ pub(crate) struct PackScreen {
     /// This frame's shadow work, for perf reports: "full", "terrain"
     /// (in-map change) or "reuse"; `None` without a shadow pass.
     pub(crate) shadow_kind: Option<&'static str>,
+    /// A terrain-change redraw's map rectangles (`partial_shadow`): the
+    /// kept map is restored and only these are cleared and drawn. Empty
+    /// for a full redraw.
+    shadow_rects: Vec<vk::Rect2D>,
     /// This frame's values, from `begin_frame`.
     values: Option<FrameValues>,
     /// The block atlas (`gtexture` for terrain) and the game's lightmap.
@@ -356,6 +360,7 @@ impl PackScreen {
             shadow_cache_drawn: (0, Mat4::IDENTITY),
             shadow_reuse: false,
             shadow_kind: None,
+            shadow_rects: Vec::new(),
             values: None,
             atlas: terrain.map(|t| t.atlas),
             lightmap: terrain.and_then(|t| t.lightmap),
@@ -1257,8 +1262,22 @@ impl PackScreen {
                 (false, true) => "full",
             }
         });
+        // A terrain change in a kept map: redraw only where it lands.
+        self.shadow_rects.clear();
+        let mut cull = values.shadow_world_clip();
+        if self.shadow_kind == Some("terrain")
+            && self.shadow_cache_filled
+            && self.installed.constants.shadow_cache
+            && let (Some(t), Some(s)) = (terrain, &self.targets.shadow)
+            && let Some(changed) = t.shadow_changes_since(since)
+            && let Some((rects, crop)) = partial_shadow(&changed, cull, s.size)
+        {
+            self.shadow_rects = rects;
+            cull = crop * cull;
+            self.shadow_kind = Some("partial");
+        }
         let shadow = (!self.shadow_reuse && self.passes.iter().any(|p| p.shadow.is_some()))
-            .then(|| (values.shadow_world_clip(), values.camera()));
+            .then(|| (cull, values.camera()));
         self.values = Some(values);
         shadow
     }
@@ -1422,7 +1441,7 @@ impl PackScreen {
         clears.push((self.stubs.uint.0.raw, Some([0.0; 4])));
         if let Some(s) = &t.shadow {
             // A kept map is restored over shadowtex0, not drawn into it.
-            if !self.shadow_reuse {
+            if !self.shadow_reuse && self.shadow_rects.is_empty() {
                 clears.push((s.depth.raw, None));
             }
             if !blending {
@@ -1455,6 +1474,39 @@ impl PackScreen {
                 }
             }
         });
+        // A partial redraw starts from the kept map.
+        if !self.shadow_rects.is_empty()
+            && let Some(s) = &self.targets.shadow
+            && let Some(cache) = &s.depth_cache
+        {
+            let (from, to, side) = (cache.raw, s.depth.raw, s.size);
+            graph.pass(
+                "pack shadow cache restore",
+                &[(from, Use::TransferSrc), (to, Use::TransferDst)],
+                &[],
+                |cmd| unsafe {
+                    // SAFETY: a copy between depth images in transfer layouts.
+                    device.cmd_copy_image(
+                        cmd,
+                        from,
+                        vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                        to,
+                        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                        &[vk::ImageCopy {
+                            src_subresource: layers(vk::ImageAspectFlags::DEPTH),
+                            dst_subresource: layers(vk::ImageAspectFlags::DEPTH),
+                            extent: vk::Extent3D {
+                                width: side,
+                                height: side,
+                                depth: 1,
+                            },
+                            ..Default::default()
+                        }],
+                    );
+                },
+            );
+        }
+        let mut clear_rects = !self.shadow_rects.is_empty();
 
         // Without terrain to draw, the scene's frame stands in for colortex0
         // (bottom row first, as pack targets are stored).
@@ -1874,6 +1926,16 @@ impl PackScreen {
             let hand_pass = pass.hand;
             let clouds_pass = pass.clouds;
             let sky_pass = pass.sky;
+            // Terrain shadow passes of a partial redraw: the first clears
+            // the rectangles, each draws once per rectangle.
+            let rects: Vec<vk::Rect2D> = match pass.geometry {
+                Some(0 | 1) if shadow_pass && entity_pass.is_none() => self.shadow_rects.clone(),
+                _ => Vec::new(),
+            };
+            let clear_here = clear_rects && !rects.is_empty();
+            if clear_here {
+                clear_rects = false;
+            }
             let white = self.stubs.white.1;
             let name = intern(&self.installed.programs[pass.program].name);
             graph.pass(name, &uses, &pass_buffers, |cmd| unsafe {
@@ -1928,6 +1990,30 @@ impl PackScreen {
                         extent,
                     }],
                 );
+                if clear_here {
+                    let clears: Vec<vk::ClearRect> = rects
+                        .iter()
+                        .map(|&rect| vk::ClearRect {
+                            rect,
+                            base_array_layer: 0,
+                            layer_count: 1,
+                        })
+                        .collect();
+                    device.cmd_clear_attachments(
+                        cmd,
+                        &[vk::ClearAttachment {
+                            aspect_mask: vk::ImageAspectFlags::DEPTH,
+                            color_attachment: 0,
+                            clear_value: vk::ClearValue {
+                                depth_stencil: vk::ClearDepthStencilValue {
+                                    depth: 1.0,
+                                    stencil: 0,
+                                },
+                            },
+                        }],
+                        &clears,
+                    );
+                }
                 device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
                 device.cmd_bind_descriptor_sets(
                     cmd,
@@ -2024,18 +2110,35 @@ impl PackScreen {
                     // cutout, one far-to-near list for translucent.
                     Some((slot, t)) if slot < 2 => {
                         let size = crate::vk::terrain::PACK_COMMAND_SIZE;
-                        for (p, (_, indices)) in t.pools.iter().enumerate() {
-                            let list = p as u64 * 2 + slot as u64;
-                            device.cmd_bind_index_buffer(cmd, *indices, 0, vk::IndexType::UINT32);
-                            ctx.draw_indexed_indirect_count(
-                                cmd,
-                                commands.0,
-                                list * u64::from(t.capacity) * size,
-                                commands.1,
-                                list * 4,
-                                t.capacity,
-                                size as u32,
-                            );
+                        let whole = [vk::Rect2D {
+                            offset: vk::Offset2D::default(),
+                            extent,
+                        }];
+                        let scissors = if rects.is_empty() {
+                            &whole[..]
+                        } else {
+                            &rects[..]
+                        };
+                        for scissor in scissors {
+                            device.cmd_set_scissor(cmd, 0, std::slice::from_ref(scissor));
+                            for (p, (_, indices)) in t.pools.iter().enumerate() {
+                                let list = p as u64 * 2 + slot as u64;
+                                device.cmd_bind_index_buffer(
+                                    cmd,
+                                    *indices,
+                                    0,
+                                    vk::IndexType::UINT32,
+                                );
+                                ctx.draw_indexed_indirect_count(
+                                    cmd,
+                                    commands.0,
+                                    list * u64::from(t.capacity) * size,
+                                    commands.1,
+                                    list * 4,
+                                    t.capacity,
+                                    size as u32,
+                                );
+                            }
                         }
                     }
                     Some((_, t)) => {
@@ -2194,6 +2297,166 @@ pub(crate) struct Overlay {
     pub view_proj: Mat4,
 }
 
+/// Torch Vibrant's shadow warp (`SHADOW_DISTORTION` in its shadow.slang).
+const SHADOW_DISTORTION: f32 = 0.85;
+
+/// Light clip x, y to the warped map position.
+fn shadow_warp(c: Vec2) -> Vec2 {
+    c / (c.length() * SHADOW_DISTORTION + (1.0 - SHADOW_DISTORTION))
+}
+
+/// `shadow_warp` undone.
+fn shadow_unwarp(w: Vec2) -> Vec2 {
+    let len = w.length();
+    let c = (1.0 - SHADOW_DISTORTION) * len / (1.0 - SHADOW_DISTORTION * len).max(1e-4);
+    w * (c * SHADOW_DISTORTION + (1.0 - SHADOW_DISTORTION))
+}
+
+/// The bounds of `map` over rectangle `(lo, hi)`, sampled along its edges
+/// (the warp keeps a region's edge its edge).
+fn mapped_bounds(lo: Vec2, hi: Vec2, map: fn(Vec2) -> Vec2) -> (Vec2, Vec2) {
+    const STEPS: usize = 16;
+    let (mut min, mut max) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN));
+    for i in 0..=STEPS {
+        let t = i as f32 / STEPS as f32;
+        let x = lo.x + (hi.x - lo.x) * t;
+        let y = lo.y + (hi.y - lo.y) * t;
+        for p in [
+            Vec2::new(x, lo.y),
+            Vec2::new(x, hi.y),
+            Vec2::new(lo.x, y),
+            Vec2::new(hi.x, y),
+        ] {
+            let m = map(p);
+            min = min.min(m);
+            max = max.max(m);
+        }
+    }
+    (min, max)
+}
+
+/// Most changed sections a partial redraw takes.
+const PARTIAL_SECTIONS: usize = 64;
+/// Most map rectangles a partial redraw draws.
+const PARTIAL_RECTS: usize = 4;
+/// The share of the map past which a partial redraw draws all of it.
+const PARTIAL_SHARE: f32 = 0.4;
+
+/// Where changed sections land in a `side`-texel map seen through
+/// `world_clip`: up to 4 texel rectangles (padded 2 texels), and the crop
+/// that narrows the caster cull to them. `None`: redraw it all.
+fn partial_shadow(
+    changed: &[[i32; 3]],
+    world_clip: Mat4,
+    side: u32,
+) -> Option<(Vec<vk::Rect2D>, Mat4)> {
+    if changed.is_empty() || changed.len() > PARTIAL_SECTIONS {
+        return None;
+    }
+    let pad = 4.0 / side as f32;
+    let mut rects: Vec<(Vec2, Vec2)> = Vec::new();
+    for origin in changed {
+        let lo = Vec3::from_array(origin.map(|v| v as f32));
+        let (mut min, mut max) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN));
+        for i in 0..8 {
+            let corner =
+                lo + Vec3::new((i & 1) as f32, ((i >> 1) & 1) as f32, (i >> 2) as f32) * 16.0;
+            let c = world_clip * corner.extend(1.0);
+            let p = c.truncate().truncate() / c.w;
+            min = min.min(p);
+            max = max.max(p);
+        }
+        if max.x < -1.0 || min.x > 1.0 || max.y < -1.0 || min.y > 1.0 {
+            continue;
+        }
+        let (min, max) = mapped_bounds(min, max, shadow_warp);
+        let (min, max) = (
+            (min - pad).max(Vec2::splat(-1.0)),
+            (max + pad).min(Vec2::splat(1.0)),
+        );
+        if min.x < max.x && min.y < max.y {
+            rects.push((min, max));
+        }
+    }
+    if rects.is_empty() {
+        return None;
+    }
+    merge_rects(&mut rects, PARTIAL_RECTS);
+    let area: f32 = rects.iter().map(|r| (r.1 - r.0).element_product()).sum();
+    if area > PARTIAL_SHARE * 4.0 {
+        return None;
+    }
+    // The cull: the rectangles' union, unwarped, as clip -1..1.
+    let (mut lo, mut hi) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN));
+    for &(min, max) in &rects {
+        let (a, b) = mapped_bounds(min, max, shadow_unwarp);
+        lo = lo.min(a);
+        hi = hi.max(b);
+    }
+    let (lo, hi) = (lo.max(Vec2::splat(-1.0)), hi.min(Vec2::splat(1.0)));
+    let span = (hi - lo).max(Vec2::splat(1e-4));
+    let scale = 2.0 / span;
+    let shift = -(hi + lo) / span;
+    let crop = Mat4::from_cols(
+        bevy::math::Vec4::new(scale.x, 0.0, 0.0, 0.0),
+        bevy::math::Vec4::new(0.0, scale.y, 0.0, 0.0),
+        bevy::math::Vec4::Z,
+        bevy::math::Vec4::new(shift.x, shift.y, 0.0, 1.0),
+    );
+    // Map y runs with clip y: shadow programs don't flip it.
+    let texel = |v: f32| ((v + 1.0) * 0.5 * side as f32).clamp(0.0, side as f32);
+    let rects = rects
+        .iter()
+        .map(|&(min, max)| {
+            let (x0, y0) = (texel(min.x).floor() as u32, texel(min.y).floor() as u32);
+            let (x1, y1) = (texel(max.x).ceil() as u32, texel(max.y).ceil() as u32);
+            vk::Rect2D {
+                offset: vk::Offset2D {
+                    x: x0 as i32,
+                    y: y0 as i32,
+                },
+                extent: vk::Extent2D {
+                    width: x1 - x0,
+                    height: y1 - y0,
+                },
+            }
+        })
+        .collect();
+    Some((rects, crop))
+}
+
+/// Merges overlapping rectangles, then the pair whose union adds the least
+/// area until at most `most` remain.
+fn merge_rects(rects: &mut Vec<(Vec2, Vec2)>, most: usize) {
+    let area = |r: (Vec2, Vec2)| (r.1 - r.0).element_product();
+    let union = |a: (Vec2, Vec2), b: (Vec2, Vec2)| (a.0.min(b.0), a.1.max(b.1));
+    loop {
+        // Overlaps cost nothing, so they merge first: no texel draws twice.
+        let mut best: Option<(usize, usize, f32)> = None;
+        for i in 0..rects.len() {
+            for j in i + 1..rects.len() {
+                let (a, b) = (rects[i], rects[j]);
+                let overlaps = a.0.x < b.1.x && b.0.x < a.1.x && a.0.y < b.1.y && b.0.y < a.1.y;
+                let cost = if overlaps {
+                    f32::MIN
+                } else {
+                    area(union(a, b)) - area(a) - area(b)
+                };
+                if best.is_none_or(|(_, _, c)| cost < c) {
+                    best = Some((i, j, cost));
+                }
+            }
+        }
+        match best {
+            Some((i, j, cost)) if rects.len() > most || cost == f32::MIN => {
+                rects[i] = union(rects[i], rects[j]);
+                rects.swap_remove(j);
+            }
+            _ => return,
+        }
+    }
+}
+
 /// A program's name as a pass label for GPU timing (leaked once per name).
 fn intern(name: &str) -> &'static str {
     static NAMES: std::sync::Mutex<Vec<(String, &'static str)>> = std::sync::Mutex::new(Vec::new());
@@ -2317,4 +2580,73 @@ fn record_mipmaps(device: &ash::Device, graph: &mut Graph, image: &crate::vk::me
             }
         },
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Mat4, Vec2, merge_rects, partial_shadow, shadow_unwarp, shadow_warp};
+
+    /// Clip x, y -1..1 over world x, z -64..64, depth over y 0..256.
+    fn map() -> Mat4 {
+        Mat4::from_cols_array_2d(&[
+            [1.0 / 64.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0 / 256.0, 0.0],
+            [0.0, 1.0 / 64.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ])
+    }
+
+    #[test]
+    fn unwarp_undoes_warp() {
+        for p in [Vec2::new(0.3, -0.7), Vec2::new(-0.95, 0.1), Vec2::ZERO] {
+            assert!(shadow_unwarp(shadow_warp(p)).distance(p) < 1e-4, "{p}");
+        }
+    }
+
+    #[test]
+    fn a_change_redraws_a_small_padded_rect() {
+        let (rects, crop) = partial_shadow(&[[16, 64, 16]], map(), 1024).expect("partial");
+        assert_eq!(rects.len(), 1);
+        let r = rects[0];
+        // The section's warped corners, in texels, lie inside.
+        for (x, z) in [(16.0, 16.0), (32.0, 32.0)] {
+            let w = shadow_warp(Vec2::new(x / 64.0, z / 64.0));
+            let t = (w + 1.0) * 0.5 * 1024.0;
+            assert!(t.x > r.offset.x as f32 && t.x < (r.offset.x + r.extent.width as i32) as f32);
+            assert!(t.y > r.offset.y as f32 && t.y < (r.offset.y + r.extent.height as i32) as f32);
+        }
+        assert!(r.extent.width < 512 && r.extent.height < 512, "{r:?}");
+        // The cull keeps the section and drops one across the map.
+        let keep = crop * map() * bevy::math::Vec4::new(24.0, 64.0, 24.0, 1.0);
+        let drop = crop * map() * bevy::math::Vec4::new(-50.0, 64.0, -50.0, 1.0);
+        assert!(keep.x.abs() <= 1.0 && keep.y.abs() <= 1.0);
+        assert!(drop.x.abs() > 1.0 || drop.y.abs() > 1.0);
+    }
+
+    #[test]
+    fn too_much_change_redraws_it_all() {
+        let all: Vec<[i32; 3]> = (-4..4)
+            .flat_map(|x| (-4..4).map(move |z| [x * 16, 64, z * 16]))
+            .collect();
+        assert!(partial_shadow(&all, map(), 1024).is_none());
+        assert!(
+            partial_shadow(&[[400, 64, 400]], map(), 1024).is_none(),
+            "off the map"
+        );
+    }
+
+    #[test]
+    fn rects_merge_to_four_and_overlaps_merge() {
+        let r = |x: f32, y: f32| (Vec2::new(x, y), Vec2::new(x + 0.1, y + 0.1));
+        let mut rects = vec![
+            r(0.0, 0.0),
+            r(0.05, 0.05),
+            r(0.5, 0.5),
+            r(-0.5, 0.5),
+            r(0.5, -0.5),
+            r(-0.5, -0.5),
+        ];
+        merge_rects(&mut rects, 4);
+        assert_eq!(rects.len(), 4);
+    }
 }
