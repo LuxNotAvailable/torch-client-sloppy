@@ -136,6 +136,9 @@ pub(crate) struct PackScreen {
     /// This frame keeps the cached terrain shadow (`begin_frame`): its
     /// cull and terrain shadow passes are skipped.
     shadow_reuse: bool,
+    /// This frame's shadow work, for perf reports: "full", "terrain"
+    /// (in-map change) or "reuse"; `None` without a shadow pass.
+    pub(crate) shadow_kind: Option<&'static str>,
     /// This frame's values, from `begin_frame`.
     values: Option<FrameValues>,
     /// The block atlas (`gtexture` for terrain) and the game's lightmap.
@@ -352,6 +355,7 @@ impl PackScreen {
             shadow_cache_filled: false,
             shadow_cache_drawn: (0, Mat4::IDENTITY),
             shadow_reuse: false,
+            shadow_kind: None,
             values: None,
             atlas: terrain.map(|t| t.atlas),
             lightmap: terrain.and_then(|t| t.lightmap),
@@ -1246,6 +1250,13 @@ impl PackScreen {
             let generation = terrain.map_or(0, |t| t.shadow_generation());
             self.shadow_cache_drawn = (generation, values.shadow_world_clip());
         }
+        self.shadow_kind = self.passes.iter().any(|p| p.shadow.is_some()).then(|| {
+            match (self.shadow_reuse, values.shadow_moved) {
+                (true, _) => "reuse",
+                (false, false) => "terrain",
+                (false, true) => "full",
+            }
+        });
         let shadow = (!self.shadow_reuse && self.passes.iter().any(|p| p.shadow.is_some()))
             .then(|| (values.shadow_world_clip(), values.camera()));
         self.values = Some(values);

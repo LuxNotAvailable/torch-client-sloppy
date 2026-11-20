@@ -200,6 +200,9 @@ struct Live {
         std::collections::HashMap<&'static str, (f32, u32)>,
         std::time::Instant,
     )>,
+    /// Each frame slot's shadow work (`Screen::shadow_kind`), matched to
+    /// its GPU timings when they are read back.
+    shadow_kinds: [Option<&'static str>; super::frame::FRAMES_IN_FLIGHT],
 }
 
 fn setup(world: &mut World) -> Result<Live, SetupError> {
@@ -269,6 +272,7 @@ fn setup(world: &mut World) -> Result<Live, SetupError> {
         size,
         stale: false,
         gpu_timing: None,
+        shadow_kinds: [None; super::frame::FRAMES_IN_FLIGHT],
     })
 }
 
@@ -1092,6 +1096,17 @@ impl Live {
         }
         if let Some((t, sums, since)) = &mut self.gpu_timing {
             t.begin_frame(&self.ctx, slot);
+            #[cfg(feature = "perf_report")]
+            if let Some(kind) = self.shadow_kinds[slot].take() {
+                let total: f32 = t.last.iter().map(|p| p.1).sum();
+                let shadow: f32 = t
+                    .last
+                    .iter()
+                    .filter(|p| p.0.starts_with("pack shadow"))
+                    .map(|p| p.1)
+                    .sum();
+                crate::diag::perf_report::note_shadow(kind, shadow, total);
+            }
             // Repeated names (one per pass) add up within the frame.
             let mut seen: Vec<&'static str> = Vec::new();
             for &(name, ms) in &t.last {
@@ -1234,7 +1249,9 @@ impl Live {
                         .inverse();
                 let pack_view = (world_from_view, camera.fov.to_radians());
                 let seconds = self.started.elapsed().as_secs_f32();
-                if let Some((light, eye)) = pack.begin_frame(pack_view, pack_extent, seconds, Some(&*terrain))
+                let drawn = pack.begin_frame(pack_view, pack_extent, seconds, Some(&*terrain));
+                self.shadow_kinds[slot] = pack.shadow_kind;
+                if let Some((light, eye)) = drawn
                     && let Err(e) = terrain.record_shadow_cull(
                         &self.ctx,
                         &self.memory,

@@ -87,6 +87,9 @@ pub(crate) struct FrameValues {
     /// This frame keeps the last shadow map rather than drawing one.
     #[allow(dead_code, reason = "the native pack rewrite picks it up")]
     pub(crate) shadow_reused: bool,
+    /// The shadow map's view changed (sun step, cell, first draw), so a
+    /// draw this frame is a full redraw, not a terrain-change one.
+    pub(crate) shadow_moved: bool,
     /// Sun Step Blending: copy the last frame's map to shadowtex1 before
     /// this one is drawn.
     pub(crate) shadow_snapshot: bool,
@@ -210,14 +213,14 @@ impl FrameValues {
         // view stays, moved by how far the camera has gone since (shadow
         // space is relative to the camera), so the old map still lines up.
         let every = crate::shaderpack::frame_state::shadow_every();
-        let mut shadow_reused =
-            every > 1 && frames % every != 0 && history.shadow_drawn.is_some();
+        let mut shadow_reused = every > 1 && frames % every != 0 && history.shadow_drawn.is_some();
         // Shadow cache: the map is drawn for a stepped sun angle about the
         // middle of the camera's cell, and kept while neither those change
         // nor terrain inside it (`terrain_changed`). Held as the Shadow Updates view is, moved by how
         // far the camera has gone since.
         // The sun step is `torchShadowStep` degrees (0.02 is a redraw about
         // every 15th of a second).
+        let mut shadow_moved = !shadow_reused;
         let mut shadow_snapshot = false;
         let mut shadow_blend = 1.0;
         let mut shadow_previous_view = Mat4::IDENTITY;
@@ -227,6 +230,7 @@ impl FrameValues {
             let step = along.round() as i32;
             let cell = (camera / SHADOW_CELL).floor().as_ivec3();
             let key = (step, cell);
+            shadow_moved = history.shadow_key != Some(key) || history.shadow_drawn.is_none();
             shadow_reused = history.shadow_key == Some(key)
                 && !terrain_changed
                 && history.shadow_drawn.is_some();
@@ -276,6 +280,7 @@ impl FrameValues {
         );
         FrameValues {
             shadow_reused,
+            shadow_moved,
             shadow_snapshot,
             shadow_blend,
             shadow_previous_view,

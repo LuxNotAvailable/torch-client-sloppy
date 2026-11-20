@@ -358,6 +358,7 @@ fn sample(
     let upload = uploads.take();
     match capture.phase {
         Phase::Settling { until } => {
+            take_shadow_frames();
             if now >= until {
                 frame_profile::set_capturing(true);
                 capture.counts_at_start = super::counts();
@@ -377,6 +378,7 @@ fn sample(
         Phase::Recording { started, until } => {
             capture.frame_ms.push(time.delta_secs() * 1000.0);
             capture.record_frame(diagnostics.as_deref(), &view);
+            capture.record_shadow();
             capture.record_render_work(upload);
             capture.record_memory(uploads.cpu_bytes());
             capture.record_assets(&uploads);
@@ -393,7 +395,31 @@ fn sample(
     }
 }
 
+/// Frames' shadow work and GPU ms (`note_shadow`), read back on the render
+/// side and drained each recorded frame.
+static SHADOW_FRAMES: Mutex<Vec<(&'static str, f32, f32)>> = Mutex::new(Vec::new());
+
+/// A finished frame's shadow work ("full", "terrain", "reuse"), its shadow
+/// passes' GPU ms and all passes' (needs `MC_NATIVE_GPU_TIMING=1`).
+pub(crate) fn note_shadow(kind: &'static str, shadow_ms: f32, total_ms: f32) {
+    let mut frames = SHADOW_FRAMES.lock().unwrap_or_else(|e| e.into_inner());
+    if frames.len() < 4096 {
+        frames.push((kind, shadow_ms, total_ms));
+    }
+}
+
+fn take_shadow_frames() -> Vec<(&'static str, f32, f32)> {
+    std::mem::take(&mut *SHADOW_FRAMES.lock().unwrap_or_else(|e| e.into_inner()))
+}
+
 impl Capture {
+    fn record_shadow(&mut self) {
+        for (kind, shadow, total) in take_shadow_frames() {
+            self.push(Section::Gpu, format!("shadow passes GPU ms, {kind} frames"), shadow);
+            self.push(Section::Gpu, format!("all passes GPU ms, {kind} frames"), total);
+        }
+    }
+
     fn push(&mut self, section: Section, name: impl Into<String>, value: f32) {
         self.series
             .entry((section, name.into()))
