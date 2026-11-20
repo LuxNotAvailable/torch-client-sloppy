@@ -1937,7 +1937,12 @@ impl PackScreen {
                 clear_rects = false;
             }
             let white = self.stubs.white.1;
-            let name = intern(&self.installed.programs[pass.program].name);
+            // Cutout terrain gets its own label in GPU timings.
+            let program = &self.installed.programs[pass.program].name;
+            let name = match pass.geometry {
+                Some(1) => intern(&format!("{program} cutout")),
+                _ => intern(program),
+            };
             graph.pass(name, &uses, &pass_buffers, |cmd| unsafe {
                 // SAFETY: attachments and sampled images in the layouts the
                 // graph set; the shared layout and set.
