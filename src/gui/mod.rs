@@ -120,6 +120,8 @@ pub enum Screen {
     ZoomSettings,
     BlockOutlineSettings,
     LeafSettings,
+    /// Light shafts' settings, under Video Settings.
+    LightRaySettings,
     /// Inventory sorting's settings, under Features.
     InventorySortSettings,
     /// The end poem and credits, after leaving the End.
@@ -214,7 +216,7 @@ settings_tree! {
     Language | AccessibilitySettings | OnlineSettings | DebugOptions => Options,
     MouseSettings => Controls,
     BlockOutlineSettings => VideoSettings,
-    LeafSettings => VideoSettings,
+    LeafSettings | LightRaySettings => VideoSettings,
     ZoomSettings | BlockInfoSettings | InventorySortSettings | FoodInfoSettings => Features,
     FontSettings => Language,
     #[cfg(audio)]
@@ -495,6 +497,17 @@ crate::options! {
         pub outline_color: u32 = 0 => key("torchOutlineColor").clamp(0, 7),
         /// Block outline opacity, percent (vanilla's is 40).
         pub outline_opacity: u32 = 40 => key("torchOutlineOpacity").clamp(0, 100),
+        /// Light shafts: beams of sun or moonlight through gaps overhead.
+        pub light_rays: bool = true => key("torchLightRays"),
+        /// Light shafts' opacity by day and by night, percent of their own
+        /// (200 is full).
+        pub light_ray_day_opacity: u32 = 200 => key("torchLightRayDayOpacity").clamp(0, 200),
+        pub light_ray_night_opacity: u32 = 200 => key("torchLightRayNightOpacity").clamp(0, 200),
+        /// How much of the biome's tint light shafts take over the sun's
+        /// colour, percent.
+        pub light_ray_tint: u32 = 25 => key("torchLightRayTint").clamp(0, 100),
+        /// How often light shafts spawn, percent of the usual rate.
+        pub light_ray_frequency: u32 = 100 => key("torchLightRayFrequency").clamp(10, 200),
         /// Vanilla's Biome Blend: how far grass, foliage and water colours
         /// average, in blocks (0 to 7).
         pub biome_blend: u32 = 2 => key("biomeBlendRadius").clamp(0, 7),

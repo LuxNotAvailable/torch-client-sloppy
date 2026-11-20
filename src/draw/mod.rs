@@ -83,6 +83,10 @@ const _: () = assert!(std::mem::size_of::<ParticleSprite>() == 80);
 /// The sprite blends (vanilla's translucent particle layer).
 pub const PARTICLE_TRANSLUCENT: u32 = 1;
 
+/// The sprite glows (added, not blended): a light shaft, stretched along
+/// the axis in its `pad` (f32 bits) by `half`, `roll` wide.
+pub const PARTICLE_GLOW: u32 = 2;
+
 /// A screen part's texture that is the terrain atlas (the wall overlay),
 /// which vkview has from the terrain dump.
 pub const TEXTURE_ATLAS: u32 = u32::MAX - 1;

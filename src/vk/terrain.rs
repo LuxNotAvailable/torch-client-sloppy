@@ -2460,8 +2460,15 @@ impl TerrainScene {
         )?;
         self.sort_translucent(uploads, camera.eye, &mut copies);
         let mut voxel_uploads = Vec::new();
-        self.voxels
-            .update(ctx, memory, bindless, uploads, camera.eye, frame, &mut voxel_uploads)?;
+        self.voxels.update(
+            ctx,
+            memory,
+            bindless,
+            uploads,
+            camera.eye,
+            frame,
+            &mut voxel_uploads,
+        )?;
         if let Some((window, _)) = self.voxels.bound() {
             copies.extend(voxel_uploads.into_iter().map(|u| Copy {
                 src: u.src,

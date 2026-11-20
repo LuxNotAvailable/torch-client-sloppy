@@ -551,6 +551,63 @@ pub(crate) fn pack_render_scale_label(value: i32) -> String {
     format!("Shader Render Scale: {value}%")
 }
 
+const LIGHT_RAY_SETTINGS: &str = "Light Rays...";
+const LIGHT_RAYS_TITLE: &str = "Light Rays";
+const LIGHT_RAY_SLIDER_ID: u32 = 80;
+
+fn light_ray_day_label(value: i32) -> String {
+    format!("Day Opacity: {value}%")
+}
+
+fn light_ray_night_label(value: i32) -> String {
+    format!("Night Opacity: {value}%")
+}
+
+fn light_ray_tint_label(value: i32) -> String {
+    format!("Tint Strength: {value}%")
+}
+
+fn light_ray_frequency_label(value: i32) -> String {
+    format!("Frequency: {value}%")
+}
+
+/// Light shafts: on or off, their opacity by day and night, how much
+/// they take the biome's tint, and how often they spawn.
+pub fn draw_light_rays(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
+    let mut form = crate::gui::form::Form::new(p, ctx, LIGHT_RAYS_TITLE, 3, LIGHT_RAY_SLIDER_ID);
+    let o = &mut state.options;
+    form.toggle(LIGHT_RAYS_TITLE, &mut o.light_rays);
+    form.tip(&tips::LIGHT_RAYS);
+    form.slider(&mut o.light_ray_day_opacity, 0, 200, light_ray_day_label);
+    form.tip(&tips::LIGHT_RAY_DAY);
+    form.slider(
+        &mut o.light_ray_night_opacity,
+        0,
+        200,
+        light_ray_night_label,
+    );
+    form.tip(&tips::LIGHT_RAY_NIGHT);
+    form.slider(&mut o.light_ray_tint, 0, 100, light_ray_tint_label);
+    form.tip(&tips::LIGHT_RAY_TINT);
+    form.slider(
+        &mut o.light_ray_frequency,
+        10,
+        200,
+        light_ray_frequency_label,
+    );
+    form.tip(&tips::LIGHT_RAY_FREQUENCY);
+    let hovered = form.hovered_tip();
+    if form.finish() {
+        crate::gui::save_options(&state.options);
+    }
+    if let (Some(tip), Some(m)) = (hovered, ctx.mouse()) {
+        crate::gui::setting_tip::draw(p, tip, None, m.x, m.y, ctx.vw, ctx.vh);
+    }
+    if draw_done(p, ctx) {
+        state.nav = Some(Screen::VideoSettings);
+    }
+}
+
 /// Vanilla's Biome Blend label: off, or the blended square's width.
 fn biome_blend_label(value: i32) -> String {
     if value == 0 {
@@ -1333,6 +1390,10 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
             state.nav = Some(Screen::LeafSettings);
         }
         f.tip(&tips::LEAVES);
+        if f.wide_button(LIGHT_RAY_SETTINGS) {
+            state.nav = Some(Screen::LightRaySettings);
+        }
+        f.tip(&tips::LIGHT_RAYS);
 
         f.header_colored(CAMERA_HEADER, CAMERA_COLOR);
         f.toggle(VIEW_BOBBING, &mut o.view_bobbing);
@@ -2399,8 +2460,8 @@ mod tests {
         // Six headers, then: the preset (1 row); Display (4: frame cap and
         // GUI frame cap, VSync, window size and fullscreen, GUI scale and
         // brightness); Performance (3: render distance and culling, lighting
-        // and shader scale, shader shadows); Quality (7, the last the
-        // Leaves button); Camera (1); Details (3: sign outline and block
+        // and shader scale, shader shadows); Quality (8, the last the
+        // Light Rays button); Camera (1); Details (3: sign outline and block
         // outline, shader packs, reset).
         let atlas = crate::gui::atlas::build_gui_atlas(&crate::assets_root());
         let mut p = Painter::new(&atlas, 0);
@@ -2414,7 +2475,7 @@ mod tests {
         draw_video(&mut p, &mut state, &ctx);
         let shader = cfg!(feature = "shader_support") as u32 as f32;
         let desktop = cfg!(not(target_os = "android")) as u32 as f32;
-        let rows = 1.0 + (3.0 + desktop) + (2.0 + shader) + 7.0 + 1.0 + (2.0 + shader);
+        let rows = 1.0 + (3.0 + desktop) + (2.0 + shader) + 8.0 + 1.0 + (2.0 + shader);
         assert_eq!(
             state.video_list.content_h,
             6.0 * HEADER_H + 5.0 * HEADER_PAD_TOP + rows * ROW_H + LIST_PAD_BOTTOM

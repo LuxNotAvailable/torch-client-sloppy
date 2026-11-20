@@ -690,7 +690,11 @@ fn place(elements: &[&Element], columns: usize) -> (Vec<(usize, f32)>, f32) {
                 column = 0;
             }
             out.push((0, if y > 0.0 { y } else { -HEADER_PAD }));
-            y += if y > 0.0 { HEADER_H } else { HEADER_H - HEADER_PAD };
+            y += if y > 0.0 {
+                HEADER_H
+            } else {
+                HEADER_H - HEADER_PAD
+            };
             continue;
         }
         out.push((column, y));
@@ -951,13 +955,15 @@ mod tests {
             Element::EndIf,
         ];
         let names = |m: &'static str| {
-            shown(&declared, move |name, value| name == "M" && value == m || name == "N")
-                .into_iter()
-                .map(|e| match e {
-                    Element::Option(n) => n.clone(),
-                    _ => unreachable!(),
-                })
-                .collect::<Vec<_>>()
+            shown(&declared, move |name, value| {
+                name == "M" && value == m || name == "N"
+            })
+            .into_iter()
+            .map(|e| match e {
+                Element::Option(n) => n.clone(),
+                _ => unreachable!(),
+            })
+            .collect::<Vec<_>>()
         };
         assert_eq!(names("1"), ["A", "B", "C"]);
         assert_eq!(names("0"), ["A", "D"]);

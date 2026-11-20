@@ -34,6 +34,9 @@ use ambient::*;
 pub(crate) mod draw;
 #[allow(unused_imports)]
 use draw::*;
+mod shaft_profile;
+mod shafts;
+use shafts::{Shafts, tick_shafts};
 
 pub struct ParticlePlugin;
 
@@ -46,6 +49,7 @@ impl Plugin for ParticlePlugin {
             .init_resource::<ParticleBatches>()
             .init_resource::<crate::draw::Particles>()
             .init_resource::<AmbientClock>()
+            .init_resource::<Shafts>()
             .add_systems(OnEnter(AppState::InGame), load_particle_atlas)
             .add_systems(
                 Update,
@@ -54,6 +58,7 @@ impl Plugin for ParticlePlugin {
                     spawn_particles,
                     spawn_crit_particles,
                     animate_tick_particles,
+                    tick_shafts,
                     tick_fireworks,
                     tick_particles,
                     draw_particles,

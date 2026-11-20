@@ -1750,6 +1750,7 @@ settings_screens! {
     ZoomSettings => options::draw_zoom,
     BlockOutlineSettings => options::draw_block_outline,
     LeafSettings => options::draw_leaves,
+    LightRaySettings => options::draw_light_rays,
     Features => options::draw_features,
     InventorySortSettings => options::draw_inventory_sort,
     FoodInfoSettings => options::draw_food_info,

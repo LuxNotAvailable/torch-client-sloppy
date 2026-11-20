@@ -1949,7 +1949,11 @@ impl PackScreen {
                     read_only: false,
                     ..
                 } = b
-                    && let Some(p) = self.installed.buffers.iter().position(|o| o.index == *index)
+                    && let Some(p) = self
+                        .installed
+                        .buffers
+                        .iter()
+                        .position(|o| o.index == *index)
                 {
                     let raw = self.buffers[p].0.raw;
                     for u in pass_buffers.iter_mut().filter(|u| u.0 == raw) {
@@ -2214,7 +2218,14 @@ impl PackScreen {
                                         view_proj: [[0.0; 4]; 4],
                                     },
                                 );
-                                device.cmd_draw_indexed(cmd, count, 1, first, base_vertex, i as u32);
+                                device.cmd_draw_indexed(
+                                    cmd,
+                                    count,
+                                    1,
+                                    first,
+                                    base_vertex,
+                                    i as u32,
+                                );
                             }
                         }
                         // Entities: one draw each, its texture in the push.
@@ -2299,7 +2310,12 @@ impl PackScreen {
                             let (indices, start, count) = t.translucent;
                             if count > 0 {
                                 let size = crate::vk::terrain::PACK_COMMAND_SIZE;
-                                device.cmd_bind_index_buffer(cmd, indices, 0, vk::IndexType::UINT32);
+                                device.cmd_bind_index_buffer(
+                                    cmd,
+                                    indices,
+                                    0,
+                                    vk::IndexType::UINT32,
+                                );
                                 device.cmd_draw_indexed_indirect(
                                     cmd,
                                     commands.0,
@@ -2948,7 +2964,10 @@ mod tests {
         ]);
         let near = partial_cascades(&[[0, 64, 0]], map, &constants, 1024).expect("partial");
         assert_eq!(near.len(), 3);
-        assert!(near.iter().all(|(rects, crop)| !rects.is_empty() && crop.is_some()));
+        assert!(
+            near.iter()
+                .all(|(rects, crop)| !rects.is_empty() && crop.is_some())
+        );
         // Past the middle cascade: the outer alone.
         let far = partial_cascades(&[[96, 64, 96]], map, &constants, 1024).expect("partial");
         assert!(far[0].1.is_none() && far[1].1.is_none());
@@ -2956,7 +2975,10 @@ mod tests {
         // The outer's rectangle sits in its square of the atlas.
         let r = far[2].0[0];
         assert!(r.offset.x >= 1024 && r.offset.y >= 512, "{r:?}");
-        assert!(partial_cascades(&[[9999, 64, 9999]], map, &constants, 1024).is_none(), "off the map");
+        assert!(
+            partial_cascades(&[[9999, 64, 9999]], map, &constants, 1024).is_none(),
+            "off the map"
+        );
     }
 
     #[test]

@@ -146,7 +146,8 @@ fn find_slangc() -> std::path::PathBuf {
 fn compile_torch_pack(slangc: &std::path::Path, android: bool) {
     use std::path::PathBuf;
 
-    let out = PathBuf::from(std::env::var("OUT_DIR").expect("cargo sets OUT_DIR")).join("torch_pack");
+    let out =
+        PathBuf::from(std::env::var("OUT_DIR").expect("cargo sets OUT_DIR")).join("torch_pack");
     std::fs::create_dir_all(&out).expect("creates the pack's output folder");
     let root = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("cargo sets it"))
         .join("src/shaderpack/builtin");
@@ -164,15 +165,27 @@ fn compile_torch_pack(slangc: &std::path::Path, android: bool) {
 
     let mut jobs: Vec<(String, &str, &str)> = Vec::new();
     for program in &programs {
-        let text = std::fs::read_to_string(pack.join(format!("{program}.slang"))).expect("readable");
+        let text =
+            std::fs::read_to_string(pack.join(format!("{program}.slang"))).expect("readable");
         if text.contains("[numthreads(") {
             jobs.push((program.clone(), "compute", "compute"));
             continue;
         }
-        let screen = ["deferred", "composite", "final", "prepare", "begin", "setup"]
-            .iter()
-            .any(|p| program.starts_with(p));
-        let inputs: &[&str] = if screen { &["screen"] } else { &["terrain", "entity"] };
+        let screen = [
+            "deferred",
+            "composite",
+            "final",
+            "prepare",
+            "begin",
+            "setup",
+        ]
+        .iter()
+        .any(|p| program.starts_with(p));
+        let inputs: &[&str] = if screen {
+            &["screen"]
+        } else {
+            &["terrain", "entity"]
+        };
         for input in inputs {
             jobs.push((program.clone(), input, "vertex"));
             jobs.push((program.clone(), input, "fragment"));
@@ -229,7 +242,10 @@ fn compile_torch_pack(slangc: &std::path::Path, android: bool) {
     });
     let failures = failures.into_inner().unwrap();
     if !failures.is_empty() {
-        panic!("slangc failed on the built-in pack:\n{}", failures.join("\n"));
+        panic!(
+            "slangc failed on the built-in pack:\n{}",
+            failures.join("\n")
+        );
     }
 
     let mut listing = String::from(

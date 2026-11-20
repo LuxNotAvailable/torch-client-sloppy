@@ -415,8 +415,16 @@ fn take_shadow_frames() -> Vec<(&'static str, f32, f32)> {
 impl Capture {
     fn record_shadow(&mut self) {
         for (kind, shadow, total) in take_shadow_frames() {
-            self.push(Section::Gpu, format!("shadow passes GPU ms, {kind} frames"), shadow);
-            self.push(Section::Gpu, format!("all passes GPU ms, {kind} frames"), total);
+            self.push(
+                Section::Gpu,
+                format!("shadow passes GPU ms, {kind} frames"),
+                shadow,
+            );
+            self.push(
+                Section::Gpu,
+                format!("all passes GPU ms, {kind} frames"),
+                total,
+            );
         }
     }
 

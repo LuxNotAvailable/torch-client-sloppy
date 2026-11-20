@@ -411,7 +411,10 @@ pub(crate) fn bind_precompiled(
     if missing.is_empty() {
         Ok(words)
     } else {
-        Err(format!("reads what it does not declare: {}", missing.join(", ")))
+        Err(format!(
+            "reads what it does not declare: {}",
+            missing.join(", ")
+        ))
     }
 }
 

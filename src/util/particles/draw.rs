@@ -427,6 +427,8 @@ pub(super) fn fill_draw_list(
     live: Res<LiveParticles>,
     atlas: Res<ParticleAtlas>,
     gui: Option<Res<crate::gui::render::GuiAssets>>,
+    shafts: Res<super::Shafts>,
+    camera: Query<&GlobalTransform, With<WorldCamera>>,
     mut out: ResMut<crate::draw::Particles>,
 ) {
     use crate::draw::{PARTICLE_TRANSLUCENT, ParticleSprite, TEXTURE_ATLAS};
@@ -481,6 +483,9 @@ pub(super) fn fill_draw_list(
             },
             pad: [0; 3],
         });
+    }
+    if let Some(eye) = camera.iter().next().map(GlobalTransform::translation) {
+        super::shafts::beam_sprites(&shafts, eye, &mut out.sprites);
     }
 }
 

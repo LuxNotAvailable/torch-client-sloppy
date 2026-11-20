@@ -77,7 +77,12 @@ pub(crate) fn specialize(words: &mut [u32], value: impl Fn(&str) -> Option<f64>)
                 types.insert(words[at + 1], Scalar::Bool);
             }
             OP_TYPE_INT if count >= 4 && words[at + 2] == 32 => {
-                types.insert(words[at + 1], Scalar::Int { signed: words[at + 3] != 0 });
+                types.insert(
+                    words[at + 1],
+                    Scalar::Int {
+                        signed: words[at + 3] != 0,
+                    },
+                );
             }
             OP_TYPE_FLOAT if count >= 3 && words[at + 2] == 32 => {
                 types.insert(words[at + 1], Scalar::Float);
@@ -150,7 +155,12 @@ mod tests {
         w.extend([(4 << 16) | u32::from(OP_TYPE_INT), 3, 32, 1]);
         w.extend([(2 << 16) | u32::from(OP_TYPE_BOOL), 4]);
         w.extend([(4 << 16) | u32::from(OP_SPEC_CONSTANT), 1, 10, 1]);
-        w.extend([(4 << 16) | u32::from(OP_SPEC_CONSTANT), 2, 11, 2.0f32.to_bits()]);
+        w.extend([
+            (4 << 16) | u32::from(OP_SPEC_CONSTANT),
+            2,
+            11,
+            2.0f32.to_bits(),
+        ]);
         w.extend([(4 << 16) | u32::from(OP_SPEC_CONSTANT), 3, 12, 3]);
         w.extend([(3 << 16) | u32::from(OP_SPEC_CONSTANT_FALSE), 4, 13]);
         w.extend([(4 << 16) | u32::from(OP_SPEC_CONSTANT), 1, 14, 9]);

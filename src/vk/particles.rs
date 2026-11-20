@@ -23,7 +23,7 @@ use super::graph::{Graph, Use};
 use super::memory::{Buffer, Image, Memory};
 use super::pipeline::{GraphicsSpec, Pending, Pipelines, Push, Spec, push};
 use super::{Context, SetupError};
-use crate::draw::{PARTICLE_TRANSLUCENT, ParticleSprite};
+use crate::draw::{PARTICLE_GLOW, PARTICLE_TRANSLUCENT, ParticleSprite};
 
 /// What the particles drew, for the viewer's summary.
 #[derive(Clone, Copy, Debug, Default)]
@@ -37,6 +37,39 @@ pub struct ParticleStats {
 struct Pipes {
     cutout: vk::Pipeline,
     blend: vk::Pipeline,
+    /// Light shafts, added.
+    glow: vk::Pipeline,
+}
+
+impl Pipes {
+    fn all(self) -> [vk::Pipeline; 3] {
+        [self.cutout, self.blend, self.glow]
+    }
+
+    fn of(built: &[vk::Pipeline]) -> Pipes {
+        Pipes {
+            cutout: built[0],
+            blend: built[1],
+            glow: built[2],
+        }
+    }
+}
+
+/// Splits sprites into the three layers, each in spawn order: opaque,
+/// translucent, then glowing, with the count of each.
+fn layers(sprites: Vec<ParticleSprite>) -> (Vec<ParticleSprite>, u32, u32, u32) {
+    let (glow, rest): (Vec<ParticleSprite>, Vec<ParticleSprite>) = sprites
+        .into_iter()
+        .partition(|s| s.flags & PARTICLE_GLOW != 0);
+    let (mut out, translucent): (Vec<ParticleSprite>, Vec<ParticleSprite>) = rest
+        .into_iter()
+        .partition(|s| s.flags & PARTICLE_TRANSLUCENT == 0);
+    let cutout = out.len() as u32;
+    let translucent_count = translucent.len() as u32;
+    let glow_count = glow.len() as u32;
+    out.extend(translucent);
+    out.extend(glow);
+    (out, cutout, translucent_count, glow_count)
 }
 
 pub struct ParticleScene {
@@ -49,9 +82,10 @@ pub struct ParticleScene {
     /// The staging, the textures' offsets in it, and the frame it was
     /// copied in.
     staging: Option<(Buffer, Vec<u64>, Option<u64>)>,
-    /// Opaque sprites first, then translucent: how many of each.
+    /// Opaque sprites first, then translucent, then glowing: how many of each.
     cutout: u32,
     translucent: u32,
+    glow: u32,
     pub stats: ParticleStats,
     /// The live renderer's state (`update`), for a scene kept across frames.
     live: Option<Live>,
@@ -106,7 +140,7 @@ impl ParticleScene {
             Some((m, ..)) => *m,
             None => pipelines.module(ctx, super::shaders::PARTICLE)?,
         };
-        let stream = |fragment: &std::ffi::CStr, depth_write, compare, blend| {
+        let stream = |fragment: &std::ffi::CStr, depth_write, compare, blend, additive| {
             Spec::Graphics(GraphicsSpec {
                 module,
                 vertex: c"particle_vertex".to_owned(),
@@ -119,7 +153,7 @@ impl ParticleScene {
                 cull: vk::CullModeFlags::NONE,
                 topology: vk::PrimitiveTopology::TRIANGLE_LIST,
                 blend,
-                additive: false,
+                additive,
                 fragment_module: None,
             })
         };
@@ -134,12 +168,21 @@ impl ParticleScene {
                         true,
                         vk::CompareOp::GREATER_OR_EQUAL,
                         false,
+                        false,
                     ),
                     // Vanilla's translucent particles test depth and leave it.
                     stream(
                         c"particle_blend",
                         false,
                         vk::CompareOp::GREATER_OR_EQUAL,
+                        true,
+                        false,
+                    ),
+                    stream(
+                        c"particle_glow",
+                        false,
+                        vk::CompareOp::GREATER_OR_EQUAL,
+                        true,
                         true,
                     ),
                 ],
@@ -148,13 +191,7 @@ impl ParticleScene {
 
         // Opaque sprites first, then translucent, each in the snapshot's
         // (spawn) order.
-        let (mut sprites, translucent): (Vec<ParticleSprite>, Vec<ParticleSprite>) = snapshot
-            .sprites
-            .into_iter()
-            .partition(|s| s.flags & PARTICLE_TRANSLUCENT == 0);
-        let cutout = sprites.len() as u32;
-        let translucent_count = translucent.len() as u32;
-        sprites.extend(translucent);
+        let (mut sprites, cutout, translucent_count, glow_count) = layers(snapshot.sprites);
 
         let mut textures = Vec::new();
         let mut texture_sizes = Vec::new();
@@ -229,6 +266,7 @@ impl ParticleScene {
             staging: Some((staging, texture_offsets, None)),
             cutout,
             translucent: translucent_count,
+            glow: glow_count,
             stats,
             live: None,
             pack_pipes,
@@ -249,13 +287,13 @@ impl ParticleScene {
             && let Some((_, pending, built)) = self.pack_pipes.take()
         {
             self.stale_pipes
-                .extend(built.into_iter().flat_map(|p| [p.cutout, p.blend]));
+                .extend(built.into_iter().flat_map(Pipes::all));
             if let Some(Ok((b, _))) = pending.and_then(|mut p| p.wait()) {
                 self.stale_pipes.extend(b);
             }
         }
         if self.pack_pipes.is_none() {
-            let spec = |fragment: &std::ffi::CStr, blend| {
+            let spec = |fragment: &std::ffi::CStr, blend, additive| {
                 Spec::Graphics(GraphicsSpec {
                     module: self.module,
                     vertex: c"particle_vertex".to_owned(),
@@ -267,15 +305,16 @@ impl ParticleScene {
                     cull: vk::CullModeFlags::NONE,
                     topology: vk::PrimitiveTopology::TRIANGLE_LIST,
                     blend,
-                    additive: false,
+                    additive,
                     fragment_module: None,
                 })
             };
             let pending = pipelines.build_on_worker(
                 ctx,
                 vec![
-                    spec(c"particle_cutout", false),
-                    spec(c"particle_blend", true),
+                    spec(c"particle_cutout", false, false),
+                    spec(c"particle_blend", true, false),
+                    spec(c"particle_glow", true, true),
                 ],
             );
             self.pack_pipes = Some((color, Some(pending), None));
@@ -284,10 +323,7 @@ impl ParticleScene {
         if built.is_none()
             && let Some(Ok((b, _))) = pending.as_mut().and_then(|p| p.take())
         {
-            *built = Some(Pipes {
-                cutout: b[0],
-                blend: b[1],
-            });
+            *built = Some(Pipes::of(&b));
             *pending = None;
         }
         *built
@@ -328,6 +364,15 @@ impl ParticleScene {
             ids,
             (self.cutout, self.translucent),
         );
+        self.draw(
+            ctx,
+            cmd,
+            pipelines,
+            pipes.glow,
+            (view_proj, camera),
+            ids,
+            (self.cutout + self.translucent, self.glow),
+        );
     }
 
     /// Builds or picks up the pack pipelines for `color` before a pass
@@ -341,10 +386,7 @@ impl ParticleScene {
             && let Some(result) = self.pending.as_mut().and_then(|p| p.take())
         {
             let (built, _) = result?;
-            self.pipes = Some(Pipes {
-                cutout: built[0],
-                blend: built[1],
-            });
+            self.pipes = Some(Pipes::of(&built));
             self.pending = None;
         }
         Ok(self.pipes)
@@ -542,6 +584,15 @@ impl ParticleScene {
             (mode, view_index, atlas_index),
             (self.cutout, self.translucent),
         );
+        self.draw(
+            ctx,
+            cmd,
+            pipelines,
+            pipes.glow,
+            (view_proj, camera),
+            (mode, view_index, atlas_index),
+            (self.cutout + self.translucent, self.glow),
+        );
     }
 
     /// Gives the scene's bindless slots back (see `EntityScene::release`).
@@ -553,13 +604,11 @@ impl ParticleScene {
     }
 
     pub fn destroy(mut self, ctx: &Context, memory: &Memory) {
-        let mut pipelines: Vec<vk::Pipeline> = self
-            .pipes
-            .map(|p| vec![p.cutout, p.blend])
-            .unwrap_or_default();
+        let mut pipelines: Vec<vk::Pipeline> =
+            self.pipes.map(|p| p.all().to_vec()).unwrap_or_default();
         pipelines.append(&mut self.stale_pipes);
         if let Some((_, pending, built)) = self.pack_pipes.take() {
-            pipelines.extend(built.into_iter().flat_map(|p| [p.cutout, p.blend]));
+            pipelines.extend(built.into_iter().flat_map(Pipes::all));
             if let Some(Ok((b, _))) = pending.and_then(|mut p| p.wait()) {
                 pipelines.extend(b);
             }
@@ -631,13 +680,10 @@ impl ParticleScene {
             self.texture_sizes.push((w, h));
         }
         // Opaque sprites first, then translucent, each in spawn order.
-        let (mut sprites, translucent): (Vec<ParticleSprite>, Vec<ParticleSprite>) = frame_data
-            .sprites
-            .into_iter()
-            .partition(|s| s.flags & PARTICLE_TRANSLUCENT == 0);
-        self.cutout = sprites.len() as u32;
-        self.translucent = translucent.len() as u32;
-        sprites.extend(translucent);
+        let (mut sprites, cutout, translucent, glow) = layers(frame_data.sprites);
+        self.cutout = cutout;
+        self.translucent = translucent;
+        self.glow = glow;
         for sprite in &mut sprites {
             if sprite.texture != crate::draw::TEXTURE_ATLAS {
                 sprite.texture = live

@@ -76,6 +76,26 @@ pub const PARTICLES: Tip = Tip::new(
     "How many particles appear: rain splashes, smoke, block breaking. Decreased and Minimal skip some.",
     Impact::Medium,
 );
+pub const LIGHT_RAYS: Tip = Tip::new(
+    "Beams of sun and moonlight falling through gaps in leaves and overhangs.",
+    Impact::Low,
+);
+pub const LIGHT_RAY_DAY: Tip = Tip::new(
+    "How visible the beams of sunlight are. 0 hides them.",
+    Impact::Low,
+);
+pub const LIGHT_RAY_NIGHT: Tip = Tip::new(
+    "How visible the beams of moonlight are. 0 hides them.",
+    Impact::Low,
+);
+pub const LIGHT_RAY_TINT: Tip = Tip::new(
+    "How much the beams take on the biome's colour instead of the sun's.",
+    Impact::Low,
+);
+pub const LIGHT_RAY_FREQUENCY: Tip = Tip::new(
+    "How often new beams of sunlight appear. Higher shows more at once.",
+    Impact::Low,
+);
 pub const LEAVES: Tip = Tip::new(
     "How leaves are drawn: fancy, fast or a mix by distance, and which leaf faces are hidden.",
     Impact::Medium,

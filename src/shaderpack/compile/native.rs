@@ -95,7 +95,6 @@ fn kind_slots(kind: ProgramKind) -> &'static str {
     }
 }
 
-
 /// What the file reads, declared for it.
 struct Declarations {
     interface: Interface,
@@ -312,17 +311,21 @@ impl Values<'_> {
                     _ => 6.0,
                 },
             }),
-            "IRIS_ALPHA_REF" => Some(self.alpha.map_or(-1.0, |t| f64::from(t.wrapper_reference()))),
+            "IRIS_ALPHA_REF" => Some(
+                self.alpha
+                    .map_or(-1.0, |t| f64::from(t.wrapper_reference())),
+            ),
             _ => self.defines.get(name)?.trim().parse().ok(),
         }
     }
 
     /// `words` with every constant but the slots set.
     fn apply(&self, mut words: Vec<u32>, label: &str) -> Result<Vec<u32>, String> {
-        let missing: Vec<String> = crate::shaderpack::spirv::specialize(&mut words, |n| self.get(n))
-            .into_iter()
-            .filter(|n| !n.starts_with("IRIS_SLOT_"))
-            .collect();
+        let missing: Vec<String> =
+            crate::shaderpack::spirv::specialize(&mut words, |n| self.get(n))
+                .into_iter()
+                .filter(|n| !n.starts_with("IRIS_SLOT_"))
+                .collect();
         if missing.is_empty() {
             Ok(words)
         } else {
@@ -393,7 +396,10 @@ pub(super) fn compile_draw(
             alpha: Some(*test),
             ..plain
         };
-        fragment_tests.push((*test, tested.apply(fragment_words.clone(), &label("fragment"))?));
+        fragment_tests.push((
+            *test,
+            tested.apply(fragment_words.clone(), &label("fragment"))?,
+        ));
     }
     let mipmapped = directives::mipmapped([text.as_str()]);
     let precompiled = Precompiled {
@@ -490,7 +496,11 @@ pub(super) fn compile_compute(
             fragment_tests: Vec::new(),
             alpha_override: None,
             fragment_linear: None,
-            compute: Some(format!("{}{}", declared.header, kind_slots(ProgramKind::Compute))),
+            compute: Some(format!(
+                "{}{}",
+                declared.header,
+                kind_slots(ProgramKind::Compute)
+            )),
             compute_used: None,
             compute_parity: None,
             dispatch,
@@ -551,8 +561,14 @@ mod tests {
     fn kind_slots_match_the_preludes() {
         let common = include_str!("../builtin/iris/iris.slang");
         let preludes = [
-            (ProgramKind::Geometry, include_str!("../builtin/iris/terrain.slang")),
-            (ProgramKind::Entity, include_str!("../builtin/iris/entity.slang")),
+            (
+                ProgramKind::Geometry,
+                include_str!("../builtin/iris/terrain.slang"),
+            ),
+            (
+                ProgramKind::Entity,
+                include_str!("../builtin/iris/entity.slang"),
+            ),
             (ProgramKind::Screen, ""),
             (ProgramKind::Compute, ""),
         ];

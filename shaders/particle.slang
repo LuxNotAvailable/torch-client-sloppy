@@ -20,6 +20,12 @@ static const uint S_COLOR = 32;
 static const uint S_ROLL = 48;
 static const uint S_TEXTURE = 52;
 static const uint S_LEVELS = 56;
+static const uint S_FLAGS = 64;
+static const uint S_AXIS = 68;
+
+// A light shaft (`PARTICLE_GLOW`): stretched along S_AXIS by its half,
+// S_ROLL wide, turned about the axis to face the eye; added.
+static const uint FLAG_GLOW = 2;
 
 // A sprite's texture that is the block atlas, which the terrain holds.
 static const uint TEXTURE_ATLAS = 0xFFFFFFFE;
@@ -50,7 +56,13 @@ SpriteOut particle_vertex(uint vertex: SV_VulkanVertexID, uint sprite: SV_Vulkan
     float roll = asfloat(sprites.Load(at + S_ROLL));
     float3 right = pc.params.xyz * centre.w;
     float3 up = asfloat(pc.more.yzw) * centre.w;
-    if (roll != 0.0) {
+    if ((sprites.Load(at + S_FLAGS) & FLAG_GLOW) != 0) {
+        float3 axis = asfloat(sprites.Load3(at + S_AXIS));
+        float3 eye = asfloat(buffer_at(pc.ids.y).Load3(VIEW_CAMERA));
+        float3 across = cross(axis, eye - centre.xyz);
+        right = normalize(dot(across, across) > 1e-8 ? across : pc.params.xyz) * roll;
+        up = axis * centre.w;
+    } else if (roll != 0.0) {
         float s = sin(roll);
         float c = cos(roll);
         float3 r = right * c + up * s;
@@ -95,6 +107,22 @@ float4 particle_cutout(SpriteOut in): SV_Target {
         discard;
     }
     return float4(color.rgb, 1);
+}
+
+// Light shafts, added. The beam's alpha follows a soft beam texture's:
+// a narrow Gaussian across, peaking near the top (v 0) and fading out
+// toward the floor, at most 0.72.
+[shader("fragment")]
+float4 particle_glow(SpriteOut in): SV_Target {
+    float x = (in.uv.x - 0.5) / 0.16;
+    float across = exp(-x * x);
+    float v = in.uv.y;
+    float along = smoothstep(0.0, 0.18, v) * (1.0 - smoothstep(0.18, 0.92, v));
+    float a = 0.72 * across * along * in.color.a;
+    if (a <= 0.0) {
+        discard;
+    }
+    return float4(in.color.rgb * a, a);
 }
 
 // The translucent layer: blended, and nothing fully clear drawn.
