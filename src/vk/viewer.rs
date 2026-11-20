@@ -129,7 +129,12 @@ fn options(args: Vec<String>) -> Options {
             "--panorama" => options.panorama = true,
             // Pack terrain pulls raw vertices, not packed quads.
             "--pack" => {
-                options.pack = args.next();
+                // `builtin`: Torch Vibrant, whose name has spaces (args.txt
+                // splits on them).
+                options.pack = args.next().map(|n| match n.as_str() {
+                    "builtin" => crate::shaderpack::builtin::NAME.to_owned(),
+                    _ => n,
+                });
                 options.terrain_options.packed = false;
             }
             "--greedy" => options.greedy = true,

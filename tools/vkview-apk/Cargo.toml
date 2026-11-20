@@ -35,7 +35,6 @@ label = "Torch vkview"
 [patch.crates-io]
 bevy_camera = { path = "../../vendor/bevy_camera" }
 simdnbt = { path = "../../vendor/simdnbt" }
-bevy_core_pipeline = { path = "../../vendor/bevy_core_pipeline" }
 
 [profile.release]
 strip = true
