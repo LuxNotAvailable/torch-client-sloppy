@@ -842,8 +842,7 @@ impl PackScreen {
                     super::bindless::bind_precompiled(words, &module.wgsl, &mut slots, &per_draw)
                 }
                 None => {
-                    let wgsl =
-                        super::bindless::rewrite_shared(&module.wgsl, &mut slots, &per_draw);
+                    let wgsl = super::bindless::rewrite_shared(&module.wgsl, &mut slots, &per_draw);
                     crate::shaderpack::backend::wgsl_to_spirv_aliased(&wgsl)
                 }
             }
@@ -1215,7 +1214,8 @@ impl PackScreen {
         let (world_from_view, fov) = camera;
         // Without the terrain to ask, assume it changed.
         let (since, clip) = self.shadow_cache_drawn;
-        let terrain_changed = terrain.is_none_or(|t| t.shadow_changed_since(since, clip));
+        let eye = world_from_view.w_axis.truncate();
+        let terrain_changed = terrain.is_none_or(|t| t.shadow_changed_since(since, clip, eye));
         let values = FrameValues::of_camera(
             world_from_view,
             1.0 / (fov * 0.5).tan(),
@@ -1372,7 +1372,8 @@ impl PackScreen {
         }
         // Sun Step Blending keeps the last step's map in shadowtex1: on a
         // step, last frame's shadowtex0 goes there before it is redrawn.
-        let blending = self.installed.constants.shadow_cache && self.installed.constants.shadow_lerp;
+        let blending =
+            self.installed.constants.shadow_cache && self.installed.constants.shadow_lerp;
         let snapshot = blending && self.values.as_ref().is_some_and(|v| v.shadow_snapshot);
         if snapshot && let Some(s) = &self.targets.shadow {
             let (from, to, side) = (s.depth.raw, s.depth_opaque.raw, s.size);
@@ -1746,13 +1747,13 @@ impl PackScreen {
                 (Some(0 | 1), _)
                     if self.shadow_reuse && pass.shadow.is_some() && pass.entity.is_none() =>
                 {
-                    continue
+                    continue;
                 }
                 (Some(_), Some(t)) if pass.clouds && t.clouds.is_none() => continue,
                 (Some(_), Some(t))
                     if pass.entity.is_some() && !pass.clouds && t.entities.is_none() =>
                 {
-                    continue
+                    continue;
                 }
                 (Some(_), Some(t)) if pass.sky.is_some() && t.sky.is_none() => continue,
                 (Some(_), Some(t)) if pass.hand && t.hand.is_none() => continue,

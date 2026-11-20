@@ -23,6 +23,7 @@
 //! it was.
 
 use std::collections::{HashMap, VecDeque};
+use std::time::{Duration, Instant};
 
 use ash::vk;
 use bevy::math::{IVec3, Mat4, Vec3};
@@ -91,14 +92,21 @@ const SHADOW_CASTER_BELOW: f32 = 48.0;
 /// redraw than this and the map is redrawn regardless.
 const SHADOW_CHANGE_LOG: usize = 1024;
 
+/// Shadow changes within this many blocks of the eye redraw the next frame.
+const SHADOW_NEAR: f32 = 64.0;
+
+/// Farther changes wait until the oldest is this old, so a chunk-loading
+/// burst is one redraw.
+const SHADOW_FAR_BATCH: Duration = Duration::from_millis(200);
+
 /// Section uploads and removals, for the shadow cache: a map drawn at an
 /// older generation is stale if a later change lands in it.
 #[derive(Default)]
 struct ShadowChanges {
     /// Bumped on every change.
     generation: u64,
-    /// The latest changes: each one's generation and section origin.
-    log: VecDeque<(u64, [i32; 3])>,
+    /// The latest changes: each one's generation, section origin and time.
+    log: VecDeque<(u64, [i32; 3], Instant)>,
     /// Each live layer's geometry hash (`geometry_hash`), so a remesh that
     /// only changes light or colour logs nothing.
     hashes: HashMap<([i32; 3], bool), u64>,
@@ -121,12 +129,14 @@ impl ShadowChanges {
         if self.log.len() == SHADOW_CHANGE_LOG {
             self.log.pop_front();
         }
-        self.log.push_back((self.generation, origin));
+        self.log.push_back((self.generation, origin, Instant::now()));
     }
 
     /// Whether a change after `since` lands in `world_clip` (the light's
-    /// world-to-clip, z 0..1). Changes older than the log count as landing.
-    fn since(&self, since: u64, world_clip: Mat4) -> bool {
+    /// world-to-clip, z 0..1) and is due: near `eye` at once, farther ones
+    /// once the oldest is `SHADOW_FAR_BATCH` old. Changes older than the log
+    /// count as landing.
+    fn since(&self, since: u64, world_clip: Mat4, eye: Vec3, now: Instant) -> bool {
         if since >= self.generation {
             return false;
         }
@@ -136,8 +146,12 @@ impl ShadowChanges {
         }
         self.log
             .iter()
-            .filter(|c| c.0 > since)
-            .any(|c| section_in_clip(c.1, world_clip))
+            .filter(|c| c.0 > since && section_in_clip(c.1, world_clip))
+            .any(|c| {
+                let centre = Vec3::from_array(c.1.map(|v| v as f32)) + 8.0;
+                centre.distance(eye) <= SHADOW_NEAR
+                    || now.saturating_duration_since(c.2) >= SHADOW_FAR_BATCH
+            })
     }
 }
 
@@ -1430,9 +1444,10 @@ impl TerrainScene {
     }
 
     /// Whether a section changed after `since` lands in the shadow map
-    /// `world_clip` sees (`ShadowChanges::since`).
-    pub fn shadow_changed_since(&self, since: u64, world_clip: Mat4) -> bool {
-        self.shadow_changes.since(since, world_clip)
+    /// `world_clip` sees and is due (`ShadowChanges::since`).
+    pub fn shadow_changed_since(&self, since: u64, world_clip: Mat4, eye: Vec3) -> bool {
+        self.shadow_changes
+            .since(since, world_clip, eye, Instant::now())
     }
 
     /// Culls the terrain for a pack's shadow pass, from the light's
@@ -3294,8 +3309,14 @@ impl TerrainScene {
 
 #[cfg(test)]
 mod tests {
-    use super::{SHADOW_CHANGE_LOG, ShadowChanges};
-    use bevy::math::Mat4;
+    use super::{SHADOW_CHANGE_LOG, SHADOW_FAR_BATCH, ShadowChanges};
+    use bevy::math::{Mat4, Vec3};
+    use std::time::Instant;
+
+    /// `since` from the origin, now.
+    fn stale(changes: &ShadowChanges, since: u64) -> bool {
+        changes.since(since, map(), Vec3::ZERO, Instant::now())
+    }
 
     /// Clip x, y -1..1 over world x, z -32..32, depth 0..1 over y 0..256.
     fn map() -> Mat4 {
@@ -3311,10 +3332,10 @@ mod tests {
     fn only_changes_in_the_map_make_it_stale() {
         let mut changes = ShadowChanges::default();
         changes.note([400, 64, 400]);
-        assert!(!changes.since(0, map()), "out of the map");
-        changes.note([-16, 64, 0]);
-        assert!(changes.since(0, map()), "in the map");
-        assert!(!changes.since(changes.generation, map()), "nothing newer");
+        assert!(!stale(&changes, 0), "out of the map");
+        changes.note([-16, 0, 0]);
+        assert!(stale(&changes, 0), "in the map");
+        assert!(!stale(&changes, changes.generation), "nothing newer");
     }
 
     #[test]
@@ -3323,8 +3344,19 @@ mod tests {
         for _ in 0..SHADOW_CHANGE_LOG + 1 {
             changes.note([400, 64, 400]);
         }
-        assert!(changes.since(0, map()));
-        assert!(!changes.since(1, map()));
+        assert!(stale(&changes, 0));
+        assert!(!stale(&changes, 1));
+    }
+
+    #[test]
+    fn far_changes_wait_for_the_batch() {
+        let mut changes = ShadowChanges::default();
+        changes.note([-32, 200, 16]);
+        assert!(!stale(&changes, 0), "far, just now");
+        let later = Instant::now() + SHADOW_FAR_BATCH;
+        assert!(changes.since(0, map(), Vec3::ZERO, later), "far, batch due");
+        changes.note([0, 0, 0]);
+        assert!(stale(&changes, 1), "near");
     }
 
     #[test]
