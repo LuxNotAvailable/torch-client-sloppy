@@ -39,7 +39,9 @@ struct Look {
     color: [u8; 4],
 }
 
-pub fn estimate(sections: &[Section]) -> Estimate {
+/// `texture_only`: neighbours need only the same texture and uv layout, as
+/// if light, colour and AO were shaded per pixel instead of per vertex.
+pub fn estimate(sections: &[Section], texture_only: bool) -> Estimate {
     let mut total = Estimate::default();
     for section in sections.iter().filter(|s| !s.water) {
         // (direction, plane) -> cell -> look id
@@ -52,7 +54,7 @@ pub fn estimate(sections: &[Section]) -> Estimate {
                 total.after += 1;
                 continue;
             };
-            match face(corners) {
+            match face(corners, texture_only) {
                 Some((dir, plane, cell, look)) => {
                     total.candidates += 1;
                     let next = looks.len();
@@ -71,10 +73,13 @@ pub fn estimate(sections: &[Section]) -> Estimate {
 
 /// A whole, evenly lit block face: its direction, plane, cell in the plane
 /// and look; `None` for anything else.
-fn face(corners: &[PackedVertex]) -> Option<(usize, i32, (i32, i32), Look)> {
-    let light = corners[0].light;
-    let color = corners[0].color;
-    if corners.iter().any(|v| v.light != light || v.color != color) {
+fn face(corners: &[PackedVertex], texture_only: bool) -> Option<(usize, i32, (i32, i32), Look)> {
+    let (light, color) = if texture_only {
+        Default::default()
+    } else {
+        (corners[0].light, corners[0].color)
+    };
+    if !texture_only && corners.iter().any(|v| v.light != light || v.color != color) {
         return None;
     }
     let pos: Vec<[i32; 3]> = corners

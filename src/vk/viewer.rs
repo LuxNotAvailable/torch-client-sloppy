@@ -1399,13 +1399,20 @@ pub fn run(args: Vec<String>) -> i32 {
         let bytes = std::fs::read(dir.join("sections.bin")).unwrap_or_default();
         match crate::vk::terrain_dump::read(&bytes) {
             Ok(sections) => {
-                let e = crate::vk::greedy::estimate(&sections);
+                let e = crate::vk::greedy::estimate(&sections, false);
                 println!(
                     "vkview: {} opaque quads, {} whole evenly lit faces; greedy meshing leaves {} ({:.1}% fewer)",
                     e.quads,
                     e.candidates,
                     e.after,
                     e.saving() * 100.0
+                );
+                let t = crate::vk::greedy::estimate(&sections, true);
+                println!(
+                    "vkview: texture-only matching (light per pixel): {} whole faces; leaves {} ({:.1}% fewer)",
+                    t.candidates,
+                    t.after,
+                    t.saving() * 100.0
                 );
             }
             Err(e) => eprintln!("vkview: {e}"),
