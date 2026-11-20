@@ -167,6 +167,8 @@ struct Live {
     pack_revision: u64,
     /// When the chosen pack was last looked up, and the name found.
     pack_checked: Option<(std::time::Instant, Option<String>)>,
+    /// The pack being installed on a worker; the old pack draws meanwhile.
+    pack_job: Option<PackJob>,
     /// The frame's pack inputs (time of day, weather, the eye's light).
     pack_inputs: Option<crate::shaderpack::inputs::Inputs>,
     started: std::time::Instant,
@@ -257,6 +259,7 @@ fn setup(world: &mut World) -> Result<Live, SetupError> {
         pack: None,
         pack_revision: 0,
         pack_checked: None,
+        pack_job: None,
         pack_inputs: None,
         started: std::time::Instant::now(),
         menu: false,
@@ -278,6 +281,15 @@ fn setup(world: &mut World) -> Result<Live, SetupError> {
 
 /// Where the pipeline cache lives: the temp folder, or on Android (where
 /// that isn't the app's) the game's own data folder.
+/// A pack install (`pack::load`: compiling and laying out its programs)
+/// running on a worker, for the name and options revision it started with.
+struct PackJob {
+    name: String,
+    revision: u64,
+    started: std::time::Instant,
+    handle: std::thread::JoinHandle<Result<crate::shaderpack::install::Installed, String>>,
+}
+
 fn pipeline_cache_path() -> std::path::PathBuf {
     #[cfg(target_os = "android")]
     {
@@ -924,25 +936,65 @@ impl Live {
         else {
             return;
         };
-        self.ctx.idle();
-        if let Some((_, old, _)) = self.pack.take() {
-            old.destroy(&self.ctx, &self.memory);
-        }
-        crate::shaderpack::packvertex::set_native_player_shadow(false);
         let Some(name) = wanted else {
+            self.pack_job = None;
+            self.ctx.idle();
+            if let Some((_, old, _)) = self.pack.take() {
+                old.destroy(&self.ctx, &self.memory);
+            }
+            crate::shaderpack::packvertex::set_native_player_shadow(false);
             // No pack: the mesher drops its pack quads.
             publish_block_ids(None);
             return;
         };
-        let installed = match super::pack::load(&name, false) {
-            Ok(i) => i,
-            Err(e) => {
-                error!("native renderer: pack {name}: {e}");
+        // The install runs on a worker while the old pack keeps drawing (its
+        // final pass fills any window size); a newer request replaces it.
+        match &self.pack_job {
+            Some(job) if job.name == name && job.revision == revision => {
+                if !job.handle.is_finished() {
+                    return;
+                }
+            }
+            _ => {
+                let worker_name = name.clone();
+                match std::thread::Builder::new()
+                    .name("pack-install".into())
+                    .spawn(move || super::pack::load(&worker_name, false))
+                {
+                    Ok(handle) => {
+                        self.pack_job = Some(PackJob {
+                            name,
+                            revision,
+                            started: std::time::Instant::now(),
+                            handle,
+                        });
+                    }
+                    Err(e) => error!("native renderer: pack {name}: no worker: {e}"),
+                }
+                return;
+            }
+        }
+        let job = self.pack_job.take().expect("matched above");
+        let installed = match job.handle.join() {
+            Ok(Ok(i)) => i,
+            failed => {
+                let why = match failed {
+                    Ok(Err(e)) => e,
+                    _ => "the install panicked".to_owned(),
+                };
+                error!("native renderer: pack {name}: {why}");
                 // Don't retry every frame.
                 self.pack_checked = Some((now, None));
                 return;
             }
         };
+        let loaded = job.started.elapsed();
+        let started = std::time::Instant::now();
+        self.ctx.idle();
+        if let Some((_, old, _)) = self.pack.take() {
+            old.destroy(&self.ctx, &self.memory);
+        }
+        crate::shaderpack::packvertex::set_native_player_shadow(false);
         match super::pack::screen::PackScreen::new(
             &self.ctx,
             &self.memory,
@@ -954,7 +1006,12 @@ impl Live {
             Some(&terrain.pack_geometry()),
         ) {
             Ok(screen) => {
-                info!("native renderer: pack {name}: {}", screen.describe());
+                info!(
+                    "native renderer: pack {name} ready: {:.0} ms install (on a worker), {:.0} ms on the render thread: {}",
+                    loaded.as_secs_f32() * 1000.0,
+                    started.elapsed().as_secs_f32() * 1000.0,
+                    screen.describe()
+                );
                 // The mesher's pack quads (normals, block ids) for this pack,
                 // as the game's own compile would publish them.
                 publish_block_ids(screen.block_ids());
