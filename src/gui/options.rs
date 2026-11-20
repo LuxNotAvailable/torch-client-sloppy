@@ -579,10 +579,18 @@ fn light_ray_frequency_label(value: i32) -> String {
     format!("Frequency: {value}%")
 }
 
+const UNDERWATER_HEADER: &str = "Under Water";
+const UNDERWATER_RAYS: &str = "Underwater Rays";
+
+fn underwater_opacity_label(value: i32) -> String {
+    format!("Opacity: {value}%")
+}
+
 /// Light shafts: on or off, their opacity by day and night, how much
-/// they take the biome's tint, and how often they spawn.
+/// they take the biome's tint, and how often they spawn; then the same
+/// under water.
 pub fn draw_light_rays(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
-    let mut form = crate::gui::form::Form::new(p, ctx, LIGHT_RAYS_TITLE, 3, LIGHT_RAY_SLIDER_ID);
+    let mut form = crate::gui::form::Form::new(p, ctx, LIGHT_RAYS_TITLE, 6, LIGHT_RAY_SLIDER_ID);
     let o = &mut state.options;
     form.toggle(LIGHT_RAYS_TITLE, &mut o.light_rays);
     form.tip(&tips::LIGHT_RAYS);
@@ -604,6 +612,23 @@ pub fn draw_light_rays(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         light_ray_frequency_label,
     );
     form.tip(&tips::LIGHT_RAY_FREQUENCY);
+    form.header(UNDERWATER_HEADER);
+    form.toggle(UNDERWATER_RAYS, &mut o.underwater_light_rays);
+    form.tip(&tips::UNDERWATER_LIGHT_RAYS);
+    form.slider(
+        &mut o.underwater_light_ray_opacity,
+        0,
+        200,
+        underwater_opacity_label,
+    );
+    form.tip(&tips::UNDERWATER_LIGHT_RAY_OPACITY);
+    form.slider(
+        &mut o.underwater_light_ray_frequency,
+        10,
+        200,
+        light_ray_frequency_label,
+    );
+    form.tip(&tips::UNDERWATER_LIGHT_RAY_FREQUENCY);
     let hovered = form.hovered_tip();
     if form.finish() {
         crate::gui::save_options(&state.options);

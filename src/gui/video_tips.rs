@@ -96,6 +96,18 @@ pub const LIGHT_RAY_FREQUENCY: Tip = Tip::new(
     "How often new beams of sunlight appear. Higher shows more at once.",
     Impact::Low,
 );
+pub const UNDERWATER_LIGHT_RAYS: Tip = Tip::new(
+    "Beams of light slanting down through the water while you swim.",
+    Impact::Low,
+);
+pub const UNDERWATER_LIGHT_RAY_OPACITY: Tip = Tip::new(
+    "How visible the beams under water are. 0 hides them.",
+    Impact::Low,
+);
+pub const UNDERWATER_LIGHT_RAY_FREQUENCY: Tip = Tip::new(
+    "How often new beams appear under water. Higher shows more at once.",
+    Impact::Low,
+);
 pub const LEAVES: Tip = Tip::new(
     "How leaves are drawn: fancy, fast or a mix by distance, and which leaf faces are hidden.",
     Impact::Medium,

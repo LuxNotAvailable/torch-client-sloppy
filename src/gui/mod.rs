@@ -508,6 +508,11 @@ crate::options! {
         pub light_ray_tint: u32 = 50 => key("torchLightRayTint").clamp(0, 100),
         /// How often light shafts spawn, percent of the usual rate.
         pub light_ray_frequency: u32 = 50 => key("torchLightRayFrequency").clamp(10, 200),
+        /// Light shafts under water: on or off, opacity (percent, 100 is
+        /// full) and spawn rate (percent of the usual).
+        pub underwater_light_rays: bool = true => key("torchUnderwaterLightRays"),
+        pub underwater_light_ray_opacity: u32 = 70 => key("torchUnderwaterLightRayOpacity").clamp(0, 200),
+        pub underwater_light_ray_frequency: u32 = 100 => key("torchUnderwaterLightRayFrequency").clamp(10, 200),
         /// Vanilla's Biome Blend: how far grass, foliage and water colours
         /// average, in blocks (0 to 7).
         pub biome_blend: u32 = 2 => key("biomeBlendRadius").clamp(0, 7),

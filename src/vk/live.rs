@@ -30,6 +30,15 @@ static PACK_CHANGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBo
 /// the options screen closes so a slider drag doesn't recompile each step.
 static PACK_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// The running pack's `sunPathRotation` (degrees, as f32 bits), 0 with no
+/// pack: what tilts its sun, for effects drawn outside it.
+static SUN_PATH_ROTATION: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// The running pack's sun tilt in degrees, 0 with no pack.
+pub fn sun_path_rotation() -> f32 {
+    f32::from_bits(SUN_PATH_ROTATION.load(std::sync::atomic::Ordering::Relaxed))
+}
+
 /// The chosen pack changed (`shaderpack.txt` written).
 pub fn pack_changed() {
     PACK_CHANGED.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -877,6 +886,11 @@ impl Live {
         {
             self.pack_inputs = Some(crate::shaderpack::inputs::Inputs::from_json(&value));
         }
+        let tilt = self
+            .pack
+            .as_ref()
+            .map_or(0.0, |(_, pack, _)| pack.sun_path_rotation());
+        SUN_PATH_ROTATION.store(tilt.to_bits(), std::sync::atomic::Ordering::Relaxed);
         // A pack draws the sky and hand as its own entities: renewed with
         // the environment.
         // Only on a renewed environment: its release frees the last ones.

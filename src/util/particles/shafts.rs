@@ -3,6 +3,8 @@
 //! probes drop from 40 blocks up along the light until a block stops them;
 //! a second ray a block aside that goes deeper has found a gap, and its
 //! deeper stretch becomes a beam that fades in, lingers and fades out.
+//! Under water, probes fall to the water's surface and the beam is the
+//! water below it.
 
 use azalea::block::fluid_state::FluidState;
 use azalea_core::position::{BlockPos, Vec3 as AzVec3};
@@ -32,6 +34,18 @@ const ANCHOR_RADIUS: f32 = 3.0;
 const START_ELEVATION: f32 = 17.5;
 const KEEP_ELEVATION: f32 = 15.0;
 
+/// Under water: probes a second, how far each walk goes, the shortest
+/// beam (in water blocks), the beam's half width, and how far from the
+/// camera a beam lives.
+const WATER_PROBES_PER_SECOND: f32 = 100.0;
+const WATER_WALK: i32 = 30;
+const WATER_MIN_LENGTH: f32 = 5.0;
+const WATER_HALF_WIDTH: f32 = 1.25;
+const WATER_REACH: f32 = 20.0;
+/// Beam colours under water, by sun and moon.
+const WATER_SUN: [f32; 3] = [0.5, 0.5 * 242.0 / 255.0, 0.5 * 97.0 / 255.0];
+const WATER_MOON: [f32; 3] = [0.4 * 171.0 / 255.0, 0.4 * 202.0 / 255.0, 0.4];
+
 struct Beam {
     from: Vec3,
     to: Vec3,
@@ -39,6 +53,8 @@ struct Beam {
     life: f32,
     moon: bool,
     tint: [f32; 3],
+    /// Under water: a beam through the water below its surface.
+    water: bool,
 }
 
 #[derive(Resource, Default)]
@@ -55,6 +71,7 @@ pub(super) struct Shafts {
     day_opacity: f32,
     night_opacity: f32,
     profile_tint: f32,
+    water_opacity: f32,
     /// The sun's height (sine), for the beams' colour.
     sun_y: f32,
     metrics: Metrics,
@@ -67,9 +84,11 @@ pub(super) struct Shafts {
 }
 
 /// The light's direction (toward the sun, or the moon at night), and
-/// whether it is the moon. Vanilla's sun turns about the z axis.
-fn light(sun_angle: f32) -> (Vec3, bool) {
-    let sun = Vec3::new(-sun_angle.sin(), sun_angle.cos(), 0.0);
+/// whether it is the moon. Vanilla's sun turns about the z axis; a shader
+/// pack's `sunPathRotation` (`tilt`, degrees) tilts that path toward -z.
+fn light(sun_angle: f32, tilt: f32) -> (Vec3, bool) {
+    let (s, c) = tilt.to_radians().sin_cos();
+    let sun = Vec3::new(-sun_angle.sin(), sun_angle.cos() * c, -sun_angle.cos() * s);
     if sun.y >= 0.0 {
         (sun, false)
     } else {
@@ -301,13 +320,30 @@ fn cell(p: Vec3) -> [i32; 3] {
 /// Steps from `start` along `down`, a block at a time, to the first block
 /// that isn't open: the steps taken, past `MAX_WALK` if none.
 fn walk(world: &azalea_world::World, start: Vec3, down: Vec3) -> f32 {
-    for k in 1..=MAX_WALK {
+    walk_while(world, start, down, MAX_WALK, open)
+}
+
+/// Steps from `start` along `down` to the first block `pass` refuses: the
+/// steps taken, past `max` if none.
+fn walk_while(
+    world: &azalea_world::World,
+    start: Vec3,
+    down: Vec3,
+    max: i32,
+    pass: fn(Option<azalea::block::BlockState>) -> bool,
+) -> f32 {
+    for k in 1..=max {
         let p = start + down * k as f32;
-        if !open(block_at(world, cell(p))) {
+        if !pass(block_at(world, cell(p))) {
             return k as f32;
         }
     }
-    (MAX_WALK + 1) as f32
+    (max + 1) as f32
+}
+
+/// What an underwater probe walks through: water blocks only.
+fn water(state: Option<azalea::block::BlockState>) -> bool {
+    state.is_some_and(|s| block_id(s) == "water")
 }
 
 #[allow(clippy::too_many_arguments, reason = "a system's resources")]
@@ -323,10 +359,10 @@ pub(super) fn tick_shafts(
     for b in &mut shafts.beams {
         b.age += dt;
     }
-    shafts.beams.retain(|b| b.age < b.life);
-    if !gui.options.light_rays {
-        shafts.beams.clear();
-    }
+    let (above, below) = (gui.options.light_rays, gui.options.underwater_light_rays);
+    shafts
+        .beams
+        .retain(|b| b.age < b.life && if b.water { below } else { above });
     shafts.logged += dt;
     if shafts.logged > 5.0 {
         shafts.logged = 0.0;
@@ -353,11 +389,15 @@ pub(super) fn tick_shafts(
         return;
     };
     let world = crate::client::tracking::read_world(&world_arc);
-    let (toward, moon) = light(env.sky.sun_angle);
+    let (toward, moon) = light(env.sky.sun_angle, crate::vk::live::sun_path_rotation());
     let render_distance = gui.options.render_distance;
     shafts.day_opacity = gui.options.light_ray_day_opacity as f32;
     shafts.night_opacity = gui.options.light_ray_night_opacity as f32;
     shafts.profile_tint = gui.options.light_ray_tint as f32 / 100.0;
+    shafts.water_opacity = gui.options.underwater_light_ray_opacity as f32;
+    shafts
+        .beams
+        .retain(|b| !b.water || b.to.distance(eye).min(b.from.distance(eye)) <= WATER_REACH);
     shafts.sun_y = env.sky.sun_angle.cos();
 
     // The gates are read once a tick, as the mod's are.
@@ -398,14 +438,18 @@ pub(super) fn tick_shafts(
         } else {
             START_ELEVATION
         };
-        shafts.active = !in_water
+        let enabled = if in_water {
+            gui.options.underwater_light_rays && gui.options.underwater_light_ray_opacity > 0
+        } else {
+            gui.options.light_rays
+                && (if moon {
+                    gui.options.light_ray_night_opacity
+                } else {
+                    gui.options.light_ray_day_opacity
+                }) > 0
+        };
+        shafts.active = enabled
             && gui.options.particles != ParticleStatus::Minimal
-            && gui.options.light_rays
-            && (if moon {
-                gui.options.light_ray_night_opacity
-            } else {
-                gui.options.light_ray_day_opacity
-            }) > 0
             && sky_clear
             && elevation > bar
             && profile.is_some();
@@ -423,8 +467,15 @@ pub(super) fn tick_shafts(
         ParticleStatus::Decreased => 0.5,
         ParticleStatus::Minimal => 0.0,
     };
-    let frequency = gui.options.light_ray_frequency as f32 / 100.0;
-    shafts.owed += PROBES_PER_SECOND * density * frequency * dt;
+    let (rate, frequency) = if in_water {
+        (
+            WATER_PROBES_PER_SECOND,
+            gui.options.underwater_light_ray_frequency,
+        )
+    } else {
+        (PROBES_PER_SECOND, gui.options.light_ray_frequency)
+    };
+    shafts.owed += rate * density * frequency as f32 / 100.0 * dt;
     let probes = shafts.owed.floor() as u32;
     shafts.owed -= probes as f32;
     if probes == 0 {
@@ -435,14 +486,47 @@ pub(super) fn tick_shafts(
 
     // Two axes across the light, to scatter probes over a disc.
     let side = toward.cross(Vec3::Z).normalize_or(Vec3::X);
+    let across = side.cross(toward);
     let rng = &mut rng.0;
+    if in_water {
+        for _ in 0..probes {
+            if shafts.beams.len() >= MAX_BEAMS {
+                break;
+            }
+            let angle = rng.next_f32() * std::f32::consts::TAU;
+            let r = RADIUS * rng.next_f32().sqrt();
+            let offset = side * (r * angle.cos()) + across * (r * angle.sin());
+            let start = eye + offset + toward * START;
+            // Down through the air to the surface, then on through water.
+            let surface = walk_while(&world, start, -toward, WATER_WALK, open);
+            if surface > WATER_WALK as f32 {
+                continue;
+            }
+            let from = start - toward * surface;
+            let depth = walk_while(&world, from, -toward, WATER_WALK, water) - 1.0;
+            if depth <= WATER_MIN_LENGTH {
+                continue;
+            }
+            let life = 5.0 + 5.0 * rng.next_f32();
+            shafts.beams.push(Beam {
+                from,
+                to: from - toward * depth,
+                age: 0.0,
+                life,
+                moon,
+                tint: if moon { WATER_MOON } else { WATER_SUN },
+                water: true,
+            });
+        }
+        return;
+    }
     for _ in 0..probes {
         if shafts.beams.len() >= MAX_BEAMS {
             break;
         }
         let angle = rng.next_f32() * std::f32::consts::TAU;
         let r = RADIUS * rng.next_f32().powf(0.75);
-        let offset = side * (r * angle.cos()) + Vec3::Z * (r * angle.sin());
+        let offset = side * (r * angle.cos()) + across * (r * angle.sin());
         let start = eye + offset + toward * START;
         // The canopy: where this ray stops. A ray a block aside that goes
         // deeper has passed a gap; the beam is that ray's deeper stretch.
@@ -451,7 +535,7 @@ pub(super) fn tick_shafts(
             continue;
         }
         let aside = rng.next_f32() * std::f32::consts::TAU;
-        let beside = start + side * aside.cos() + Vec3::Z * aside.sin();
+        let beside = start + side * aside.cos() + across * aside.sin();
         let floor = walk(&world, beside, -toward);
         if (floor - canopy) * toward.y.abs() <= MIN_HEIGHT {
             continue;
@@ -466,6 +550,7 @@ pub(super) fn tick_shafts(
             life,
             moon,
             tint,
+            water: false,
         });
     }
 }
@@ -499,9 +584,17 @@ pub(super) fn beam_sprites(shafts: &Shafts, eye: Vec3, out: &mut Vec<crate::draw
         let axis = (b.from - b.to).normalize_or_zero();
         let d = (centre - eye).length();
         let near = if d < 8.0 { d } else { 8.0 + (d - 8.0) / 3.0 };
-        let strength = if b.moon { 0.3 } else { 0.6 };
+        let strength = if b.water {
+            1.0
+        } else if b.moon {
+            0.3
+        } else {
+            0.6
+        };
         let alpha = fade(b.age, b.life) * (strength / near.max(0.01)).clamp(0.0, 1.0);
-        let opacity = if b.moon {
+        let opacity = if b.water {
+            shafts.water_opacity
+        } else if b.moon {
             shafts.night_opacity
         } else {
             shafts.day_opacity
@@ -510,7 +603,9 @@ pub(super) fn beam_sprites(shafts: &Shafts, eye: Vec3, out: &mut Vec<crate::draw
         if alpha <= 0.002 {
             continue;
         }
-        let color = if b.moon {
+        let color = if b.water {
+            b.tint
+        } else if b.moon {
             shaft_profile::MOON_TINT
         } else {
             let sun = sun_color(shafts.sun_y);
@@ -521,7 +616,11 @@ pub(super) fn beam_sprites(shafts: &Shafts, eye: Vec3, out: &mut Vec<crate::draw
             half: (b.from - b.to).length() * 0.5,
             uv: [0.0, 0.0, 1.0, 1.0],
             color: [color[0], color[1], color[2], alpha],
-            roll: HALF_WIDTH,
+            roll: if b.water {
+                WATER_HALF_WIDTH
+            } else {
+                HALF_WIDTH
+            },
             texture: crate::draw::TEXTURE_ATLAS,
             levels: [240.0, 240.0],
             flags: crate::draw::PARTICLE_GLOW,
@@ -543,10 +642,25 @@ mod tests {
 
     #[test]
     fn the_light_is_overhead_at_noon_and_the_moon_at_midnight() {
-        let (noon, moon) = light(0.0);
+        let (noon, moon) = light(0.0, 0.0);
         assert!(noon.y > 0.99 && !moon);
-        let (night, moon) = light(std::f32::consts::PI);
+        let (night, moon) = light(std::f32::consts::PI, 0.0);
         assert!(night.y > 0.99 && moon);
+    }
+
+    #[test]
+    fn a_pack_tilt_leans_the_noon_sun_as_its_sky_does() {
+        let (noon, _) = light(0.0, -25.0);
+        let sky = bevy::math::Mat4::from_rotation_y((-90.0f32).to_radians())
+            * bevy::math::Mat4::from_rotation_z((-25.0f32).to_radians())
+            * bevy::math::Mat4::from_rotation_x(0.0);
+        let want = sky.transform_vector3(Vec3::Y);
+        assert!(noon.distance(want) < 1e-5, "{noon} vs {want}");
+        let (dusk, _) = light(1.0, -25.0);
+        let sky = bevy::math::Mat4::from_rotation_y((-90.0f32).to_radians())
+            * bevy::math::Mat4::from_rotation_z((-25.0f32).to_radians())
+            * bevy::math::Mat4::from_rotation_x(1.0);
+        assert!(dusk.distance(sky.transform_vector3(Vec3::Y)) < 1e-5);
     }
 
     #[test]
