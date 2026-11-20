@@ -557,7 +557,7 @@ pub fn draw_options(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     let clip = p.push_clip(list_x, list_y, list_w, list_h);
 
     let mut action = None;
-    let mut hovered: Option<&str> = None;
+    let mut hovered: Option<(Option<&str>, Option<&str>)> = None;
 
     let mut headers = 0;
     for (index, (element, &(column, offset))) in elements.iter().zip(&places).enumerate() {
@@ -580,7 +580,7 @@ pub fn draw_options(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         if let Element::Option(name) = element
             && masked.hovering(x, y, cell_w, WIDGET_HEIGHT)
         {
-            hovered = loaded.lang.comment(name);
+            hovered = Some((loaded.lang.comment(name), loaded.lang.impact(name)));
         }
         if let Some(next) = element_widget(p, &masked, loaded, element, x, y, cell_w, index) {
             action = Some(next);
@@ -589,8 +589,8 @@ pub fn draw_options(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     p.pop_clip(clip);
     crate::gui::focus::resume();
 
-    if let Some(text) = hovered {
-        draw_comment(p, ctx, text);
+    if let Some((text, impact)) = hovered {
+        draw_comment(p, ctx, text, impact);
     }
 
     let footer_y = LAYOUT.footer_y(ctx.vh);
@@ -893,22 +893,39 @@ fn tag(label: &str, value: &str, changed: bool) -> String {
     format!("{mark}{label}: {value}")
 }
 
-fn draw_comment(p: &mut Painter, ctx: &ScreenCtx, text: &str) {
+/// The hovered option's comment, with its performance impact below when the
+/// pack's lang rates it.
+fn draw_comment(p: &mut Painter, ctx: &ScreenCtx, text: Option<&str>, impact: Option<&str>) {
     let Some(mouse) = ctx.input.mouse else { return };
-    let spans = [crate::text::Span {
-        text: text.to_owned(),
-        style: crate::text::Style::default(),
-    }];
-    let lines: Vec<String> = p
-        .atlas
-        .font
-        .wrap(&spans, (ctx.vw / 3.0).max(120.0))
-        .iter()
-        .map(|line| line.iter().map(|span| span.text.as_str()).collect())
-        .collect();
-    if !lines.is_empty() {
-        super::options::draw_bind_tooltip(p, &lines, mouse.x, mouse.y, ctx.vw);
+    let impact = impact.and_then(super::setting_tip::Impact::parse);
+    if impact.is_none() {
+        let Some(text) = text else { return };
+        let spans = [crate::text::Span {
+            text: text.to_owned(),
+            style: crate::text::Style::default(),
+        }];
+        let lines: Vec<String> = p
+            .atlas
+            .font
+            .wrap(&spans, (ctx.vw / 3.0).max(120.0))
+            .iter()
+            .map(|line| line.iter().map(|span| span.text.as_str()).collect())
+            .collect();
+        if !lines.is_empty() {
+            super::options::draw_bind_tooltip(p, &lines, mouse.x, mouse.y, ctx.vw);
+        }
+        return;
     }
+    let mut lines = Vec::new();
+    if let Some(text) = text {
+        let spans = [crate::text::Span {
+            text: text.to_owned(),
+            style: crate::text::Style::colored(0xE0E0E0),
+        }];
+        lines.extend(p.atlas.font.wrap(&spans, (ctx.vw / 3.0).max(120.0)));
+    }
+    lines.extend(impact.map(super::setting_tip::Impact::line));
+    crate::gui::tooltip::draw_lines(p, &lines, mouse.x, mouse.y, ctx.vw, ctx.vh);
 }
 
 const MESSAGE_ERROR: u32 = 0xFF_5555;

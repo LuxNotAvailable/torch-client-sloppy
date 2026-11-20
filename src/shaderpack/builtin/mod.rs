@@ -166,8 +166,11 @@ SCALED_RESOLVE=1
                 .constants
         };
         assert!(at("").voxels, "World Traced is the default");
-        assert!(!at("REFLECTION_METHOD=0
-").voxels);
+        assert!(
+            !at("REFLECTION_METHOD=0
+")
+            .voxels
+        );
         assert!(at("REFLECTION_METHOD=1\n").voxels);
         assert!(!at("REFLECTION_METHOD=1\nWATER_REFLECTIONS=0\n").voxels);
         assert_eq!(at("REFLECTION_METHOD=1\n").voxel_reach, 128);

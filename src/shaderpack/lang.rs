@@ -52,6 +52,12 @@ impl Lang {
         self.get(&format!("option.{name}.comment"))
     }
 
+    /// The option's performance impact (`option.<name>.impact`), a Torch
+    /// extension: None, Low, Medium, High or Varies.
+    pub(crate) fn impact(&self, name: &str) -> Option<&str> {
+        self.get(&format!("option.{name}.impact"))
+    }
+
     pub(crate) fn value(&self, name: &str, value: &str) -> Option<&str> {
         self.get(&format!("value.{name}.{value}"))
     }

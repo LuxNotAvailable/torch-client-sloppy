@@ -16,6 +16,24 @@ pub enum Impact {
 }
 
 impl Impact {
+    /// Parses a caption, as a shader pack's lang writes it.
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s.trim() {
+            "Varies" => Impact::Varies,
+            "None" => Impact::None,
+            "Low" => Impact::Low,
+            "Medium" => Impact::Medium,
+            "High" => Impact::High,
+            _ => return None,
+        })
+    }
+
+    /// The tooltip's last line: "Performance Impact: <level>", coloured.
+    pub fn line(self) -> Vec<Span> {
+        let (level, rgb) = self.caption();
+        vec![span("Performance Impact: ", 0xAAAAAA), span(level, rgb)]
+    }
+
     fn caption(self) -> (&'static str, u32) {
         match self {
             Impact::Varies => ("Varies", 0x55FFFF),
