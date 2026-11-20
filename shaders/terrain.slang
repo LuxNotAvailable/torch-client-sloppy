@@ -64,6 +64,17 @@ void cull(uint3 id: SV_DispatchThreadID) {
     if (keep && (flags & CULL_BELOW) != 0) {
         keep = hi.y >= asfloat(view.Load(VIEW_CAMERA + 12));
     }
+    if (keep && (flags & CULL_HOLE) != 0) {
+        float hole = asfloat(view.Load(VIEW_HOLE));
+        Columns m = load_columns(view, VIEW_VIEW_PROJ);
+        float2 reach = float2(0.0, 0.0);
+        for (uint i = 0; i < 8; i++) {
+            float3 corner = float3((i & 1) != 0 ? hi.x : lo.x, (i & 2) != 0 ? hi.y : lo.y, (i & 4) != 0 ? hi.z : lo.z);
+            float4 c = m.apply(corner);
+            reach = max(reach, abs(c.xy / c.w));
+        }
+        keep = max(reach.x, reach.y) >= hole;
+    }
     if (keep && (flags & CULL_FRUSTUM) != 0) {
         keep = in_frustum(load_columns(view, VIEW_VIEW_PROJ), lo, hi);
     }

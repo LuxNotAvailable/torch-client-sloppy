@@ -19,6 +19,12 @@ struct IrisBindlessPush {
     uint base;
     /// The draw's own texture, for a slot set to `IRIS_PER_DRAW`.
     uint texture;
+    /// Shadow passes: the cascade drawn, as its zoom on the light's clip
+    /// space (float bits; 1 the outer, more the inner), 0 for no cascades.
+    uint cascade;
+    /// Shadow passes: 1 where leaves cast solid (coarse cascades, whose
+    /// texels span several leaf pixels and would only flicker).
+    uint solid_leaves;
 };
 [[vk::push_constant]] ConstantBuffer<IrisBindlessPush> iris_bindless;
 

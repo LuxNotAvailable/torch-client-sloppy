@@ -10,6 +10,8 @@ static const uint VIEW_PREV_VIEW_PROJ = 64;
 static const uint VIEW_CAMERA = 128;
 static const uint VIEW_HIZ = 144;
 static const uint VIEW_FLAGS = 160;
+// x: the hole's half size in view_proj's clip x, y (CULL_HOLE), as bits.
+static const uint VIEW_HOLE = 176;
 // The environment (phase 5): fog colour, fog ranges (environmental start
 // and end, render-distance start and end), and x the lightmap's texture
 // index (none: 0xFFFFFFFF), y 1 when fog is on.
@@ -25,6 +27,9 @@ static const uint CULL_FRUSTUM = 8;
 static const uint CULL_NO_WAVE = 16;
 // Drop boxes wholly under camera.w (the shadow pass's caster floor).
 static const uint CULL_BELOW = 32;
+// Drop boxes whose clip x, y lie wholly inside the hole (VIEW_HOLE): the
+// outer shadow cascade, where the inner one covers.
+static const uint CULL_HOLE = 64;
 
 // VkDrawIndexedIndirectCommand.
 struct DrawCommand {

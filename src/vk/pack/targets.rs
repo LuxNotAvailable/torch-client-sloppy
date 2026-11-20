@@ -134,9 +134,14 @@ pub(crate) fn usable(ctx: &Context, format: vk::Format) -> vk::Format {
     }
 }
 
-/// The shadow pass's targets, square at the pack's resolution.
+/// The shadow pass's targets: the pack's resolution square, or with
+/// `torchShadowCascades` a 3:2 atlas of cascades (`screen::cascade_area`).
 pub(crate) struct ShadowTargets {
+    /// One cascade's side.
     pub size: u32,
+    pub cascades: u32,
+    /// The whole map.
+    pub extent: vk::Extent2D,
     pub depth: Image,
     pub depth_opaque: Image,
     /// With the shadow cache (`torchShadowCache`): the terrain's depth,
@@ -221,8 +226,15 @@ impl PackTargets {
                     .constants
                     .shadow_map_resolution
                     .clamp(1, MAX_SHADOW_MAP);
+                let cascades = if installed.constants.shadow_cascades {
+                    super::screen::CASCADES
+                } else {
+                    1
+                };
+                // Cascades: the inner square, then the two half-size ones
+                // stacked beside it (`screen::cascade_area`).
                 let square = vk::Extent2D {
-                    width: side,
+                    width: if cascades > 1 { side + side / 2 } else { side },
                     height: side,
                 };
                 let mut colors: [Option<Image>; MAX_SHADOW_COLORS] = Default::default();
@@ -240,6 +252,8 @@ impl PackTargets {
                 }
                 Some(ShadowTargets {
                     size: side,
+                    cascades,
+                    extent: square,
                     depth: depth("shadowtex0", square)?,
                     depth_opaque: depth("shadowtex1", square)?,
                     depth_cache: if installed.constants.shadow_cache {

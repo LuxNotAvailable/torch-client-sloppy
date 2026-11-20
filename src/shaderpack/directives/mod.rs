@@ -161,6 +161,15 @@ pub(crate) struct Constants {
     pub(crate) shadow_lerp: bool,
     /// `torchCloudUpper`: a second cloud layer above the first.
     pub(crate) cloud_upper: bool,
+    /// `torchShadowCascades` (the built-in pack only): the shadow map is a
+    /// an atlas of three cascades side by side (`vk::pack::screen::cascade_reach`),
+    /// drawn into each in turn.
+    pub(crate) shadow_cascades: bool,
+    /// The pack's `TEXEL_FULL_DISTANCE` and `TEXEL_RING_WIDTH` options
+    /// (blocks), which set the cascades' reach
+    /// (`vk::pack::screen::cascade_reach`).
+    pub(crate) texel_full_distance: f32,
+    pub(crate) texel_ring_width: f32,
 }
 
 impl Default for Constants {
@@ -184,6 +193,9 @@ impl Default for Constants {
             shadow_step: 0.02,
             shadow_lerp: false,
             cloud_upper: false,
+            shadow_cascades: false,
+            texel_full_distance: 24.0,
+            texel_ring_width: 16.0,
         }
     }
 }
@@ -218,6 +230,7 @@ pub(crate) fn read_constants<'a>(sources: impl Iterator<Item = &'a str>) -> Cons
                     "torchShadowCache" => constants.shadow_cache = on,
                     "torchShadowLerp" => constants.shadow_lerp = on,
                     "torchCloudUpper" => constants.cloud_upper = on,
+                    "torchShadowCascades" => constants.shadow_cascades = on,
                     _ => {}
                 }
                 continue;

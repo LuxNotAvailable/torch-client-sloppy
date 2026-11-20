@@ -726,7 +726,7 @@ impl Renderer {
             if let (Some((view_proj, eye)), Scene::Terrain(terrain, _)) = (light, &mut *scene)
                 && let Err(e) = terrain.record_shadow_cull(
                     &self.ctx, memory, bindless, pipelines, &mut graph, slot, self.frame,
-                    view_proj, eye,
+                    eye, &pack.shadow_cull_views(view_proj),
                 )
             {
                 eprintln!("vkview: shadow cull failed: {e}");

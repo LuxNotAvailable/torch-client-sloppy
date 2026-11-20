@@ -1317,8 +1317,8 @@ impl Live {
                         &mut graph,
                         slot,
                         self.frame,
-                        light,
                         eye,
+                        &pack.shadow_cull_views(light),
                     )
                 {
                     error!("native renderer: shadow cull: {}", e.0);

@@ -75,6 +75,11 @@
 static const float PI = 3.14159265;
 
 // Block ids from block.properties.
+
+/// Leaf blocks (block.properties 10004), foliage that casts shadows.
+bool is_leaves(float id) {
+    return id > 10003.5 && id < 10004.5;
+}
 static const float MATERIAL_WATER = 1.0;
 static const float MATERIAL_FOLIAGE = 2.0;
 static const float MATERIAL_EMISSIVE = 3.0;
@@ -82,6 +87,9 @@ static const float MATERIAL_EMISSIVE = 3.0;
 float material_of(float id) {
     if (id > 10000.5 && id < 10003.5) {
         return id - 10000.0;
+    }
+    if (is_leaves(id)) {
+        return MATERIAL_FOLIAGE;
     }
     return 0.0;
 }

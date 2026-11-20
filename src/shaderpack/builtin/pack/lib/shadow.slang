@@ -81,14 +81,137 @@ float shadow_compare(bool previous, float2 uv, float reference) {
     return shadowtex0HW.SampleCmpLevelZero(shadowtex0HW_sampler, uv, reference);
 }
 
+/// Cascades (torchShadowCascades): the map is a 3:2 atlas. The inner
+/// cascade, out to the full-detail texel ring, fills the left square; the
+/// middle (to the next ring) and outer (the whole shadow distance), half
+/// as many texels a side, are stacked on the right, middle on top. Told
+/// apart from the warped map by its shape. Matches `cascade_area` in
+/// vk/pack/screen.rs.
+struct ShadowAtlas {
+    /// The inner cascade's side, in texels.
+    float side;
+    /// The whole atlas, in texels.
+    float2 size;
+    /// The light's clip units per block (1 / shadowDistance).
+    float per_block;
+};
+
+bool shadow_cascaded() {
+    uint2 size = iris_size(shadowtex0HW);
+    return size.x > size.y;
+}
+
+ShadowAtlas shadow_atlas() {
+    uint2 size = iris_size(shadowtex0HW);
+    ShadowAtlas a;
+    a.side = float(size.y);
+    a.size = float2(size);
+    a.per_block = length(mul(frame.shadowProjection, float4(1.0, 0.0, 0.0, 0.0)).xyz);
+    return a;
+}
+
+static const uint SHADOW_CASCADES = 3;
+
+/// Cascade `i`'s reach (blocks, either way), for all but the outer: the
+/// texel rings' edges and a little over for the blend. Matches
+/// `cascade_reach` in vk/pack/screen.rs.
+float shadow_cascade_reach(uint i) {
+    if (i == 0) {
+        return float(TEXEL_FULL_DISTANCE) + 2.0;
+    }
+    return float(TEXEL_FULL_DISTANCE + TEXEL_RING_WIDTH) + 2.0;
+}
+
+/// Cascade `i`'s side, in texels.
+float cascade_side(ShadowAtlas a, uint i) {
+    return i == 0 ? a.side : a.side * 0.5;
+}
+
+/// Cascade `i`'s zoom on the light's clip space (the outer's is 1).
+float cascade_scale(ShadowAtlas a, uint i) {
+    if (i + 1 >= SHADOW_CASCADES) {
+        return 1.0;
+    }
+    return max(1.0 / (a.per_block * shadow_cascade_reach(i)), 1.0);
+}
+
+/// Texels a cascade's blend toward the next takes, at its rim.
+static const float CASCADE_BAND = 8.0;
+
+/// Where `clip` (the light's clip x, y) lands in the atlas, in cascade `i`
+/// zoomed by `scale`.
+float2 cascade_uv(ShadowAtlas a, float2 clip, uint i, float scale) {
+    float2 local = clip * scale * 0.5 + 0.5;
+    if (i == 0) {
+        return local * a.side / a.size;
+    }
+    float half_side = a.side * 0.5;
+    float2 corner = float2(a.side, i == 2 ? half_side : 0.0);
+    return (corner + local * half_side) / a.size;
+}
+
+/// The finest cascade holding `clip` with `margin` of its texels to spare,
+/// and (`blend`) how far into its rim band toward the next it is.
+uint cascade_for(ShadowAtlas a, float2 clip, float margin, out float blend) {
+    float edge = max(abs(clip.x), abs(clip.y));
+    for (uint i = 0; i + 1 < SHADOW_CASCADES; i++) {
+        float side = cascade_side(a, i);
+        float m = margin * 2.0 / side;
+        float band = CASCADE_BAND * 2.0 / side;
+        float e = edge * cascade_scale(a, i);
+        if (e < 1.0 - m) {
+            blend = smoothstep(1.0 - m - band, 1.0 - m, e);
+            return i;
+        }
+    }
+    blend = 0.0;
+    return SHADOW_CASCADES - 1;
+}
+
 /// One hardware-filtered lookup at a point already in the shadow map's clip
 /// space (before the warp); 1 outside the map.
 float shadow_at(float3 clip) {
     if (length(clip.xy) > 0.98 || abs(clip.z) > 0.98) {
         return 1.0;
     }
+    float reference = clip.z * 0.5 + 0.5 - 0.00005;
+    if (shadow_cascaded()) {
+        ShadowAtlas a = shadow_atlas();
+        float blend;
+        uint i = cascade_for(a, clip.xy, 0.0, blend);
+        float lit = shadowtex0HW.SampleCmpLevelZero(
+            shadowtex0HW_sampler, cascade_uv(a, clip.xy, i, cascade_scale(a, i)), reference);
+        if (blend > 0.0) {
+            float next = shadowtex0HW.SampleCmpLevelZero(
+                shadowtex0HW_sampler, cascade_uv(a, clip.xy, i + 1, cascade_scale(a, i + 1)), reference);
+            return lerp(lit, next, blend);
+        }
+        return lit;
+    }
     float2 uv = shadow_distort(clip.xy) * 0.5 + 0.5;
-    return shadowtex0HW.SampleCmpLevelZero(shadowtex0HW_sampler, uv, clip.z * 0.5 + 0.5 - 0.00005);
+    return shadowtex0HW.SampleCmpLevelZero(shadowtex0HW_sampler, uv, reference);
+}
+
+/// Filtered lookups in cascade `i` around `player` moved off the surface by
+/// about one of its texels, the taps `radius` of its texels apart.
+float cascade_taps(ShadowAtlas a, float4x4 to_shadow, bool previous, float3 player, float3 n, uint i, float radius, uint taps) {
+    float scale = cascade_scale(a, i);
+    // The cascade's texel, in blocks.
+    float texel_blocks = 2.0 / (a.per_block * scale * cascade_side(a, i));
+    float3 moved = mul(to_shadow, float4(player + n * (0.01 + 0.75 * texel_blocks), 1.0)).xyz;
+    float2 uv = cascade_uv(a, moved.xy, i, scale);
+    float reference = moved.z * 0.5 + 0.5 - 0.00005;
+    if (taps <= 1) {
+        return shadow_compare(previous, uv, reference);
+    }
+    // One texel, in atlas uv (the same size in every cascade).
+    float2 texel = 1.0 / a.size;
+    float lit = 0.0;
+    uint tapped = min(taps, 8u);
+    for (uint t = 0; t < tapped; t++) {
+        lit += shadow_compare(previous, uv + SHADOW_TAPS[t] * texel * radius, reference);
+    }
+    return lit / float(tapped);
 }
 
 /// As `shadow_visibility`, in one map, seen through `view`.
@@ -98,6 +221,19 @@ float shadow_visibility_in(float4x4 view, bool previous, float3 player, float3 n
     float reach = length(clip.xy);
     if (reach > 0.98 || abs(clip.z) > 0.98) {
         return 1.0;
+    }
+    if (shadow_cascaded()) {
+        ShadowAtlas a = shadow_atlas();
+        float radius = SHADOW_SOFTNESS;
+        // Room for the taps inside a cascade before the next takes over.
+        float blend;
+        uint i = cascade_for(a, clip.xy, radius, blend);
+        float lit = cascade_taps(a, to_shadow, previous, player, n, i, radius, taps);
+        if (blend > 0.0) {
+            float next = cascade_taps(a, to_shadow, previous, player, n, i + 1, radius, taps);
+            return lerp(lit, next, blend);
+        }
+        return lit;
     }
     // Farther out a shadow texel covers more ground; lean off the surface
     // in proportion, so it never shadows itself.

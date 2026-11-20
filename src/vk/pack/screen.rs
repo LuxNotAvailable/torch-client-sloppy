@@ -1033,7 +1033,13 @@ impl PackScreen {
             self.table.push(word);
         }
 
-        let shadow_side = self.targets.shadow.as_ref().map_or(1, |s| s.size);
+        let shadow_extent = self.targets.shadow.as_ref().map_or(
+            vk::Extent2D {
+                width: 1,
+                height: 1,
+            },
+            |s| s.extent,
+        );
         let shadow_colors: Vec<u8> = if shadow {
             program
                 .draw_buffers
@@ -1060,10 +1066,7 @@ impl PackScreen {
                             .map(|c| c.format)
                     })
                     .collect(),
-                vk::Extent2D {
-                    width: shadow_side,
-                    height: shadow_side,
-                },
+                shadow_extent,
             ),
             Some(format) => (None, vec![format], self.targets.size),
             None => {
@@ -1208,6 +1211,29 @@ impl PackScreen {
         out
     }
 
+    /// The shadow cull's views, one per cascade: the light's world-to-clip
+    /// (`light`) cropped to the cascade, and the hole the finer cascade
+    /// covers, in that cascade's clip x, y. Without cascades, `light` alone.
+    pub(crate) fn shadow_cull_views(&self, light: Mat4) -> Vec<(Mat4, Option<f32>)> {
+        let Some(s) = self.targets.shadow.as_ref().filter(|s| s.cascades > 1) else {
+            return vec![(light, None)];
+        };
+        let constants = &self.installed.constants;
+        (0..s.cascades)
+            .map(|i| {
+                let scale = cascade_scale(constants, i);
+                let crop = Mat4::from_scale(bevy::math::Vec3::new(scale, scale, 1.0)) * light;
+                let hole = (i > 0).then(|| {
+                    // The finer cascade's inset, in its own texels.
+                    let finer = cascade_area(s.size, i - 1).extent.width as f32;
+                    let inset = 2.0 * CASCADE_HOLE_INSET / finer;
+                    (1.0 - inset) * scale / cascade_scale(constants, i - 1)
+                });
+                (crop, hole)
+            })
+            .collect()
+    }
+
     /// This frame's uniform values; the light's world-to-clip when the pack
     /// draws a shadow map (for the terrain's shadow cull).
     pub(crate) fn begin_frame(
@@ -1269,6 +1295,7 @@ impl PackScreen {
             && self.shadow_cache_filled
             && self.installed.constants.shadow_cache
             && let (Some(t), Some(s)) = (terrain, &self.targets.shadow)
+            && s.cascades == 1
             && let Some(changed) = t.shadow_changes_since(since)
             && let Some((rects, crop)) = partial_shadow(&changed, cull, s.size)
         {
@@ -1406,7 +1433,7 @@ impl PackScreen {
             self.installed.constants.shadow_cache && self.installed.constants.shadow_lerp;
         let snapshot = blending && self.values.as_ref().is_some_and(|v| v.shadow_snapshot);
         if snapshot && let Some(s) = &self.targets.shadow {
-            let (from, to, side) = (s.depth.raw, s.depth_opaque.raw, s.size);
+            let (from, to, side) = (s.depth.raw, s.depth_opaque.raw, s.extent);
             graph.pass(
                 "pack shadow step snapshot",
                 &[(from, Use::TransferSrc), (to, Use::TransferDst)],
@@ -1423,8 +1450,8 @@ impl PackScreen {
                             src_subresource: layers(vk::ImageAspectFlags::DEPTH),
                             dst_subresource: layers(vk::ImageAspectFlags::DEPTH),
                             extent: vk::Extent3D {
-                                width: side,
-                                height: side,
+                                width: side.width,
+                                height: side.height,
                                 depth: 1,
                             },
                             ..Default::default()
@@ -1479,7 +1506,7 @@ impl PackScreen {
             && let Some(s) = &self.targets.shadow
             && let Some(cache) = &s.depth_cache
         {
-            let (from, to, side) = (cache.raw, s.depth.raw, s.size);
+            let (from, to, side) = (cache.raw, s.depth.raw, s.extent);
             graph.pass(
                 "pack shadow cache restore",
                 &[(from, Use::TransferSrc), (to, Use::TransferDst)],
@@ -1496,8 +1523,8 @@ impl PackScreen {
                             src_subresource: layers(vk::ImageAspectFlags::DEPTH),
                             dst_subresource: layers(vk::ImageAspectFlags::DEPTH),
                             extent: vk::Extent3D {
-                                width: side,
-                                height: side,
+                                width: side.width,
+                                height: side.height,
                                 depth: 1,
                             },
                             ..Default::default()
@@ -1667,7 +1694,7 @@ impl PackScreen {
                     (s.depth.raw, cache.raw)
                 };
                 self.shadow_cache_filled = true;
-                let side = s.size;
+                let side = s.extent;
                 graph.pass(
                     "pack shadow cache copy",
                     &[(from, Use::TransferSrc), (to, Use::TransferDst)],
@@ -1684,8 +1711,8 @@ impl PackScreen {
                                 src_subresource: layers(vk::ImageAspectFlags::DEPTH),
                                 dst_subresource: layers(vk::ImageAspectFlags::DEPTH),
                                 extent: vk::Extent3D {
-                                    width: side,
-                                    height: side,
+                                    width: side.width,
+                                    height: side.height,
                                     depth: 1,
                                 },
                                 ..Default::default()
@@ -1698,7 +1725,7 @@ impl PackScreen {
                 && !blending
                 && let Some(s) = &self.targets.shadow
             {
-                let (from, to, side) = (s.depth.raw, s.depth_opaque.raw, s.size);
+                let (from, to, side) = (s.depth.raw, s.depth_opaque.raw, s.extent);
                 graph.pass(
                     "pack shadow depth copy",
                     &[(from, Use::TransferSrc), (to, Use::TransferDst)],
@@ -1715,8 +1742,8 @@ impl PackScreen {
                                 src_subresource: layers(vk::ImageAspectFlags::DEPTH),
                                 dst_subresource: layers(vk::ImageAspectFlags::DEPTH),
                                 extent: vk::Extent3D {
-                                    width: side,
-                                    height: side,
+                                    width: side.width,
+                                    height: side.height,
                                     depth: 1,
                                 },
                                 ..Default::default()
@@ -1876,6 +1903,14 @@ impl PackScreen {
                         (vk::Buffer::null(), vk::Buffer::null()),
                     ),
                 };
+            // Each cascade draws from its own cull, cropped to it and without
+            // the finer cascade's hole (`TerrainScene::record_shadow_cull`).
+            let cascade_commands: Vec<(vk::Buffer, vk::Buffer)> = match (&pass.shadow, draw) {
+                (Some(_), Some((_, t))) if !t.shadow_cascades.is_empty() => {
+                    t.shadow_cascades.clone()
+                }
+                _ => vec![commands],
+            };
             uses.retain(|u| u.0 != depth_image);
             let depth_view = match draw {
                 Some((_, t)) => {
@@ -1884,6 +1919,10 @@ impl PackScreen {
                     pass_buffers.push((t.slots.0, Use::VertexRead));
                     pass_buffers.push((commands.0, Use::IndirectRead));
                     pass_buffers.push((commands.1, Use::IndirectRead));
+                    for c in cascade_commands.iter().filter(|c| **c != commands) {
+                        pass_buffers.push((c.0, Use::IndirectRead));
+                        pass_buffers.push((c.1, Use::IndirectRead));
+                    }
                     pass_buffers.push((t.translucent.0, Use::IndexRead));
                     for (vertices, indices) in &t.pools {
                         pass_buffers.push((*vertices, Use::VertexRead));
@@ -1937,6 +1976,26 @@ impl PackScreen {
                 clear_rects = false;
             }
             let white = self.stubs.white.1;
+            // Each cascade's square of the shadow atlas, its zoom for the
+            // vertex stage (push word 4, as float bits; 0: no cascades), and
+            // past the inner one, leaves cast solid (word 5).
+            let cascades: Vec<(u32, vk::Rect2D)> = match &self.targets.shadow {
+                Some(s) if shadow_pass && s.cascades > 1 => (0..s.cascades)
+                    .map(|n| {
+                        (
+                            cascade_scale(&self.installed.constants, n).to_bits(),
+                            cascade_area(s.size, n),
+                        )
+                    })
+                    .collect(),
+                _ => vec![(
+                    0,
+                    vk::Rect2D {
+                        offset: vk::Offset2D::default(),
+                        extent,
+                    },
+                )],
+            };
             // Cutout terrain gets its own label in GPU timings.
             let program = &self.installed.programs[pass.program].name;
             let name = match pass.geometry {
@@ -2028,139 +2087,155 @@ impl PackScreen {
                     &[bindless.set],
                     &[],
                 );
-                push(
-                    ctx,
-                    cmd,
-                    pipelines.layout,
-                    &Push {
-                        ids: [table_index, base, 0, 0],
-                        more: [0; 4],
-                        params: [0.0; 4],
-                        view_proj: [[0.0; 4]; 4],
-                    },
-                );
-                match draw {
-                    // Sky pieces: one draw each, in the snapshot's order.
-                    Some((_, t)) if sky_pass.is_some() => {
-                        let Some(e) = &t.sky else { return };
-                        device.cmd_bind_index_buffer(cmd, e.indices, 0, vk::IndexType::UINT32);
-                        let (textured, adds) = sky_pass.unwrap_or_default();
-                        for (i, &(first, count, base_vertex, texture, add)) in
-                            e.draws.iter().enumerate()
-                        {
-                            // `blended` lists the textured pieces here.
-                            if add != adds || e.blended.contains(&(i as u32)) != textured {
-                                continue;
-                            }
-                            let texture = if texture == u32::MAX { white } else { texture };
-                            push(
-                                ctx,
-                                cmd,
-                                pipelines.layout,
-                                &Push {
-                                    ids: [table_index, base, texture, 0],
-                                    more: [0; 4],
-                                    params: [0.0; 4],
-                                    view_proj: [[0.0; 4]; 4],
-                                },
-                            );
-                            device.cmd_draw_indexed(cmd, count, 1, first, base_vertex, i as u32);
-                        }
+                for (n, &(cascade, area)) in cascades.iter().enumerate() {
+                    let commands = cascade_commands.get(n).copied().unwrap_or(commands);
+                    let solid_leaves = u32::from(n > 0);
+                    if cascades.len() > 1 {
+                        device.cmd_set_viewport(
+                            cmd,
+                            0,
+                            &[vk::Viewport {
+                                x: area.offset.x as f32,
+                                y: area.offset.y as f32,
+                                width: area.extent.width as f32,
+                                height: area.extent.height as f32,
+                                min_depth: 0.0,
+                                max_depth: 1.0,
+                            }],
+                        );
+                        device.cmd_set_scissor(cmd, 0, &[area]);
                     }
-                    // Entities: one draw each, its texture in the push.
-                    Some((_, t)) if entity_pass.is_some() => {
-                        let set = if hand_pass {
-                            &t.hand
-                        } else if clouds_pass {
-                            &t.clouds
-                        } else {
-                            &t.entities
-                        };
-                        let Some(e) = set else {
-                            return;
-                        };
-                        device.cmd_bind_index_buffer(cmd, e.indices, 0, vk::IndexType::UINT32);
-                        let order: Vec<u32> = if entity_pass == Some(true) {
-                            e.blended.clone()
-                        } else {
-                            // The shadow pass takes the shadow-only ones
-                            // too; the rest skip them.
-                            (0..e.draws.len() as u32)
-                                .filter(|&i| {
-                                    let only =
-                                        e.shadow_only.get(i as usize).copied().unwrap_or(false);
-                                    !e.draws[i as usize].4 && (shadow_pass || !only)
-                                })
-                                .collect()
-                        };
-                        for i in order {
-                            let (first, count, base_vertex, texture, _) = e.draws[i as usize];
-                            // Untextured parts (the clouds) sample white.
-                            let texture = if texture == u32::MAX { white } else { texture };
-                            push(
-                                ctx,
-                                cmd,
-                                pipelines.layout,
-                                &Push {
-                                    ids: [table_index, base, texture, 0],
-                                    more: [0; 4],
-                                    params: [0.0; 4],
-                                    view_proj: [[0.0; 4]; 4],
-                                },
-                            );
-                            device.cmd_draw_indexed(cmd, count, 1, first, base_vertex, i);
-                        }
-                    }
-                    // The terrain's culled commands: per pool for solid and
-                    // cutout, one far-to-near list for translucent.
-                    Some((slot, t)) if slot < 2 => {
-                        let size = crate::vk::terrain::PACK_COMMAND_SIZE;
-                        let whole = [vk::Rect2D {
-                            offset: vk::Offset2D::default(),
-                            extent,
-                        }];
-                        let scissors = if rects.is_empty() {
-                            &whole[..]
-                        } else {
-                            &rects[..]
-                        };
-                        for scissor in scissors {
-                            device.cmd_set_scissor(cmd, 0, std::slice::from_ref(scissor));
-                            for (p, (_, indices)) in t.pools.iter().enumerate() {
-                                let list = p as u64 * 2 + slot as u64;
-                                device.cmd_bind_index_buffer(
+                    push(
+                        ctx,
+                        cmd,
+                        pipelines.layout,
+                        &Push {
+                            ids: [table_index, base, 0, cascade],
+                            more: [solid_leaves, 0, 0, 0],
+                            params: [0.0; 4],
+                            view_proj: [[0.0; 4]; 4],
+                        },
+                    );
+                    match draw {
+                        // Sky pieces: one draw each, in the snapshot's order.
+                        Some((_, t)) if sky_pass.is_some() => {
+                            let Some(e) = &t.sky else { return };
+                            device.cmd_bind_index_buffer(cmd, e.indices, 0, vk::IndexType::UINT32);
+                            let (textured, adds) = sky_pass.unwrap_or_default();
+                            for (i, &(first, count, base_vertex, texture, add)) in
+                                e.draws.iter().enumerate()
+                            {
+                                // `blended` lists the textured pieces here.
+                                if add != adds || e.blended.contains(&(i as u32)) != textured {
+                                    continue;
+                                }
+                                let texture = if texture == u32::MAX { white } else { texture };
+                                push(
+                                    ctx,
                                     cmd,
-                                    *indices,
-                                    0,
-                                    vk::IndexType::UINT32,
+                                    pipelines.layout,
+                                    &Push {
+                                        ids: [table_index, base, texture, cascade],
+                                        more: [solid_leaves, 0, 0, 0],
+                                        params: [0.0; 4],
+                                        view_proj: [[0.0; 4]; 4],
+                                    },
                                 );
-                                ctx.draw_indexed_indirect_count(
+                                device.cmd_draw_indexed(cmd, count, 1, first, base_vertex, i as u32);
+                            }
+                        }
+                        // Entities: one draw each, its texture in the push.
+                        Some((_, t)) if entity_pass.is_some() => {
+                            let set = if hand_pass {
+                                &t.hand
+                            } else if clouds_pass {
+                                &t.clouds
+                            } else {
+                                &t.entities
+                            };
+                            let Some(e) = set else {
+                                return;
+                            };
+                            device.cmd_bind_index_buffer(cmd, e.indices, 0, vk::IndexType::UINT32);
+                            let order: Vec<u32> = if entity_pass == Some(true) {
+                                e.blended.clone()
+                            } else {
+                                // The shadow pass takes the shadow-only ones
+                                // too; the rest skip them.
+                                (0..e.draws.len() as u32)
+                                    .filter(|&i| {
+                                        let only =
+                                            e.shadow_only.get(i as usize).copied().unwrap_or(false);
+                                        !e.draws[i as usize].4 && (shadow_pass || !only)
+                                    })
+                                    .collect()
+                            };
+                            for i in order {
+                                let (first, count, base_vertex, texture, _) = e.draws[i as usize];
+                                // Untextured parts (the clouds) sample white.
+                                let texture = if texture == u32::MAX { white } else { texture };
+                                push(
+                                    ctx,
+                                    cmd,
+                                    pipelines.layout,
+                                    &Push {
+                                        ids: [table_index, base, texture, cascade],
+                                        more: [solid_leaves, 0, 0, 0],
+                                        params: [0.0; 4],
+                                        view_proj: [[0.0; 4]; 4],
+                                    },
+                                );
+                                device.cmd_draw_indexed(cmd, count, 1, first, base_vertex, i);
+                            }
+                        }
+                        // The terrain's culled commands: per pool for solid and
+                        // cutout, one far-to-near list for translucent.
+                        Some((slot, t)) if slot < 2 => {
+                            let size = crate::vk::terrain::PACK_COMMAND_SIZE;
+                            let whole = [area];
+                            let scissors = if rects.is_empty() {
+                                &whole[..]
+                            } else {
+                                &rects[..]
+                            };
+                            for scissor in scissors {
+                                device.cmd_set_scissor(cmd, 0, std::slice::from_ref(scissor));
+                                for (p, (_, indices)) in t.pools.iter().enumerate() {
+                                    let list = p as u64 * 2 + slot as u64;
+                                    device.cmd_bind_index_buffer(
+                                        cmd,
+                                        *indices,
+                                        0,
+                                        vk::IndexType::UINT32,
+                                    );
+                                    ctx.draw_indexed_indirect_count(
+                                        cmd,
+                                        commands.0,
+                                        list * u64::from(t.capacity) * size,
+                                        commands.1,
+                                        list * 4,
+                                        t.capacity,
+                                        size as u32,
+                                    );
+                                }
+                            }
+                        }
+                        Some((_, t)) => {
+                            let (indices, start, count) = t.translucent;
+                            if count > 0 {
+                                let size = crate::vk::terrain::PACK_COMMAND_SIZE;
+                                device.cmd_bind_index_buffer(cmd, indices, 0, vk::IndexType::UINT32);
+                                device.cmd_draw_indexed_indirect(
                                     cmd,
                                     commands.0,
-                                    list * u64::from(t.capacity) * size,
-                                    commands.1,
-                                    list * 4,
-                                    t.capacity,
+                                    u64::from(start) * size,
+                                    count,
                                     size as u32,
                                 );
                             }
                         }
+                        None => device.cmd_draw(cmd, 3, 1, 0, 0),
                     }
-                    Some((_, t)) => {
-                        let (indices, start, count) = t.translucent;
-                        if count > 0 {
-                            let size = crate::vk::terrain::PACK_COMMAND_SIZE;
-                            device.cmd_bind_index_buffer(cmd, indices, 0, vk::IndexType::UINT32);
-                            device.cmd_draw_indexed_indirect(
-                                cmd,
-                                commands.0,
-                                u64::from(start) * size,
-                                count,
-                                size as u32,
-                            );
-                        }
-                    }
-                    None => device.cmd_draw(cmd, 3, 1, 0, 0),
                 }
                 device.cmd_end_rendering(cmd);
             });
@@ -2301,6 +2376,54 @@ pub(crate) struct Overlay {
     pub extent: vk::Extent2D,
     pub view_proj: Mat4,
 }
+
+/// Shadow cascades with `torchShadowCascades`: inner, middle, outer.
+pub(crate) const CASCADES: u32 = 3;
+
+/// Cascade `i`'s reach (blocks, either way), for all but the outer: the
+/// texel shading's rings (full detail, then the first coarser ring) and a
+/// little over for the blend (`shadow_cascade_reach` in the pack's
+/// lib/shadow.slang).
+fn cascade_reach(constants: &crate::shaderpack::directives::Constants, i: u32) -> f32 {
+    match i {
+        0 => constants.texel_full_distance + 2.0,
+        _ => constants.texel_full_distance + constants.texel_ring_width + 2.0,
+    }
+}
+
+/// Cascade `i`'s zoom on the light's clip space (the outer's is 1).
+fn cascade_scale(constants: &crate::shaderpack::directives::Constants, i: u32) -> f32 {
+    if i + 1 >= CASCADES {
+        return 1.0;
+    }
+    (constants.shadow_distance / cascade_reach(constants, i)).max(1.0)
+}
+
+/// Cascade `i`'s square in the shadow atlas of inner side `side`: the
+/// inner on the left, the middle and outer at half size stacked on the
+/// right (`cascade_uv` in the pack's lib/shadow.slang).
+fn cascade_area(side: u32, i: u32) -> vk::Rect2D {
+    let half = side / 2;
+    let (x, y, size) = match i {
+        0 => (0, 0, side),
+        1 => (side, 0, half),
+        _ => (side, half, half),
+    };
+    vk::Rect2D {
+        offset: vk::Offset2D {
+            x: x as i32,
+            y: y as i32,
+        },
+        extent: vk::Extent2D {
+            width: size,
+            height: size,
+        },
+    }
+}
+
+/// Texels in from a cascade's edge that the next cascade's hole stops:
+/// room for its blend band, filter taps and lean.
+const CASCADE_HOLE_INSET: f32 = 14.0;
 
 /// Torch Vibrant's shadow warp (`SHADOW_DISTORTION` in its shadow.slang).
 const SHADOW_DISTORTION: f32 = 0.85;

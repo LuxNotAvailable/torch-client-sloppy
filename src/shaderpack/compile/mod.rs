@@ -521,6 +521,16 @@ pub(crate) fn compile_frame(
     }
     frame.targets = targets;
     frame.constants = directives::read_constants(preprocessed.iter().map(String::as_str));
+    for (name, field) in [
+        ("TEXEL_FULL_DISTANCE", &mut frame.constants.texel_full_distance),
+        ("TEXEL_RING_WIDTH", &mut frame.constants.texel_ring_width),
+    ] {
+        if let Some(opt) = pack.declared.get(name)
+            && let Ok(blocks) = pack.values.get(opt).parse::<f32>()
+        {
+            *field = blocks;
+        }
+    }
     frame.notes.extend(
         unknown
             .into_iter()

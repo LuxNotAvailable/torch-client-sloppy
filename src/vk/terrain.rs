@@ -82,6 +82,7 @@ const CULL_BUCKETS: u32 = 4;
 const CULL_FRUSTUM: u32 = 8;
 const CULL_NO_WAVE: u32 = 16;
 const CULL_BELOW: u32 = 32;
+const CULL_HOLE: u32 = 64;
 
 /// Shadow casters wholly this far under the eye are skipped: light falls
 /// down, so they only shade what lies lower still, out of most views.
@@ -566,6 +567,8 @@ pub struct PackGeometry {
     pub atlas: (vk::Image, u32),
     /// The shadow cull's commands and counts (same lists), when it ran.
     pub shadow: Option<(vk::Buffer, vk::Buffer)>,
+    /// With cascades, each one's (the first is `shadow`'s).
+    pub shadow_cascades: Vec<(vk::Buffer, vk::Buffer)>,
     /// The game's lightmap, when the snapshot has one.
     pub lightmap: Option<(vk::Image, u32)>,
     /// The snapshot's entities, when it has some.
@@ -662,8 +665,10 @@ pub struct TerrainScene {
     atlas_size: (u32, u32),
     depth: DepthTarget,
     retired: Vec<(Buffer, u64)>,
-    /// A pack's shadow cull: its own commands and counts, a view per slot.
-    shadow: Option<ShadowCull>,
+    /// A pack's shadow cull, one list per cascade (one without): its own
+    /// commands and counts, a view per slot; and how many ran this frame.
+    shadow: Vec<ShadowCull>,
+    shadow_live: usize,
 
     lo: Vec3,
     hi: Vec3,
@@ -1009,7 +1014,8 @@ impl TerrainScene {
             atlas_size,
             depth: DepthTarget::default(),
             retired: Vec::new(),
-            shadow: None,
+            shadow: Vec::new(),
+            shadow_live: 0,
             lo: Vec3::splat(f32::MAX),
             hi: Vec3::splat(f32::MIN),
             stats: Stats::default(),
@@ -1409,7 +1415,19 @@ impl TerrainScene {
                 self.translucent_count,
             ),
             atlas: (self.atlas.raw, self.atlas_raw_index),
-            shadow: self.shadow.as_ref().map(|s| (s.commands.raw, s.counts.raw)),
+            shadow: self
+                .shadow
+                .first()
+                .filter(|_| self.shadow_live > 0)
+                .map(|s| (s.commands.raw, s.counts.raw)),
+            shadow_cascades: if self.shadow_live > 1 {
+                self.shadow[..self.shadow_live]
+                    .iter()
+                    .map(|s| (s.commands.raw, s.counts.raw))
+                    .collect()
+            } else {
+                Vec::new()
+            },
             lightmap: self.env.as_ref().map(|e| (e.lightmap.0.raw, e.lightmap.1)),
             entities: self.entities.as_ref().map(|e| e.pack_entities()),
             sky: self.env.as_ref().and_then(|e| e.pack_entities()),
@@ -1464,6 +1482,7 @@ impl TerrainScene {
     /// `view_proj` (world to clip, z 0..1): frustum only, since Hi-Z, cave
     /// visibility and face buckets are the camera's.
     #[allow(clippy::too_many_arguments, reason = "one pass's whole context")]
+    #[allow(clippy::too_many_arguments, reason = "the frame's recording context")]
     pub fn record_shadow_cull(
         &mut self,
         ctx: &Context,
@@ -1473,8 +1492,36 @@ impl TerrainScene {
         graph: &mut Graph,
         slot: usize,
         frame: u64,
+        eye: Vec3,
+        views: &[(Mat4, Option<f32>)],
+    ) -> Result<(), SetupError> {
+        self.shadow_live = 0;
+        for (list, &(view_proj, hole)) in views.iter().enumerate() {
+            self.record_shadow_list(
+                ctx, memory, bindless, pipelines, graph, slot, frame, list, view_proj, eye, hole,
+            )?;
+            self.shadow_live = list + 1;
+        }
+        Ok(())
+    }
+
+    /// Shadow cull list `list`, through `view_proj` (a cascade's, cropped
+    /// to it), leaving out casters wholly inside `hole` (the finer
+    /// cascade's).
+    #[allow(clippy::too_many_arguments, reason = "the frame's recording context")]
+    fn record_shadow_list(
+        &mut self,
+        ctx: &Context,
+        memory: &Memory,
+        bindless: &mut Bindless,
+        pipelines: &Pipelines,
+        graph: &mut Graph,
+        slot: usize,
+        frame: u64,
+        list: usize,
         view_proj: Mat4,
         eye: Vec3,
+        hole: Option<f32>,
     ) -> Result<(), SetupError> {
         let Some(pipes) = self.pipes else {
             return Ok(());
@@ -1482,7 +1529,7 @@ impl TerrainScene {
         let storage = vk::BufferUsageFlags::STORAGE_BUFFER
             | vk::BufferUsageFlags::TRANSFER_DST
             | vk::BufferUsageFlags::INDIRECT_BUFFER;
-        if self.shadow.is_none() {
+        if self.shadow.len() <= list {
             let counts = memory.buffer(
                 ctx,
                 "shadow counts",
@@ -1506,7 +1553,7 @@ impl TerrainScene {
             let commands =
                 memory.buffer(ctx, "shadow commands", 16, storage, MemoryLocation::GpuOnly)?;
             let commands_index = bindless.add_buffer(ctx, commands.raw).ok_or_else(full)?;
-            self.shadow = Some(ShadowCull {
+            self.shadow.push(ShadowCull {
                 commands,
                 commands_index,
                 counts,
@@ -1514,7 +1561,7 @@ impl TerrainScene {
                 views,
             });
         }
-        let shadow = self.shadow.as_mut().expect("made above");
+        let shadow = &mut self.shadow[list];
         // As big as the camera's commands, which `ensure_commands` sizes.
         if shadow.commands.size < self.commands.size {
             let buffer = memory.buffer(
@@ -1535,8 +1582,13 @@ impl TerrainScene {
             prev_view_proj: view_proj.to_cols_array_2d(),
             camera: [eye.x, eye.y, eye.z, eye.y - SHADOW_CASTER_BELOW],
             hiz: [0; 4],
-            flags: [CULL_FRUSTUM | CULL_BELOW, 0, 0, 0],
-            pad: [0; 4],
+            flags: [
+                CULL_FRUSTUM | CULL_BELOW | if hole.is_some() { CULL_HOLE } else { 0 },
+                0,
+                0,
+                0,
+            ],
+            pad: [hole.unwrap_or(0.0).to_bits(), 0, 0, 0],
             fog_color: [0.0; 4],
             fog_ranges: [0.0, f32::MAX, 0.0, f32::MAX],
             env: [u32::MAX, 0, 0, 0],
@@ -1578,7 +1630,12 @@ impl TerrainScene {
         ];
         let ranks = self.ranks.index;
         let slot_count = self.slot_high;
-        graph.pass("shadow cull", &[], &buffers, |cmd| unsafe {
+        let name = match list {
+            0 => "shadow cull",
+            1 => "shadow cull middle",
+            _ => "shadow cull outer",
+        };
+        graph.pass(name, &[], &buffers, |cmd| unsafe {
             // SAFETY: the terrain's cull pipeline with the shared layout and set.
             device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipes.cull);
             device.cmd_bind_descriptor_sets(
@@ -3281,7 +3338,7 @@ impl TerrainScene {
         buffers.extend(self.readback);
         buffers.extend(self.views);
         buffers.extend(self.retired.into_iter().map(|(b, _)| b));
-        if let Some(s) = self.shadow {
+        for s in self.shadow {
             buffers.push(s.commands);
             buffers.push(s.counts);
             buffers.extend(s.views.into_iter().map(|(b, _)| b));
