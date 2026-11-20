@@ -99,9 +99,23 @@ struct ShadowChanges {
     generation: u64,
     /// The latest changes: each one's generation and section origin.
     log: VecDeque<(u64, [i32; 3])>,
+    /// Each live layer's geometry hash (`geometry_hash`), so a remesh that
+    /// only changes light or colour logs nothing.
+    hashes: HashMap<([i32; 3], bool), u64>,
 }
 
 impl ShadowChanges {
+    /// A layer's new geometry (`None`: removed); logged only if it differs.
+    fn set(&mut self, key: ([i32; 3], bool), hash: Option<u64>) {
+        let old = match hash {
+            Some(h) => self.hashes.insert(key, h),
+            None => self.hashes.remove(&key),
+        };
+        if old != hash {
+            self.note(key.0);
+        }
+    }
+
     fn note(&mut self, origin: [i32; 3]) {
         self.generation += 1;
         if self.log.len() == SHADOW_CHANGE_LOG {
@@ -125,6 +139,21 @@ impl ShadowChanges {
             .filter(|c| c.0 > since)
             .any(|c| section_in_clip(c.1, world_clip))
     }
+}
+
+/// Hash of what a layer casts: vertex positions, UVs (cutout alpha) and
+/// both index lists. Light and colour are left out.
+fn geometry_hash(verts: &[crate::terrain::mesh::PackedVertex], idx: &[u32], cutout: &[u32]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::hash::DefaultHasher::new();
+    verts.len().hash(&mut h);
+    for v in verts {
+        v.pos[..3].hash(&mut h);
+        v.uv.hash(&mut h);
+    }
+    idx.hash(&mut h);
+    cutout.hash(&mut h);
+    h.finish()
 }
 
 /// Whether the 16-block section at `origin` overlaps clip space x, y in
@@ -1614,7 +1643,6 @@ impl TerrainScene {
         self.stats.indices -= entry.index_count as u64;
         self.release_slot(entry.slot);
         self.sections_changed = true;
-        self.shadow_changes.note(key.0);
     }
 
     /// A new pool, when every pool is too full for a section.
@@ -1687,6 +1715,7 @@ impl TerrainScene {
                     let keys: Vec<_> = self.entries.keys().copied().collect();
                     for key in keys {
                         self.remove(key);
+                        self.shadow_changes.set(key, None);
                     }
                     self.vis.clear();
                     continue;
@@ -1700,6 +1729,7 @@ impl TerrainScene {
                         .collect();
                     for key in keys {
                         self.remove(key);
+                        self.shadow_changes.set(key, None);
                     }
                     self.vis.retain(|&(x, _, z), _| x != cx || z != cz);
                     continue;
@@ -1718,6 +1748,9 @@ impl TerrainScene {
                 );
             }
             self.remove(key);
+            let hash = (!section.verts.is_empty())
+                .then(|| geometry_hash(&section.verts, &section.idx, &section.cutout_idx));
+            self.shadow_changes.set(key, hash);
             if section.verts.is_empty() {
                 continue;
             }
@@ -1946,7 +1979,6 @@ impl TerrainScene {
                 },
             );
             self.sections_changed = true;
-            self.shadow_changes.note(key.0);
         }
         self.stats.sections = self.entries.len();
         self.stats.pools = self.pools.len();
@@ -3293,6 +3325,20 @@ mod tests {
         }
         assert!(changes.since(0, map()));
         assert!(!changes.since(1, map()));
+    }
+
+    #[test]
+    fn same_geometry_logs_nothing() {
+        let key = ([-16, 64, 0], false);
+        let mut changes = ShadowChanges::default();
+        changes.set(key, Some(7));
+        assert_eq!(changes.generation, 1);
+        changes.set(key, Some(7));
+        assert_eq!(changes.generation, 1, "light-only remesh");
+        changes.set(key, Some(8));
+        changes.set(key, None);
+        changes.set(key, None);
+        assert_eq!(changes.generation, 3);
     }
     use super::*;
 
