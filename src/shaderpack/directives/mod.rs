@@ -169,6 +169,8 @@ pub(crate) struct Constants {
     /// records and the terrain a window of them (`vk::voxels`) for traced
     /// reflections.
     pub(crate) voxels: bool,
+    /// `torchVoxelDistance`: how far (blocks) the voxel window reaches.
+    pub(crate) voxel_reach: u32,
     /// The pack's `TEXEL_FULL_DISTANCE` and `TEXEL_RING_WIDTH` options
     /// (blocks), which set the cascades' reach
     /// (`vk::pack::screen::cascade_reach`).
@@ -199,6 +201,7 @@ impl Default for Constants {
             cloud_upper: false,
             shadow_cascades: false,
             voxels: false,
+            voxel_reach: 64,
             texel_full_distance: 24.0,
             texel_ring_width: 16.0,
         }
@@ -222,6 +225,9 @@ pub(crate) fn read_constants<'a>(sources: impl Iterator<Item = &'a str>) -> Cons
                     }
                     "shadowMapResolution" if (1..=16384).contains(&size) => {
                         constants.shadow_map_resolution = size
+                    }
+                    "torchVoxelDistance" if (32..=1024).contains(&size) => {
+                        constants.voxel_reach = size
                     }
                     _ => {}
                 }

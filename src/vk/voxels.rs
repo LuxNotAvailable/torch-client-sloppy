@@ -1,12 +1,15 @@
 //! The voxel window traced reflections read (`terrain::voxels`): the
-//! sections around the camera, 8 x 4 x 8, in one storage buffer the pack's
-//! water reads by bindless index (`PackGeometry::voxels`).
+//! sections around the camera, `side` x `HEIGHT` x `side`, in one storage
+//! buffer the pack's water reads by bindless index
+//! (`PackGeometry::voxels`). Its reach is the pack's `torchVoxelDistance`.
 //!
-//! Layout, in u32 words: `MAGIC` and three pads, then per slot its section
-//! (x, y, z in sections) and state (`UNKNOWN`, `EMPTY`, `FILLED`), then per
-//! slot 4096 two-word records. Section `s` lives in slot
-//! `(s.x & 7) | (s.z & 7) << 3 | (s.y & 3) << 6`; a slot whose header names
-//! another section is unknown. `gbuffers_water.slang` reads the same.
+//! Layout, in u32 words: `MAGIC`, side, height and a pad; then per slot
+//! its section (x, y, z in sections) and state (`UNKNOWN`, `EMPTY`, or
+//! `FILLED | page << 2`); then the pages, 4096 two-word records each. Only
+//! filled sections take a page, so air and buried rock cost a header.
+//! Section `s` lives in slot `m(s.x) + m(s.z) * side + m(s.y, HEIGHT) *
+//! side^2` (`m`: the non-negative remainder); a slot whose header names
+//! another section is unknown. `lib/water.slang` reads the same.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -21,15 +24,18 @@ use super::upload::Uploads;
 use super::{Context, SetupError};
 use crate::terrain::voxels::SectionVoxels;
 
-pub const MAGIC: u32 = 0x5658_4c31;
-const SLOTS: usize = 8 * 4 * 8;
-const HEADER_BYTES: u64 = 16 + SLOTS as u64 * 16;
-const SLOT_BYTES: u64 = 4096 * 8;
+pub const MAGIC: u32 = 0x5658_4c32;
+/// Sections tall: three below the eye's, four above.
+const HEIGHT: i32 = 8;
+const PAGE_BYTES: u64 = 4096 * 8;
+/// At most 64 MB of pages; past that, the farthest filled sections read
+/// unknown (sky).
+const MAX_PAGES: u32 = 2048;
 const UNKNOWN: u32 = 0;
 const EMPTY: u32 = 1;
 const FILLED: u32 = 2;
 /// Bytes of records staged a frame; slots past it wait (and read unknown).
-const BUDGET: u64 = 1 << 20;
+const BUDGET: u64 = 2 << 20;
 
 /// A copy from the staging ring into the window.
 pub struct Upload {
@@ -39,19 +45,46 @@ pub struct Upload {
     pub size: u64,
 }
 
+struct Window {
+    buffer: Buffer,
+    index: u32,
+    side: i32,
+    pages: u32,
+    /// What each slot holds on the GPU: section and generation, and its
+    /// page.
+    slots: Vec<(Option<([i32; 3], u64)>, Option<u32>)>,
+    free: Vec<u32>,
+    magic: bool,
+    /// The window's corner section and the store's generation when every
+    /// slot last matched them; nothing to do until either moves.
+    settled: Option<([i32; 3], u64)>,
+}
+
 #[derive(Default)]
 pub struct VoxelWindow {
-    buffer: Option<(Buffer, u32)>,
+    window: Option<Window>,
+    /// Windows replaced by a bigger reach, freed with the scene (a frame in
+    /// flight may still read them).
+    retired: Vec<Buffer>,
     /// Every stored section's records, by section, with a generation.
     store: HashMap<[i32; 3], (Arc<SectionVoxels>, u64)>,
     generation: u64,
-    /// What each slot holds on the GPU: section and generation (0 unknown).
-    slots: Vec<Option<([i32; 3], u64)>>,
-    magic: bool,
 }
 
-fn slot_of(s: [i32; 3]) -> usize {
-    ((s[0] & 7) | (s[2] & 7) << 3 | (s[1] & 3) << 6) as usize
+/// Pages a window `side` sections across keeps: one a slot, up to
+/// `MAX_PAGES` (past it, near sections take far ones' pages).
+fn pages_for(side: i32) -> u32 {
+    ((side * side * HEIGHT) as u32).min(MAX_PAGES)
+}
+
+fn header_bytes(side: i32) -> u64 {
+    16 + (side * side * HEIGHT) as u64 * 16
+}
+
+/// Section `s`'s slot in a window `side` sections across.
+fn slot_of(side: i32, s: [i32; 3]) -> usize {
+    (s[0].rem_euclid(side) + s[2].rem_euclid(side) * side + s[1].rem_euclid(HEIGHT) * side * side)
+        as usize
 }
 
 impl VoxelWindow {
@@ -79,11 +112,12 @@ impl VoxelWindow {
 
     /// The window's bindless index and buffer, once made.
     pub fn bound(&self) -> Option<(vk::Buffer, u32)> {
-        self.buffer.as_ref().map(|(b, i)| (b.raw, *i))
+        self.window.as_ref().map(|w| (w.buffer.raw, w.index))
     }
 
     /// Stages what changed in the window around `eye` (blocks), making the
-    /// buffer the first time. Does nothing unless a pack wants voxels.
+    /// buffer the first time and again when the reach grows. Does nothing
+    /// unless a pack wants voxels.
     pub fn update(
         &mut self,
         ctx: &Context,
@@ -91,26 +125,45 @@ impl VoxelWindow {
         bindless: &mut Bindless,
         uploads: &mut Uploads,
         eye: Vec3,
+        frame: u64,
         out: &mut Vec<Upload>,
     ) -> Result<(), SetupError> {
         if !crate::terrain::voxels::wanted() {
             return Ok(());
         }
-        if self.buffer.is_none() {
+        let side = (crate::terrain::voxels::distance() as i32 / 16).clamp(2, 64) * 2;
+        if self.window.as_ref().is_none_or(|w| w.side != side) {
+            let pages = pages_for(side);
             let buffer = memory.buffer(
                 ctx,
                 "voxel window",
-                HEADER_BYTES + SLOTS as u64 * SLOT_BYTES,
+                header_bytes(side) + u64::from(pages) * PAGE_BYTES,
                 vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
                 MemoryLocation::GpuOnly,
             )?;
             let index = bindless
                 .add_buffer(ctx, buffer.raw)
                 .ok_or_else(|| SetupError("the bindless set is full".into()))?;
-            self.buffer = Some((buffer, index));
-            self.slots = vec![None; SLOTS];
-            self.magic = false;
+            if let Some(old) = self.window.take() {
+                // Its index stays bound until the frames reading it end.
+                bindless.remove_buffer(old.index, frame);
+                self.retired.push(old.buffer);
+            }
+            self.window = Some(Window {
+                buffer,
+                index,
+                side,
+                pages,
+                slots: vec![(None, None); (side * side * HEIGHT) as usize],
+                free: (0..pages).rev().collect(),
+                magic: false,
+                settled: None,
+            });
         }
+        let Some(w) = self.window.as_mut() else {
+            return Ok(());
+        };
+        let header = header_bytes(w.side);
         let mut stage = |bytes: &[u8], at: u64, out: &mut Vec<Upload>| -> bool {
             match uploads.stage(bytes) {
                 Some(s) => {
@@ -125,56 +178,121 @@ impl VoxelWindow {
                 None => false,
             }
         };
-        if !self.magic {
-            self.magic = stage(bytemuck::cast_slice(&[MAGIC, 0, 0, 0]), 0, out);
+        if !w.magic {
+            let words = [MAGIC, w.side as u32, HEIGHT as u32, w.pages];
+            w.magic = stage(bytemuck::cast_slice(&words), 0, out);
         }
-        // Sections around the eye: four either side across, two up and down.
+        let half = w.side / 2;
         let base = [
-            (eye.x / 16.0 + 0.5).floor() as i32 - 4,
-            (eye.y / 16.0 + 0.5).floor() as i32 - 2,
-            (eye.z / 16.0 + 0.5).floor() as i32 - 4,
+            (eye.x / 16.0 + 0.5).floor() as i32 - half,
+            (eye.y / 16.0).floor() as i32 - 3,
+            (eye.z / 16.0 + 0.5).floor() as i32 - half,
         ];
-        let mut spent = 0u64;
-        for dy in 0..4 {
-            for dz in 0..8 {
-                for dx in 0..8 {
-                    let s = [base[0] + dx, base[1] + dy, base[2] + dz];
-                    let slot = slot_of(s);
-                    let entry = self.store.get(&s);
-                    let want = (s, entry.map_or(0, |e| e.1));
-                    if self.slots[slot] == Some(want) {
-                        continue;
-                    }
-                    let state = match entry {
-                        None => UNKNOWN,
-                        Some((v, _)) if v.cells.is_empty() => EMPTY,
-                        Some(_) => FILLED,
-                    };
-                    if state == FILLED {
-                        if spent + SLOT_BYTES > BUDGET {
-                            continue;
-                        }
-                        let dense = entry.map(|(v, _)| v.dense()).unwrap_or_default();
-                        let at = HEADER_BYTES + slot as u64 * SLOT_BYTES;
-                        if !stage(bytemuck::cast_slice(&dense), at, out) {
-                            return Ok(());
-                        }
-                        spent += SLOT_BYTES;
-                    }
-                    let header = [s[0] as u32, s[1] as u32, s[2] as u32, state];
-                    if !stage(bytemuck::cast_slice(&header), 16 + slot as u64 * 16, out) {
-                        return Ok(());
-                    }
-                    self.slots[slot] = Some(want);
+        if w.settled == Some((base, self.generation)) {
+            return Ok(());
+        }
+        let mut complete = true;
+        // Nearest first, so the budget goes where reflections are seen.
+        let mut order: Vec<[i32; 3]> = Vec::with_capacity(w.slots.len());
+        for dy in 0..HEIGHT {
+            for dz in 0..w.side {
+                for dx in 0..w.side {
+                    order.push([base[0] + dx, base[1] + dy, base[2] + dz]);
                 }
             }
+        }
+        let centre = [base[0] + half, base[1] + 3, base[2] + half];
+        order.sort_by_key(|s| {
+            let d = [s[0] - centre[0], s[1] - centre[1], s[2] - centre[2]];
+            d[0] * d[0] + d[1] * d[1] + d[2] * d[2]
+        });
+        let mut spent = 0u64;
+        for s in order {
+            let slot = slot_of(w.side, s);
+            let entry = self.store.get(&s);
+            let want = (s, entry.map_or(0, |e| e.1));
+            if w.slots[slot].0 == Some(want) {
+                continue;
+            }
+            let filled = entry.filter(|(v, _)| !v.cells.is_empty());
+            let state = match (entry, filled) {
+                (None, _) => UNKNOWN,
+                (Some(_), None) => EMPTY,
+                (Some(_), Some(_)) => FILLED,
+            };
+            let mut word = state;
+            if let Some((v, _)) = filled {
+                if spent + PAGE_BYTES > BUDGET {
+                    complete = false;
+                    continue;
+                }
+                let dist = |q: [i32; 3]| {
+                    let d = [q[0] - centre[0], q[1] - centre[1], q[2] - centre[2]];
+                    d[0] * d[0] + d[1] * d[1] + d[2] * d[2]
+                };
+                let page = match w.slots[slot].1.or_else(|| w.free.pop()) {
+                    Some(p) => p,
+                    // Out of pages: take the farthest filled section's, if
+                    // it is farther than this one (it reads unknown).
+                    None => {
+                        let mine = dist(s);
+                        let far = w
+                            .slots
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(i, (held, page))| {
+                                let (q, _) = (*held)?;
+                                page.map(|_| (i, dist(q)))
+                            })
+                            .filter(|&(_, d)| d > mine)
+                            .max_by_key(|&(_, d)| d);
+                        let Some((victim, _)) = far else {
+                            complete = false;
+                            continue;
+                        };
+                        let Some(q) = w.slots[victim].0.map(|(q, _)| q) else {
+                            continue;
+                        };
+                        let words = [q[0] as u32, q[1] as u32, q[2] as u32, UNKNOWN];
+                        if !stage(bytemuck::cast_slice(&words), 16 + victim as u64 * 16, out) {
+                            return Ok(());
+                        }
+                        // Unknown now: it asks again once a page is free.
+                        w.slots[victim].0 = Some((q, u64::MAX));
+                        match w.slots[victim].1.take() {
+                            Some(p) => p,
+                            None => continue,
+                        }
+                    }
+                };
+                let at = header + u64::from(page) * PAGE_BYTES;
+                if !stage(bytemuck::cast_slice(&v.dense()), at, out) {
+                    return Ok(());
+                }
+                spent += PAGE_BYTES;
+                w.slots[slot].1 = Some(page);
+                word = FILLED | page << 2;
+            } else if let Some(page) = w.slots[slot].1.take() {
+                w.free.push(page);
+            }
+            let words = [s[0] as u32, s[1] as u32, s[2] as u32, word];
+            if !stage(bytemuck::cast_slice(&words), 16 + slot as u64 * 16, out) {
+                return Ok(());
+            }
+            w.slots[slot].0 = Some(want);
+        }
+        if complete {
+            w.settled = Some((base, self.generation));
         }
         Ok(())
     }
 
     pub fn destroy(self, ctx: &Context, memory: &Memory) {
-        if let Some((buffer, _)) = self.buffer {
-            memory.free_buffer(ctx, buffer);
+        if let Some(w) = self.window {
+            memory.free_buffer(ctx, w.buffer);
+        }
+        for b in self.retired {
+            memory.free_buffer(ctx, b);
         }
     }
 }
@@ -184,12 +302,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn neighbouring_sections_take_different_slots() {
+    fn a_window_gives_every_section_its_own_slot() {
+        let side = 12;
         let mut seen = std::collections::HashSet::new();
-        for y in -2..2 {
-            for z in -4..4 {
-                for x in -4..4 {
-                    assert!(seen.insert(slot_of([x, y, z])));
+        for y in -3..5 {
+            for z in -6..6 {
+                for x in -6..6 {
+                    assert!(seen.insert(slot_of(side, [x + 100, y - 7, z - 31])));
                 }
             }
         }

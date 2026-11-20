@@ -30,9 +30,11 @@ float4 fragment(Varyings v) : SV_Target0 {
     }
     uint key = (uint(claim.x) << 16u) | uint(claim.y);
     uint4 value = refl_lookup(key);
-    // Untraced (the table overflowed): no reflection on this pixel.
+    // Untraced (the table was full): this pixel traces its texel itself,
+    // so a full table costs time, not holes.
     if (value.w == REFL_PENDING) {
-        return float4(c, 1.0);
+        float depth = depthtex0.Load(px).r;
+        value = refl_value(key, player_pos(view_pos(v.uv, depth)).y);
     }
     float4 surface = colortex3.Load(px);
     float4 m = refl_finish(value, colortex7.Load(px).rgb, refl_open(surface.w));

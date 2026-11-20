@@ -14,6 +14,21 @@
 #ifndef TORCH_SLANG
 #if WATER_REFLECTIONS == 1 && REFLECTION_METHOD == 1
 const bool torchVoxels = true;
+#if REFLECTION_DISTANCE == 64
+const int torchVoxelDistance = 64;
+#elif REFLECTION_DISTANCE == 96
+const int torchVoxelDistance = 96;
+#elif REFLECTION_DISTANCE == 128
+const int torchVoxelDistance = 128;
+#elif REFLECTION_DISTANCE == 192
+const int torchVoxelDistance = 192;
+#elif REFLECTION_DISTANCE == 256
+const int torchVoxelDistance = 256;
+#elif REFLECTION_DISTANCE == 384
+const int torchVoxelDistance = 384;
+#elif REFLECTION_DISTANCE == 512
+const int torchVoxelDistance = 512;
+#endif
 #endif
 #endif
 
@@ -358,6 +373,21 @@ Lit fragment(Varyings v) {
             // table's reach it is traced here.
             uint level = refl_level(across);
             uint key = refl_key(world, level);
+            if (REFLECTION_DEBUG != 0) {
+                // 16, 8, 4, 2, 1 texels a block: red, yellow, green, cyan,
+                // blue; out of the table's reach (traced per pixel): white.
+                float3 levels[5] = {
+                    float3(1.0, 0.1, 0.1), float3(1.0, 0.9, 0.1), float3(0.1, 1.0, 0.2),
+                    float3(0.1, 0.9, 1.0), float3(0.2, 0.2, 1.0)
+                };
+                float3 tint = key == REFL_EMPTY ? float3(1.0) : levels[min(level, 4u)];
+                // The texel grid shows as darker checks.
+                float res = refl_res(level);
+                int2 cell = int2(floor(world.xz * res));
+                tint *= ((cell.x + cell.y) & 1) == 0 ? 1.0 : 0.7;
+                o.color = float4(tint, 1.0);
+                return o;
+            }
             if (key != REFL_EMPTY) {
                 refl_claim(key, v.player.y);
                 claimed = true;

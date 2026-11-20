@@ -10,6 +10,10 @@ pub(crate) enum Element {
     Empty,
     Profile,
     Rest,
+    /// `<header:NAME>` (Torch's own): a section heading across the row,
+    /// labelled `header.NAME` in the pack's lang, as the video settings
+    /// group theirs.
+    Header(String),
 }
 
 impl Element {
@@ -19,6 +23,9 @@ impl Element {
             "<empty>" => Element::Empty,
             "<profile>" => Element::Profile,
             "*" => Element::Rest,
+            _ if token.starts_with("<header:") && token.ends_with('>') => {
+                Element::Header(token["<header:".len()..token.len() - 1].to_owned())
+            }
             _ => {
                 if let Some(inner) = token.strip_prefix('[').and_then(|t| t.strip_suffix(']')) {
                     Element::Link(inner.to_owned())
@@ -186,6 +193,14 @@ fn elements(value: &str) -> Vec<Element> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_header_token_names_its_section() {
+        assert_eq!(
+            Element::parse("<header:WATER>"),
+            Some(Element::Header("WATER".into()))
+        );
+    }
 
     fn parsed(text: &str) -> Properties {
         parse(text, &mut Defines::new())

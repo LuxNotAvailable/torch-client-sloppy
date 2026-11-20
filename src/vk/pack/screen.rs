@@ -298,7 +298,10 @@ impl PackScreen {
             };
         // Traced reflections: the mesher's voxel records, while this pack
         // is on.
-        crate::terrain::voxels::set_wanted(installed.constants.voxels);
+        crate::terrain::voxels::set_wanted(
+            installed.constants.voxels,
+            installed.constants.voxel_reach,
+        );
         let noise_size = installed.constants.noise_resolution.clamp(1, 1024);
         let stubs = Stubs {
             white: stub("pack white", vk::Format::R8G8B8A8_UNORM, color_aspect, one)?,

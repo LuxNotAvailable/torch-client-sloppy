@@ -521,15 +521,15 @@ pub fn draw_options(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     draw_title(p, ctx, &title);
 
     let elements = layout(loaded, &screen_id);
+    let headed = elements.iter().any(|e| matches!(e, Element::Header(_)));
     let columns = loaded
         .props
         .columns(&screen_id)
-        .unwrap_or(if elements.len() > 18 { 3 } else { 2 })
+        .unwrap_or(if elements.len() > 18 && !headed { 3 } else { 2 })
         .max(1);
 
     let (list_x, list_y, list_w, list_h) = LAYOUT.content_rect(ctx.vw, ctx.vh);
-    let rows = elements.len().div_ceil(columns as usize);
-    let content_h = rows as f32 * ROW_H;
+    let (places, content_h) = place(&elements, columns as usize);
     let grid_w = columns as f32 * COLUMN_STEP - (COLUMN_STEP - COLUMN_W);
     let left = (ctx.vw / 2.0 - grid_w / 2.0).floor();
     let cell_w = COLUMN_W.min(grid_w / columns as f32 - 4.0);
@@ -559,12 +559,22 @@ pub fn draw_options(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     let mut action = None;
     let mut hovered: Option<&str> = None;
 
-    for (index, element) in elements.iter().enumerate() {
-        let column = index % columns as usize;
-        let row_index = index / columns as usize;
+    let mut headers = 0;
+    for (index, (element, &(column, offset))) in elements.iter().zip(&places).enumerate() {
         let x = left + column as f32 * COLUMN_STEP;
-        let y = top + row_index as f32 * ROW_H + ROW_INSET;
+        let y = top + offset + ROW_INSET;
         if y + ROW_H < list_y || y > list_y + list_h {
+            headers += usize::from(matches!(element, Element::Header(_)));
+            continue;
+        }
+        if let Element::Header(name) = element {
+            let label = loaded
+                .lang
+                .header(name)
+                .map_or_else(|| lang::humanise(name), str::to_owned);
+            let rgb = HEADER_COLORS[headers % HEADER_COLORS.len()];
+            p.text_str(&label, x, y + HEADER_PAD, rgb, true);
+            headers += 1;
             continue;
         }
         if let Element::Option(name) = element
@@ -662,6 +672,40 @@ fn apply_action(state: &mut GuiState, action: Action) {
     state.shaderpacks.revision += 1;
 }
 
+/// Above a header, the gap from the row before; a header's whole height.
+const HEADER_PAD: f32 = 6.0;
+const HEADER_H: f32 = HEADER_PAD + 14.0;
+/// Header colours, in turn, as the video settings colour theirs.
+const HEADER_COLORS: [u32; 6] = [0x7FD4FF, 0x8CFF8C, 0xD8A8FF, 0xFFB07F, 0xFFD27F, 0xC8C8C8];
+
+/// Each element's column and offset from the top, and the content's height:
+/// a grid of `columns`, where a header starts a row of its own.
+fn place(elements: &[&Element], columns: usize) -> (Vec<(usize, f32)>, f32) {
+    let mut out = Vec::with_capacity(elements.len());
+    let (mut y, mut column) = (0.0f32, 0usize);
+    for element in elements {
+        if let Element::Header(_) = element {
+            if column > 0 {
+                y += ROW_H;
+                column = 0;
+            }
+            out.push((0, if y > 0.0 { y } else { -HEADER_PAD }));
+            y += if y > 0.0 { HEADER_H } else { HEADER_H - HEADER_PAD };
+            continue;
+        }
+        out.push((column, y));
+        column += 1;
+        if column == columns {
+            column = 0;
+            y += ROW_H;
+        }
+    }
+    if column > 0 {
+        y += ROW_H;
+    }
+    (out, y)
+}
+
 fn layout<'a>(loaded: &'a Loaded, screen: &str) -> Vec<&'a Element> {
     let Some(declared) = loaded.props.screens.get(screen) else {
         return loaded.menu.every.iter().collect();
@@ -696,8 +740,7 @@ fn element_widget(
     index: usize,
 ) -> Option<Action> {
     match element {
-        Element::Empty => None,
-        Element::Rest => None,
+        Element::Empty | Element::Rest | Element::Header(_) => None,
         Element::Link(id) => {
             let label = format!("{}...", screen_title(loaded, id));
             Button::new(x, y, w, WIDGET_HEIGHT, &label)
@@ -837,4 +880,24 @@ const MESSAGE_MARGIN: f32 = 8.0;
 fn text_center(p: &mut Painter, s: &str, cx: f32, y: f32, color: u32) {
     let x = (cx - p.atlas.font.width_str(s) / 2.0).floor();
     p.text_str(s, x, y, color, true);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_header_starts_its_own_row() {
+        let (a, h, b) = (
+            Element::Option("A".into()),
+            Element::Header("H".into()),
+            Element::Option("B".into()),
+        );
+        let (places, height) = place(&[&a, &h, &b], 2);
+        assert_eq!(places[0], (0, 0.0));
+        // The header leaves A's half-filled row and takes one of its own.
+        assert_eq!(places[1], (0, ROW_H));
+        assert_eq!(places[2], (0, ROW_H + HEADER_H));
+        assert_eq!(height, ROW_H + HEADER_H + ROW_H);
+    }
 }

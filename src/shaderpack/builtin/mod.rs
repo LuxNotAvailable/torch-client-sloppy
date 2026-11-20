@@ -164,11 +164,15 @@ SCALED_RESOLVE=1
             compile_frame(super::NAME, false, Some(values), Dimension::Overworld)
                 .unwrap_or_else(|e| panic!("{text}: {e}"))
                 .constants
-                .voxels
         };
-        assert!(!at(""));
-        assert!(at("REFLECTION_METHOD=1\n"));
-        assert!(!at("REFLECTION_METHOD=1\nWATER_REFLECTIONS=0\n"));
+        assert!(!at("").voxels);
+        assert!(at("REFLECTION_METHOD=1\n").voxels);
+        assert!(!at("REFLECTION_METHOD=1\nWATER_REFLECTIONS=0\n").voxels);
+        assert_eq!(at("REFLECTION_METHOD=1\n").voxel_reach, 128);
+        assert_eq!(
+            at("REFLECTION_METHOD=1\nREFLECTION_DISTANCE=512\n").voxel_reach,
+            512
+        );
     }
 
     #[test]

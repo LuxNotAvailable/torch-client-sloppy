@@ -8,7 +8,7 @@
 //! Word 1: tint RGB8 (24), sky light (4), block light (4).
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use super::{BlockGeom, RenderedBlock};
 
@@ -21,15 +21,22 @@ pub const EMISSIVE: u32 = 16;
 const MAX_TILE: u32 = 4095;
 
 static WANTED: AtomicBool = AtomicBool::new(false);
+static DISTANCE: AtomicU32 = AtomicU32::new(64);
 
 /// Whether the mesher fills voxel records.
 pub fn wanted() -> bool {
     WANTED.load(Ordering::Relaxed)
 }
 
-/// Sets whether a pack traces voxels; turning it on re-meshes the world so
-/// every section gets its records.
-pub fn set_wanted(on: bool) {
+/// How far (blocks, either way) the voxel window reaches.
+pub fn distance() -> u32 {
+    DISTANCE.load(Ordering::Relaxed)
+}
+
+/// Sets whether a pack traces voxels, and how far; turning it on re-meshes
+/// the world so every section gets its records.
+pub fn set_wanted(on: bool, distance: u32) {
+    DISTANCE.store(distance.max(32), Ordering::Relaxed);
     if WANTED.swap(on, Ordering::Relaxed) != on && on {
         crate::client::bus::request(crate::client::bus::ClientRequest::ReloadChunks);
     }

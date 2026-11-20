@@ -60,6 +60,10 @@ impl Lang {
         self.get(&format!("screen.{id}"))
     }
 
+    pub(crate) fn header(&self, name: &str) -> Option<&str> {
+        self.get(&format!("header.{name}"))
+    }
+
     pub(crate) fn profile(&self, name: &str) -> Option<&str> {
         self.get(&format!("profile.{name}"))
     }

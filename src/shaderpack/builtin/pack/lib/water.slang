@@ -66,8 +66,7 @@ float3 wave_normal(float3 world, float footprint) {
     return normalize(float3(-slope.x, 1.0, -slope.y));
 }
 
-static const uint VOXEL_MAGIC = 0x56584c31u;
-static const uint VOXEL_HEADER = 16u + 256u * 16u;
+static const uint VOXEL_MAGIC = 0x56584c32u;
 
 /// What a ray from `origin` (player space) along `dir` meets in the voxel
 /// window (`vk::voxels`): the lit block face and 1, or -1 where it meets
@@ -78,7 +77,8 @@ static const uint VOXEL_HEADER = 16u + 256u * 16u;
 /// the eye's pixel cone does, and the hit samples the atlas mip that
 /// footprint covers, so far hits blur instead of shimmering. The ray
 /// walks block by block (a DDA) from the camera's block, so it stays exact
-/// far from the origin.
+/// far from the origin, and crosses an empty section in one jump, so long
+/// rays through air stay cheap.
 float4 trace_voxels(float3 origin, float3 dir, float surface, float width) {
     ByteAddressBuffer vox = iris_vk_voxels();
     if (vox.Load(0) != VOXEL_MAGIC) {
@@ -90,16 +90,25 @@ float4 trace_voxels(float3 origin, float3 dir, float surface, float width) {
     int3 step = int3(sign(dir));
     float3 inv = 1.0 / max(abs(dir), float3(1e-6));
     float3 next = select(dir > 0.0, float3(cell) + 1.0 - p, p - float3(cell)) * inv;
-    int budget = REFLECTION_QUALITY == 0 ? 48 : (REFLECTION_QUALITY == 2 ? 160 : 96);
+    uint side = vox.Load(4);
+    uint height = vox.Load(8);
+    uint header = 16u + side * side * height * 16u;
+    // Reach is measured from the camera, across: the window is centred on
+    // it, so a reflection stops at the same range wherever the water is.
+    float reach = float(REFLECTION_DISTANCE);
     int3 section = int3(0x7fffffff);
     uint state = 0u;
     uint records = 0u;
     int axis = 1;
     float t = 0.0;
-    for (int i = 0; i < 160; i++) {
+    bool jumped = false;
+    for (int i = 0; i < 1024; i++) {
         // Step first: the origin's own block (a lily pad, the shore) is
-        // the surface's, not what it mirrors.
-        if (next.x < next.y && next.x < next.z) {
+        // the surface's, not what it mirrors. After a jump the ray already
+        // stands in its next block.
+        if (jumped) {
+            jumped = false;
+        } else if (next.x < next.y && next.x < next.z) {
             t = next.x;
             next.x += inv.x;
             cell.x += step.x;
@@ -115,22 +124,38 @@ float4 trace_voxels(float3 origin, float3 dir, float surface, float width) {
             cell.z += step.z;
             axis = 2;
         }
-        if (i >= budget) {
+        // `cell` is relative to the camera's block.
+        float2 across = float2(cell.xz) + 0.5 - frac(frame.cameraPosition.xz);
+        if (dot(across, across) > reach * reach) {
             break;
         }
         int3 w = cell + base;
         int3 s = w >> 4;
         if (any(s != section)) {
             section = s;
-            uint slot = uint(s.x & 7) | (uint(s.z & 7) << 3u) | (uint(s.y & 3) << 6u);
+            int3 m = int3(int(side), int(height), int(side));
+            uint3 q = uint3(((s % m) + m) % m);
+            uint slot = q.x + q.z * side + q.y * side * side;
             uint4 h = vox.Load4(16u + slot * 16u);
-            state = all(int3(h.xyz) == s) ? h.w : 0u;
-            records = VOXEL_HEADER + slot * 32768u;
+            uint word = all(int3(h.xyz) == s) ? h.w : 0u;
+            state = word & 3u;
+            records = header + (word >> 2u) * 32768u;
             if (state == 0u) {
                 return float4(0.0, 0.0, 0.0, -1.0);
             }
         }
-        if (state != 2u) {
+        if (state == 1u) {
+            // Empty: jump to where the ray leaves the section.
+            float3 lo = float3(s * 16 - base);
+            float3 exits = (select(dir > 0.0, lo + 16.0, lo) - p) * sign(dir) * inv;
+            exits = select(abs(dir) > 1e-6, exits, float3(1e9));
+            float leave = min(exits.x, min(exits.y, exits.z));
+            axis = exits.x <= exits.y && exits.x <= exits.z ? 0 : (exits.y <= exits.z ? 1 : 2);
+            t = leave;
+            float3 at = p + dir * (leave + 1e-3);
+            cell = int3(floor(at));
+            next = select(dir > 0.0, float3(cell) + 1.0 - at, at - float3(cell)) * inv + leave + 1e-3;
+            jumped = true;
             continue;
         }
         int3 l = w & 15;
@@ -224,7 +249,7 @@ RWByteAddressBuffer refl() { return iris_rw_buffer(IRIS_BUFFER_2); } // read_wri
 
 static const uint REFL_SIZE = 524288;
 static const uint REFL_MASK = 524287;
-static const uint REFL_PROBES = 8;
+static const uint REFL_PROBES = 16;
 static const uint REFL_EMPTY = 0u;
 /// A claimed texel's last value word until composite_a traces it.
 static const uint REFL_PENDING = 0xFFFFFFFFu;
@@ -239,10 +264,10 @@ float refl_res(uint level) {
 }
 
 /// The level for a surface `across` blocks per pixel across the view:
-/// texels no narrower than REFLECTION_TEXEL_PIXELS pixels, times
-/// REFLECTION_TEXEL_SCALE, at most 16 a block.
+/// texels no narrower than REFLECTION_TEXEL_PIXELS pixels, at most 16 a
+/// block.
 uint refl_level(float across) {
-    float per_block = REFLECTION_TEXEL_SCALE / max(across * float(REFLECTION_TEXEL_PIXELS), 1e-4);
+    float per_block = 1.0 / max(across * float(REFLECTION_TEXEL_PIXELS), 1e-4);
     float res = min(exp2(floor(log2(max(per_block, 1.0)))), 16.0);
     return uint(round(log2(16.0 / res)));
 }
@@ -318,8 +343,15 @@ float2 unpack_half2(uint w) {
 /// Traces the texel in work slot `slot`: what it mirrors, split so a pixel
 /// can finish it with its own surface colour and sky light (`refl_finish`).
 void refl_trace(uint slot) {
-    uint key = refl().Load(REFL_KEYS + 4 * slot) - 1u;
+    uint key = refl().Load(REFL_KEYS + 4 * slot);
     float y = asfloat(refl().Load(REFL_VALUES + 16 * slot));
+    refl().Store4(REFL_VALUES + 16 * slot, refl_value(key, y));
+}
+
+/// What texel `key` mirrors, its surface `y` high (player space), as
+/// `refl_trace` stores it.
+uint4 refl_value(uint key, float y) {
+    key -= 1u;
     uint level = key >> 29u;
     float res = refl_res(level);
     float2 t = float2(float(key & 2047u), float((key >> 11u) & 2047u)) - 1024.0;
@@ -335,9 +367,9 @@ void refl_trace(uint slot) {
     float3 q = m.rgb * hit;
     float3 sky = sky_color(r) * (1.0 - hit);
     float blend = reflection_blend(saturate(dot(rn, rv)));
-    refl().Store4(REFL_VALUES + 16 * slot, uint4(
+    return uint4(
         pack_half2(q.r, q.g), pack_half2(q.b, blend),
-        pack_half2(sky.r, sky.g), pack_half2(sky.b, 1.0 - hit)));
+        pack_half2(sky.r, sky.g), pack_half2(sky.b, 1.0 - hit));
 }
 
 /// A traced value finished for a pixel: the reflected colour (its own
