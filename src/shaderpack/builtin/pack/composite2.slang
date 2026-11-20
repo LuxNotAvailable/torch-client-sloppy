@@ -1,6 +1,5 @@
-// Torch Vibrant: lays the water's reflections and the volumetric fog over
-// the scene (both traced at a fraction of the resolution, see
-// lib/resolve.slang), then the distance haze that hides the edge of the
+// Torch Vibrant: lays the volumetric fog over the scene (traced at a
+// fraction of the resolution, see lib/resolve.slang), then the distance haze that hides the edge of the
 // world, and the murk under water or lava.
 
 /* RENDERTARGETS: 0 */
@@ -45,10 +44,6 @@ float4 fragment(Varyings v) : SV_Target0 {
         return float4(lerp(float3(1.2, 0.32, 0.04), c, through), 1.0);
     }
 
-    if (colortex3.Load(px).z >= 0.5) {
-        float4 mirror = resolve(colortex5, v.uv, v.clip.xy, depth, true);
-        c = lerp(c, mirror.rgb, mirror.a);
-    }
     float4 fog = resolve(colortex4, v.uv, v.clip.xy, depth, false);
     c = c * fog.a + fog.rgb;
 

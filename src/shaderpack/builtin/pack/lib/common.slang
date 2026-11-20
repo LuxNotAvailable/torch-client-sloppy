@@ -16,6 +16,11 @@
 [SpecializationConstant] const float WATER_CAUSTICS_DEPTH = 20.0;
 [SpecializationConstant] const float WATER_CAUSTICS_SHADE = 0.5;
 [SpecializationConstant] const int WATER_STYLE = 0;
+[SpecializationConstant] const int WATER_REFLECTIONS = 1;
+[SpecializationConstant] const int REFLECTION_QUALITY = 1;
+[SpecializationConstant] const int REFLECTION_STRENGTH = 100;
+[SpecializationConstant] const int WATER_COLOR_MAPPING = 1;
+[SpecializationConstant] const int GLINT_SMOOTHNESS = 15;
 [SpecializationConstant] const float EXPOSURE = 1.0;
 [SpecializationConstant] const int SCALED_RESOLVE = 0;
 [SpecializationConstant] const int TEXEL_FULL_DISTANCE = 24;
@@ -43,13 +48,24 @@
 // How much shadow on the surface dims caustics: 0 not at all, 1 fully.
 #define WATER_CAUSTICS_SHADE 0.5 // [0.0 0.25 0.5 0.75 1.0]
 // 0 Waves, rippled normals; 1 Flat, a still surface glinting on the
-// texture's bright texels (cheaper).
-#define WATER_STYLE 0 // [0 1]
+// texture's bright texels (cheaper); 2 Immersive, flat and coloured by the
+// texture's brightness, clouding with depth and mirroring at grazing angles.
+#define WATER_STYLE 0 // [0 1 2]
+// Water reflections, as ImmersiveVFX draws them: on or off, the trace's
+// quality (0 Low 16 steps / 3 halvings, 1 Normal 30 / 6, 2 High 38 / 10),
+// and strength in percent (100 is half a mirror at most).
+#define WATER_REFLECTIONS 1 // [0 1]
+#define REFLECTION_QUALITY 1 // [0 1 2]
+#define REFLECTION_STRENGTH 100 // [0 25 50 75 100 125 150 175 200]
+// Immersive water: colour follows the biome and clouds with depth (off: the
+// vanilla texture as is).
+#define WATER_COLOR_MAPPING 1 // [0 1]
+// Water glints: 0 sparkles on single texels, 100 a soft sheen.
+#define GLINT_SMOOTHNESS 15 // [0 15 25 50 75 100]
 #define EXPOSURE 1.0 // [0.6 0.8 1.0 1.2 1.4]
-// The fraction of the screen reflections and light shafts are traced at
-// (1/1 to 1/4; shaders.properties sizes their targets), and how that is
-// brought back to full resolution: 0 upsample, 1 dither.
-#define REFLECTION_RES 2 // [1 2 3 4]
+// The fraction of the screen light shafts are traced at (1/1 to 1/4;
+// shaders.properties sizes their target), and how that is brought back to
+// full resolution: 0 upsample, 1 dither.
 #define VOLUMETRIC_RES 2 // [1 2 3 4]
 #define SCALED_RESOLVE 0 // [0 1]
 // Shading texels by distance: full detail (16 per block) out to

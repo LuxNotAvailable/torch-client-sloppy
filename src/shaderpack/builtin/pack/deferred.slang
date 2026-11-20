@@ -7,8 +7,11 @@
 // Pro) aborts when a depth texture appears in a compute pipeline, which the
 // cache's passes need, so every pixel takes an eight-tap lookup here, in the
 // fragment stage.
+//
+// The lit scene is also copied to colortex5, which water samples for its
+// reflections (it cannot read the target it blends into).
 
-/* RENDERTARGETS: 0 */
+/* RENDERTARGETS: 0,5 */
 
 #include "lib/common.slang"
 #include "lib/shadow.slang"
@@ -74,7 +77,22 @@ float cached_coarse(uint key) {
 }
 #endif
 
-float4 fragment(Varyings v) : SV_Target0 {
+float4 shade(Varyings v);
+
+struct Shaded {
+    float4 color : SV_Target0;
+    float4 copy : SV_Target1;
+};
+
+Shaded fragment(Varyings v) {
+    float4 c = shade(v);
+    Shaded o;
+    o.color = c;
+    o.copy = c;
+    return o;
+}
+
+float4 shade(Varyings v) {
     int3 px = int3(int2(v.clip.xy), 0);
     float4 base = colortex0.Load(px);
     float depth = depthtex0.Load(px).r;

@@ -38,7 +38,6 @@ pub(crate) const FILES: &[(&str, &str)] = files![
     "deferred_a.slang",
     "deferred_b.slang",
     "deferred.slang",
-    "composite.slang",
     "composite1.slang",
     "composite2.slang",
     "final.slang",
@@ -142,18 +141,9 @@ mod tests {
             defaults.targets.settings[4].resolve_size([1200, 600]),
             [600, 300]
         );
-        assert_eq!(
-            defaults.targets.settings[5].resolve_size([1200, 600]),
-            [600, 300]
-        );
-        let scaled = at("REFLECTION_RES=4
-VOLUMETRIC_RES=1
+        let scaled = at("VOLUMETRIC_RES=1
 SCALED_RESOLVE=1
 ");
-        assert_eq!(
-            scaled.targets.settings[5].resolve_size([1200, 600]),
-            [300, 150]
-        );
         assert_eq!(
             scaled.targets.settings[4].resolve_size([1200, 600]),
             [1200, 600]
@@ -164,11 +154,15 @@ SCALED_RESOLVE=1
     fn a_bubble_column_shades_as_water() {
         use azalea::block::BlockState;
         use azalea_registry::builtin::BlockKind;
-        let frame = compile_frame(super::NAME, false, None, Dimension::Overworld).expect("built-in");
+        let frame =
+            compile_frame(super::NAME, false, None, Dimension::Overworld).expect("built-in");
         let ids = frame.block_ids.expect("the pack draws terrain");
         let water = ids.of(BlockState::from(BlockKind::Water).id() as u16);
         assert_ne!(water, crate::shaderpack::packvertex::UNMAPPED);
-        assert_eq!(ids.of(BlockState::from(BlockKind::BubbleColumn).id() as u16), water);
+        assert_eq!(
+            ids.of(BlockState::from(BlockKind::BubbleColumn).id() as u16),
+            water
+        );
     }
 
     #[test]
