@@ -139,10 +139,14 @@ pub(crate) struct PackScreen {
     /// This frame's shadow work, for perf reports: "full", "terrain"
     /// (in-map change) or "reuse"; `None` without a shadow pass.
     pub(crate) shadow_kind: Option<&'static str>,
-    /// A terrain-change redraw's map rectangles (`partial_shadow`): the
-    /// kept map is restored and only these are cleared and drawn. Empty
-    /// for a full redraw.
-    shadow_rects: Vec<vk::Rect2D>,
+    /// A terrain-change redraw's map rectangles per cascade (one list
+    /// without; `partial_shadow`, `partial_cascades`): the kept map is
+    /// restored and only these are cleared and drawn. Empty for a full
+    /// redraw.
+    shadow_rects: Vec<Vec<vk::Rect2D>>,
+    /// With cascades, a partial redraw's cull crop per cascade (in its
+    /// clip x, y); `None` where nothing changed, so it draws nothing.
+    shadow_partial_crops: Vec<Option<Mat4>>,
     /// This frame's values, from `begin_frame`.
     values: Option<FrameValues>,
     /// The block atlas (`gtexture` for terrain) and the game's lightmap.
@@ -361,6 +365,7 @@ impl PackScreen {
             shadow_reuse: false,
             shadow_kind: None,
             shadow_rects: Vec::new(),
+            shadow_partial_crops: Vec::new(),
             values: None,
             atlas: terrain.map(|t| t.atlas),
             lightmap: terrain.and_then(|t| t.lightmap),
@@ -1222,8 +1227,23 @@ impl PackScreen {
         (0..s.cascades)
             .map(|i| {
                 let scale = cascade_scale(constants, i);
-                let crop = Mat4::from_scale(bevy::math::Vec3::new(scale, scale, 1.0)) * light;
-                let hole = (i > 0).then(|| {
+                let mut crop = Mat4::from_scale(bevy::math::Vec3::new(scale, scale, 1.0)) * light;
+                // A partial redraw: only where this cascade changed, or
+                // nothing (every box lands off to the side).
+                if !self.shadow_partial_crops.is_empty() {
+                    crop = match self.shadow_partial_crops.get(i as usize).copied().flatten() {
+                        Some(partial) => partial * crop,
+                        None => Mat4::from_cols(
+                            bevy::math::Vec4::ZERO,
+                            bevy::math::Vec4::ZERO,
+                            bevy::math::Vec4::Z,
+                            bevy::math::Vec4::new(10.0, 10.0, 0.0, 1.0),
+                        ),
+                    };
+                }
+                // The hole is centred on the cascade, so a partial redraw's
+                // crop (off-centre) goes without; its scissor keeps it small.
+                let hole = (i > 0 && self.shadow_partial_crops.is_empty()).then(|| {
                     // The finer cascade's inset, in its own texels.
                     let finer = cascade_area(s.size, i - 1).extent.width as f32;
                     let inset = 2.0 * CASCADE_HOLE_INSET / finer;
@@ -1290,18 +1310,27 @@ impl PackScreen {
         });
         // A terrain change in a kept map: redraw only where it lands.
         self.shadow_rects.clear();
+        self.shadow_partial_crops.clear();
         let mut cull = values.shadow_world_clip();
         if self.shadow_kind == Some("terrain")
             && self.shadow_cache_filled
             && self.installed.constants.shadow_cache
             && let (Some(t), Some(s)) = (terrain, &self.targets.shadow)
-            && s.cascades == 1
             && let Some(changed) = t.shadow_changes_since(since)
-            && let Some((rects, crop)) = partial_shadow(&changed, cull, s.size)
         {
-            self.shadow_rects = rects;
-            cull = crop * cull;
-            self.shadow_kind = Some("partial");
+            if s.cascades == 1 {
+                if let Some((rects, crop)) = partial_shadow(&changed, cull, s.size) {
+                    self.shadow_rects = vec![rects];
+                    cull = crop * cull;
+                    self.shadow_kind = Some("partial");
+                }
+            } else if let Some(per) =
+                partial_cascades(&changed, cull, &self.installed.constants, s.size)
+            {
+                self.shadow_rects = per.iter().map(|(rects, _)| rects.clone()).collect();
+                self.shadow_partial_crops = per.into_iter().map(|(_, crop)| crop).collect();
+                self.shadow_kind = Some("partial");
+            }
         }
         let shadow = (!self.shadow_reuse && self.passes.iter().any(|p| p.shadow.is_some()))
             .then(|| (cull, values.camera()));
@@ -1967,7 +1996,7 @@ impl PackScreen {
             let sky_pass = pass.sky;
             // Terrain shadow passes of a partial redraw: the first clears
             // the rectangles, each draws once per rectangle.
-            let rects: Vec<vk::Rect2D> = match pass.geometry {
+            let rects: Vec<Vec<vk::Rect2D>> = match pass.geometry {
                 Some(0 | 1) if shadow_pass && entity_pass.is_none() => self.shadow_rects.clone(),
                 _ => Vec::new(),
             };
@@ -2057,6 +2086,7 @@ impl PackScreen {
                 if clear_here {
                     let clears: Vec<vk::ClearRect> = rects
                         .iter()
+                        .flatten()
                         .map(|&rect| vk::ClearRect {
                             rect,
                             base_array_layer: 0,
@@ -2193,10 +2223,12 @@ impl PackScreen {
                         Some((slot, t)) if slot < 2 => {
                             let size = crate::vk::terrain::PACK_COMMAND_SIZE;
                             let whole = [area];
-                            let scissors = if rects.is_empty() {
+                            // A partial redraw: this cascade's rectangles,
+                            // none where it didn't change.
+                            let scissors: &[vk::Rect2D] = if rects.is_empty() {
                                 &whole[..]
                             } else {
-                                &rects[..]
+                                rects.get(n).map_or(&[][..], |r| &r[..])
                             };
                             for scissor in scissors {
                                 device.cmd_set_scissor(cmd, 0, std::slice::from_ref(scissor));
@@ -2553,6 +2585,101 @@ fn partial_shadow(
     Some((rects, crop))
 }
 
+/// As `partial_shadow` for the cascades' atlas: per cascade (`cascade_area`),
+/// the texel rectangles changed sections land in (up to 4, padded 2 of its
+/// texels) and the cull crop to them in its clip x, y, or `None` where none
+/// land. `None` overall: redraw it all (too many sections, or past
+/// `PARTIAL_SHARE` of some cascade).
+fn partial_cascades(
+    changed: &[[i32; 3]],
+    world_clip: Mat4,
+    constants: &crate::shaderpack::directives::Constants,
+    side: u32,
+) -> Option<Vec<(Vec<vk::Rect2D>, Option<Mat4>)>> {
+    if changed.is_empty() || changed.len() > PARTIAL_SECTIONS {
+        return None;
+    }
+    // Each section's box in the light's clip x, y.
+    let boxes: Vec<(Vec2, Vec2)> = changed
+        .iter()
+        .map(|origin| {
+            let lo = Vec3::from_array(origin.map(|v| v as f32));
+            let (mut min, mut max) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN));
+            for i in 0..8 {
+                let corner =
+                    lo + Vec3::new((i & 1) as f32, ((i >> 1) & 1) as f32, (i >> 2) as f32) * 16.0;
+                let c = world_clip * corner.extend(1.0);
+                let p = c.truncate().truncate() / c.w;
+                min = min.min(p);
+                max = max.max(p);
+            }
+            (min, max)
+        })
+        .collect();
+    let mut out = Vec::with_capacity(CASCADES as usize);
+    let mut any = false;
+    for i in 0..CASCADES {
+        let scale = cascade_scale(constants, i);
+        let area = cascade_area(side, i);
+        let size = area.extent.width as f32;
+        let pad = 4.0 / size;
+        let mut rects: Vec<(Vec2, Vec2)> = boxes
+            .iter()
+            .map(|&(min, max)| (min * scale, max * scale))
+            .filter(|(min, max)| max.x >= -1.0 && min.x <= 1.0 && max.y >= -1.0 && min.y <= 1.0)
+            .map(|(min, max)| {
+                (
+                    (min - pad).max(Vec2::splat(-1.0)),
+                    (max + pad).min(Vec2::splat(1.0)),
+                )
+            })
+            .collect();
+        if rects.is_empty() {
+            out.push((Vec::new(), None));
+            continue;
+        }
+        any = true;
+        merge_rects(&mut rects, PARTIAL_RECTS);
+        let share: f32 = rects.iter().map(|r| (r.1 - r.0).element_product()).sum();
+        if share > PARTIAL_SHARE * 4.0 {
+            return None;
+        }
+        let (mut lo, mut hi) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN));
+        for &(min, max) in &rects {
+            lo = lo.min(min);
+            hi = hi.max(max);
+        }
+        let span = (hi - lo).max(Vec2::splat(1e-4));
+        let crop = Mat4::from_cols(
+            bevy::math::Vec4::new(2.0 / span.x, 0.0, 0.0, 0.0),
+            bevy::math::Vec4::new(0.0, 2.0 / span.y, 0.0, 0.0),
+            bevy::math::Vec4::Z,
+            bevy::math::Vec4::new(-(hi.x + lo.x) / span.x, -(hi.y + lo.y) / span.y, 0.0, 1.0),
+        );
+        // Map y runs with clip y: shadow programs don't flip it.
+        let texel = |v: f32| ((v + 1.0) * 0.5 * size).clamp(0.0, size);
+        let texels = rects
+            .iter()
+            .map(|&(min, max)| {
+                let (x0, y0) = (texel(min.x).floor() as u32, texel(min.y).floor() as u32);
+                let (x1, y1) = (texel(max.x).ceil() as u32, texel(max.y).ceil() as u32);
+                vk::Rect2D {
+                    offset: vk::Offset2D {
+                        x: area.offset.x + x0 as i32,
+                        y: area.offset.y + y0 as i32,
+                    },
+                    extent: vk::Extent2D {
+                        width: x1 - x0,
+                        height: y1 - y0,
+                    },
+                }
+            })
+            .collect();
+        out.push((texels, Some(crop)));
+    }
+    any.then_some(out)
+}
+
 /// Merges overlapping rectangles, then the pair whose union adds the least
 /// area until at most `most` remain.
 fn merge_rects(rects: &mut Vec<(Vec2, Vec2)>, most: usize) {
@@ -2712,7 +2839,9 @@ fn record_mipmaps(device: &ash::Device, graph: &mut Graph, image: &crate::vk::me
 
 #[cfg(test)]
 mod tests {
-    use super::{Mat4, Vec2, merge_rects, partial_shadow, shadow_unwarp, shadow_warp};
+    use super::{
+        Mat4, Vec2, merge_rects, partial_cascades, partial_shadow, shadow_unwarp, shadow_warp,
+    };
 
     /// Clip x, y -1..1 over world x, z -64..64, depth over y 0..256.
     fn map() -> Mat4 {
@@ -2761,6 +2890,30 @@ mod tests {
             partial_shadow(&[[400, 64, 400]], map(), 1024).is_none(),
             "off the map"
         );
+    }
+
+    #[test]
+    fn a_change_redraws_only_the_cascades_it_lands_in() {
+        let constants = crate::shaderpack::directives::Constants::default();
+        let d = constants.shadow_distance;
+        // Clip x, y -1..1 over world x, z -d..d, depth over y 0..256.
+        let map = Mat4::from_cols_array_2d(&[
+            [1.0 / d, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0 / 256.0, 0.0],
+            [0.0, 1.0 / d, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]);
+        let near = partial_cascades(&[[0, 64, 0]], map, &constants, 1024).expect("partial");
+        assert_eq!(near.len(), 3);
+        assert!(near.iter().all(|(rects, crop)| !rects.is_empty() && crop.is_some()));
+        // Past the middle cascade: the outer alone.
+        let far = partial_cascades(&[[96, 64, 96]], map, &constants, 1024).expect("partial");
+        assert!(far[0].1.is_none() && far[1].1.is_none());
+        assert!(!far[2].0.is_empty());
+        // The outer's rectangle sits in its square of the atlas.
+        let r = far[2].0[0];
+        assert!(r.offset.x >= 1024 && r.offset.y >= 512, "{r:?}");
+        assert!(partial_cascades(&[[9999, 64, 9999]], map, &constants, 1024).is_none(), "off the map");
     }
 
     #[test]
