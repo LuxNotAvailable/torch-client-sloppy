@@ -22,6 +22,14 @@ CPU fits 60 fps. Dips with flat CPU mean the **GPU is the limit**: full native r
 5. **Compute between graphics passes**: cull, Hi-Z and counts readback make the tiler flush and stall.
 6. **Thermals**: no adaptation. Clocks drop after minutes, and so does fps.
 
+## Measured 2026-11-21 (in-run A/B, steady phases only)
+
+- **Occlusion culling**: off costs terrain +4.6 ms against Hi-Z's 2.5 ms; keep it.
+- **Render Scale 100/70/50%**: GPU 13.2-14.4 / 13.5-14.0 / 13.6-14.3 ms. Terrain
+  stays ~7.5 ms at every scale: it is geometry-bound (vertices, tile binning),
+  not fill-bound. Hi-Z gets 1.2-1.8 ms cheaper, the post upscale costs 0.8-1.0 ms more.
+- **Leaves Fancy vs Fast**: terrain 6.59 vs 6.33-6.50 ms; cutout isn't the cost.
+
 ## Options (rough order of payoff)
 
 - **Render scale**: draw the world at 50–75% and upscale in the rotation pass, which is free since that pass samples anyway. Make it dynamic from frame time or thermal headroom (`AThermal_getThermalHeadroom`).

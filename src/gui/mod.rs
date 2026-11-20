@@ -899,13 +899,10 @@ pub(crate) const GAMMA_DEFAULT: u32 = 50;
 pub const GAMMA_MAX: u32 = 150;
 pub const PACK_RENDER_SCALE_MIN: u32 = 50;
 pub const PACK_RENDER_SCALE_MAX: u32 = 100;
-/// Phones draw the world at 70%: on the Pixel 10 Pro, 70% costs about what
-/// 50% does (GPU ~15.5 vs ~20.5 ms at 100%) and looks much sharper.
-pub const PACK_RENDER_SCALE_DEFAULT: u32 = if cfg!(target_os = "android") {
-    70
-} else {
-    PACK_RENDER_SCALE_MAX
-};
+/// 100% everywhere: on the Pixel 10 Pro, 70% and 50% saved nothing (terrain
+/// cost doesn't follow resolution there; the cheaper Hi-Z is eaten by the
+/// upscale).
+pub const PACK_RENDER_SCALE_DEFAULT: u32 = PACK_RENDER_SCALE_MAX;
 
 pub const FOV_EFFECTS_DEFAULT: u32 = 100;
 
