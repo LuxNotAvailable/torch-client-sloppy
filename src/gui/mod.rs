@@ -501,13 +501,13 @@ crate::options! {
         pub light_rays: bool = true => key("torchLightRays"),
         /// Light shafts' opacity by day and by night, percent of their own
         /// (200 is full).
-        pub light_ray_day_opacity: u32 = 200 => key("torchLightRayDayOpacity").clamp(0, 200),
-        pub light_ray_night_opacity: u32 = 200 => key("torchLightRayNightOpacity").clamp(0, 200),
+        pub light_ray_day_opacity: u32 = 70 => key("torchLightRayDayOpacity").clamp(0, 200),
+        pub light_ray_night_opacity: u32 = 5 => key("torchLightRayNightOpacity").clamp(0, 200),
         /// How much of the biome's tint light shafts take over the sun's
         /// colour, percent.
-        pub light_ray_tint: u32 = 25 => key("torchLightRayTint").clamp(0, 100),
+        pub light_ray_tint: u32 = 50 => key("torchLightRayTint").clamp(0, 100),
         /// How often light shafts spawn, percent of the usual rate.
-        pub light_ray_frequency: u32 = 100 => key("torchLightRayFrequency").clamp(10, 200),
+        pub light_ray_frequency: u32 = 50 => key("torchLightRayFrequency").clamp(10, 200),
         /// Vanilla's Biome Blend: how far grass, foliage and water colours
         /// average, in blocks (0 to 7).
         pub biome_blend: u32 = 2 => key("biomeBlendRadius").clamp(0, 7),

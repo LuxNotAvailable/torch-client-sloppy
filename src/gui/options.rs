@@ -162,6 +162,14 @@ const RESET_VIDEO: &str = "Reset Video Settings";
 const RESET_CHAT: &str = "Reset Chat Settings";
 
 const RESET_ALL: &str = "Reset All Options";
+const RESET_ALL_CONFIRM: &str = "Click again to reset all";
+/// How long Reset All Options waits for its second click, in seconds.
+const RESET_ALL_WINDOW: f32 = 3.0;
+
+/// When Reset All Options was first clicked, while it waits for the
+/// second: one click alone resets nothing.
+static RESET_ALL_ARMED: std::sync::Mutex<Option<crate::platform::time::Instant>> =
+    std::sync::Mutex::new(None);
 
 const MANAGE_STORAGE: &str = "Manage Storage...";
 const MANAGE_STORAGE_TITLE: &str = "Manage Storage";
@@ -872,20 +880,20 @@ const QUALITY_PRESETS: [QualityPreset; 6] = {
             name: "Lux Special",
             render_distance: 32,
             pack_render_scale: 100,
-            biome_blend: 4,
+            biome_blend: 2,
             clouds: CloudStatus::Fancy,
             smooth_lighting: true,
             antialiasing: AaMode::Off,
-            particles: ParticleStatus::Decreased,
+            particles: ParticleStatus::All,
             entity_shadows: true,
             lighting: true,
             shadow_update: 1,
-            pack_shadow: ("2048", "128.0"),
+            pack_shadow: ("1024", "128.0"),
             pack_foliage: "0",
             max_fps: crate::gui::MAX_FPS_UNLIMITED,
             entity_culling: true,
             entity_backface_culling: false,
-            smooth_gui_model: true,
+            smooth_gui_model: false,
             leaves: (0, 4, true, 2),
         },
     ]
@@ -1120,7 +1128,25 @@ pub fn draw_manage_storage(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCt
     #[allow(unused)]
     let mut next = 1;
 
-    if Button::new(left, top, COLUMN_W, WIDGET_HEIGHT, RESET_ALL).draw(p, ctx) {
+    let armed = {
+        let mut at = RESET_ALL_ARMED.lock().unwrap_or_else(|e| e.into_inner());
+        if at.is_some_and(|t| t.elapsed().as_secs_f32() > RESET_ALL_WINDOW) {
+            *at = None;
+        }
+        at.is_some()
+    };
+    let label = if armed { RESET_ALL_CONFIRM } else { RESET_ALL };
+    let mut reset = false;
+    if Button::new(left, top, COLUMN_W, WIDGET_HEIGHT, label).draw(p, ctx) {
+        let mut at = RESET_ALL_ARMED.lock().unwrap_or_else(|e| e.into_inner());
+        if armed {
+            *at = None;
+            reset = true;
+        } else {
+            *at = Some(crate::platform::time::Instant::now());
+        }
+    }
+    if reset {
         reset_video_options(&mut state.options);
         reset_chat_options(&mut state.options);
         let o = &mut state.options;
@@ -1386,11 +1412,12 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
             water_clarity_label,
         );
         f.tip(&tips::WATER_CLARITY);
-        if f.wide_button(LEAF_SETTINGS) {
+        f.new_row();
+        if f.button(LEAF_SETTINGS) {
             state.nav = Some(Screen::LeafSettings);
         }
         f.tip(&tips::LEAVES);
-        if f.wide_button(LIGHT_RAY_SETTINGS) {
+        if f.button(LIGHT_RAY_SETTINGS) {
             state.nav = Some(Screen::LightRaySettings);
         }
         f.tip(&tips::LIGHT_RAYS);
@@ -2460,8 +2487,8 @@ mod tests {
         // Six headers, then: the preset (1 row); Display (4: frame cap and
         // GUI frame cap, VSync, window size and fullscreen, GUI scale and
         // brightness); Performance (3: render distance and culling, lighting
-        // and shader scale, shader shadows); Quality (8, the last the
-        // Light Rays button); Camera (1); Details (3: sign outline and block
+        // and shader scale, shader shadows); Quality (7, the last the
+        // Leaves and Light Rays buttons); Camera (1); Details (3: sign outline and block
         // outline, shader packs, reset).
         let atlas = crate::gui::atlas::build_gui_atlas(&crate::assets_root());
         let mut p = Painter::new(&atlas, 0);
@@ -2475,7 +2502,7 @@ mod tests {
         draw_video(&mut p, &mut state, &ctx);
         let shader = cfg!(feature = "shader_support") as u32 as f32;
         let desktop = cfg!(not(target_os = "android")) as u32 as f32;
-        let rows = 1.0 + (3.0 + desktop) + (2.0 + shader) + 8.0 + 1.0 + (2.0 + shader);
+        let rows = 1.0 + (3.0 + desktop) + (2.0 + shader) + 7.0 + 1.0 + (2.0 + shader);
         assert_eq!(
             state.video_list.content_h,
             6.0 * HEADER_H + 5.0 * HEADER_PAD_TOP + rows * ROW_H + LIST_PAD_BOTTOM

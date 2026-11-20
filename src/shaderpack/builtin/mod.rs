@@ -101,7 +101,7 @@ mod tests {
                     "{:?}",
                     frame.notes
                 );
-                assert_eq!(frame.constants.shadow_map_resolution, 2048);
+                assert_eq!(frame.constants.shadow_map_resolution, 1024);
                 assert!(frame.buffers.iter().any(|b| b.index == 0));
                 // The texel target's 8-byte words.
                 assert_eq!(
@@ -165,7 +165,9 @@ SCALED_RESOLVE=1
                 .unwrap_or_else(|e| panic!("{text}: {e}"))
                 .constants
         };
-        assert!(!at("").voxels);
+        assert!(at("").voxels, "World Traced is the default");
+        assert!(!at("REFLECTION_METHOD=0
+").voxels);
         assert!(at("REFLECTION_METHOD=1\n").voxels);
         assert!(!at("REFLECTION_METHOD=1\nWATER_REFLECTIONS=0\n").voxels);
         assert_eq!(at("REFLECTION_METHOD=1\n").voxel_reach, 128);

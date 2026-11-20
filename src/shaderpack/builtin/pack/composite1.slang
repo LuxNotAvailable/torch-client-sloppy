@@ -8,9 +8,9 @@
 #include "lib/shadow.slang"
 
 #ifdef TORCH_SLANG
-[SpecializationConstant] const int GOD_RAY_STEPS = 12;
+[SpecializationConstant] const int GOD_RAY_STEPS = 6;
 #else
-#define GOD_RAY_STEPS 12 // [6 8 12 16 24]
+#define GOD_RAY_STEPS 6 // [6 8 12 16 24]
 #endif
 
 struct Varyings {

@@ -2,25 +2,25 @@
 // do not draw to the shadow map.
 
 #ifdef TORCH_SLANG
-[SpecializationConstant] const float SHADOW_SOFTNESS = 1.0;
-[SpecializationConstant] const int TEXEL_DENOISE = 8;
-[SpecializationConstant] const int TEXEL_DENOISE_RES = 8;
-[SpecializationConstant] const int TEXEL_TEMPORAL = 32;
-[SpecializationConstant] const int TEXEL_TEMPORAL_POINTS = 2;
+[SpecializationConstant] const float SHADOW_SOFTNESS = 0.5;
+[SpecializationConstant] const int TEXEL_DENOISE = 16;
+[SpecializationConstant] const int TEXEL_DENOISE_RES = 4;
+[SpecializationConstant] const int TEXEL_TEMPORAL = 64;
+[SpecializationConstant] const int TEXEL_TEMPORAL_POINTS = 4;
 #else
-#define SHADOW_SOFTNESS 1.0 // [0.5 1.0 1.5 2.0]
+#define SHADOW_SOFTNESS 0.5 // [0.5 1.0 1.5 2.0]
 // Coarse texels' shadow denoising: how many points across the texel its
 // shade averages (1 is the middle only), for texels of TEXEL_DENOISE_RES
 // texels per block or fewer.
-#define TEXEL_DENOISE 8 // [1 2 4 8 16]
-#define TEXEL_DENOISE_RES 8 // [1 2 4 8]
+#define TEXEL_DENOISE 16 // [1 2 4 8 16]
+#define TEXEL_DENOISE_RES 4 // [1 2 4 8]
 // Temporal denoising of those texels (the texel cache only): each frame a
 // few points scattered anew across the texel, averaged into its history
 // over up to TEXEL_TEMPORAL frames at 1 texel per block, half that at 2,
 // and so on (finer texels keep less history, so they follow a moving
 // shadow more closely). 0 is off (TEXEL_DENOISE fixed points a frame).
-#define TEXEL_TEMPORAL 32 // [0 8 16 32 64]
-#define TEXEL_TEMPORAL_POINTS 2 // [1 2 4]
+#define TEXEL_TEMPORAL 64 // [0 8 16 32 64]
+#define TEXEL_TEMPORAL_POINTS 4 // [1 2 4]
 #endif
 
 static const float SHADOW_DISTORTION = 0.85;

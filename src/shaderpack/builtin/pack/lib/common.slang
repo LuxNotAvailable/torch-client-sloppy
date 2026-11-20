@@ -7,43 +7,43 @@
 
 #ifdef TORCH_SLANG
 [SpecializationConstant] const float SUN_BRIGHTNESS = 2.4;
-[SpecializationConstant] const float TORCH_BRIGHTNESS = 2.2;
+[SpecializationConstant] const float TORCH_BRIGHTNESS = 1.4;
 [SpecializationConstant] const float FOG_DENSITY = 1.0;
-[SpecializationConstant] const float WATER_CLARITY = 1.0;
-[SpecializationConstant] const float WATER_SURFACE_OPACITY = 0.2;
+[SpecializationConstant] const float WATER_CLARITY = 2.0;
+[SpecializationConstant] const float WATER_SURFACE_OPACITY = 0.4;
 [SpecializationConstant] const int WATER_CAUSTICS_ENABLED = 1;
 [SpecializationConstant] const float WATER_CAUSTICS = 0.1;
 [SpecializationConstant] const float WATER_CAUSTICS_DEPTH = 20.0;
-[SpecializationConstant] const float WATER_CAUSTICS_SHADE = 0.5;
-[SpecializationConstant] const int WATER_STYLE = 0;
+[SpecializationConstant] const float WATER_CAUSTICS_SHADE = 0.75;
+[SpecializationConstant] const int WATER_STYLE = 2;
 [SpecializationConstant] const int WATER_REFLECTIONS = 1;
-[SpecializationConstant] const int REFLECTION_QUALITY = 1;
+[SpecializationConstant] const int REFLECTION_QUALITY = 0;
 [SpecializationConstant] const int REFLECTION_DISTANCE = 128;
 [SpecializationConstant] const int REFLECTION_DEBUG = 0;
 [SpecializationConstant] const int REFLECTION_STRENGTH = 100;
-[SpecializationConstant] const int REFLECTION_METHOD = 0;
-[SpecializationConstant] const int REFLECTION_TEXEL_PIXELS = 2;
-[SpecializationConstant] const float REFLECTION_FALLOFF = 2.0;
+[SpecializationConstant] const int REFLECTION_METHOD = 1;
+[SpecializationConstant] const int REFLECTION_TEXEL_PIXELS = 4;
+[SpecializationConstant] const float REFLECTION_FALLOFF = 1.0;
 [SpecializationConstant] const int WATER_COLOR_MAPPING = 1;
-[SpecializationConstant] const int GLINT_SMOOTHNESS = 15;
+[SpecializationConstant] const int GLINT_SMOOTHNESS = 0;
 [SpecializationConstant] const float EXPOSURE = 1.0;
-[SpecializationConstant] const int SCALED_RESOLVE = 0;
+[SpecializationConstant] const int SCALED_RESOLVE = 1;
 [SpecializationConstant] const int TEXEL_FULL_DISTANCE = 24;
-[SpecializationConstant] const int TEXEL_RING_WIDTH = 16;
-[SpecializationConstant] const int TEXEL_MIN_RES = 2;
+[SpecializationConstant] const int TEXEL_RING_WIDTH = 32;
+[SpecializationConstant] const int TEXEL_MIN_RES = 1;
 [SpecializationConstant] const int FOLIAGE_SHADING = 0;
 [SpecializationConstant] const int CLOUD_STYLE = 0;
 [SpecializationConstant] const float CLOUD_BLEND_DISTANCE = 384.0;
 [SpecializationConstant] const float CLOUD_SCATTER = 1.0;
 #else
 #define SUN_BRIGHTNESS 2.4 // [1.6 2.0 2.4 2.8 3.2]
-#define TORCH_BRIGHTNESS 2.2 // [1.4 1.8 2.2 2.6 3.0]
+#define TORCH_BRIGHTNESS 1.4 // [1.4 1.8 2.2 2.6 3.0]
 #define FOG_DENSITY 1.0 // [0.0 0.5 1.0 1.5 2.0]
 // How far you see into water: lower is murkier, higher clearer.
-#define WATER_CLARITY 1.0 // [0.25 0.5 0.75 1.0 1.25 1.5 2.0]
+#define WATER_CLARITY 2.0 // [0.25 0.5 0.75 1.0 1.25 1.5 2.0]
 // How much of the water's surface is its own colour however shallow it is,
 // so a pool a block deep still reads as water.
-#define WATER_SURFACE_OPACITY 0.2 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8]
+#define WATER_SURFACE_OPACITY 0.4 // [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8]
 // Light the surface focuses on the floor: 0 off, 1 on.
 #define WATER_CAUSTICS_ENABLED 1 // [0 1]
 // Strength of that light.
@@ -51,16 +51,16 @@
 // Depth in blocks by which caustics have faded out.
 #define WATER_CAUSTICS_DEPTH 20.0 // [2.0 4.0 6.0 8.0 12.0 16.0 20.0 28.0 40.0]
 // How much shadow on the surface dims caustics: 0 not at all, 1 fully.
-#define WATER_CAUSTICS_SHADE 0.5 // [0.0 0.25 0.5 0.75 1.0]
+#define WATER_CAUSTICS_SHADE 0.75 // [0.0 0.25 0.5 0.75 1.0]
 // 0 Waves, rippled normals; 1 Flat, a still surface glinting on the
 // texture's bright texels (cheaper); 2 Vivid, flat and coloured by the
 // texture's brightness, clouding with depth and mirroring at grazing angles.
-#define WATER_STYLE 0 // [0 1 2]
+#define WATER_STYLE 2 // [0 1 2]
 // Water reflections, drawn as a flat mirror: on or off, the trace's
 // quality (0 Low 16 steps / 3 halvings, 1 Normal 30 / 6, 2 High 38 / 10),
 // and strength in percent (100 is half a mirror at most).
 #define WATER_REFLECTIONS 1 // [0 1]
-#define REFLECTION_QUALITY 1 // [0 1 2]
+#define REFLECTION_QUALITY 0 // [0 1 2]
 // World Traced: how far (blocks) reflections reach.
 #define REFLECTION_DISTANCE 128 // [64 96 128 192 256 384 512]
 // World Traced: paint water by reflection texel size instead (debug).
@@ -69,30 +69,30 @@
 // How reflections find what they mirror: 0 Screen, the mod's trace over
 // the screen; 1 Voxel, a ray per water texel through the blocks around
 // you (off screen too), the sky past them (no screen trace).
-#define REFLECTION_METHOD 0 // [0 1]
+#define REFLECTION_METHOD 1 // [0 1]
 // World Traced: the smallest a reflection pixel can be, in screen pixels
 // (and at most 16 a block).
-#define REFLECTION_TEXEL_PIXELS 2 // [1 2 3 4 6 8 12 16 32]
+#define REFLECTION_TEXEL_PIXELS 4 // [1 2 3 4 6 8 12 16 32]
 // Voxel: how fast reflections fade looking down (the mod's is 3.6).
-#define REFLECTION_FALLOFF 2.0 // [0.5 1.0 1.5 2.0 2.5 3.0 3.6]
+#define REFLECTION_FALLOFF 1.0 // [0.5 1.0 1.5 2.0 2.5 3.0 3.6]
 // Colour mapped water: colour follows the biome and clouds with depth (off: the
 // vanilla texture as is).
 #define WATER_COLOR_MAPPING 1 // [0 1]
 // Water glints: 0 sparkles on single texels, 100 a soft sheen.
-#define GLINT_SMOOTHNESS 15 // [0 15 25 50 75 100]
+#define GLINT_SMOOTHNESS 0 // [0 15 25 50 75 100]
 #define EXPOSURE 1.0 // [0.6 0.8 1.0 1.2 1.4]
 // The fraction of the screen light shafts are traced at (1/1 to 1/4;
 // shaders.properties sizes their target), and how that is brought back to
 // full resolution: 0 upsample, 1 dither.
 #define VOLUMETRIC_RES 2 // [1 2 3 4]
-#define SCALED_RESOLVE 0 // [0 1]
+#define SCALED_RESOLVE 1 // [0 1]
 // Shading texels by distance: full detail (16 per block) out to
 // TEXEL_FULL_DISTANCE blocks, then each ring TEXEL_RING_WIDTH blocks wide
 // halves the texels per block, down to TEXEL_MIN_RES. Fewer texels mean
 // fewer texel-cache entries to shade.
 #define TEXEL_FULL_DISTANCE 24 // [8 16 24 32 48 64 96]
-#define TEXEL_RING_WIDTH 16 // [8 16 24 32 48 64]
-#define TEXEL_MIN_RES 2 // [1 2 4 8 16]
+#define TEXEL_RING_WIDTH 32 // [8 16 24 32 48 64]
+#define TEXEL_MIN_RES 1 // [1 2 4 8 16]
 // How plants off the block grid (cross plants, sugar cane) are shadowed:
 // 0 Fancy, texels on the plant's own plane through the texel cache; 1 Fast,
 // a lookup per vertex; 2 Potato, one shade per plant block.
