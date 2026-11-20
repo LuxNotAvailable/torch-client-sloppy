@@ -1,6 +1,6 @@
 //! The frame's last full-screen pass (VULKAN_REWRITE_CHECKLIST.md 5.3,
 //! `shaders/post.slang`): the scene is drawn into an image of its own,
-//! larger under SSAA, and this pass reads it into the output with the
+//! larger under SSAA, smaller under the Render Scale, and this pass reads it into the output with the
 //! server's post effects (`client::post_effects` flags) and FXAA.
 
 use ash::vk;
@@ -17,8 +17,9 @@ use super::{Context, SetupError};
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Settings {
     pub fxaa: bool,
-    /// The scene's size over the output's (1, 1.5 or 2 in the game).
-    pub ssaa: f32,
+    /// The scene's size over the output's: SSAA (1.5, 2) times the Render
+    /// Scale (0.5 to 1); below 1 the pass scales the scene up.
+    pub scale: f32,
     /// Post effect flags in place of the snapshot's.
     pub effects: Option<u32>,
 }
@@ -27,7 +28,7 @@ impl Default for Settings {
     fn default() -> Settings {
         Settings {
             fxaa: false,
-            ssaa: 1.0,
+            scale: 1.0,
             effects: None,
         }
     }
@@ -36,7 +37,7 @@ impl Default for Settings {
 impl Settings {
     /// The scene's extent for an output of `extent`.
     pub fn scene_extent(&self, extent: vk::Extent2D) -> vk::Extent2D {
-        let scale = |v: u32| ((v as f32 * self.ssaa).round() as u32).max(1);
+        let scale = |v: u32| ((v as f32 * self.scale).round() as u32).max(1);
         vk::Extent2D {
             width: scale(extent.width),
             height: scale(extent.height),

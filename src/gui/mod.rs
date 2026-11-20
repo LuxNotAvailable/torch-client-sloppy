@@ -469,9 +469,10 @@ crate::options! {
         /// alpha and the underwater fog's reach scale together
         /// (`scene::environment::water_opacity`).
         pub water_clarity: u32 = WATER_CLARITY_DEFAULT => key("waterClarity").clamp(0, WATER_CLARITY_MAX),
-        /// Percent of the window's size a shader pack draws at, scaled up at
-        /// the end: full-screen passes cost per pixel.
-        pub pack_render_scale: u32 = PACK_RENDER_SCALE_MAX => key("shaderRenderScale").clamp(PACK_RENDER_SCALE_MIN, PACK_RENDER_SCALE_MAX),
+        /// Percent of the window's size the world draws at (a shader pack or
+        /// the plain renderer), scaled up at the end: fill costs per pixel.
+        /// The key keeps its old shader-only name.
+        pub pack_render_scale: u32 = PACK_RENDER_SCALE_DEFAULT => key("shaderRenderScale").clamp(PACK_RENDER_SCALE_MIN, PACK_RENDER_SCALE_MAX),
         /// A shader pack's shadow map is redrawn every this many frames
         /// (1 to 3); between, the last one is reused, moved with the camera.
         pub shadow_update: u32 = 1 => key("torchShadowUpdate").clamp(1, 3),
@@ -898,6 +899,13 @@ pub(crate) const GAMMA_DEFAULT: u32 = 50;
 pub const GAMMA_MAX: u32 = 150;
 pub const PACK_RENDER_SCALE_MIN: u32 = 50;
 pub const PACK_RENDER_SCALE_MAX: u32 = 100;
+/// Phones draw the world at 70%: on the Pixel 10 Pro, 70% costs about what
+/// 50% does (GPU ~15.5 vs ~20.5 ms at 100%) and looks much sharper.
+pub const PACK_RENDER_SCALE_DEFAULT: u32 = if cfg!(target_os = "android") {
+    70
+} else {
+    PACK_RENDER_SCALE_MAX
+};
 
 pub const FOV_EFFECTS_DEFAULT: u32 = 100;
 

@@ -2348,7 +2348,7 @@ impl TerrainScene {
         let effects = settings
             .effects
             .unwrap_or_else(|| self.env.as_ref().map_or(0, |e| e.post));
-        let post = !self.cull_only && (settings.fxaa || settings.ssaa != 1.0 || effects != 0);
+        let post = !self.cull_only && (settings.fxaa || settings.scale != 1.0 || effects != 0);
         if post {
             let scene_extent = settings.scene_extent(extent);
             let scene = self

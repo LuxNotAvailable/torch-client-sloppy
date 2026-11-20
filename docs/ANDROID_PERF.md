@@ -38,6 +38,6 @@ CPU fits 60 fps. Dips with flat CPU mean the **GPU is the limit**: full native r
 
 ## Measure first
 
-- In-game GPU timing on Android: `MC_NATIVE_GPU_TIMING` can't reach the APK. Add an option or debug toggle.
+- In-game GPU timing on Android: done. Push an `env.txt` holding `MC_NATIVE_GPU_TIMING=1` to `/sdcard/Android/data/com.torch.client/files/`, restart the app, and grep logcat for `native renderer: gpu`. Pushed values override the APK's bundled `env.txt`.
 - Profiles are unreadable: the APK isn't debuggable. Write `profiles/` to external files (`/sdcard/Android/data/com.torch.client/files`), or build debuggable.
 - Arm/IMG tooling: PVRTune for tiler, HSR and bandwidth counters.

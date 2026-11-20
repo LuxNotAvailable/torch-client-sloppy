@@ -44,8 +44,8 @@ pub const LIGHTING_ENGINE: Tip = Tip::new(
     "Works out block and sky light. Off is fullbright: everything is evenly lit, a large saving on weak PCs.",
     Impact::Medium,
 );
-pub const SHADER_SCALE: Tip = Tip::new(
-    "Draws the shader pack at a share of the window's resolution, then scales it up. Lower is faster but blurrier.",
+pub const RENDER_SCALE: Tip = Tip::new(
+    "Draws the world (with or without a shader pack) at a share of the window's resolution, then scales it up; menus stay sharp. Lower is faster but blurrier.",
     Impact::High,
 );
 pub const SHADER_SHADOWS: Tip = Tip::new(

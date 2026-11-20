@@ -509,11 +509,14 @@ fn draw_frame(
             let post = super::post::Settings {
                 // MSAA has no native path: FXAA stands in.
                 fxaa: matches!(aa.mode, AaMode::Fxaa | AaMode::Msaa),
-                ssaa: if aa.mode == AaMode::Supersample {
+                // Render Scale too; under a pack the post pass is skipped,
+                // and the pack applies it itself.
+                scale: if aa.mode == AaMode::Supersample {
                     SSAA_SCALES.get(aa.ssaa).copied().unwrap_or(1.0)
                 } else {
                     1.0
-                },
+                } * pack_scale.clamp(1, 100) as f32
+                    / 100.0,
                 effects: None,
             };
             SMOOTH_FIGURE.store(
@@ -640,10 +643,10 @@ impl Live {
         crate::scene::weather::NATIVE
             .store(self.pack.is_none(), std::sync::atomic::Ordering::Relaxed);
         self.shots.extend(f.shots);
-        if (self.post.fxaa, self.post.ssaa) != (f.post.fxaa, f.post.ssaa) {
+        if (self.post.fxaa, self.post.scale) != (f.post.fxaa, f.post.scale) {
             info!(
-                "native renderer: anti-aliasing -> fxaa {}, ssaa {}",
-                f.post.fxaa, f.post.ssaa
+                "native renderer: anti-aliasing -> fxaa {}, scale {}",
+                f.post.fxaa, f.post.scale
             );
             // The post pass frees its targets on change; let the GPU finish with them.
             // SAFETY: only waits.

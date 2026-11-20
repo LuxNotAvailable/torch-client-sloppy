@@ -388,6 +388,7 @@ fn sample(
                 let secs = now.duration_since(started).as_secs_f32();
                 finish(capture, secs, &context);
                 if exit_when_written() {
+                    crate::QUIT_ASKED.store(true, std::sync::atomic::Ordering::Relaxed);
                     exit.write(AppExit::Success);
                 }
             }

@@ -556,7 +556,7 @@ fn shadow_update_label(value: i32) -> String {
 }
 
 pub(crate) fn pack_render_scale_label(value: i32) -> String {
-    format!("Shader Render Scale: {value}%")
+    format!("Render Scale: {value}%")
 }
 
 const LIGHT_RAY_SETTINGS: &str = "Light Rays...";
@@ -998,7 +998,7 @@ fn reset_video_options(o: &mut crate::gui::GuiOptions) {
     o.smooth_gui_model = true;
     o.biome_blend = 2;
     o.water_clarity = crate::gui::WATER_CLARITY_DEFAULT;
-    o.pack_render_scale = crate::gui::PACK_RENDER_SCALE_MAX;
+    o.pack_render_scale = crate::gui::PACK_RENDER_SCALE_DEFAULT;
     o.shadow_update = 1;
     o.sign_glow_outline = 0;
     (o.leaves, o.leaf_distance, o.leaf_backs, o.leaf_culling) = (0, 4, true, 2);
@@ -1362,15 +1362,15 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
             f.mark_changed();
         }
         f.tip(&tips::LIGHTING_ENGINE);
+        f.slider(
+            &mut o.pack_render_scale,
+            crate::gui::PACK_RENDER_SCALE_MIN,
+            crate::gui::PACK_RENDER_SCALE_MAX,
+            pack_render_scale_label,
+        );
+        f.tip(&tips::RENDER_SCALE);
         #[cfg(feature = "shader_support")]
         {
-            f.slider(
-                &mut o.pack_render_scale,
-                crate::gui::PACK_RENDER_SCALE_MIN,
-                crate::gui::PACK_RENDER_SCALE_MAX,
-                pack_render_scale_label,
-            );
-            f.tip(&tips::SHADER_SCALE);
             f.slider(&mut o.shadow_update, 1, 3, shadow_update_label);
             f.tip(&tips::SHADER_SHADOWS);
         }

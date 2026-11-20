@@ -1806,6 +1806,7 @@ fn auto_harness(
     if let Some(q) = quit_at
         && time.elapsed().as_millis() as u64 >= q
     {
+        crate::QUIT_ASKED.store(true, std::sync::atomic::Ordering::Relaxed);
         exit.write(bevy::app::AppExit::Success);
     }
     // `MC_JOIN_COMMANDS`, sent once, 3 s after entering the world (test

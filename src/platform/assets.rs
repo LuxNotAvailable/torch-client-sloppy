@@ -409,10 +409,23 @@ pub(crate) mod android {
         (username, address)
     }
 
+    /// The apk's `env.txt`, then one pushed to the external files folder
+    /// (`adb push env.txt /sdcard/Android/data/com.torch.client/files/`),
+    /// whose values win: switches like `MC_NATIVE_GPU_TIMING=1` without a
+    /// rebuild.
     pub(crate) fn apply_env(app: &AndroidApp) {
-        let Some(text) = entry(app, ENV).and_then(|b| String::from_utf8(b).ok()) else {
+        let bundled = entry(app, ENV).and_then(|b| String::from_utf8(b).ok());
+        let pushed = app
+            .external_data_path()
+            .and_then(|d| std::fs::read_to_string(d.join(ENV)).ok());
+        if bundled.is_none() && pushed.is_none() {
             return;
-        };
+        }
+        let text = [bundled, pushed]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join("\n");
         let mut values = std::collections::HashMap::new();
         for line in text.lines() {
             let line = line.trim();

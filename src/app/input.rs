@@ -80,6 +80,7 @@ pub(crate) fn apply_gui_nav(
     if std::mem::take(&mut state.quit) {
         crate::client::bus::request(crate::client::bus::ClientRequest::Quit);
         let _ = &shared;
+        crate::QUIT_ASKED.store(true, std::sync::atomic::Ordering::Relaxed);
         exit.write(AppExit::Success);
         return;
     }

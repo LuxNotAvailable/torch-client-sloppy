@@ -166,7 +166,7 @@ fn options(args: Vec<String>) -> Options {
             "--fxaa" => options.terrain_options.post.fxaa = true,
             "--ssaa" => {
                 if let Some(scale) = args.next().and_then(|v| v.parse::<f32>().ok()) {
-                    options.terrain_options.post.ssaa = scale.clamp(1.0, 4.0);
+                    options.terrain_options.post.scale = scale.clamp(1.0, 4.0);
                 }
             }
             "--post" => {
