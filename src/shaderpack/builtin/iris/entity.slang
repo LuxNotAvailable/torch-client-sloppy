@@ -32,9 +32,6 @@ struct IrisVkIn {
 };
 
 uint iris_vk_inst(uint word) { return iris_buffer(IRIS_SLOT_iris_vk_inst).Load(4 * word); }
-/// Entities have no voxel window: the instances stand in, without its
-/// magic word, so a trace finds nothing.
-ByteAddressBuffer iris_vk_voxels() { return iris_buffer(IRIS_SLOT_iris_vk_inst); }
 float4 iris_vk_f4(uint word) { return asfloat(iris_buffer(IRIS_SLOT_iris_vk_inst).Load4(4 * word)); }
 
 IrisVkIn iris_vk_in(IrisVertexIn raw) {

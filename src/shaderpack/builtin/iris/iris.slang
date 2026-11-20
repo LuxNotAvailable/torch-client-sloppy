@@ -42,6 +42,12 @@ Texture2D<float> iris_depth_texture(uint slot) { return iris_depth_textures[iris
 SamplerState iris_sampler(uint slot) { return iris_samplers[iris_index(slot)]; }
 SamplerComparisonState iris_comparison_sampler(uint slot) { return iris_comparison_samplers[iris_index(slot)]; }
 ByteAddressBuffer iris_buffer(uint slot) { return iris_buffers[iris_index(slot)]; }
+
+[SpecializationConstant] const uint IRIS_SLOT_iris_vk_voxels = 0;
+
+/// The voxel window traced reflections read (`vk::voxels`); every kind of
+/// program can name it.
+ByteAddressBuffer iris_vk_voxels() { return iris_buffer(IRIS_SLOT_iris_vk_voxels); }
 RWByteAddressBuffer iris_rw_buffer(uint slot) { return iris_rw_buffers[iris_index(slot)]; }
 /// A buffer by its own bindless index (the terrain's per-section pools).
 ByteAddressBuffer iris_buffer_at(uint index) { return iris_buffers[NonUniformResourceIndex(index)]; }

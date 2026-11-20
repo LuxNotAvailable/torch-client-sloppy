@@ -86,9 +86,12 @@ fn kind_slots(kind: ProgramKind) -> &'static str {
             "@group(2) @binding(10) var<storage, read> iris_vk_inst: IrisVkInstances;\n\
              @group(2) @binding(11) var<storage, read> iris_vk_mesh: IrisVkMeshes;\n\
              @group(2) @binding(12) var<storage, read> iris_vk_vert: IrisVkVertices;\n\
-             @group(2) @binding(13) var<storage, read> iris_vk_part: IrisVkParts;\n"
+             @group(2) @binding(13) var<storage, read> iris_vk_part: IrisVkParts;\n\
+             @group(2) @binding(14) var<storage, read> iris_vk_voxels: IrisVkVoxels;\n"
         }
-        ProgramKind::Screen | ProgramKind::Compute => "",
+        ProgramKind::Screen | ProgramKind::Compute => {
+            "@group(2) @binding(14) var<storage, read> iris_vk_voxels: IrisVkVoxels;\n"
+        }
     }
 }
 
@@ -487,7 +490,7 @@ pub(super) fn compile_compute(
             fragment_tests: Vec::new(),
             alpha_override: None,
             fragment_linear: None,
-            compute: Some(declared.header),
+            compute: Some(format!("{}{}", declared.header, kind_slots(ProgramKind::Compute))),
             compute_used: None,
             compute_parity: None,
             dispatch,
@@ -546,11 +549,15 @@ mod tests {
     /// The manifest's own slots are those the preludes name.
     #[test]
     fn kind_slots_match_the_preludes() {
+        let common = include_str!("../builtin/iris/iris.slang");
         let preludes = [
             (ProgramKind::Geometry, include_str!("../builtin/iris/terrain.slang")),
             (ProgramKind::Entity, include_str!("../builtin/iris/entity.slang")),
+            (ProgramKind::Screen, ""),
+            (ProgramKind::Compute, ""),
         ];
         for (kind, prelude) in preludes {
+            let prelude = format!("{prelude}{common}");
             for line in kind_slots(kind).lines() {
                 let name = line
                     .split("var<storage, read> ")

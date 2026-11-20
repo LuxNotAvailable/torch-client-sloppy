@@ -14,6 +14,9 @@ const vec4 colortex3ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
 const int colortex5Format = RGBA16F;
 const bool colortex4Clear = false;
 const bool colortex5Clear = false;
+const int colortex6Format = RGBA32F;
+const vec4 colortex6ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
+const int colortex7Format = RGBA16F;
 */
 
 // The texel target: 8 bytes (see `Texel`). RGBA32F on Android, where

@@ -63,7 +63,7 @@
 #define REFLECTION_STRENGTH 100 // [0 25 50 75 100 125 150 175 200]
 // How reflections find what they mirror: 0 Screen, the mod's trace over
 // the screen; 1 Voxel, a ray per water texel through the blocks around
-// you (off screen too), the screen trace only where those are unknown.
+// you (off screen too), the sky past them (no screen trace).
 #define REFLECTION_METHOD 0 // [0 1]
 // Voxel: the fewest screen pixels a reflection texel spans; far water
 // snaps to coarser texels, so its pixels agree instead of shimmering.

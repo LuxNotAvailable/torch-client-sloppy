@@ -1849,6 +1849,8 @@ impl PackScreen {
                             *b,
                             if self.buffers.iter().any(|(o, _)| o.raw == *b) {
                                 Use::ComputeWrite
+                            } else if *u == Use::SampledFragment {
+                                Use::ComputeRead
                             } else {
                                 *u
                             },
@@ -1936,6 +1938,22 @@ impl PackScreen {
                 }
             };
             let mut pass_buffers = buffers.clone();
+            // Buffers this program writes from its fragment stage (the
+            // water's reflection claims).
+            for b in &self.installed.programs[pass.program].layout.bindings {
+                if let crate::shaderpack::pipeline::Binding::Buffer {
+                    index,
+                    read_only: false,
+                    ..
+                } = b
+                    && let Some(p) = self.installed.buffers.iter().position(|o| o.index == *index)
+                {
+                    let raw = self.buffers[p].0.raw;
+                    for u in pass_buffers.iter_mut().filter(|u| u.0 == raw) {
+                        u.1 = Use::FragmentWrite;
+                    }
+                }
+            }
             // The shadow pass draws from the shadow cull, into the shadow map.
             let (depth_image, depth_image_view, commands) =
                 match (&pass.shadow, &self.targets.shadow, draw) {

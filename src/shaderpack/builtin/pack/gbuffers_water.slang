@@ -4,10 +4,11 @@
 // the scene by a screen-space ray traced here, on water pixels only, against
 // the opaque scene (colortex5, copied by deferred, and depthtex1).
 
-/* RENDERTARGETS: 0,3 */
+/* RENDERTARGETS: 0,3,6,7 */
 
 #include "lib/common.slang"
 #include "lib/shadow.slang"
+#include "lib/water.slang"
 
 // Voxel reflections need the mesher's voxel records (`vk::voxels`).
 #ifndef TORCH_SLANG
@@ -26,9 +27,15 @@ struct Varyings {
     nointerpolation float material : TEXCOORD5;
 };
 
+/// `surface`, `claim` and `covered` hand a World Traced reflection to
+/// composite: the colour it mixes into and the sky light; the texel's key
+/// (high and low 16 bits), alpha and 1 (0: nothing to lay); and the
+/// colour the water mirrors under cover.
 struct Lit {
     float4 color : SV_Target0;
     float4 surface : SV_Target1;
+    float4 claim : SV_Target2;
+    float4 covered : SV_Target3;
 };
 
 Varyings vertex(IrisVertexIn input) {
@@ -42,69 +49,6 @@ Varyings vertex(IrisVertexIn input) {
     o.normal = a.normal;
     o.material = material_of(a.entity.x);
     return o;
-}
-
-float hash(int2 i) {
-    uint h = (asuint(i.x) * 0x8DA6B343u) ^ (asuint(i.y) * 0xD8163841u);
-    h = (h ^ (h >> 13u)) * 0x5BD1E995u;
-    h ^= h >> 15u;
-    return float(h) * (1.0 / 4294967295.0);
-}
-
-/// The slope of smooth value noise at `p`, worked out alongside it, so a
-/// normal costs one lookup of the four corners instead of three.
-float2 noise_slope(float2 p) {
-    float2 cell = floor(p);
-    float2 f = p - cell;
-    float2 u = f * f * (3.0 - 2.0 * f);
-    float2 du = 6.0 * f * (1.0 - f);
-    int2 i = int2(cell);
-    float a = hash(i);
-    float b = hash(i + int2(1, 0));
-    float c = hash(i + int2(0, 1));
-    float d = hash(i + int2(1, 1));
-    float k = a - b - c + d;
-    return float2(du.x * (b - a + k * u.y), du.y * (c - a + k * u.x));
-}
-
-/// How much of a ripple of `wavelength` blocks to keep when one pixel spans
-/// `footprint` blocks: all of it from four pixels a wave, none below two.
-/// A ripple finer than that cannot be drawn, only aliased into sparkle.
-float resolvable(float wavelength, float footprint) {
-    return smoothstep(2.0 * footprint, 4.0 * footprint, wavelength);
-}
-
-/// The slope of the swell: octaves of noise, each turned and drifting its
-/// own way, so the surface never lines up into rows. Octaves too fine for
-/// the pixel they land in are left out (`footprint`, blocks per pixel).
-float2 wave_slope(float2 p, float t, float footprint) {
-    // Rotations, written by rows.
-    float2x2 r1 = float2x2(0.8, -0.6, 0.6, 0.8);
-    float2x2 r2 = float2x2(0.28, 0.96, -0.96, 0.28);
-    float2x2 r12 = mul(r1, r2);
-    // Each octave samples q = r * p * scale; its slope in p is r^T * slope(q) * scale,
-    // and its wavelength is 1 / scale blocks.
-    float2 g = noise_slope(p * 0.32 + float2(t * 0.22, t * 0.05))
-        * (0.11 * 0.32 * resolvable(1.0 / 0.32, footprint));
-    g += mul(noise_slope(mul(r1, p) * 0.75 + float2(-t * 0.31, t * 0.17)), r1)
-        * (0.05 * 0.75 * resolvable(1.0 / 0.75, footprint));
-    g += mul(noise_slope(mul(r2, p) * 1.6 + float2(t * 0.12, -t * 0.38)), r2)
-        * (0.022 * 1.6 * resolvable(1.0 / 1.6, footprint));
-    g += mul(noise_slope(mul(r12, p) * 3.1 + float2(-t * 0.45, -t * 0.2)), r12)
-        * (0.01 * 3.1 * resolvable(1.0 / 3.1, footprint));
-    return g;
-}
-
-/// The ripple's normal, taken at the middle of the block texel `world` is
-/// in, so the surface shades in texel-sized facets. Once a texel is smaller
-/// than a pixel the facets themselves would alias, so they give way to the
-/// unsnapped swell.
-float3 wave_normal(float3 world, float footprint) {
-    float facets = 1.0 - smoothstep(0.5 / 16.0, 1.5 / 16.0, footprint);
-    float2 snapped = (floor(world.xz * 16.0) + 0.5) / 16.0;
-    float2 p = lerp(world.xz, snapped, facets);
-    float2 slope = wave_slope(p, frame.frameTimeCounter, footprint);
-    return normalize(float3(-slope.x, 1.0, -slope.y));
 }
 
 /// Two hashes for a cell, for a feature point that moves within it.
@@ -282,110 +226,6 @@ float4 trace_mirror(float3 start, float3 dir, float2 size) {
     return float4(mirrored_color(saturate(hit_uv), size, world_dir, dist), fade);
 }
 
-static const uint VOXEL_MAGIC = 0x56584c31u;
-static const uint VOXEL_HEADER = 16u + 256u * 16u;
-
-/// What a ray from `origin` (player space) along `dir` meets in the voxel
-/// window (`vk::voxels`): the lit block face and 1, or -1 where it meets
-/// nothing the window knows (out of it, not loaded or uploaded, out of
-/// steps), left to the screen trace and the sky.
-/// `surface` is the origin's distance from the eye, for haze. The ray
-/// walks block by block (a DDA) from the camera's block, so it stays exact
-/// far from the origin.
-float4 trace_voxels(float3 origin, float3 dir, float surface) {
-    ByteAddressBuffer vox = iris_vk_voxels();
-    if (vox.Load(0) != VOXEL_MAGIC) {
-        return float4(0.0, 0.0, 0.0, -1.0);
-    }
-    float3 p = origin + frac(frame.cameraPosition);
-    int3 base = int3(floor(frame.cameraPosition));
-    int3 cell = int3(floor(p));
-    int3 step = int3(sign(dir));
-    float3 inv = 1.0 / max(abs(dir), float3(1e-6));
-    float3 next = select(dir > 0.0, float3(cell) + 1.0 - p, p - float3(cell)) * inv;
-    int budget = REFLECTION_QUALITY == 0 ? 48 : (REFLECTION_QUALITY == 2 ? 160 : 96);
-    int3 section = int3(0x7fffffff);
-    uint state = 0u;
-    uint records = 0u;
-    int axis = 1;
-    float t = 0.0;
-    for (int i = 0; i < 160; i++) {
-        // Step first: the origin's own block (a lily pad, the shore) is
-        // the surface's, not what it mirrors.
-        if (next.x < next.y && next.x < next.z) {
-            t = next.x;
-            next.x += inv.x;
-            cell.x += step.x;
-            axis = 0;
-        } else if (next.y < next.z) {
-            t = next.y;
-            next.y += inv.y;
-            cell.y += step.y;
-            axis = 1;
-        } else {
-            t = next.z;
-            next.z += inv.z;
-            cell.z += step.z;
-            axis = 2;
-        }
-        if (i >= budget) {
-            break;
-        }
-        int3 w = cell + base;
-        int3 s = w >> 4;
-        if (any(s != section)) {
-            section = s;
-            uint slot = uint(s.x & 7) | (uint(s.z & 7) << 3u) | (uint(s.y & 3) << 6u);
-            uint4 h = vox.Load4(16u + slot * 16u);
-            state = all(int3(h.xyz) == s) ? h.w : 0u;
-            records = VOXEL_HEADER + slot * 32768u;
-            if (state == 0u) {
-                return float4(0.0, 0.0, 0.0, -1.0);
-            }
-        }
-        if (state != 2u) {
-            continue;
-        }
-        int3 l = w & 15;
-        uint2 r = vox.Load2(records + uint((l.y << 8) | (l.z << 4) | l.x) * 8u);
-        uint flags = r.x >> 24u;
-        if ((flags & 1u) == 0u) {
-            continue;
-        }
-        // The face it entered by, and where on it.
-        float3 hit = p + dir * t;
-        float3 nrm = float3(0.0);
-        nrm[axis] = -float(step[axis]);
-        bool bottom = axis == 1 && step.y > 0;
-        uint tile = bottom ? (r.x >> 12u) & 4095u : r.x & 4095u;
-        bool tinted = (flags & (bottom ? 4u : 2u)) != 0u;
-        float2 f = axis == 1 ? frac(hit.xz) : float2(frac(axis == 0 ? hit.z : hit.x), 1.0 - frac(hit.y));
-        float2 atlas = float2(iris_size(gtexture));
-        float tile_px = atlas.x / 16.0;
-        float2 corner = float2(float(tile % 16u), float(tile / 16u)) * tile_px;
-        int2 texel = int2(corner + clamp(floor(f * tile_px), float2(0.0), float2(tile_px - 1.0)));
-        float4 c = gtexture.Load(int3(texel, 0));
-        if ((flags & 8u) != 0u && c.a < 0.5) {
-            continue;
-        }
-        float3 tint = tinted ? float3(float(r.y & 255u), float((r.y >> 8u) & 255u), float((r.y >> 16u) & 255u)) / 255.0 : float3(1.0);
-        float3 albedo = to_linear(c.rgb * tint);
-        float2 light = float2(float(r.y >> 28u), float((r.y >> 24u) & 15u)) / 15.0;
-        float3 at = hit - frac(frame.cameraPosition);
-        float vis = dot(nrm, light_dir()) > 0.0 ? shadow_visibility(at, nrm, 1) : 0.0;
-        float3 col = surface_light(albedo, nrm, light, vis, false);
-        if ((flags & 16u) != 0u) {
-            col += albedo * 0.6;
-        }
-        float dist = surface + t;
-        float haze = 1.0 - exp(-dist * 0.0008 * FOG_DENSITY);
-        float edge = smoothstep(frame.far * 0.75, frame.far, dist);
-        return float4(lerp(col, sky_color(dir), max(haze * 0.45, edge)), 1.0);
-    }
-    // Out of steps in known air: what lies past is unknown.
-    return float4(0.0, 0.0, 0.0, -1.0);
-}
-
 float ggx(float3 n, float3 v, float3 l, float roughness) {
     float3 h = normalize(v + l);
     float ndh = max(dot(n, h), 0.0);
@@ -412,7 +252,9 @@ Lit fragment(Varyings v) {
     if (v.material != MATERIAL_WATER) {
         float3 lit = surface_light(to_linear(tex.rgb), face, v.light, vis, false);
         o.color = float4(lit, tex.a);
-        o.surface = float4(oct_encode(face), 0.0, v.light.y);
+        o.surface = float4(0.0);
+        o.claim = float4(0.0);
+        o.covered = float4(0.0);
         return o;
     }
 
@@ -495,50 +337,53 @@ Lit fragment(Varyings v) {
     // Blending scales the colour by alpha; the glint is light off the
     // surface, so undo that, but not without bound for clear water.
     o.color = float4(scatter + min(shine, 2.0) / max(alpha, 0.35), alpha);
+    o.surface = float4(0.0);
+    o.claim = float4(0.0);
+    o.covered = float4(0.0);
 
     // Reflection, from above only, as ImmersiveVFX: mixed into the surface's
     // colour by 0.15 looking down to 1 at grazing angles, times Reflection
     // Strength (100% is half), then blended by the surface's alpha.
     if (WATER_REFLECTIONS != 0 && REFLECTION_STRENGTH > 0 && frame.isEyeInWater != 1 && dot(face, view_dir) > 0.0) {
-        // Voxel: one ray per reflection texel, from its middle. Texels are
-        // 1/16 block near, coarser where a block spans few pixels, so no
-        // texel is narrower than REFLECTION_TEXEL_PIXELS pixels.
-        float3 from = v.player;
-        float3 rn = n;
-        float3 rv = view_dir;
-        if (REFLECTION_METHOD == 1 && face.y > 0.5) {
-            float per_block = REFLECTION_TEXEL_SCALE / max(across * float(REFLECTION_TEXEL_PIXELS), 1e-4);
-            float res = min(exp2(floor(log2(max(per_block, 1.0)))), 16.0);
-            float2 snapped = (floor(world.xz * res) + 0.5) / res;
-            from = float3(snapped.x, world.y, snapped.y) - frame.cameraPosition;
-            if (WATER_STYLE == 0) {
-                rn = wave_normal(float3(snapped.x, world.y, snapped.y), footprint);
-            }
-            rv = normalize(-from);
-        }
-        float cos_view = saturate(dot(rn, rv));
-        // The mod's curve, exp(-k cos) rescaled to 1 at grazing and 0
-        // straight down (k 3.6); Voxel takes Reflection Falloff for k.
-        float k = REFLECTION_METHOD == 1 ? REFLECTION_FALLOFF : 3.6;
-        float ek = exp(-k);
-        float grazing = max((exp(-k * cos_view) - ek) / (1.0 - ek), 0.0);
-        float blend = lerp(0.15, 1.0, grazing) * float(REFLECTION_STRENGTH) / 200.0;
-        float3 r = reflect(-rv, rn);
         // Sky only under open sky; covered water mirrors itself, darkened.
-        float open = saturate(sky * 3.33333 - 2.33333);
-        open *= open;
-        float3 reflected = lerp(surface_color * 0.5, sky_color(r), open);
-        float4 mirror = float4(0.0, 0.0, 0.0, -1.0);
-        if (REFLECTION_METHOD == 1) {
-            mirror = trace_voxels(from + rn * 0.03, r, length(from));
-        }
-        if (mirror.a < 0.0) {
+        float open = refl_open(sky);
+        float3 covered = surface_color * 0.5;
+        float4 mirror;
+        bool claimed = false;
+        if (REFLECTION_METHOD == 1 && face.y > 0.5) {
+            // World Traced: a ray from each reflection texel's middle.
+            // Texels are 1/16 block near, coarser where a block spans few
+            // pixels (`refl_level`). The texel is claimed here and traced
+            // once in composite_a, however many pixels show it; past the
+            // table's reach it is traced here.
+            uint level = refl_level(across);
+            uint key = refl_key(world, level);
+            if (key != REFL_EMPTY) {
+                refl_claim(key, v.player.y);
+                claimed = true;
+                o.surface = float4(o.color.rgb, sky);
+                o.claim = float4(float(key >> 16u), float(key & 65535u), alpha, 1.0);
+                o.covered = float4(covered, 0.0);
+                mirror = float4(0.0);
+            } else {
+                float res = refl_res(level);
+                float width = max(1.0 / res, across);
+                mirror = voxel_texel((floor(world.xz * res) + 0.5) / res, world.y, width, footprint, covered, open);
+            }
+        } else if (REFLECTION_METHOD == 1) {
+            // Voxel on the water's sides: a ray per pixel.
+            mirror = voxel_reflection(v.player, n, footprint, covered, open);
+        } else {
+            float3 r = reflect(-view_dir, n);
             float3 start = mul(frame.gbufferModelView, float4(v.player + n * 0.03, 1.0)).xyz;
-            float3 dir = normalize(mul(frame.gbufferModelView, float4(reflect(-view_dir, n), 0.0)).xyz);
-            mirror = trace_mirror(start, dir, size);
+            float3 dir = normalize(mul(frame.gbufferModelView, float4(r, 0.0)).xyz);
+            float4 hit = trace_mirror(start, dir, size);
+            float3 col = lerp(lerp(covered, sky_color(r), open), hit.rgb, hit.a);
+            mirror = float4(col, reflection_blend(saturate(dot(n, view_dir))));
         }
-        reflected = lerp(reflected, mirror.rgb, mirror.a);
-        o.color.rgb = lerp(o.color.rgb, reflected, saturate(blend));
+        if (!claimed) {
+            o.color.rgb = lerp(o.color.rgb, mirror.rgb, saturate(mirror.a));
+        }
     }
 
     // Caustics: light the surface focuses on the floor. Blending keeps
@@ -575,6 +420,5 @@ Lit fragment(Varyings v) {
             o.color.rgb += light * (1.0 - alpha) / max(alpha, 0.05);
         }
     }
-    o.surface = float4(oct_encode(n), 1.0, sky);
     return o;
 }

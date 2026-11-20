@@ -18,6 +18,8 @@ pub enum Use {
     DepthAttachment,
     /// Sampled or loaded in a fragment shader.
     SampledFragment,
+    /// Written (and read) as a storage buffer in a fragment shader.
+    FragmentWrite,
     /// Read as a storage buffer or sampled image in compute.
     ComputeRead,
     ComputeWrite,
@@ -38,7 +40,7 @@ impl Use {
         match self {
             Use::ColorAttachment => S::COLOR_ATTACHMENT_OUTPUT,
             Use::DepthAttachment => S::EARLY_FRAGMENT_TESTS | S::LATE_FRAGMENT_TESTS,
-            Use::SampledFragment => S::FRAGMENT_SHADER,
+            Use::SampledFragment | Use::FragmentWrite => S::FRAGMENT_SHADER,
             Use::ComputeRead | Use::ComputeWrite => S::COMPUTE_SHADER,
             Use::VertexRead => S::VERTEX_SHADER,
             Use::IndirectRead => S::DRAW_INDIRECT,
@@ -59,7 +61,9 @@ impl Use {
             }
             Use::SampledFragment => A::SHADER_SAMPLED_READ | A::SHADER_STORAGE_READ,
             Use::ComputeRead | Use::VertexRead => A::SHADER_STORAGE_READ | A::SHADER_SAMPLED_READ,
-            Use::ComputeWrite => A::SHADER_STORAGE_WRITE | A::SHADER_STORAGE_READ,
+            Use::ComputeWrite | Use::FragmentWrite => {
+                A::SHADER_STORAGE_WRITE | A::SHADER_STORAGE_READ
+            }
             Use::IndirectRead => A::INDIRECT_COMMAND_READ,
             Use::IndexRead => A::INDEX_READ,
             Use::TransferDst => A::TRANSFER_WRITE,
@@ -71,7 +75,11 @@ impl Use {
     fn writes(self) -> bool {
         matches!(
             self,
-            Use::ColorAttachment | Use::DepthAttachment | Use::ComputeWrite | Use::TransferDst
+            Use::ColorAttachment
+                | Use::DepthAttachment
+                | Use::ComputeWrite
+                | Use::FragmentWrite
+                | Use::TransferDst
         )
     }
 
@@ -87,7 +95,7 @@ impl Use {
                     L::SHADER_READ_ONLY_OPTIMAL
                 }
             }
-            Use::ComputeWrite => L::GENERAL,
+            Use::ComputeWrite | Use::FragmentWrite => L::GENERAL,
             Use::TransferDst => L::TRANSFER_DST_OPTIMAL,
             Use::TransferSrc => L::TRANSFER_SRC_OPTIMAL,
             Use::Present => L::PRESENT_SRC_KHR,
