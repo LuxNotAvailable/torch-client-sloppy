@@ -299,7 +299,7 @@ Lit fragment(Varyings v) {
     float sky = v.light.y;
     float3 ambient = sky_ambient() * (sky * sky) + TORCH * pow(v.light.x, 2.6) * TORCH_BRIGHTNESS * 0.5;
     float3 scatter = tint * 0.45 * (ambient + direct_light() * vis * 0.2);
-    // Immersive: the biome colour kept bright in green, shaded by the
+    // Vivid: the biome colour kept bright in green, shaded by the
     // texture's own brightness so its pixels show through.
     float3 texel = tex.rgb / max(v.color.rgb, float3(0.001));
     if (WATER_STYLE == 2) {
@@ -356,7 +356,7 @@ Lit fragment(Varyings v) {
     o.claim = float4(0.0);
     o.covered = float4(0.0);
 
-    // Reflection, from above only, as ImmersiveVFX: mixed into the surface's
+    // Reflection, from above only, as a flat mirror: mixed into the surface's
     // colour by 0.15 looking down to 1 at grazing angles, times Reflection
     // Strength (100% is half), then blended by the surface's alpha.
     if (WATER_REFLECTIONS != 0 && REFLECTION_STRENGTH > 0 && frame.isEyeInWater != 1 && dot(face, view_dir) > 0.0) {
@@ -371,7 +371,7 @@ Lit fragment(Varyings v) {
             // pixels (`refl_level`). The texel is claimed here and traced
             // once in composite_a, however many pixels show it; past the
             // table's reach it is traced here.
-            uint level = refl_level(across);
+            uint level = refl_level_blend(across, world, v.player);
             uint key = refl_key(world, level);
             if (REFLECTION_DEBUG != 0) {
                 // 16, 8, 4, 2, 1 texels a block: red, yellow, green, cyan,
@@ -442,7 +442,7 @@ Lit fragment(Varyings v) {
         if (strength > 0.002) {
             float c = caustic(floor_pos.xz + frame.cameraPosition.xz, l, deep, frame.frameTimeCounter);
             float3 light = direct_light() * absorbed * c * strength;
-            // Immersive: the floor keeps its caustics at full strength
+            // Vivid: the floor keeps its caustics at full strength
             // through the more opaque surface.
             if (WATER_STYLE == 2) {
                 light /= max(1.0 - alpha, 0.25);

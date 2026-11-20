@@ -14,6 +14,11 @@ pub(crate) enum Element {
     /// labelled `header.NAME` in the pack's lang, as the video settings
     /// group theirs.
     Header(String),
+    /// `<if:NAME=VALUE>` (Torch's own): what follows, up to `<endif>`, shows
+    /// only while option NAME is VALUE. Screens are read before
+    /// preprocessing, so `#if` cannot do this.
+    If(String, String),
+    EndIf,
 }
 
 impl Element {
@@ -23,6 +28,11 @@ impl Element {
             "<empty>" => Element::Empty,
             "<profile>" => Element::Profile,
             "*" => Element::Rest,
+            "<endif>" => Element::EndIf,
+            _ if token.starts_with("<if:") && token.ends_with('>') => {
+                let (name, value) = token["<if:".len()..token.len() - 1].split_once('=')?;
+                Element::If(name.to_owned(), value.to_owned())
+            }
             _ if token.starts_with("<header:") && token.ends_with('>') => {
                 Element::Header(token["<header:".len()..token.len() - 1].to_owned())
             }
@@ -200,6 +210,15 @@ mod tests {
             Element::parse("<header:WATER>"),
             Some(Element::Header("WATER".into()))
         );
+    }
+
+    #[test]
+    fn an_if_token_names_its_option_and_value() {
+        assert_eq!(
+            Element::parse("<if:MODE=1>"),
+            Some(Element::If("MODE".into(), "1".into()))
+        );
+        assert_eq!(Element::parse("<endif>"), Some(Element::EndIf));
     }
 
     fn parsed(text: &str) -> Properties {

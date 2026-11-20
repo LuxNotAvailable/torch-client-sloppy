@@ -710,13 +710,45 @@ fn layout<'a>(loaded: &'a Loaded, screen: &str) -> Vec<&'a Element> {
     let Some(declared) = loaded.props.screens.get(screen) else {
         return loaded.menu.every.iter().collect();
     };
-    declared
-        .iter()
-        .flat_map(|element| match element {
-            Element::Rest => loaded.menu.unplaced.iter().collect::<Vec<_>>(),
-            other => vec![other],
-        })
-        .collect()
+    shown(declared, |name, value| {
+        loaded
+            .options
+            .get(name)
+            .is_some_and(|opt| loaded.values.get(opt) == value)
+    })
+    .into_iter()
+    .flat_map(|element| match element {
+        Element::Rest => loaded.menu.unplaced.iter().collect::<Vec<_>>(),
+        other => vec![other],
+    })
+    .collect()
+}
+
+/// `declared` without what an `<if:NAME=VALUE>` hides: `holds(NAME, VALUE)`
+/// is whether the option has that value now. Ifs nest; the markers go.
+fn shown<'a>(declared: &'a [Element], holds: impl Fn(&str, &str) -> bool) -> Vec<&'a Element> {
+    let mut hidden = 0usize;
+    let mut depth = 0usize;
+    let mut out = Vec::new();
+    for element in declared {
+        match element {
+            Element::If(name, value) => {
+                depth += 1;
+                if hidden == 0 && !holds(name, value) {
+                    hidden = depth;
+                }
+            }
+            Element::EndIf => {
+                if hidden == depth {
+                    hidden = 0;
+                }
+                depth = depth.saturating_sub(1);
+            }
+            _ if hidden == 0 => out.push(element),
+            _ => {}
+        }
+    }
+    out
 }
 
 fn screen_title(loaded: &Loaded, screen: &str) -> String {
@@ -740,7 +772,9 @@ fn element_widget(
     index: usize,
 ) -> Option<Action> {
     match element {
-        Element::Empty | Element::Rest | Element::Header(_) => None,
+        Element::Empty | Element::Rest | Element::Header(_) | Element::If(..) | Element::EndIf => {
+            None
+        }
         Element::Link(id) => {
             let label = format!("{}...", screen_title(loaded, id));
             Button::new(x, y, w, WIDGET_HEIGHT, &label)
@@ -899,5 +933,33 @@ mod tests {
         assert_eq!(places[1], (0, ROW_H));
         assert_eq!(places[2], (0, ROW_H + HEADER_H));
         assert_eq!(height, ROW_H + HEADER_H + ROW_H);
+    }
+
+    #[test]
+    fn an_if_hides_its_options_while_the_value_differs() {
+        let opt = |n: &str| Element::Option(n.into());
+        let declared = [
+            opt("A"),
+            Element::If("M".into(), "1".into()),
+            opt("B"),
+            Element::If("N".into(), "1".into()),
+            opt("C"),
+            Element::EndIf,
+            Element::EndIf,
+            Element::If("M".into(), "0".into()),
+            opt("D"),
+            Element::EndIf,
+        ];
+        let names = |m: &'static str| {
+            shown(&declared, move |name, value| name == "M" && value == m || name == "N")
+                .into_iter()
+                .map(|e| match e {
+                    Element::Option(n) => n.clone(),
+                    _ => unreachable!(),
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names("1"), ["A", "B", "C"]);
+        assert_eq!(names("0"), ["A", "D"]);
     }
 }

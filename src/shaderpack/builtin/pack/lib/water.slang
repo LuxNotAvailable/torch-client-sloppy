@@ -272,6 +272,31 @@ uint refl_level(float across) {
     return uint(round(log2(16.0 / res)));
 }
 
+/// `refl_level` without a hard line between levels: the coarser level's
+/// texels each pick the finer level by a hash, more of them nearer the
+/// finer side, so the change steps texel by texel. Judged at the coarse
+/// texel's middle (`across` scaled by distance), so a texel never splits.
+/// `world` is the surface point, `player` the same from the camera.
+uint refl_level_blend(float across, float3 world, float3 player) {
+    float per_block = 1.0 / max(across * float(REFLECTION_TEXEL_PIXELS), 1e-4);
+    float lf = clamp(log2(16.0 / max(per_block, 1.0)), 0.0, 4.0);
+    uint coarse = uint(ceil(lf));
+    if (coarse == 0u) {
+        return 0u;
+    }
+    float res = refl_res(coarse);
+    float2 cell = floor(world.xz * res);
+    float2 mid = (cell + 0.5) / res - frame.cameraPosition.xz;
+    float dist = length(player);
+    float scale = length(float3(mid.x, player.y, mid.y)) / max(dist, 1e-3);
+    float lc = clamp(log2(16.0 * max(across * scale, 1e-6) * float(REFLECTION_TEXEL_PIXELS)), 0.0, 4.0);
+    // Back on the coarse level's span, `lc` in (coarse-1, coarse].
+    float finer = saturate(float(coarse) - lc);
+    int2 c = int2(cell);
+    float pick = float(refl_hash(uint(c.x) * 73856093u ^ uint(c.y) * 19349663u ^ coarse) & 1023u) / 1024.0;
+    return pick < finer ? coarse - 1u : coarse;
+}
+
 /// The key of the reflection texel `world` (a water surface) falls in at
 /// `level`: its texel x and z from the camera's block (11 bits each), its
 /// block y from it (7) and the level (3), plus one so no key is

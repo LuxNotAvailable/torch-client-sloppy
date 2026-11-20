@@ -53,10 +53,10 @@
 // How much shadow on the surface dims caustics: 0 not at all, 1 fully.
 #define WATER_CAUSTICS_SHADE 0.5 // [0.0 0.25 0.5 0.75 1.0]
 // 0 Waves, rippled normals; 1 Flat, a still surface glinting on the
-// texture's bright texels (cheaper); 2 Immersive, flat and coloured by the
+// texture's bright texels (cheaper); 2 Vivid, flat and coloured by the
 // texture's brightness, clouding with depth and mirroring at grazing angles.
 #define WATER_STYLE 0 // [0 1 2]
-// Water reflections, as ImmersiveVFX draws them: on or off, the trace's
+// Water reflections, drawn as a flat mirror: on or off, the trace's
 // quality (0 Low 16 steps / 3 halvings, 1 Normal 30 / 6, 2 High 38 / 10),
 // and strength in percent (100 is half a mirror at most).
 #define WATER_REFLECTIONS 1 // [0 1]
@@ -75,7 +75,7 @@
 #define REFLECTION_TEXEL_PIXELS 2 // [1 2 3 4 6 8 12 16 32]
 // Voxel: how fast reflections fade looking down (the mod's is 3.6).
 #define REFLECTION_FALLOFF 2.0 // [0.5 1.0 1.5 2.0 2.5 3.0 3.6]
-// Immersive water: colour follows the biome and clouds with depth (off: the
+// Colour mapped water: colour follows the biome and clouds with depth (off: the
 // vanilla texture as is).
 #define WATER_COLOR_MAPPING 1 // [0 1]
 // Water glints: 0 sparkles on single texels, 100 a soft sheen.
