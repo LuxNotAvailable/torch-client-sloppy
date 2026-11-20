@@ -67,44 +67,6 @@ Varyings vertex(IrisVertexIn input) {
 }
 
 /// Two hashes for a cell, for a feature point that moves within it.
-float2 hash2(int2 i) {
-    return float2(hash(i), hash(i + int2(113, 271)));
-}
-
-/// Bright where two moving cell points are near equally close: the web
-/// lines of a Voronoi pattern, which read as caustic light.
-float caustic_cells(float2 p, float t) {
-    float2 cell = floor(p);
-    float2 f = p - cell;
-    float d1 = 8.0;
-    float d2 = 8.0;
-    for (int y = -1; y <= 1; y++) {
-        for (int x = -1; x <= 1; x++) {
-            int2 g = int2(x, y);
-            float2 o = 0.5 + 0.4 * sin(t + 6.2831853 * hash2(int2(cell) + g));
-            float2 r = float2(g) + o - f;
-            float d = dot(r, r);
-            if (d < d1) {
-                d2 = d1;
-                d1 = d;
-            } else if (d < d2) {
-                d2 = d;
-            }
-        }
-    }
-    return 1.0 - smoothstep(0.0, 0.2, sqrt(d2) - sqrt(d1));
-}
-
-/// Caustic light on the floor at `floor_world`, `deep` blocks under the
-/// surface. Traced up along the light to where it entered, then snapped to
-/// the block-texel grid so the pattern stays pixel art and holds still.
-float caustic(float2 floor_world, float3 l, float deep, float t) {
-    float2 entry = floor_world + l.xz / max(l.y, 0.2) * deep;
-    float2 p = (floor(entry * 16.0) + 0.5) / 16.0;
-    float c = caustic_cells(p * 0.75, t * 0.7) * 0.65 + caustic_cells(p * 1.35 + float2(7.3, 2.9), t * 1.05) * 0.35;
-    return c * c * 1.3 + c * 0.15;
-}
-
 /// View-space distance of a depth-buffer value; `a`, `b` are the inverse
 /// projection's last two columns, so a lookup is a multiply-add.
 float linear_depth(float depth, float4 a, float4 b) {

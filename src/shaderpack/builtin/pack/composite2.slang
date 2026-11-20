@@ -6,6 +6,8 @@
 
 #include "lib/common.slang"
 #include "lib/resolve.slang"
+#include "lib/shadow.slang"
+#include "lib/water.slang"
 
 struct Varyings {
     float4 clip : SV_Position;
@@ -34,10 +36,27 @@ float4 fragment(Varyings v) : SV_Target0 {
     bool sky = depth >= 1.0;
 
     if (frame.isEyeInWater == 1) {
+        // Caustics on floors seen from under water: the surface only draws
+        // them when looked through from above.
+        Texel t = read_texel(colortex2.Load(px));
+        if (WATER_CAUSTICS_ENABLED != 0 && WATER_CAUSTICS > 0.0 && !sky && t.terrain && t.surface.face == 2u && dist < 32.0) {
+            float3 l = light_dir();
+            float4x4 to_shadow = mul(frame.shadowProjection, frame.shadowModelView);
+            float vis = shadow_at(mul(to_shadow, float4(player + float3(0.0, 0.05, 0.0), 1.0)).xyz);
+            float shade = lerp(1.0 - WATER_CAUSTICS_SHADE, 1.0, vis);
+            float strength = WATER_CAUSTICS * 4.0 * shade * smoothstep(0.3, 0.8, t.surface.light.y)
+                * (1.0 - smoothstep(20.0, 32.0, dist)) * smoothstep(0.0, 0.3, l.y);
+            if (strength > 0.002) {
+                float2 floor_xz = player.xz + frame.cameraPosition.xz;
+                float caust = caustic(floor_xz, l, 2.0, frame.frameTimeCounter);
+                c += c * direct_light() * caust * strength;
+            }
+        }
         float open = clamp(float(frame.eyeBrightnessSmooth.y) / 240.0, 0.0, 1.0);
         float3 murk = float3(0.02, 0.12, 0.16) * (sky_ambient() * open + float3(0.02));
         float3 through = exp(-(sky ? 48.0 : dist) * float3(0.32, 0.09, 0.07));
-        return float4(c * through + murk * (1.0 - through), 1.0);
+        float3 shafts = resolve(colortex4, v.uv, v.clip.xy, depth, false).rgb;
+        return float4(c * through + murk * (1.0 - through) + shafts, 1.0);
     }
     if (frame.isEyeInWater == 2) {
         float through = exp(-dist * 1.4);

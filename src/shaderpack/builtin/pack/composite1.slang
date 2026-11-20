@@ -46,9 +46,42 @@ float phase(float cos_angle) {
     return 0.3 + 0.7 * pow(toward, 4.0) + 0.5 * pow(toward, 32.0);
 }
 
+/// Water's extinction per block, as composite2's murk.
+static const float3 WATER_EXTINCTION = float3(0.32, 0.09, 0.07);
+
+/// Light shafts under water: sunlight the water scatters toward the eye,
+/// dimmed by the water between. Alpha stays 1: composite2's murk does the
+/// extinction.
+float4 water_shafts(float2 uv, float2 clip_xy) {
+    float2 size = float2(iris_size(depthtex0));
+    float depth = depthtex0.Load(int3(int2(uv * size), 0)).r;
+    float3 target_pos = player_pos(view_pos(uv, min(depth, 0.99999)));
+    float reach = min(length(target_pos), 48.0);
+    float3 dir = normalize(target_pos);
+    int steps = GOD_RAY_STEPS;
+    float seg = reach / float(steps);
+    float dither = ign(clip_xy);
+    float4x4 to_shadow = mul(frame.shadowProjection, frame.shadowModelView);
+    float3 start = mul(to_shadow, float4(0.0, 0.0, 0.0, 1.0)).xyz;
+    float3 along = mul(to_shadow, float4(dir * seg, 0.0)).xyz;
+    float open = clamp(float(frame.eyeBrightnessSmooth.y) / 240.0, 0.0, 1.0);
+    float3 sun = direct_light() * phase(dot(dir, light_dir())) * daylight() * open;
+    float3 tint = float3(0.25, 0.8, 0.9);
+    float3 scatter = float3(0.0);
+    for (int i = 0; i < steps; i++) {
+        float k = float(i) + dither;
+        float vis = shadow_at(start + along * k);
+        scatter += exp(-WATER_EXTINCTION * seg * k) * vis * seg;
+    }
+    return float4(sun * tint * scatter * 0.012 * FOG_DENSITY, 1.0);
+}
+
 float4 fragment(Varyings v) : SV_Target0 {
-    if (!has_sky() || frame.isEyeInWater != 0) {
+    if (!has_sky() || frame.isEyeInWater > 1) {
         return float4(0.0, 0.0, 0.0, 1.0);
+    }
+    if (frame.isEyeInWater == 1) {
+        return water_shafts(v.uv, v.clip.xy);
     }
     float2 size = float2(iris_size(depthtex0));
     float depth = depthtex0.Load(int3(int2(v.uv * size), 0)).r;
