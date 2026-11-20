@@ -295,26 +295,33 @@ fn android_main(app: bevy::android::android_activity::AndroidApp) {
         step(&format!("client exited: {e}"));
     }
 
-    // Only a quit from the game finishes the activity: closed by the system
-    // (swiped away), the ANativeActivity is already freed.
-    if QUIT_ASKED.load(std::sync::atomic::Ordering::Relaxed) {
-        step("event loop ended, finishing the activity");
-        unsafe extern "C" {
-            fn ANativeActivity_finish(activity: *mut core::ffi::c_void);
+    step("event loop ended, finishing the activity");
+    // `activity_as_ptr` is the Java Activity (a jobject), not an
+    // ANativeActivity: finish it through JNI. A no-op if already finishing.
+    // SAFETY: both pointers come from the live AndroidApp.
+    let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    let finished = vm.attach_current_thread(|env| {
+        let activity =
+            unsafe { jni::objects::JObject::from_raw(env, app.activity_as_ptr().cast()) };
+        let called = env
+            .call_method(
+                &activity,
+                jni::jni_str!("finish"),
+                jni::jni_sig!("()V"),
+                &[],
+            )
+            .map(|_| ());
+        if called.is_err() {
+            env.exception_clear();
         }
-        // SAFETY: the game quit itself, so the activity is still alive.
-        unsafe { ANativeActivity_finish(app.activity_as_ptr()) };
-    } else {
-        step("event loop ended, the activity is already gone");
+        called
+    });
+    if let Err(e) = finished {
+        step(&format!("finishing the activity failed: {e}"));
     }
     std::thread::sleep(std::time::Duration::from_millis(100));
     std::process::exit(0);
 }
-
-/// The game asked to quit (Quit button, `MC_EXIT_AFTER_MS`, a perf run's
-/// end), as opposed to the system closing it.
-pub(crate) static QUIT_ASKED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
 
 #[cfg(target_os = "android")]
 pub fn step(message: &str) {
