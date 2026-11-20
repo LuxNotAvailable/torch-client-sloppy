@@ -165,6 +165,10 @@ pub(crate) struct Constants {
     /// an atlas of three cascades side by side (`vk::pack::screen::cascade_reach`),
     /// drawn into each in turn.
     pub(crate) shadow_cascades: bool,
+    /// `torchVoxels` (the built-in pack only): the mesher keeps voxel
+    /// records and the terrain a window of them (`vk::voxels`) for traced
+    /// reflections.
+    pub(crate) voxels: bool,
     /// The pack's `TEXEL_FULL_DISTANCE` and `TEXEL_RING_WIDTH` options
     /// (blocks), which set the cascades' reach
     /// (`vk::pack::screen::cascade_reach`).
@@ -194,6 +198,7 @@ impl Default for Constants {
             shadow_lerp: false,
             cloud_upper: false,
             shadow_cascades: false,
+            voxels: false,
             texel_full_distance: 24.0,
             texel_ring_width: 16.0,
         }
@@ -231,6 +236,7 @@ pub(crate) fn read_constants<'a>(sources: impl Iterator<Item = &'a str>) -> Cons
                     "torchShadowLerp" => constants.shadow_lerp = on,
                     "torchCloudUpper" => constants.cloud_upper = on,
                     "torchShadowCascades" => constants.shadow_cascades = on,
+                    "torchVoxels" => constants.voxels = on,
                     _ => {}
                 }
                 continue;

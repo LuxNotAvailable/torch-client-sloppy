@@ -9,6 +9,13 @@
 #include "lib/common.slang"
 #include "lib/shadow.slang"
 
+// Voxel reflections need the mesher's voxel records (`vk::voxels`).
+#ifndef TORCH_SLANG
+#if WATER_REFLECTIONS == 1 && REFLECTION_METHOD == 1
+const bool torchVoxels = true;
+#endif
+#endif
+
 struct Varyings {
     float4 clip : SV_Position;
     float2 uv : TEXCOORD0;
@@ -275,6 +282,110 @@ float4 trace_mirror(float3 start, float3 dir, float2 size) {
     return float4(mirrored_color(saturate(hit_uv), size, world_dir, dist), fade);
 }
 
+static const uint VOXEL_MAGIC = 0x56584c31u;
+static const uint VOXEL_HEADER = 16u + 256u * 16u;
+
+/// What a ray from `origin` (player space) along `dir` meets in the voxel
+/// window (`vk::voxels`): the lit block face and 1, or -1 where it meets
+/// nothing the window knows (out of it, not loaded or uploaded, out of
+/// steps), left to the screen trace and the sky.
+/// `surface` is the origin's distance from the eye, for haze. The ray
+/// walks block by block (a DDA) from the camera's block, so it stays exact
+/// far from the origin.
+float4 trace_voxels(float3 origin, float3 dir, float surface) {
+    ByteAddressBuffer vox = iris_vk_voxels();
+    if (vox.Load(0) != VOXEL_MAGIC) {
+        return float4(0.0, 0.0, 0.0, -1.0);
+    }
+    float3 p = origin + frac(frame.cameraPosition);
+    int3 base = int3(floor(frame.cameraPosition));
+    int3 cell = int3(floor(p));
+    int3 step = int3(sign(dir));
+    float3 inv = 1.0 / max(abs(dir), float3(1e-6));
+    float3 next = select(dir > 0.0, float3(cell) + 1.0 - p, p - float3(cell)) * inv;
+    int budget = REFLECTION_QUALITY == 0 ? 48 : (REFLECTION_QUALITY == 2 ? 160 : 96);
+    int3 section = int3(0x7fffffff);
+    uint state = 0u;
+    uint records = 0u;
+    int axis = 1;
+    float t = 0.0;
+    for (int i = 0; i < 160; i++) {
+        // Step first: the origin's own block (a lily pad, the shore) is
+        // the surface's, not what it mirrors.
+        if (next.x < next.y && next.x < next.z) {
+            t = next.x;
+            next.x += inv.x;
+            cell.x += step.x;
+            axis = 0;
+        } else if (next.y < next.z) {
+            t = next.y;
+            next.y += inv.y;
+            cell.y += step.y;
+            axis = 1;
+        } else {
+            t = next.z;
+            next.z += inv.z;
+            cell.z += step.z;
+            axis = 2;
+        }
+        if (i >= budget) {
+            break;
+        }
+        int3 w = cell + base;
+        int3 s = w >> 4;
+        if (any(s != section)) {
+            section = s;
+            uint slot = uint(s.x & 7) | (uint(s.z & 7) << 3u) | (uint(s.y & 3) << 6u);
+            uint4 h = vox.Load4(16u + slot * 16u);
+            state = all(int3(h.xyz) == s) ? h.w : 0u;
+            records = VOXEL_HEADER + slot * 32768u;
+            if (state == 0u) {
+                return float4(0.0, 0.0, 0.0, -1.0);
+            }
+        }
+        if (state != 2u) {
+            continue;
+        }
+        int3 l = w & 15;
+        uint2 r = vox.Load2(records + uint((l.y << 8) | (l.z << 4) | l.x) * 8u);
+        uint flags = r.x >> 24u;
+        if ((flags & 1u) == 0u) {
+            continue;
+        }
+        // The face it entered by, and where on it.
+        float3 hit = p + dir * t;
+        float3 nrm = float3(0.0);
+        nrm[axis] = -float(step[axis]);
+        bool bottom = axis == 1 && step.y > 0;
+        uint tile = bottom ? (r.x >> 12u) & 4095u : r.x & 4095u;
+        bool tinted = (flags & (bottom ? 4u : 2u)) != 0u;
+        float2 f = axis == 1 ? frac(hit.xz) : float2(frac(axis == 0 ? hit.z : hit.x), 1.0 - frac(hit.y));
+        float2 atlas = float2(iris_size(gtexture));
+        float tile_px = atlas.x / 16.0;
+        float2 corner = float2(float(tile % 16u), float(tile / 16u)) * tile_px;
+        int2 texel = int2(corner + clamp(floor(f * tile_px), float2(0.0), float2(tile_px - 1.0)));
+        float4 c = gtexture.Load(int3(texel, 0));
+        if ((flags & 8u) != 0u && c.a < 0.5) {
+            continue;
+        }
+        float3 tint = tinted ? float3(float(r.y & 255u), float((r.y >> 8u) & 255u), float((r.y >> 16u) & 255u)) / 255.0 : float3(1.0);
+        float3 albedo = to_linear(c.rgb * tint);
+        float2 light = float2(float(r.y >> 28u), float((r.y >> 24u) & 15u)) / 15.0;
+        float3 at = hit - frac(frame.cameraPosition);
+        float vis = dot(nrm, light_dir()) > 0.0 ? shadow_visibility(at, nrm, 1) : 0.0;
+        float3 col = surface_light(albedo, nrm, light, vis, false);
+        if ((flags & 16u) != 0u) {
+            col += albedo * 0.6;
+        }
+        float dist = surface + t;
+        float haze = 1.0 - exp(-dist * 0.0008 * FOG_DENSITY);
+        float edge = smoothstep(frame.far * 0.75, frame.far, dist);
+        return float4(lerp(col, sky_color(dir), max(haze * 0.45, edge)), 1.0);
+    }
+    // Out of steps in known air: what lies past is unknown.
+    return float4(0.0, 0.0, 0.0, -1.0);
+}
+
 float ggx(float3 n, float3 v, float3 l, float roughness) {
     float3 h = normalize(v + l);
     float ndh = max(dot(n, h), 0.0);
@@ -288,6 +399,9 @@ Lit fragment(Varyings v) {
     float4 tex = gtexture.Sample(gtexture_sampler, v.uv) * v.color;
     // Blocks of surface one pixel spans, along its longer side.
     float footprint = max(length(ddx(v.player)), length(ddy(v.player)));
+    // Across the view, not along it: at grazing angles a pixel stretches
+    // far along the ray, which would coarsen voxel reflections too soon.
+    float across = min(length(ddx(v.player)), length(ddy(v.player)));
     if (!iris_alpha_pass(tex.a)) {
         discard;
     }
@@ -386,17 +500,43 @@ Lit fragment(Varyings v) {
     // colour by 0.15 looking down to 1 at grazing angles, times Reflection
     // Strength (100% is half), then blended by the surface's alpha.
     if (WATER_REFLECTIONS != 0 && REFLECTION_STRENGTH > 0 && frame.isEyeInWater != 1 && dot(face, view_dir) > 0.0) {
-        float cos_view = saturate(dot(n, view_dir));
-        float grazing = max(exp(-3.6 * cos_view) * 1.0281 - 0.0281, 0.0);
+        // Voxel: one ray per reflection texel, from its middle. Texels are
+        // 1/16 block near, coarser where a block spans few pixels, so no
+        // texel is narrower than REFLECTION_TEXEL_PIXELS pixels.
+        float3 from = v.player;
+        float3 rn = n;
+        float3 rv = view_dir;
+        if (REFLECTION_METHOD == 1 && face.y > 0.5) {
+            float per_block = REFLECTION_TEXEL_SCALE / max(across * float(REFLECTION_TEXEL_PIXELS), 1e-4);
+            float res = min(exp2(floor(log2(max(per_block, 1.0)))), 16.0);
+            float2 snapped = (floor(world.xz * res) + 0.5) / res;
+            from = float3(snapped.x, world.y, snapped.y) - frame.cameraPosition;
+            if (WATER_STYLE == 0) {
+                rn = wave_normal(float3(snapped.x, world.y, snapped.y), footprint);
+            }
+            rv = normalize(-from);
+        }
+        float cos_view = saturate(dot(rn, rv));
+        // The mod's curve, exp(-k cos) rescaled to 1 at grazing and 0
+        // straight down (k 3.6); Voxel takes Reflection Falloff for k.
+        float k = REFLECTION_METHOD == 1 ? REFLECTION_FALLOFF : 3.6;
+        float ek = exp(-k);
+        float grazing = max((exp(-k * cos_view) - ek) / (1.0 - ek), 0.0);
         float blend = lerp(0.15, 1.0, grazing) * float(REFLECTION_STRENGTH) / 200.0;
-        float3 r = reflect(-view_dir, n);
+        float3 r = reflect(-rv, rn);
         // Sky only under open sky; covered water mirrors itself, darkened.
         float open = saturate(sky * 3.33333 - 2.33333);
         open *= open;
         float3 reflected = lerp(surface_color * 0.5, sky_color(r), open);
-        float3 start = mul(frame.gbufferModelView, float4(v.player + n * 0.03, 1.0)).xyz;
-        float3 dir = normalize(mul(frame.gbufferModelView, float4(r, 0.0)).xyz);
-        float4 mirror = trace_mirror(start, dir, size);
+        float4 mirror = float4(0.0, 0.0, 0.0, -1.0);
+        if (REFLECTION_METHOD == 1) {
+            mirror = trace_voxels(from + rn * 0.03, r, length(from));
+        }
+        if (mirror.a < 0.0) {
+            float3 start = mul(frame.gbufferModelView, float4(v.player + n * 0.03, 1.0)).xyz;
+            float3 dir = normalize(mul(frame.gbufferModelView, float4(reflect(-view_dir, n), 0.0)).xyz);
+            mirror = trace_mirror(start, dir, size);
+        }
         reflected = lerp(reflected, mirror.rgb, mirror.a);
         o.color.rgb = lerp(o.color.rgb, reflected, saturate(blend));
     }

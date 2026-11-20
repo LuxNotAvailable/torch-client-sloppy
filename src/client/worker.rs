@@ -753,7 +753,7 @@ fn process_job(
             let Some(section) = chunk.sections.get(si as usize) else {
                 continue;
             };
-            let (opaque, water, vis) = mesh_section(
+            let (opaque, water, vis, voxels) = mesh_section(
                 section,
                 (x_base, sec_y, z_base),
                 atlas_rows,
@@ -768,6 +768,7 @@ fn process_job(
                 opaque,
                 water,
                 vis,
+                voxels,
             });
         }
     }
@@ -810,6 +811,7 @@ fn mesh_section<'c>(
     terrain::MeshBuf,
     terrain::MeshBuf,
     terrain::visgraph::VisibilitySet,
+    Option<std::sync::Arc<terrain::voxels::SectionVoxels>>,
 ) {
     blocks.clear();
     if section.block_count != 0 {
@@ -842,7 +844,9 @@ fn mesh_section<'c>(
     let vis = crate::terrain::visgraph::resolve(|lx, ly, lz| {
         occ.is_solid(x_base + lx as i32, sec_y + ly as i32, z_base + lz as i32)
     });
-    (opaque, water, vis)
+    let voxels = terrain::voxels::wanted()
+        .then(|| terrain::voxels::build(blocks, (x_base, sec_y, z_base), atlas_rows, occ));
+    (opaque, water, vis, voxels)
 }
 
 /// A section's states in palette index order, decoded in one pass.
@@ -1157,7 +1161,7 @@ mod bench {
             let mut verts = 0;
             for (si, section) in chunk.sections.iter().enumerate() {
                 let sec_y = min_y + si as i32 * 16;
-                let (opaque, water, _) =
+                let (opaque, water, _, _) =
                     mesh_section(section, (0, sec_y, 0), 16, &occ, &cache, &mut blocks);
                 verts += opaque.verts.len() + water.verts.len();
             }

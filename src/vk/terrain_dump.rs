@@ -87,7 +87,12 @@ pub fn atlas(width: u32, height: u32, rgba: &[u8]) {
 }
 
 /// Appends one stored section's opaque and translucent meshes.
-pub fn section(origin: [i32; 3], vis: VisibilitySet, meshes: [&MeshBuf; 2]) {
+pub fn section(
+    origin: [i32; 3],
+    vis: VisibilitySet,
+    meshes: [&MeshBuf; 2],
+    voxels: Option<std::sync::Arc<crate::terrain::voxels::SectionVoxels>>,
+) {
     if super::live::wanted() {
         for (layer, mesh) in meshes.iter().enumerate() {
             live(Record::Layer(Section {
@@ -101,6 +106,7 @@ pub fn section(origin: [i32; 3], vis: VisibilitySet, meshes: [&MeshBuf; 2]) {
                 pack: bytemuck::cast_slice(&mesh.pack).to_vec(),
                 #[cfg(not(feature = "shader_support"))]
                 pack: Vec::new(),
+                voxels: if layer == 0 { voxels.clone() } else { None },
             }));
         }
     }
@@ -174,6 +180,9 @@ pub struct Section {
     /// Pack quads (`packvertex::PackQuad` words), one per four vertices;
     /// empty when no pack was on.
     pub pack: Vec<[u32; 4]>,
+    /// The opaque layer's voxel records (`terrain::voxels`), when made;
+    /// dumps keep none.
+    pub voxels: Option<std::sync::Arc<crate::terrain::voxels::SectionVoxels>>,
 }
 
 /// One record of a dump, in the order the game wrote them.
@@ -233,6 +242,7 @@ fn next_record(bytes: &[u8], at: &mut usize) -> Option<Record> {
             idx,
             cutout_idx,
             pack,
+            voxels: None,
         })
     })
 }

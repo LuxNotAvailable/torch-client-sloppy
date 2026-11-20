@@ -151,6 +151,23 @@ SCALED_RESOLVE=1
     }
 
     #[test]
+    fn the_voxel_method_asks_for_voxels() {
+        let source = crate::shaderpack::discover::open(super::NAME).expect("embedded");
+        let texts = crate::shaderpack::include::option_texts(&source);
+        let declared = crate::shaderpack::options::discover(texts.iter().map(String::as_str));
+        let at = |text: &str| {
+            let values = crate::shaderpack::options::Values::load(text, &declared);
+            compile_frame(super::NAME, false, Some(values), Dimension::Overworld)
+                .unwrap_or_else(|e| panic!("{text}: {e}"))
+                .constants
+                .voxels
+        };
+        assert!(!at(""));
+        assert!(at("REFLECTION_METHOD=1\n"));
+        assert!(!at("REFLECTION_METHOD=1\nWATER_REFLECTIONS=0\n"));
+    }
+
+    #[test]
     fn a_bubble_column_shades_as_water() {
         use azalea::block::BlockState;
         use azalea_registry::builtin::BlockKind;

@@ -19,6 +19,10 @@
 [SpecializationConstant] const int WATER_REFLECTIONS = 1;
 [SpecializationConstant] const int REFLECTION_QUALITY = 1;
 [SpecializationConstant] const int REFLECTION_STRENGTH = 100;
+[SpecializationConstant] const int REFLECTION_METHOD = 0;
+[SpecializationConstant] const int REFLECTION_TEXEL_PIXELS = 2;
+[SpecializationConstant] const float REFLECTION_FALLOFF = 2.0;
+[SpecializationConstant] const float REFLECTION_TEXEL_SCALE = 2.0;
 [SpecializationConstant] const int WATER_COLOR_MAPPING = 1;
 [SpecializationConstant] const int GLINT_SMOOTHNESS = 15;
 [SpecializationConstant] const float EXPOSURE = 1.0;
@@ -57,6 +61,18 @@
 #define WATER_REFLECTIONS 1 // [0 1]
 #define REFLECTION_QUALITY 1 // [0 1 2]
 #define REFLECTION_STRENGTH 100 // [0 25 50 75 100 125 150 175 200]
+// How reflections find what they mirror: 0 Screen, the mod's trace over
+// the screen; 1 Voxel, a ray per water texel through the blocks around
+// you (off screen too), the screen trace only where those are unknown.
+#define REFLECTION_METHOD 0 // [0 1]
+// Voxel: the fewest screen pixels a reflection texel spans; far water
+// snaps to coarser texels, so its pixels agree instead of shimmering.
+#define REFLECTION_TEXEL_PIXELS 2 // [1 2 4 8]
+// Voxel: how fast reflections fade looking down (the mod's is 3.6).
+#define REFLECTION_FALLOFF 2.0 // [0.5 1.0 1.5 2.0 2.5 3.0 3.6]
+// Voxel: multiplies reflection texels per block past the pixel limit
+// (still at most 16); higher keeps far reflections sharper.
+#define REFLECTION_TEXEL_SCALE 2.0 // [0.5 1.0 2.0 4.0 8.0 16.0]
 // Immersive water: colour follows the biome and clouds with depth (off: the
 // vanilla texture as is).
 #define WATER_COLOR_MAPPING 1 // [0 1]

@@ -154,6 +154,8 @@ pub(crate) struct PackScreen {
     lightmap: Option<(vk::Image, u32)>,
     /// Table words that hold the terrain's slots buffer.
     terrain_slots: Vec<usize>,
+    /// Table entries for the voxel window (`vk::voxels`).
+    voxel_slots: Vec<usize>,
     /// Table entries for the block animation table.
     anim_slots: Vec<usize>,
     /// Table words for the entity buffers: 0 instances, 1 meshes, 2
@@ -294,6 +296,9 @@ impl PackScreen {
                 let index = texture(bindless, &image)?;
                 Ok((image, index))
             };
+        // Traced reflections: the mesher's voxel records, while this pack
+        // is on.
+        crate::terrain::voxels::set_wanted(installed.constants.voxels);
         let noise_size = installed.constants.noise_resolution.clamp(1, 1024);
         let stubs = Stubs {
             white: stub("pack white", vk::Format::R8G8B8A8_UNORM, color_aspect, one)?,
@@ -370,6 +375,7 @@ impl PackScreen {
             atlas: terrain.map(|t| t.atlas),
             lightmap: terrain.and_then(|t| t.lightmap),
             terrain_slots: Vec::new(),
+            voxel_slots: Vec::new(),
             anim_slots: Vec::new(),
             entity_slots: Vec::new(),
             building_entity: None,
@@ -966,6 +972,12 @@ impl PackScreen {
                         Source::Entities
                     };
                     self.entity_slots.push((at, which, source));
+                    0
+                }
+                SlotKind::Buffer { ty, .. } if ty == "IrisVkVoxels" => {
+                    // The voxel window: filled per frame (`record`).
+                    let at = self.table.len();
+                    self.voxel_slots.push(at);
                     0
                 }
                 SlotKind::Buffer { ty, .. } if ty == "IrisVkAnim" => {
@@ -1619,6 +1631,11 @@ impl PackScreen {
             for &at in &self.terrain_slots {
                 table[at] = t.slots.1;
             }
+            // Without a window the slots buffer stands in; the shader finds
+            // no magic word there and traces nothing.
+            for &at in &self.voxel_slots {
+                table[at] = t.voxels.map_or(t.slots.1, |v| v.1);
+            }
             // The terrain writes a table every frame before the pack draws.
             static LOGGED: std::sync::Once = std::sync::Once::new();
             LOGGED.call_once(|| {
@@ -1667,6 +1684,11 @@ impl PackScreen {
                 .iter()
                 .map(|(b, _)| (b.raw, Use::SampledFragment)),
         );
+        if !self.voxel_slots.is_empty()
+            && let Some((window, _)) = terrain.and_then(|t| t.voxels)
+        {
+            buffers.push((window, Use::SampledFragment));
+        }
 
         let (range, _) = self.plans[self.frames as usize % self.plans.len()].clone();
         for (at, pass) in self.passes[range].iter().enumerate() {

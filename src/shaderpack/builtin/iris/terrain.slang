@@ -10,6 +10,10 @@ struct IrisVertexIn {
 
 [SpecializationConstant] const uint IRIS_SLOT_iris_vk_slots = 0;
 [SpecializationConstant] const uint IRIS_SLOT_iris_vk_anim = 0;
+[SpecializationConstant] const uint IRIS_SLOT_iris_vk_voxels = 0;
+
+/// The voxel window traced reflections read (`vk::voxels`).
+ByteAddressBuffer iris_vk_voxels() { return iris_buffer(IRIS_SLOT_iris_vk_voxels); }
 
 uint4 iris_vk_slot(uint instance, uint word) {
     return iris_buffer(IRIS_SLOT_iris_vk_slots).Load4(16 * (instance * 8 + word));

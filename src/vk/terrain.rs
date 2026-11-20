@@ -571,6 +571,8 @@ pub struct PackGeometry {
     pub shadow_cascades: Vec<(vk::Buffer, vk::Buffer)>,
     /// The game's lightmap, when the snapshot has one.
     pub lightmap: Option<(vk::Image, u32)>,
+    /// The voxel window (`vk::voxels`), once a pack asked for it.
+    pub voxels: Option<(vk::Buffer, u32)>,
     /// The snapshot's entities, when it has some.
     pub entities: Option<super::entities::PackEntities>,
     /// The sky pieces as entities (`TerrainScene::pack_sky`).
@@ -655,6 +657,8 @@ pub struct TerrainScene {
     anim: Vec<Option<(Buffer, u32)>>,
     /// The table written this frame (bindless index plus one), for packs.
     anim_current: u32,
+    /// The voxel window traced reflections read (`vk::voxels`).
+    voxels: super::voxels::VoxelWindow,
     /// The blends' scratch (GPU) and its bindless index; the tick last
     /// blended.
     anim_blends: Option<(Buffer, u32)>,
@@ -1007,6 +1011,7 @@ impl TerrainScene {
             atlas_index,
             anim: Vec::new(),
             anim_current: 0,
+            voxels: Default::default(),
             anim_blends: None,
             anim_tick: u64::MAX,
             atlas_raw_index,
@@ -1429,6 +1434,7 @@ impl TerrainScene {
                 Vec::new()
             },
             lightmap: self.env.as_ref().map(|e| (e.lightmap.0.raw, e.lightmap.1)),
+            voxels: self.voxels.bound(),
             entities: self.entities.as_ref().map(|e| e.pack_entities()),
             sky: self.env.as_ref().and_then(|e| e.pack_entities()),
             hand: self.env.as_ref().and_then(|e| e.pack_hand_entities()),
@@ -1794,6 +1800,7 @@ impl TerrainScene {
             self.stats.records += 1;
             let section = match record {
                 Record::Cleared => {
+                    self.voxels.clear();
                     let keys: Vec<_> = self.entries.keys().copied().collect();
                     for key in keys {
                         self.remove(key);
@@ -1803,6 +1810,7 @@ impl TerrainScene {
                     continue;
                 }
                 Record::Dropped { cx, cz } => {
+                    self.voxels.drop_column(cx, cz);
                     let keys: Vec<_> = self
                         .entries
                         .keys()
@@ -1820,6 +1828,7 @@ impl TerrainScene {
             };
             let key = (section.origin, section.water);
             if !section.water {
+                self.voxels.store(section.origin, section.voxels.clone());
                 self.vis.insert(
                     (
                         section.origin[0] >> 4,
@@ -2450,6 +2459,18 @@ impl TerrainScene {
             camera.eye,
         )?;
         self.sort_translucent(uploads, camera.eye, &mut copies);
+        let mut voxel_uploads = Vec::new();
+        self.voxels
+            .update(ctx, memory, bindless, uploads, camera.eye, &mut voxel_uploads)?;
+        if let Some((window, _)) = self.voxels.bound() {
+            copies.extend(voxel_uploads.into_iter().map(|u| Copy {
+                src: u.src,
+                from: u.from,
+                to: window,
+                at: u.at,
+                size: u.size,
+            }));
+        }
         if self.options.visibility {
             self.fill_visibility(camera.eye);
         }
@@ -3327,6 +3348,7 @@ impl TerrainScene {
             }
         }
         self.post.destroy(ctx, memory);
+        self.voxels.destroy(ctx, memory);
         let mut buffers = vec![
             self.translucent.buffer,
             self.slots.buffer,
@@ -3491,6 +3513,7 @@ mod tests {
             idx,
             cutout_idx: Vec::new(),
             pack: Vec::new(),
+            voxels: None,
         };
         let sort = Sort::new(&section, 0);
         let order = sort.back_to_front(Vec3::new(0.5, 0.5, -5.0));

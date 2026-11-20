@@ -79,7 +79,8 @@ fn kind_slots(kind: ProgramKind) -> &'static str {
     match kind {
         ProgramKind::Geometry | ProgramKind::Shadow => {
             "@group(2) @binding(7) var<storage, read> iris_vk_slots: IrisVkSlots;\n\
-             @group(2) @binding(12) var<storage, read> iris_vk_anim: IrisVkAnim;\n"
+             @group(2) @binding(12) var<storage, read> iris_vk_anim: IrisVkAnim;\n\
+             @group(2) @binding(14) var<storage, read> iris_vk_voxels: IrisVkVoxels;\n"
         }
         ProgramKind::Entity | ProgramKind::ShadowEntity => {
             "@group(2) @binding(10) var<storage, read> iris_vk_inst: IrisVkInstances;\n\

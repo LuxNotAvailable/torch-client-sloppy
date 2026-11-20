@@ -104,7 +104,12 @@ pub fn finish(batch: &mut Batch, scratch: &mut Scratch) {
     for sec in &batch.sections {
         let origin = [sec.chunk_x * 16, sec.sec_y, sec.chunk_z * 16];
         #[cfg(feature = "vulkan")]
-        crate::vk::terrain_dump::section(origin, sec.vis, [&sec.opaque, &sec.water]);
+        crate::vk::terrain_dump::section(
+            origin,
+            sec.vis,
+            [&sec.opaque, &sec.water],
+            sec.voxels.clone(),
+        );
         crate::blockentities::transient::section_rebuilt(origin);
         crate::blockentities::bake::section_rebuilt(origin);
     }

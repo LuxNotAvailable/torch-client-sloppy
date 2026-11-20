@@ -12,6 +12,7 @@ pub(crate) mod occupancy;
 pub mod stream;
 pub mod textures;
 pub mod visgraph;
+pub mod voxels;
 
 pub use mesh::{
     MeshBuf, biome_blend, build_section_mesh, lighting_enabled, set_biome_blend,
@@ -83,4 +84,7 @@ pub struct PendingSection {
     pub opaque: MeshBuf,
     pub water: MeshBuf,
     pub vis: visgraph::VisibilitySet,
+    /// Voxel records for traced reflections (`voxels`), when a pack wants
+    /// them.
+    pub voxels: Option<std::sync::Arc<voxels::SectionVoxels>>,
 }

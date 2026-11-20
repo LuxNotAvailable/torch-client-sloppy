@@ -28,6 +28,7 @@ pub mod test_scene;
 pub mod timestamps;
 pub mod upload;
 pub mod viewer;
+pub mod voxels;
 
 /// The engine's shaders, compiled from `shaders/*.slang` by `build.rs`.
 pub mod shaders {
