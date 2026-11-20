@@ -249,7 +249,8 @@ impl EnvScene {
             .parts
             .iter()
             .enumerate()
-            // The upper cloud layer is a pack's alone.
+            // The upper cloud layer and the pack's lower one are a pack's
+            // alone (`pad[0]` 1 and 2, `scene::clouds`).
             .filter(|(_, p)| !(p.kind == 1 && p.pad[0] > 0.5))
             .filter_map(|(i, p)| {
                 let (first, count, base) = *ranges.get(p.mesh as usize)?;
@@ -607,7 +608,10 @@ impl EnvScene {
         upper: bool,
     ) -> Result<(), SetupError> {
         use crate::draw::EntityInstance;
-        if !self.clouds.iter().any(|(p, _)| upper || p.pad[0] < 0.5) {
+        // Parts: vanilla's lower layer (`pad[0]` 0, not a pack's), the
+        // upper (1, with `upper`) and the pack's lower (2).
+        let wanted = |p: &crate::draw::EnvPart| p.pad[0] > 1.5 || (upper && p.pad[0] > 0.5);
+        if !self.clouds.iter().any(|(p, _)| wanted(p)) {
             self.pack_clouds = None;
             return Ok(());
         }
@@ -616,7 +620,7 @@ impl EnvScene {
         let mut meshes: Vec<[u32; 4]> = Vec::new();
         let mut draws = Vec::new();
         for (part, (first, count, base)) in &self.clouds {
-            if part.pad[0] > 0.5 && !upper {
+            if !wanted(part) {
                 continue;
             }
             meshes.push([*first, *count, *base, 0]);
@@ -1146,7 +1150,10 @@ impl EnvScene {
         bindless.remove_texture(self.lightmap.1, frame);
         bindless.remove_buffer(self.vertices.1, frame);
         bindless.remove_buffer(self.parts.1, frame);
-        for p in [&self.pack, &self.pack_hand, &self.pack_clouds].into_iter().flatten() {
+        for p in [&self.pack, &self.pack_hand, &self.pack_clouds]
+            .into_iter()
+            .flatten()
+        {
             bindless.remove_buffer(p.instances.1, frame);
             bindless.remove_buffer(p.meshes.1, frame);
         }
@@ -1189,7 +1196,10 @@ impl EnvScene {
         for b in [self.parts.0, self.vertices.0, self.indices] {
             memory.free_buffer(ctx, b);
         }
-        for p in [self.pack, self.pack_hand, self.pack_clouds].into_iter().flatten() {
+        for p in [self.pack, self.pack_hand, self.pack_clouds]
+            .into_iter()
+            .flatten()
+        {
             memory.free_buffer(ctx, p.instances.0);
             memory.free_buffer(ctx, p.meshes.0);
         }

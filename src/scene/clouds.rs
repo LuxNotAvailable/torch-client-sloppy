@@ -159,6 +159,10 @@ struct CloudAssets {
     /// The upper layer packs may draw (`UPPER_GAP` up, other cells).
     upper: Arc<crate::draw::MeshData>,
     upper_built: Option<(i32, i32, RelativeCameraPos, CloudStatus)>,
+    /// The lower layer as a pack draws it: the same cells, its faces chosen
+    /// for the `PACK_CELL_HEIGHT` layer the pack stretches it to.
+    pack: Arc<crate::draw::MeshData>,
+    pack_built: Option<(i32, i32, RelativeCameraPos, CloudStatus)>,
 }
 
 /// A pack's clouds stand this tall: the pack stretches the mesh (built
@@ -189,6 +193,8 @@ fn setup(mut commands: Commands) {
         built: None,
         upper: crate::draw::MeshData::new(Vec::new(), Vec::new(), false),
         upper_built: None,
+        pack: crate::draw::MeshData::new(Vec::new(), Vec::new(), false),
+        pack_built: None,
     });
 }
 
@@ -345,10 +351,13 @@ fn try_cell(
         return;
     }
 
-    if relative != RelativeCameraPos::BelowClouds {
+    // Tops only from above, bases only from below: inside the layer both
+    // face away. Vanilla builds them and culls back faces; our cloud
+    // pipelines cull nothing, so inside they drew as a grid of squares.
+    if relative == RelativeCameraPos::AboveClouds {
         b.face(x, z, UP, false, false);
     }
-    if relative != RelativeCameraPos::AboveClouds {
+    if relative == RelativeCameraPos::BelowClouds {
         b.face(x, z, DOWN, false, false);
     }
     if cell & NORTH_OPEN != 0 && z > 0 {
@@ -363,9 +372,26 @@ fn try_cell(
     if cell & EAST_OPEN != 0 && x < 0 {
         b.face(x, z, EAST, false, false);
     }
-    if relative == RelativeCameraPos::InsideClouds && x.abs() <= 1 && z.abs() <= 1 {
-        for direction in 0..6 {
-            b.face(x, z, direction, true, false);
+    // The inside of the cloud around the camera. Vanilla draws all six
+    // faces of each nearby cell and culls them from outside; here they're
+    // built only when the camera's own cell is cloud, and sides toward
+    // another cloud cell are left out, so joined cells show one hull.
+    if relative == RelativeCameraPos::InsideClouds
+        && x.abs() <= 1
+        && z.abs() <= 1
+        && texture.cell(center_x, center_z) != 0
+    {
+        for (direction, open) in [
+            (UP, true),
+            (DOWN, true),
+            (NORTH, cell & NORTH_OPEN != 0),
+            (SOUTH, cell & SOUTH_OPEN != 0),
+            (WEST, cell & WEST_OPEN != 0),
+            (EAST, cell & EAST_OPEN != 0),
+        ] {
+            if open {
+                b.face(x, z, direction, true, false);
+            }
         }
     }
 }
@@ -437,6 +463,22 @@ fn update_clouds(
         };
         assets.mesh = build_mesh(texture, cell_x, cell_z, relative, status, 0.0);
     }
+    // A pack's lower layer stands PACK_CELL_HEIGHT tall: between the
+    // vanilla top and its own, the camera is inside it, not above.
+    let pack_relative = if relative_bottom + (PACK_CELL_HEIGHT as f64) < 0.0 {
+        RelativeCameraPos::AboveClouds
+    } else if relative_bottom > 0.0 {
+        RelativeCameraPos::BelowClouds
+    } else {
+        RelativeCameraPos::InsideClouds
+    };
+    let pack_key = (cell_x, cell_z, pack_relative, status);
+    if assets.pack_built != Some(pack_key) {
+        assets.pack_built = Some(pack_key);
+        if let Some(texture) = assets.texture.as_ref() {
+            assets.pack = build_mesh(texture, cell_x, cell_z, pack_relative, status, 0.0);
+        }
+    }
     let upper_bottom = relative_bottom + UPPER_LIFT as f64;
     let upper_relative = if upper_bottom + (PACK_CELL_HEIGHT as f64) < 0.0 {
         RelativeCameraPos::AboveClouds
@@ -482,6 +524,14 @@ fn update_clouds(
             Mat4::from_translation(at + Vec3::Y * UPPER_LIFT),
         )
     });
+    // pad[0] 2: the pack's own lower layer (`vk::env::pack_clouds`).
+    out.clouds.push(crate::draw::EnvDraw {
+        alpha: crate::draw::ALPHA_BLEND,
+        bias: crate::scene::sky::BIAS_CLOUDS,
+        tint: color.to_color().to_linear().to_f32_array(),
+        pad: [2.0, 0.0, 0.0],
+        ..crate::draw::EnvDraw::new(assets.pack.clone(), 1, Mat4::from_translation(at))
+    });
 }
 
 #[cfg(test)]
@@ -508,32 +558,60 @@ mod tests {
     #[test]
     fn fast_clouds_are_one_quad_per_cell() {
         let t = checkerboard();
-        let fast = build_mesh(&t, 0, 0, RelativeCameraPos::BelowClouds, CloudStatus::Fast, 0.0);
-        let fancy = build_mesh(&t, 0, 0, RelativeCameraPos::BelowClouds, CloudStatus::Fancy, 0.0);
+        let fast = build_mesh(
+            &t,
+            0,
+            0,
+            RelativeCameraPos::BelowClouds,
+            CloudStatus::Fast,
+            0.0,
+        );
+        let fancy = build_mesh(
+            &t,
+            0,
+            0,
+            RelativeCameraPos::BelowClouds,
+            CloudStatus::Fancy,
+            0.0,
+        );
         assert!(fast.verts.len() > 0);
         assert!(fancy.verts.len() > fast.verts.len());
         assert_eq!(fast.verts.len() % 4, 0);
     }
 
     #[test]
-    fn the_far_side_of_the_layer_is_not_built() {
+    fn tops_from_above_and_bases_from_below_only() {
         let t = checkerboard();
-        let below = build_mesh(&t, 0, 0, RelativeCameraPos::BelowClouds, CloudStatus::Fancy, 0.0);
-        let inside = build_mesh(
-            &t,
-            0,
-            0,
-            RelativeCameraPos::InsideClouds,
-            CloudStatus::Fancy,
-            0.0,
+        let mesh = |relative| build_mesh(&t, 0, 0, relative, CloudStatus::Fancy, 0.0);
+        // Flat quads at height `y` (tops at CELL_HEIGHT, bases at 0).
+        let flat = |m: &crate::draw::MeshData, y: f32| {
+            m.verts
+                .chunks(4)
+                .filter(|q| q.iter().all(|v| v.pos[1] == y))
+                .count()
+        };
+        let (below, inside, above) = (
+            mesh(RelativeCameraPos::BelowClouds),
+            mesh(RelativeCameraPos::InsideClouds),
+            mesh(RelativeCameraPos::AboveClouds),
         );
-        assert!(inside.verts.len() > below.verts.len());
+        assert!(flat(&below, 0.0) > 9 && flat(&below, CELL_HEIGHT) == 0);
+        assert!(flat(&above, CELL_HEIGHT) > 9 && flat(&above, 0.0) == 0);
+        // Inside: only the camera's 3x3 cells' own inner faces.
+        assert!(flat(&inside, 0.0) <= 9 && flat(&inside, CELL_HEIGHT) <= 9);
     }
 
     #[test]
     fn the_fade_reaches_zero_at_the_rim() {
         let t = checkerboard();
-        let mesh = build_mesh(&t, 0, 0, RelativeCameraPos::BelowClouds, CloudStatus::Fast, 0.0);
+        let mesh = build_mesh(
+            &t,
+            0,
+            0,
+            RelativeCameraPos::BelowClouds,
+            CloudStatus::Fast,
+            0.0,
+        );
         for (p, c) in mesh.verts.iter().map(|v| (v.pos, v.color)) {
             let d = (p[0] * p[0] + p[2] * p[2]).sqrt();
             assert!(c[3] >= 0.0 && c[3] <= 1.0);
