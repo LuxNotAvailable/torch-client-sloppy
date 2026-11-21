@@ -83,6 +83,14 @@ const GAIN_LAST: f32 = 0.03;
 /// The targets offered, and the default.
 const TARGETS: [u32; 7] = [30, 60, 90, 120, 144, 165, 240];
 const DEFAULT_TARGET: u32 = 60;
+/// A trial whose two current-value windows differ by more than this was
+/// measured while the scene's frame rate moved: it's run again, up to
+/// `REDO_MAX` times, then left undecided.
+const DRIFT_MAX: f32 = 0.15;
+const REDO_MAX: u32 = 1;
+/// A kept change is checked once more on its own; frames this much slower
+/// than before it undo it.
+const VERIFY_SLACK: f32 = 0.03;
 /// Quality Boost keeps a value only this far under the target's frame time.
 const BOOST_MARGIN: f32 = 0.95;
 /// A Quality Boost trial measures the candidate alone, twice.
@@ -459,6 +467,8 @@ struct Row {
     status: Status,
     /// Review: the change is kept.
     keep: bool,
+    /// A value that won its A/B but slowed frames overall, so was undone.
+    undone: Option<u32>,
 }
 
 /// One measuring window: waits out the switch and any terrain rebuild,
@@ -562,6 +572,8 @@ struct Trial {
     /// The candidate's stable times.
     cand_stable: Vec<f32>,
     base_stable: Vec<f32>,
+    /// Times run again after the scene's frame rate moved.
+    redo: u32,
 }
 
 #[derive(Default, Clone, Copy, PartialEq)]
@@ -652,6 +664,8 @@ pub struct TuneState {
     trial: Option<Trial>,
     gate2: Gate2,
     check: Option<Window>,
+    /// A kept change's overall check, and the frame time before it.
+    verify: Option<(Window, f32)>,
     last_frame: Option<Instant>,
     /// Background terrain work per `BUCKET`, once measured, and the
     /// measuring's start.
@@ -703,6 +717,7 @@ fn start(state: &mut GuiState) {
             .map(|_| Row {
                 status: Status::Pending,
                 keep: true,
+                undone: None,
             })
             .collect(),
         ..Default::default()
@@ -789,6 +804,7 @@ fn next_trial(state: &mut GuiState) {
         cand: Vec::new(),
         cand_stable: Vec::new(),
         base_stable: Vec::new(),
+        redo: 0,
     });
     set_side(state);
 }
@@ -813,6 +829,21 @@ fn finish_knob(state: &mut GuiState) {
     let chosen = t.best.map_or(t.base, |b| b.0);
     let change = t.best.map_or(t.worst_change, |b| b.1);
     let ms = t.best.map_or(t.base_stable, |b| b.2);
+    // A change is kept only if frames overall are no slower with it on.
+    if chosen != t.base && !t.boosting() && t.base_ms > 0.0 {
+        t.verify = Some((Window::new(Instant::now()), t.base_ms));
+        (k.set)(&mut state.options, chosen);
+        apply_live(state);
+        take_gpu();
+        return;
+    }
+    complete_knob(state, chosen, change, ms);
+}
+
+/// Records the knob's outcome and moves on.
+fn complete_knob(state: &mut GuiState, chosen: u32, change: f32, ms: f32) {
+    let t = &mut state.tune;
+    let k = &KNOBS[t.knob];
     t.rows[t.knob].status = Status::Done {
         from: t.base,
         to: chosen,
@@ -912,6 +943,30 @@ fn step(state: &mut GuiState, now: Instant, dt: Option<f32>) {
         return;
     }
     let k = &KNOBS[t.knob];
+    if let Some((window, before)) = &mut t.verify {
+        if let Some((score, stable)) = window.tick(now, dt, k.settle, vsync, background) {
+            let before = *before;
+            t.verify = None;
+            let change = (score - before) / before;
+            let chosen = t.best.map_or(t.base, |b| b.0);
+            if change > VERIFY_SLACK {
+                info!(
+                    "tune: {} {} undone, frames {:+.1}% overall",
+                    k.name,
+                    (k.label)(chosen),
+                    change * 100.0
+                );
+                t.rows[t.knob].undone = Some(chosen);
+                let base = t.base;
+                complete_knob(state, base, change, 0.0);
+            } else {
+                t.base_ms = score;
+                let kept = t.best.map_or(change, |b| b.1);
+                complete_knob(state, chosen, kept, stable);
+            }
+        }
+        return;
+    }
     let boosting = k.gate() == 2 && t.boosting();
     let target_ms = t.target_ms();
     let Some(trial) = &mut t.trial else { return };
@@ -952,6 +1007,31 @@ fn step(state: &mut GuiState, now: Instant, dt: Option<f32>) {
         (k.set)(&mut state.options, t.base);
         next_trial(state);
         return;
+    }
+    // The scene's frame rate moved mid-trial (the two current-value
+    // windows disagree): run it again, then leave it undecided.
+    if let [a, b] = trial.base[..] {
+        let drift = (a - b).abs() / a.min(b).max(0.01);
+        if drift > DRIFT_MAX {
+            if trial.redo < REDO_MAX {
+                trial.redo += 1;
+                trial.step = 0;
+                trial.base.clear();
+                trial.cand.clear();
+                trial.base_stable.clear();
+                trial.cand_stable.clear();
+                set_side(state);
+                return;
+            }
+            info!(
+                "tune: {} undecided, frame rate moved {:.0}%",
+                k.name,
+                drift * 100.0
+            );
+            (k.set)(&mut state.options, t.base);
+            next_trial(state);
+            return;
+        }
     }
     // Every candidate window must beat every base one, or it was noise.
     let fmin = |v: &[f32]| v.iter().copied().fold(f32::MAX, f32::min);
@@ -1043,6 +1123,22 @@ fn row_line(i: usize, t: &TuneState) -> (String, u32) {
     match t.rows[i].status {
         Status::Pending => (format!("  {}", k.name), GRAY),
         Status::Skipped => (format!("- {} (not needed)", k.name), GRAY),
+        Status::Testing if t.verify.is_some() => {
+            let v = t.best.map_or(t.base, |b| b.0);
+            (
+                format!("> {}: {} (checking overall fps)", k.name, (k.label)(v)),
+                YELLOW,
+            )
+        }
+        Status::Done { from, change, .. } if t.rows[i].undone.is_some() => (
+            format!(
+                "x {}: {} undone, fps fell ({})",
+                k.name,
+                (k.label)(t.rows[i].undone.unwrap_or(from)),
+                change_text(change)
+            ),
+            RED,
+        ),
         Status::Testing => {
             let detail = t.trial.as_ref().map_or(String::new(), |tr| {
                 let side = if tr.order[tr.step.min(tr.order.len() - 1)] {
@@ -1055,7 +1151,9 @@ fn row_line(i: usize, t: &TuneState) -> (String, u32) {
                     (true, true) => ", rebuilding",
                     (true, false) => ", settling",
                 };
-                let again = if tr.window.retries > 0 {
+                let again = if tr.redo > 0 {
+                    ", fps moved, again"
+                } else if tr.window.retries > 0 {
                     ", hitch, again"
                 } else {
                     ""
