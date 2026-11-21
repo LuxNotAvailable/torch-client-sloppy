@@ -19,7 +19,7 @@ type Drawn<'a> = (
     (
         Has<crate::blockentities::BeRigNode>,
         Has<crate::util::particles::draw::ParticleBatch>,
-        Has<crate::blockentities::BeamNode>,
+        Option<&'a crate::blockentities::BeamNode>,
         Has<crate::scene::tethers::WeatherLayer>,
     ),
 );
@@ -107,7 +107,7 @@ fn fill_draw_list(
                 tag: tag.map_or(0, |t| t.0),
                 alpha: material.alpha_mode.code(),
                 depth_bias: material.depth_bias,
-                kind: match (block, beam, weather) {
+                kind: match (block, beam.is_some(), weather) {
                     (true, ..) => 1,
                     (_, true, _) => 3,
                     (.., true) => 4,
@@ -122,7 +122,13 @@ fn fill_draw_list(
                 light: p.light.to_array(),
                 light0: p.light0.to_array(),
                 light1: p.light1.to_array(),
-                switches: p.switches.to_array(),
+                // y: a beam's texture scroll.
+                switches: [
+                    p.switches.x,
+                    beam.map_or(0.0, |b| b.0),
+                    p.switches.z,
+                    p.switches.w,
+                ],
                 levels: [p.light_block.w, p.light_sky.w],
                 mode: p.mode,
                 see_through: u32::from(material.see_through),

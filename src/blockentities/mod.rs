@@ -96,6 +96,11 @@ pub struct BeBuiltGeom {
     pub build: fn(&BeState, &crate::gui::atlas::GuiAtlas) -> Option<Mesh>,
     pub texture: BuiltTexture,
     pub refresh: Option<fn(&BeState, &mut Mesh)>,
+    /// The shape `refresh` writes, hashed: the mesh is rewritten only when
+    /// it changes. Without one it's rewritten every frame.
+    pub refresh_key: Option<fn(&BeState) -> u64>,
+    /// A texture V scroll applied per instance on the GPU (beams).
+    pub scroll: Option<fn(&BeState) -> f32>,
 }
 
 pub enum BuiltTexture {
@@ -170,6 +175,8 @@ impl BeSpec {
                 build,
                 texture,
                 refresh: None,
+                refresh_key: None,
+                scroll: None,
             }),
         )
     }
@@ -177,6 +184,22 @@ impl BeSpec {
     pub fn with_refresh(mut self, refresh: fn(&BeState, &mut Mesh)) -> BeSpec {
         if let BeGeom::Built(geom) = &mut self.geom {
             geom.refresh = Some(refresh);
+        }
+        self
+    }
+
+    /// Rewrites the mesh only when `key` changes (see `with_refresh`).
+    pub fn with_refresh_key(mut self, key: fn(&BeState) -> u64) -> BeSpec {
+        if let BeGeom::Built(geom) = &mut self.geom {
+            geom.refresh_key = Some(key);
+        }
+        self
+    }
+
+    /// A per-frame texture V scroll, applied on the GPU.
+    pub fn with_scroll(mut self, scroll: fn(&BeState) -> f32) -> BeSpec {
+        if let BeGeom::Built(geom) = &mut self.geom {
+            geom.scroll = Some(scroll);
         }
         self
     }
@@ -674,6 +697,8 @@ enum RigBody {
     Built {
         mesh: Option<Handle<Mesh>>,
         node: Entity,
+        /// The `refresh_key` the mesh was last written for.
+        refreshed: Option<u64>,
     },
 }
 
@@ -711,9 +736,11 @@ impl BeRigs {
 #[derive(Component)]
 pub(crate) struct BeRigNode;
 
-/// Marks a beam's mesh, for shader packs' `gbuffers_beaconbeam`.
-#[derive(Component)]
-pub(crate) struct BeamNode;
+/// Marks a beam's mesh, for shader packs' `gbuffers_beaconbeam`; holds its
+/// texture's V scroll this frame (`BeBuiltGeom::scroll`), which the
+/// instance carries so the mesh needn't be rewritten every frame.
+#[derive(Component, Default)]
+pub(crate) struct BeamNode(pub f32);
 
 pub struct BlockEntityPlugin;
 
@@ -747,12 +774,13 @@ fn sync_block_entities(
     camera_q: Query<&GlobalTransform, With<crate::app::systems::WorldCamera>>,
     mut nodes: Query<(&mut Transform, &mut Visibility), With<BeRigNode>>,
     mut mats: Query<&mut crate::draw::Material3d<EntityMaterial>>,
-    (lightmap, occlusion, mut rig_parts, mut aabbs, mut gpu_rigs_were): (
+    (lightmap, occlusion, mut rig_parts, mut aabbs, mut gpu_rigs_were, mut beams): (
         Res<crate::app::systems::LightmapState>,
         Res<crate::scene::occlusion::OcclusionState>,
         ResMut<RigParts>,
         Query<&mut Aabb, With<BeRigNode>>,
         Local<Option<bool>>,
+        Query<&mut BeamNode>,
     ),
     gui_state: Option<Res<crate::gui::GuiState>>,
     mut carried: ResMut<CarriedEntities>,
@@ -1023,14 +1051,29 @@ fn sync_block_entities(
                 (
                     BeGeom::Built(BeBuiltGeom {
                         refresh: Some(refresh),
+                        refresh_key,
+                        scroll,
                         ..
                     }),
                     RigBody::Built {
-                        mesh: Some(mesh), ..
+                        mesh: Some(mesh),
+                        node,
+                        refreshed,
                     },
                 ) => {
-                    if let Some(mesh) = meshes.get_mut(mesh) {
+                    // Rewritten only when its shape changed: every write
+                    // re-uploads the mesh.
+                    let key = refresh_key.map(|k| k(&st));
+                    if (key.is_none() || key != *refreshed)
+                        && let Some(mesh) = meshes.get_mut(mesh)
+                    {
                         refresh(&st, mesh);
+                        *refreshed = key;
+                    }
+                    if let Some(scroll) = scroll
+                        && let Ok(mut beam) = beams.get_mut(*node)
+                    {
+                        beam.0 = scroll(&st);
                     }
                 }
                 _ => {}
@@ -1321,7 +1364,7 @@ fn spawn_layer(
                 BeRigNode,
             ));
             if spec.beam {
-                spawned.insert(BeamNode);
+                spawned.insert(BeamNode::default());
             }
             let geom_node = spawned.id();
             commands.entity(node).add_child(geom_node);
@@ -1332,6 +1375,7 @@ fn spawn_layer(
                 body: RigBody::Built {
                     mesh: Some(handle),
                     node: geom_node,
+                    refreshed: None,
                 },
                 key,
                 texture: Some(image),

@@ -161,7 +161,8 @@ VertexOut entity_vertex(uint vertex: SV_VulkanVertexID, uint instance: SV_Vulkan
 
     VertexOut out;
     out.position = mul(pc.view_proj, float4(world_position.xyz, 1));
-    out.uv = uv;
+    // switches.y: a texture V scroll (beams), kept off the mesh.
+    out.uv = uv + float2(0, asfloat(instances.Load(at + I_SWITCHES + 4)));
     out.world = world_position.xyz;
     out.instance = instance;
     uint mode = instances.Load(at + I_MODE);

@@ -77,6 +77,8 @@ fn beam_spec(
 ) -> BeSpec {
     BeSpec::built(name, segment_count, build, BuiltTexture::Tiled(texture))
         .with_refresh(refresh)
+        .with_refresh_key(shape_key)
+        .with_scroll(scroll)
         .with_full_bright(|_| true)
         .with_light(LightMode::Emissive)
         .with_beam()
@@ -194,6 +196,27 @@ fn segment_count(st: &BeState) -> Option<u64> {
     Beam::of(st).map(|beam| beam.segments.len() as u64)
 }
 
+/// The beam's shape (segments, radii, scale), hashed: what `write` builds,
+/// the scroll aside.
+fn shape_key(st: &BeState) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    if let Some(beam) = Beam::of(st) {
+        beam.segments
+            .for_each(|s| (s.start, s.height, s.color).hash(&mut h));
+        for f in [beam.scale, beam.solid_radius, beam.glow_radius] {
+            f.to_bits().hash(&mut h);
+        }
+    }
+    h.finish()
+}
+
+/// The texture's V scroll this frame, added on the GPU (`switches.y`).
+/// Every drawn segment runs upward, so all share it.
+fn scroll(st: &BeState) -> f32 {
+    tex_v_off(animation_time(st), 1)
+}
+
 fn animation_time(st: &BeState) -> f32 {
     (st.game_time % 40) as f32 + st.partial
 }
@@ -260,11 +283,11 @@ fn write(st: &BeState, part: Part, mesh: &mut Mesh) {
     uvs.clear();
     colors.clear();
     let corners = part.corners(&beam);
-    let time = animation_time(st);
     beam.segments.for_each(|segment| {
         let start = segment.start as f32;
         let end = (segment.start + segment.height) as f32;
-        let vv2 = -1.0 + tex_v_off(time, segment.height);
+        // The scroll is added per instance (`scroll`).
+        let vv2 = -1.0;
         let vv1 = part.v_span(&beam, segment.height) + vv2;
         let color = rgb_to_linear(segment.color);
         for (a, b) in QUADS {

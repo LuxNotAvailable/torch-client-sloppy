@@ -216,6 +216,8 @@ void iris_vk_entity() {
     iris_EntityPosition = uintBitsToFloat(uvec3(iris_VkVert[v], iris_VkVert[v + 1u], iris_VkVert[v + 2u]));
     iris_EntityNormal = uintBitsToFloat(uvec3(iris_VkVert[v + 3u], iris_VkVert[v + 4u], iris_VkVert[v + 5u]));
     iris_EntityUV = uintBitsToFloat(uvec2(iris_VkVert[v + 6u], iris_VkVert[v + 7u]));
+    // switches.y (word 23): a beam's texture V scroll.
+    iris_EntityUV.y += iris_vk_f(at + 23u);
     iris_EntityColor = uintBitsToFloat(uvec4(iris_VkVert[v + 8u], iris_VkVert[v + 9u], iris_VkVert[v + 10u], iris_VkVert[v + 11u]));
     uint mesh = iris_VkInst[at];
     iris_Rigged = iris_VkMesh[mesh].w != 0u;
