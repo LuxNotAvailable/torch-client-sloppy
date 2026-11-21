@@ -1,6 +1,6 @@
 // Terrain programs' input (gbuffers terrain and water, the shadow pass):
-// each vertex pulled from its section's pool (`vk::terrain`, 128-byte
-// slots: origin at word 2, the pool's bindless index at word 3's y, the
+// each vertex pulled from its section's pool (`vk::terrain`, 320-byte
+// slots, `IRIS_SLOT_WORDS` 16-byte words: origin at word 2, the pool's bindless index at word 3's y, the
 // quad pool's at word 3's w).
 
 struct IrisVertexIn {
@@ -11,8 +11,11 @@ struct IrisVertexIn {
 [SpecializationConstant] const uint IRIS_SLOT_iris_vk_slots = 0;
 [SpecializationConstant] const uint IRIS_SLOT_iris_vk_anim = 0;
 
+// `vk::terrain::SLOT_SIZE` / 16; a test keeps them equal.
+static const uint IRIS_SLOT_WORDS = 20;
+
 uint4 iris_vk_slot(uint instance, uint word) {
-    return iris_buffer(IRIS_SLOT_iris_vk_slots).Load4(16 * (instance * 8 + word));
+    return iris_buffer(IRIS_SLOT_iris_vk_slots).Load4(16 * (instance * IRIS_SLOT_WORDS + word));
 }
 
 /// The block animation table (`block_anim`): the shift from the tile a quad

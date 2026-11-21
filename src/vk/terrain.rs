@@ -4036,6 +4036,18 @@ impl TerrainScene {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn pack_terrain_reads_the_slot_stride() {
+        // The pack's terrain shader indexes slots in 16-byte words; a stale
+        // stride lost the device under every pack.
+        let words = super::SLOT_SIZE / 16;
+        let src = include_str!("../shaderpack/builtin/iris/terrain.slang");
+        assert!(
+            src.contains(&format!("static const uint IRIS_SLOT_WORDS = {words};")),
+            "iris/terrain.slang IRIS_SLOT_WORDS must be SLOT_SIZE / 16 = {words}"
+        );
+    }
+
     use super::{SHADOW_CHANGE_LOG, SHADOW_FAR_BATCH, ShadowChanges};
     use bevy::math::{Mat4, Vec3};
     use std::time::Instant;
