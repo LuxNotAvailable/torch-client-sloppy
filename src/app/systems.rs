@@ -666,7 +666,15 @@ impl TagProjector {
             eye: cam_tf.translation,
             forward: *cam_tf.forward(),
             view_from_world: cam_tf.compute_affine().inverse(),
-            clip_from_view: camera.clip_from_view(),
+            // From the FOV and this view's aspect: Bevy's own matrix only
+            // follows a render target it draws, which the native renderer
+            // isn't, so it can go stale (tags drift off their entities).
+            clip_from_view: match projection {
+                Projection::Perspective(p) => {
+                    Mat4::perspective_infinite_reverse_rh(p.fov, view.x / view.y.max(1.0), p.near)
+                }
+                _ => camera.clip_from_view(),
+            },
             units_per_block: match projection {
                 Projection::Perspective(p) => view.y / (2.0 * (p.fov * 0.5).tan()),
                 _ => view.y,
