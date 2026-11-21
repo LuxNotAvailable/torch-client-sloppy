@@ -265,14 +265,28 @@ static SENT: std::sync::Mutex<
 
 /// Counts a mesh sent, and every 2 s logs the busiest origins: meshes sent
 /// again and again while nothing changes are wasted uploads.
-fn note_sent(channel: usize, mesh: &crate::draw::MeshData, fresh: bool) {
+fn note_sent(
+    channel: usize,
+    mesh: &crate::draw::MeshData,
+    (kind, posed, texture): (u32, bool, u32),
+    fresh: bool,
+) {
     let Ok(mut sent) = SENT.lock() else {
         return;
     };
     let (since, counts) = sent.get_or_insert_with(|| (std::time::Instant::now(), HashMap::new()));
     let o = mesh.origin;
     let e = counts
-        .entry((channel, format!("{}:{}", o.file(), o.line())))
+        .entry((
+            channel,
+            format!(
+                "{}:{} kind {kind}{} tex {texture} {}v",
+                o.file(),
+                o.line(),
+                if posed { " gpu-posed" } else { "" },
+                mesh.verts.len()
+            ),
+        ))
         .or_default();
     if fresh {
         e.0 += 1;
@@ -318,11 +332,19 @@ fn to_live(
     for mesh in &used_meshes {
         registry.used.insert(mesh.slot, now);
     }
+    // What draws each mesh, for the resend report: kind, GPU-posed, texture.
+    let mut drawn_as = vec![(u32::MAX, false, u32::MAX); used_meshes.len()];
+    for inst in &instances {
+        if let Some(d) = drawn_as.get_mut(inst.mesh as usize) {
+            *d = (inst.kind & 0xFF, inst.tag != 0, inst.texture);
+        }
+    }
     // Frames not yet taken keep their new meshes and textures.
     let mut frame = pending.take().unwrap_or_default();
     let mesh_index: Vec<u32> = used_meshes
         .iter()
-        .map(|mesh| {
+        .enumerate()
+        .map(|(pos, mesh)| {
             let (verts, indices, rigged) = (&mesh.verts, &mesh.indices, &mesh.rigged);
             let key = mesh.id;
             match registry.meshes.get_mut(&mesh.slot) {
@@ -338,7 +360,7 @@ fn to_live(
                             .meshes
                             .push((*index, verts.clone(), indices.clone(), *rigged));
                         super::live::count_new(0, verts.len());
-                        note_sent(channel, mesh, false);
+                        note_sent(channel, mesh, drawn_as[pos], false);
                     }
                     *index
                 }
@@ -355,7 +377,7 @@ fn to_live(
                         .meshes
                         .push((index, verts.clone(), indices.clone(), *rigged));
                     super::live::count_new(0, verts.len());
-                    note_sent(channel, mesh, true);
+                    note_sent(channel, mesh, drawn_as[pos], true);
                     index
                 }
             }
