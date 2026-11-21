@@ -34,13 +34,13 @@ CPU fits 60 fps. Dips with flat CPU mean the **GPU is the limit**: full native r
   2.21 / 2.37 and 2.16 / 2.18 ms, cull 0.42 / 0.49 ms. MX250 laptop terrain
   3.15 / 3.17 ms, cull 0.175 / 0.206 ms (0.255 before sorting by pool first).
   No gain: HSR and Hi-Z already drop what it would save, and the cull's
-  scattered slot reads cost more. Kept as Advanced Performance > Near-First
-  Terrain, off by default.
+  scattered slot reads cost more. Kept as Advanced Performance > Near-First,
+  off by default.
 - **Hi-Z every other frame** (`vkview --hiz-ab`, `dump5`, `--camera game`,
   every frame / every second): Pixel GPU total 5.55 / 4.31 ms, Hi-Z
   2.16 / 1.06 ms, terrain 2.20 / 2.20 ms. MX250 laptop total 4.47-4.51 /
   4.49-4.50 ms (its Hi-Z is only 0.25 ms). Static camera: pop-in while
-  turning is unmeasured. Advanced Performance > Occlusion Every Other Frame,
+  turning is unmeasured. Advanced Performance > Half-Rate Occlusion,
   on by default on Android only.
 - **Quarter-res Hi-Z** (level 1 from one depth texel per 2 x 2; `vkview
   --hiz-quarter-ab`, every-frame builds, full / quarter): Pixel Hi-Z

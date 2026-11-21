@@ -77,7 +77,7 @@ pub const HIZ_EVERY_OTHER: Tip = Tip::new(
     Impact::Medium,
 );
 pub const HIZ_QUARTER: Tip = Tip::new(
-    "Builds the depth map that occlusion culling checks from a quarter of the screen's pixels. Saves about 0.8 ms a frame on phones (0.4 ms with Occlusion Every Other Frame; measured on a Pixel 10 Pro); no gain on desktop graphics cards. Not exact: chunks seen only through gaps one pixel wide, like between leaves far away, can vanish. Experimental.",
+    "Builds the depth map that occlusion culling checks from a quarter of the screen's pixels. Saves about 0.8 ms a frame on phones (0.4 ms with Half-Rate Occlusion; measured on a Pixel 10 Pro); no gain on desktop graphics cards. Not exact: chunks seen only through gaps one pixel wide, like between leaves far away, can vanish. Experimental.",
     Impact::Medium,
 );
 pub const ENTITY_CULLING: Tip = Tip::new(

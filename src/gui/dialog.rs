@@ -922,7 +922,7 @@ fn draw_input(
                 HANDLE_WIDTH,
                 control_h,
             );
-            widgets::draw_label_spans(p, label, x, cy, row.w, control_h);
+            widgets::draw_label_spans(p, label, x, cy, row.w, control_h, false);
         }
         _ => {}
     }

@@ -1045,14 +1045,26 @@ const LABEL_INACTIVE: u32 = 0xA0A0A0;
 
 const HANDLE_WIDTH: f32 = 8.0;
 
-fn draw_label(p: &mut Painter, label: &str, x: f32, y: f32, w: f32, h: f32, color: u32) {
+#[allow(clippy::too_many_arguments, reason = "a label's box, color and hover")]
+fn draw_label(
+    p: &mut Painter,
+    label: &str,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    color: u32,
+    hovered: bool,
+) {
     let spans = [Span {
         text: crate::gui::tooltip::localize(label).into_owned(),
         style: Style::colored(color),
     }];
-    draw_label_spans(p, &spans, x, y, w, h);
+    draw_label_spans(p, &spans, x, y, w, h, hovered);
 }
 
+/// A label centred in its box. Too wide: clipped to the box, and scrolled
+/// back and forth while `hovered` (vanilla's scrolling string, eased).
 pub(in crate::gui) fn draw_label_spans(
     p: &mut Painter,
     label: &[Span],
@@ -1060,15 +1072,48 @@ pub(in crate::gui) fn draw_label_spans(
     y: f32,
     w: f32,
     h: f32,
+    hovered: bool,
 ) {
     let lw = p.atlas.font.width(label);
     let (left, right) = (x + TEXT_MARGIN, x + w - TEXT_MARGIN);
-    let mut cx = x + w / 2.0;
-    if lw <= right - left {
-        cx = cx.clamp(left + lw / 2.0, right - lw / 2.0);
-    }
     let top = ((y + y + h - LINE_HEIGHT) / 2.0 + 1.0).floor();
+    let overflow = lw - (right - left);
+    if overflow > 0.0 {
+        let offset = if hovered {
+            scroll_offset((x, y), overflow)
+        } else {
+            0.0
+        };
+        let clip = p.push_clip(left, y, right - left, h);
+        p.text(label, (left - offset).round(), top, true);
+        p.pop_clip(clip);
+        return;
+    }
+    let cx = (x + w / 2.0).clamp(left + lw / 2.0, right - lw / 2.0);
     p.text(label, (cx - lw / 2.0).floor(), top, true);
+}
+
+/// How far a hovered label `overflow` px too wide has scrolled: from its
+/// start to its end and back, easing at each end, one way per
+/// `max(overflow / 2, 3)` seconds (as vanilla). Restarts when the hover
+/// moves to another box.
+fn scroll_offset(at: (f32, f32), overflow: f32) -> f32 {
+    use crate::platform::time::Instant;
+    static HOVER: std::sync::Mutex<Option<((u32, u32), Instant)>> = std::sync::Mutex::new(None);
+    let key = (at.0.to_bits(), at.1.to_bits());
+    let mut hover = HOVER.lock().unwrap_or_else(|e| e.into_inner());
+    let start = match *hover {
+        Some((k, start)) if k == key => start,
+        _ => {
+            let now = Instant::now();
+            *hover = Some((key, now));
+            now
+        }
+    };
+    let period = (overflow * 0.5).max(3.0) * 2.0;
+    let t = start.elapsed().as_secs_f32() / period;
+    let eased = 0.5 - 0.5 * (std::f32::consts::TAU * t).cos();
+    eased * overflow
 }
 
 pub(in crate::gui) fn draw_button_spans(
@@ -1090,7 +1135,7 @@ pub(in crate::gui) fn draw_button_spans(
     };
     p.sprite(sprite, x, y, w, h);
     if active {
-        draw_label_spans(p, label, x, y, w, h);
+        draw_label_spans(p, label, x, y, w, h, hovered || focused);
     } else {
         let greyed: Vec<Span> = label
             .iter()
@@ -1102,7 +1147,7 @@ pub(in crate::gui) fn draw_button_spans(
                 },
             })
             .collect();
-        draw_label_spans(p, &greyed, x, y, w, h);
+        draw_label_spans(p, &greyed, x, y, w, h, hovered);
     }
     let clicked = active && hovered && ctx.input.left_click;
     if clicked {
@@ -1151,7 +1196,16 @@ impl<'a> Button<'a> {
         } else {
             LABEL_INACTIVE
         };
-        draw_label(p, self.label, self.x, self.y, self.w, self.h, color);
+        draw_label(
+            p,
+            self.label,
+            self.x,
+            self.y,
+            self.w,
+            self.h,
+            color,
+            hovered || focused,
+        );
         #[cfg(not(feature = "mobile_ui"))]
         let clicked = self.active && hovered && ctx.input.left_click;
         #[cfg(feature = "mobile_ui")]
@@ -1410,7 +1464,16 @@ impl<F: Fn(i32) -> String> Slider<F> {
         p.sprite(handle, self.x + travel, self.y, HANDLE_WIDTH, self.h);
 
         let label = (self.label)(value);
-        draw_label(p, &label, self.x, self.y, self.w, self.h, LABEL_ACTIVE);
+        draw_label(
+            p,
+            &label,
+            self.x,
+            self.y,
+            self.w,
+            self.h,
+            LABEL_ACTIVE,
+            hovered || focused || dragging,
+        );
         value
     }
 }

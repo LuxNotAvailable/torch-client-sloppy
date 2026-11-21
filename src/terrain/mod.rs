@@ -62,11 +62,11 @@ pub static FACE_BANDS: std::sync::atomic::AtomicBool = std::sync::atomic::Atomic
 pub static FACE_FILTER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// The terrain cull walks sections nearest the camera first (Advanced
-/// Performance > Near-First Terrain).
+/// Performance > Near-First).
 pub static NEAR_FIRST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// The Hi-Z pyramid is rebuilt every second frame (Advanced Performance >
-/// Occlusion Every Other Frame).
+/// Half-Rate Occlusion).
 pub static HIZ_EVERY_OTHER: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(cfg!(target_os = "android"));
 

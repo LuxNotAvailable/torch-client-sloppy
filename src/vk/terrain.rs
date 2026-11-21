@@ -311,7 +311,7 @@ impl Camera {
 }
 
 /// Near first (the cull walks slots nearest the camera first): Advanced
-/// Performance > Near-First Terrain; `MC_NEAR_FIRST_AB=1` flips it every
+/// Performance > Near-First; `MC_NEAR_FIRST_AB=1` flips it every
 /// two seconds instead and logs each side, for an in-run A/B.
 fn near_first() -> bool {
     if !near_first_ab_mode() {
@@ -330,8 +330,8 @@ fn near_first_ab_mode() -> bool {
     *AB.get_or_init(|| crate::platform::env::var("MC_NEAR_FIRST_AB").is_ok_and(|v| v == "1"))
 }
 
-/// Hi-Z rebuilt every second frame: Advanced Performance > Occlusion Every
-/// Other Frame; `MC_HIZ_AB=1` flips it every two seconds instead (A every
+/// Hi-Z rebuilt every second frame: Advanced Performance > Half-Rate
+/// Occlusion; `MC_HIZ_AB=1` flips it every two seconds instead (A every
 /// frame, B every second), for an in-run A/B.
 fn hiz_every_other() -> bool {
     if hiz_quarter_ab_mode() {
