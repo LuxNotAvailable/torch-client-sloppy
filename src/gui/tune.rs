@@ -7,12 +7,17 @@
 //! the trimmed mean frame time (GPU time under vsync). A candidate wins only
 //! when every one of its windows beats every base window.
 //!
-//! Gate 1 tries settings that keep the picture (culling, meshing): free ones
-//! switch for a small gain, barely visible ones for a larger one. If the
-//! frame rate is still under 60 after it, Gate 2 goes on through every
-//! setting that costs frames, least destructive first (down to render
-//! distance and the lighting engine), taking the mildest value that helps
-//! and stopping once 60 is reached.
+//! A setup page picks the goal first ([`Goal`]). Gate 1 always tries
+//! settings that keep the picture (culling, meshing): free ones switch for
+//! a small gain, barely visible ones for a larger one. Then a stable-fps
+//! check (90th percentile frame) decides Gate 2:
+//! - Hit Target FPS: under the target, every setting that costs frames,
+//!   least destructive first, the mildest value that helps, stopping once
+//!   the target is reached.
+//! - Max FPS: all of those, each at its fastest value that helps.
+//! - Best Quality: under the target, as Hit Target FPS; over it, a Quality
+//!   Boost that raises settings, most visible first, keeping each at its
+//!   highest value whose stable fps stays 5% over the target.
 //!
 //! While it runs, input is swallowed ([`swallow_input`]), the frame cap is
 //! lifted (`app::systems::limit_framerate`) and nothing is saved. The
@@ -75,8 +80,13 @@ const GAIN_FREE: f32 = 0.02;
 const GAIN_COSTLY: f32 = 0.06;
 /// Gate 2 trades looks for frames: any clear gain counts.
 const GAIN_LAST: f32 = 0.03;
-/// Gate 2 runs below this, and stops once it's reached.
-const TARGET_FPS: f32 = 60.0;
+/// The targets offered, and the default.
+const TARGETS: [u32; 7] = [30, 60, 90, 120, 144, 165, 240];
+const DEFAULT_TARGET: u32 = 60;
+/// Quality Boost keeps a value only this far under the target's frame time.
+const BOOST_MARGIN: f32 = 0.95;
+/// A Quality Boost trial measures the candidate alone, twice.
+const ORDER_UP: [bool; 2] = [true, true];
 /// The FPS sidebar's width, and how often its number updates.
 const SIDEBAR_W: f32 = 72.0;
 const FPS_EVERY: f32 = 0.25;
@@ -483,7 +493,8 @@ impl Window {
         }
     }
 
-    /// The window's score (ms per frame) once it's full.
+    /// The window's score and stable time (ms per frame: trimmed mean and
+    /// 90th percentile, or GPU time under vsync) once it's full.
     fn tick(
         &mut self,
         now: Instant,
@@ -491,7 +502,7 @@ impl Window {
         settle: f32,
         vsync: bool,
         background: f32,
-    ) -> Option<f32> {
+    ) -> Option<(f32, f32)> {
         let since = now.duration_since(self.switched).as_secs_f32();
         // Frames count only once the terrain has rebuilt and stayed so.
         // Work well over the background in a bucket restarts the quiet
@@ -531,21 +542,26 @@ impl Window {
             return None;
         }
         // Under vsync frames pace to the display: the GPU's time tells more.
-        let score = match take_gpu() {
-            Some(g) if vsync => g,
-            _ => trimmed_mean(&mut self.frames),
-        };
-        Some(score)
+        let p90 = percentile(&mut self.frames, 0.9);
+        match take_gpu() {
+            Some(g) if vsync => Some((g, g)),
+            _ => Some((trimmed_mean(&mut self.frames), p90)),
+        }
     }
 }
 
 /// One candidate's A/B.
 struct Trial {
     candidate: u32,
+    /// Which side each window measures (`ORDER`, or `ORDER_UP`).
+    order: &'static [bool],
     step: usize,
     window: Window,
     base: Vec<f32>,
     cand: Vec<f32>,
+    /// The candidate's stable times.
+    cand_stable: Vec<f32>,
+    base_stable: Vec<f32>,
 }
 
 #[derive(Default, Clone, Copy, PartialEq)]
@@ -560,12 +576,54 @@ enum Gate2 {
     Running(f32),
     /// Reached the target at this many fps.
     Reached(f32),
+    /// Best Quality over the target: raising settings from this many fps.
+    Boosting(f32),
+}
+
+/// What the tune chases, picked on the setup page.
+#[derive(Default, Clone, Copy, PartialEq)]
+pub enum Goal {
+    /// Reach the target, giving up as little as possible.
+    #[default]
+    Target,
+    /// As many frames as the settings allow.
+    MaxFps,
+    /// The best looks that still hold the target.
+    Quality,
+}
+
+impl Goal {
+    fn name(self) -> &'static str {
+        match self {
+            Goal::Target => "Hit Target FPS",
+            Goal::MaxFps => "Max FPS",
+            Goal::Quality => "Best Quality",
+        }
+    }
+
+    fn about(self) -> &'static str {
+        match self {
+            Goal::Target => "Cuts looks only as far as the target needs.",
+            Goal::MaxFps => "Takes every setting that makes frames cheaper.",
+            Goal::Quality => "Raises looks while the target holds steady.",
+        }
+    }
+
+    fn next(self) -> Goal {
+        match self {
+            Goal::Target => Goal::MaxFps,
+            Goal::MaxFps => Goal::Quality,
+            Goal::Quality => Goal::Target,
+        }
+    }
 }
 
 #[derive(Default)]
 enum Phase {
     #[default]
     Idle,
+    /// The goal and target are being picked.
+    Setup,
     Running,
     Review,
 }
@@ -573,8 +631,14 @@ enum Phase {
 #[derive(Default)]
 pub struct TuneState {
     phase: Phase,
+    goal: Goal,
+    /// The target fps (`TARGETS`); 0 before setup.
+    target: u32,
     original: Option<GuiOptions>,
     rows: Vec<Row>,
+    /// Knob indices in the order they're tried, and the place in it.
+    order: Vec<usize>,
+    pos: usize,
     knob: usize,
     base: u32,
     /// Candidates left for the current knob, mildest last (popped first),
@@ -582,8 +646,9 @@ pub struct TuneState {
     queue: Vec<u32>,
     best: Option<(u32, f32, f32)>,
     worst_change: f32,
-    /// The current value's ms, from the last trial.
+    /// The current value's ms and stable ms, from the last measuring.
     base_ms: f32,
+    base_stable: f32,
     trial: Option<Trial>,
     gate2: Gate2,
     check: Option<Window>,
@@ -603,14 +668,35 @@ impl TuneState {
     pub fn active(&self) -> bool {
         !matches!(self.phase, Phase::Idle)
     }
+
+    fn target_ms(&self) -> f32 {
+        1000.0 / self.target.max(1) as f32
+    }
+
+    fn boosting(&self) -> bool {
+        matches!(self.gate2, Gate2::Boosting(_))
+    }
 }
 
-/// Starts a tune: backs the options up and opens the checklist.
-pub fn start(state: &mut GuiState) {
+/// Opens the setup page: the goal and target, then Start.
+pub fn open(state: &mut GuiState) {
+    state.tune = TuneState {
+        phase: Phase::Setup,
+        target: DEFAULT_TARGET,
+        ..Default::default()
+    };
+    state.nav = Some(Screen::TuneSettings);
+}
+
+/// Starts a tune: backs the options up and runs the checklist.
+fn start(state: &mut GuiState) {
     let original = state.options.clone();
     crate::platform::storage::TUNE_BACKUP.store(&crate::gui::options_json(&original));
     state.tune = TuneState {
         phase: Phase::Running,
+        goal: state.tune.goal,
+        target: state.tune.target,
+        order: (0..KNOBS.len()).collect(),
         original: Some(original),
         rows: KNOBS
             .iter()
@@ -624,22 +710,18 @@ pub fn start(state: &mut GuiState) {
     RUNNING.store(true, Ordering::Relaxed);
     take_gpu();
     advance(state);
-    state.nav = Some(Screen::TuneSettings);
 }
 
 fn apply_live(state: &GuiState) {
     crate::gui::publish_unsaved(&state.options);
 }
 
-fn target_ms() -> f32 {
-    1000.0 / TARGET_FPS
-}
-
 /// From `knob` on: starts the next knob with something to try, the gate
 /// check, or the review.
 fn advance(state: &mut GuiState) {
     let t = &mut state.tune;
-    while t.knob < KNOBS.len() {
+    while t.pos < t.order.len() {
+        t.knob = t.order[t.pos];
         let k = &KNOBS[t.knob];
         if k.gate() == 2 {
             match t.gate2 {
@@ -649,20 +731,22 @@ fn advance(state: &mut GuiState) {
                     take_gpu();
                     return;
                 }
-                Gate2::Checking | Gate2::Running(_) => {}
+                Gate2::Checking | Gate2::Running(_) | Gate2::Boosting(_) => {}
                 Gate2::Skipped(_) | Gate2::Reached(_) => {
-                    for row in &mut t.rows[t.knob..] {
-                        row.status = Status::Skipped;
+                    for &i in &t.order[t.pos..] {
+                        t.rows[i].status = Status::Skipped;
                     }
                     break;
                 }
             }
         }
         let base = (k.get)(&state.options);
-        let mut queue: Vec<u32> = (k.values)(&state.options)
-            .into_iter()
-            .filter(|&v| v != base)
-            .collect();
+        let values = if k.gate() == 2 && t.boosting() {
+            up(k, &state.options)
+        } else {
+            (k.values)(&state.options)
+        };
+        let mut queue: Vec<u32> = values.into_iter().filter(|&v| v != base).collect();
         if !queue.is_empty() {
             queue.reverse();
             t.base = base;
@@ -678,7 +762,7 @@ fn advance(state: &mut GuiState) {
             to: base,
             change: 0.0,
         };
-        t.knob += 1;
+        t.pos += 1;
     }
     t.phase = Phase::Review;
     t.trial = None;
@@ -691,12 +775,20 @@ fn next_trial(state: &mut GuiState) {
         finish_knob(state);
         return;
     };
+    let order: &'static [bool] = if KNOBS[t.knob].gate() == 2 && t.boosting() {
+        &ORDER_UP
+    } else {
+        &ORDER
+    };
     t.trial = Some(Trial {
         candidate,
+        order,
         step: 0,
         window: Window::new(Instant::now()),
         base: Vec::new(),
         cand: Vec::new(),
+        cand_stable: Vec::new(),
+        base_stable: Vec::new(),
     });
     set_side(state);
 }
@@ -705,7 +797,7 @@ fn next_trial(state: &mut GuiState) {
 fn set_side(state: &mut GuiState) {
     let t = &state.tune;
     let Some(trial) = &t.trial else { return };
-    let value = if ORDER[trial.step] {
+    let value = if trial.order[trial.step] {
         trial.candidate
     } else {
         t.base
@@ -720,16 +812,16 @@ fn finish_knob(state: &mut GuiState) {
     let k = &KNOBS[t.knob];
     let chosen = t.best.map_or(t.base, |b| b.0);
     let change = t.best.map_or(t.worst_change, |b| b.1);
-    let ms = t.best.map_or(t.base_ms, |b| b.2);
+    let ms = t.best.map_or(t.base_stable, |b| b.2);
     t.rows[t.knob].status = Status::Done {
         from: t.base,
         to: chosen,
         change,
     };
-    if k.gate() == 2 && ms > 0.0 && ms <= target_ms() {
+    if k.gate() == 2 && t.goal != Goal::MaxFps && !t.boosting() && ms > 0.0 && ms <= t.target_ms() {
         t.gate2 = Gate2::Reached(1000.0 / ms);
     }
-    t.knob += 1;
+    t.pos += 1;
     (k.set)(&mut state.options, chosen);
     apply_live(state);
     advance(state);
@@ -762,6 +854,14 @@ fn spread(v: &mut [f32]) -> f32 {
     v[v.len() * 9 / 10] / low
 }
 
+fn percentile(v: &mut [f32], at: f32) -> f32 {
+    if v.is_empty() {
+        return 0.0;
+    }
+    v.sort_by(f32::total_cmp);
+    v[((v.len() as f32 * at) as usize).min(v.len() - 1)]
+}
+
 fn median(v: &mut [f32]) -> f32 {
     if v.is_empty() {
         return 0.0;
@@ -791,36 +891,69 @@ fn step(state: &mut GuiState, now: Instant, dt: Option<f32>) {
         }
     };
     if let Some(check) = &mut t.check {
-        if let Some(ms) = check.tick(now, dt, SETTLE, vsync, background) {
+        if let Some((ms, stable)) = check.tick(now, dt, SETTLE, vsync, background) {
             t.check = None;
-            let fps = if ms > 0.0 { 1000.0 / ms } else { TARGET_FPS };
-            t.gate2 = if fps >= TARGET_FPS {
-                Gate2::Skipped(fps)
-            } else {
-                Gate2::Running(fps)
+            t.base_ms = ms;
+            t.base_stable = stable;
+            let fps = if stable > 0.0 { 1000.0 / stable } else { 0.0 };
+            let under = fps < t.target as f32;
+            t.gate2 = match t.goal {
+                Goal::MaxFps => Gate2::Running(fps),
+                _ if under => Gate2::Running(fps),
+                Goal::Target => Gate2::Skipped(fps),
+                Goal::Quality => {
+                    // Most visible first: Gate 2's list backwards.
+                    t.order[t.pos..].reverse();
+                    Gate2::Boosting(fps)
+                }
             };
             advance(state);
         }
         return;
     }
     let k = &KNOBS[t.knob];
+    let boosting = k.gate() == 2 && t.boosting();
+    let target_ms = t.target_ms();
     let Some(trial) = &mut t.trial else { return };
-    let Some(score) = trial.window.tick(now, dt, k.settle, vsync, background) else {
+    let Some((score, stable)) = trial.window.tick(now, dt, k.settle, vsync, background) else {
         return;
     };
-    if ORDER[trial.step] {
+    if trial.order[trial.step] {
         trial.cand.push(score);
+        trial.cand_stable.push(stable);
     } else {
         trial.base.push(score);
+        trial.base_stable.push(stable);
     }
     trial.step += 1;
     trial.window = Window::new(now);
-    if trial.step < ORDER.len() {
+    if trial.step < trial.order.len() {
         set_side(state);
         return;
     }
-    // Every candidate window must beat every base one, or it was noise.
     let fmax = |v: &[f32]| v.iter().copied().fold(f32::MIN, f32::max);
+    // Quality Boost: the highest value whose every window holds the target.
+    if boosting {
+        let cand = median(&mut trial.cand);
+        let change = if t.base_ms > 0.0 {
+            (cand - t.base_ms) / t.base_ms
+        } else {
+            0.0
+        };
+        let stable = fmax(&trial.cand_stable);
+        if stable <= target_ms * BOOST_MARGIN {
+            t.best = Some((trial.candidate, change, stable));
+            t.base_ms = cand;
+            t.base_stable = stable;
+            t.queue.clear();
+        } else if change.abs() > t.worst_change.abs() {
+            t.worst_change = change;
+        }
+        (k.set)(&mut state.options, t.base);
+        next_trial(state);
+        return;
+    }
+    // Every candidate window must beat every base one, or it was noise.
     let fmin = |v: &[f32]| v.iter().copied().fold(f32::MAX, f32::min);
     let consistent = fmax(&trial.cand) < fmin(&trial.base);
     let base = median(&mut trial.base);
@@ -831,15 +964,17 @@ fn step(state: &mut GuiState, now: Instant, dt: Option<f32>) {
         0.0
     };
     t.base_ms = base;
+    t.base_stable = median(&mut trial.base_stable);
+    let cand_stable = median(&mut trial.cand_stable);
     let need = match k.cost {
         Cost::Free => GAIN_FREE,
         Cost::Costly => GAIN_COSTLY,
         Cost::Last => GAIN_LAST,
     };
     if -change >= need && consistent && t.best.is_none_or(|b| change < b.1) {
-        t.best = Some((trial.candidate, change, cand));
+        t.best = Some((trial.candidate, change, cand_stable));
         // Gate 2 takes the mildest value that reaches the target.
-        if k.cost == Cost::Last && cand <= target_ms() {
+        if k.cost == Cost::Last && t.goal != Goal::MaxFps && cand_stable <= target_ms {
             t.queue.clear();
         }
     }
@@ -866,6 +1001,9 @@ pub fn guard(mut state: ResMut<GuiState>) {
 fn end(state: &mut GuiState, keep: bool, back: bool) {
     let t = std::mem::take(&mut state.tune);
     RUNNING.store(false, Ordering::Relaxed);
+    if back {
+        state.nav = Some(Screen::VideoSettings);
+    }
     let Some(mut options) = t.original else {
         return;
     };
@@ -882,9 +1020,6 @@ fn end(state: &mut GuiState, keep: bool, back: bool) {
     state.options = options;
     crate::gui::save_options(&state.options);
     crate::platform::storage::TUNE_BACKUP.remove();
-    if back {
-        state.nav = Some(Screen::VideoSettings);
-    }
 }
 
 fn span(text: String, color: u32) -> Span {
@@ -910,7 +1045,7 @@ fn row_line(i: usize, t: &TuneState) -> (String, u32) {
         Status::Skipped => (format!("- {} (not needed)", k.name), GRAY),
         Status::Testing => {
             let detail = t.trial.as_ref().map_or(String::new(), |tr| {
-                let side = if ORDER[tr.step.min(ORDER.len() - 1)] {
+                let side = if tr.order[tr.step.min(tr.order.len() - 1)] {
                     (k.label)(tr.candidate)
                 } else {
                     (k.label)(t.base)
@@ -925,7 +1060,7 @@ fn row_line(i: usize, t: &TuneState) -> (String, u32) {
                 } else {
                     ""
                 };
-                format!(": {side} ({}/{}{wait}{again})", tr.step + 1, ORDER.len())
+                format!(": {side} ({}/{}{wait}{again})", tr.step + 1, tr.order.len())
             });
             (format!("> {}{detail}", k.name), YELLOW)
         }
@@ -955,13 +1090,26 @@ fn gate_header(gate: u8, t: &TuneState) -> (String, u32) {
     if gate == 1 {
         return ("Gate 1: Quality-Preserving".to_owned(), AQUA);
     }
-    let name = "Gate 2: Last Resort";
+    let target = t.target;
+    let name = match (t.goal, t.gate2) {
+        (_, Gate2::Boosting(_)) => "Gate 2: Quality Boost",
+        (Goal::MaxFps, _) => "Gate 2: Max FPS",
+        _ => "Gate 2: Last Resort",
+    };
     match t.gate2 {
-        Gate2::NotReached => (format!("{name} (only below 60 fps)"), GOLD),
-        Gate2::Checking => (format!("{name}: checking fps..."), YELLOW),
+        Gate2::NotReached => match t.goal {
+            Goal::Target => (format!("{name} (only below {target} fps)"), GOLD),
+            Goal::MaxFps => (format!("{name} (after Gate 1)"), GOLD),
+            Goal::Quality => (
+                format!("Gate 2: Last Resort or Quality Boost ({target} fps)"),
+                GOLD,
+            ),
+        },
+        Gate2::Checking => (format!("{name}: checking stable fps..."), YELLOW),
         Gate2::Skipped(fps) => (format!("{name}: skipped, {fps:.0} fps"), GRAY),
         Gate2::Running(fps) => (format!("{name}: from {fps:.0} fps"), GOLD),
         Gate2::Reached(fps) => (format!("{name}: reached {fps:.0} fps"), GREEN),
+        Gate2::Boosting(fps) => (format!("{name}: from {fps:.0} fps"), PURPLE),
     }
 }
 
@@ -987,6 +1135,10 @@ pub fn draw(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     match state.tune.phase {
         Phase::Idle => {
             state.nav = Some(Screen::VideoSettings);
+            return;
+        }
+        Phase::Setup => {
+            draw_setup(p, state, ctx);
             return;
         }
         Phase::Running => {
@@ -1083,8 +1235,12 @@ fn draw_running(p: &mut Painter, state: &GuiState, ctx: &ScreenCtx) {
     let head = if t.background.is_none() {
         "Measuring background terrain work. Input is off until it finishes.".to_owned()
     } else {
+        let goal = match t.goal {
+            Goal::MaxFps => t.goal.name().to_owned(),
+            g => format!("{} ({} fps)", g.name(), t.target),
+        };
         format!(
-            "Setting {} of {}. Input is off until it finishes.",
+            "{goal}: setting {} of {}. Input is off until it finishes.",
             done.clamp(1, KNOBS.len()),
             KNOBS.len()
         )
@@ -1177,6 +1333,90 @@ fn colored_button(
     .draw(p, ctx)
 }
 
+/// The setup page: the goal, the target, Start and Cancel.
+fn draw_setup(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
+    let x = ((ctx.vw - WIDGET_WIDTH_BIG) / 2.0).floor();
+    let mut y = LAYOUT.title_y() + 16.0;
+    let t = &mut state.tune;
+    let goal = format!("Goal: {}", t.goal.name());
+    if Button::new(x, y, WIDGET_WIDTH_BIG, WIDGET_HEIGHT, &goal).draw(p, ctx) {
+        t.goal = t.goal.next();
+    }
+    y += WIDGET_HEIGHT + 4.0;
+    if t.goal != Goal::MaxFps {
+        let label = format!("Target: {} fps", t.target);
+        if Button::new(x, y, WIDGET_WIDTH_BIG, WIDGET_HEIGHT, &label).draw(p, ctx) {
+            let at = TARGETS.iter().position(|&v| v == t.target).unwrap_or(0);
+            t.target = TARGETS[(at + 1) % TARGETS.len()];
+        }
+    }
+    y += WIDGET_HEIGHT + 6.0;
+    let about = t.goal.about();
+    let w = p.atlas.font.width_str(about);
+    p.text_str(about, ((ctx.vw - w) / 2.0).floor(), y, GRAY, true);
+    y += line_h() + 2.0;
+    let note = "Takes several minutes; input is off while it runs.";
+    let w = p.atlas.font.width_str(note);
+    p.text_str(note, ((ctx.vw - w) / 2.0).floor(), y, GRAY, true);
+    y += line_h() + 8.0;
+    let half = (WIDGET_WIDTH_BIG / 2.0 - 2.0).floor();
+    if colored_button(p, ctx, x, y, half, "Start", GREEN) {
+        start(state);
+        return;
+    }
+    if colored_button(p, ctx, x + half + 4.0, y, half, "Cancel", RED) {
+        end(state, false, true);
+    }
+}
+
+/// Values above `current`, highest first.
+fn above(current: u32, values: &[u32]) -> Vec<u32> {
+    let mut v: Vec<u32> = values.iter().copied().filter(|&x| x > current).collect();
+    v.sort_unstable_by(|a, b| b.cmp(a));
+    v.dedup();
+    v
+}
+
+/// Values below `current`, lowest first: for settings where lower looks
+/// better (shadow updates, particle cuts).
+fn below(current: u32, values: &[u32]) -> Vec<u32> {
+    let mut v: Vec<u32> = values.iter().copied().filter(|&x| x < current).collect();
+    v.sort_unstable();
+    v.dedup();
+    v
+}
+
+/// Quality Boost's values for a Gate 2 knob: better looking than now,
+/// best first.
+fn up(k: &Knob, o: &GuiOptions) -> Vec<u32> {
+    let now = (k.get)(o);
+    match k.name {
+        "Smooth Player Model"
+        | "Underwater Light Rays"
+        | "Entity Shadows"
+        | "Light Rays"
+        | "Smooth Lighting"
+        | "Lighting Engine" => above(now, &[1]),
+        "Light Ray Frequency" => above(now, &[100, 75, 50]),
+        "Sign Distance" => above(now, &[4, 3]),
+        "Torch Distance" => above(now, &[5, 4]),
+        "Shader Shadow Updates" => below(now, &[1, 2]),
+        "Particles" => below(now, &[0, 1]),
+        "Biome Blend" => above(now, &[5, 3, 2]),
+        "Clouds" => above(now, &[2, 1]),
+        "Entity Distance" => above(now, &[8, 6, 5]),
+        "Leaves" if now != 0 => vec![0],
+        // Supersampling is never suggested.
+        "Antialiasing" => above(now, &[2, 1]),
+        "Render Scale" => above(now, &[100, 85]),
+        "Render Distance" => {
+            let max = crate::gui::options::RENDER_DISTANCE_MAX as u32;
+            above(now, &[(now * 3 / 2).min(max), (now * 5 / 4).min(max)])
+        }
+        _ => Vec::new(),
+    }
+}
+
 fn draw_review(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     let half = (WIDGET_WIDTH_BIG / 2.0 - 2.0).floor();
     let left = ((ctx.vw - SIDEBAR_W - WIDGET_WIDTH_BIG) / 2.0)
@@ -1222,7 +1462,7 @@ mod tests {
     fn every_knob_sets_what_it_reads() {
         let mut o = GuiOptions::default();
         for k in KNOBS {
-            for v in (k.values)(&o) {
+            for v in (k.values)(&o).into_iter().chain(up(k, &o)) {
                 (k.set)(&mut o, v);
                 assert_eq!((k.get)(&o), v, "{}", k.name);
             }

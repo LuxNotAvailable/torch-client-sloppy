@@ -1598,7 +1598,7 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         crate::gui::save_options(&state.options);
     }
     if tune {
-        crate::gui::tune::start(state);
+        crate::gui::tune::open(state);
         return;
     }
     // A preset also sets Torch Vibrant's shadow map size and reach.
