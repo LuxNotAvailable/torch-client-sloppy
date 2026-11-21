@@ -21,9 +21,13 @@ use crate::gui::options::{
 use crate::gui::painter::Painter;
 use crate::gui::setting_tip::Tip;
 use crate::gui::widgets::{self, Button, Slider, WIDGET_HEIGHT};
+use crate::text::{Span, Style};
 
 const ON: &str = "ON";
 const OFF: &str = "OFF";
+const SLOW: &str = " (Slow!)";
+const WHITE: u32 = 0xFFFFFF;
+const RED: u32 = 0xFF5555;
 
 pub struct Form<'p, 'a, 'c> {
     p: &'p mut Painter<'a>,
@@ -171,8 +175,27 @@ impl<'p, 'a, 'c> Form<'p, 'a, 'c> {
 
     pub fn toggle(&mut self, label: &str, value: &mut bool) -> bool {
         let (x, y) = self.cell();
-        let caption = format!("{label}: {}", if *value { ON } else { OFF });
-        let pressed = Button::new(x, y, COLUMN_W, WIDGET_HEIGHT, &caption).draw(self.p, self.ctx);
+        let state = if *value { ON } else { OFF };
+        // A trailing "(Slow!)" warning shows in red.
+        let pressed = if let Some(name) = label.strip_suffix(SLOW) {
+            let span = |text: String, color| Span {
+                text,
+                style: Style::colored(color),
+            };
+            let spans = [
+                span(crate::gui::tooltip::localize(name).into_owned(), WHITE),
+                span(SLOW.to_owned(), RED),
+                span(format!(": {state}"), WHITE),
+            ];
+            Button {
+                spans: Some(&spans),
+                ..Button::new(x, y, COLUMN_W, WIDGET_HEIGHT, "")
+            }
+            .draw(self.p, self.ctx)
+        } else {
+            let caption = format!("{label}: {state}");
+            Button::new(x, y, COLUMN_W, WIDGET_HEIGHT, &caption).draw(self.p, self.ctx)
+        };
         if pressed {
             *value = !*value;
             self.changed = true;

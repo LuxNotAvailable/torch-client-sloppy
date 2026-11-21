@@ -2069,6 +2069,7 @@ pub fn draw_controls(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
                     h: BIND_ROW_H,
                     label: RESET,
                     active: !state.keybinds.is_default(*bind),
+                    spans: None,
                 };
                 if reset.draw(p, list_ctx) {
                     state.keybinds.reset(*bind);
@@ -2094,6 +2095,7 @@ pub fn draw_controls(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         h: WIDGET_HEIGHT,
         label: RESET_ALL_KEYS,
         active: state.keybinds.any_rebound(),
+        spans: None,
     };
     if reset_all.draw(p, screen_ctx) {
         state.keybinds.reset_all();

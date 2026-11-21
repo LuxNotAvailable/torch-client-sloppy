@@ -1168,6 +1168,8 @@ pub struct Button<'a> {
     pub h: f32,
     pub label: &'a str,
     pub active: bool,
+    /// Colored label parts, drawn in place of `label` when active.
+    pub spans: Option<&'a [Span]>,
 }
 
 impl<'a> Button<'a> {
@@ -1179,6 +1181,7 @@ impl<'a> Button<'a> {
             h,
             label,
             active: true,
+            spans: None,
         }
     }
 
@@ -1196,16 +1199,20 @@ impl<'a> Button<'a> {
         } else {
             LABEL_INACTIVE
         };
-        draw_label(
-            p,
-            self.label,
-            self.x,
-            self.y,
-            self.w,
-            self.h,
-            color,
-            hovered || focused,
-        );
+        if let (Some(spans), true) = (self.spans, self.active) {
+            draw_label_spans(p, spans, self.x, self.y, self.w, self.h, hovered || focused);
+        } else {
+            draw_label(
+                p,
+                self.label,
+                self.x,
+                self.y,
+                self.w,
+                self.h,
+                color,
+                hovered || focused,
+            );
+        }
         #[cfg(not(feature = "mobile_ui"))]
         let clicked = self.active && hovered && ctx.input.left_click;
         #[cfg(feature = "mobile_ui")]

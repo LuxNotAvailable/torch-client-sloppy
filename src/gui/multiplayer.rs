@@ -230,6 +230,7 @@ fn draw_version_menu(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx, loc
         h: WIDGET_HEIGHT,
         label: current.name,
         active: !locked,
+        spans: None,
     };
     if head.draw(p, ctx) {
         open = !open;
@@ -543,6 +544,7 @@ fn draw_footer(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx, locked: b
             h: WIDGET_HEIGHT,
             label,
             active: active && !locked,
+            spans: None,
         };
         b.draw(p, ctx)
     };
@@ -727,6 +729,7 @@ pub fn draw_manage(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         h: WIDGET_HEIGHT,
         label: DONE,
         active: valid,
+        spans: None,
     };
     let cancel = Button::new(x, base + 138.0, WIDGET_WIDTH_BIG, WIDGET_HEIGHT, CANCEL);
 
@@ -773,6 +776,7 @@ pub fn draw_direct(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         h: WIDGET_HEIGHT,
         label: JOIN,
         active: valid,
+        spans: None,
     };
     let cancel = Button::new(x, base + 132.0, WIDGET_WIDTH_BIG, WIDGET_HEIGHT, CANCEL);
 

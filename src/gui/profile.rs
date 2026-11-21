@@ -347,6 +347,7 @@ fn draw_footer(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx, locked: b
             h: WIDGET_HEIGHT,
             label,
             active: active && !locked,
+            spans: None,
         }
         .draw(p, ctx)
     };
@@ -654,6 +655,7 @@ pub fn draw_edit(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         h: WIDGET_HEIGHT,
         label: DONE,
         active: valid,
+        spans: None,
     };
 
     if (done.draw(p, ctx) || (ctx.input.enter && valid)) && valid {
