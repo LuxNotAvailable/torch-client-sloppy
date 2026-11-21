@@ -1,3 +1,5 @@
+//! Monster renderers.
+
 use crate::entities::registry::Registry;
 
 pub mod blaze;

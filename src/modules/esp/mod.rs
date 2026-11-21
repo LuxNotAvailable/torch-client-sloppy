@@ -1,3 +1,5 @@
+//! ESP module: block scan table and highlight state.
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering::Relaxed};
 

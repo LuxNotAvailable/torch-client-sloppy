@@ -1,3 +1,5 @@
+//! Block entity renderers: one module per vanilla block entity model.
+
 pub mod banner;
 pub mod beam;
 pub mod bell;

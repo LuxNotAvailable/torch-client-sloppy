@@ -1,3 +1,5 @@
+//! Animal model definitions (vanilla `LayerDefinition` ports).
+
 pub mod animations;
 pub mod armadillo;
 pub mod camel;

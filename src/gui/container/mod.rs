@@ -1,3 +1,5 @@
+//! Container screens (chests, anvils, beacons, ...) drawn over the inventory.
+
 use crate::gui::painter::Painter;
 use crate::gui::screens::dim_background;
 use crate::gui::slots::{self, CONTAINER_W, INV_H, INV_W, Layout};

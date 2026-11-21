@@ -1,3 +1,5 @@
+//! Humanoid model definitions, plus armor and elytra layers.
+
 pub mod armor;
 pub mod armor_stand;
 pub mod elytra;

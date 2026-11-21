@@ -1,3 +1,5 @@
+//! Command tree: parse, usage and tab-completion suggestions.
+
 mod candidates;
 mod format;
 mod parse;

@@ -1,3 +1,5 @@
+//! Compiles a shader pack: options, directives and programs into a pipeline.
+
 use crate::shaderpack::directives::{self, Constants, Targets};
 use crate::shaderpack::expressions::Customs;
 use crate::shaderpack::options::{self, Values};

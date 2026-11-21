@@ -1,3 +1,5 @@
+//! Aquatic and flying mob model definitions.
+
 use crate::entities::geom::MeshDef;
 use crate::util::mth::DEG_TO_RAD;
 

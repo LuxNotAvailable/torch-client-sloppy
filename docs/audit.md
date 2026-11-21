@@ -56,3 +56,6 @@ is the region-replacement engine for the gen_* tools. Vendor scripts: azalea pro
 ## Priority
 
 Nothing open above Low: the pack TODO and the shaderpack/voice allows wait on their features.
+
+Low, long-term: split `scene/` and `vk/` into their own crates for a hard
+boundary (from the retired `token-optimization.md`; its other items are done).

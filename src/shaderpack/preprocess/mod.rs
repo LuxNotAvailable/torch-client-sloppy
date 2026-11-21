@@ -1,3 +1,5 @@
+//! GLSL preprocessor: `#define` and `#if` evaluation.
+
 use std::borrow::Cow;
 use std::collections::HashMap;
 

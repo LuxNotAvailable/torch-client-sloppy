@@ -1,3 +1,5 @@
+//! Data only: animal keyframes ported from vanilla `*Animation` classes.
+
 pub mod armadillo;
 pub mod armadillo_baby;
 pub mod camel;

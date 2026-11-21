@@ -1,3 +1,5 @@
+//! Click GUI: the module list, settings and keybind editor.
+
 mod picker;
 pub(crate) mod theme;
 

@@ -1,3 +1,5 @@
+//! Non-mob entity renderers: block displays, boats, frames, minecarts.
+
 use bevy::math::{Mat4, Vec3};
 use bevy::prelude::Transform;
 

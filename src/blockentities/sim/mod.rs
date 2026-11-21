@@ -1,3 +1,5 @@
+//! Block entity client-side state: animation timers and ticked effects.
+
 pub mod beacon;
 pub mod bell;
 pub mod book;

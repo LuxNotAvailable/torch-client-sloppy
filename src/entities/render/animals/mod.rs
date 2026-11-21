@@ -1,3 +1,5 @@
+//! Animal renderers: pose a model each frame and register it.
+
 use crate::entities::registry::Registry;
 
 pub mod armadillo;

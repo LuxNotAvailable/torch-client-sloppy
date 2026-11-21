@@ -1,3 +1,5 @@
+//! Evaluates pack expressions (custom uniforms, `if` conditions).
+
 mod eval;
 mod parse;
 

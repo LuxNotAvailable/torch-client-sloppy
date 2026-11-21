@@ -1,3 +1,5 @@
+//! Humanoid renderers and their layers (armor, held items).
+
 use crate::entities::registry::Registry;
 
 pub mod armor;

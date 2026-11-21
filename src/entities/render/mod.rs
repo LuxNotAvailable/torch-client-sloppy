@@ -1,3 +1,5 @@
+//! Entity renderers by family; `register_all` fills the registry.
+
 use crate::entities::registry::Registry;
 
 pub mod animals;

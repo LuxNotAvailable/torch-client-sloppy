@@ -1,3 +1,5 @@
+//! Aquatic and flying mob renderers.
+
 use crate::entities::registry::Registry;
 
 pub mod allay;

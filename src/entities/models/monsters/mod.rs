@@ -1,3 +1,5 @@
+//! Monster model definitions; `*_anim` siblings hold their keyframes.
+
 pub mod blaze;
 pub mod breeze;
 pub mod breeze_anim;

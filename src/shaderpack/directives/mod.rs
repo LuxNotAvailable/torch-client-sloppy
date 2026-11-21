@@ -1,3 +1,5 @@
+//! Reads pack directives from shader source: targets, formats, constants.
+
 mod targets;
 
 #[cfg(test)]

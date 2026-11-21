@@ -1,3 +1,5 @@
+//! Rewrites pack GLSL for the native backend.
+
 mod atomics;
 mod builtins;
 pub(crate) mod declarations;
