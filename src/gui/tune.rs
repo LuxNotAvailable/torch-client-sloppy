@@ -1,7 +1,7 @@
 //! Video Settings > Tune Settings: tries each performance setting's values
 //! in the running world and keeps the ones that make frames cheaper. Each
-//! candidate is A/B tested against the current value over six alternating
-//! windows. Each window waits until terrain work (sections meshed,
+//! candidate is A/B tested against the current value over four windows
+//! (current, candidate, candidate, current). Each window waits until terrain work (sections meshed,
 //! uploaded, chunks received) drops back to the background rate measured
 //! at the start and stays there a second, is retaken after a hitch, and counts
 //! the trimmed mean frame time (GPU time under vsync). A candidate wins only
@@ -74,7 +74,7 @@ const MAX_WAIT: f32 = 30.0;
 const SPREAD_MAX: f32 = 1.6;
 const RETRIES: u32 = 2;
 /// Base and candidate alternating: drift cancels out.
-const ORDER: [bool; 6] = [false, true, true, false, false, true];
+const ORDER: [bool; 4] = [false, true, true, false];
 /// The gain a setting needs to switch: free ones change nothing on screen.
 const GAIN_FREE: f32 = 0.02;
 const GAIN_COSTLY: f32 = 0.06;
