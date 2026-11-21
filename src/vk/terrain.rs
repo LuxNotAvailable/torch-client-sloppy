@@ -310,6 +310,40 @@ impl Camera {
     }
 }
 
+/// Near first (the cull walks slots nearest the camera first): Advanced
+/// Performance > Near-First Terrain; `MC_NEAR_FIRST_AB=1` flips it every
+/// two seconds instead and logs each side, for an in-run A/B.
+fn near_first() -> bool {
+    if !near_first_ab_mode() {
+        return crate::terrain::NEAR_FIRST.load(std::sync::atomic::Ordering::Relaxed);
+    }
+    let on = near_first_phase().0;
+    static SIDE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(2);
+    if SIDE.swap(u8::from(on), std::sync::atomic::Ordering::Relaxed) != u8::from(on) {
+        bevy::log::info!("near-first A/B: side {}", if on { "B" } else { "A" });
+    }
+    on
+}
+
+fn near_first_ab_mode() -> bool {
+    static AB: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *AB.get_or_init(|| crate::platform::env::var("MC_NEAR_FIRST_AB").is_ok_and(|v| v == "1"))
+}
+
+/// The A/B's side now (true: near first) and seconds into it.
+fn near_first_phase() -> (bool, f32) {
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    let secs = START.get_or_init(Instant::now).elapsed().as_secs_f32();
+    ((secs / 2.0) as u32 % 2 == 1, secs % 2.0)
+}
+
+/// The A/B's side for timing (true: near first), past a short settle after
+/// each flip; None outside the A/B or while settling.
+pub fn near_first_ab() -> Option<bool> {
+    let (on, into) = near_first_phase();
+    (near_first_ab_mode() && into >= 0.3).then_some(on)
+}
+
 /// Which culling the terrain does, for comparing with each off.
 /// Where a scene's sections come from.
 pub enum Source<'a> {
@@ -838,6 +872,13 @@ pub struct TerrainScene {
     rank_of: Vec<u32>,
     ranks_dirty: bool,
     ranked_for: Option<IVec3>,
+    /// Near first: every slot index, nearest the camera first; the cull
+    /// walks it so commands come out roughly front to back.
+    order: Grown,
+    order_cpu: Vec<u32>,
+    order_dirty: bool,
+    ordered_for: Option<IVec3>,
+    frames_since_order: u32,
     translucent_count: u32,
 
     commands: Buffer,
@@ -1032,6 +1073,12 @@ impl TerrainScene {
             slot_capacity as u64 * 4,
             storage,
         )?;
+        let order = grown(
+            bindless,
+            "terrain slot order",
+            slot_capacity as u64 * 4,
+            storage,
+        )?;
         let indirect = storage | vk::BufferUsageFlags::INDIRECT_BUFFER;
         let commands = memory.buffer(
             ctx,
@@ -1220,6 +1267,11 @@ impl TerrainScene {
             rank_of: vec![0; slot_capacity as usize],
             ranks_dirty: true,
             ranked_for: None,
+            order,
+            order_cpu: Vec::new(),
+            order_dirty: true,
+            ordered_for: None,
+            frames_since_order: 0,
             translucent_count: 0,
             commands,
             commands_index,
@@ -1958,6 +2010,7 @@ impl TerrainScene {
                 }
             }
         }
+        self.order_dirty = true;
         if entry.sort.is_some() {
             self.translucent_count -= 1;
             self.ranks_dirty = true;
@@ -2370,6 +2423,7 @@ impl TerrainScene {
             };
             self.dirty_slots.push(slot);
             self.set_visible(slot, true);
+            self.order_dirty = true;
             if sort.is_some() {
                 self.translucent_count += 1;
                 self.ranks_dirty = true;
@@ -2510,6 +2564,13 @@ impl TerrainScene {
             storage,
             None,
         )?;
+        replace(
+            &mut self.order,
+            "terrain slot order",
+            capacity as u64 * 4,
+            storage,
+            None,
+        )?;
         self.slot_capacity = capacity;
         self.stats.grown[1] += 1;
         self.slot_cpu.resize(capacity as usize, Slot::default());
@@ -2517,6 +2578,7 @@ impl TerrainScene {
         self.rank_of.resize(capacity as usize, 0);
         self.visible_dirty = true;
         self.ranks_dirty = true;
+        self.order_dirty = true;
         Ok(())
     }
 
@@ -2562,6 +2624,49 @@ impl TerrainScene {
             });
             sort.sorted_for = Some(eye_block);
         }
+    }
+
+    /// Orders every slot nearest the eye first (box distance), when the eye
+    /// moves two blocks, or every 15 frames while slots change. True when
+    /// the order changed.
+    fn order_slots(&mut self, eye: Vec3) -> bool {
+        self.frames_since_order += 1;
+        let here = eye.floor().as_ivec3() >> 1;
+        let due =
+            self.ordered_for != Some(here) || (self.order_dirty && self.frames_since_order >= 15);
+        if !due {
+            return false;
+        }
+        let mut keyed: Vec<(u32, f32, u32)> = self.slot_cpu[..self.slot_high as usize]
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                let origin = Vec3::new(
+                    s.origin_base[0] as f32,
+                    s.origin_base[1] as f32,
+                    s.origin_base[2] as f32,
+                );
+                let lo = origin + Vec3::from_slice(&s.lo[..3]);
+                let hi = origin + Vec3::from_slice(&s.hi[..3]);
+                // Dead slots last.
+                let live = s.info[2] & SLOT_LIVE != 0;
+                let d = if live {
+                    (eye.clamp(lo, hi) - eye).length_squared()
+                } else {
+                    f32::MAX
+                };
+                (s.info[0], d, i as u32)
+            })
+            .collect();
+        // By pool, then distance: each pool is its own draw, and a subgroup
+        // naming one pool reserves with one atomic.
+        keyed.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
+        self.order_cpu.clear();
+        self.order_cpu.extend(keyed.iter().map(|k| k.2));
+        self.order_dirty = false;
+        self.ordered_for = Some(here);
+        self.frames_since_order = 0;
+        true
     }
 
     /// Ranks the translucent layers far to near, when the eye changes
@@ -2823,6 +2928,22 @@ impl TerrainScene {
                 None => self.ranks_dirty = true,
             }
         }
+        let near_first = near_first();
+        if !near_first {
+            self.ordered_for = None;
+        }
+        if near_first && self.slot_high > 0 && self.order_slots(cull.eye) {
+            match uploads.stage(bytemuck::cast_slice(&self.order_cpu)) {
+                Some(staged) => copies.push(Copy {
+                    src: staged.buffer,
+                    from: staged.offset,
+                    to: self.order.buffer.raw,
+                    at: 0,
+                    size: staged.size,
+                }),
+                None => self.ordered_for = None,
+            }
+        }
         if self.visible_dirty
             && let Some(staged) = uploads.stage(bytemuck::cast_slice(&self.visible_bits))
         {
@@ -3014,6 +3135,7 @@ impl TerrainScene {
             (self.slots.buffer.raw, Use::ComputeRead),
             (self.visible.buffer.raw, Use::ComputeRead),
             (self.ranks.buffer.raw, Use::ComputeRead),
+            (self.order.buffer.raw, Use::ComputeRead),
             (self.commands.raw, Use::ComputeWrite),
             (self.counts.raw, Use::ComputeWrite),
         ];
@@ -3063,7 +3185,16 @@ impl TerrainScene {
                         self.view_indices[slot],
                         self.translucent_start,
                     ],
-                    params: [f32::from_bits(self.ranks.index), 0.0, 0.0, 0.0],
+                    params: [
+                        f32::from_bits(self.ranks.index),
+                        f32::from_bits(self.order.index),
+                        f32::from_bits(if near_first {
+                            self.order_cpu.len() as u32
+                        } else {
+                            0
+                        }),
+                        0.0,
+                    ],
                     view_proj: [[0.0; 4]; 4],
                 },
             );
@@ -3804,6 +3935,7 @@ impl TerrainScene {
             self.slots.buffer,
             self.visible.buffer,
             self.ranks.buffer,
+            self.order.buffer,
             self.commands,
             self.counts,
         ];

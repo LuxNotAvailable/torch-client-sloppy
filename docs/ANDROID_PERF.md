@@ -29,6 +29,13 @@ CPU fits 60 fps. Dips with flat CPU mean the **GPU is the limit**: full native r
   stays ~7.5 ms at every scale: it is geometry-bound (vertices, tile binning),
   not fill-bound. Hi-Z gets 1.2-1.8 ms cheaper, the post upscale costs 0.8-1.0 ms more.
 - **Leaves Fancy vs Fast**: terrain 6.59 vs 6.33-6.50 ms; cutout isn't the cost.
+- **Near-first terrain** (cull walks sections nearest first; `vkview
+  --near-first-ab`, `dump5`, `--camera game`, off / on): Pixel terrain
+  2.21 / 2.37 and 2.16 / 2.18 ms, cull 0.42 / 0.49 ms. MX250 laptop terrain
+  3.15 / 3.17 ms, cull 0.175 / 0.206 ms (0.255 before sorting by pool first).
+  No gain: HSR and Hi-Z already drop what it would save, and the cull's
+  scattered slot reads cost more. Kept as Advanced Performance > Near-First
+  Terrain, off by default.
 
 ## Options (rough order of payoff)
 

@@ -240,20 +240,8 @@ const ALL: &[Var] = &[
         enabled: cfg!(feature = "vulkan"),
     },
     Var {
-        name: "MC_NO_NEAR_FIRST",
-        what: "1 walks terrain sections in slot order rather than nearest the camera first, to measure what the order saves",
-        default: "off",
-        enabled: true,
-    },
-    Var {
-        name: "MC_NO_FOG_CULL",
-        what: "1 draws terrain wholly inside vanilla's fog too, to measure what leaving it out saves",
-        default: "off",
-        enabled: true,
-    },
-    Var {
-        name: "MC_NO_SHADOW_SKIP",
-        what: "1 sends a back-face shadow pass the faces toward the light too, to measure what leaving them out saves",
+        name: "MC_NEAR_FIRST_AB",
+        what: "1 flips near first on and off every two seconds and logs each side (`near-first A/B: side A` off, `B` on), for an in-run A/B",
         default: "off",
         enabled: true,
     },

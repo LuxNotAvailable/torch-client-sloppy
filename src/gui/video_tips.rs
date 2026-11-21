@@ -68,6 +68,10 @@ pub const PER_FACE_CULLING: Tip = Tip::new(
     "WARNING: usually makes the game SLOWER. Checks every block face on the GPU each frame and drops the ones facing away from you. The check costs more than it saves: measured slower on a GeForce MX250 laptop and a Pixel 10 Pro. Experimental; leave it off. Off under shader packs.",
     Impact::High,
 );
+pub const NEAR_FIRST: Tip = Tip::new(
+    "WARNING: usually makes the game slightly SLOWER. Draws the chunks nearest you first, so hidden terrain behind them is skipped sooner. Occlusion culling already skips most of it, so the extra sorting costs more than it saves: measured slower on a GeForce MX250 laptop and a Pixel 10 Pro. Experimental; leave it off.",
+    Impact::Low,
+);
 pub const ENTITY_CULLING: Tip = Tip::new(
     "Skips drawing mobs, items and block entities hidden behind solid blocks. Turning it off costs frames in busy areas; only do so if something vanishes when it shouldn't.",
     Impact::Medium,

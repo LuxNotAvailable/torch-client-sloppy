@@ -504,6 +504,9 @@ crate::options! {
         /// Off by default: on the laptop's MX250 its pass (1.6 ms) cost more
         /// than the drawing it saved.
         pub per_face_culling: bool = false => key("torchPerFaceCulling"),
+        /// The terrain cull walks sections nearest the camera first. Off by
+        /// default: no gain and a slower cull on the MX250 and Pixel 10 Pro.
+        pub near_first: bool = false => key("torchNearFirst"),
         /// The inventory player model drawn at 2x and averaged (native).
         pub smooth_gui_model: bool = true => key("torchSmoothGuiModel"),
         /// Model item icons rendered at 2x and averaged; applies after a

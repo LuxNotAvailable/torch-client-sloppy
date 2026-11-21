@@ -61,6 +61,10 @@ pub static FACE_BANDS: std::sync::atomic::AtomicBool = std::sync::atomic::Atomic
 /// Culling).
 pub static FACE_FILTER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// The terrain cull walks sections nearest the camera first (Advanced
+/// Performance > Near-First Terrain).
+pub static NEAR_FIRST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// Section origins per row of the terrain origins texture (`terrain.wgsl`
 /// and the pack preludes read it at this width).
 pub const ORIGIN_ROW: u32 = 256;

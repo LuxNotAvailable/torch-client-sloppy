@@ -51,6 +51,7 @@ const CUTOUT_FACE_CULLING: &str = "Cutout Face Culling";
 const ANGLED_FACE_CULLING: &str = "Angled Face Culling";
 const EXACT_FACE_CULLING: &str = "Exact Face Culling";
 const PER_FACE_CULLING: &str = "Per-Face Culling (Slower!)";
+const NEAR_FIRST: &str = "Near-First Terrain (Slower!)";
 const ENTITY_AWAY_FACES: &str = "Entity Away-Face Culling";
 const ADVANCED_PERFORMANCE_SLIDER_ID: u32 = 90;
 
@@ -85,6 +86,8 @@ pub fn draw_advanced_performance(p: &mut Painter, state: &mut GuiState, ctx: &Sc
     form.tip(&tips::EXACT_FACE_CULLING);
     form.toggle(PER_FACE_CULLING, &mut o.per_face_culling);
     form.tip(&tips::PER_FACE_CULLING);
+    form.toggle(NEAR_FIRST, &mut o.near_first);
+    form.tip(&tips::NEAR_FIRST);
     form.toggle(ENTITY_AWAY_FACES, &mut o.entity_away_faces);
     form.tip(&tips::ENTITY_AWAY_FACES);
     form.slider(&mut o.entity_distance, 2, 8, entity_distance_label);
@@ -1083,6 +1086,7 @@ fn reset_video_options(o: &mut crate::gui::GuiOptions) {
     o.angled_face_culling = true;
     o.exact_face_culling = true;
     o.per_face_culling = false;
+    o.near_first = false;
     o.entity_away_faces = true;
     o.entity_backface_culling = false;
     o.smooth_gui_model = true;

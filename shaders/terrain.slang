@@ -95,7 +95,9 @@ uint through(Slot s, RWByteAddressBuffer slots, uint bands_at, uint b, uint k, u
 // Push: ids.x slots, ids.y visible-slot bits, ids.z commands, ids.w counts,
 //       more.x slot count, more.y commands per list, more.z the cull view,
 //       more.w where the translucent commands start (in commands); params.x
-//       the translucent rank buffer (as bits).
+//       the translucent rank buffer (as bits), y the slot order buffer
+//       and z its length (near first: nearest slots reserve first; 0 off,
+//       and slots past it, added since the sort, keep their place).
 // Lists: pool * 2 for solid, pool * 2 + 1 for cutout. Translucent slots
 // write their command at their rank (far to near, from the CPU), culled or
 // not, so translucent layers draw back to front across sections (3.5, 3.7).
@@ -103,6 +105,9 @@ uint through(Slot s, RWByteAddressBuffer slots, uint bands_at, uint b, uint k, u
 [numthreads(64, 1, 1)]
 void cull(uint3 id: SV_DispatchThreadID) {
     uint index = id.x;
+    if (index < asuint(pc.params.z)) {
+        index = buffer_at(asuint(pc.params.y)).Load(index * 4);
+    }
     RWByteAddressBuffer view = buffer_at(pc.more.z);
     uint flags = view.Load(VIEW_FLAGS);
     // Load4, not Load3: slangc turns a Load3 at an offset divisible by 12

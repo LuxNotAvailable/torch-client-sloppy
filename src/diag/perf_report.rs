@@ -913,6 +913,7 @@ fn describe(
             "per-face culling".to_owned(),
             o.per_face_culling.to_string(),
         ),
+        ("near-first".to_owned(), o.near_first.to_string()),
         (
             "entity distance".to_owned(),
             format!("{}%", o.entity_distance * 25),

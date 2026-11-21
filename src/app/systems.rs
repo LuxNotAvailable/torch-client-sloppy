@@ -1785,6 +1785,10 @@ fn sync_terrain_culls(state: Res<crate::gui::GuiState>) {
         state.options.per_face_culling,
         std::sync::atomic::Ordering::Relaxed,
     );
+    crate::terrain::NEAR_FIRST.store(
+        state.options.near_first,
+        std::sync::atomic::Ordering::Relaxed,
+    );
 }
 
 /// Video Settings > Greedy Meshing to `terrain::GREEDY`, re-meshing on a

@@ -54,6 +54,7 @@ use crate::vk::upload::Uploads;
 use crate::vk::{self, Context, Frames, Swapchain, frame};
 use ash::vk as v;
 use gpu_allocator::MemoryLocation;
+use std::collections::HashMap;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
@@ -126,6 +127,8 @@ fn options(args: Vec<String>) -> Options {
             // SAFETY: set while parsing, before any thread reads them.
             "--extension-path" => unsafe { std::env::set_var("MC_VK_EXTENSION_PATH", "1") },
             "--no-indirect-count" => unsafe { std::env::set_var("MC_VK_NO_INDIRECT_COUNT", "1") },
+            // SAFETY: set while parsing, before any thread reads the environment.
+            "--near-first-ab" => unsafe { std::env::set_var("MC_NEAR_FIRST_AB", "1") },
             "--stress" => options.stress = true,
             "--screenshot" => options.screenshot = args.next(),
             "--terrain" => options.terrain = args.next().map(Into::into),
@@ -271,6 +274,8 @@ struct Renderer {
     /// The `--pack` pack's screen passes, run over the scene.
     pack: Option<crate::vk::pack::screen::PackScreen>,
     timestamps: Option<Timestamps>,
+    /// `MC_NEAR_FIRST_AB` GPU ms sums by side (off, on): frames, per pass.
+    near_first_ab: [(u32, HashMap<&'static str, f32>); 2],
     uploads: Option<Uploads>,
     pipelines: Option<Pipelines>,
     bindless: Option<Bindless>,
@@ -480,6 +485,7 @@ impl Renderer {
             scene: Some(scene),
             pack,
             timestamps: Some(timestamps),
+            near_first_ab: Default::default(),
             uploads: Some(uploads),
             pipelines: Some(pipelines),
             bindless: Some(bindless),
@@ -623,6 +629,15 @@ impl Renderer {
         bindless.recycle(self.frame);
         uploads.begin(slot);
         timestamps.begin_frame(&self.ctx, slot);
+        if let Some(on) = crate::vk::terrain::near_first_ab()
+            && !timestamps.last.is_empty()
+        {
+            let side = &mut self.near_first_ab[usize::from(on)];
+            side.0 += 1;
+            for (name, ms) in &timestamps.last {
+                *side.1.entry(name).or_insert(0.0) += ms;
+            }
+        }
 
         let (image, image_view, extent, target_format, rotation) =
             match (&self.swapchain, &self.offscreen) {
@@ -1175,6 +1190,27 @@ impl Renderer {
                 .map(|(name, ms)| format!("{name} {ms:.3}"))
                 .collect();
             println!("vkview: GPU ms per pass: {}", passes.join(", "));
+        }
+        let [off, on] = &self.near_first_ab;
+        if off.0 > 0 && on.0 > 0 {
+            let mut names: Vec<_> = off.1.keys().chain(on.1.keys()).copied().collect();
+            names.sort_unstable();
+            names.dedup();
+            let avg = |s: &(u32, HashMap<&'static str, f32>), n| {
+                s.1.get(n).copied().unwrap_or(0.0) / s.0 as f32
+            };
+            let total =
+                |s: &(u32, HashMap<&'static str, f32>)| s.1.values().sum::<f32>() / s.0 as f32;
+            println!(
+                "vkview: near-first A/B, {} off / {} on frames: total {:.3} / {:.3}",
+                off.0,
+                on.0,
+                total(off),
+                total(on)
+            );
+            for n in names {
+                println!("vkview:   {n} {:.3} / {:.3}", avg(off, n), avg(on, n));
+            }
         }
         if let Some(memory) = &self.memory {
             let (used, reserved) = memory.usage();
