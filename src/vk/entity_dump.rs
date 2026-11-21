@@ -128,6 +128,41 @@ struct Registry {
     images: HashMap<AssetId<Image>, (u32, usize)>,
     next_mesh: u32,
     next_image: u32,
+    /// Frames sent, and the frame each mesh slot was last used on.
+    frames: u64,
+    used: HashMap<u64, u64>,
+    /// Indices of slots dropped by `forget_unused`, for new meshes.
+    free_meshes: Vec<u32>,
+}
+
+/// A mesh slot unused for this many frames gives its index back.
+const MESH_KEEP_FRAMES: u64 = 120;
+
+impl Registry {
+    /// Gives back the indices of slots unused lately. Meshes built anew
+    /// each frame (a fresh slot every time) would otherwise take a new
+    /// index every frame, and the renderer's mesh table and geometry
+    /// would grow without end; reused, a same-sized mesh is rewritten in
+    /// place.
+    fn forget_unused(&mut self) {
+        self.frames += 1;
+        if self.frames % 30 != 0 {
+            return;
+        }
+        let now = self.frames;
+        let stale: Vec<u64> = self
+            .used
+            .iter()
+            .filter(|&(_, &at)| now - at > MESH_KEEP_FRAMES)
+            .map(|(&slot, _)| slot)
+            .collect();
+        for slot in stale {
+            self.used.remove(&slot);
+            if let Some((index, ..)) = self.meshes.remove(&slot) {
+                self.free_meshes.push(index);
+            }
+        }
+    }
 }
 
 /// The live channels: the world, and the inventory figure.
@@ -232,6 +267,11 @@ fn to_live(
         live.push(Default::default());
     }
     let (registry, pending) = &mut live[channel];
+    registry.forget_unused();
+    let now = registry.frames;
+    for mesh in &used_meshes {
+        registry.used.insert(mesh.slot, now);
+    }
     // Frames not yet taken keep their new meshes and textures.
     let mut frame = pending.take().unwrap_or_default();
     let mesh_index: Vec<u32> = used_meshes
@@ -256,8 +296,10 @@ fn to_live(
                     *index
                 }
                 None => {
-                    let index = registry.next_mesh;
-                    registry.next_mesh += 1;
+                    let index = registry.free_meshes.pop().unwrap_or_else(|| {
+                        registry.next_mesh += 1;
+                        registry.next_mesh - 1
+                    });
                     registry.meshes.insert(
                         mesh.slot,
                         (index, key, content_hash(verts, indices, *rigged)),

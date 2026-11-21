@@ -145,6 +145,11 @@ pub struct EntityScene {
 /// A live scene's geometry and what this frame must upload: meshes and
 /// textures stay, by the stable index the capture gave them; instances,
 /// pose rows and boxes are rewritten each frame.
+/// The live mesh table's length and its geometry bytes, for the
+/// renderer's 2 s report (`terrain::phase_report`).
+pub static LIVE_SIZES: [std::sync::atomic::AtomicU64; 2] =
+    [const { std::sync::atomic::AtomicU64::new(0) }; 2];
+
 #[derive(Default)]
 struct Live {
     /// Per stable mesh index: first index, index count, base vertex,
@@ -1279,6 +1284,14 @@ impl EntityScene {
         self.rank_of = vec![0; count as usize];
         self.stats.instances = count as usize;
         self.stats.meshes = live.meshes.iter().flatten().count();
+        LIVE_SIZES[0].store(
+            live.meshes.len() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        LIVE_SIZES[1].store(
+            live.vertices_used + live.indices_used,
+            std::sync::atomic::Ordering::Relaxed,
+        );
         self.stats.textures = self.textures.len();
         self.stats.rigged = rigged;
         self.stats.blended = blended.len();

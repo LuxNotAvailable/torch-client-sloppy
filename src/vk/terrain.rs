@@ -78,14 +78,16 @@ pub fn phase_report(frames: u64) -> String {
         .collect();
     let s: Vec<u64> = SIZES.iter().map(|v| v.load(Relaxed)).collect();
     format!(
-        "terrain record: {}; pools {}, sections {}, slot high {}, queued {}, retired {}, dirty slots {}",
+        "terrain record: {}; pools {}, sections {}, slot high {}, queued {}, retired {}, dirty slots {}; entity meshes {}, {} KiB",
         phases.join(", "),
         s[0],
         s[1],
         s[2],
         s[3],
         s[4],
-        s[5]
+        s[5],
+        super::entities::LIVE_SIZES[0].load(Relaxed),
+        super::entities::LIVE_SIZES[1].load(Relaxed) / 1024
     )
 }
 
