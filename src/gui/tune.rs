@@ -1,9 +1,9 @@
 //! Video Settings > Tune Settings: tries each performance setting's values
 //! in the running world and keeps the ones that make frames cheaper. Each
 //! candidate is A/B tested against the current value over six alternating
-//! windows. Each window waits until no section has been meshed, uploaded
-//! or received for a second (a switch that rebuilds nothing waits only the
-//! settle), is retaken after a hitch, and counts
+//! windows. Each window waits until terrain work (sections meshed,
+//! uploaded, chunks received) drops back to the background rate measured
+//! at the start and stays there a second, is retaken after a hitch, and counts
 //! the trimmed mean frame time (GPU time under vsync). A candidate wins only
 //! when every one of its windows beats every base window.
 //!
@@ -55,6 +55,13 @@ const SETTLE_REMESH: f32 = 1.5;
 const SETTLE_RELOAD: f32 = 5.0;
 const QUIET: f32 = 1.0;
 const SAMPLE: f32 = 2.5;
+/// Terrain work is judged per bucket of this many seconds; the background
+/// rate is measured over `CALIBRATE` seconds first. A bucket over
+/// `BURST` times the background, plus `BURST_MIN`, is a rebuild.
+const BUCKET: f32 = 0.5;
+const CALIBRATE: f32 = 2.0;
+const BURST: f32 = 2.0;
+const BURST_MIN: f32 = 8.0;
 /// A rebuild that never ends (chunks streaming in) is measured anyway.
 const MAX_WAIT: f32 = 30.0;
 /// A window whose 90th percentile frame is this many times its 10th is
@@ -454,8 +461,10 @@ struct Window {
     waiting: bool,
     /// Terrain work seen during the wait, for the checklist.
     rebuilt: bool,
-    /// `terrain_work` when last read.
-    work: u64,
+    /// The current bucket's start and `terrain_work` then.
+    bucket: (Instant, u64),
+    /// The last full bucket was a rebuild; true until one is judged.
+    active: bool,
     retries: u32,
     frames: Vec<f32>,
 }
@@ -467,23 +476,35 @@ impl Window {
             quiet_since: None,
             waiting: true,
             rebuilt: false,
-            work: terrain_work(),
+            bucket: (now, terrain_work()),
+            active: true,
             retries: 0,
             frames: Vec::new(),
         }
     }
 
     /// The window's score (ms per frame) once it's full.
-    fn tick(&mut self, now: Instant, dt: Option<f32>, settle: f32, vsync: bool) -> Option<f32> {
+    fn tick(
+        &mut self,
+        now: Instant,
+        dt: Option<f32>,
+        settle: f32,
+        vsync: bool,
+        background: f32,
+    ) -> Option<f32> {
         let since = now.duration_since(self.switched).as_secs_f32();
         // Frames count only once the terrain has rebuilt and stayed so.
-        // Any meshing or upload since last frame restarts the quiet time;
-        // a switch that rebuilds nothing goes on after the settle.
-        let work = terrain_work();
-        let active = work != self.work;
-        self.work = work;
-        self.rebuilt |= active;
-        let rebuilding = since < settle || (active && since < MAX_WAIT);
+        // Work well over the background in a bucket restarts the quiet
+        // time; a switch that rebuilds nothing goes on after the settle.
+        let (at, work0) = self.bucket;
+        if now.duration_since(at).as_secs_f32() >= BUCKET {
+            let work = terrain_work();
+            let done = work.saturating_sub(work0) as f32;
+            self.active = done > background * BURST + BURST_MIN;
+            self.rebuilt |= self.active;
+            self.bucket = (now, work);
+        }
+        let rebuilding = since < settle || (self.active && since < MAX_WAIT);
         if rebuilding {
             self.quiet_since = None;
         }
@@ -567,6 +588,10 @@ pub struct TuneState {
     gate2: Gate2,
     check: Option<Window>,
     last_frame: Option<Instant>,
+    /// Background terrain work per `BUCKET`, once measured, and the
+    /// measuring's start.
+    background: Option<f32>,
+    calibrate: Option<(Instant, u64)>,
     /// The sidebar: frames since its last update (ms summed, count), and
     /// the number shown.
     fps_sum: (f32, u32),
@@ -750,8 +775,23 @@ fn median(v: &mut [f32]) -> f32 {
 fn step(state: &mut GuiState, now: Instant, dt: Option<f32>) {
     let vsync = state.options.vsync;
     let t = &mut state.tune;
+    // First the background terrain work, with nothing switched.
+    let background = match t.background {
+        Some(b) => b,
+        None => {
+            let (at, work0) = *t.calibrate.get_or_insert((now, terrain_work()));
+            let secs = now.duration_since(at).as_secs_f32();
+            if secs < CALIBRATE {
+                return;
+            }
+            let b = terrain_work().saturating_sub(work0) as f32 * BUCKET / secs;
+            t.background = Some(b);
+            info!("tune: background terrain work {b:.1} per {BUCKET} s");
+            b
+        }
+    };
     if let Some(check) = &mut t.check {
-        if let Some(ms) = check.tick(now, dt, SETTLE, vsync) {
+        if let Some(ms) = check.tick(now, dt, SETTLE, vsync, background) {
             t.check = None;
             let fps = if ms > 0.0 { 1000.0 / ms } else { TARGET_FPS };
             t.gate2 = if fps >= TARGET_FPS {
@@ -765,7 +805,7 @@ fn step(state: &mut GuiState, now: Instant, dt: Option<f32>) {
     }
     let k = &KNOBS[t.knob];
     let Some(trial) = &mut t.trial else { return };
-    let Some(score) = trial.window.tick(now, dt, k.settle, vsync) else {
+    let Some(score) = trial.window.tick(now, dt, k.settle, vsync, background) else {
         return;
     };
     if ORDER[trial.step] {
@@ -1040,11 +1080,15 @@ fn draw_running(p: &mut Painter, state: &GuiState, ctx: &ScreenCtx) {
         .iter()
         .filter(|r| !matches!(r.status, Status::Pending))
         .count();
-    let head = format!(
-        "Setting {} of {}. Input is off until it finishes.",
-        done.clamp(1, KNOBS.len()),
-        KNOBS.len()
-    );
+    let head = if t.background.is_none() {
+        "Measuring background terrain work. Input is off until it finishes.".to_owned()
+    } else {
+        format!(
+            "Setting {} of {}. Input is off until it finishes.",
+            done.clamp(1, KNOBS.len()),
+            KNOBS.len()
+        )
+    };
     p.text_str(&head, 8.0, y, AQUA, true);
     y += line_h() + 3.0;
     draw_items(p, ctx, y, &gate_items(t, false), &t.rows);
