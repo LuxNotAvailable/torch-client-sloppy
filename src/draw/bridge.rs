@@ -65,6 +65,7 @@ fn slot(id: AssetId<Mesh>) -> u64 {
 }
 
 /// A mesh's position, normal, uv, colour and rig part attributes.
+#[track_caller]
 pub fn mesh_data(mesh: &Mesh, slot: Option<u64>) -> Option<Arc<MeshData>> {
     use bevy::mesh::VertexAttributeValues as V;
     // A mesh kept only in the render world panics on attribute access once

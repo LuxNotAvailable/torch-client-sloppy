@@ -159,10 +159,13 @@ pub struct MeshData {
     pub indices: Vec<u32>,
     /// Vertices name rig parts (`EntityVertex::part`).
     pub rigged: bool,
+    /// Where it was built, for the live renderer's resend report.
+    pub origin: &'static std::panic::Location<'static>,
 }
 
 impl MeshData {
     /// A mesh in a slot of its own.
+    #[track_caller]
     pub fn new(
         verts: Vec<EntityVertex>,
         indices: Vec<u32>,
@@ -173,6 +176,7 @@ impl MeshData {
 
     /// A mesh in `slot` (a fresh one when `None`). Slots the caller picks
     /// have the top bit set; fresh ones never do.
+    #[track_caller]
     pub fn in_slot(
         slot: Option<u64>,
         verts: Vec<EntityVertex>,
@@ -187,6 +191,7 @@ impl MeshData {
             verts,
             indices,
             rigged,
+            origin: std::panic::Location::caller(),
         })
     }
 }

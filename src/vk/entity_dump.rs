@@ -254,6 +254,52 @@ fn particles_to_live(
     *pending = Some(frame);
 }
 
+/// Meshes sent to the live renderer since the last report, by channel and
+/// where they were built: (new slots, rebuilt, vertices).
+static SENT: std::sync::Mutex<
+    Option<(
+        std::time::Instant,
+        HashMap<(usize, String), (u32, u32, u64)>,
+    )>,
+> = std::sync::Mutex::new(None);
+
+/// Counts a mesh sent, and every 2 s logs the busiest origins: meshes sent
+/// again and again while nothing changes are wasted uploads.
+fn note_sent(channel: usize, mesh: &crate::draw::MeshData, fresh: bool) {
+    let Ok(mut sent) = SENT.lock() else {
+        return;
+    };
+    let (since, counts) = sent.get_or_insert_with(|| (std::time::Instant::now(), HashMap::new()));
+    let o = mesh.origin;
+    let e = counts
+        .entry((channel, format!("{}:{}", o.file(), o.line())))
+        .or_default();
+    if fresh {
+        e.0 += 1;
+    } else {
+        e.1 += 1;
+    }
+    e.2 += mesh.verts.len() as u64;
+    if since.elapsed().as_secs_f32() < 2.0 {
+        return;
+    }
+    let mut rows: Vec<_> = counts.drain().collect();
+    rows.sort_by_key(|r| std::cmp::Reverse(r.1.0 + r.1.1));
+    let top: Vec<String> = rows
+        .iter()
+        .take(8)
+        .map(|((ch, at), (new, rebuilt, verts))| {
+            let n = (new + rebuilt).max(1);
+            format!(
+                "ch{ch} {at} new {new} rebuilt {rebuilt} ({} verts)",
+                verts / u64::from(n)
+            )
+        })
+        .collect();
+    bevy::log::info!("entity meshes sent in 2 s: {}", top.join("; "));
+    *since = std::time::Instant::now();
+}
+
 fn to_live(
     channel: usize,
     cache: &Cache,
@@ -292,6 +338,7 @@ fn to_live(
                             .meshes
                             .push((*index, verts.clone(), indices.clone(), *rigged));
                         super::live::count_new(0, verts.len());
+                        note_sent(channel, mesh, false);
                     }
                     *index
                 }
@@ -308,6 +355,7 @@ fn to_live(
                         .meshes
                         .push((index, verts.clone(), indices.clone(), *rigged));
                     super::live::count_new(0, verts.len());
+                    note_sent(channel, mesh, true);
                     index
                 }
             }
