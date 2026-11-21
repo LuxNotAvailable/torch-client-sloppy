@@ -97,3 +97,26 @@ these hold:
   The default intensity is 200.
 - **Tint** is set per profile id (see `light_shaft_beam_builder.json`).
   The moon's is `#bcefff`.
+
+### Underwater light shafts (ported in `src/util/particles/shafts.rs`)
+
+- **Gates:** the same as the surface beams, except that the camera must
+  be in water and `underwaterLightShafts` must be on.
+- **Spawner:** `light_shaft_spawner_underwater` sends 100 probes a second
+  × the particle density.
+  - Each probe starts 40 blocks up, rotated by the sun angle, within a
+    disc of radius `30·√r`.
+- **Canopy probe:** walks 1-block steps through air, glass or glass
+  pane, for at most 30 blocks.
+- **Floor probe:** goes on from there through `minecraft:water` only,
+  for at most 30 blocks. A beam is kept when the water stretch is over
+  5 blocks long. Unlike the surface beams, there is no second ray.
+- **Beam:** additive, with half-size `[length/2, 1.25]` and a 5 to 10
+  second Bézier fade.
+  - Alpha is `clamp(1/dist, 0, 1)`. The beam expires once it is more
+    than 20 blocks from the camera.
+  - Sun colour is `0.5·(255,242,97)/255`. Moon colour is
+    `0.4·(171,202,255)/255`.
+- **Shader pass:** none in Torch. The user had the pack's shader
+  shafts removed, so all shafts are particles. They tilt with the
+  pack's `sunPathRotation`.
