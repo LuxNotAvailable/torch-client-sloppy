@@ -865,19 +865,21 @@ void store_level(uint level, int2 p, float depth) {
 // through shared memory. Two dispatches cover a 4096-wide frame. Each
 // texel keeps the farthest depth (the smallest, with reversed depth).
 // Push: ids.x pyramid buffer, ids.y depth texture, more.x source level,
-//       more.yz the depth's size, more.w the top level.
+//       more.yz the depth's size, more.w the top level; params.x > 0 reads
+//       one depth texel per 2 × 2 (quarter-res, not conservative).
 [shader("compute")]
 [numthreads(16, 16, 1)]
 void hiz_reduce(uint3 group: SV_GroupID, uint3 thread: SV_GroupThreadID) {
     uint level = pc.more.x;
     uint2 size = level_size(level, pc.more.yz);
     int2 t = int2(thread.xy);
+    int n0 = level == 0 && pc.params.x > 0 ? 1 : 2;
     for (int dy = 0; dy < 2; dy++) {
         for (int dx = 0; dx < 2; dx++) {
             int2 o = int2(group.xy) * 32 + t * 2 + int2(dx, dy);
             float far = 1;
-            for (int y = 0; y < 2; y++) {
-                for (int x = 0; x < 2; x++) {
+            for (int y = 0; y < n0; y++) {
+                for (int x = 0; x < n0; x++) {
                     far = min(far, source_depth(o * 2 + int2(x, y), size, level));
                 }
             }

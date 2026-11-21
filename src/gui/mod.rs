@@ -510,6 +510,9 @@ crate::options! {
         /// Hi-Z rebuilt every second frame. On by default on Android: the
         /// Pixel 10 Pro's build costs ~2.2 ms; desktop GPUs gain nothing.
         pub hiz_every_other: bool = HIZ_EVERY_OTHER_DEFAULT => key("torchHizEveryOther"),
+        /// Hi-Z built from a quarter of the depth texels. Off by default:
+        /// not conservative, so thin gaps can hide what's behind them.
+        pub hiz_quarter: bool = false => key("torchHizQuarter"),
         /// The inventory player model drawn at 2x and averaged (native).
         pub smooth_gui_model: bool = true => key("torchSmoothGuiModel"),
         /// Model item icons rendered at 2x and averaged; applies after a

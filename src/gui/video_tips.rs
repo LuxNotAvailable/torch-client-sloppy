@@ -76,6 +76,10 @@ pub const HIZ_EVERY_OTHER: Tip = Tip::new(
     "Rebuilds the depth map that occlusion culling checks every second frame instead of every frame. Saves about 1 ms a frame on phones (measured on a Pixel 10 Pro); no gain on desktop graphics cards. Turning quickly can show a chunk a frame late at the screen edge. On by default on Android.",
     Impact::Medium,
 );
+pub const HIZ_QUARTER: Tip = Tip::new(
+    "Builds the depth map that occlusion culling checks from a quarter of the screen's pixels. Saves about 0.8 ms a frame on phones (0.4 ms with Occlusion Every Other Frame; measured on a Pixel 10 Pro); no gain on desktop graphics cards. Not exact: chunks seen only through gaps one pixel wide, like between leaves far away, can vanish. Experimental.",
+    Impact::Medium,
+);
 pub const ENTITY_CULLING: Tip = Tip::new(
     "Skips drawing mobs, items and block entities hidden behind solid blocks. Turning it off costs frames in busy areas; only do so if something vanishes when it shouldn't.",
     Impact::Medium,

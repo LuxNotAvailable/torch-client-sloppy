@@ -130,6 +130,7 @@ fn options(args: Vec<String>) -> Options {
             // SAFETY: set while parsing, before any thread reads the environment.
             "--near-first-ab" => unsafe { std::env::set_var("MC_NEAR_FIRST_AB", "1") },
             "--hiz-ab" => unsafe { std::env::set_var("MC_HIZ_AB", "1") },
+            "--hiz-quarter-ab" => unsafe { std::env::set_var("MC_HIZ_QUARTER_AB", "1") },
             "--stress" => options.stress = true,
             "--screenshot" => options.screenshot = args.next(),
             "--terrain" => options.terrain = args.next().map(Into::into),

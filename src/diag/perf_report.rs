@@ -915,6 +915,7 @@ fn describe(
         ),
         ("near-first".to_owned(), o.near_first.to_string()),
         ("hiz every other".to_owned(), o.hiz_every_other.to_string()),
+        ("hiz quarter".to_owned(), o.hiz_quarter.to_string()),
         (
             "entity distance".to_owned(),
             format!("{}%", o.entity_distance * 25),

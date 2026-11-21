@@ -70,6 +70,10 @@ pub static NEAR_FIRST: std::sync::atomic::AtomicBool = std::sync::atomic::Atomic
 pub static HIZ_EVERY_OTHER: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(cfg!(target_os = "android"));
 
+/// Hi-Z level 1 from one depth texel per 2 x 2 (Advanced Performance >
+/// Quarter-Res Occlusion).
+pub static HIZ_QUARTER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// Section origins per row of the terrain origins texture (`terrain.wgsl`
 /// and the pack preludes read it at this width).
 pub const ORIGIN_ROW: u32 = 256;

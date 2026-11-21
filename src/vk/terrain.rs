@@ -334,6 +334,9 @@ fn near_first_ab_mode() -> bool {
 /// Other Frame; `MC_HIZ_AB=1` flips it every two seconds instead (A every
 /// frame, B every second), for an in-run A/B.
 fn hiz_every_other() -> bool {
+    if hiz_quarter_ab_mode() {
+        return false;
+    }
     if !hiz_ab_mode() {
         return crate::terrain::HIZ_EVERY_OTHER.load(std::sync::atomic::Ordering::Relaxed);
     }
@@ -343,6 +346,26 @@ fn hiz_every_other() -> bool {
         bevy::log::info!("hiz A/B: side {}", if on { "B" } else { "A" });
     }
     on
+}
+
+/// Hi-Z level 1 from a quarter of the depth texels: Advanced Performance >
+/// Quarter-Res Occlusion; `MC_HIZ_QUARTER_AB=1` flips it every two seconds
+/// instead (A full, B quarter), building every frame.
+fn hiz_quarter() -> bool {
+    if !hiz_quarter_ab_mode() {
+        return crate::terrain::HIZ_QUARTER.load(std::sync::atomic::Ordering::Relaxed);
+    }
+    let on = near_first_phase().0;
+    static SIDE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(2);
+    if SIDE.swap(u8::from(on), std::sync::atomic::Ordering::Relaxed) != u8::from(on) {
+        bevy::log::info!("hiz quarter A/B: side {}", if on { "B" } else { "A" });
+    }
+    on
+}
+
+fn hiz_quarter_ab_mode() -> bool {
+    static AB: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *AB.get_or_init(|| crate::platform::env::var("MC_HIZ_QUARTER_AB").is_ok_and(|v| v == "1"))
 }
 
 fn hiz_ab_mode() -> bool {
@@ -361,7 +384,7 @@ fn near_first_phase() -> (bool, f32) {
 /// each flip; None outside an A/B or while settling.
 pub fn ab_side() -> Option<bool> {
     let (on, into) = near_first_phase();
-    ((near_first_ab_mode() || hiz_ab_mode()) && into >= 0.3).then_some(on)
+    ((near_first_ab_mode() || hiz_ab_mode() || hiz_quarter_ab_mode()) && into >= 0.3).then_some(on)
 }
 
 /// Which culling the terrain does, for comparing with each off.
@@ -3715,6 +3738,7 @@ impl TerrainScene {
             return Ok(());
         };
         let device = &ctx.device;
+        let quarter = hiz_quarter();
         for base in [0u32, 6] {
             if base >= *levels {
                 break;
@@ -3753,7 +3777,7 @@ impl TerrainScene {
                         &Push {
                             ids: [grown.index, depth.1, 0, 0],
                             more: [base, size.0, size.1, *levels],
-                            params: [0.0; 4],
+                            params: [f32::from(u8::from(quarter)), 0.0, 0.0, 0.0],
                             view_proj: [[0.0; 4]; 4],
                         },
                     );

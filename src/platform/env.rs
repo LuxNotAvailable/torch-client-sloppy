@@ -252,6 +252,12 @@ const ALL: &[Var] = &[
         enabled: true,
     },
     Var {
+        name: "MC_HIZ_QUARTER_AB",
+        what: "1 flips Hi-Z level 1 between all depth texels and one per 2x2 each two seconds (every frame's build) and logs each side (`hiz quarter A/B: side A` full, `B` quarter), for an in-run A/B",
+        default: "off",
+        enabled: true,
+    },
+    Var {
         name: "MC_NO_HIZ",
         what: "turn off terrain occlusion culling against last frame's depth, when set to 1 (overrides MC_HIZ and the debug toggle)",
         default: "off",
