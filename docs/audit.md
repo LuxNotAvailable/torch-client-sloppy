@@ -1,41 +1,58 @@
 # Audit
 
-2026-11-17 · 669 rs · 21 tools/ scripts · 20 vendor/azalea/codegen/
+2026-11-21 · 657 rs · 19 tools/ scripts · 20 vendor/azalea/codegen/
+
+The 2026-11-17 audit's items are all done: the orphans are deleted, the
+`lerp` copies use `mth`, and the profile folder is now `acquired-profiles/`.
 
 ## Dupes
 
-| Where | Dup of | Fix |
-|-------|--------|-----|
-| `src/util/interp.rs` `fn lerp(t:f64,a:f64,b:f64)` | `mth::lerp_f64` (t is f32 there) | add f64-t overload to mth |
-| `src/terrain/mesh.rs:137` `fn lerp(a,b,t)` | `mth::lerp(t,a,b)` | use mth |
+Identical function bodies (6+ lines; generated, `_anim` and model files skipped).
+Merged 2026-11-21: `unwind` (now `mth::unwind_degrees`), `player_facing`
+(now `interaction::player_direction`), `last_word_start` (now
+`commands::last_word_index`).
 
-Not dupes (legit repeated names): `clamp`×12, `normalize`×5, `Target`×4, timeline `lerp` trait, environment `lerp` — all domain-specific.
+Kept: `terrain/cave.rs` / `scene/occlusion.rs` `index` and
+`entities/blockmodel.rs` / `blockentities/text.rs` `finish`. Each is ~12 lines
+over different types; sharing them needs a trait for little gain.
 
-## Orphans (not in any mod.rs)
+Not dupes: `mth::wrap_degrees` / `wrap_degrees_f64` (vanilla keeps both float
+widths), timeline `lerp` trait, environment `lerp`, `items/mesh.rs` `remap`.
 
-| File | Lines | What | Do |
-|------|-------|------|----|
-| `src/gui/gui_material.rs` | 86 | Bevy GUI material, unreferenced | del or wire |
-| `src/play/tutorial.rs` | 267 | Tutorial steps (Move, FindTree, Punch…), references `gui::toast::TutorialSlot` | del or wire |
-| `src/renderer/packmaterial.rs` | 379 | Terrain pack material, refs `shaderpack::pipeline` | del or wire |
+## Dead code
 
-~732 lines dead.
+`cargo check` is warning-free (desktop and `mobile_ui`). Removed 2026-11-21:
+`audio::audible_at`, `DisplayTransforms::get_named`, and `Retired::Entities` /
+`Retired::Particles` (entity and particle scenes update in place now).
+
+## Orphans
+
+None. Every tracked `src/**/*.rs` is reachable from `main.rs` / `lib.rs` / `bin/`.
 
 ## Dead-code allows
 
-3 total: `gui/toast.rs:85`, `gui/option_codec.rs:283`, `diag/mod.rs:13`. Clean.
+68, each with a `reason`: feature- or platform-gated items (touch controls,
+perf_report, profiling, packed assets), test-only helpers, and kept vanilla
+parity (full `*_anim.rs` sets, `PartDefinition` methods). Spot-checked clean.
+Watch these groups; they hold code nothing calls yet:
+
+- `shaderpack/` ×7: "the native pack rewrite picks it up"
+- `voice/mod.rs:271`, `voice/wire.rs:449`: voice screen and mic not built
+- `text/mod.rs:12`: end poem and credits not drawn
 
 ## Hygiene
 
-- `aquired-profiles/` → typo, rename `acquired-profiles/` + fix `.gitignore`
-- `dist/`, `keystore/`, `screenshot-dump/`, `reference/`, `web-output/` — all gitignored, expected
+- `src/vk/pack/screen.rs:841`: the only real TODO left (odd-frame parity variant).
+- Done 2026-11-21: vendored `azalea-client` uses `azalea_registry::data::Enchantment`
+  (in `vendor/PATCHES.md`); `IMMERSIVEVFX_FEATURES.md` moved to `docs/`;
+  `Modelfile.64k` deleted.
+- `dist/`, `keystore/`, `screenshot-dump/`, `reference/`, `acquired-profiles/`: gitignored, as expected.
 
 ## Scripts
 
-All 21 `tools/` scripts active (codegen + asset pipeline). `tools/generated.py` = region-replacement engine for gen_* tools, not a generated artifact. Vendor scripts: azalea protocol codegen.
+All 19 `tools/` scripts active (codegen + asset pipeline). `tools/generated.py`
+is the region-replacement engine for the gen_* tools. Vendor scripts: azalea protocol codegen.
 
 ## Priority
 
-1. **High** — del/wire 3 orphans (732 lines)
-2. **Med** — dedupe 2 `lerp` copies via mth
-3. **Low** — rename `aquired-profiles/`
+Nothing open above Low: the pack TODO and the shaderpack/voice allows wait on their features.

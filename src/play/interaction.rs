@@ -1370,7 +1370,7 @@ fn predict_block_use(bot: &Client, hit: &BlockHitResult, interacted: bool) {
 }
 
 /// `Entity.getDirection`: the horizontal way a yaw faces.
-fn player_direction(yaw: f32) -> Direction {
+pub(super) fn player_direction(yaw: f32) -> Direction {
     match (yaw as f64 / 90.0 + 0.5).floor() as i64 & 3 {
         0 => Direction::South,
         1 => Direction::West,

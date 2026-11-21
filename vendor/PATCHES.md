@@ -34,6 +34,9 @@ Treat as our code. History: `git log -- vendor/azalea`. Main areas:
 - `azalea-client`: `ON_LOCAL_BREAK` is called with each predicted break
   before the world changes, so every local break plays its effects
   (`plugins/mining.rs`).
+- `azalea-client`: the mining speed lookup uses
+  `azalea_registry::data::Enchantment`, not the deprecated alias
+  (`plugins/mining.rs`).
 - `codegen/`: Python generators for the tables above. Edit these, then
   regenerate; never edit generated tables by hand.
 

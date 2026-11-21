@@ -149,17 +149,6 @@ pub fn play(event: &str, category: SoundCategory, volume: f32, pitch: f32) {
     submit(event, category, volume, pitch, None, roll_seed(), true);
 }
 
-/// Whether a sound at `at` could be heard at the default range, to skip
-/// working out one that could not.
-pub fn audible_at(at: [f32; 3]) -> bool {
-    if DEFS.get().is_none() {
-        return false;
-    }
-    let listener = listener();
-    let d: f32 = (0..3).map(|i| (at[i] - listener.position[i]).powi(2)).sum();
-    d <= defs::DEFAULT_ATTENUATION * defs::DEFAULT_ATTENUATION
-}
-
 /// A sound the client makes itself, at a point.
 pub fn play_at(event: &str, category: SoundCategory, at: [f32; 3], volume: f32, pitch: f32) {
     submit(event, category, volume, pitch, Some(at), roll_seed(), true);

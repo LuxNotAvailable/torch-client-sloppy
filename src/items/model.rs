@@ -226,10 +226,6 @@ impl DisplayTransforms {
         self.0[ctx.index()]
     }
 
-    pub fn get_named(&self, name: &str) -> Option<Transform> {
-        DisplayContext::parse(name).and_then(|ctx| self.get(ctx))
-    }
-
     pub fn is_empty(&self) -> bool {
         self.0.iter().all(Option::is_none)
     }

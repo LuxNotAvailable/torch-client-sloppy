@@ -286,15 +286,6 @@ fn block_pos(pos: [f64; 3]) -> [i32; 3] {
     ]
 }
 
-fn unwind(old: &mut f32, new: f32) {
-    while new - *old < -180.0 {
-        *old -= 360.0;
-    }
-    while new - *old >= 180.0 {
-        *old += 360.0;
-    }
-}
-
 impl Default for TickInput {
     fn default() -> Self {
         TickInput::new()
@@ -1535,10 +1526,10 @@ impl EntityAnim {
                 self.tick_head_turn(target);
             }
 
-            unwind(&mut self.y_rot_old, self.y_rot);
-            unwind(&mut self.body_rot_old, self.body_rot);
-            unwind(&mut self.x_rot_old, self.x_rot);
-            unwind(&mut self.head_rot_old, self.head_rot);
+            crate::util::mth::unwind_degrees(&mut self.y_rot_old, self.y_rot);
+            crate::util::mth::unwind_degrees(&mut self.body_rot_old, self.body_rot);
+            crate::util::mth::unwind_degrees(&mut self.x_rot_old, self.x_rot);
+            crate::util::mth::unwind_degrees(&mut self.head_rot_old, self.head_rot);
         }
 
         self.sampled = Sampled::from_input(input);

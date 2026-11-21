@@ -2041,24 +2041,18 @@ fn terrain_options() -> super::terrain::Options {
 /// A scene replaced by a newer snapshot, waiting out the frames in flight.
 enum Retired {
     Env(super::env::EnvScene),
-    Entities(super::entities::EntityScene),
-    Particles(super::particles::ParticleScene),
 }
 
 impl Retired {
     fn release(&self, bindless: &mut Bindless, frame: u64) {
         match self {
             Retired::Env(s) => s.release(bindless, frame),
-            Retired::Entities(s) => s.release(bindless, frame),
-            Retired::Particles(s) => s.release(bindless, frame),
         }
     }
 
     fn destroy(self, ctx: &Context, memory: &Memory) {
         match self {
             Retired::Env(s) => s.destroy(ctx, memory),
-            Retired::Entities(s) => s.destroy(ctx, memory),
-            Retired::Particles(s) => s.destroy(ctx, memory),
         }
     }
 }

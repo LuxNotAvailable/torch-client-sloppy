@@ -322,15 +322,6 @@ fn distance_sqr(a: [f64; 3], b: [f64; 3]) -> f64 {
     dx * dx + dy * dy + dz * dz
 }
 
-fn unwind(old: &mut f32, new: f32) {
-    while new - *old < -180.0 {
-        *old -= 360.0;
-    }
-    while new - *old >= 180.0 {
-        *old += 360.0;
-    }
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct HumanoidAnim {
     walk_pos: f32,
@@ -550,10 +541,10 @@ impl HumanoidAnim {
 
         self.turn_body();
 
-        unwind(&mut self.y_rot_old, self.y_rot);
-        unwind(&mut self.body_yaw_old, self.body_yaw);
-        unwind(&mut self.pitch_old, self.pitch);
-        unwind(&mut self.head_yaw_old, self.head_yaw);
+        crate::util::mth::unwind_degrees(&mut self.y_rot_old, self.y_rot);
+        crate::util::mth::unwind_degrees(&mut self.body_yaw_old, self.body_yaw);
+        crate::util::mth::unwind_degrees(&mut self.pitch_old, self.pitch);
+        crate::util::mth::unwind_degrees(&mut self.head_yaw_old, self.head_yaw);
     }
 
     fn handle_movement_packets(&mut self, input: &AnimInput) -> Option<([f64; 3], f32, f32)> {

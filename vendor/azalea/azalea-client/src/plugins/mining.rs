@@ -46,7 +46,7 @@ pub fn has_aqua_affinity(inventory: &Inventory, registries: &azalea_core::regist
     };
     enchantments
         .levels
-        .get(&azalea_registry::Enchantment::new_raw(id as u32))
+        .get(&azalea_registry::data::Enchantment::new_raw(id as u32))
         .is_some_and(|&lvl| lvl > 0)
 }
 

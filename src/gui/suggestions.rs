@@ -405,7 +405,7 @@ impl Field {
 
 fn sort_suggestions(pending: &Suggestions, value: &str, cursor: usize) -> Vec<Suggestion> {
     let typed: Vec<char> = value.chars().take(cursor).collect();
-    let start = last_word_start(&typed);
+    let start = crate::play::commands::last_word_index(&typed);
     let last_word: String = typed[start..].iter().collect::<String>().to_lowercase();
     let namespaced = format!("minecraft:{last_word}");
     let (mut head, tail): (Vec<Suggestion>, Vec<Suggestion>) = pending
@@ -415,22 +415,6 @@ fn sort_suggestions(pending: &Suggestions, value: &str, cursor: usize) -> Vec<Su
         .partition(|s| s.text.starts_with(&last_word) || s.text.starts_with(&namespaced));
     head.extend(tail);
     head
-}
-
-fn last_word_start(text: &[char]) -> usize {
-    let mut result = 0usize;
-    let mut i = 0usize;
-    while i < text.len() {
-        if text[i].is_whitespace() {
-            while i < text.len() && text[i].is_whitespace() {
-                i += 1;
-            }
-            result = i;
-        } else {
-            i += 1;
-        }
-    }
-    result
 }
 
 pub fn draw(p: &mut Painter, f: &mut Field, ctx: &ScreenCtx, st: Style, a: Anchor) {

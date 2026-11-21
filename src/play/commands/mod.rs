@@ -159,7 +159,8 @@ fn parse_exception(parse: &Parse, input: &[char]) -> String {
     )
 }
 
-fn last_word_index(text: &[char]) -> usize {
+/// Where the last whitespace-separated word of `text` starts.
+pub fn last_word_index(text: &[char]) -> usize {
     let mut result = 0usize;
     let mut i = 0usize;
     while i < text.len() {

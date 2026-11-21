@@ -36,6 +36,17 @@ pub fn rot_lerp_f64(t: f64, a: f64, b: f64) -> f64 {
     a + t * wrap_degrees_f64(b - a)
 }
 
+/// Steps `old` by whole turns to within 180 degrees of `new`, so lerping
+/// between them takes the short way.
+pub fn unwind_degrees(old: &mut f32, new: f32) {
+    while new - *old < -180.0 {
+        *old -= 360.0;
+    }
+    while new - *old >= 180.0 {
+        *old += 360.0;
+    }
+}
+
 pub fn wrap_degrees(mut degrees: f32) -> f32 {
     degrees %= 360.0;
     if degrees >= 180.0 {

@@ -4,6 +4,7 @@ use std::{
     sync::{LazyLock, OnceLock},
 };
 
+use super::interaction::player_direction;
 use crate::blocks::facing::{clockwise, name as direction_name};
 use crate::play::redstone::has_neighbor_signal;
 use crate::play::survival;
@@ -223,7 +224,7 @@ fn two_part_state(
     if !door && !survival::is_bed(block) {
         return Some(state);
     }
-    let facing = player_facing(yaw);
+    let facing = player_direction(yaw);
     let mut placed = Box::<dyn BlockTrait>::from(state);
     let _ = placed.set_property("facing", direction_name(facing));
     if door {
@@ -485,7 +486,7 @@ fn state_for_placement(
                 } else {
                     "top"
                 };
-                (player_facing(yaw).opposite(), half)
+                (player_direction(yaw).opposite(), half)
             };
         let _ = placed.set_property("facing", direction_name(facing));
         let _ = placed.set_property("half", half);
@@ -501,7 +502,7 @@ fn state_for_placement(
         if accepts(block, "facing", "up") {
             Direction::nearest(look_vector(yaw, pitch)).opposite()
         } else {
-            player_facing(yaw).opposite()
+            player_direction(yaw).opposite()
         }
     });
     let _ = placed.set_property("facing", direction_name(facing));
@@ -546,13 +547,13 @@ fn state_for_placement(
 fn crafter_orientation(yaw: f32, pitch: f32) -> &'static str {
     let front = Direction::nearest(look_vector(yaw, pitch)).opposite();
     match front {
-        Direction::Down => match player_facing(yaw).opposite() {
+        Direction::Down => match player_direction(yaw).opposite() {
             Direction::North => "down_north",
             Direction::South => "down_south",
             Direction::West => "down_west",
             _ => "down_east",
         },
-        Direction::Up => match player_facing(yaw) {
+        Direction::Up => match player_direction(yaw) {
             Direction::North => "up_north",
             Direction::South => "up_south",
             Direction::West => "up_west",
@@ -638,7 +639,7 @@ fn scaffolding_extension(
             hit.direction
         }
     } else if hit.direction == Direction::Up {
-        player_facing(yaw)
+        player_direction(yaw)
     } else {
         Direction::Up
     };
@@ -931,12 +932,12 @@ fn exceptional_facing(
                 | BlockKind::CalibratedSculkSensor
         )
     {
-        return Some(player_facing(yaw));
+        return Some(player_direction(yaw));
     }
 
     match block {
         BlockKind::Anvil | BlockKind::ChippedAnvil | BlockKind::DamagedAnvil => {
-            Some(clockwise(player_facing(yaw)))
+            Some(clockwise(player_direction(yaw)))
         }
         BlockKind::Observer => Some(Direction::nearest(look_vector(yaw, pitch))),
         BlockKind::Hopper => Some(match hit.direction.opposite() {
@@ -968,8 +969,8 @@ fn face_attached_placement(
 ) -> Option<BlockState> {
     for direction in nearest_looking_directions(yaw, pitch, hit.direction, replacing_clicked) {
         let (face, facing) = match direction {
-            Direction::Up => ("ceiling", player_facing(yaw)),
-            Direction::Down => ("floor", player_facing(yaw)),
+            Direction::Up => ("ceiling", player_direction(yaw)),
+            Direction::Down => ("floor", player_direction(yaw)),
             horizontal => ("wall", horizontal.opposite()),
         };
         let connected = match face {
@@ -1005,8 +1006,8 @@ fn bell_placement(
         } else {
             "floor"
         };
-        apply(&mut placed, attachment, player_facing(yaw));
-        return bell_survives(pos, attachment, player_facing(yaw), block_at)
+        apply(&mut placed, attachment, player_direction(yaw));
+        return bell_survives(pos, attachment, player_direction(yaw), block_at)
             .then(|| placed.as_block_state());
     }
 
@@ -1196,7 +1197,7 @@ fn segment_placement(
     }
     // `predict` checks it survives (`survival`).
     let mut placed = Box::<dyn BlockTrait>::from(BlockState::from(block));
-    let _ = placed.set_property("facing", direction_name(player_facing(yaw).opposite()));
+    let _ = placed.set_property("facing", direction_name(player_direction(yaw).opposite()));
     Some((pos, placed.as_block_state()))
 }
 
@@ -1282,7 +1283,7 @@ fn standing_state(
         let above = block_at(pos.up(1))?;
         let attached = !is_face_sturdy(above, Direction::Down) || secondary_use;
         if !attached {
-            rotation = match player_facing(yaw).opposite() {
+            rotation = match player_direction(yaw).opposite() {
                 Direction::South => "0",
                 Direction::West => "4",
                 Direction::North => "8",
@@ -1355,15 +1356,6 @@ fn look_vector(yaw: f32, pitch: f32) -> Vec3 {
         x: -yaw.sin() * pitch.cos(),
         y: -pitch.sin(),
         z: yaw.cos() * pitch.cos(),
-    }
-}
-
-fn player_facing(yaw: f32) -> Direction {
-    match (yaw as f64 / 90.0 + 0.5).floor() as i64 & 3 {
-        0 => Direction::South,
-        1 => Direction::West,
-        2 => Direction::North,
-        _ => Direction::East,
     }
 }
 
