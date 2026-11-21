@@ -129,6 +129,7 @@ fn options(args: Vec<String>) -> Options {
             "--no-indirect-count" => unsafe { std::env::set_var("MC_VK_NO_INDIRECT_COUNT", "1") },
             // SAFETY: set while parsing, before any thread reads the environment.
             "--near-first-ab" => unsafe { std::env::set_var("MC_NEAR_FIRST_AB", "1") },
+            "--hiz-ab" => unsafe { std::env::set_var("MC_HIZ_AB", "1") },
             "--stress" => options.stress = true,
             "--screenshot" => options.screenshot = args.next(),
             "--terrain" => options.terrain = args.next().map(Into::into),
@@ -274,8 +275,8 @@ struct Renderer {
     /// The `--pack` pack's screen passes, run over the scene.
     pack: Option<crate::vk::pack::screen::PackScreen>,
     timestamps: Option<Timestamps>,
-    /// `MC_NEAR_FIRST_AB` GPU ms sums by side (off, on): frames, per pass.
-    near_first_ab: [(u32, HashMap<&'static str, f32>); 2],
+    /// `MC_NEAR_FIRST_AB` / `MC_HIZ_AB` GPU ms sums by side (A, B): frames, per pass.
+    ab: [(u32, HashMap<&'static str, f32>); 2],
     uploads: Option<Uploads>,
     pipelines: Option<Pipelines>,
     bindless: Option<Bindless>,
@@ -485,7 +486,7 @@ impl Renderer {
             scene: Some(scene),
             pack,
             timestamps: Some(timestamps),
-            near_first_ab: Default::default(),
+            ab: Default::default(),
             uploads: Some(uploads),
             pipelines: Some(pipelines),
             bindless: Some(bindless),
@@ -629,10 +630,10 @@ impl Renderer {
         bindless.recycle(self.frame);
         uploads.begin(slot);
         timestamps.begin_frame(&self.ctx, slot);
-        if let Some(on) = crate::vk::terrain::near_first_ab()
+        if let Some(on) = crate::vk::terrain::ab_side()
             && !timestamps.last.is_empty()
         {
-            let side = &mut self.near_first_ab[usize::from(on)];
+            let side = &mut self.ab[usize::from(on)];
             side.0 += 1;
             for (name, ms) in &timestamps.last {
                 *side.1.entry(name).or_insert(0.0) += ms;
@@ -1191,7 +1192,7 @@ impl Renderer {
                 .collect();
             println!("vkview: GPU ms per pass: {}", passes.join(", "));
         }
-        let [off, on] = &self.near_first_ab;
+        let [off, on] = &self.ab;
         if off.0 > 0 && on.0 > 0 {
             let mut names: Vec<_> = off.1.keys().chain(on.1.keys()).copied().collect();
             names.sort_unstable();
@@ -1202,7 +1203,7 @@ impl Renderer {
             let total =
                 |s: &(u32, HashMap<&'static str, f32>)| s.1.values().sum::<f32>() / s.0 as f32;
             println!(
-                "vkview: near-first A/B, {} off / {} on frames: total {:.3} / {:.3}",
+                "vkview: A/B, {} A / {} B frames: total {:.3} / {:.3}",
                 off.0,
                 on.0,
                 total(off),

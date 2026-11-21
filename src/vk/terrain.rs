@@ -330,18 +330,38 @@ fn near_first_ab_mode() -> bool {
     *AB.get_or_init(|| crate::platform::env::var("MC_NEAR_FIRST_AB").is_ok_and(|v| v == "1"))
 }
 
-/// The A/B's side now (true: near first) and seconds into it.
+/// Hi-Z rebuilt every second frame: Advanced Performance > Occlusion Every
+/// Other Frame; `MC_HIZ_AB=1` flips it every two seconds instead (A every
+/// frame, B every second), for an in-run A/B.
+fn hiz_every_other() -> bool {
+    if !hiz_ab_mode() {
+        return crate::terrain::HIZ_EVERY_OTHER.load(std::sync::atomic::Ordering::Relaxed);
+    }
+    let on = near_first_phase().0;
+    static SIDE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(2);
+    if SIDE.swap(u8::from(on), std::sync::atomic::Ordering::Relaxed) != u8::from(on) {
+        bevy::log::info!("hiz A/B: side {}", if on { "B" } else { "A" });
+    }
+    on
+}
+
+fn hiz_ab_mode() -> bool {
+    static AB: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *AB.get_or_init(|| crate::platform::env::var("MC_HIZ_AB").is_ok_and(|v| v == "1"))
+}
+
+/// The A/B's side now (true: B) and seconds into it.
 fn near_first_phase() -> (bool, f32) {
     static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
     let secs = START.get_or_init(Instant::now).elapsed().as_secs_f32();
     ((secs / 2.0) as u32 % 2 == 1, secs % 2.0)
 }
 
-/// The A/B's side for timing (true: near first), past a short settle after
-/// each flip; None outside the A/B or while settling.
-pub fn near_first_ab() -> Option<bool> {
+/// The running A/B's side for timing (true: B), past a short settle after
+/// each flip; None outside an A/B or while settling.
+pub fn ab_side() -> Option<bool> {
     let (on, into) = near_first_phase();
-    (near_first_ab_mode() && into >= 0.3).then_some(on)
+    ((near_first_ab_mode() || hiz_ab_mode()) && into >= 0.3).then_some(on)
 }
 
 /// Which culling the terrain does, for comparing with each off.
@@ -879,6 +899,8 @@ pub struct TerrainScene {
     order_dirty: bool,
     ordered_for: Option<IVec3>,
     frames_since_order: u32,
+    /// Last frame skipped the pyramid build (`hiz_every_other`).
+    pyramid_skipped: bool,
     translucent_count: u32,
 
     commands: Buffer,
@@ -1272,6 +1294,7 @@ impl TerrainScene {
             order_dirty: true,
             ordered_for: None,
             frames_since_order: 0,
+            pyramid_skipped: false,
             translucent_count: 0,
             commands,
             commands_index,
@@ -3467,8 +3490,17 @@ impl TerrainScene {
             device.cmd_end_rendering(cmd);
         });
 
-        // Frozen: the pyramid stays the cull camera's last.
-        if !frozen {
+        // Frozen: the pyramid stays the cull camera's last. Every other
+        // frame: kept a frame more, still reprojected from its own camera.
+        let skip = hiz_every_other()
+            && !self.pyramid_skipped
+            && self.pyramid_view.is_some()
+            && self
+                .pyramid
+                .as_ref()
+                .is_some_and(|p| p.1 == (extent.width, extent.height));
+        self.pyramid_skipped = skip;
+        if !frozen && !skip {
             self.build_pyramid(
                 ctx,
                 memory,

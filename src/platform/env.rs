@@ -246,6 +246,12 @@ const ALL: &[Var] = &[
         enabled: true,
     },
     Var {
+        name: "MC_HIZ_AB",
+        what: "1 flips the Hi-Z build between every frame and every second frame each two seconds and logs each side (`hiz A/B: side A` every frame, `B` every second), for an in-run A/B",
+        default: "off",
+        enabled: true,
+    },
+    Var {
         name: "MC_NO_HIZ",
         what: "turn off terrain occlusion culling against last frame's depth, when set to 1 (overrides MC_HIZ and the debug toggle)",
         default: "off",

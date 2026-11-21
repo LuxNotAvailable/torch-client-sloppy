@@ -507,6 +507,9 @@ crate::options! {
         /// The terrain cull walks sections nearest the camera first. Off by
         /// default: no gain and a slower cull on the MX250 and Pixel 10 Pro.
         pub near_first: bool = false => key("torchNearFirst"),
+        /// Hi-Z rebuilt every second frame. On by default on Android: the
+        /// Pixel 10 Pro's build costs ~2.2 ms; desktop GPUs gain nothing.
+        pub hiz_every_other: bool = HIZ_EVERY_OTHER_DEFAULT => key("torchHizEveryOther"),
         /// The inventory player model drawn at 2x and averaged (native).
         pub smooth_gui_model: bool = true => key("torchSmoothGuiModel"),
         /// Model item icons rendered at 2x and averaged; applies after a
@@ -913,6 +916,7 @@ pub const MAX_FPS_UNLIMITED: u32 = 260;
 pub const MAX_FPS_DEFAULT: u32 = if cfg!(feature = "mobile_ui") { 30 } else { 60 };
 
 pub const VSYNC_DEFAULT: bool = !cfg!(target_os = "android");
+pub const HIZ_EVERY_OTHER_DEFAULT: bool = cfg!(target_os = "android");
 
 pub const WATER_CLARITY_DEFAULT: u32 = 50;
 pub const WATER_CLARITY_MAX: u32 = 100;

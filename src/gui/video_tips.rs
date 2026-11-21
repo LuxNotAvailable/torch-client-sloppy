@@ -72,6 +72,10 @@ pub const NEAR_FIRST: Tip = Tip::new(
     "WARNING: usually makes the game slightly SLOWER. Draws the chunks nearest you first, so hidden terrain behind them is skipped sooner. Occlusion culling already skips most of it, so the extra sorting costs more than it saves: measured slower on a GeForce MX250 laptop and a Pixel 10 Pro. Experimental; leave it off.",
     Impact::Low,
 );
+pub const HIZ_EVERY_OTHER: Tip = Tip::new(
+    "Rebuilds the depth map that occlusion culling checks every second frame instead of every frame. Saves about 1 ms a frame on phones (measured on a Pixel 10 Pro); no gain on desktop graphics cards. Turning quickly can show a chunk a frame late at the screen edge. On by default on Android.",
+    Impact::Medium,
+);
 pub const ENTITY_CULLING: Tip = Tip::new(
     "Skips drawing mobs, items and block entities hidden behind solid blocks. Turning it off costs frames in busy areas; only do so if something vanishes when it shouldn't.",
     Impact::Medium,

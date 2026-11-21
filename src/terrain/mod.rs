@@ -65,6 +65,11 @@ pub static FACE_FILTER: std::sync::atomic::AtomicBool = std::sync::atomic::Atomi
 /// Performance > Near-First Terrain).
 pub static NEAR_FIRST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// The Hi-Z pyramid is rebuilt every second frame (Advanced Performance >
+/// Occlusion Every Other Frame).
+pub static HIZ_EVERY_OTHER: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(cfg!(target_os = "android"));
+
 /// Section origins per row of the terrain origins texture (`terrain.wgsl`
 /// and the pack preludes read it at this width).
 pub const ORIGIN_ROW: u32 = 256;

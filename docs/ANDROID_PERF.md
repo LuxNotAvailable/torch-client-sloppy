@@ -36,13 +36,19 @@ CPU fits 60 fps. Dips with flat CPU mean the **GPU is the limit**: full native r
   No gain: HSR and Hi-Z already drop what it would save, and the cull's
   scattered slot reads cost more. Kept as Advanced Performance > Near-First
   Terrain, off by default.
+- **Hi-Z every other frame** (`vkview --hiz-ab`, `dump5`, `--camera game`,
+  every frame / every second): Pixel GPU total 5.55 / 4.31 ms, Hi-Z
+  2.16 / 1.06 ms, terrain 2.20 / 2.20 ms. MX250 laptop total 4.47-4.51 /
+  4.49-4.50 ms (its Hi-Z is only 0.25 ms). Static camera: pop-in while
+  turning is unmeasured. Advanced Performance > Occlusion Every Other Frame,
+  on by default on Android only.
 
 ## Options (rough order of payoff)
 
 - **Render scale**: draw the world at 50–75% and upscale in the rotation pass, which is free since that pass samples anyway. Make it dynamic from frame time or thermal headroom (`AThermal_getThermalHeadroom`).
 - **Merge passes at the end**: rotation + upscale + FXAA + post in one full-screen pass.
 - **Tile-friendly attachments**: depth `LAZILY_ALLOCATED`/transient, `storeOp = DONT_CARE`, `loadOp = CLEAR`/`DONT_CARE` everywhere. No depth store unless Hi-Z reads it.
-- **Hi-Z on mobile**: off, or built from a ¼-res depth every 2nd frame. PowerVR HSR already removes opaque overdraw, so measure cull savings against the 2.2 ms.
+- **Hi-Z on mobile**: every 2nd frame is done (above); next, build it from ¼-res depth. PowerVR HSR already removes opaque overdraw, so measure cull savings against the 2.2 ms.
 - **Opaque first, cutout last**: keep HSR effective. Fast leaves (opaque), and cutout only near.
 - **Fewer triangles**: greedy meshing (3.9), far LOD (11.1). Tiler cost scales with geometry.
 - **Half precision**: `half`/RelaxedPrecision in fragment shaders (lighting, fog, atlas math).

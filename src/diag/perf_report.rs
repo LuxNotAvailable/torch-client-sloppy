@@ -914,6 +914,7 @@ fn describe(
             o.per_face_culling.to_string(),
         ),
         ("near-first".to_owned(), o.near_first.to_string()),
+        ("hiz every other".to_owned(), o.hiz_every_other.to_string()),
         (
             "entity distance".to_owned(),
             format!("{}%", o.entity_distance * 25),
