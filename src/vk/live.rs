@@ -135,6 +135,7 @@ fn report_times(last: &mut Option<std::time::Instant>) {
         new[1],
         new[3] / 1024
     );
+    info!("native renderer: {}", super::terrain::phase_report(frames));
     // With Triangle Outlines on: why the quads meshed since aren't packed
     // records (which keeps them out of greedy meshing).
     if crate::terrain::OUTLINES.load(Relaxed) {

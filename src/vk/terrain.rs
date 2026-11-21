@@ -25,6 +25,70 @@
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
+/// `record_scene`'s phases, timed for the renderer's 2 s report: where
+/// `terrain record` goes when it grows.
+const PHASES: [&str; 11] = [
+    "readback+retire",
+    "prepare",
+    "apply changes",
+    "sort translucent",
+    "voxels",
+    "rank+order",
+    "slots+commands",
+    "copies",
+    "cull setup",
+    "cull+lists",
+    "draws",
+];
+static PHASE_NS: [std::sync::atomic::AtomicU64; 11] =
+    [const { std::sync::atomic::AtomicU64::new(0) }; 11];
+/// Sizes at the last record: pools, sections, slot high, queued records,
+/// retired buffers, dirty slots.
+static SIZES: [std::sync::atomic::AtomicU64; 6] =
+    [const { std::sync::atomic::AtomicU64::new(0) }; 6];
+
+/// Times `record_scene` phase by phase; what's left at drop is "draws".
+struct Lap(Instant);
+
+impl Lap {
+    fn mark(&mut self, phase: usize) {
+        let now = Instant::now();
+        PHASE_NS[phase].fetch_add(
+            now.duration_since(self.0).as_nanos() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        self.0 = now;
+    }
+}
+
+impl Drop for Lap {
+    fn drop(&mut self) {
+        self.mark(PHASES.len() - 1);
+    }
+}
+
+/// The phases' ms per frame over `frames`, and the sizes; resets the
+/// times.
+pub fn phase_report(frames: u64) -> String {
+    use std::sync::atomic::Ordering::Relaxed;
+    let phases: Vec<String> = PHASES
+        .iter()
+        .zip(&PHASE_NS)
+        .map(|(n, t)| format!("{n} {:.2}", t.swap(0, Relaxed) as f64 / 1e6 / frames as f64))
+        .collect();
+    let s: Vec<u64> = SIZES.iter().map(|v| v.load(Relaxed)).collect();
+    format!(
+        "terrain record: {}; pools {}, sections {}, slot high {}, queued {}, retired {}, dirty slots {}",
+        phases.join(", "),
+        s[0],
+        s[1],
+        s[2],
+        s[3],
+        s[4],
+        s[5]
+    )
+}
+
 use ash::vk;
 use bevy::math::{IVec3, Mat4, Vec3};
 use gpu_allocator::MemoryLocation;
@@ -2897,6 +2961,21 @@ impl TerrainScene {
         // drawn from `camera`; the occlusion pyramid stays the cull camera's.
         let frozen = cull.is_some();
         let cull = cull.unwrap_or(camera);
+        let mut lap = Lap(Instant::now());
+        {
+            use std::sync::atomic::Ordering::Relaxed;
+            let sizes = [
+                self.pools.len(),
+                self.entries.len(),
+                self.slot_high as usize,
+                self.queue.len(),
+                self.retired.len(),
+                self.dirty_slots.len(),
+            ];
+            for (at, v) in SIZES.iter().zip(sizes) {
+                at.store(v as u64, Relaxed);
+            }
+        }
         self.read_back(ctx, slot);
         // Buffers replaced at least a round of frames ago are unused now.
         let mut i = 0;
@@ -2909,6 +2988,7 @@ impl TerrainScene {
             }
         }
 
+        lap.mark(0);
         let (depth, depth_view, depth_index) = self
             .depth
             .get(ctx, memory, bindless, graph, extent, frame)?;
@@ -2922,6 +3002,7 @@ impl TerrainScene {
             env.prepare(ctx, memory, graph, frame);
         }
 
+        lap.mark(1);
         // Section changes, re-sorts and per-slot data, all copied in one
         // pass.
         let mut copies = Vec::new();
@@ -2936,7 +3017,9 @@ impl TerrainScene {
             frame,
             camera.eye,
         )?;
+        lap.mark(2);
         self.sort_translucent(uploads, camera.eye, &mut copies);
+        lap.mark(3);
         let mut voxel_uploads = Vec::new();
         self.voxels.update(
             ctx,
@@ -2956,6 +3039,7 @@ impl TerrainScene {
                 size: u.size,
             }));
         }
+        lap.mark(4);
         if self.options.visibility {
             self.fill_visibility(cull.eye);
         }
@@ -3002,6 +3086,7 @@ impl TerrainScene {
             });
             self.visible_dirty = false;
         }
+        lap.mark(5);
         self.dirty_slots.sort_unstable();
         self.dirty_slots.dedup();
         let mut kept = Vec::new();
@@ -3019,6 +3104,7 @@ impl TerrainScene {
         }
         self.dirty_slots = kept;
         self.ensure_commands(ctx, memory, bindless, frame)?;
+        lap.mark(6);
 
         let atlas_ready = self
             .atlas_staging
@@ -3051,6 +3137,7 @@ impl TerrainScene {
             _ => None,
         };
         self.record_copies(ctx, graph, &copies, &grow, atlas_copy);
+        lap.mark(7);
         let device = &ctx.device;
 
         if self.pipes.is_none()
@@ -3202,6 +3289,7 @@ impl TerrainScene {
                 slot,
             )?;
         }
+        lap.mark(8);
         graph.pass("terrain cull", &[], &cull_buffers, |cmd| unsafe {
             // SAFETY: recording with the shared layout and the bindless set;
             // the push names live buffers.
@@ -3327,6 +3415,7 @@ impl TerrainScene {
 
         // The camera's turn, for particles drawn into a pack's targets.
         self.pack_camera = Mat4::look_to_rh(camera.eye, camera.forward(), Vec3::Y).inverse();
+        lap.mark(9);
         // A shader pack draws the world itself: only the culls are wanted.
         if self.cull_only {
             self.pyramid_view = None;
@@ -4006,6 +4095,7 @@ impl TerrainScene {
         for pool in self.pools {
             buffers.push(pool.vertices);
             buffers.push(pool.indices);
+            buffers.push(pool.filtered);
             buffers.extend(pool.quads.map(|(b, _)| b));
         }
         if let Some((grown, ..)) = self.pyramid {
