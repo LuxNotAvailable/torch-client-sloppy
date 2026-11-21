@@ -145,6 +145,23 @@ pub struct EntityScene {
 /// A live scene's geometry and what this frame must upload: meshes and
 /// textures stay, by the stable index the capture gave them; instances,
 /// pose rows and boxes are rewritten each frame.
+/// A range of `len` bytes: the first free one that fits (the rest stays
+/// free), else at the end.
+fn take_range(free: &mut Vec<(u64, u64)>, end: &mut u64, len: u64) -> u64 {
+    if let Some(i) = free.iter().position(|&(_, room)| room >= len) {
+        let (at, room) = free[i];
+        if room == len {
+            free.swap_remove(i);
+        } else {
+            free[i] = (at + len, room - len);
+        }
+        return at;
+    }
+    let at = *end;
+    *end += len;
+    at
+}
+
 /// The live mesh table's length and its geometry bytes, for the
 /// renderer's 2 s report (`terrain::phase_report`).
 pub static LIVE_SIZES: [std::sync::atomic::AtomicU64; 2] =
@@ -160,6 +177,10 @@ struct Live {
     room: Vec<(u32, u32)>,
     vertices_used: u64,
     indices_used: u64,
+    /// Ranges left by meshes rewritten somewhere bigger, as (byte offset,
+    /// bytes), reused first-fit before the end grows.
+    free_vertices: Vec<(u64, u64)>,
+    free_indices: Vec<(u64, u64)>,
     /// Per stable texture index: its bindless index and its UNORM view's.
     textures: Vec<Option<(u32, u32)>>,
     /// Waiting for `prepare`: vertex and index bytes at their offsets, new
@@ -1142,9 +1163,19 @@ impl EntityScene {
             let (vertex_at, index_at) = match in_place {
                 Some((first, _, base, ..)) => (base as u64 * 52, first as u64 * 4),
                 None => {
-                    let place = (live.vertices_used, live.indices_used);
-                    live.vertices_used += (verts.len() * 52) as u64;
-                    live.indices_used += (indices.len() * 4) as u64;
+                    // The old range (if any) is free for others.
+                    if let Some((first, _, base, ..)) = live.meshes.get(at).copied().flatten() {
+                        live.free_vertices
+                            .push((base as u64 * 52, room_v as u64 * 52));
+                        live.free_indices
+                            .push((first as u64 * 4, room_i as u64 * 4));
+                    }
+                    let v_len = (verts.len() * 52) as u64;
+                    let i_len = (indices.len() * 4) as u64;
+                    let place = (
+                        take_range(&mut live.free_vertices, &mut live.vertices_used, v_len),
+                        take_range(&mut live.free_indices, &mut live.indices_used, i_len),
+                    );
                     live.room[at] = (verts.len() as u32, indices.len() as u32);
                     place
                 }
@@ -1637,5 +1668,23 @@ impl EntityScene {
             }
         });
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::take_range;
+
+    #[test]
+    fn freed_ranges_are_reused_before_the_end_grows() {
+        let mut free = vec![(104, 52)];
+        let mut end = 520;
+        assert_eq!(take_range(&mut free, &mut end, 52), 104);
+        assert!(free.is_empty());
+        assert_eq!(take_range(&mut free, &mut end, 52), 520);
+        assert_eq!(end, 572);
+        let mut free = vec![(0, 156)];
+        assert_eq!(take_range(&mut free, &mut end, 52), 0);
+        assert_eq!(free, [(52, 104)]);
     }
 }
