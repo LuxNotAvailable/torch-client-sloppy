@@ -1,8 +1,10 @@
 //! Video Settings > Tune Settings: tries each performance setting's values
 //! in the running world and keeps the ones that make frames cheaper. Each
-//! candidate is A/B tested against the current value (base, candidate,
-//! candidate, base), a short settle after every switch, and the frame time
-//! (GPU time under vsync) compared. Settings that cost nothing to look at
+//! candidate is A/B tested against the current value over six alternating
+//! windows. Each window waits for the terrain to finish rebuilding
+//! (`JobQueue::busy`) and stay rebuilt, is retaken after a hitch, and counts
+//! the trimmed mean frame time (GPU time under vsync). A candidate wins only
+//! when every one of its windows beats every base window. Settings that cost nothing to look at
 //! switch for a small gain; ones that change the picture need a larger one.
 //!
 //! While it runs, input is swallowed ([`swallow_input`]), the frame cap is
@@ -34,13 +36,20 @@ const GRAY: u32 = 0x808080;
 const WHITE: u32 = 0xFFFFFF;
 const AQUA: u32 = 0x55FFFF;
 
-/// Seconds after a switch before frames count, and seconds counted.
-const SETTLE: f32 = 0.4;
-/// Settings that remesh the terrain settle longer.
-const SETTLE_REMESH: f32 = 2.5;
-const SAMPLE: f32 = 1.0;
-/// Base, candidate, candidate, base: drift cancels out.
-const ORDER: [bool; 4] = [false, true, true, false];
+/// Seconds after a switch before the rebuild check, then seconds the
+/// terrain must stay rebuilt (uploads, caches), then seconds counted.
+const SETTLE: f32 = 0.5;
+const SETTLE_REMESH: f32 = 1.5;
+const QUIET: f32 = 1.0;
+const SAMPLE: f32 = 2.5;
+/// A rebuild that never ends (chunks streaming in) is measured anyway.
+const MAX_WAIT: f32 = 30.0;
+/// A window whose 90th percentile frame is this many times its 10th is
+/// a hitch: measured again, up to `RETRIES` times.
+const SPREAD_MAX: f32 = 1.6;
+const RETRIES: u32 = 2;
+/// Base and candidate alternating: drift cancels out.
+const ORDER: [bool; 6] = [false, true, true, false, false, true];
 /// The gain a setting needs to switch: free ones change nothing on screen.
 const GAIN_FREE: f32 = 0.02;
 const GAIN_COSTLY: f32 = 0.06;
@@ -258,6 +267,11 @@ struct Trial {
     candidate: u32,
     step: usize,
     switched: Instant,
+    /// When the terrain was last seen rebuilt, for `QUIET`.
+    quiet_since: Option<Instant>,
+    /// Waiting on a rebuild, for the checklist.
+    waiting: bool,
+    retries: u32,
     frames: Vec<f32>,
     base: Vec<f32>,
     cand: Vec<f32>,
@@ -362,6 +376,9 @@ fn next_trial(state: &mut GuiState) {
         candidate,
         step: 0,
         switched: Instant::now(),
+        quiet_since: None,
+        waiting: true,
+        retries: 0,
         frames: Vec::new(),
         base: Vec::new(),
         cand: Vec::new(),
@@ -398,6 +415,31 @@ fn finish_knob(state: &mut GuiState) {
     next_knob(state);
 }
 
+fn terrain_busy() -> bool {
+    crate::CHUNK_Q.get().is_some_and(|q| q.busy())
+}
+
+/// The mean without the fastest and slowest tenth.
+fn trimmed_mean(v: &mut [f32]) -> f32 {
+    if v.is_empty() {
+        return 0.0;
+    }
+    v.sort_by(f32::total_cmp);
+    let cut = v.len() / 10;
+    let kept = &v[cut..v.len() - cut];
+    kept.iter().sum::<f32>() / kept.len() as f32
+}
+
+/// The 90th percentile frame over the 10th.
+fn spread(v: &mut [f32]) -> f32 {
+    if v.len() < 10 {
+        return 1.0;
+    }
+    v.sort_by(f32::total_cmp);
+    let low = v[v.len() / 10].max(0.01);
+    v[v.len() * 9 / 10] / low
+}
+
 fn median(v: &mut [f32]) -> f32 {
     if v.is_empty() {
         return 0.0;
@@ -421,21 +463,40 @@ fn step(state: &mut GuiState) {
     let Some(trial) = &mut t.trial else { return };
     let since = now.duration_since(trial.switched).as_secs_f32();
     let settle = if k.remesh { SETTLE_REMESH } else { SETTLE };
-    if since < settle {
+    // Frames count only once the terrain has rebuilt and stayed so.
+    let rebuilding = since < settle || (terrain_busy() && since < MAX_WAIT);
+    if rebuilding {
+        trial.quiet_since = None;
+    }
+    let quiet = *trial.quiet_since.get_or_insert(now);
+    let start = now.duration_since(quiet).as_secs_f32();
+    trial.waiting = rebuilding || start < QUIET;
+    if trial.waiting {
+        trial.frames.clear();
         take_gpu();
         return;
     }
     if let Some(ms) = dt {
         trial.frames.push(ms);
     }
-    if since < settle + SAMPLE {
+    if start < QUIET + SAMPLE {
         return;
     }
+    // A hitch in the window (a stray rebuild, a GC): measure again.
+    let spread = spread(&mut trial.frames);
+    if spread > SPREAD_MAX && trial.retries < RETRIES {
+        trial.retries += 1;
+        trial.quiet_since = Some(now);
+        trial.frames.clear();
+        take_gpu();
+        return;
+    }
+    trial.retries = 0;
     // Under vsync frames pace to the display: the GPU's time tells more.
     let gpu = take_gpu();
     let score = match gpu {
         Some(g) if vsync => g,
-        _ => median(&mut trial.frames),
+        _ => trimmed_mean(&mut trial.frames),
     };
     trial.frames.clear();
     if ORDER[trial.step] {
@@ -445,6 +506,7 @@ fn step(state: &mut GuiState) {
     }
     trial.step += 1;
     trial.switched = now;
+    trial.quiet_since = None;
     if trial.step < ORDER.len() {
         set_side(state);
         return;
@@ -460,7 +522,11 @@ fn step(state: &mut GuiState) {
         Cost::Free => GAIN_FREE,
         Cost::Costly => GAIN_COSTLY,
     };
-    if -change >= need && t.best.is_none_or(|b| change < b.1) {
+    // Every candidate window must beat every base one, or it was noise.
+    let fmax = |v: &[f32]| v.iter().copied().fold(f32::MIN, f32::max);
+    let fmin = |v: &[f32]| v.iter().copied().fold(f32::MAX, f32::min);
+    let consistent = fmax(&trial.cand) < fmin(&trial.base);
+    if -change >= need && consistent && t.best.is_none_or(|b| change < b.1) {
         t.best = Some((trial.candidate, change));
     }
     if change.abs() > t.worst_change.abs() {
@@ -530,7 +596,13 @@ fn row_line(i: usize, row: &Row, t: &TuneState) -> (String, u32) {
                 } else {
                     (k.label)(t.base)
                 };
-                format!(": {side} ({}/{})", tr.step + 1, ORDER.len())
+                let wait = if tr.waiting {
+                    ", waiting for rebuild"
+                } else {
+                    ""
+                };
+                let again = if tr.retries > 0 { ", hitch, again" } else { "" };
+                format!(": {side} ({}/{}{wait}{again})", tr.step + 1, ORDER.len())
             });
             (format!("> {}{detail}", k.name), YELLOW)
         }

@@ -141,6 +141,12 @@ impl JobQueue {
         }
     }
 
+    /// Whether sections are queued, meshing, or meshed and not yet
+    /// uploaded: the terrain is still rebuilding.
+    pub fn busy(&self) -> bool {
+        self.backlog.load(Ordering::Relaxed) > 0 || !self.inner.lock().unwrap().keys.is_empty()
+    }
+
     pub fn set_backlog(&self, sections: usize) {
         let before = self.backlog.swap(sections, Ordering::Relaxed);
         if before >= MAX_PENDING_SECTIONS && sections < MAX_PENDING_SECTIONS {
