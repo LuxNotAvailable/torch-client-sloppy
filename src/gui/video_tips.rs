@@ -45,7 +45,7 @@ pub const TORCH_DISTANCE: Tip = Tip::new(
     Impact::Low,
 );
 pub const TUNE_SETTINGS: Tip = Tip::new(
-    "Tries each performance setting in this world, timing frames, and suggests the ones that help. Takes a few minutes with input off; you keep or drop each change at the end. In a world only.",
+    "Times each performance setting in this world and suggests what helps. Gate 1 tries settings that keep the picture; if you're still under 60 fps, Gate 2 goes on through ones that cost looks, mildest first, down to render distance and fullbright. Takes several minutes with input off; you keep or drop each change at the end. In a world only.",
     Impact::None,
 );
 pub const ADVANCED_PERFORMANCE: Tip = Tip::new(
