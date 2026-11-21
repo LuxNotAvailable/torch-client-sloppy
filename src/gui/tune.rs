@@ -1,8 +1,9 @@
 //! Video Settings > Tune Settings: tries each performance setting's values
 //! in the running world and keeps the ones that make frames cheaper. Each
 //! candidate is A/B tested against the current value over six alternating
-//! windows. Each window waits for the terrain to finish rebuilding
-//! (`JobQueue::busy`) and stay rebuilt, is retaken after a hitch, and counts
+//! windows. Each window waits until no section has been meshed, uploaded
+//! or received for a second (a switch that rebuilds nothing waits only the
+//! settle), is retaken after a hitch, and counts
 //! the trimmed mean frame time (GPU time under vsync). A candidate wins only
 //! when every one of its windows beats every base window.
 //!
@@ -449,8 +450,12 @@ struct Window {
     switched: Instant,
     /// When the terrain was last seen rebuilt, for `QUIET`.
     quiet_since: Option<Instant>,
-    /// Waiting on a rebuild, for the checklist.
+    /// Settling or rebuilding, for the checklist.
     waiting: bool,
+    /// Terrain work seen during the wait, for the checklist.
+    rebuilt: bool,
+    /// `terrain_work` when last read.
+    work: u64,
     retries: u32,
     frames: Vec<f32>,
 }
@@ -461,6 +466,8 @@ impl Window {
             switched: now,
             quiet_since: None,
             waiting: true,
+            rebuilt: false,
+            work: terrain_work(),
             retries: 0,
             frames: Vec::new(),
         }
@@ -470,7 +477,13 @@ impl Window {
     fn tick(&mut self, now: Instant, dt: Option<f32>, settle: f32, vsync: bool) -> Option<f32> {
         let since = now.duration_since(self.switched).as_secs_f32();
         // Frames count only once the terrain has rebuilt and stayed so.
-        let rebuilding = since < settle || (terrain_busy() && since < MAX_WAIT);
+        // Any meshing or upload since last frame restarts the quiet time;
+        // a switch that rebuilds nothing goes on after the settle.
+        let work = terrain_work();
+        let active = work != self.work;
+        self.work = work;
+        self.rebuilt |= active;
+        let rebuilding = since < settle || (active && since < MAX_WAIT);
         if rebuilding {
             self.quiet_since = None;
         }
@@ -697,8 +710,10 @@ fn finish_knob(state: &mut GuiState) {
     advance(state);
 }
 
-fn terrain_busy() -> bool {
-    crate::CHUNK_Q.get().is_some_and(|q| q.busy())
+/// Sections meshed, uploaded and chunks received so far.
+fn terrain_work() -> u64 {
+    use crate::diag::{Stat, get};
+    get(Stat::SectionsMeshed) + get(Stat::SectionsUploaded) + get(Stat::ChunksReceived)
 }
 
 /// The mean without the fastest and slowest tenth.
@@ -860,10 +875,10 @@ fn row_line(i: usize, t: &TuneState) -> (String, u32) {
                 } else {
                     (k.label)(t.base)
                 };
-                let wait = if tr.window.waiting {
-                    ", waiting for rebuild"
-                } else {
-                    ""
+                let wait = match (tr.window.waiting, tr.window.rebuilt) {
+                    (false, _) => "",
+                    (true, true) => ", rebuilding",
+                    (true, false) => ", settling",
                 };
                 let again = if tr.window.retries > 0 {
                     ", hitch, again"
