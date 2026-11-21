@@ -56,7 +56,7 @@ const POOL_INDICES: u32 = 3_200_000;
 const POOL_INDICES: u32 = 2_400_000;
 const MAX_POOLS: u32 = 64;
 
-const SLOT_SIZE: u64 = 128;
+const SLOT_SIZE: u64 = 320;
 const COMMAND_SIZE: u64 = 20;
 /// The most commands a slot's solid buckets can take: seven buckets with
 /// hidden ones between visible ones split into at most four runs (at most
@@ -79,6 +79,12 @@ const SLOT_TRANSLUCENT: u32 = 2;
 const CULL_HIZ: u32 = 1;
 const CULL_VISIBILITY: u32 = 2;
 const CULL_BUCKETS: u32 = 4;
+/// Away-face culling for the cutout buckets too.
+const CULL_CUTOUT_BUCKETS: u32 = 128;
+/// The cutout layer's octant buckets too (Angled Face Culling).
+const CULL_ANGLED_BUCKETS: u32 = 256;
+/// The solid axis buckets' plane bands (Exact Face Culling).
+const CULL_FACE_BANDS: u32 = 512;
 const CULL_FRUSTUM: u32 = 8;
 const CULL_NO_WAVE: u32 = 16;
 const CULL_BELOW: u32 = 32;
@@ -204,14 +210,26 @@ struct Slot {
     origin_base: [i32; 4],
     /// The pool, the vertex buffer's bindless index, flags.
     info: [u32; 4],
-    /// The first index, the cutout (or translucent) index count.
+    /// The first index, the cutout (or translucent) index count, then the
+    /// cutout's bucket counts (`CUTOUT_BUCKETS`) as u16 pairs, on through
+    /// `spare.yzw` and `more.xy`; its no-axis bucket is the rest, before
+    /// the torches.
     ranges: [u32; 4],
-    /// Index counts of the +x, -x, +y, -y, +z, -z and no-axis buckets.
+    /// Index counts of the +x, -x, +y, -y, +z, -z and no-axis buckets,
+    /// then of the torches closing the cutout range.
     buckets: [u32; 8],
     spare: [u32; 4],
+    /// x, y: more cutout bucket counts as u16 pairs (`CUTOUT_BUCKETS`);
+    /// z, w: the solid axis buckets' band counts (`band_sort`), on through
+    /// `bands`.
+    more: [u32; 4],
+    /// Rows of four, past `BAND_WORDS - 2` zero (a 16-byte multiple slot).
+    bands: [[u32; 4]; 11],
 }
 
 const _: () = assert!(std::mem::size_of::<Slot>() == SLOT_SIZE as usize);
+// `SLOT_BANDS` in `shaders/terrain.slang`.
+const _: () = assert!(std::mem::offset_of!(Slot, bands) == 144);
 
 /// The frame's cull inputs, matching the `VIEW_*` offsets in
 /// `shaders/terrain.slang`.
@@ -231,6 +249,8 @@ struct CullView {
     fog_color: [f32; 4],
     fog_ranges: [f32; 4],
     env: [u32; 4],
+    /// The eye the cull tests from (the camera's, but for a frozen cull).
+    cull_eye: [f32; 4],
 }
 
 /// The view data entity shaders read, for a view outside the world (the
@@ -246,6 +266,7 @@ pub fn plain_view(view_proj: Mat4, eye: Vec3) -> Vec<u8> {
         fog_color: [0.0; 4],
         fog_ranges: [0.0, f32::MAX, 0.0, f32::MAX],
         env: [u32::MAX, 0, 0, 0],
+        cull_eye: [eye.x, eye.y, eye.z, 0.0],
     };
     bytemuck::bytes_of(&view).to_vec()
 }
@@ -358,6 +379,11 @@ pub struct Stats {
 struct Pool {
     vertices: Buffer,
     indices: Buffer,
+    /// The main view's indices after Per-Face Culling (`face_filter`): each
+    /// drawn command's kept quads at its own offset.
+    filtered: Buffer,
+    /// Bindless indices of `indices` and `filtered`.
+    index_ids: (u32, u32),
     /// Pack quads, 16 bytes per vertex slot (a quad at its first vertex's
     /// offset); made when a section brings some.
     quads: Option<(Buffer, u32)>,
@@ -449,8 +475,23 @@ impl Sort {
     }
 }
 
-/// Sorts a section's solid indices into the seven face buckets by each
-/// quad's normal: +x, -x, +y, -y, +z, -z, then faces on no axis.
+/// Per-Face Culling this frame: the option on, and no shader pack.
+fn face_filter_wanted() -> bool {
+    #[cfg(feature = "shader_support")]
+    if crate::shaderpack::packvertex::active() {
+        return false;
+    }
+    crate::terrain::FACE_FILTER.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Torch Distance's reach squared, 0 for no limit.
+fn torch_reach_sq() -> f32 {
+    let blocks = crate::terrain::TORCH_DISTANCE.load(std::sync::atomic::Ordering::Relaxed) as f32;
+    blocks * blocks
+}
+
+/// Sorts a section's indices into the seven face buckets by each quad's
+/// normal: +x, -x, +y, -y, +z, -z, then faces on no axis.
 fn bucket(verts: &[PackedVertex], idx: &[u32]) -> ([u32; 7], Vec<u32>) {
     let mut lists: [Vec<u32>; 7] = Default::default();
     if !idx.len().is_multiple_of(6) {
@@ -485,6 +526,160 @@ fn bucket(verts: &[PackedVertex], idx: &[u32]) -> ([u32; 7], Vec<u32>) {
     (counts, lists.concat())
 }
 
+/// Plane bands per solid axis bucket (Exact Face Culling): one per block
+/// plane, so a face whose back the eye sees is dropped (a plane off the
+/// block grid, a slab's top, rounds to its block: kept a little longer).
+const BANDS: usize = 16;
+/// `band_sort`'s counts as u16 pairs: `Slot.more.zw`, then `Slot.bands`.
+const BAND_WORDS: usize = 6 * (BANDS - 1) / 2;
+/// A bucket's band counts when it isn't banded (a plane off the section,
+/// or a count past 16 bits): the cull falls back to the section test.
+const NO_BANDS: u16 = u16::MAX;
+
+/// Sorts each solid axis bucket's quads by plane band, far side first: a
+/// +a bucket by descending plane, so the faces the eye sees (planes below
+/// it) close the bucket, and a -a bucket the same way, so its seen faces
+/// (planes above) open it; each axis pair's seen faces then touch. Returns
+/// per bucket the index counts through its first three bands (stored
+/// order).
+fn band_sort(
+    indices: &mut [u32],
+    counts: &[u32; 7],
+    plane: impl Fn(u32, usize) -> i32,
+) -> [[u16; BANDS - 1]; 6] {
+    let mut out = [[NO_BANDS; BANDS - 1]; 6];
+    let mut at = 0usize;
+    for (bucket, bands) in out.iter_mut().enumerate() {
+        let n = counts[bucket] as usize;
+        let quads = &mut indices[at..at + n];
+        at += n;
+        if !n.is_multiple_of(6) {
+            continue;
+        }
+        let axis = bucket / 2;
+        // Positions are in 256ths of a block.
+        let band_of = |q: &[u32]| {
+            let p = plane(q[0], axis);
+            (0..=16 * 256)
+                .contains(&p)
+                .then(|| BANDS - 1 - ((p / 256) as usize).min(BANDS - 1))
+        };
+        let Some(mut sorted) = quads
+            .chunks_exact(6)
+            .map(|q| band_of(q).map(|b| (b, [q[0], q[1], q[2], q[3], q[4], q[5]])))
+            .collect::<Option<Vec<_>>>()
+        else {
+            continue;
+        };
+        sorted.sort_by_key(|q| q.0);
+        let mut through = [0usize; BANDS];
+        for (band, _) in &sorted {
+            through[*band] += 6;
+        }
+        for (i, (_, q)) in sorted.iter().enumerate() {
+            quads[i * 6..i * 6 + 6].copy_from_slice(q);
+        }
+        let mut sum = 0usize;
+        let mut cumulative = [0u16; BANDS - 1];
+        let mut fits = true;
+        for (c, count) in cumulative.iter_mut().zip(through) {
+            sum += count;
+            fits &= sum < usize::from(NO_BANDS);
+            *c = sum as u16;
+        }
+        if fits {
+            *bands = cumulative;
+        }
+    }
+    out
+}
+
+/// `band_sort`'s counts as u16 pairs, bucket by bucket.
+fn band_words(bands: &[[u16; BANDS - 1]; 6]) -> [u32; BAND_WORDS] {
+    let flat: Vec<u32> = bands.iter().flatten().map(|&c| u32::from(c)).collect();
+    std::array::from_fn(|i| flat[i * 2] | flat[i * 2 + 1] << 16)
+}
+
+/// The cutout buckets before its no-axis rest, in index order: the
+/// vertical faces around the circle (each axis, then the two octants
+/// between it and the next axis, through its diagonal), then +y and -y.
+/// Kept in a ring so the faces a camera sees are one arc, few commands.
+const CUTOUT_BUCKETS: usize = 14;
+
+/// Sorts a section's cutout indices into `CUTOUT_BUCKETS` then the no-axis
+/// rest. Vertical faces off an axis (cross plants, turned signs) go to the
+/// octant holding their normal.
+fn bucket_cutout(verts: &[PackedVertex], idx: &[u32]) -> ([u32; CUTOUT_BUCKETS], Vec<u32>) {
+    let mut lists: [Vec<u32>; CUTOUT_BUCKETS + 1] = Default::default();
+    if !idx.len().is_multiple_of(6) {
+        lists[CUTOUT_BUCKETS].extend_from_slice(idx);
+    } else {
+        for quad in idx.chunks_exact(6) {
+            let at = |i: usize| {
+                verts.get(quad[i] as usize).map_or([0i64; 3], |v| {
+                    [v.pos[0] as i64, v.pos[1] as i64, v.pos[2] as i64]
+                })
+            };
+            let (a, b, c) = (at(0), at(1), at(2));
+            let (u, v) = (
+                [b[0] - a[0], b[1] - a[1], b[2] - a[2]],
+                [c[0] - a[0], c[1] - a[1], c[2] - a[2]],
+            );
+            let [x, y, z] = [
+                u[1] * v[2] - u[2] * v[1],
+                u[2] * v[0] - u[0] * v[2],
+                u[0] * v[1] - u[1] * v[0],
+            ];
+            lists[cutout_bucket(x, y, z)].extend_from_slice(quad);
+        }
+    }
+    let counts = std::array::from_fn(|i| lists[i].len() as u32);
+    (counts, lists.concat())
+}
+
+/// A normal's cutout bucket (`CUTOUT_BUCKETS` order; that count for none).
+fn cutout_bucket(x: i64, y: i64, z: i64) -> usize {
+    match (x, y, z) {
+        (x, 0, 0) if x > 0 => 0,
+        (0, 0, z) if z > 0 => 3,
+        (x, 0, 0) if x < 0 => 6,
+        (0, 0, z) if z < 0 => 9,
+        (0, y, 0) if y > 0 => 12,
+        (0, y, 0) if y < 0 => 13,
+        // Octants: from each axis toward the next, the half nearer it
+        // first (a diagonal counts with the axis before it).
+        (x, 0, z) if x > 0 && z > 0 => {
+            if x >= z {
+                1
+            } else {
+                2
+            }
+        }
+        (x, 0, z) if x < 0 && z > 0 => {
+            if z >= -x {
+                4
+            } else {
+                5
+            }
+        }
+        (x, 0, z) if x < 0 && z < 0 => {
+            if -x >= -z {
+                7
+            } else {
+                8
+            }
+        }
+        (x, 0, z) if x > 0 && z < 0 => {
+            if -z >= x {
+                10
+            } else {
+                11
+            }
+        }
+        _ => CUTOUT_BUCKETS,
+    }
+}
+
 /// The terrain's pipelines, in the order `TerrainScene::new` asks for them.
 #[derive(Clone, Copy)]
 struct Pipes {
@@ -494,6 +689,10 @@ struct Pipes {
     cutout: vk::Pipeline,
     translucent: vk::Pipeline,
     anim_blend: vk::Pipeline,
+    /// The overdraw view: every terrain fragment added, no depth test.
+    overdraw: vk::Pipeline,
+    /// Per-Face Culling: drops each drawn quad the cull eye sees the back of.
+    face_filter: vk::Pipeline,
 }
 
 impl Pipes {
@@ -505,10 +704,12 @@ impl Pipes {
             cutout: built[3],
             translucent: built[4],
             anim_blend: built[5],
+            overdraw: built[6],
+            face_filter: built[7],
         }
     }
 
-    fn all(self) -> [vk::Pipeline; 6] {
+    fn all(self) -> [vk::Pipeline; 8] {
         [
             self.cull,
             self.hiz_reduce,
@@ -516,6 +717,8 @@ impl Pipes {
             self.cutout,
             self.translucent,
             self.anim_blend,
+            self.overdraw,
+            self.face_filter,
         ]
     }
 }
@@ -609,6 +812,8 @@ pub struct TerrainScene {
     translucent_legacy: Option<(Allocation, u32)>,
 
     slots: Grown,
+    /// Whether this frame's main draws read the filtered indices.
+    face_filtered: bool,
     slot_capacity: u32,
     slot_cpu: Vec<Slot>,
     slot_high: u32,
@@ -770,6 +975,24 @@ impl TerrainScene {
                 Spec::Compute {
                     module,
                     entry: c"anim_blend".to_owned(),
+                },
+                Spec::Graphics(GraphicsSpec {
+                    module,
+                    vertex: c"terrain_vertex".to_owned(),
+                    fragment: c"terrain_overdraw".to_owned(),
+                    color: vec![color_format],
+                    depth: Some(DEPTH_FORMAT),
+                    depth_test: None,
+                    depth_write: false,
+                    cull: vk::CullModeFlags::BACK,
+                    topology: vk::PrimitiveTopology::TRIANGLE_LIST,
+                    blend: true,
+                    additive: true,
+                    fragment_module: None,
+                }),
+                Spec::Compute {
+                    module,
+                    entry: c"face_filter".to_owned(),
                 },
             ],
         );
@@ -976,6 +1199,7 @@ impl TerrainScene {
             translucent_generation: 0,
             translucent_legacy: None,
             slots,
+            face_filtered: false,
             slot_capacity,
             slot_cpu: vec![Slot::default(); slot_capacity as usize],
             slot_high: 0,
@@ -1400,6 +1624,16 @@ impl TerrainScene {
 
     /// What a pack's geometry passes draw with: this frame's culled
     /// commands over the same pools.
+    /// The index buffer the main view draws a pool from: filtered when
+    /// Per-Face Culling ran this frame.
+    fn drawn_indices(&self, pool: &Pool) -> vk::Buffer {
+        if self.face_filtered {
+            pool.filtered.raw
+        } else {
+            pool.indices.raw
+        }
+    }
+
     pub fn pack_geometry(&self) -> PackGeometry {
         PackGeometry {
             slots: (self.slots.buffer.raw, self.slots.index),
@@ -1601,6 +1835,7 @@ impl TerrainScene {
             fog_color: [0.0; 4],
             fog_ranges: [0.0, f32::MAX, 0.0, f32::MAX],
             env: [u32::MAX, 0, 0, 0],
+            cull_eye: [eye.x, eye.y, eye.z, eye.y - SHADOW_CASTER_BELOW],
         };
         shadow.views[slot]
             .0
@@ -1753,17 +1988,33 @@ impl TerrainScene {
             vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
             MemoryLocation::GpuOnly,
         )?;
+        let index_usage = vk::BufferUsageFlags::INDEX_BUFFER
+            | vk::BufferUsageFlags::TRANSFER_DST
+            | vk::BufferUsageFlags::STORAGE_BUFFER;
         let indices = memory.buffer(
             ctx,
             "terrain indices",
             POOL_INDICES as u64 * 4,
-            vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+            index_usage,
+            MemoryLocation::GpuOnly,
+        )?;
+        let filtered = memory.buffer(
+            ctx,
+            "terrain filtered indices",
+            POOL_INDICES as u64 * 4,
+            index_usage,
             MemoryLocation::GpuOnly,
         )?;
         let vertex_index = bindless.add_buffer(ctx, vertices.raw).ok_or_else(full)?;
+        let index_ids = (
+            bindless.add_buffer(ctx, indices.raw).ok_or_else(full)?,
+            bindless.add_buffer(ctx, filtered.raw).ok_or_else(full)?,
+        );
         self.pools.push(Pool {
             vertices,
             indices,
+            filtered,
+            index_ids,
             quads: None,
             vertex_index,
             valloc: Allocator::new(POOL_VERTICES),
@@ -1849,11 +2100,18 @@ impl TerrainScene {
                 continue;
             }
 
+            // Solid buckets, then cutout's (the same seven), then torches.
+            let mut cutout_counts = [0u32; CUTOUT_BUCKETS];
             let (mut counts, indices) = if section.water {
                 ([0; 7], Vec::new())
             } else {
                 let (counts, mut solid) = bucket(&section.verts, &section.idx);
-                solid.extend_from_slice(&section.cutout_idx);
+                let torches = section.cutout_idx.len() - section.torch_count as usize;
+                let (cutout, sorted) =
+                    bucket_cutout(&section.verts, &section.cutout_idx[..torches]);
+                cutout_counts = cutout;
+                solid.extend_from_slice(&sorted);
+                solid.extend_from_slice(&section.cutout_idx[torches..]);
                 (counts, solid)
             };
             // Solid layers' whole-face quads as compact records
@@ -1868,16 +2126,43 @@ impl TerrainScene {
                     let mut p = super::packed::pack(&section.verts, &indices, 2, greedy);
                     if greedy {
                         let aggressive = mode == crate::terrain::GREEDY_AGGRESSIVE;
-                        super::packed::merge(&mut p, &mut counts, aggressive);
+                        super::packed::merge(
+                            &mut p,
+                            &mut counts,
+                            &mut cutout_counts,
+                            section.torch_count,
+                            aggressive,
+                        );
                     }
                     p
                 });
-            let (indices, record_units) = match &packed {
+            let (mut indices, record_units) = match &packed {
                 Some(p) => (
                     p.indices.clone(),
                     (p.records.len() as u32 * 32 + p.cells.len() as u32 * 4).div_ceil(20),
                 ),
                 None => (indices, 0),
+            };
+            // The solid axis buckets in plane bands (Exact Face Culling).
+            let band_words = if section.water {
+                [u32::MAX; BAND_WORDS]
+            } else {
+                let plane = |index: u32, axis: usize| -> i32 {
+                    let vertex = match &packed {
+                        Some(p) if index >= super::packed::PACKED_BASE => {
+                            let at = index - super::packed::PACKED_BASE;
+                            super::packed::unpack(&p.records[(at / 4) as usize], at & 3)
+                        }
+                        Some(p) => p.verts.get(index as usize).copied().unwrap_or_default(),
+                        None => section
+                            .verts
+                            .get(index as usize)
+                            .copied()
+                            .unwrap_or_default(),
+                    };
+                    i32::from(vertex.pos[axis])
+                };
+                band_words(&band_sort(&mut indices, &counts, plane))
             };
             let index_count = if section.water {
                 (section.idx.len() + section.cutout_idx.len()) as u32
@@ -2034,6 +2319,17 @@ impl TerrainScene {
             let solid: u32 = counts.iter().sum();
             let mut buckets = [0u32; 8];
             buckets[..7].copy_from_slice(&counts);
+            buckets[7] = if section.water {
+                0
+            } else {
+                section.torch_count
+            };
+            // Cutout's buckets as u16 pairs; one too big for 16 bits folds
+            // them all into its no-axis bucket (always drawn).
+            if cutout_counts.iter().any(|&c| c > 0xFFFF) {
+                cutout_counts = [0; CUTOUT_BUCKETS];
+            }
+            let pair = |i: usize| cutout_counts[i] | cutout_counts[i + 1] << 16;
             self.slot_cpu[slot as usize] = Slot {
                 lo: [min[0], min[1], min[2], 0.0],
                 hi: [max[0], max[1], max[2], 0.0],
@@ -2060,12 +2356,17 @@ impl TerrainScene {
                     } else {
                         index_count - solid
                     },
-                    0,
-                    0,
+                    pair(0),
+                    pair(2),
                 ],
                 buckets,
-                // The packed records' byte offset in the vertex pool.
-                spare: [vertices.offset * 20, 0, 0, 0],
+                // The packed records' byte offset in the vertex pool, then
+                // cutout bucket counts.
+                spare: [vertices.offset * 20, pair(4), pair(6), pair(8)],
+                more: [pair(10), pair(12), band_words[0], band_words[1]],
+                bands: std::array::from_fn(|row| {
+                    std::array::from_fn(|i| band_words.get(2 + row * 4 + i).copied().unwrap_or(0))
+                }),
             };
             self.dirty_slots.push(slot);
             self.set_visible(slot, true);
@@ -2359,6 +2660,7 @@ impl TerrainScene {
         frame: u64,
         slot: usize,
         camera: Camera,
+        cull: Option<Camera>,
         view: View,
     ) -> Result<(), SetupError> {
         self.write_anim(ctx, memory, bindless, frame, slot)?;
@@ -2386,6 +2688,7 @@ impl TerrainScene {
                 frame,
                 slot,
                 camera,
+                cull,
                 view,
             )?;
             self.post.record(
@@ -2402,7 +2705,7 @@ impl TerrainScene {
         } else {
             self.record_scene(
                 ctx, memory, bindless, pipelines, uploads, graph, output, extent, rotation, frame,
-                slot, camera, view,
+                slot, camera, cull, view,
             )?;
         }
         if let Some(env) = self.env.as_ref().filter(|_| !self.cull_only) {
@@ -2436,8 +2739,13 @@ impl TerrainScene {
         frame: u64,
         slot: usize,
         camera: Camera,
+        cull: Option<Camera>,
         view: View,
     ) -> Result<(), SetupError> {
+        // A frozen cull (Debug Options > Freeze Culling): culled from `cull`,
+        // drawn from `camera`; the occlusion pyramid stays the cull camera's.
+        let frozen = cull.is_some();
+        let cull = cull.unwrap_or(camera);
         self.read_back(ctx, slot);
         // Buffers replaced at least a round of frames ago are unused now.
         let mut i = 0;
@@ -2498,7 +2806,7 @@ impl TerrainScene {
             }));
         }
         if self.options.visibility {
-            self.fill_visibility(camera.eye);
+            self.fill_visibility(cull.eye);
         }
         if self.rank_translucent(camera.eye) {
             match uploads.stage(bytemuck::cast_slice(
@@ -2622,17 +2930,21 @@ impl TerrainScene {
         };
 
         let aspect = rotation.aspect;
-        let view_proj = rotation.clip
-            * Mat4::perspective_infinite_reverse_rh(camera.fov.to_radians(), aspect, NEAR)
-            * self.env.as_ref().map_or(Mat4::IDENTITY, |e| e.warp)
-            * Mat4::look_to_rh(camera.eye, camera.forward(), Vec3::Y);
+        let project = |c: &Camera| {
+            rotation.clip
+                * Mat4::perspective_infinite_reverse_rh(c.fov.to_radians(), aspect, NEAR)
+                * self.env.as_ref().map_or(Mat4::IDENTITY, |e| e.warp)
+                * Mat4::look_to_rh(c.eye, c.forward(), Vec3::Y)
+        };
+        let view_proj = project(&camera);
+        let cull_proj = project(&cull);
 
         // Hi-Z only with a pyramid of this size, from a camera close by.
         let hiz = match (&self.pyramid, self.pyramid_view) {
             (Some((grown, size, levels)), Some((prev, eye)))
                 if self.options.hiz
                     && *size == (extent.width, extent.height)
-                    && eye.distance(camera.eye) < HIZ_GUARD =>
+                    && eye.distance(cull.eye) < HIZ_GUARD =>
             {
                 Some((grown.index, *size, *levels, prev))
             }
@@ -2648,18 +2960,29 @@ impl TerrainScene {
         }
         if self.options.buckets {
             flags |= CULL_BUCKETS;
+            if crate::terrain::CUTOUT_FACES.load(std::sync::atomic::Ordering::Relaxed) {
+                flags |= CULL_CUTOUT_BUCKETS;
+            }
+            if crate::terrain::ANGLED_FACES.load(std::sync::atomic::Ordering::Relaxed) {
+                flags |= CULL_ANGLED_BUCKETS;
+            }
+            if crate::terrain::FACE_BANDS.load(std::sync::atomic::Ordering::Relaxed) {
+                flags |= CULL_FACE_BANDS;
+            }
         }
         if !self.options.wave {
             flags |= CULL_NO_WAVE;
         }
         let cull_view = CullView {
-            view_proj: view_proj.to_cols_array_2d(),
-            prev_view_proj: hiz.map_or(view_proj, |h| h.3).to_cols_array_2d(),
+            view_proj: cull_proj.to_cols_array_2d(),
+            prev_view_proj: hiz.map_or(cull_proj, |h| h.3).to_cols_array_2d(),
             camera: [camera.eye.x, camera.eye.y, camera.eye.z, 0.0],
             hiz: hiz.map_or([0; 4], |(index, size, levels, _)| {
                 [index, levels, size.0, size.1]
             }),
-            flags: [flags, 0, 0, 0],
+            // y: the torch reach squared (Video Settings > Torch Distance),
+            // 0 for none.
+            flags: [flags, torch_reach_sq().to_bits(), 0, 0],
             pad: [0; 4],
             fog_color: self.env.as_ref().map_or([0.0; 4], |e| e.fog_color),
             fog_ranges: self.env.as_ref().map_or([0.0; 4], |e| e.fog_ranges),
@@ -2667,6 +2990,7 @@ impl TerrainScene {
                 .env
                 .as_ref()
                 .map_or([u32::MAX, 0, 0, 0], |e| [e.lightmap_index(), 1, 0, 0]),
+            cull_eye: [cull.eye.x, cull.eye.y, cull.eye.z, 0.0],
         };
         self.views[slot].write(0, bytemuck::bytes_of(&cull_view));
 
@@ -2706,7 +3030,7 @@ impl TerrainScene {
                 graph,
                 self.view_indices[slot],
                 pyramid_buffer,
-                camera.eye,
+                cull.eye,
                 slot,
             )?;
         }
@@ -2745,6 +3069,60 @@ impl TerrainScene {
             );
             device.cmd_dispatch(cmd, slot_count.div_ceil(64).max(1), 1, 1);
         });
+
+        // Per-Face Culling: each drawn solid and cutout command's quads
+        // facing away from the cull eye go; the kept ones move to the
+        // pool's filtered indices. Not under a pack: its shadow pass draws
+        // the pools' indices with commands of its own.
+        self.face_filtered = face_filter_wanted();
+        if self.face_filtered && !self.pools.is_empty() {
+            let mut buffers = vec![
+                (self.slots.buffer.raw, Use::ComputeRead),
+                (self.counts.raw, Use::ComputeRead),
+                (self.commands.raw, Use::ComputeWrite),
+            ];
+            for pool in &self.pools {
+                buffers.push((pool.vertices.raw, Use::ComputeRead));
+                buffers.push((pool.indices.raw, Use::ComputeRead));
+                buffers.push((pool.filtered.raw, Use::ComputeWrite));
+            }
+            let capacity = self.list_capacity;
+            let view_index = self.view_indices[slot];
+            graph.pass("terrain face filter", &[], &buffers, |cmd| unsafe {
+                // SAFETY: recording with the shared layout and the bindless
+                // set; the push names live buffers.
+                device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipes.face_filter);
+                device.cmd_bind_descriptor_sets(
+                    cmd,
+                    vk::PipelineBindPoint::COMPUTE,
+                    pipelines.layout,
+                    0,
+                    &[bindless.set],
+                    &[],
+                );
+                for (p, pool) in self.pools.iter().enumerate() {
+                    push(
+                        ctx,
+                        cmd,
+                        pipelines.layout,
+                        &Push {
+                            ids: [
+                                self.slots.index,
+                                self.commands_index,
+                                self.counts_index,
+                                view_index,
+                            ],
+                            more: [capacity, p as u32 * 2, pool.index_ids.0, pool.index_ids.1],
+                            params: [0.0; 4],
+                            view_proj: [[0.0; 4]; 4],
+                        },
+                    );
+                    // A group per command slot of the solid and the cutout
+                    // list; those past the cull's count leave at once.
+                    device.cmd_dispatch(cmd, capacity.max(1), 2, 1);
+                }
+            });
+        }
 
         let readback = self.readback[slot].raw;
         let lists = self.pools.len() as u64 * 2;
@@ -2785,7 +3163,7 @@ impl TerrainScene {
         ];
         for pool in &self.pools {
             buffers.push((pool.vertices.raw, Use::VertexRead));
-            buffers.push((pool.indices.raw, Use::IndexRead));
+            buffers.push((self.drawn_indices(pool), Use::IndexRead));
         }
         let stats_pool = self.stats_pools.get(slot).copied();
         if let Some(issued) = self.stats_issued.get_mut(slot) {
@@ -2815,6 +3193,7 @@ impl TerrainScene {
             .as_ref()
             .map_or([0.47, 0.65, 1.0, 1.0], |e| e.clear);
         let seconds = frame as f32 / 60.0;
+        let overdraw = view == View::Overdraw;
         // Two passes around the depth pyramid: it takes only what's opaque,
         // or water (which writes depth) would hide what shows through it.
         graph.pass("terrain", &images, &buffers, |cmd| unsafe {
@@ -2877,23 +3256,56 @@ impl TerrainScene {
                 },
             );
             let capacity = self.list_capacity;
-            for (kind, pipeline) in [pipes.solid, pipes.cutout].into_iter().enumerate() {
-                device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
-                for (p, pool) in self.pools.iter().enumerate() {
-                    let list = p as u64 * 2 + kind as u64;
-                    device.cmd_bind_index_buffer(cmd, pool.indices.raw, 0, vk::IndexType::UINT32);
-                    ctx.draw_indexed_indirect_count(
-                        cmd,
-                        self.commands.raw,
-                        list * capacity as u64 * COMMAND_SIZE,
-                        self.counts.raw,
-                        list * 4,
-                        capacity,
-                        COMMAND_SIZE as u32,
-                    );
+            let draw_lists = |pipelines: [vk::Pipeline; 2]| {
+                for (kind, pipeline) in pipelines.into_iter().enumerate() {
+                    device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
+                    for (p, pool) in self.pools.iter().enumerate() {
+                        let list = p as u64 * 2 + kind as u64;
+                        device.cmd_bind_index_buffer(
+                            cmd,
+                            self.drawn_indices(pool),
+                            0,
+                            vk::IndexType::UINT32,
+                        );
+                        ctx.draw_indexed_indirect_count(
+                            cmd,
+                            self.commands.raw,
+                            list * capacity as u64 * COMMAND_SIZE,
+                            self.counts.raw,
+                            list * 4,
+                            capacity,
+                            COMMAND_SIZE as u32,
+                        );
+                    }
                 }
+            };
+            draw_lists([pipes.solid, pipes.cutout]);
+            if overdraw {
+                // The depth stays the normal draw's (the occlusion pyramid
+                // reads it); the colour restarts black, then every drawn
+                // terrain fragment adds to it.
+                device.cmd_clear_attachments(
+                    cmd,
+                    &[vk::ClearAttachment {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        color_attachment: 0,
+                        clear_value: vk::ClearValue {
+                            color: vk::ClearColorValue { float32: [0.0; 4] },
+                        },
+                    }],
+                    &[vk::ClearRect {
+                        rect: vk::Rect2D {
+                            offset: vk::Offset2D::default(),
+                            extent,
+                        },
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    }],
+                );
+                draw_lists([pipes.overdraw, pipes.overdraw]);
             }
-            if let Some(particles) = &self.particles {
+            if overdraw {
+            } else if let Some(particles) = &self.particles {
                 particles.draw_cutout(
                     ctx,
                     cmd,
@@ -2905,7 +3317,8 @@ impl TerrainScene {
                     self.atlas_index,
                 );
             }
-            if let Some(entities) = &self.entities {
+            if overdraw {
+            } else if let Some(entities) = &self.entities {
                 entities.draw_solid(
                     ctx,
                     cmd,
@@ -2923,18 +3336,21 @@ impl TerrainScene {
             device.cmd_end_rendering(cmd);
         });
 
-        self.build_pyramid(
-            ctx,
-            memory,
-            bindless,
-            pipelines,
-            pipes.hiz_reduce,
-            graph,
-            (depth, depth_index),
-            extent,
-            frame,
-        )?;
-        self.pyramid_view = Some((view_proj, camera.eye));
+        // Frozen: the pyramid stays the cull camera's last.
+        if !frozen {
+            self.build_pyramid(
+                ctx,
+                memory,
+                bindless,
+                pipelines,
+                pipes.hiz_reduce,
+                graph,
+                (depth, depth_index),
+                extent,
+                frame,
+            )?;
+            self.pyramid_view = Some((view_proj, camera.eye));
+        }
 
         graph.pass("terrain translucent", &images, &buffers, |cmd| unsafe {
             // SAFETY: as the opaque pass; both attachments keep its output.
@@ -2981,7 +3397,12 @@ impl TerrainScene {
             );
             // Translucent last, far to near over everything opaque.
             if self.translucent_count > 0 {
-                device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipes.translucent);
+                let pipeline = if overdraw {
+                    pipes.overdraw
+                } else {
+                    pipes.translucent
+                };
+                device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
                 device.cmd_bind_index_buffer(
                     cmd,
                     self.translucent.buffer.raw,
@@ -2996,7 +3417,8 @@ impl TerrainScene {
                     COMMAND_SIZE as u32,
                 );
             }
-            if let Some(entities) = &self.entities {
+            if overdraw {
+            } else if let Some(entities) = &self.entities {
                 entities.draw_blend(
                     ctx,
                     cmd,
@@ -3008,7 +3430,8 @@ impl TerrainScene {
                 );
             }
             // Iris and vanilla draw particles after the translucent terrain.
-            if let Some(particles) = &self.particles {
+            if overdraw {
+            } else if let Some(particles) = &self.particles {
                 particles.draw_blend(
                     ctx,
                     cmd,
@@ -3020,7 +3443,8 @@ impl TerrainScene {
                     self.atlas_index,
                 );
             }
-            if let Some(env) = &self.env {
+            if overdraw {
+            } else if let Some(env) = &self.env {
                 env.draw_clouds(ctx, cmd, pipelines, view_index, view_proj_cols);
                 env.draw_world_overlays(ctx, cmd, pipelines, view_index, view_proj_cols, extent);
                 // The hand camera's projection (`scene::hand`: 70° fov,
@@ -3444,6 +3868,66 @@ mod tests {
     }
 
     #[test]
+    fn bands_put_seen_faces_together() {
+        // Four +x quads at planes 1, 13, 5, 9 (quad i's plane from its first
+        // index), then two -x quads at 2 and 14.
+        let planes = [1, 13, 5, 9, 2, 14];
+        let mut indices: Vec<u32> = (0..6u32).flat_map(|q| [q * 4; 6]).collect();
+        let counts = [24, 12, 0, 0, 0, 0, 0];
+        let plane = |i: u32, _: usize| planes[(i / 4) as usize] * 256;
+        let bands = band_sort(&mut indices, &counts, plane);
+        let order: Vec<i32> = indices
+            .chunks(6)
+            .map(|q| planes[(q[0] / 4) as usize])
+            .collect();
+        assert_eq!(order, [13, 9, 5, 1, 14, 2], "far side first");
+        // Stored bands run plane 15 down to 0: 13 is the third, 9 the
+        // seventh, 5 the eleventh, 1 the fifteenth.
+        let mut plus = [0u16; 15];
+        for (k, c) in plus.iter_mut().enumerate() {
+            *c = [2usize, 6, 10, 14].iter().filter(|&&b| b <= k).count() as u16 * 6;
+        }
+        assert_eq!(bands[0], plus);
+        assert_eq!(bands[1][0], 0);
+        assert_eq!(bands[1][1], 6, "plane 14 second");
+        assert_eq!(bands[1][12], 6);
+        assert_eq!(bands[1][13], 12, "plane 2 fourteenth");
+        assert_eq!(bands[2], [0; 15], "empty buckets band trivially");
+        let off = |i: u32, _: usize| if i == 0 { -256 } else { 256 };
+        let mut again = indices.clone();
+        assert_eq!(band_sort(&mut again, &counts, off)[0], [NO_BANDS; 15]);
+    }
+
+    #[test]
+    fn cutout_buckets_follow_the_ring() {
+        // Axes, then the octants either side of each diagonal.
+        assert_eq!(cutout_bucket(5, 0, 0), 0);
+        assert_eq!(cutout_bucket(5, 0, 2), 1);
+        assert_eq!(
+            cutout_bucket(3, 0, 3),
+            1,
+            "a diagonal goes with the axis before"
+        );
+        assert_eq!(cutout_bucket(2, 0, 5), 2);
+        assert_eq!(cutout_bucket(0, 0, 5), 3);
+        assert_eq!(cutout_bucket(-2, 0, 5), 4);
+        assert_eq!(cutout_bucket(-5, 0, 2), 5);
+        assert_eq!(cutout_bucket(-5, 0, 0), 6);
+        assert_eq!(cutout_bucket(-5, 0, -2), 7);
+        assert_eq!(cutout_bucket(-2, 0, -5), 8);
+        assert_eq!(cutout_bucket(0, 0, -5), 9);
+        assert_eq!(cutout_bucket(2, 0, -5), 10);
+        assert_eq!(cutout_bucket(5, 0, -2), 11);
+        assert_eq!(cutout_bucket(0, 5, 0), 12);
+        assert_eq!(cutout_bucket(0, -5, 0), 13);
+        assert_eq!(
+            cutout_bucket(1, 1, 0),
+            CUTOUT_BUCKETS,
+            "tilted off vertical"
+        );
+    }
+
+    #[test]
     fn only_changes_in_the_map_make_it_stale() {
         let mut changes = ShadowChanges::default();
         changes.note([400, 64, 400]);
@@ -3538,6 +4022,7 @@ mod tests {
             verts,
             idx,
             cutout_idx: Vec::new(),
+            torch_count: 0,
             pack: Vec::new(),
             voxels: None,
         };

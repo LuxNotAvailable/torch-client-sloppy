@@ -30,6 +30,9 @@ pub enum View {
     /// Shaded, with terrain triangles outlined and quads tinted by how
     /// they were stored (plain, packed, merged).
     Outlines,
+    /// Terrain depth complexity: each drawn fragment adds heat, hidden
+    /// ones included (black 0, red ~8, yellow ~32, white ~128).
+    Overdraw,
 }
 
 impl View {
@@ -39,6 +42,7 @@ impl View {
             "normals" => View::Normals,
             "texture" => View::TextureIndex,
             "outlines" => View::Outlines,
+            "overdraw" => View::Overdraw,
             _ => return None,
         })
     }
@@ -49,6 +53,7 @@ impl View {
             View::Normals => 1,
             View::TextureIndex => 2,
             View::Outlines => 3,
+            View::Overdraw => 4,
         }
     }
 }

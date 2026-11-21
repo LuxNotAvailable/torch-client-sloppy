@@ -56,6 +56,18 @@ fn backface_culling() -> bool {
     BACKFACE_CULLING.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Back-cull opaque entity models (Advanced Performance > Entity Away-Face
+/// Culling): no alpha holes, so no back face ever shows.
+static AWAY_FACES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+pub fn set_away_faces(on: bool) {
+    AWAY_FACES.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn away_faces() -> bool {
+    AWAY_FACES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// What the entities drew last frame, for the viewer's summary.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct EntityStats {
@@ -400,7 +412,8 @@ impl EntityScene {
         let bounds_buffer = make("entity bounds", bounds_bytes.len() as u64, storage)?;
         let ranks = make("entity ranks", count as u64 * 4, storage)?;
         let indirect = storage | vk::BufferUsageFlags::INDIRECT_BUFFER;
-        let commands = make("entity commands", count as u64 * 2 * COMMAND_SIZE, indirect)?;
+        // Two-sided solid, back-culled solid, then blended (at rank).
+        let commands = make("entity commands", count as u64 * 3 * COMMAND_SIZE, indirect)?;
         let counts = make(
             "entity counts",
             16,
@@ -733,7 +746,7 @@ impl EntityScene {
         }
         let counts = self.counts.0.raw;
         let commands = self.commands.0.raw;
-        let zeroed = u64::from(self.count) * COMMAND_SIZE;
+        let zeroed = u64::from(self.count) * 2 * COMMAND_SIZE;
         graph.pass(
             "entity reset",
             &[],
@@ -778,11 +791,16 @@ impl EntityScene {
                         self.commands.1,
                         self.counts.1,
                     ],
-                    more: [count, count, view_index, count],
+                    more: [count, count, view_index, count * 2],
                     params: [
                         f32::from_bits(self.ranks.1),
                         f32::from_bits(self.bounds.1),
-                        0.0,
+                        // Every solid instance back-culled (Entity Back
+                        // Faces: Hidden), else only opaque ones (Entity
+                        // Away-Face Culling).
+                        f32::from_bits(
+                            u32::from(backface_culling()) | u32::from(away_faces()) << 1,
+                        ),
                         0.0,
                     ],
                     view_proj: [[0.0; 4]; 4],
@@ -885,28 +903,28 @@ impl EntityScene {
         // SAFETY: inside the terrain pass, with the shared layout and set
         // bound by the caller.
         unsafe {
-            ctx.device.cmd_bind_pipeline(
-                cmd,
-                vk::PipelineBindPoint::GRAPHICS,
-                if backface_culling() {
-                    pipes.solid_culled
-                } else {
-                    pipes.solid
-                },
-            )
+            ctx.device
+                .cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipes.solid)
         };
         self.bind(ctx, cmd, pipelines, view_proj, mode, seconds, view_index);
-        // SAFETY: as above; the commands and count the cull wrote.
-        unsafe {
-            ctx.draw_indexed_indirect_count(
-                cmd,
-                self.commands.0.raw,
-                0,
-                self.counts.0.raw,
-                0,
-                self.count,
-                COMMAND_SIZE as u32,
-            );
+        // The cull's two solid lists: two-sided, then back-culled.
+        for (list, pipeline) in [(0u64, pipes.solid), (1, pipes.solid_culled)] {
+            // SAFETY: as above; the commands and count the cull wrote.
+            unsafe {
+                if list > 0 {
+                    ctx.device
+                        .cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
+                }
+                ctx.draw_indexed_indirect_count(
+                    cmd,
+                    self.commands.0.raw,
+                    list * u64::from(self.count) * COMMAND_SIZE,
+                    self.counts.0.raw,
+                    list * 4,
+                    self.count,
+                    COMMAND_SIZE as u32,
+                );
+            }
         }
     }
 
@@ -952,7 +970,7 @@ impl EntityScene {
                 ctx.device.cmd_draw_indexed_indirect(
                     cmd,
                     self.commands.0.raw,
-                    (self.count + first) as u64 * COMMAND_SIZE,
+                    (self.count * 2 + first) as u64 * COMMAND_SIZE,
                     len,
                     COMMAND_SIZE as u32,
                 );
@@ -1448,7 +1466,7 @@ impl EntityScene {
             memory,
             bindless,
             &mut self.commands,
-            count * 2 * COMMAND_SIZE,
+            count * 3 * COMMAND_SIZE,
             indirect,
             frame,
             r,

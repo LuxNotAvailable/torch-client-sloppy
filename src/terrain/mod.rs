@@ -33,6 +33,34 @@ pub const GREEDY_AGGRESSIVE: u8 = 2;
 /// tinted by how each quad is stored.
 pub static OUTLINES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// Culling frozen at the camera it was turned on at (Debug Options >
+/// Freeze Culling), so freecam can look at what it keeps.
+pub static FREEZE_CULL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The overdraw heat map (Debug Options > Overdraw): every drawn terrain
+/// fragment, hidden ones included.
+pub static OVERDRAW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Torches farther than this many blocks aren't drawn (Video Settings >
+/// Torch Distance); 0 for no limit.
+pub static TORCH_DISTANCE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Away-face culling for the cutout layer (Advanced Performance > Cutout
+/// Face Culling).
+pub static CUTOUT_FACES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Away-face culling for angled cutout faces: cross plants, turned signs
+/// (Advanced Performance > Angled Face Culling).
+pub static ANGLED_FACES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Away-face culling by plane band within a section (Advanced Performance >
+/// Exact Face Culling).
+pub static FACE_BANDS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Per-quad away-face culling on the GPU (Advanced Performance > Per-Face
+/// Culling).
+pub static FACE_FILTER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// Section origins per row of the terrain origins texture (`terrain.wgsl`
 /// and the pack preludes read it at this width).
 pub const ORIGIN_ROW: u32 = 256;
@@ -88,6 +116,8 @@ pub struct RenderedBlock {
     /// Its sides' coverage, an index into `blocks::shape::shapes`; 0 for
     /// none.
     pub shape: u32,
+    /// A torch (any kind): its quads go in the section's torch range.
+    pub torch: bool,
 }
 
 pub struct PendingSection {

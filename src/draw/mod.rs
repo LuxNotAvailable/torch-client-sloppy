@@ -55,6 +55,10 @@ pub const KIND_REPEAT: u32 = 1 << 31;
 /// Set in an instance's `kind` when only a pack's shadow pass draws it (the
 /// local player in first person).
 pub const KIND_SHADOW_ONLY: u32 = 1 << 30;
+/// Set in an instance's `kind` when its back faces can go (an opaque
+/// material: no alpha holes to show a back face through, as vanilla's
+/// culled `entitySolid`). Must match `KIND_CULL` in `shaders/entity.slang`.
+pub const KIND_CULL: u32 = 1 << 29;
 
 /// One live particle, billboarded in the vertex shader.
 #[repr(C)]

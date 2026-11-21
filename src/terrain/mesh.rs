@@ -149,7 +149,12 @@ const _: () = assert!(std::mem::size_of::<PackedVertex>() == 20);
 pub struct MeshBuf {
     pub verts: Vec<PackedVertex>,
     pub idx: Vec<u32>,
+    /// Cutout indices; the last `torch_count` are torches'.
     pub cutout_idx: Vec<u32>,
+    pub torch_count: u32,
+    /// The block being meshed is a torch: its cutout quads go to `torch_idx`.
+    pub torch: bool,
+    torch_idx: Vec<u32>,
     pub min: [i16; 3],
     pub max: [i16; 3],
     /// The block being meshed is randomized (`VERTEX_FREE_ROTATION`).
@@ -276,6 +281,10 @@ impl MeshBuf {
     }
 
     fn shrink_to_fit(&mut self) {
+        // Torch quads close the cutout range, so a cull can drop them alone.
+        self.torch_count = self.torch_idx.len() as u32;
+        let torches = std::mem::take(&mut self.torch_idx);
+        self.cutout_idx.extend_from_slice(&torches);
         self.verts.shrink_to_fit();
         #[cfg(feature = "shader_support")]
         self.pack.shrink_to_fit();
@@ -392,6 +401,8 @@ impl MeshBuf {
         }
         let idx = if quad.opaque {
             &mut self.idx
+        } else if self.torch {
+            &mut self.torch_idx
         } else {
             &mut self.cutout_idx
         };
@@ -653,6 +664,7 @@ fn emit_baked(
         .randomized
         .then(|| JavaRandom::new(position_seed(bx, by, bz)));
     buf.free_rotation = baked.randomized;
+    buf.torch = rb.torch;
 
     let [ox, oy, oz] = rb.offset.at(bx, bz);
     let (wx, wy, wz) = (wx + ox, wy + oy, wz + oz);
@@ -850,6 +862,7 @@ fn emit_block_entity(
     buf: &mut MeshBuf,
 ) {
     buf.free_rotation = false;
+    buf.torch = false;
     let light = flat_light_coords(occ, at, at);
     for quad in quads {
         let lit = QuadLight::flat(quad.shade(cardinal), light);

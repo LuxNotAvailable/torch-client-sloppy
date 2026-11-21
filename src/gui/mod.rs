@@ -122,6 +122,8 @@ pub enum Screen {
     LeafSettings,
     /// Light shafts' settings, under Video Settings.
     LightRaySettings,
+    /// The culling options, under Video Settings.
+    AdvancedPerformance,
     /// Inventory sorting's settings, under Features.
     InventorySortSettings,
     /// The end poem and credits, after leaving the End.
@@ -216,7 +218,7 @@ settings_tree! {
     Language | AccessibilitySettings | OnlineSettings | DebugOptions => Options,
     MouseSettings => Controls,
     BlockOutlineSettings => VideoSettings,
-    LeafSettings | LightRaySettings => VideoSettings,
+    LeafSettings | LightRaySettings | AdvancedPerformance => VideoSettings,
     ZoomSettings | BlockInfoSettings | InventorySortSettings | FoodInfoSettings => Features,
     FontSettings => Language,
     #[cfg(audio)]
@@ -483,6 +485,25 @@ crate::options! {
         /// Entities and block entities behind solid blocks are not drawn
         /// (`entities::cull`).
         pub entity_culling: bool = true => key("torchEntityCulling"),
+        /// Entity Distance in quarters (2 to 8: 50% to 200%).
+        pub entity_distance: u32 = 4 => key("torchEntityDistance").clamp(2, 8),
+        /// How far sign text draws, in 16-block steps (1 to 4; 4 is vanilla's 64).
+        pub sign_distance: u32 = 4 => key("torchSignDistance").clamp(1, 4),
+        /// How far torches draw, in 16-block steps (1 to 5; 5 is no limit).
+        pub torch_distance: u32 = 5 => key("torchTorchDistance").clamp(1, 5),
+        /// Skip cutout faces (signs, lanterns, leaves) pointing away from
+        /// the camera, per section.
+        pub cutout_face_culling: bool = true => key("torchCutoutFaceCulling"),
+        /// The same for angled cutout faces: cross plants, turned signs.
+        pub angled_face_culling: bool = true => key("torchAngledFaceCulling"),
+        /// Away faces within a section too, by 4-block plane band.
+        pub exact_face_culling: bool = true => key("torchExactFaceCulling"),
+        /// Back-cull opaque entity models (no alpha holes to see one through).
+        pub entity_away_faces: bool = true => key("torchEntityAwayFaces"),
+        /// Drop every terrain quad whose back faces the camera, on the GPU.
+        /// Off by default: on the laptop's MX250 its pass (1.6 ms) cost more
+        /// than the drawing it saved.
+        pub per_face_culling: bool = false => key("torchPerFaceCulling"),
         /// The inventory player model drawn at 2x and averaged (native).
         pub smooth_gui_model: bool = true => key("torchSmoothGuiModel"),
         /// Model item icons rendered at 2x and averaged; applies after a

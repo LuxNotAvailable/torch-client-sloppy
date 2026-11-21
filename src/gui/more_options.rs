@@ -44,6 +44,7 @@ pub fn apply(options: &crate::gui::GuiOptions) {
     crate::entities::cull::set_enabled(options.entity_culling);
 
     crate::vk::entities::set_backface_culling(options.entity_backface_culling);
+    crate::vk::entities::set_away_faces(options.entity_away_faces);
     crate::blockentities::text::set_glow_outline(
         crate::blockentities::text::GlowOutline::ALL[options.sign_glow_outline.min(2) as usize],
     );
@@ -127,6 +128,16 @@ pub fn draw_debug(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     let mut outlines = crate::terrain::OUTLINES.load(std::sync::atomic::Ordering::Relaxed);
     if form.toggle("Triangle Outlines", &mut outlines) {
         crate::terrain::OUTLINES.store(outlines, std::sync::atomic::Ordering::Relaxed);
+    }
+    // Culls stay at the camera this was turned on at (look with freecam).
+    let mut freeze = crate::terrain::FREEZE_CULL.load(std::sync::atomic::Ordering::Relaxed);
+    if form.toggle("Freeze Culling", &mut freeze) {
+        crate::terrain::FREEZE_CULL.store(freeze, std::sync::atomic::Ordering::Relaxed);
+    }
+    // Terrain overdraw heat map: black none, red ~8 layers, white ~128.
+    let mut overdraw = crate::terrain::OVERDRAW.load(std::sync::atomic::Ordering::Relaxed);
+    if form.toggle("Overdraw", &mut overdraw) {
+        crate::terrain::OVERDRAW.store(overdraw, std::sync::atomic::Ordering::Relaxed);
     }
     // Records a performance report of the play that follows (closes the
     // menus so the recording is of play, not of this screen).

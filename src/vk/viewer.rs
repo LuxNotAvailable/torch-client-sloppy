@@ -697,6 +697,7 @@ impl Renderer {
                     self.frame,
                     slot,
                     camera,
+                    None,
                     view,
                 )
             }

@@ -112,7 +112,12 @@ fn fill_draw_list(
                     (_, true, _) => 3,
                     (.., true) => 4,
                     _ => 0,
-                } | if shadow_only { KIND_SHADOW_ONLY } else { 0 },
+                } | if shadow_only { KIND_SHADOW_ONLY } else { 0 }
+                    | if material.alpha_mode.code() == 0 {
+                        crate::draw::KIND_CULL
+                    } else {
+                        0
+                    },
                 tint: p.tint.to_array(),
                 light: p.light.to_array(),
                 light0: p.light0.to_array(),

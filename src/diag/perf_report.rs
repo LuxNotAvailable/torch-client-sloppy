@@ -38,6 +38,7 @@ use crate::platform::time::Instant;
 const SETTLE: Duration = Duration::from_secs(2);
 /// How long a report records.
 pub const RECORD: Duration = Duration::from_secs(10);
+
 /// How often the process is sampled.
 const PROCESS_EVERY: Duration = Duration::from_millis(250);
 
@@ -886,6 +887,48 @@ fn describe(
             ["off", "standard", "aggressive"][o.greedy_meshing.min(2) as usize].to_owned(),
         ),
         ("entity shadows".to_owned(), o.entity_shadows.to_string()),
+        // Advanced Performance's culls.
+        ("entity culling".to_owned(), o.entity_culling.to_string()),
+        (
+            "entity back faces".to_owned(),
+            o.entity_backface_culling.to_string(),
+        ),
+        (
+            "entity away faces".to_owned(),
+            o.entity_away_faces.to_string(),
+        ),
+        (
+            "cutout face culling".to_owned(),
+            o.cutout_face_culling.to_string(),
+        ),
+        (
+            "angled face culling".to_owned(),
+            o.angled_face_culling.to_string(),
+        ),
+        (
+            "exact face culling".to_owned(),
+            o.exact_face_culling.to_string(),
+        ),
+        (
+            "per-face culling".to_owned(),
+            o.per_face_culling.to_string(),
+        ),
+        (
+            "entity distance".to_owned(),
+            format!("{}%", o.entity_distance * 25),
+        ),
+        (
+            "sign distance".to_owned(),
+            format!("{} blocks", o.sign_distance * 16),
+        ),
+        (
+            "torch distance".to_owned(),
+            if o.torch_distance >= 5 {
+                "unlimited".to_owned()
+            } else {
+                format!("{} blocks", o.torch_distance * 16)
+            },
+        ),
         ("fov".to_owned(), o.fov.to_string()),
         ("gui scale".to_owned(), o.gui_scale.to_string()),
         ("shader pack".to_owned(), pack),

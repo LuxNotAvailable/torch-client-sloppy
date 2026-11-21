@@ -102,6 +102,7 @@ pub fn section(
                 verts: mesh.verts.clone(),
                 idx: mesh.idx.clone(),
                 cutout_idx: mesh.cutout_idx.clone(),
+                torch_count: mesh.torch_count,
                 #[cfg(feature = "shader_support")]
                 pack: bytemuck::cast_slice(&mesh.pack).to_vec(),
                 #[cfg(not(feature = "shader_support"))]
@@ -177,6 +178,8 @@ pub struct Section {
     pub verts: Vec<PackedVertex>,
     pub idx: Vec<u32>,
     pub cutout_idx: Vec<u32>,
+    /// The last this many of `cutout_idx` are torches'; dumps keep none.
+    pub torch_count: u32,
     /// Pack quads (`packvertex::PackQuad` words), one per four vertices;
     /// empty when no pack was on.
     pub pack: Vec<[u32; 4]>,
@@ -241,6 +244,7 @@ fn next_record(bytes: &[u8], at: &mut usize) -> Option<Record> {
             verts,
             idx,
             cutout_idx,
+            torch_count: 0,
             pack,
             voxels: None,
         })

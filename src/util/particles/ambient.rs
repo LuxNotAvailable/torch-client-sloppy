@@ -149,6 +149,16 @@ impl NearChunks {
     }
 }
 
+/// A torch past Torch Distance (`terrain::TORCH_DISTANCE`): it isn't drawn,
+/// so neither are its flame and smoke.
+fn torch_past_reach(ambient: crate::blocks::ambient::Ambient, cell: [i32; 3], eye: Vec3) -> bool {
+    use crate::blocks::ambient::Ambient;
+    let reach = crate::terrain::TORCH_DISTANCE.load(std::sync::atomic::Ordering::Relaxed) as f32;
+    let torch = matches!(ambient, Ambient::Torch { .. } | Ambient::RedstoneTorch);
+    let centre = Vec3::new(cell[0] as f32, cell[1] as f32, cell[2] as f32) + 0.5;
+    torch && reach > 0.0 && centre.distance_squared(eye) > reach * reach
+}
+
 #[allow(clippy::too_many_arguments, reason = "one sample's whole context")]
 pub(super) fn do_animate_tick(
     cell: [i32; 3],
@@ -169,7 +179,9 @@ pub(super) fn do_animate_tick(
         live,
         rng,
     };
-    if let Some(ambient) = crate::blocks::ambient::of(state) {
+    if let Some(ambient) = crate::blocks::ambient::of(state)
+        && !torch_past_reach(ambient, cell, eye)
+    {
         emit_ambient(ambient, state, &mut ctx);
     }
     block_sounds(state, &mut ctx);

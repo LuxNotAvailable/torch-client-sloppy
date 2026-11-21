@@ -170,9 +170,18 @@ struct MergeKey {
 /// from the start of `indices`) and of the cutout quads after them (leaves)
 /// into rectangles, updating `counts`.
 ///
+/// The cutout quads come as buckets (`cutout`), then the rest on no axis; the last `torches` indices (the torch range) stay in place,
+/// unmerged.
+///
 /// `aggressive` merges every whole face of a plane, whatever its texture
 /// or rotation (`AGGRESSIVE`).
-pub fn merge(packed: &mut Packed, counts: &mut [u32; 7], aggressive: bool) {
+pub fn merge(
+    packed: &mut Packed,
+    counts: &mut [u32; 7],
+    cutout: &mut [u32],
+    torches: u32,
+    aggressive: bool,
+) {
     let indices = std::mem::take(&mut packed.indices);
     let mut out = Vec::with_capacity(indices.len());
     let mut merged: Vec<(Record, Option<Record>)> = Vec::new();
@@ -188,13 +197,22 @@ pub fn merge(packed: &mut Packed, counts: &mut [u32; 7], aggressive: bool) {
         *count = run.len() as u32;
         out.extend(run);
     }
+    for count in cutout.iter_mut() {
+        let quads = &indices[at..at + *count as usize];
+        at += *count as usize;
+        let run = merge_run(packed, &mut merged, quads, None, aggressive);
+        *count = run.len() as u32;
+        out.extend(run);
+    }
+    let tail = indices.len() - torches as usize;
     out.extend(merge_run(
         packed,
         &mut merged,
-        &indices[at..],
+        &indices[at..tail],
         None,
         aggressive,
     ));
+    out.extend_from_slice(&indices[tail..]);
 
     // Keep only the records still named, merged ones included; a loose
     // record left unmerged goes back to its vertices.
@@ -919,7 +937,7 @@ mod tests {
         let mut packed = pack(&verts, &indices, 0, false);
         let plain: Vec<Record> = packed.records.clone();
         let mut counts = [0, 0, indices.len() as u32, 0, 0, 0, 0];
-        merge(&mut packed, &mut counts, true);
+        merge(&mut packed, &mut counts, &mut [0; 6], 0, true);
         assert_eq!(packed.records.len(), 1);
         assert_eq!(counts[2], 6);
         assert_eq!(packed.indices.len(), 6);
@@ -971,7 +989,7 @@ mod tests {
         let mut packed = pack(&verts, &indices, 2, true);
         assert_eq!(packed.records.len(), 4);
         let mut counts = [0, 0, indices.len() as u32, 0, 0, 0, 0];
-        merge(&mut packed, &mut counts, true);
+        merge(&mut packed, &mut counts, &mut [0; 6], 0, true);
         assert_eq!(packed.records.len(), 1);
         assert_eq!(packed.indices.len(), 6);
         assert_eq!(packed.cells[0], u32::from_le_bytes([222, 249, 255, 255]));
@@ -979,7 +997,7 @@ mod tests {
         // One face alone: back to its four vertices.
         let mut one = pack(&verts[..4], &[0, 1, 2, 0, 2, 3], 2, true);
         let mut counts = [0, 0, 6, 0, 0, 0, 0];
-        merge(&mut one, &mut counts, true);
+        merge(&mut one, &mut counts, &mut [0; 6], 0, true);
         assert!(one.records.is_empty());
         assert_eq!(one.verts.len(), 4);
         assert!(one.indices.iter().all(|&i| i < 4));
@@ -1000,7 +1018,7 @@ mod tests {
     fn exact(verts: &[PackedVertex], indices: &[u32]) -> (Packed, [u32; 7]) {
         let mut packed = pack(verts, indices, 0, false);
         let mut counts = [0, 0, indices.len() as u32, 0, 0, 0, 0];
-        merge(&mut packed, &mut counts, false);
+        merge(&mut packed, &mut counts, &mut [0; 6], 0, false);
         (packed, counts)
     }
 
@@ -1039,7 +1057,7 @@ mod tests {
         }
         let mut packed = pack(&verts, &indices, 0, false);
         let mut counts = [0, 0, indices.len() as u32, 0, 0, 0, 0];
-        merge(&mut packed, &mut counts, false);
+        merge(&mut packed, &mut counts, &mut [0; 6], 0, false);
         // The odd cell alone, then the other three as an L: two rectangles
         // and one single.
         assert_eq!(counts[2] / 6, 3);
@@ -1081,7 +1099,7 @@ mod tests {
                 // One bucket is enough for counting (keys hold the axis).
                 let mut counts = [0, 0, 0, 0, 0, 0, 0];
                 counts[0] = solid;
-                merge(&mut p, &mut counts, false);
+                merge(&mut p, &mut counts, &mut [0; 6], 0, false);
                 after += p.indices.len() / 6;
             }
             println!("slack {slack}: {quads} quads, {records} records, {after} after merging");

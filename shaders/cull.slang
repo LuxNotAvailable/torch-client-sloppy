@@ -18,6 +18,9 @@ static const uint VIEW_HOLE = 176;
 static const uint VIEW_FOG_COLOR = 192;
 static const uint VIEW_FOG_RANGES = 208;
 static const uint VIEW_ENV = 224;
+// The eye culls test from (xyz; w the CULL_BELOW floor): the camera's, or
+// a frozen cull's.
+static const uint VIEW_CULL_EYE = 240;
 
 static const uint CULL_HIZ = 1;
 static const uint CULL_VISIBILITY = 2;
@@ -30,6 +33,12 @@ static const uint CULL_BELOW = 32;
 // Drop boxes whose clip x, y lie wholly inside the hole (VIEW_HOLE): the
 // outer shadow cascade, where the inner one covers.
 static const uint CULL_HOLE = 64;
+// CULL_BUCKETS for the cutout layer too (Cutout Face Culling).
+static const uint CULL_CUTOUT_BUCKETS = 128;
+// The cutout octant buckets too (Angled Face Culling).
+static const uint CULL_ANGLED_BUCKETS = 256;
+// The solid axis buckets' plane bands (Exact Face Culling).
+static const uint CULL_FACE_BANDS = 512;
 
 // VkDrawIndexedIndirectCommand.
 struct DrawCommand {
@@ -102,44 +111,66 @@ uint level_offset(uint level, uint2 size0) {
 
 // Whether the box is hidden behind last frame's depth (3.4): projected with
 // last frame's camera, so the pyramid lines up, its nearest depth is
-// farther than the farthest depth over the area it covers. Anything that
-// was partly off last frame's screen, or crosses its near plane, counts as
-// visible.
+// farther than the farthest depth over the area it covers. A box past a
+// screen edge is tested on its on-screen part, but only past an edge it
+// also crosses on this frame's screen (beyond it nothing shows now; inside
+// it, last frame may have no depth). One crossing either near plane counts
+// as visible.
 bool hiz_occluded(RWByteAddressBuffer view, float3 lo, float3 hi) {
     uint4 hiz = view.Load4(VIEW_HIZ);
     Columns m = load_columns(view, VIEW_PREV_VIEW_PROJ);
+    Columns now = load_columns(view, VIEW_VIEW_PROJ);
     float2 mn = 1e9;
     float2 mx = -1e9;
+    float2 now_mn = 1e9;
+    float2 now_mx = -1e9;
     float nearest = 0;
     for (uint i = 0; i < 8; i++) {
         float3 corner = float3((i & 1) != 0 ? hi.x : lo.x, (i & 2) != 0 ? hi.y : lo.y, (i & 4) != 0 ? hi.z : lo.z);
         float4 c = m.apply(corner);
-        if (c.w <= 0.05) {
+        float4 n = now.apply(corner);
+        if (c.w <= 0.05 || n.w <= 0.05) {
             return false;
         }
         float3 ndc = c.xyz / c.w;
         float2 uv = float2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
         mn = min(mn, uv);
         mx = max(mx, uv);
+        float2 now_uv = float2(n.x / n.w * 0.5 + 0.5, 0.5 - n.y / n.w * 0.5);
+        now_mn = min(now_mn, now_uv);
+        now_mx = max(now_mx, now_uv);
         nearest = max(nearest, ndc.z);
     }
-    if (any(mn < 0) || any(mx > 1)) {
+    // Past an edge last frame but not now: part of it may show uncovered.
+    if (any(mn < 0 && now_mn >= 0) || any(mx > 1 && now_mx <= 1)) {
         return false;
     }
+    if (any(mx < 0) || any(mn > 1)) {
+        return false;
+    }
+    mn = saturate(mn);
+    mx = saturate(mx);
     uint2 size0 = hiz.zw;
     float2 px_lo = mn * float2(size0);
     float2 px_hi = mx * float2(size0);
     float extent = max(px_hi.x - px_lo.x, px_hi.y - px_lo.y);
-    uint level = clamp(uint(ceil(log2(max(extent, 1.0)))), 1u, hiz.y);
+    // Fine enough that the box spans at most 5 texels: a coarser level's
+    // texels reach well past the box (into the sky near the horizon), and
+    // the culling flickered in bands as the box slid across their grid.
+    uint level = clamp(uint(ceil(log2(max(extent / 4.0, 1.0)))), 1u, hiz.y);
     uint2 size = level_size(level, size0);
     float scale = exp2(-float(level));
     int2 a = min(int2(px_lo * scale), int2(size) - 1);
     int2 b = min(int2(px_hi * scale), int2(size) - 1);
+    if (any(b - a > 4)) {
+        // Past the coarsest level's reach: not read in full, so kept.
+        return false;
+    }
     RWByteAddressBuffer pyramid = buffer_at(hiz.x);
     uint offset = level_offset(level, size0);
     float far = 1;
-    for (int y = a.y; y <= min(b.y, a.y + 2); y++) {
-        for (int x = a.x; x <= min(b.x, a.x + 2); x++) {
+    for (int y = a.y; y <= b.y; y++) {
+        for (int x = a.x; x <= b.x; x++) {
             far = min(far, asfloat(pyramid.Load((offset + y * size.x + x) * 4)));
         }
     }

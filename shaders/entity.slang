@@ -22,6 +22,8 @@ static const uint I_ALPHA = 12;
 static const uint I_KIND = 20;
 // Set in the kind when the texture repeats (`entity_dump::KIND_REPEAT`).
 static const uint KIND_REPEAT = 0x80000000u;
+// Set when the instance's back faces can go (`draw::KIND_CULL`).
+static const uint KIND_CULL = 0x20000000u;
 static const uint I_TINT = 24;
 static const uint I_LIGHT = 40;
 static const uint I_LIGHT0 = 56;
@@ -52,7 +54,8 @@ Columns instance_transform(ByteAddressBuffer instances, uint at) {
 // Push: ids.x instances, ids.y mesh table, ids.z commands, ids.w counts,
 //       more.x instance count, more.y solid capacity, more.z the cull view,
 //       more.w where the blended commands start; params.x the blend ranks
-//       buffer, params.y the bounds buffer (both as bits).
+//       buffer, params.y the bounds buffer (both as bits), params.z the
+//       back-cull bits (see below).
 // Solid (opaque and cutout) instances append to one list; blended ones
 // write their command at their rank (far to near, from the CPU), culled or
 // not, so they blend in order.
@@ -87,10 +90,16 @@ void cull_entities(uint3 id: SV_DispatchThreadID) {
         uint rank = buffer_ro(asuint(pc.params.x)).Load(index * 4);
         write_command(pc.ids.z, pc.more.w + rank, range.y, range.x, int(range.z), index, keep ? 1 : 0);
     }
+    // Solid lists: 0 two-sided, 1 back-culled (params.z: bit 0 all, bit 1
+    // the opaque ones).
     uint solid = keep && !blended ? 1 : 0;
-    uint slot = reserve(pc.ids.w, 0, solid, (flags & CULL_NO_WAVE) == 0);
+    uint cull_bits = asuint(pc.params.z);
+    uint kind = live ? instances.Load(at + I_KIND) : 0;
+    bool culled = (cull_bits & 1) != 0 || ((cull_bits & 2) != 0 && (kind & KIND_CULL) != 0);
+    uint list = culled ? 1 : 0;
+    uint slot = reserve(pc.ids.w, list, solid, (flags & CULL_NO_WAVE) == 0);
     if (solid > 0 && slot < pc.more.y) {
-        write_command(pc.ids.z, slot, range.y, range.x, int(range.z), index, 1);
+        write_command(pc.ids.z, list * pc.more.y + slot, range.y, range.x, int(range.z), index, 1);
     }
 }
 

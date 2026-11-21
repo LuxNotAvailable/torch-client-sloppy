@@ -175,6 +175,7 @@ pub fn block_visual(state: azalea::block::BlockState) -> RenderedBlock {
             state: state.id(),
             translucent: false,
             shape: 0,
+            torch: false,
         };
     }
 
@@ -207,6 +208,7 @@ pub fn block_visual(state: azalea::block::BlockState) -> RenderedBlock {
             state: state.id(),
             translucent: false,
             shape: 0,
+            torch: false,
         };
     }
 
@@ -236,6 +238,7 @@ pub fn block_visual(state: azalea::block::BlockState) -> RenderedBlock {
         state: state.id(),
         translucent: translucent_layer(name),
         shape,
+        torch: name.ends_with("torch"),
     }
 }
 
@@ -318,6 +321,7 @@ fn modded_visual(state: azalea::block::BlockState) -> RenderedBlock {
         translucent: false,
         // A stand-in cube is solid, which culls its neighbours already.
         shape: 0,
+        torch: false,
     }
 }
 

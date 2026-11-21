@@ -823,6 +823,8 @@ fn sync_block_entities(
     });
 
     let mut cull_blocks = Vec::new();
+    // Sign text's reach (Sign Distance): 16 blocks a step, vanilla's 64 at most.
+    let sign_reach = crate::gui::current_options().sign_distance as f32 * 16.0;
     for (pos, info) in snapshot.iter() {
         let Some(entry) = registry.by_kind.get(&info.kind) else {
             continue;
@@ -944,7 +946,15 @@ fn sync_block_entities(
             && bake::rig_wanted(info.state.state_id, *pos, moving);
         for layer in &mut rig.layers {
             let spec = &registry.specs[layer.spec];
-            let show = open && distance_sq < spec.view_distance * spec.view_distance;
+            let reach = if matches!(
+                info.kind,
+                BlockEntityKind::Sign | BlockEntityKind::HangingSign
+            ) {
+                spec.view_distance.min(sign_reach)
+            } else {
+                spec.view_distance
+            };
+            let show = open && distance_sq < reach * reach;
             if let Ok((_, mut visibility)) = nodes.get_mut(layer.root) {
                 let want = if show {
                     Visibility::Inherited

@@ -184,6 +184,8 @@ struct Live {
     retired: Vec<(Retired, u64)>,
     /// The world camera's eye last frame.
     eye: bevy::math::Vec3,
+    /// Debug Options > Freeze Culling: the camera culls stay at.
+    frozen_cull: Option<Camera>,
     /// The inventory's player figure, drawn offscreen for the GUI.
     figure: Figure,
     /// The shader pack drawing the frame, when one is chosen: its name and
@@ -270,6 +272,7 @@ fn setup(world: &mut World) -> Result<Live, SetupError> {
     let gui = GuiPass::new(&ctx, &memory, &mut bindless, &pipelines, format)?;
     let uploads = Uploads::new(&ctx, &memory, 16 << 20)?;
     Ok(Live {
+        frozen_cull: None,
         ctx,
         swapchain,
         frames: ManuallyDrop::new(frames),
@@ -1328,6 +1331,13 @@ impl Live {
             terrain.set_cull_only(self.pack.is_some());
             // Debug Options > Occlusion Culling.
             terrain.set_hiz(!crate::terrain::hiz::disabled());
+            // Debug Options > Freeze Culling: culls stay at the camera it
+            // was turned on at.
+            if crate::terrain::FREEZE_CULL.load(std::sync::atomic::Ordering::Relaxed) {
+                self.frozen_cull.get_or_insert(camera);
+            } else {
+                self.frozen_cull = None;
+            }
             let _timed = Timed::new(9);
             match terrain.record(
                 &self.ctx,
@@ -1342,7 +1352,10 @@ impl Live {
                 self.frame,
                 slot,
                 camera,
-                if crate::terrain::OUTLINES.load(std::sync::atomic::Ordering::Relaxed) {
+                self.frozen_cull,
+                if crate::terrain::OVERDRAW.load(std::sync::atomic::Ordering::Relaxed) {
+                    super::test_scene::View::Overdraw
+                } else if crate::terrain::OUTLINES.load(std::sync::atomic::Ordering::Relaxed) {
                     super::test_scene::View::Outlines
                 } else {
                     super::test_scene::View::Shaded

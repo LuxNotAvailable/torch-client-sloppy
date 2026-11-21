@@ -218,12 +218,61 @@ fn in_open_view(st: &EntityState, occlusion: &crate::scene::occlusion::Occlusion
     )
 }
 
-fn within_view_range(st: &EntityState, camera: &CameraView) -> bool {
-    let Some(display) = st.extras.object.display.as_deref() else {
-        return true;
-    };
-    let limit = display.view_range * VIEW_RANGE_BLOCKS;
-    Vec3::from(st.pos).distance_squared(camera.position) <= limit * limit
+fn within_view_range(st: &EntityState, camera: &CameraView, scale: f32) -> bool {
+    let distance_sq = Vec3::from(st.pos).distance_squared(camera.position);
+    if let Some(display) = st.extras.object.display.as_deref() {
+        let limit = display.view_range * VIEW_RANGE_BLOCKS * scale;
+        return distance_sq <= limit * limit;
+    }
+    match render_reach(st, scale) {
+        Some(reach) => distance_sq < reach * reach,
+        None => true,
+    }
+}
+
+/// Vanilla's `Entity.getViewScale`: render distance / 8, clamped to 1..2.5,
+/// times the Entity Distance option.
+pub fn view_scale(options: &crate::gui::GuiOptions) -> f32 {
+    let chunks =
+        crate::scene::environment::effective_render_distance(options.render_distance as i32);
+    (chunks as f32 / 8.0).clamp(1.0, 2.5) * options.entity_distance as f32 / 4.0
+}
+
+/// How far an entity draws: vanilla's `shouldRenderAtSqrDistance` and its
+/// overrides. None: no limit.
+fn render_reach(st: &EntityState, scale: f32) -> Option<f32> {
+    // `AABB.getSize`: the mean edge.
+    let size = (2.0 * st.bounding_box_width + st.bounding_box_height) / 3.0;
+    Some(match st.kind {
+        // The crystal's beam reaches past its box.
+        EntityKind::Phantom | EntityKind::Trident | EntityKind::EndCrystal => return None,
+        EntityKind::Player | EntityKind::Arrow | EntityKind::SpectralArrow => {
+            size * 10.0 * 64.0 * scale
+        }
+        EntityKind::ArmorStand => {
+            let size = if size == 0.0 { 1.0 } else { size };
+            size * 4.0 * 64.0
+        }
+        EntityKind::ItemFrame | EntityKind::GlowItemFrame => 16.0 * 64.0 * scale,
+        EntityKind::LeashKnot => 32.0,
+        EntityKind::LightningBolt => 64.0 * scale,
+        EntityKind::FireworkRocket | EntityKind::FishingBobber => 64.0,
+        EntityKind::ShulkerBullet => 128.0,
+        EntityKind::EyeOfEnder
+        | EntityKind::Fireball
+        | EntityKind::SmallFireball
+        | EntityKind::DragonFireball
+        | EntityKind::WitherSkull
+        | EntityKind::WindCharge
+        | EntityKind::BreezeWindCharge
+        | EntityKind::Snowball
+        | EntityKind::Egg
+        | EntityKind::EnderPearl
+        | EntityKind::ExperienceBottle
+        | EntityKind::SplashPotion
+        | EntityKind::LingeringPotion => size * 4.0 * 64.0,
+        _ => size * 64.0 * scale,
+    })
 }
 
 pub fn display_orientation(
@@ -1129,24 +1178,34 @@ mod display_tests {
     }
 
     #[test]
-    fn view_range_culls_only_displays() {
-        let mut st = EntityState::new(0, EntityKind::BlockDisplay);
+    fn view_range_follows_vanilla() {
+        let mut st = EntityState::new(0, EntityKind::Pig);
         let camera = CameraView::default();
-        st.pos = [0.0, 0.0, 100.0];
-        assert!(within_view_range(&st, &camera), "a pig is never culled");
+        // A 0.6 x 1.8 box: a mean edge of 1, so 64 blocks at scale 1.
+        st.pos = [0.0, 0.0, 63.0];
+        assert!(within_view_range(&st, &camera, 1.0));
+        st.pos = [0.0, 0.0, 65.0];
+        assert!(!within_view_range(&st, &camera, 1.0));
+        assert!(within_view_range(&st, &camera, 1.25), "scaled to 80");
 
+        st.kind = EntityKind::Phantom;
+        st.pos = [0.0, 0.0, 1000.0];
+        assert!(within_view_range(&st, &camera, 1.0), "phantoms always draw");
+
+        st.kind = EntityKind::BlockDisplay;
         st.extras.shared_mut().object.display = Some(Box::new(state::Display {
             view_range: 1.0,
             ..state::Display::default()
         }));
+        st.pos = [0.0, 0.0, 100.0];
         assert!(
-            !within_view_range(&st, &camera),
+            !within_view_range(&st, &camera, 1.0),
             "100 blocks is past a range of 64"
         );
         st.pos = [0.0, 0.0, 50.0];
-        assert!(within_view_range(&st, &camera));
+        assert!(within_view_range(&st, &camera, 1.0));
         st.pos = [0.0, 0.0, 65.0];
-        assert!(!within_view_range(&st, &camera));
+        assert!(!within_view_range(&st, &camera, 1.0));
     }
 }
 
@@ -1393,6 +1452,7 @@ fn sync_entities(
     let mut posed: Vec<PosedPart> = Vec::new();
 
     let mut cull_boxes = Vec::new();
+    let scale = view_scale(&crate::gui::current_options());
     for st in frame.iter().copied().chain(&carried.0) {
         let spec_ids = registry.specs_for_state(st);
         if spec_ids.is_empty() {
@@ -1411,7 +1471,7 @@ fn sync_entities(
                 ],
             ));
         }
-        let in_range = within_view_range(st, &camera)
+        let in_range = within_view_range(st, &camera, scale)
             && in_open_view(st, &occlusion)
             && !cull::entity_hidden(st.id);
         let flash = tnt_flash_alpha(st);

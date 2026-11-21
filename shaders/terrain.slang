@@ -23,15 +23,74 @@ struct Slot {
     float4 hi;           // xyz box max
     int4 origin_base;    // xyz origin, w base vertex
     uint4 info;          // x pool, y vertex buffer, z flags, w unused
-    uint4 ranges;        // x first index, y cutout (or translucent) count
+    uint4 ranges;        // x first index, y cutout (or translucent) count,
+                         // zw cutout bucket counts as u16 pairs
     uint4 buckets0;      // +x, -x, +y, -y index counts
-    uint4 buckets1;      // +z, -z, no axis, unused
-    uint4 spare;
+    uint4 buckets1;      // +z, -z, no axis, torches (closing cutout)
+    uint4 spare;         // x packed records' offset, yzw cutout pairs
+    uint4 more;          // xy cutout pairs, zw band counts (`band_sort` in
+                         // src/vk/terrain.rs), on at SLOT_BANDS
 };
 
-static const uint SLOT_SIZE = 128;
+static const uint SLOT_SIZE = 320;
+// Where a slot's band counts go on after `more.zw` (not in `Slot`, so the
+// cull's whole-slot load stays small).
+static const uint SLOT_BANDS = 144;
 static const uint SLOT_LIVE = 1;
 static const uint SLOT_TRANSLUCENT = 2;
+
+// Writes the drawn buckets of one range (starting at index `at`) as
+// commands in `list`, neighbours merged (an empty bucket between two drawn
+// ones doesn't split them). At most four runs: past that the last one
+// stretches over the hidden buckets between (drawn, just not culled).
+// Returns where the range ends. Called from uniform control flow
+// (`reserve`).
+static const uint BUCKETS = 16;
+uint emit_runs(uint counts[BUCKETS], bool drawn[BUCKETS], uint at, uint list, int base, uint index, bool wave) {
+    uint run_first[4];
+    uint run_end[4];
+    uint runs = 0;
+    bool open = false;
+    for (uint b = 0; b < BUCKETS; b++) {
+        if (drawn[b]) {
+            if (!open && runs < 4) {
+                run_first[runs] = at;
+                runs++;
+            }
+            open = true;
+            run_end[runs - 1] = at + counts[b];
+        } else if (counts[b] > 0) {
+            open = false;
+        }
+        at += counts[b];
+    }
+    uint start = reserve(pc.ids.w, list, runs, wave);
+    for (uint r = 0; r < runs; r++) {
+        if (start + r < pc.more.y) {
+            write_command(pc.ids.z, list * pc.more.y + start + r, run_end[r] - run_first[r], run_first[r], base, index, 1);
+        }
+    }
+    return at;
+}
+
+// A slot's u16 band count `i` (`band_sort`): the first two in `more.zw`,
+// the rest at SLOT_BANDS.
+uint band_count(Slot s, RWByteAddressBuffer slots, uint bands_at, uint i) {
+    uint w = i / 2;
+    uint word = w == 0 ? s.more.z : (w == 1 ? s.more.w : slots.Load(bands_at + (w - 2) * 4));
+    return (word >> ((i % 2) * 16)) & 0xFFFF;
+}
+
+// Index count through bucket `b`'s first `k` stored bands (0 to 16).
+uint through(Slot s, RWByteAddressBuffer slots, uint bands_at, uint b, uint k, uint total) {
+    if (k == 0) {
+        return 0;
+    }
+    if (k >= 16) {
+        return total;
+    }
+    return band_count(s, slots, bands_at, b * 15 + k - 1);
+}
 
 // Push: ids.x slots, ids.y visible-slot bits, ids.z commands, ids.w counts,
 //       more.x slot count, more.y commands per list, more.z the cull view,
@@ -46,7 +105,10 @@ void cull(uint3 id: SV_DispatchThreadID) {
     uint index = id.x;
     RWByteAddressBuffer view = buffer_at(pc.more.z);
     uint flags = view.Load(VIEW_FLAGS);
-    float3 camera = asfloat(view.Load3(VIEW_CAMERA));
+    // Load4, not Load3: slangc turns a Load3 at an offset divisible by 12
+    // into a uint3 array index (240 / 12) over a 16-byte stride, reading
+    // past the view (zeros).
+    float3 camera = asfloat(view.Load4(VIEW_CULL_EYE).xyz);
     Slot s = (Slot)0;
     if (index < pc.more.x) {
         s = buffer_at(pc.ids.x).Load<Slot>(index * SLOT_SIZE);
@@ -62,7 +124,7 @@ void cull(uint3 id: SV_DispatchThreadID) {
         keep = ((word >> (index % 32)) & 1) != 0;
     }
     if (keep && (flags & CULL_BELOW) != 0) {
-        keep = hi.y >= asfloat(view.Load(VIEW_CAMERA + 12));
+        keep = hi.y >= asfloat(view.Load(VIEW_CULL_EYE + 12));
     }
     if (keep && (flags & CULL_HOLE) != 0) {
         float hole = asfloat(view.Load(VIEW_HOLE));
@@ -99,40 +161,110 @@ void cull(uint3 id: SV_DispatchThreadID) {
         camera.z > lo.z, camera.z < hi.z,
         true,
     };
-    uint run_first[4];
-    uint run_count[4];
-    uint runs = 0;
-    uint at = first;
-    bool open = false;
-    for (uint b = 0; b < 7; b++) {
-        bool drawn = solid && counts[b] > 0 && ((flags & CULL_BUCKETS) == 0 || facing[b]);
-        if (drawn) {
-            if (!open) {
-                run_first[runs] = at;
-                run_count[runs] = 0;
-                runs++;
-                open = true;
-            }
-            run_count[runs - 1] += counts[b];
-        } else if (counts[b] > 0) {
-            open = false;
-        }
-        at += counts[b];
-    }
     uint pool = s.info.x;
-    uint start = reserve(pc.ids.w, pool * 2, runs, (flags & CULL_NO_WAVE) == 0);
-    for (uint r = 0; r < runs; r++) {
-        if (start + r < pc.more.y) {
-            write_command(pc.ids.z, (pool * 2) * pc.more.y + start + r, run_count[r], run_first[r], base, index, 1);
+    bool wave = (flags & CULL_NO_WAVE) == 0;
+    bool any_side = (flags & CULL_BUCKETS) == 0;
+    // Each axis bucket as two entries, split at a plane band: its quads
+    // are sorted far side first (`band_sort`), so a +a bucket's seen faces
+    // (planes below the eye) close it and a -a bucket's (above) open it.
+    // Unbanded buckets split at their ends by the section test.
+    float3 eye = camera - float3(s.origin_base.xyz);
+    RWByteAddressBuffer slot_words = buffer_at(pc.ids.x);
+    uint bands_at = index * SLOT_SIZE + SLOT_BANDS;
+    bool banded = (flags & CULL_FACE_BANDS) != 0 && !any_side;
+    uint solid_counts[BUCKETS];
+    bool solid_drawn[BUCKETS];
+    for (uint b = 0; b < 6; b++) {
+        uint total = counts[b];
+        // Counts through the first k stored bands: 0, the 15 stored, total.
+        uint first_band = band_count(s, slot_words, bands_at, b * 15);
+        bool has = banded && first_band != 0xFFFF;
+        bool seen = any_side || facing[b];
+        float e = b < 2 ? eye.x : (b < 4 ? eye.y : eye.z);
+        uint split;
+        bool plus = (b % 2) == 0;
+        if (plus) {
+            // Seen: planes below the eye, the last n bands.
+            uint n = has ? uint(clamp(ceil(e), 0.0, 16.0)) : (seen ? 16u : 0u);
+            split = through(s, slot_words, bands_at, b, 16 - n, total);
+        } else {
+            // Seen: planes above the eye, the first 16 - m bands.
+            uint m = has ? uint(clamp(floor(e), 0.0, 16.0)) : (seen ? 0u : 16u);
+            split = through(s, slot_words, bands_at, b, 16 - m, total);
         }
+        // Never past the bucket, whatever the counts say.
+        split = min(split, total);
+        solid_counts[b * 2] = split;
+        solid_counts[b * 2 + 1] = total - split;
+        solid_drawn[b * 2] = solid && split > 0 && !plus;
+        solid_drawn[b * 2 + 1] = solid && total > split && plus;
     }
+    solid_counts[12] = counts[6];
+    solid_drawn[12] = solid && counts[6] > 0;
+    for (uint b = 13; b < BUCKETS; b++) {
+        solid_counts[b] = 0;
+        solid_drawn[b] = false;
+    }
+    uint at = emit_runs(solid_counts, solid_drawn, first, pool * 2, base, index, wave);
 
-    // Cutout, after the buckets.
-    uint cutout = solid && s.ranges.y > 0 ? 1 : 0;
-    uint slot_at = reserve(pc.ids.w, pool * 2 + 1, cutout, (flags & CULL_NO_WAVE) == 0);
-    if (cutout > 0 && slot_at < pc.more.y) {
-        write_command(pc.ids.z, (pool * 2 + 1) * pc.more.y + slot_at, s.ranges.y, at, base, index, 1);
+    // Cutout, after the buckets: its ring of vertical faces (+x, two
+    // octants, +z, ... as `CUTOUT_BUCKETS` in `src/vk/terrain.rs`), +y, -y,
+    // the no-axis rest, then its torches, dropped past the torch reach
+    // (squared, 0 for none) from the box's nearest point.
+    uint torches = s.buckets1.w;
+    uint pairs[7] = { s.ranges.z, s.ranges.w, s.spare.y, s.spare.z, s.spare.w, s.more.x, s.more.y };
+    uint cut[BUCKETS];
+    uint listed = 0;
+    for (uint i = 0; i < 14; i++) {
+        cut[i] = (pairs[i / 2] >> ((i % 2) * 16)) & 0xFFFF;
+        listed += cut[i];
     }
+    cut[14] = s.ranges.y - torches - listed;
+    cut[15] = torches;
+    bool torch_near = true;
+    float torch_reach = asfloat(view.Load(VIEW_FLAGS + 4));
+    if (torch_reach > 0) {
+        float3 d = clamp(camera, lo, hi) - camera;
+        torch_near = dot(d, d) <= torch_reach;
+    }
+    // Whether some of the box faces the camera from direction d (xz, each
+    // component -1, 0 or 1): the camera past the box's back plane for d.
+    // The ring's eight directions: +x, +x+z, +z, -x+z, -x, -x-z, -z, +x-z.
+    bool cutout_sides = (flags & CULL_CUTOUT_BUCKETS) != 0;
+    bool angled_sides = cutout_sides && (flags & CULL_ANGLED_BUCKETS) != 0;
+    bool seen[8];
+    for (uint k = 0; k < 8; k++) {
+        float2 d = float2(k == 0 || k == 1 || k == 7 ? 1 : (k >= 3 && k <= 5 ? -1 : 0),
+                          k >= 1 && k <= 3 ? 1 : (k >= 5 ? -1 : 0));
+        float back = (d.x > 0 ? lo.x : hi.x) * d.x + (d.y > 0 ? lo.z : hi.z) * d.y;
+        seen[k] = dot(camera.xz, d) > back;
+    }
+    bool cut_drawn[BUCKETS];
+    for (uint b = 0; b < BUCKETS; b++) {
+        bool side = true;
+        if (b < 12) {
+            // Ring slot b: an axis (b % 3 == 0, direction 2 * b / 3) or the
+            // octant after it, between that axis and its diagonal (1) or the
+            // diagonal and the next axis (2).
+            uint k = (b / 3) * 2;
+            uint r = b % 3;
+            if (r == 0) {
+                side = !cutout_sides || seen[k];
+            } else {
+                uint d0 = (k + r - 1) % 8;
+                uint d1 = (k + r) % 8;
+                side = !angled_sides || seen[d0] || seen[d1];
+            }
+        } else if (b == 12) {
+            side = !cutout_sides || facing[2];
+        } else if (b == 13) {
+            side = !cutout_sides || facing[3];
+        } else if (b == 15) {
+            side = torch_near;
+        }
+        cut_drawn[b] = solid && cut[b] > 0 && side;
+    }
+    emit_runs(cut, cut_drawn, at, pool * 2 + 1, base, index, wave);
 }
 
 struct VertexOut {
@@ -267,6 +399,71 @@ Corner packed_corner(ByteAddressBuffer pool, uint record_at, uint corner) {
     out.outline = outline;
     out.table = record_at + r1.x;
     return out;
+}
+
+// A drawn index's corner position (1/256 block from the section origin).
+int3 corner_at(uint index, int base, ByteAddressBuffer pool, uint records) {
+    if (index >= PACKED_BASE) {
+        uint quad = (index - PACKED_BASE) >> 2;
+        return packed_corner(pool, records + quad * 32, index & 3).local;
+    }
+    uint2 raw = pool.Load2((index + uint(base)) * 20);
+    return int3(sign16(raw.x & 0xFFFF), sign16(raw.x >> 16), sign16(raw.y & 0xFFFF));
+}
+
+groupshared uint kept_indices;
+
+// Per-Face Culling: one group per command slot (x) of a pool's solid or
+// cutout list (y), after the cull. Each quad whose back the cull eye sees
+// goes; the rest move to the filtered indices at the command's own offset,
+// and its count becomes theirs.
+// Push: ids.x slots, ids.y commands, ids.z counts, ids.w the view buffer;
+//       more.x commands per list, more.y the pool's solid list, more.z its
+//       indices, more.w its filtered indices.
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void face_filter(uint3 group: SV_GroupID, uint3 thread: SV_GroupThreadID) {
+    uint list = pc.more.y + group.y;
+    if (group.x >= buffer_at(pc.ids.z).Load(list * 4)) {
+        return;
+    }
+    RWByteAddressBuffer commands = buffer_at(pc.ids.y);
+    uint at = (list * pc.more.x + group.x) * COMMAND_SIZE;
+    uint count = commands.Load(at);
+    uint first = commands.Load(at + 8);
+    int base = asint(commands.Load(at + 12));
+    uint slot = commands.Load(at + 16);
+    ByteAddressBuffer slots = buffer_ro(pc.ids.x);
+    float3 origin = float3(asint(slots.Load4(slot * SLOT_SIZE + 32)).xyz);
+    ByteAddressBuffer pool = buffer_ro(slots.Load(slot * SLOT_SIZE + 52));
+    uint records = slots.Load(slot * SLOT_SIZE + 112);
+    float3 eye = (asfloat(buffer_at(pc.ids.w).Load4(VIEW_CULL_EYE).xyz) - origin) * 256.0;
+    ByteAddressBuffer source = buffer_ro(pc.more.z);
+    RWByteAddressBuffer kept = buffer_at(pc.more.w);
+    if (thread.x == 0) {
+        kept_indices = 0;
+    }
+    GroupMemoryBarrierWithGroupSync();
+    for (uint q = thread.x; q < count / 6; q += 64) {
+        uint from = (first + q * 6) * 4;
+        uint i0 = source.Load(from);
+        uint i1 = source.Load(from + 4);
+        uint i2 = source.Load(from + 8);
+        int3 p0 = corner_at(i0, base, pool, records);
+        float3 n = cross(float3(corner_at(i1, base, pool, records) - p0), float3(corner_at(i2, base, pool, records) - p0));
+        // Kept when the eye is on its front side (or the quad is degenerate).
+        if (dot(eye - float3(p0), n) > 0 || all(n == 0)) {
+            uint to;
+            InterlockedAdd(kept_indices, 6, to);
+            for (uint k = 0; k < 6; k++) {
+                kept.Store((first + to + k) * 4, source.Load(from + k * 4));
+            }
+        }
+    }
+    GroupMemoryBarrierWithGroupSync();
+    if (thread.x == 0) {
+        commands.Store(at, kept_indices);
+    }
 }
 
 // Push: ids.x slots, ids.y the view buffer, more.x atlas texture, more.y
@@ -615,6 +812,13 @@ float4 terrain_cutout(VertexOut in): SV_Target {
         discard;
     }
     return float4(c.rgb, 1);
+}
+
+// The overdraw view: each fragment adds heat (red, then yellow, then
+// white as layers stack), whatever its depth.
+[shader("fragment")]
+float4 terrain_overdraw(VertexOut in): SV_Target {
+    return float4(1.0 / 8, 1.0 / 32, 1.0 / 128, 0);
 }
 
 // Vanilla's translucent layer: water, stained glass, ice, slime, honey and

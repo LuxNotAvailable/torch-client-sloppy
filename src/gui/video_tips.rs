@@ -32,6 +32,42 @@ pub const RENDER_DISTANCE: Tip = Tip::new(
     "How many chunks out the world is drawn. The biggest single cost to frame rate and memory.",
     Impact::High,
 );
+pub const ENTITY_DISTANCE: Tip = Tip::new(
+    "How far away mobs, items and other entities still draw, scaled by their size. 100% is vanilla.",
+    Impact::Medium,
+);
+pub const SIGN_DISTANCE: Tip = Tip::new(
+    "How far away sign text still draws. The sign itself always draws. Vanilla is 64 blocks.",
+    Impact::Low,
+);
+pub const TORCH_DISTANCE: Tip = Tip::new(
+    "How far away torches still draw. Their light stays. Unlimited is vanilla.",
+    Impact::Low,
+);
+pub const ADVANCED_PERFORMANCE: Tip = Tip::new(
+    "Culling options: what's skipped by facing or distance.",
+    Impact::None,
+);
+pub const CUTOUT_FACE_CULLING: Tip = Tip::new(
+    "Skips the far sides of signs, lanterns, leaves and other see-through blocks before they reach the GPU.",
+    Impact::Low,
+);
+pub const ANGLED_FACE_CULLING: Tip = Tip::new(
+    "Skips the far sides of grass, flowers, crops and turned signs. Needs Cutout Face Culling.",
+    Impact::Low,
+);
+pub const EXACT_FACE_CULLING: Tip = Tip::new(
+    "Skips block faces pointing away from you in the chunks around you too, not just whole chunks behind you.",
+    Impact::Low,
+);
+pub const ENTITY_AWAY_FACES: Tip = Tip::new(
+    "Skips the hidden inner sides of solid mob and block entity models. Models with see-through parts keep both sides.",
+    Impact::Low,
+);
+pub const PER_FACE_CULLING: Tip = Tip::new(
+    "WARNING: usually makes the game SLOWER. Checks every block face on the GPU each frame and drops the ones facing away from you. The check costs more than it saves: measured slower on a GeForce MX250 laptop and a Pixel 10 Pro. Experimental; leave it off. Off under shader packs.",
+    Impact::High,
+);
 pub const ENTITY_CULLING: Tip = Tip::new(
     "Skips drawing mobs, items and block entities hidden behind solid blocks. Turning it off costs frames in busy areas; only do so if something vanishes when it shouldn't.",
     Impact::Medium,

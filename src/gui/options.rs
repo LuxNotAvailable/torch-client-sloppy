@@ -45,6 +45,65 @@ const LEAVES_TITLE: &str = "Leaves";
 const LEAVES_MODES: [&str; 3] = ["Fancy", "Fast", "Hybrid"];
 const LEAF_BACKS: &str = "Leaf Inner Faces";
 const LEAF_SLIDER_ID: u32 = 70;
+const ADVANCED_PERFORMANCE: &str = "Advanced Performance...";
+const ADVANCED_PERFORMANCE_TITLE: &str = "Advanced Performance";
+const CUTOUT_FACE_CULLING: &str = "Cutout Face Culling";
+const ANGLED_FACE_CULLING: &str = "Angled Face Culling";
+const EXACT_FACE_CULLING: &str = "Exact Face Culling";
+const PER_FACE_CULLING: &str = "Per-Face Culling (Slower!)";
+const ENTITY_AWAY_FACES: &str = "Entity Away-Face Culling";
+const ADVANCED_PERFORMANCE_SLIDER_ID: u32 = 90;
+
+/// Advanced Performance: the culling options (docs/CULLING_TODO.md), each
+/// one switchable.
+pub fn draw_advanced_performance(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
+    let mut form = crate::gui::form::Form::new(
+        p,
+        ctx,
+        ADVANCED_PERFORMANCE_TITLE,
+        5,
+        ADVANCED_PERFORMANCE_SLIDER_ID,
+    );
+    let o = &mut state.options;
+    form.toggle(ENTITY_CULLING, &mut o.entity_culling);
+    form.tip(&tips::ENTITY_CULLING);
+    let backs = if o.entity_backface_culling {
+        "Hidden"
+    } else {
+        "Drawn"
+    };
+    if form.button(&format!("{ENTITY_BACK_FACES}: {backs}")) {
+        o.entity_backface_culling = !o.entity_backface_culling;
+        form.mark_changed();
+    }
+    form.tip(&tips::ENTITY_BACK_FACES);
+    form.toggle(CUTOUT_FACE_CULLING, &mut o.cutout_face_culling);
+    form.tip(&tips::CUTOUT_FACE_CULLING);
+    form.toggle(ANGLED_FACE_CULLING, &mut o.angled_face_culling);
+    form.tip(&tips::ANGLED_FACE_CULLING);
+    form.toggle(EXACT_FACE_CULLING, &mut o.exact_face_culling);
+    form.tip(&tips::EXACT_FACE_CULLING);
+    form.toggle(PER_FACE_CULLING, &mut o.per_face_culling);
+    form.tip(&tips::PER_FACE_CULLING);
+    form.toggle(ENTITY_AWAY_FACES, &mut o.entity_away_faces);
+    form.tip(&tips::ENTITY_AWAY_FACES);
+    form.slider(&mut o.entity_distance, 2, 8, entity_distance_label);
+    form.tip(&tips::ENTITY_DISTANCE);
+    form.slider(&mut o.sign_distance, 1, 4, sign_distance_label);
+    form.tip(&tips::SIGN_DISTANCE);
+    form.slider(&mut o.torch_distance, 1, 5, torch_distance_label);
+    form.tip(&tips::TORCH_DISTANCE);
+    let hovered = form.hovered_tip();
+    if form.finish() {
+        crate::gui::save_options(&state.options);
+    }
+    if let (Some(tip), Some(m)) = (hovered, ctx.mouse()) {
+        crate::gui::setting_tip::draw(p, tip, None, m.x, m.y, ctx.vw, ctx.vh);
+    }
+    if draw_done(p, ctx) {
+        state.nav = Some(Screen::VideoSettings);
+    }
+}
 
 fn leaf_distance_label(value: i32) -> String {
     format!("Hybrid Distance: {value} {CHUNKS}")
@@ -652,6 +711,27 @@ fn biome_blend_label(value: i32) -> String {
     }
 }
 
+/// Vanilla's percent label, in steps of 25%.
+fn entity_distance_label(value: i32) -> String {
+    format!("Entity Distance: {}%", value * 25)
+}
+
+fn sign_distance_label(value: i32) -> String {
+    if value == 4 {
+        "Sign Distance: Vanilla".to_owned()
+    } else {
+        format!("Sign Distance: {} Blocks", value * 16)
+    }
+}
+
+fn torch_distance_label(value: i32) -> String {
+    if value >= 5 {
+        "Torch Distance: Unlimited".to_owned()
+    } else {
+        format!("Torch Distance: {} Blocks", value * 16)
+    }
+}
+
 fn water_clarity_label(value: i32) -> String {
     if value as u32 == crate::gui::WATER_CLARITY_DEFAULT {
         "Water Clarity: Vanilla".to_owned()
@@ -996,6 +1076,14 @@ fn reset_video_options(o: &mut crate::gui::GuiOptions) {
     o.vsync = crate::gui::VSYNC_DEFAULT;
     o.fps_counter = crate::gui::FPS_COUNTER_DEFAULT;
     o.entity_culling = true;
+    o.entity_distance = 4;
+    o.sign_distance = 4;
+    o.torch_distance = 5;
+    o.cutout_face_culling = true;
+    o.angled_face_culling = true;
+    o.exact_face_culling = true;
+    o.per_face_culling = false;
+    o.entity_away_faces = true;
     o.entity_backface_culling = false;
     o.smooth_gui_model = true;
     o.biome_blend = 2;
@@ -1342,18 +1430,10 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
             render_distance_label,
         );
         f.tip(&tips::RENDER_DISTANCE);
-        f.toggle(ENTITY_CULLING, &mut o.entity_culling);
-        f.tip(&tips::ENTITY_CULLING);
-        let backs = if o.entity_backface_culling {
-            "Hidden"
-        } else {
-            "Drawn"
-        };
-        if f.button(&format!("{ENTITY_BACK_FACES}: {backs}")) {
-            o.entity_backface_culling = !o.entity_backface_culling;
-            f.mark_changed();
+        if f.button(ADVANCED_PERFORMANCE) {
+            state.nav = Some(Screen::AdvancedPerformance);
         }
-        f.tip(&tips::ENTITY_BACK_FACES);
+        f.tip(&tips::ADVANCED_PERFORMANCE);
         let lighting = if o.lighting_enabled {
             ON
         } else {
@@ -2520,8 +2600,8 @@ mod tests {
     fn video_grid_stacks_like_the_options_list() {
         // Six headers, then: the preset (1 row); Display (4: frame cap and
         // GUI frame cap, VSync, window size and fullscreen, GUI scale and
-        // brightness); Performance (4: render distance and culling, back
-        // faces and lighting, greedy meshing and render scale, shader
+        // brightness); Performance (3: render distance and lighting, greedy
+        // meshing and render scale, advanced performance and shader
         // shadows); Quality (7, the last the
         // Leaves and Light Rays buttons); Camera (1); Details (3: sign outline and block
         // outline, shader packs, reset).
@@ -2537,7 +2617,7 @@ mod tests {
         draw_video(&mut p, &mut state, &ctx);
         let shader = cfg!(feature = "shader_support") as u32 as f32;
         let desktop = cfg!(not(target_os = "android")) as u32 as f32;
-        let rows = 1.0 + (3.0 + desktop) + (3.0 + shader) + 7.0 + 1.0 + (2.0 + shader);
+        let rows = 1.0 + (3.0 + desktop) + 3.0 + 7.0 + 1.0 + (2.0 + shader);
         assert_eq!(
             state.video_list.content_h,
             6.0 * HEADER_H + 5.0 * HEADER_PAD_TOP + rows * ROW_H + LIST_PAD_BOTTOM

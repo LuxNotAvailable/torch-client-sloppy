@@ -1751,6 +1751,7 @@ settings_screens! {
     BlockOutlineSettings => options::draw_block_outline,
     LeafSettings => options::draw_leaves,
     LightRaySettings => options::draw_light_rays,
+    AdvancedPerformance => options::draw_advanced_performance,
     Features => options::draw_features,
     InventorySortSettings => options::draw_inventory_sort,
     FoodInfoSettings => options::draw_food_info,

@@ -177,6 +177,9 @@ fn build(state: u16, regions: &Regions) -> Option<Vec<BakedQuad>> {
 
     let registry = registry();
     let mut out = Vec::new();
+    // Each part's box and the range of `out` it made, to drop faces buried
+    // in another part (a closed chest's lid underside and body top).
+    let mut boxes: Vec<(Vec3, Vec3, std::ops::Range<usize>)> = Vec::new();
     let mut posed = Vec::new();
     for &idx in registry.specs_for(kind) {
         let spec = &registry.specs[idx];
@@ -199,10 +202,37 @@ fn build(state: u16, regions: &Regions) -> Option<Vec<BakedQuad>> {
                 continue;
             };
             let atlas = |uv: [f32; 2]| [u0 + uv[0] * (u1 - u0), v0 + uv[1] * (v1 - v0)];
+            let start = out.len();
             push_part(&mut out, at.mat, &arrays, atlas);
+            let corners = out[start..].iter().flat_map(|q| q.pos).map(Vec3::from);
+            let lo = corners.clone().fold(Vec3::splat(f32::MAX), Vec3::min);
+            let hi = corners.fold(Vec3::splat(f32::MIN), Vec3::max);
+            boxes.push((lo, hi, start..out.len()));
         }
     }
-    Some(out)
+    Some(drop_buried(out, &boxes))
+}
+
+/// Drops each quad whose front looks into another part's box: a point just
+/// in front of its centre lies inside it, so nothing outside can see it.
+fn drop_buried(
+    quads: Vec<BakedQuad>,
+    boxes: &[(Vec3, Vec3, std::ops::Range<usize>)],
+) -> Vec<BakedQuad> {
+    const STEP: f32 = 0.01;
+    const EDGE: f32 = 0.001;
+    quads
+        .into_iter()
+        .enumerate()
+        .filter(|(i, q)| {
+            let centre = q.pos.iter().map(|&p| Vec3::from(p)).sum::<Vec3>() / 4.0;
+            let probe = centre + Vec3::from(q.normal) * STEP;
+            !boxes.iter().any(|(lo, hi, own)| {
+                !own.contains(i) && probe.cmpgt(*lo + EDGE).all() && probe.cmplt(*hi - EDGE).all()
+            })
+        })
+        .map(|(_, q)| q)
+        .collect()
 }
 
 fn push_part(
@@ -326,6 +356,19 @@ mod tests {
         }
         let top = quads.iter().filter(|q| q.face == 1).count();
         assert!(top >= 2, "the lid and the knob have tops");
+        // Three boxes, 18 faces, less the three buried: the lid's underside,
+        // the body's top and the knob's back.
+        assert_eq!(quads.len(), 15);
+        let centre_y = |q: &BakedQuad| q.pos.iter().map(|p| p[1]).sum::<f32>() / 4.0;
+        // The body's top at 10/16 and the lid's underside at 9/16.
+        let near = |q: &BakedQuad, y: f32| (centre_y(q) - y).abs() < 0.01;
+        assert!(
+            !quads
+                .iter()
+                .any(|q| (q.face == 1 && near(q, 10.0 / 16.0))
+                    || (q.face == 0 && near(q, 9.0 / 16.0))),
+            "no face inside the closed chest"
+        );
         assert_eq!(
             region_uv(rect, Vec2::new(32.0, 32.0), 64.0),
             Vec2::new(0.625, 0.375)

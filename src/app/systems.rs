@@ -1761,6 +1761,32 @@ fn sync_lighting_enabled(
     }
 }
 
+/// Advanced Performance's terrain culls to `terrain::TORCH_DISTANCE`
+/// (blocks, 0 for no limit), `terrain::CUTOUT_FACES`,
+/// `terrain::ANGLED_FACES` and `terrain::FACE_BANDS`; the cull reads
+/// them each frame.
+fn sync_terrain_culls(state: Res<crate::gui::GuiState>) {
+    let steps = state.options.torch_distance;
+    let blocks = if steps >= 5 { 0 } else { steps * 16 };
+    crate::terrain::TORCH_DISTANCE.store(blocks, std::sync::atomic::Ordering::Relaxed);
+    crate::terrain::CUTOUT_FACES.store(
+        state.options.cutout_face_culling,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    crate::terrain::ANGLED_FACES.store(
+        state.options.angled_face_culling,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    crate::terrain::FACE_BANDS.store(
+        state.options.exact_face_culling,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    crate::terrain::FACE_FILTER.store(
+        state.options.per_face_culling,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
 /// Video Settings > Greedy Meshing to `terrain::GREEDY`, re-meshing on a
 /// change (the merge runs as sections upload).
 fn sync_greedy_meshing(state: Res<crate::gui::GuiState>, mut last: Local<Option<u32>>) {
@@ -2230,7 +2256,7 @@ pub fn run(
             ),
         )
         .add_systems(Update, sync_lighting_enabled)
-        .add_systems(Update, sync_greedy_meshing)
+        .add_systems(Update, (sync_greedy_meshing, sync_terrain_culls))
         .add_systems(Update, toggle_screen.after(apply_gui_nav))
         .add_systems(
             Update,
