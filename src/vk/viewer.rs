@@ -5,7 +5,7 @@
 //! `vkview [--frames N] [--device NAME] [--vsync] [--size WxH] [--stress]
 //!         [--view shaded|normals|texture] [--screenshot FILE.png]
 //!         [--terrain DIR [--camera X,Y,Z,YAW,PITCH|game] [--no-hiz] [--no-vis]
-//!          [--no-buckets] [--budget MB] [--greedy]
+//!          [--no-buckets] [--budget MB] [--greedy] [--no-greedy] [--aggressive]
 //!          [--fxaa] [--ssaa SCALE] [--post creeper,spider,invert,blur|none]]`
 //!
 //! The scene is the test scene, or with `--terrain` a terrain dump the game
@@ -78,6 +78,8 @@ struct Options {
     /// `--camera game`: the camera the game drew from (entity snapshot).
     game_camera: bool,
     greedy: bool,
+    /// Aggressive greedy meshing (any texture).
+    aggressive: bool,
     sheet: Option<String>,
     sheet_tile: (u32, u32),
     sheet_cols: u32,
@@ -105,6 +107,7 @@ fn options(args: Vec<String>) -> Options {
         game_camera: false,
         turn: 0.0,
         greedy: false,
+        aggressive: false,
         sheet: None,
         sheet_tile: (160, 90),
         sheet_cols: 16,
@@ -158,6 +161,8 @@ fn options(args: Vec<String>) -> Options {
             "--no-buckets" => options.terrain_options.buckets = false,
             "--no-wave" => options.terrain_options.wave = false,
             "--no-packed" => options.terrain_options.packed = false,
+            "--no-greedy" => options.terrain_options.greedy = false,
+            "--aggressive" => options.aggressive = true,
             "--budget" => {
                 if let Some(mb) = args.next().and_then(|v| v.parse::<f64>().ok()) {
                     options.terrain_options.budget = (mb * 1048576.0) as u64;
@@ -1419,6 +1424,18 @@ pub fn run(args: Vec<String>) -> i32 {
         }
         return 0;
     }
+    // The game's switch (Video Settings) is off by default; the viewer
+    // merges unless `--no-greedy`.
+    crate::terrain::GREEDY.store(
+        if !options.terrain_options.greedy {
+            crate::terrain::GREEDY_OFF
+        } else if options.aggressive {
+            crate::terrain::GREEDY_AGGRESSIVE
+        } else {
+            crate::terrain::GREEDY_STANDARD
+        },
+        std::sync::atomic::Ordering::Relaxed,
+    );
     let mut app = App {
         options,
         renderer: None,

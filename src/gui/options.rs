@@ -146,6 +146,7 @@ const OFF: &str = "OFF";
 
 const SMOOTH_LIGHTING: &str = "Smooth Lighting";
 const LIGHTING_ENGINE: &str = "Lighting Engine";
+const GREEDY_MESHING: &str = "Greedy Meshing";
 const MAX_FRAMERATE: &str = "Max Framerate";
 const UNLIMITED: &str = "Unlimited";
 const VSYNC: &str = "VSync";
@@ -989,6 +990,7 @@ fn reset_video_options(o: &mut crate::gui::GuiOptions) {
     o.antialiasing = crate::gui::antialias::Antialiasing::default();
     o.smooth_lighting = crate::gui::SMOOTH_LIGHTING_DEFAULT;
     o.lighting_enabled = crate::gui::LIGHTING_ENABLED_DEFAULT;
+    o.greedy_meshing = 0;
     o.max_fps = crate::gui::MAX_FPS_DEFAULT;
     o.gui_max_fps = crate::gui::MAX_FPS_DEFAULT;
     o.vsync = crate::gui::VSYNC_DEFAULT;
@@ -1362,6 +1364,13 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
             f.mark_changed();
         }
         f.tip(&tips::LIGHTING_ENGINE);
+        let greedy =
+            ["OFF", "Standard", "Aggressive (Experimental)"][o.greedy_meshing.min(2) as usize];
+        if f.button(&format!("{GREEDY_MESHING}: {greedy}")) {
+            o.greedy_meshing = (o.greedy_meshing + 1) % 3;
+            f.mark_changed();
+        }
+        f.tip(&tips::GREEDY_MESHING);
         f.slider(
             &mut o.pack_render_scale,
             crate::gui::PACK_RENDER_SCALE_MIN,
@@ -2511,8 +2520,9 @@ mod tests {
     fn video_grid_stacks_like_the_options_list() {
         // Six headers, then: the preset (1 row); Display (4: frame cap and
         // GUI frame cap, VSync, window size and fullscreen, GUI scale and
-        // brightness); Performance (3: render distance and culling, lighting
-        // and shader scale, shader shadows); Quality (7, the last the
+        // brightness); Performance (4: render distance and culling, back
+        // faces and lighting, greedy meshing and render scale, shader
+        // shadows); Quality (7, the last the
         // Leaves and Light Rays buttons); Camera (1); Details (3: sign outline and block
         // outline, shader packs, reset).
         let atlas = crate::gui::atlas::build_gui_atlas(&crate::assets_root());
@@ -2527,7 +2537,7 @@ mod tests {
         draw_video(&mut p, &mut state, &ctx);
         let shader = cfg!(feature = "shader_support") as u32 as f32;
         let desktop = cfg!(not(target_os = "android")) as u32 as f32;
-        let rows = 1.0 + (3.0 + desktop) + (2.0 + shader) + 7.0 + 1.0 + (2.0 + shader);
+        let rows = 1.0 + (3.0 + desktop) + (3.0 + shader) + 7.0 + 1.0 + (2.0 + shader);
         assert_eq!(
             state.video_list.content_h,
             6.0 * HEADER_H + 5.0 * HEADER_PAD_TOP + rows * ROW_H + LIST_PAD_BOTTOM

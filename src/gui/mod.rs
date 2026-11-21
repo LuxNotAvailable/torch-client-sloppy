@@ -526,6 +526,10 @@ crate::options! {
         /// See-through leaves draw their faces' inner side too.
         pub leaf_backs: bool = true => key("torchLeafBacks"),
         pub lighting_enabled: bool = LIGHTING_ENABLED_DEFAULT => key("lightingEnabled"),
+        /// Greedy meshing (`terrain::GREEDY`): 0 off, 1 standard, 2
+        /// aggressive (experimental). Fewer terrain triangles; random
+        /// texture rotations are lost.
+        pub greedy_meshing: u32 = 0 => key("torchGreedyMode").clamp(0, 2),
         /// The window size chosen in Video Settings, in physical pixels; 0
         /// for the default size.
         pub window_width: u32 = 0 => key("windowWidth"),

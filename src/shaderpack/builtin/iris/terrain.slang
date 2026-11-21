@@ -55,7 +55,11 @@ float3 iris_snorm3(uint v) {
 
 IrisAttributes iris_attributes(IrisVertexIn input) {
     ByteAddressBuffer pool = iris_buffer_at(iris_vk_slot(input.instance_index, 3).y);
-    uint at = 4 * input.vertex_index * 5;
+    // A section meshed before the pack came on may name packed records
+    // (`vk::packed`, from 1 << 28 past the base): read vertex 0 instead, so
+    // its quads collapse until the remesh replaces it.
+    uint named = input.vertex_index - uint(iris_vk_slot(input.instance_index, 2).w);
+    uint at = named >= (1u << 28) ? 0 : 4 * input.vertex_index * 5;
     uint x = pool.Load(at);
     uint y = pool.Load(at + 4);
     uint z = pool.Load(at + 8);

@@ -123,6 +123,11 @@ pub fn draw_debug(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     if form.toggle("Occlusion Culling", &mut culling) {
         state.occlusion_culling_off = !culling;
     }
+    // Terrain triangles outlined, tinted plain, packed or merged.
+    let mut outlines = crate::terrain::OUTLINES.load(std::sync::atomic::Ordering::Relaxed);
+    if form.toggle("Triangle Outlines", &mut outlines) {
+        crate::terrain::OUTLINES.store(outlines, std::sync::atomic::Ordering::Relaxed);
+    }
     // Records a performance report of the play that follows (closes the
     // menus so the recording is of play, not of this screen).
     #[cfg(feature = "perf_report")]

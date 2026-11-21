@@ -135,6 +135,23 @@ fn report_times(last: &mut Option<std::time::Instant>) {
         new[1],
         new[3] / 1024
     );
+    // With Triangle Outlines on: why the quads meshed since aren't packed
+    // records (which keeps them out of greedy meshing).
+    if crate::terrain::OUTLINES.load(Relaxed) {
+        if let Some(counts) = super::packed::reasons()
+            && !counts.is_empty()
+        {
+            let list: Vec<String> = counts.iter().map(|(k, v)| format!("{k} {v}")).collect();
+            info!("native renderer: quads packed: {}", list.join(", "));
+            if let Ok(mut samples) = super::packed::COLOUR_SAMPLES.lock() {
+                for sample in samples.drain(..) {
+                    info!("native renderer: not one tint: {sample}");
+                }
+            }
+        }
+    } else {
+        super::packed::stop_reasons();
+    }
 }
 
 pub struct LivePlugin;
@@ -1160,8 +1177,14 @@ impl Live {
         );
         let (mut image, mut view) = present;
         let mut extent = swapchain.extent;
+        // Timed with `MC_NATIVE_GPU_TIMING=1`, or while a perf report runs
+        // (its GPU section).
+        #[cfg(feature = "perf_report")]
+        let report = crate::diag::perf_report::running();
+        #[cfg(not(feature = "perf_report"))]
+        let report = false;
         if self.gpu_timing.is_none()
-            && crate::platform::env::var("MC_NATIVE_GPU_TIMING").is_ok_and(|v| v == "1")
+            && (report || crate::platform::env::var("MC_NATIVE_GPU_TIMING").is_ok_and(|v| v == "1"))
         {
             match super::timestamps::Timestamps::new(&self.ctx) {
                 Ok(t) => self.gpu_timing = Some((t, Default::default(), std::time::Instant::now())),
@@ -1180,6 +1203,17 @@ impl Live {
                     .map(|p| p.1)
                     .sum();
                 crate::diag::perf_report::note_shadow(kind, shadow, total);
+            }
+            #[cfg(feature = "perf_report")]
+            if report && !t.last.is_empty() {
+                let mut passes: Vec<(&'static str, f32)> = Vec::new();
+                for &(name, ms) in &t.last {
+                    match passes.iter_mut().find(|p| p.0 == name) {
+                        Some(p) => p.1 += ms,
+                        None => passes.push((name, ms)),
+                    }
+                }
+                crate::diag::perf_report::note_gpu_passes(passes);
             }
             // Repeated names (one per pass) add up within the frame.
             let mut seen: Vec<&'static str> = Vec::new();
@@ -1308,7 +1342,11 @@ impl Live {
                 self.frame,
                 slot,
                 camera,
-                super::test_scene::View::Shaded,
+                if crate::terrain::OUTLINES.load(std::sync::atomic::Ordering::Relaxed) {
+                    super::test_scene::View::Outlines
+                } else {
+                    super::test_scene::View::Shaded
+                },
             ) {
                 Ok(()) => drew_world = true,
                 Err(e) => error!("native renderer: terrain: {}", e.0),
@@ -1966,13 +2004,10 @@ impl GuiPass {
 }
 
 /// Terrain options, with stages turned off by `MC_NATIVE_TERRAIN`
-/// (comma list: `nohiz`, `novis`, `nobuckets`, `nopacked`), for bisecting.
+/// (comma list: `nohiz`, `novis`, `nobuckets`, `nopacked`, `nogreedy`), for
+/// bisecting. Sections meshed for a pack keep raw vertices either way.
 fn terrain_options() -> super::terrain::Options {
-    // Packs read raw vertices, not the compact quad records.
-    let mut o = super::terrain::Options {
-        packed: false,
-        ..Default::default()
-    };
+    let mut o = super::terrain::Options::default();
     let flags = std::env::var("MC_NATIVE_TERRAIN").unwrap_or_default();
     for flag in flags.split(',').map(str::trim) {
         match flag {
@@ -1980,6 +2015,7 @@ fn terrain_options() -> super::terrain::Options {
             "novis" => o.visibility = false,
             "nobuckets" => o.buckets = false,
             "nopacked" => o.packed = false,
+            "nogreedy" => o.greedy = false,
             _ => {}
         }
     }

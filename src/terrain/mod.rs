@@ -20,6 +20,19 @@ pub use mesh::{
 };
 pub use occupancy::Occupancy;
 
+/// Greedy meshing (Video Settings > Greedy Meshing): the native renderer
+/// merges whole faces into rectangles (`vk::packed::merge`). One of
+/// `GREEDY_OFF`, `GREEDY_STANDARD` (same texture) and `GREEDY_AGGRESSIVE`
+/// (any texture).
+pub static GREEDY: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(GREEDY_OFF);
+pub const GREEDY_OFF: u8 = 0;
+pub const GREEDY_STANDARD: u8 = 1;
+pub const GREEDY_AGGRESSIVE: u8 = 2;
+
+/// Triangle outlines over the terrain (Debug Options > Triangle Outlines),
+/// tinted by how each quad is stored.
+pub static OUTLINES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// Section origins per row of the terrain origins texture (`terrain.wgsl`
 /// and the pack preludes read it at this width).
 pub const ORIGIN_ROW: u32 = 256;

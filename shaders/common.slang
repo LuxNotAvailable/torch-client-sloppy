@@ -44,4 +44,5 @@ ByteAddressBuffer buffer_ro(uint index) {
 static const uint VIEW_SHADED = 0;
 static const uint VIEW_NORMALS = 1;
 static const uint VIEW_TEXTURE_INDEX = 2;
+static const uint VIEW_OUTLINES = 3;
 static const uint VIEW_DEPTH = 3;

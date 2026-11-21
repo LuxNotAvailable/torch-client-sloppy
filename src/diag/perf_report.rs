@@ -359,6 +359,7 @@ fn sample(
     match capture.phase {
         Phase::Settling { until } => {
             take_shadow_frames();
+            take_gpu_frames();
             if now >= until {
                 frame_profile::set_capturing(true);
                 capture.counts_at_start = super::counts();
@@ -379,6 +380,7 @@ fn sample(
             capture.frame_ms.push(time.delta_secs() * 1000.0);
             capture.record_frame(diagnostics.as_deref(), &view);
             capture.record_shadow();
+            capture.record_gpu();
             capture.record_render_work(upload);
             capture.record_memory(uploads.cpu_bytes());
             capture.record_assets(&uploads);
@@ -412,7 +414,39 @@ fn take_shadow_frames() -> Vec<(&'static str, f32, f32)> {
     std::mem::take(&mut *SHADOW_FRAMES.lock().unwrap_or_else(|e| e.into_inner()))
 }
 
+/// Frames' GPU time per pass (`note_gpu_passes`), drained each recorded
+/// frame.
+static GPU_FRAMES: Mutex<Vec<Vec<(&'static str, f32)>>> = Mutex::new(Vec::new());
+
+/// Whether a report is settling or recording: the native renderer then
+/// times its passes on the GPU, without `MC_NATIVE_GPU_TIMING`.
+pub fn running() -> bool {
+    CAPTURE.lock().is_ok_and(|c| c.is_some())
+}
+
+/// A finished frame's GPU ms per pass (a name's passes summed).
+pub(crate) fn note_gpu_passes(passes: Vec<(&'static str, f32)>) {
+    let mut frames = GPU_FRAMES.lock().unwrap_or_else(|e| e.into_inner());
+    if frames.len() < 4096 {
+        frames.push(passes);
+    }
+}
+
+fn take_gpu_frames() -> Vec<Vec<(&'static str, f32)>> {
+    std::mem::take(&mut *GPU_FRAMES.lock().unwrap_or_else(|e| e.into_inner()))
+}
+
 impl Capture {
+    fn record_gpu(&mut self) {
+        for passes in take_gpu_frames() {
+            let total: f32 = passes.iter().map(|p| p.1).sum();
+            self.push(Section::Gpu, "all passes GPU ms", total);
+            for (name, ms) in passes {
+                self.push(Section::Gpu, format!("{name} GPU ms"), ms);
+            }
+        }
+    }
+
     fn record_shadow(&mut self) {
         for (kind, shadow, total) in take_shadow_frames() {
             self.push(
@@ -847,6 +881,10 @@ fn describe(
         ("clouds".to_owned(), o.clouds.caption().to_owned()),
         ("particles".to_owned(), o.particles.caption().to_owned()),
         ("smooth lighting".to_owned(), o.smooth_lighting.to_string()),
+        (
+            "greedy meshing".to_owned(),
+            ["off", "standard", "aggressive"][o.greedy_meshing.min(2) as usize].to_owned(),
+        ),
         ("entity shadows".to_owned(), o.entity_shadows.to_string()),
         ("fov".to_owned(), o.fov.to_string()),
         ("gui scale".to_owned(), o.gui_scale.to_string()),

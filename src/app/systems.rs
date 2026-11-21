@@ -1761,6 +1761,25 @@ fn sync_lighting_enabled(
     }
 }
 
+/// Video Settings > Greedy Meshing to `terrain::GREEDY`, re-meshing on a
+/// change (the merge runs as sections upload).
+fn sync_greedy_meshing(state: Res<crate::gui::GuiState>, mut last: Local<Option<u32>>) {
+    let wanted = state.options.greedy_meshing;
+    if *last == Some(wanted) {
+        return;
+    }
+    let had_previous_value = last.is_some();
+    *last = Some(wanted);
+    crate::terrain::GREEDY.store(wanted as u8, std::sync::atomic::Ordering::Relaxed);
+    info!(
+        "greedy meshing {}",
+        ["off", "standard", "aggressive"][wanted.min(2) as usize]
+    );
+    if had_previous_value {
+        crate::client::bus::request(crate::client::bus::ClientRequest::ReloadChunks);
+    }
+}
+
 fn sync_vsync(
     state: Res<crate::gui::GuiState>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
@@ -2211,6 +2230,7 @@ pub fn run(
             ),
         )
         .add_systems(Update, sync_lighting_enabled)
+        .add_systems(Update, sync_greedy_meshing)
         .add_systems(Update, toggle_screen.after(apply_gui_nav))
         .add_systems(
             Update,

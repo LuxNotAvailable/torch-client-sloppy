@@ -311,6 +311,8 @@ pub struct Options {
     pub post: super::post::Settings,
     /// Store whole-face quads as compact records (`vk::packed`).
     pub packed: bool,
+    /// Merge packed records into rectangles (`vk::packed::merge`).
+    pub greedy: bool,
 }
 
 impl Default for Options {
@@ -322,6 +324,7 @@ impl Default for Options {
             wave: true,
             budget: UPLOAD_BUDGET,
             packed: true,
+            greedy: true,
             post: super::post::Settings::default(),
         }
     }
@@ -1846,25 +1849,40 @@ impl TerrainScene {
                 continue;
             }
 
-            let (counts, indices) = if section.water {
+            let (mut counts, indices) = if section.water {
                 ([0; 7], Vec::new())
             } else {
                 let (counts, mut solid) = bucket(&section.verts, &section.idx);
                 solid.extend_from_slice(&section.cutout_idx);
                 (counts, solid)
             };
-            let index_count = (section.idx.len() + section.cutout_idx.len()) as u32;
             // Solid layers' whole-face quads as compact records
-            // (`vk::packed`): the records go first in the section's vertex
-            // range, in 20-byte units, then the vertices left.
-            let packed = (!section.water && self.options.packed)
-                .then(|| super::packed::pack(&section.verts, &indices));
+            // (`vk::packed`), merged into rectangles: the records and their
+            // cells go first in the section's vertex range, in 20-byte
+            // units, then the vertices left. Not under a pack, whose
+            // programs read raw vertices.
+            let packed =
+                (!section.water && self.options.packed && section.pack.is_empty()).then(|| {
+                    let mode = crate::terrain::GREEDY.load(std::sync::atomic::Ordering::Relaxed);
+                    let greedy = self.options.greedy && mode != crate::terrain::GREEDY_OFF;
+                    let mut p = super::packed::pack(&section.verts, &indices, 2, greedy);
+                    if greedy {
+                        let aggressive = mode == crate::terrain::GREEDY_AGGRESSIVE;
+                        super::packed::merge(&mut p, &mut counts, aggressive);
+                    }
+                    p
+                });
             let (indices, record_units) = match &packed {
                 Some(p) => (
                     p.indices.clone(),
-                    (p.records.len() as u32 * 32).div_ceil(20),
+                    (p.records.len() as u32 * 32 + p.cells.len() as u32 * 4).div_ceil(20),
                 ),
                 None => (indices, 0),
+            };
+            let index_count = if section.water {
+                (section.idx.len() + section.cutout_idx.len()) as u32
+            } else {
+                indices.len() as u32
             };
             let plain_verts: &[crate::terrain::mesh::PackedVertex] = match &packed {
                 Some(p) => &p.verts,
@@ -1933,6 +1951,7 @@ impl TerrainScene {
             let mut vertex_bytes = Vec::with_capacity(vertex_count as usize * 20);
             if let Some(p) = &packed {
                 vertex_bytes.extend_from_slice(bytemuck::cast_slice(&p.records));
+                vertex_bytes.extend_from_slice(bytemuck::cast_slice(&p.cells));
                 vertex_bytes.resize(record_units as usize * 20, 0);
             }
             vertex_bytes.extend_from_slice(bytemuck::cast_slice(plain_verts));

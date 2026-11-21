@@ -152,6 +152,8 @@ pub struct MeshBuf {
     pub cutout_idx: Vec<u32>,
     pub min: [i16; 3],
     pub max: [i16; 3],
+    /// The block being meshed is randomized (`VERTEX_FREE_ROTATION`).
+    pub free_rotation: bool,
     #[cfg(feature = "shader_support")]
     pub pack: Vec<crate::shaderpack::packvertex::PackQuad>,
     #[cfg(feature = "shader_support")]
@@ -200,13 +202,17 @@ pub const MATERIAL_WATER: u8 = 3;
 pub const MATERIAL_LAVA: u8 = 4;
 pub const MATERIAL_EMISSIVE_BASE: u8 = 5;
 
+/// Vertex flags (`light[3]`): the face's texture rotation was picked at
+/// random (a randomized block), so greedy meshing may change it.
+pub const VERTEX_FREE_ROTATION: u8 = 1;
+
 #[inline]
-fn pack_light(light: [f32; 2], material: u8, anchor: f32) -> [u8; 4] {
+fn pack_light(light: [f32; 2], material: u8, flags: u8) -> [u8; 4] {
     [
         light[0].clamp(0.0, 255.0).round() as u8,
         light[1].clamp(0.0, 255.0).round() as u8,
         material,
-        (anchor.clamp(0.0, 1.0) * 255.0).round() as u8,
+        flags,
     ]
 }
 
@@ -301,7 +307,7 @@ impl MeshBuf {
         material: u8,
     ) {
         let base = self.verts.len() as u32;
-        let light = pack_light(light, material, 1.0);
+        let light = pack_light(light, material, 0);
         let col = pack_color([tint[0], tint[1], tint[2], 1.0]);
         #[cfg(feature = "shader_support")]
         let col = match &self.pack_block {
@@ -361,7 +367,12 @@ impl MeshBuf {
                 }
                 None => color,
             };
-            let light = pack_light(lit.light[i], material, p[1]);
+            let flags = if self.free_rotation {
+                VERTEX_FREE_ROTATION
+            } else {
+                0
+            };
+            let light = pack_light(lit.light[i], material, flags);
             self.push_vertex(
                 [p[0] + wx, p[1] + wy, p[2] + wz],
                 pack_uv(quad.uv[i]),
@@ -641,6 +652,7 @@ fn emit_baked(
     let mut random = baked
         .randomized
         .then(|| JavaRandom::new(position_seed(bx, by, bz)));
+    buf.free_rotation = baked.randomized;
 
     let [ox, oy, oz] = rb.offset.at(bx, bz);
     let (wx, wy, wz) = (wx + ox, wy + oy, wz + oz);
@@ -837,6 +849,7 @@ fn emit_block_entity(
     cardinal: &[f32; 6],
     buf: &mut MeshBuf,
 ) {
+    buf.free_rotation = false;
     let light = flat_light_coords(occ, at, at);
     for quad in quads {
         let lit = QuadLight::flat(quad.shade(cardinal), light);

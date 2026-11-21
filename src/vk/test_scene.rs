@@ -27,6 +27,9 @@ pub enum View {
     Shaded,
     Normals,
     TextureIndex,
+    /// Shaded, with terrain triangles outlined and quads tinted by how
+    /// they were stored (plain, packed, merged).
+    Outlines,
 }
 
 impl View {
@@ -35,6 +38,7 @@ impl View {
             "shaded" => View::Shaded,
             "normals" => View::Normals,
             "texture" => View::TextureIndex,
+            "outlines" => View::Outlines,
             _ => return None,
         })
     }
@@ -44,6 +48,7 @@ impl View {
             View::Shaded => 0,
             View::Normals => 1,
             View::TextureIndex => 2,
+            View::Outlines => 3,
         }
     }
 }

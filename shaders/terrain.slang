@@ -141,8 +141,16 @@ struct VertexOut {
     float4 color;
     float3 world;
     nointerpolation uint slot;
-    // A leaves face (the mesher's leaf material).
-    nointerpolation uint leaf;
+    // Bit 0: a leaves face (the mesher's leaf material). Bits 1-2 the
+    // quad's kind (0 plain, 1 packed, 2 merged), bit 3 its drawn diagonal
+    // (both for the outlines view), bits 8-15 and 16-23 its size in cells.
+    // Merged: bit 4 aggressive, bits 24-31 the uv edges by step code.
+    nointerpolation uint flags;
+    // A merged record (`vk::packed::merge`), so its pixels read only their
+    // cell: x its pool, y its cells' byte address + 1 (0 for any other
+    // quad), zw its uv rectangle (u0 | u1 << 16, v0 | v1 << 16). Its
+    // position in cells is in color.xy.
+    nointerpolation uint4 merged;
 };
 
 int sign16(uint bits) {
@@ -152,6 +160,16 @@ int sign16(uint bits) {
 // Indices from here up name a packed quad's corner: PACKED_BASE + 4 ×
 // record + corner (`src/vk/packed.rs`, whose `unpack` this mirrors).
 static const uint PACKED_BASE = 1u << 28;
+static const uint MERGED = 1u << 26;
+static const uint AGGRESSIVE = 1u << 29;
+// An exact merge (`vk::packed::EXACT`): shaded by its vertices, its size in
+// the next record slot; only its texture repeats per cell.
+static const uint EXACT = 1u << 30;
+// Merged pixels light each corner and blend (three lightmap lookups, as
+// the vertex path), or blend light and look up once (false, cheaper).
+static const bool MERGED_EXACT_LIGHT = false;
+// Growth per block of distance: about half a pixel at 1600 wide, 70°.
+static const float MERGED_GROW = 0.0004;
 
 // A packed corner as the vertex words the mesher would have written: the
 // position (x, y, z in 1/256 block), uv, light and colour.
@@ -161,6 +179,18 @@ struct Corner {
     float2 light;
     float4 color;
     uint leaf;
+    // Merged: the corner in cells (0 to width, 0 to height), and its way
+    // out of the quad in the plane (zero for any other quad).
+    float2 cells;
+    float3 outward;
+    float2 outward_cells;
+    // Outlines view: kind, diagonal and size (see `VertexOut.flags`).
+    uint outline;
+    // Merged: its cells' byte address.
+    uint table;
+    // Exact merged: the uv step per cell along each in-plane axis.
+    float2 du;
+    float2 dv;
 };
 
 uint tinted(uint tint, uint grey) {
@@ -178,8 +208,40 @@ Corner packed_corner(ByteAddressBuffer pool, uint record_at, uint corner) {
     int3 pos = int3(block) * 256;
     uint b = (axis + 1) % 3;
     uint c = (axis + 2) % 3;
-    pos[b] += int(steps & 1) * 256;
-    pos[c] += int((steps >> 1) & 1) * 256;
+    uint2 size = uint2(1, 1);
+    bool exact = (w0 & EXACT) != 0;
+    if (exact) {
+        uint ext = pool.Load(record_at + 32);
+        size = uint2((ext & 15) + 1, ((ext >> 4) & 15) + 1);
+    } else if ((w0 & MERGED) != 0) {
+        size = uint2((r0.w & 15) + 1, ((r0.w >> 4) & 15) + 1);
+    }
+    float2 cells = float2(steps & 1, (steps >> 1) & 1) * float2(size);
+    pos[b] += int(cells.x) * 256;
+    pos[c] += int(cells.y) * 256;
+    float3 outward = float3(0, 0, 0);
+    if ((w0 & MERGED) != 0) {
+        outward[b] = (steps & 1) != 0 ? 1.0 : -1.0;
+        outward[c] = (steps & 2) != 0 ? 1.0 : -1.0;
+    }
+    float2 outward_cells = float2(outward[b], outward[c]);
+    // `VertexOut.flags` without the leaf bit.
+    // Merged also: bit 3 aggressive, bits 23-30 the uv edges by step code.
+    // Exact merged: kind 3, bit 4 its texture repeats per cell.
+    uint kind = exact ? 3 : (w0 & MERGED) != 0 ? 2 : 1;
+    uint outline = kind | (((w0 >> 27) & 1) << 2) | (size.x << 7) | (size.y << 15);
+    float2 code_uv[4] = { float2(0, 0), float2(0, 0), float2(0, 0), float2(0, 0) };
+    if ((w0 & MERGED) != 0) {
+        uint code_edges = 0;
+        for (uint k = 0; k < 4; k++) {
+            uint e = (r1.z >> (24 + 2 * k)) & 3;
+            uint code = (w0 >> (17 + 2 * k)) & 3;
+            code_edges |= e << (2 * code);
+            code_uv[code] = float2((e & 1) != 0 ? r0.y >> 16 : r0.y & 0xFFFF,
+                                   (e & 2) != 0 ? r0.z >> 16 : r0.z & 0xFFFF) / 65535.0;
+        }
+        outline |= ((w0 & AGGRESSIVE) != 0 ? 1u : 0u) << 3 | (exact ? 1u : 0u) << 4 | (code_edges << 23);
+    }
     uint edges = (r1.z >> (24 + 2 * corner)) & 3;
     uint u = (edges & 1) != 0 ? r0.y >> 16 : r0.y & 0xFFFF;
     uint v = (edges & 2) != 0 ? r0.z >> 16 : r0.z & 0xFFFF;
@@ -190,9 +252,20 @@ Corner packed_corner(ByteAddressBuffer pool, uint record_at, uint corner) {
     Corner out;
     out.local = pos;
     out.uv = float2(u, v) / 65535.0;
+    out.du = code_uv[1] - code_uv[0];
+    out.dv = code_uv[2] - code_uv[0];
+    if (exact) {
+        // Unwrapped across the cells; the pixel shader repeats it.
+        out.uv = code_uv[0] + cells.x * out.du + cells.y * out.dv;
+    }
     out.light = float2(light & 0xFF, light >> 8);
     out.color = float4(tinted(tint.x, grey), tinted(tint.y, grey), tinted(tint.z, grey), alpha) / 255.0;
     out.leaf = leaf;
+    out.cells = cells;
+    out.outward = outward;
+    out.outward_cells = outward_cells;
+    out.outline = outline;
+    out.table = record_at + r1.x;
     return out;
 }
 
@@ -209,18 +282,44 @@ VertexOut terrain_vertex(uint vertex: SV_VulkanVertexID, uint instance: SV_Vulka
     float2 light;
     float4 color;
     uint leaf = 0;
+    uint4 merged = uint4(0, 0, 0, 0);
+    float3 outward = float3(0, 0, 0);
+    float2 outward_cells = float2(0, 0);
+    // Exact merged: the uv steps per cell, for growing it.
+    float2 du = float2(0, 0);
+    float2 dv = float2(0, 0);
+    bool grows = false;
+    uint outline;
     // The draw adds the base vertex to every index; a packed one is
     // recognised past it.
     uint named = vertex - uint(origin_base.w);
     if (named >= PACKED_BASE) {
         uint quad = (named - PACKED_BASE) >> 2;
         uint records = slots.Load(instance * SLOT_SIZE + 112);
-        Corner corner = packed_corner(pool, records + quad * 32, named & 3);
+        uint record_at = records + quad * 32;
+        Corner corner = packed_corner(pool, record_at, named & 3);
         local = corner.local;
         uv = corner.uv;
         light = corner.light;
         color = corner.color;
         leaf = corner.leaf;
+        outline = corner.outline;
+        uint w0 = pool.Load(record_at);
+        if ((w0 & MERGED) != 0) {
+            grows = true;
+            outward = corner.outward;
+            outward_cells = corner.outward_cells;
+            uint2 rect = uint2(pool.Load(record_at + 4), pool.Load(record_at + 8));
+            if ((w0 & EXACT) != 0) {
+                // Shaded by its vertices: only the uv rectangle, to repeat.
+                merged = uint4(0, 0, rect);
+                du = corner.du;
+                dv = corner.dv;
+            } else {
+                merged = uint4(slots.Load(instance * SLOT_SIZE + 52), corner.table + 1, rect);
+                color = float4(corner.cells, 0, 0);
+            }
+        }
     } else {
         uint4 raw = pool.Load4(vertex * 20);
         uint tail = pool.Load(vertex * 20 + 16);
@@ -229,9 +328,25 @@ VertexOut terrain_vertex(uint vertex: SV_VulkanVertexID, uint instance: SV_Vulka
         light = float2(raw.w & 0xFF, (raw.w >> 8) & 0xFF);
         leaf = ((raw.w >> 16) & 0xFF) == 1 ? 1 : 0;
         color = float4(tail & 0xFF, (tail >> 8) & 0xFF, (tail >> 16) & 0xFF, tail >> 24) / 255.0;
+        // Plain quads: four vertices in winding order, split 0-2 (most
+        // are; the outlines are a debug view).
+        outline = (1 << 7) | (1 << 15);
     }
 
     float3 world = float3(origin_base.xyz) + float3(local) / 256.0;
+    // A merged quad's edges pass its neighbours' corners (T-junctions),
+    // where rounding can leave pixel cracks: grow it in its plane by about
+    // half a pixel at its distance, so it overlaps them.
+    if (grows) {
+        float3 camera = asfloat(buffer_at(pc.ids.y).Load3(VIEW_CAMERA));
+        float grow = length(world - camera) * MERGED_GROW;
+        world += outward * grow;
+        if (merged.y != 0) {
+            color.xy += outward_cells * grow;
+        } else {
+            uv += (outward_cells.x * du + outward_cells.y * dv) * grow;
+        }
+    }
 
     // The colour darkened by its ambient occlusion (alpha), lit by the
     // lightmap at the vertex's levels, as terrain.wgsl.
@@ -240,10 +355,11 @@ VertexOut terrain_vertex(uint vertex: SV_VulkanVertexID, uint instance: SV_Vulka
     VertexOut out;
     out.position = mul(pc.view_proj, float4(world, 1));
     out.uv = uv;
-    out.color = float4(color.rgb * color.a * lit, 1);
+    out.color = merged.y != 0 ? color : float4(color.rgb * color.a * lit, 1);
     out.world = world;
     out.slot = instance;
-    out.leaf = leaf;
+    out.flags = leaf | (outline << 1);
+    out.merged = merged;
     return out;
 }
 
@@ -252,7 +368,7 @@ VertexOut terrain_vertex(uint vertex: SV_VulkanVertexID, uint instance: SV_Vulka
 // chunk): a dithered share of the see-through texels drawn filled.
 // Fast leaves (params.x < 0) fill every hole.
 bool leaf_filled(VertexOut in) {
-    if (in.leaf == 0 || pc.params.x == 0.0) {
+    if ((in.flags & 1) == 0 || pc.params.x == 0.0) {
         return false;
     }
     float2 centre = pc.params.yz * 16.0 + 8.0;
@@ -290,11 +406,11 @@ void anim_blend(uint3 id: SV_DispatchThreadID) {
 // the next for interpolated textures, as terrain.wgsl's `sample_atlas`.
 static const uint ATLAS_COLS = 16;
 
-float4 sample_atlas(float2 uv) {
+float4 sample_atlas(float2 uv, float2 gx, float2 gy) {
     Texture2D atlas = texture_at(pc.more.x);
     SamplerState s = g_samplers[SAMPLER_NEAREST];
     if (pc.more.z == 0) {
-        return atlas.Sample(s, uv);
+        return atlas.SampleGrad(s, uv, gx, gy);
     }
     uint w, h, levels;
     atlas.GetDimensions(0, w, h, levels);
@@ -302,8 +418,6 @@ float4 sample_atlas(float2 uv) {
     float2 grid = uv * tiles;
     float2 cell = clamp(floor(grid), 0, tiles - 1);
     float2 local = grid - cell;
-    float2 gx = ddx(uv);
-    float2 gy = ddy(uv);
     uint tile = uint(cell.y) * ATLAS_COLS + uint(cell.x);
     ByteAddressBuffer table = buffer_ro(pc.more.z - 1);
     // Tiles past the table's (block entity textures) are their own.
@@ -323,6 +437,127 @@ float4 sample_atlas(float2 uv) {
     return lerp(ta, tb, float(entry.y) / 65535.0);
 }
 
+// One corner of a merged cell, lit as `terrain_vertex` lights a vertex.
+// `rgba` the vertex's colour bytes, `light` its block and sky light.
+float3 cell_corner(uint rgba, uint light, RWByteAddressBuffer view) {
+    float4 c = float4(rgba & 0xFF, (rgba >> 8) & 0xFF, (rgba >> 16) & 0xFF, rgba >> 24) / 255.0;
+    return c.rgb * c.a * lightmap_at(view, float2(light & 0xFF, (light >> 8) & 0xFF));
+}
+
+// A merged quad's pixel: the uv in its cell's tile (and the gradients of
+// the uv unwrapped across cells, for the mip), and the colour its cell's
+// two triangles would have interpolated.
+void merged_pixel(VertexOut in, float2 dcx, float2 dcy, out float2 uv, out float2 gx, out float2 gy, out float3 color) {
+    ByteAddressBuffer pool = buffer_ro(in.merged.x);
+    uint2 size = uint2((in.flags >> 8) & 0xFF, (in.flags >> 16) & 0xFF);
+    float2 st = in.color.xy;
+    float2 cell = clamp(floor(st), 0, float2(size - 1));
+    float2 f = saturate(st - cell);
+    // An aggressive record's cells carry their own texture.
+    bool aggressive = ((in.flags >> 4) & 1) != 0;
+    uint cell_at = in.merged.y - 1 + (uint(cell.y) * size.x + uint(cell.x)) * (aggressive ? 40 : 28);
+    // Each corner's uv, by its in-plane step code.
+    uint3 t = aggressive ? pool.Load3(cell_at + 28) : uint3(in.merged.zw, in.flags >> 24);
+    float2 corner_uv[4];
+    for (uint code = 0; code < 4; code++) {
+        uint edges = (t.z >> (2 * code)) & 3;
+        corner_uv[code] = float2((edges & 1) != 0 ? t.x >> 16 : t.x & 0xFFFF,
+                                 (edges & 2) != 0 ? t.y >> 16 : t.y & 0xFFFF) / 65535.0;
+    }
+    float2 du = corner_uv[1] - corner_uv[0];
+    float2 dv = corner_uv[2] - corner_uv[0];
+    uv = corner_uv[0] + f.x * du + f.y * dv;
+    gx = dcx.x * du + dcx.y * dv;
+    gy = dcy.x * du + dcy.y * dv;
+
+    // The cell: each corner's colour, then their light, then the diagonal.
+    uint4 c = pool.Load4(cell_at);
+    uint3 l = pool.Load3(cell_at + 16);
+    uint4 light = uint4(l.x & 0xFFFF, l.x >> 16, l.y & 0xFFFF, l.y >> 16);
+    RWByteAddressBuffer view = buffer_at(pc.ids.y);
+    // The cell's triangle under the pixel: its three corners (by step
+    // code) and their weights, as the vertices would have interpolated.
+    uint3 k;
+    float3 w;
+    if ((l.z & 1) == 0) {
+        // Diagonal 0-3: triangles 0-1-3 (f.x >= f.y) and 0-2-3.
+        k = f.x >= f.y ? uint3(0, 1, 3) : uint3(0, 2, 3);
+        w = f.x >= f.y ? float3(1 - f.x, f.x - f.y, f.y) : float3(1 - f.y, f.y - f.x, f.x);
+    } else {
+        // Diagonal 1-2: triangles 0-1-2 (f.x + f.y <= 1) and 3-2-1.
+        k = f.x + f.y <= 1 ? uint3(0, 1, 2) : uint3(3, 2, 1);
+        // Corner 2 (0, 1) weighs 1 - f.x, corner 1 (1, 0) 1 - f.y.
+        w = f.x + f.y <= 1 ? float3(1 - f.x - f.y, f.x, f.y) : float3(f.x + f.y - 1, 1 - f.x, 1 - f.y);
+    }
+    uint rgba[4] = { c.x, c.y, c.z, c.w };
+    uint lights[4] = { light.x, light.y, light.z, light.w };
+    if (MERGED_EXACT_LIGHT) {
+        // Each corner lit, then blended: exactly the vertex path.
+        color = w.x * cell_corner(rgba[k.x], lights[k.x], view)
+              + w.y * cell_corner(rgba[k.y], lights[k.y], view)
+              + w.z * cell_corner(rgba[k.z], lights[k.z], view);
+        return;
+    }
+    // Colour and light blended, then one lightmap lookup: a shade off the
+    // vertex path where light changes across a cell (AO corners).
+    float3 shade = float3(0, 0, 0);
+    float2 lit = float2(0, 0);
+    for (uint i = 0; i < 3; i++) {
+        uint code = k[i];
+        float4 cc = float4(rgba[code] & 0xFF, (rgba[code] >> 8) & 0xFF, (rgba[code] >> 16) & 0xFF, rgba[code] >> 24) / 255.0;
+        shade += w[i] * cc.rgb * cc.a;
+        lit += w[i] * float2(lights[code] & 0xFF, (lights[code] >> 8) & 0xFF);
+    }
+    color = shade * lightmap_at(view, lit);
+}
+
+// Outlines view: the shaded colour tinted by the quad's kind (plain as it
+// is, packed green, exact merged cyan, aggressive merged blue), with its triangles' edges in white and a
+// merged quad's cells in grey.
+float3 outlined(VertexOut in, float3 shaded) {
+    uint kind = (in.flags >> 1) & 3;
+    float2 size = float2((in.flags >> 8) & 0xFF, (in.flags >> 16) & 0xFF);
+    // Merged: the position in cells. Others: the block-grid position in
+    // the face's plane (a plain quad's diagonal is a guess).
+    float2 g = in.color.xy;
+    if (kind == 3) {
+        // Exact merged: cells back from the unwrapped uv.
+        float2 c[4];
+        for (uint code = 0; code < 4; code++) {
+            uint e = (in.flags >> (24 + 2 * code)) & 3;
+            c[code] = float2((e & 1) != 0 ? in.merged.z >> 16 : in.merged.z & 0xFFFF,
+                             (e & 2) != 0 ? in.merged.w >> 16 : in.merged.w & 0xFFFF) / 65535.0;
+        }
+        float2 du = c[1] - c[0];
+        float2 dv = c[2] - c[0];
+        g = float2(dot(in.uv - c[0], du) / dot(du, du), dot(in.uv - c[0], dv) / dot(dv, dv));
+    } else if (kind != 2) {
+        float3 n = abs(cross(ddx(in.world), ddy(in.world)));
+        uint axis = n.x > n.y && n.x > n.z ? 0 : n.y > n.z ? 1 : 2;
+        g = frac(float2(in.world[(axis + 1) % 3], in.world[(axis + 2) % 3]));
+    }
+    float2 w = max(fwidth(g), 1e-5);
+    // Distance to the quad's edges and its diagonal, in pixels.
+    float2 edge = min(g, size - g) / w;
+    float2 n = g / size;
+    float2 nw = w / size;
+    float diag = ((in.flags >> 3) & 1) == 0
+        ? abs(n.x - n.y) / (nw.x + nw.y)
+        : abs(n.x + n.y - 1) / (nw.x + nw.y);
+    float line = min(min(edge.x, edge.y), diag * 2);
+    // Fade lines out once the quad (or cell) is a few pixels across.
+    float2 quad_px = size / w;
+    float fade = saturate((min(quad_px.x, quad_px.y) - 6) / 10);
+    float3 tint = kind == 1 ? float3(0.4, 1, 0.4) : kind == 3 ? float3(0.3, 0.9, 1) : float3(0.4, 0.6, 1);
+    float3 c = kind == 0 ? shaded : lerp(shaded, tint * (0.3 + dot(shaded, float3(0.3, 0.5, 0.2)) * 1.4), 0.7);
+    if (kind >= 2) {
+        float2 cell = abs(g - round(g)) / w;
+        float cell_fade = saturate((1 / max(w.x, w.y) - 6) / 10);
+        c = lerp(c, float3(0.55, 0.55, 0.55), saturate(1 - min(cell.x, cell.y)) * 0.6 * cell_fade);
+    }
+    return lerp(c, float3(1, 1, 1), saturate(1 - line) * fade);
+}
+
 // A cut-out hole returns alpha -1, for the entry point to discard: the
 // PowerVR compiler fails on a discard inside a called function.
 float4 terrain_shade(VertexOut in, bool cutout) {
@@ -334,18 +569,38 @@ float4 terrain_shade(VertexOut in, bool cutout) {
         uint i = in.slot * 2654435761u;
         return float4(float3(i & 255, (i >> 8) & 255, (i >> 16) & 255) / 255.0 * 0.8 + 0.2, 1);
     }
-    float4 texel = sample_atlas(in.uv);
+    // Derivatives before any branch on the quad.
+    float2 gx = ddx(in.uv);
+    float2 gy = ddy(in.uv);
+    float2 dcx = ddx(in.color.xy);
+    float2 dcy = ddy(in.color.xy);
+    float2 uv = in.uv;
+    float3 color = in.color.rgb;
+    if (in.merged.y != 0) {
+        merged_pixel(in, dcx, dcy, uv, gx, gy, color);
+    } else if ((in.flags & (1 << 5)) != 0) {
+        // Exact merged: the unwrapped uv back into its tile (gradients
+        // stay the unwrapped ones, for the mip).
+        float2 lo = float2(in.merged.z & 0xFFFF, in.merged.w & 0xFFFF) / 65535.0;
+        float2 span = float2(in.merged.z >> 16, in.merged.w >> 16) / 65535.0 - lo;
+        uv = lo + frac((in.uv - lo) / span) * span;
+    }
+    float4 texel = sample_atlas(uv, gx, gy);
     if (cutout && texel.a < 0.1) {
         if (!leaf_filled(in)) {
             return float4(0, 0, 0, -1);
         }
         // A hole filled with the leaf's average colour (a small mip),
         // halfway to black: the shade of a leaf's shadowed inside.
-        texel = float4(texture_at(pc.more.x).SampleLevel(g_samplers[SAMPLER_LINEAR], in.uv, 4).rgb * 0.5, 1);
+        texel = float4(texture_at(pc.more.x).SampleLevel(g_samplers[SAMPLER_LINEAR], uv, 4).rgb * 0.5, 1);
     }
     RWByteAddressBuffer view = buffer_at(pc.ids.y);
     float3 camera = asfloat(view.Load3(VIEW_CAMERA));
-    return vanilla_fog(view, float4(texel.rgb * in.color.rgb, texel.a), in.world - camera);
+    float3 rgb = texel.rgb * color;
+    if (pc.more.y == VIEW_OUTLINES) {
+        rgb = outlined(in, rgb);
+    }
+    return vanilla_fog(view, float4(rgb, texel.a), in.world - camera);
 }
 
 [shader("fragment")]
@@ -368,7 +623,7 @@ float4 terrain_cutout(VertexOut in): SV_Target {
 [shader("fragment")]
 float4 terrain_translucent(VertexOut in): SV_Target {
     float4 c = terrain_shade(in, false);
-    if (pc.more.y != VIEW_SHADED) {
+    if (pc.more.y != VIEW_SHADED && pc.more.y != VIEW_OUTLINES) {
         return float4(c.rgb, 0.6);
     }
     return float4(c.rgb, saturate(c.a * pc.params.w));
