@@ -1187,7 +1187,9 @@ impl Live {
         #[cfg(not(feature = "perf_report"))]
         let report = false;
         if self.gpu_timing.is_none()
-            && (report || crate::platform::env::var("MC_NATIVE_GPU_TIMING").is_ok_and(|v| v == "1"))
+            && (report
+                || crate::gui::tune::running()
+                || crate::platform::env::var("MC_NATIVE_GPU_TIMING").is_ok_and(|v| v == "1"))
         {
             match super::timestamps::Timestamps::new(&self.ctx) {
                 Ok(t) => self.gpu_timing = Some((t, Default::default(), std::time::Instant::now())),
@@ -1196,6 +1198,9 @@ impl Live {
         }
         if let Some((t, sums, since)) = &mut self.gpu_timing {
             t.begin_frame(&self.ctx, slot);
+            if crate::gui::tune::running() && !t.last.is_empty() {
+                crate::gui::tune::note_gpu(t.last.iter().map(|p| p.1).sum());
+            }
             #[cfg(feature = "perf_report")]
             if let Some(kind) = self.shadow_kinds[slot].take() {
                 let total: f32 = t.last.iter().map(|p| p.1).sum();

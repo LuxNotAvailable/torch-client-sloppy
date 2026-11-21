@@ -1334,6 +1334,11 @@ fn limit_framerate(
     monitors: Query<&bevy::window::Monitor, With<bevy::window::PrimaryMonitor>>,
     mut next_frame: Local<Option<Instant>>,
 ) {
+    // Tune Settings measures uncapped frames.
+    if crate::gui::tune::running() {
+        *next_frame = None;
+        return;
+    }
     let mut target = gui.options.max_fps;
     // An open GUI takes its own cap; screens outside a world never need
     // more than 60, whatever the settings.
@@ -2234,6 +2239,11 @@ pub fn run(
     .add_systems(Update, sync_app_state.after(FrameViewSystems))
     .add_systems(Update, note_frame)
     .add_systems(First, limit_framerate.before(bevy::time::TimeSystems))
+    .add_systems(
+        PreUpdate,
+        crate::gui::tune::swallow_input.after(bevy::input::InputSystems),
+    )
+    .add_systems(Update, crate::gui::tune::guard)
     .add_systems(
         Update,
         mesh_on_render_thread

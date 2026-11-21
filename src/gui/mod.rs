@@ -75,6 +75,7 @@ pub mod tablist;
 pub mod title;
 pub mod toast;
 pub mod tooltip;
+pub mod tune;
 pub mod video_tips;
 #[cfg(voice)]
 pub mod voice_chat;
@@ -124,6 +125,8 @@ pub enum Screen {
     LightRaySettings,
     /// The culling options, under Video Settings.
     AdvancedPerformance,
+    /// Tune Settings' checklist, under Video Settings (`tune`).
+    TuneSettings,
     /// Inventory sorting's settings, under Features.
     InventorySortSettings,
     /// The end poem and credits, after leaving the End.
@@ -218,7 +221,7 @@ settings_tree! {
     Language | AccessibilitySettings | OnlineSettings | DebugOptions => Options,
     MouseSettings => Controls,
     BlockOutlineSettings => VideoSettings,
-    LeafSettings | LightRaySettings | AdvancedPerformance => VideoSettings,
+    LeafSettings | LightRaySettings | AdvancedPerformance | TuneSettings => VideoSettings,
     ZoomSettings | BlockInfoSettings | InventorySortSettings | FoodInfoSettings => Features,
     FontSettings => Language,
     #[cfg(audio)]
@@ -1141,16 +1144,34 @@ pub fn stored_smooth_item_icons() -> bool {
 }
 
 fn load_options() -> Option<serde_json::Value> {
+    // A tune that never finished (a close or crash): its backup wins.
+    if let Some(backup) = crate::platform::storage::TUNE_BACKUP.load() {
+        crate::platform::storage::OPTIONS.store(&backup);
+        crate::platform::storage::TUNE_BACKUP.remove();
+        crate::log_warn!(
+            "options",
+            "restored the options from before an unfinished tune"
+        );
+    }
     let text = crate::platform::storage::OPTIONS.load()?;
     serde_json::from_str(&text).ok()
 }
 
 pub fn save_options(options: &GuiOptions) {
     publish_options(&std::sync::Arc::new(options.clone()));
+    crate::platform::storage::OPTIONS.store(&options_json(options));
+}
+
+/// The options as `options.json` holds them.
+pub(crate) fn options_json(options: &GuiOptions) -> String {
     let mut map = serde_json::Map::new();
     option_codec::OptionGroup::write_to(options, &mut map);
-    let json = serde_json::Value::Object(map);
-    crate::platform::storage::OPTIONS.store(&json.to_string());
+    serde_json::Value::Object(map).to_string()
+}
+
+/// Publishes options for this run only, unsaved (Tune Settings' trials).
+pub(crate) fn publish_unsaved(options: &GuiOptions) {
+    publish_options(&std::sync::Arc::new(options.clone()));
 }
 
 #[derive(Resource, Default)]
@@ -1204,6 +1225,8 @@ pub struct GuiState {
     pub menu: multiplayer::MenuState,
     pub profile: profile::ProfileState,
     pub video_list: scroll_list::ScrollList,
+    /// Tune Settings' run (`tune`).
+    pub tune: tune::TuneState,
     pub features_list: scroll_list::ScrollList,
     pub game_list: scroll_list::ScrollList,
     #[cfg(voice)]

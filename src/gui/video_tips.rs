@@ -44,6 +44,10 @@ pub const TORCH_DISTANCE: Tip = Tip::new(
     "How far away torches still draw. Their light stays. Unlimited is vanilla.",
     Impact::Low,
 );
+pub const TUNE_SETTINGS: Tip = Tip::new(
+    "Tries each performance setting in this world, timing frames, and suggests the ones that help. Takes a few minutes with input off; you keep or drop each change at the end. In a world only.",
+    Impact::None,
+);
 pub const ADVANCED_PERFORMANCE: Tip = Tip::new(
     "Culling options: what's skipped by facing or distance.",
     Impact::None,

@@ -16,6 +16,9 @@ macro_rules! slots {
 slots! {
     SERVERS = "servers.json";
     OPTIONS = "options.json";
+    /// The options from before a Tune Settings run; left only when one
+    /// didn't finish.
+    TUNE_BACKUP = "tune_backup.json";
     KEYBINDS = "keybinds.json";
     MODULES = "modules.json";
     PROFILE = "profile.json";
@@ -47,6 +50,10 @@ impl Slot {
                 self.0
             );
         }
+    }
+
+    pub(crate) fn remove(&self) {
+        let _ = std::fs::remove_file(self.path());
     }
 
     fn store_native(&self, value: &str) -> std::io::Result<()> {

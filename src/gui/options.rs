@@ -47,6 +47,7 @@ const LEAF_BACKS: &str = "Leaf Inner Faces";
 const LEAF_SLIDER_ID: u32 = 70;
 const ADVANCED_PERFORMANCE: &str = "Advanced Performance...";
 const ADVANCED_PERFORMANCE_TITLE: &str = "Advanced Performance";
+const TUNE_SETTINGS: &str = "Tune Settings...";
 const CUTOUT_FACE_CULLING: &str = "Cutout Face Culling";
 const ANGLED_FACE_CULLING: &str = "Angled Face Culling";
 const EXACT_FACE_CULLING: &str = "Exact Face Culling";
@@ -1357,6 +1358,8 @@ fn scrolling_form(
 pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
     draw_title(p, ctx, VIDEO_TITLE);
     let max_gui_scale = auto_gui_scale(ctx.vw * ctx.input.scale, ctx.vh * ctx.input.scale);
+    let in_world = !state.in_menu();
+    let mut tune = false;
     let o = &mut state.options;
 
     #[cfg(not(target_os = "android"))]
@@ -1446,6 +1449,10 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
             state.nav = Some(Screen::AdvancedPerformance);
         }
         f.tip(&tips::ADVANCED_PERFORMANCE);
+        if f.button_active(TUNE_SETTINGS, in_world) {
+            tune = true;
+        }
+        f.tip(&tips::TUNE_SETTINGS);
         let lighting = if o.lighting_enabled {
             ON
         } else {
@@ -1589,6 +1596,10 @@ pub fn draw_video(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
 
     if changed {
         crate::gui::save_options(&state.options);
+    }
+    if tune {
+        crate::gui::tune::start(state);
+        return;
     }
     // A preset also sets Torch Vibrant's shadow map size and reach.
     #[cfg(feature = "shader_support")]
@@ -2614,9 +2625,9 @@ mod tests {
     fn video_grid_stacks_like_the_options_list() {
         // Six headers, then: the preset (1 row); Display (4: frame cap and
         // GUI frame cap, VSync, window size and fullscreen, GUI scale and
-        // brightness); Performance (3: render distance and lighting, greedy
-        // meshing and render scale, advanced performance and shader
-        // shadows); Quality (7, the last the
+        // brightness); Performance (4: render distance, advanced
+        // performance, tune settings, lighting, greedy meshing, render
+        // scale and shader shadows); Quality (7, the last the
         // Leaves and Light Rays buttons); Camera (1); Details (3: sign outline and block
         // outline, shader packs, reset).
         let atlas = crate::gui::atlas::build_gui_atlas(&crate::assets_root());
@@ -2631,7 +2642,7 @@ mod tests {
         draw_video(&mut p, &mut state, &ctx);
         let shader = cfg!(feature = "shader_support") as u32 as f32;
         let desktop = cfg!(not(target_os = "android")) as u32 as f32;
-        let rows = 1.0 + (3.0 + desktop) + 3.0 + 7.0 + 1.0 + (2.0 + shader);
+        let rows = 1.0 + (3.0 + desktop) + 4.0 + 7.0 + 1.0 + (2.0 + shader);
         assert_eq!(
             state.video_list.content_h,
             6.0 * HEADER_H + 5.0 * HEADER_PAD_TOP + rows * ROW_H + LIST_PAD_BOTTOM

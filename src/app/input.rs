@@ -1130,6 +1130,11 @@ pub(crate) fn toggle_screen(
         return;
     }
 
+    // Tune Settings ends only by Apply or Cancel.
+    if state.tune.active() {
+        return;
+    }
+
     let guard = std::mem::take(&mut state.keybinds.escape_guard);
     if state.keybinds.capturing.is_some() || (guard && keys.just_pressed(KeyCode::Escape)) {
         return;
