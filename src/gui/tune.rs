@@ -69,10 +69,16 @@ const BURST: f32 = 2.0;
 const BURST_MIN: f32 = 8.0;
 /// A rebuild that never ends (chunks streaming in) is measured anyway.
 const MAX_WAIT: f32 = 30.0;
-/// A window whose 90th percentile frame is this many times its 10th is
+/// A spike is a frame over `SPIKE` times the window's median. A window
+/// with a bigger share of spikes than the device shows at rest (measured
+/// while calibrating, times `SPIKE_SCALE`, at least `SPIKE_SHARE_MIN`) had
 /// a hitch: measured again, up to `RETRIES` times.
-const SPREAD_MAX: f32 = 1.6;
-const RETRIES: u32 = 2;
+const SPIKE: f32 = 3.0;
+const SPIKE_SCALE: f32 = 2.0;
+const SPIKE_SHARE_MIN: f32 = 0.01;
+const RETRIES: u32 = 1;
+/// The spike share a window may have (f32 bits), set by calibration.
+static SPIKE_LIMIT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 /// Base and candidate alternating: drift cancels out.
 const ORDER: [bool; 4] = [false, true, true, false];
 /// The gain a setting needs to switch: free ones change nothing on screen.
@@ -86,7 +92,7 @@ const DEFAULT_TARGET: u32 = 60;
 /// A trial whose two current-value windows differ by more than this was
 /// measured while the scene's frame rate moved: it's run again, up to
 /// `REDO_MAX` times, then left undecided.
-const DRIFT_MAX: f32 = 0.15;
+const DRIFT_MAX: f32 = 0.2;
 const REDO_MAX: u32 = 1;
 /// A kept change is checked once more on its own; frames this much slower
 /// than before it undo it.
@@ -544,7 +550,8 @@ impl Window {
             return None;
         }
         // A hitch in the window (a stray rebuild, a GC): measure again.
-        if spread(&mut self.frames) > SPREAD_MAX && self.retries < RETRIES {
+        let limit = f32::from_bits(SPIKE_LIMIT.load(Ordering::Relaxed)).max(SPIKE_SHARE_MIN);
+        if spike_share(&mut self.frames) > limit && self.retries < RETRIES {
             self.retries += 1;
             self.quiet_since = Some(now);
             self.frames.clear();
@@ -671,6 +678,8 @@ pub struct TuneState {
     /// measuring's start.
     background: Option<f32>,
     calibrate: Option<(Instant, u64)>,
+    /// Frame times while calibrating, for the spike limit.
+    calib_frames: Vec<f32>,
     /// The sidebar: frames since its last update (ms summed, count), and
     /// the number shown.
     fps_sum: (f32, u32),
@@ -875,14 +884,13 @@ fn trimmed_mean(v: &mut [f32]) -> f32 {
     kept.iter().sum::<f32>() / kept.len() as f32
 }
 
-/// The 90th percentile frame over the 10th.
-fn spread(v: &mut [f32]) -> f32 {
+/// The share of frames over `SPIKE` times the median.
+fn spike_share(v: &mut [f32]) -> f32 {
     if v.len() < 10 {
-        return 1.0;
+        return 0.0;
     }
-    v.sort_by(f32::total_cmp);
-    let low = v[v.len() / 10].max(0.01);
-    v[v.len() * 9 / 10] / low
+    let cut = median(v) * SPIKE;
+    v.iter().filter(|&&f| f > cut).count() as f32 / v.len() as f32
 }
 
 fn percentile(v: &mut [f32], at: f32) -> f32 {
@@ -912,9 +920,20 @@ fn step(state: &mut GuiState, now: Instant, dt: Option<f32>) {
         None => {
             let (at, work0) = *t.calibrate.get_or_insert((now, terrain_work()));
             let secs = now.duration_since(at).as_secs_f32();
+            if let Some(ms) = dt {
+                t.calib_frames.push(ms);
+            }
             if secs < CALIBRATE {
                 return;
             }
+            let spikes = spike_share(&mut t.calib_frames);
+            let limit = (spikes * SPIKE_SCALE).max(SPIKE_SHARE_MIN);
+            SPIKE_LIMIT.store(limit.to_bits(), Ordering::Relaxed);
+            info!(
+                "tune: {:.1}% spikes at rest, limit {:.1}%",
+                spikes * 100.0,
+                limit * 100.0
+            );
             let b = terrain_work().saturating_sub(work0) as f32 * BUCKET / secs;
             t.background = Some(b);
             info!("tune: background terrain work {b:.1} per {BUCKET} s");
