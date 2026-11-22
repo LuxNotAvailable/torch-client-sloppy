@@ -133,6 +133,40 @@ scanned all 35k layers every frame.
 GPU at 68 fps: terrain 6.1, Hi-Z 1-6 2.6, terrain cull 1.2, entity counts
 readback 1.0, translucent 0.7, post 0.5.
 
+## Built-in pack on the Pixel (2026-11-22, RD 32, locked conditions)
+
+`PACK=builtin tools/bench-apk/run.sh` (`MC_VK_MEMORY=1` logs GPU
+allocations by name; `MC_PACK_SKIP=<programs>` leaves passes out).
+
+The pack never ran on the phone: present returned
+`ERROR_OUT_OF_HOST_MEMORY` a moment after it loaded, with logcat's
+`DMABUFHEAPS ... vframe-secure: Out of memory` on the render thread, while
+2.4 GB of system memory was free. Bisected to gbuffers_water with nothing
+to draw: its four targets (colortex0, 3, 6, 7) were 40 bytes a pixel. At
+70% or 50% Render Scale, or with colortex6 at RGBA16F (32 bytes), it runs.
+Fixed by the RGBA16F claim encoding (`ANDROID_VS_PC.md`, Shader packs).
+
+The picture was stretched sideways: the pack's targets took the
+swapchain's portrait size (1280 x 2856) under a landscape projection. They
+take the upright frame's size now (both builds; PC has no turn).
+
+GPU memory (`MC_VK_MEMORY`), RD 32:
+
+| | no pack | pack |
+|---|---|---|
+| Total before | 2427 MiB (graphics 3.07 GB in `dumpsys meminfo`) | 4512 MiB (graphics 5.45 GB; 218 MB of system memory left) |
+| Terrain vertices, 47 pools | 1076 | 1076 |
+| Terrain indices | 430 | 430 |
+| Per-Face Culling indices (option off) | 430 -> 0 | 430 -> 0 |
+| Pack quads | - | 861 -> 215 |
+| Each pack target half | - | 64.2 (8-byte formats) or 128.5 MiB (16-byte), padded to 4096 x 2048 |
+
+GPU at full resolution, first working build: 95 ms a frame (11 fps):
+gbuffers_water 29.9, gbuffers_terrain 23.4, cutout 10.9, deferred 5.8,
+composite2 3.8, composite_a 2.9, clears 2.2, three shadow culls 5.7. vkview's
+dump at the same size: terrain 2.1, cutout 1.3, water 4.7 (a smaller world,
+and its terrain is loaded before the pack starts).
+
 ## Options (rough order of payoff)
 
 - **Render scale**: draw the world at 50–75% and upscale in the rotation pass, which is free since that pass samples anyway. Make it dynamic from frame time or thermal headroom (`AThermal_getThermalHeadroom`).

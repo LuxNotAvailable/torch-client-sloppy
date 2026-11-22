@@ -72,6 +72,7 @@ pub const PER_FACE_CULLING: Tip = Tip::new(
     "WARNING: usually makes the game SLOWER. Checks every block face on the GPU each frame and drops the ones facing away from you. The check costs more than it saves: measured slower on a GeForce MX250 laptop and a Pixel 10 Pro. Experimental; leave it off. Off under shader packs.",
     Impact::High,
 );
+#[cfg(not(target_os = "android"))]
 pub const NEAR_FIRST: Tip = Tip::new(
     "WARNING: usually makes the game slightly SLOWER. Draws the chunks nearest you first, so hidden terrain behind them is skipped sooner. Occlusion culling already skips most of it, so the extra sorting costs more than it saves: measured slower on a GeForce MX250 laptop and a Pixel 10 Pro. Experimental; leave it off.",
     Impact::Low,
@@ -96,6 +97,7 @@ pub const LIGHTING_ENGINE: Tip = Tip::new(
     "Works out block and sky light. Off is fullbright: everything is evenly lit, a large saving on weak PCs.",
     Impact::Medium,
 );
+#[cfg(not(target_os = "android"))]
 pub const GREEDY_MESHING: Tip = Tip::new(
     "Joins neighbouring block faces into large rectangles, so the GPU draws fewer triangles. Standard joins only faces with the same texture whose lighting the joined face reproduces exactly, so it costs nothing per pixel and should never be slower. Not vanilla: blocks whose texture is turned at random (grass, sand, stone, dirt and others) all face one way within each rectangle, so their random rotation and mirroring are lost. Aggressive (experimental) joins every flat face regardless of texture or lighting, keeping each block's own texture and rotation, for far fewer triangles but more work per pixel: for phones and other GPUs limited by geometry; it can be slower on desktop graphics cards. Leaves and other cut-out faces merge too. Off under shader packs. Changing it reloads the chunks.",
     Impact::Low,

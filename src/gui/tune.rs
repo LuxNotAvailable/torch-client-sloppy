@@ -166,7 +166,16 @@ impl Knob {
     fn gate(&self) -> u8 {
         if self.cost == Cost::Last { 2 } else { 1 }
     }
+
+    /// Tried on this build: Android hides the options that do nothing there
+    /// (`docs/ANDROID_VS_PC.md`).
+    fn offered(&self) -> bool {
+        cfg!(not(target_os = "android")) || !ANDROID_HIDDEN.contains(&self.name)
+    }
 }
+
+/// Knobs whose options Android hides.
+const ANDROID_HIDDEN: [&str; 2] = ["Near-First", "Greedy Meshing"];
 
 fn on_off(v: u32) -> String {
     if v != 0 { "ON" } else { "OFF" }.to_owned()
@@ -719,7 +728,7 @@ fn start(state: &mut GuiState) {
         phase: Phase::Running,
         goal: state.tune.goal,
         target: state.tune.target,
-        order: (0..KNOBS.len()).collect(),
+        order: (0..KNOBS.len()).filter(|&i| KNOBS[i].offered()).collect(),
         original: Some(original),
         rows: KNOBS
             .iter()
@@ -1321,7 +1330,7 @@ fn gate_items(t: &TuneState, review: bool) -> Vec<Item> {
         let (s, c) = gate_header(gate, t);
         items.push(Item::Header(s, c));
         let rows: Vec<usize> = (0..KNOBS.len())
-            .filter(|&i| KNOBS[i].gate() == gate)
+            .filter(|&i| KNOBS[i].gate() == gate && KNOBS[i].offered())
             .collect();
         if review {
             items.extend(

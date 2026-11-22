@@ -317,6 +317,36 @@ uint refl_hash(uint key) {
     return h & REFL_MASK;
 }
 
+/// A water pixel's claim (colortex6, read by composite): its texel's key
+/// and alpha; w < 0.5 means none. PC: RGBA32F, the key's high and low 16
+/// bits, alpha, 1. Android: RGBA16F (RGBA32F would take the water pass
+/// past what the PowerVR driver can back at full resolution): key - 1 in
+/// 11, 11 and 10 bits (FP16 holds integers to 2048 exactly), 1 + alpha.
+float4 refl_claim_pixel(uint key, float alpha) {
+#ifdef MC_OS_ANDROID
+    uint k = key - 1u;
+    return float4(float(k & 2047u), float((k >> 11u) & 2047u), float(k >> 22u), 1.0 + alpha);
+#else
+    return float4(float(key >> 16u), float(key & 65535u), alpha, 1.0);
+#endif
+}
+
+uint refl_claim_key(float4 claim) {
+#ifdef MC_OS_ANDROID
+    return (uint(claim.x) | (uint(claim.y) << 11u) | (uint(claim.z) << 22u)) + 1u;
+#else
+    return (uint(claim.x) << 16u) | uint(claim.y);
+#endif
+}
+
+float refl_claim_alpha(float4 claim) {
+#ifdef MC_OS_ANDROID
+    return claim.w - 1.0;
+#else
+    return claim.z;
+#endif
+}
+
 /// Claims `key`'s texel for the frame; the first claimer lists it, with
 /// its surface's height (player space) for the trace.
 void refl_claim(uint key, float y) {

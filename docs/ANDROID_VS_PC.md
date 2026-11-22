@@ -53,6 +53,7 @@ desktop (PC) build, and where. Keep the two from leaking into each other.
 | | PC | Android |
 |---|---|---|
 | Terrain pools | 1.6 M vertices, 3.2 M indices | 1.2 M vertices, 2.4 M indices |
+| Pool memory | Per-Face Culling's filtered indices made with each pool | a 4-byte stand-in until Per-Face Culling is first on (`grow_filtered`; ~9 MB a pool, 430 MB at RD 32); vertex ranges rounded to whole quads |
 | Terrain cull | loads the whole slot; one thread per slot | `CULL_LAZY`: ranges and band words only for kept slots; `CULL_LIST`: one thread per candidate from `cull_list` (CPU: cave-visible and in the cull frustum, plus every translucent layer), written to a host-visible buffer per frame in flight. Same commands; near-first is off |
 | Hi-Z | every frame | every second frame (`HIZ_EVERY_OTHER`); level 1 from one `GatherRed` per 2 × 2 (`hiz_reduce` params.y, same values; vkview Hi-Z 2.2 -> 1.24 ms) |
 | Detail atlas tiles | up to 32 px | `TILE_PX` |
@@ -86,9 +87,40 @@ Pixel results in `ANDROID_PERF.md` (`input` wins ~5% of frame).
 `fixed_ab` flips every two seconds: A GPU-driven, B fixed, both on plain
 vertices, so the A/B measures vertex fetch plus culling, not packing.
 
-## Option defaults
+## Shader packs
+
+| | PC | Android |
+|---|---|---|
+| Packs offered | the built-in one and the shaders folder's | the built-in one only (`shaderpack::discover::EXTERNAL`, `allowed`); a saved outside pack runs as none; no Open Shader Pack Folder button |
+| Pack quads (`terrain pack quads`) | 16 bytes per vertex slot (quad q at the section's first vertex + q) | 16 bytes per quad, at vertex / 4 (`vk::terrain::QUAD_UNITS`; `iris_vk_quad` under `MC_OS_ANDROID`): a quarter of the memory (861 -> 215 MB at RD 32) |
+| colortex2 (texel target) | RGBA16 | RGBA32F (RGBA16 may fall back to a float format) |
+| colortex6 (reflection claim) | RGBA32F: the key's high and low 16 bits, alpha, 1 | RGBA16F: key - 1 in 11, 11 and 10 bits, 1 + alpha (`refl_claim_pixel` / `refl_claim_key` / `refl_claim_alpha` in `lib/water.slang`) |
+| Texel cache | on | off (the PowerVR driver aborts on the depth texture its compute passes read); `deferred` looks shadows up per pixel |
+
+PowerVR (Pixel 10 Pro) limits the Android pack must keep:
+- A colour image over 4 bytes a pixel is padded to power-of-two sides:
+  2856 x 1280 RGBA16F takes 4096 x 2048 (64 MiB, 2.3x). 4-byte formats
+  and depth are tight.
+- A pass whose colour outputs pass 32 bytes a pixel fails at full
+  resolution: present returns `ERROR_OUT_OF_HOST_MEMORY` and logcat shows
+  `DMABUFHEAPS: Unable to allocate from DMA-BUF heap: vframe-secure`
+  (gbuffers_water at 40 bytes did; 32 runs). Keep every pass at 32 or
+  under.
+
+Both builds: a pack draws no terrain on a frame whose cull didn't run
+(`TerrainScene::culled`, e.g. while the terrain pipelines compile), since
+its commands would be stale or never written. Pack targets take the
+upright frame's size (`live::update_pack`): on a turned display the
+swapchain is portrait, and portrait targets stretched the picture.
+
+## Options
 
 | Option | PC | Android |
 |---|---|---|
 | Half-Rate Occlusion | off | on |
-| Greedy Meshing | as set | no effect (packing off under vertex input) |
+| Greedy Meshing | Video Settings | hidden: no packed records to merge (tuner skips it too) |
+| Near-First | Advanced Performance | hidden: the cull is never near-first (tuner skips it too) |
+| Antialiasing | Off, FXAA, MSAA, Supersampling | no Supersampling (`antialias::SUPERSAMPLE`); a saved `ssaa` reads as FXAA |
+| Shader packs | any | the built-in one |
+| Window Size, Fullscreen, Open Client Folder | shown | hidden |
+| Music & Sounds | shown | absent (no `audio` cfg) |

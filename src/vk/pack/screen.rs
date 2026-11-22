@@ -26,6 +26,19 @@ use crate::vk::memory::{Buffer, Image, Memory};
 use crate::vk::pipeline::{GraphicsDesc, Pipelines, Push, push};
 use crate::vk::{Context, SetupError};
 
+/// Debug: `MC_PACK_SKIP` (comma list of program names) leaves those passes
+/// out, to bisect a pass that hangs the GPU.
+fn skipped(program: &str) -> bool {
+    static SKIP: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    SKIP.get_or_init(|| {
+        crate::platform::env::var("MC_PACK_SKIP")
+            .map(|v| v.split(',').map(str::to_owned).collect())
+            .unwrap_or_default()
+    })
+    .iter()
+    .any(|s| s == program)
+}
+
 fn failed(what: impl std::fmt::Display) -> SetupError {
     SetupError(what.to_string())
 }
@@ -1696,6 +1709,9 @@ impl PackScreen {
 
         let (range, _) = self.plans[self.frames as usize % self.plans.len()].clone();
         for (at, pass) in self.passes[range].iter().enumerate() {
+            if skipped(&self.installed.programs[pass.program].name) {
+                continue;
+            }
             // depthtex2 takes depthtex0 before the hand, depthtex1 after it
             // (both at once without a hand pass).
             let mut to: Vec<vk::Image> = Vec::new();

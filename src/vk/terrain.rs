@@ -136,6 +136,11 @@ const POOL_INDICES: u32 = 3_200_000;
 #[cfg(target_os = "android")]
 const POOL_INDICES: u32 = 2_400_000;
 const MAX_POOLS: u32 = 64;
+/// Pool vertices per pack-quad entry: PC keeps one entry per vertex slot
+/// (quad q at the section's first vertex + q); Android one per quad (at
+/// vertex / 4, sections start on a quad), a quarter of the memory.
+/// `iris/terrain.slang`'s `iris_vk_quad` reads the same.
+const QUAD_UNITS: u32 = if MOBILE { 4 } else { 1 };
 
 const SLOT_SIZE: u64 = 320;
 const COMMAND_SIZE: u64 = 20;
@@ -564,12 +569,13 @@ struct Pool {
     vertices: Buffer,
     indices: Buffer,
     /// The main view's indices after Per-Face Culling (`face_filter`): each
-    /// drawn command's kept quads at its own offset.
+    /// drawn command's kept quads at its own offset. Android: 4 bytes until
+    /// the option is first on (`grow_filtered`).
     filtered: Buffer,
     /// Bindless indices of `indices` and `filtered`.
     index_ids: (u32, u32),
-    /// Pack quads, 16 bytes per vertex slot (a quad at its first vertex's
-    /// offset); made when a section brings some.
+    /// Pack quads, 16 bytes per `QUAD_UNITS` vertex slots; made when a
+    /// section brings some.
     quads: Option<(Buffer, u32)>,
     vertex_index: u32,
     valloc: Allocator,
@@ -1109,6 +1115,10 @@ pub struct TerrainScene {
     pack_camera: Mat4,
     /// `record` only culls: a shader pack draws the world.
     cull_only: bool,
+    /// This frame's `record` wrote the GPU cull's commands and counts. A
+    /// frame that didn't (pipelines still compiling) leaves them stale or
+    /// never written, so `pack_geometry` hands a pack no terrain draws.
+    culled: bool,
     env: Option<super::env::EnvScene>,
 }
 
@@ -1518,6 +1528,7 @@ impl TerrainScene {
             stats: Stats::default(),
             entities,
             cull_only: false,
+            culled: false,
             particles,
             env,
         })
@@ -1911,11 +1922,17 @@ impl TerrainScene {
             commands: self.commands.raw,
             counts: self.counts.raw,
             capacity: self.list_capacity,
-            pools: self
-                .pools
-                .iter()
-                .map(|p| (p.vertices.raw, p.indices.raw))
-                .collect(),
+            // No cull this frame: nothing to draw (the commands would be
+            // stale or garbage, and a garbage draw count runs the tiler out
+            // of memory on PowerVR).
+            pools: if self.culled {
+                self.pools
+                    .iter()
+                    .map(|p| (p.vertices.raw, p.indices.raw))
+                    .collect()
+            } else {
+                Vec::new()
+            },
             quads: self
                 .pools
                 .iter()
@@ -1924,7 +1941,11 @@ impl TerrainScene {
             translucent: (
                 self.translucent.buffer.raw,
                 self.translucent_start,
-                self.translucent_count,
+                if self.culled {
+                    self.translucent_count
+                } else {
+                    0
+                },
             ),
             atlas: (self.atlas.raw, self.atlas_raw_index),
             shadow: self
@@ -2275,10 +2296,15 @@ impl TerrainScene {
             index_usage,
             MemoryLocation::GpuOnly,
         )?;
+        // Android: a stand-in until Per-Face Culling is on (`grow_filtered`).
         let filtered = memory.buffer(
             ctx,
             "terrain filtered indices",
-            POOL_INDICES as u64 * 4,
+            if MOBILE && !face_filter_wanted() {
+                4
+            } else {
+                POOL_INDICES as u64 * 4
+            },
             index_usage,
             MemoryLocation::GpuOnly,
         )?;
@@ -2299,6 +2325,39 @@ impl TerrainScene {
             slots: 0,
         });
         Ok(self.pools.len() as u32 - 1)
+    }
+
+    /// Android: gives every pool its full Per-Face Culling index buffer, the
+    /// first time the option is on (pools start with a stand-in, saving
+    /// ~9 MB a pool while it is off).
+    fn grow_filtered(
+        &mut self,
+        ctx: &Context,
+        memory: &Memory,
+        bindless: &mut Bindless,
+        frame: u64,
+    ) -> Result<(), SetupError> {
+        let full_bytes = POOL_INDICES as u64 * 4;
+        for pool in &mut self.pools {
+            if pool.filtered.size >= full_bytes {
+                continue;
+            }
+            let buffer = memory.buffer(
+                ctx,
+                "terrain filtered indices",
+                full_bytes,
+                vk::BufferUsageFlags::INDEX_BUFFER
+                    | vk::BufferUsageFlags::TRANSFER_DST
+                    | vk::BufferUsageFlags::STORAGE_BUFFER,
+                MemoryLocation::GpuOnly,
+            )?;
+            let index = bindless.add_buffer(ctx, buffer.raw).ok_or_else(full)?;
+            bindless.remove_buffer(pool.index_ids.1, frame);
+            pool.index_ids.1 = index;
+            let old = std::mem::replace(&mut pool.filtered, buffer);
+            self.retired.push((old, frame));
+        }
+        Ok(())
     }
 
     /// Takes queued changes until the byte budget or the staging ring runs
@@ -2461,6 +2520,13 @@ impl TerrainScene {
                 None => &section.verts,
             };
             let vertex_count = record_units + plain_verts.len() as u32;
+            // Android: whole quads, so every section starts on one and the
+            // pack quads index by vertex / 4 (`QUAD_UNITS`).
+            let vertex_count = if MOBILE {
+                vertex_count.next_multiple_of(4)
+            } else {
+                vertex_count
+            };
 
             // Room for the vertices (and opaque indices) in some pool.
             let mut placed = None;
@@ -2567,7 +2633,7 @@ impl TerrainScene {
                     let buffer = memory.buffer(
                         ctx,
                         "terrain pack quads",
-                        POOL_VERTICES as u64 * 16,
+                        (POOL_VERTICES / QUAD_UNITS) as u64 * 16,
                         vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
                         MemoryLocation::GpuOnly,
                     )?;
@@ -2582,7 +2648,7 @@ impl TerrainScene {
                         src: staged.buffer,
                         from: staged.offset,
                         to: quads.raw,
-                        at: vertices.offset as u64 * 16,
+                        at: (vertices.offset / QUAD_UNITS) as u64 * 16,
                         size: staged.size,
                     });
                 }
@@ -3147,6 +3213,7 @@ impl TerrainScene {
         cull: Option<Camera>,
         view: View,
     ) -> Result<(), SetupError> {
+        self.culled = false;
         self.write_anim(ctx, memory, bindless, frame, slot)?;
         // The scene goes through the post pass when it has anything to do.
         let settings = self.options.post;
@@ -3344,6 +3411,9 @@ impl TerrainScene {
         } else {
             None
         };
+        if MOBILE && face_filter_wanted() {
+            self.grow_filtered(ctx, memory, bindless, frame)?;
+        }
         if !near_first {
             self.ordered_for = None;
         }
@@ -3614,6 +3684,7 @@ impl TerrainScene {
                 l.translucent.len() as u32,
             ];
         } else {
+            self.culled = true;
             graph.pass("terrain cull", &[], &cull_buffers, |cmd| unsafe {
                 // SAFETY: recording with the shared layout and the bindless set;
                 // the push names live buffers.

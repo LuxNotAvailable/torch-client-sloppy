@@ -216,6 +216,24 @@ const ALL: &[Var] = &[
         enabled: cfg!(feature = "vulkan"),
     },
     Var {
+        name: "MC_PACK_SKIP",
+        what: "leave out the named shader pack programs' passes (comma-separated), to bisect a pass that fails",
+        default: "off",
+        enabled: cfg!(feature = "vulkan"),
+    },
+    Var {
+        name: "MC_VK_MEMORY",
+        what: "log the biggest GPU allocations by name every 2 s (with MC_NATIVE_GPU_TIMING=1), when set to 1",
+        default: "off",
+        enabled: cfg!(feature = "vulkan"),
+    },
+    Var {
+        name: "MC_VK_ROBUST",
+        what: "1 turns on robustBufferAccess, so out-of-range buffer reads return 0 instead of faulting, for debugging",
+        default: "off",
+        enabled: cfg!(feature = "vulkan"),
+    },
+    Var {
         name: "MC_WGSL_DUMP",
         what: "a folder the pack-compile test writes translated shaders to",
         default: "off",

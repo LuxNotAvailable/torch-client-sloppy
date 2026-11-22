@@ -136,7 +136,13 @@ impl Context {
         let mut features = Features::required();
         features.core = features
             .core
-            .pipeline_statistics_query(info.pipeline_statistics);
+            .pipeline_statistics_query(info.pipeline_statistics)
+            // Debug: `MC_VK_ROBUST=1` makes out-of-range buffer reads
+            // return 0 instead of faulting, to tell a stray read from a
+            // hang (core in Vulkan 1.0).
+            .robust_buffer_access(
+                crate::platform::env::var("MC_VK_ROBUST").is_ok_and(|v| v == "1"),
+            );
         // Headless, there is nothing to present to.
         let extension_names: Vec<*const std::ffi::c_char> = if surface == vk::SurfaceKHR::null() {
             Vec::new()

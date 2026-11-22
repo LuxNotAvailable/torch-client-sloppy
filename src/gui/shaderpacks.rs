@@ -474,12 +474,15 @@ pub fn draw_packs(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         .loaded
         .as_ref()
         .is_some_and(|l| !l.options.is_empty());
-    let count = if has_options { 3.0 } else { 2.0 };
+    // No folder button where outside packs don't load (Android).
+    let count = f32::from(u8::from(has_options)) + f32::from(u8::from(discover::EXTERNAL)) + 1.0;
     let mut x = (ctx.vw / 2.0 - (count * FOOTER_W + (count - 1.0) * FOOTER_GAP) / 2.0).floor();
-    if Button::new(x, footer_y, FOOTER_W, WIDGET_HEIGHT, OPEN_FOLDER).draw(p, ctx) {
-        crate::platform::url::open_folder(&discover::dir());
+    if discover::EXTERNAL {
+        if Button::new(x, footer_y, FOOTER_W, WIDGET_HEIGHT, OPEN_FOLDER).draw(p, ctx) {
+            crate::platform::url::open_folder(&discover::dir());
+        }
+        x += FOOTER_W + FOOTER_GAP;
     }
-    x += FOOTER_W + FOOTER_GAP;
     if has_options {
         if Button::new(x, footer_y, FOOTER_W, WIDGET_HEIGHT, SETTINGS).draw(p, ctx) {
             state.shaderpacks.open_options();

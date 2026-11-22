@@ -354,7 +354,7 @@ Lit fragment(Varyings v) {
                 refl_claim(key, v.player.y);
                 claimed = true;
                 o.surface = float4(o.color.rgb, sky);
-                o.claim = float4(float(key >> 16u), float(key & 65535u), alpha, 1.0);
+                o.claim = refl_claim_pixel(key, alpha);
                 o.covered = float4(covered, 0.0);
                 mirror = float4(0.0);
             } else {

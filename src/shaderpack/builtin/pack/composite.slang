@@ -28,7 +28,7 @@ float4 fragment(Varyings v) : SV_Target0 {
     if (claim.w < 0.5) {
         return float4(c, 1.0);
     }
-    uint key = (uint(claim.x) << 16u) | uint(claim.y);
+    uint key = refl_claim_key(claim);
     uint4 value = refl_lookup(key);
     // Untraced (the table was full): this pixel traces its texel itself,
     // so a full table costs time, not holes.
@@ -38,6 +38,6 @@ float4 fragment(Varyings v) : SV_Target0 {
     }
     float4 surface = colortex3.Load(px);
     float4 m = refl_finish(value, colortex7.Load(px).rgb, refl_open(surface.w));
-    c += claim.z * saturate(m.a) * (m.rgb - surface.rgb);
+    c += refl_claim_alpha(claim) * saturate(m.a) * (m.rgb - surface.rgb);
     return float4(c, 1.0);
 }

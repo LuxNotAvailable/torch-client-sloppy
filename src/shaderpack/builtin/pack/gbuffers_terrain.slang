@@ -14,7 +14,6 @@ const vec4 colortex3ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
 const int colortex5Format = RGBA16F;
 const bool colortex4Clear = false;
 const bool colortex5Clear = false;
-const int colortex6Format = RGBA32F;
 const vec4 colortex6ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
 const int colortex7Format = RGBA16F;
 */
@@ -24,10 +23,12 @@ const int colortex7Format = RGBA16F;
 #ifdef MC_OS_ANDROID
 /*
 const int colortex2Format = RGBA32F;
+const int colortex6Format = RGBA16F;
 */
 #else
 /*
 const int colortex2Format = RGBA16;
+const int colortex6Format = RGBA32F;
 */
 #endif
 

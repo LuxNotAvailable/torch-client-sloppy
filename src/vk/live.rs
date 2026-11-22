@@ -957,15 +957,22 @@ impl Live {
             let name = crate::platform::storage::SHADER_PACK
                 .load()
                 .map(|p| p.trim().to_owned())
-                .filter(|p| !p.is_empty());
+                .filter(|p| !p.is_empty())
+                // Android: a saved outside pack runs as none.
+                .filter(|p| crate::shaderpack::discover::allowed(p));
             self.pack_checked = Some((now, name));
         }
         let wanted = self.pack_checked.as_ref().and_then(|(_, n)| n.clone());
         // The pack's targets at the render scale; final fills the window.
         let scale = self.pack_scale.clamp(1, 100);
-        let extent = self.swapchain.as_ref().map(|s| vk::Extent2D {
-            width: (s.extent.width * scale / 100).max(1),
-            height: (s.extent.height * scale / 100).max(1),
+        // The upright frame's size: a turned display's swapchain is
+        // portrait, the world is drawn landscape (Android).
+        let extent = self.swapchain.as_ref().map(|s| {
+            let upright = s.upright().map_or(s.extent, |u| u.1);
+            vk::Extent2D {
+                width: (upright.width * scale / 100).max(1),
+                height: (upright.height * scale / 100).max(1),
+            }
         });
         let revision = PACK_REVISION.load(std::sync::atomic::Ordering::Relaxed);
         let current = self.pack.as_ref().map(|(n, _, e)| (n.clone(), *e));
@@ -1258,6 +1265,22 @@ impl Live {
                     "native renderer: gpu {total:.2} ms/frame: {}",
                     top.join(", ")
                 );
+                // Debug: `MC_VK_MEMORY=1` adds the biggest GPU allocations.
+                if crate::platform::env::var("MC_VK_MEMORY").is_ok_and(|v| v == "1") {
+                    let (used, reserved) = self.memory.usage();
+                    let rows: Vec<String> = self
+                        .memory
+                        .top(24)
+                        .iter()
+                        .map(|(n, b, c)| format!("{n} {:.1} MiB x{c}", *b as f64 / 1048576.0))
+                        .collect();
+                    info!(
+                        "native renderer: gpu memory {:.0} MiB used of {:.0} reserved: {}",
+                        used as f64 / 1048576.0,
+                        reserved as f64 / 1048576.0,
+                        rows.join(", ")
+                    );
+                }
                 *since = std::time::Instant::now();
             }
         }

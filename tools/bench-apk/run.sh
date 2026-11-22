@@ -8,7 +8,9 @@
 #
 #   tools/bench-apk/run.sh [KEY=VALUE ...]   # extra env.txt lines
 #
-# SECS (default 120), RD (render distance, default 32), NO_BUILD=1.
+# SECS (default 120), RD (render distance, default 32), NO_BUILD=1,
+# PACK (shader pack name, default none; "builtin" for the built-in one),
+# OPTS (extra options.json fields, e.g. '"shaderRenderScale": 70').
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 win() { if command -v cygpath > /dev/null; then cygpath -m "$1"; else echo "$1"; fi; }
@@ -18,6 +20,8 @@ D=/sdcard/Android/data/$P/files
 OUT=${OUT:-.}
 SECS=${SECS:-120}
 RD=${RD:-32}
+PACK=${PACK:-}
+[ "$PACK" = builtin ] && PACK="Torch Vibrant (built-in)"
 if [ "${NO_BUILD:-0}" != 1 ]; then
     sdk=${ANDROID_HOME:-$LOCALAPPDATA/Android/Sdk}
     export ANDROID_HOME=$sdk
@@ -36,11 +40,13 @@ tmp=$(mktemp -d)
 } > "$tmp/env.txt"
 printf 'localhost:25565\nBench\n' > "$tmp/launch.txt"
 # Uncapped: the mobile default caps at 30 fps.
-printf '{"renderDistance": %s, "maxFps": 260}\n' "$RD" > "$tmp/options.json"
+printf '{"renderDistance": %s, "maxFps": 260%s}\n' "$RD" "${OPTS:+, $OPTS}" > "$tmp/options.json"
+printf '%s' "$PACK" > "$tmp/shaderpack.txt"
 # The game rewrites options.json; reset the render distance every run.
 adb push "$(win "$tmp/env.txt")" $D/env.txt > /dev/null
 adb push "$(win "$tmp/launch.txt")" $D/launch.txt > /dev/null
 adb push "$(win "$tmp/options.json")" $D/options.json > /dev/null
+adb push "$(win "$tmp/shaderpack.txt")" $D/shaderpack.txt > /dev/null
 rm -rf "$tmp"
 adb reverse tcp:25565 tcp:25565 > /dev/null
 # Fixed conditions: the world's gamerules stop time, weather and mob

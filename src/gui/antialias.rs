@@ -4,6 +4,10 @@
 
 use std::sync::atomic::{AtomicU8, Ordering};
 
+/// Supersampling offered: PC only. On Android it draws past the ~3.6 MP
+/// screen on a geometry-bound tile GPU (`docs/ANDROID_VS_PC.md`).
+pub const SUPERSAMPLE: bool = cfg!(not(target_os = "android"));
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum AaMode {
     #[default]
@@ -27,8 +31,8 @@ impl AaMode {
         match self {
             AaMode::Off => AaMode::Fxaa,
             AaMode::Fxaa => AaMode::Msaa,
-            AaMode::Msaa => AaMode::Supersample,
-            AaMode::Supersample => AaMode::Off,
+            AaMode::Msaa if SUPERSAMPLE => AaMode::Supersample,
+            AaMode::Msaa | AaMode::Supersample => AaMode::Off,
         }
     }
 
@@ -46,7 +50,9 @@ impl AaMode {
             "off" => Some(AaMode::Off),
             "fxaa" => Some(AaMode::Fxaa),
             "msaa" => Some(AaMode::Msaa),
-            "ssaa" => Some(AaMode::Supersample),
+            "ssaa" if SUPERSAMPLE => Some(AaMode::Supersample),
+            // Android: a saved supersample reads as FXAA.
+            "ssaa" => Some(AaMode::Fxaa),
             _ => None,
         }
     }
@@ -130,7 +136,9 @@ impl Antialiasing {
     pub fn read(value: impl Fn(&str) -> Option<serde_json::Value>) -> Antialiasing {
         let mut aa = Antialiasing::default();
         match value("antialiasing") {
-            Some(serde_json::Value::Bool(true)) => aa.mode = AaMode::Supersample,
+            Some(serde_json::Value::Bool(true)) => {
+                aa.mode = AaMode::from_key(AaMode::Supersample.key()).unwrap_or_default()
+            }
             Some(serde_json::Value::String(key)) => {
                 aa.mode = AaMode::from_key(&key).unwrap_or_default()
             }

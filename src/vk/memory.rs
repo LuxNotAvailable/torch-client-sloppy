@@ -271,6 +271,26 @@ impl Memory {
         }
     }
 
+    /// The `n` biggest allocation names: bytes and count, biggest first
+    /// (`MC_VK_MEMORY=1` logs them).
+    pub fn top(&self, n: usize) -> Vec<(String, u64, usize)> {
+        let Ok(a) = self.allocator.lock() else {
+            return Vec::new();
+        };
+        let report = a.generate_report();
+        let mut by: std::collections::HashMap<String, (u64, usize)> = Default::default();
+        for r in &report.allocations {
+            let e = by.entry(r.name.clone()).or_default();
+            e.0 += r.size;
+            e.1 += 1;
+        }
+        let mut rows: Vec<(String, u64, usize)> =
+            by.into_iter().map(|(k, (b, c))| (k, b, c)).collect();
+        rows.sort_by(|a, b| b.1.cmp(&a.1));
+        rows.truncate(n);
+        rows
+    }
+
     /// Bytes allocated and reserved, for the performance report.
     pub fn usage(&self) -> (u64, u64) {
         self.allocator.lock().map_or((0, 0), |a| {
