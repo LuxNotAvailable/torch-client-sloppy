@@ -64,7 +64,7 @@ pub(super) struct Lists {
 
 /// The clip planes of a reversed, infinite projection: left, right,
 /// bottom, top, near (no far).
-fn planes(view_proj: Mat4) -> [Vec4; 5] {
+pub(super) fn planes(view_proj: Mat4) -> [Vec4; 5] {
     let r = [
         view_proj.row(0),
         view_proj.row(1),
@@ -81,7 +81,7 @@ fn planes(view_proj: Mat4) -> [Vec4; 5] {
 }
 
 /// Whether the box can be in view: some corner inside every plane.
-fn in_frustum(planes: &[Vec4; 5], lo: Vec3, hi: Vec3) -> bool {
+pub(super) fn in_frustum(planes: &[Vec4; 5], lo: Vec3, hi: Vec3) -> bool {
     planes.iter().all(|p| {
         let corner = Vec3::new(
             if p.x >= 0.0 { hi.x } else { lo.x },

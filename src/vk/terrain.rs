@@ -168,6 +168,8 @@ const CULL_ANGLED_BUCKETS: u32 = 256;
 const CULL_FACE_BANDS: u32 = 512;
 /// Load a slot's ranges and bands only once kept (`MOBILE`).
 const CULL_LAZY: u32 = 1024;
+/// Cull the slots listed in the order buffer only (`cull_list`).
+const CULL_LIST: u32 = 2048;
 const CULL_FRUSTUM: u32 = 8;
 const CULL_NO_WAVE: u32 = 16;
 const CULL_BELOW: u32 = 32;
@@ -1024,6 +1026,10 @@ pub struct TerrainScene {
     /// `MOBILE`: the eye block the translucent sort last scanned for, and
     /// whether that scan left layers for later (budget).
     sort_scanned: Option<IVec3>,
+    /// `MOBILE`: this frame's cull list (`cull_list`), and per frame in
+    /// flight its host-visible buffer and bindless index.
+    cull_candidates: Vec<u32>,
+    cull_lists: Vec<Option<(Buffer, u32)>>,
     /// `MOBILE`: `fill_dense`'s arrays, kept between fills.
     dense_vis: Vec<VisibilitySet>,
     dense_slots: Vec<[u32; 2]>,
@@ -1460,6 +1466,8 @@ impl TerrainScene {
             visible_dirty: true,
             fill_for: None,
             sort_scanned: None,
+            cull_candidates: Vec::new(),
+            cull_lists: (0..FRAMES_IN_FLIGHT).map(|_| None).collect(),
             dense_vis: Vec::new(),
             dense_slots: Vec::new(),
             sort_pending: false,
@@ -2996,6 +3004,74 @@ impl TerrainScene {
         self.visible_dirty = true;
     }
 
+    /// `MOBILE`: the slots the GPU cull need look at, written to this
+    /// frame's list buffer: every translucent layer (each writes its ranked command) and
+    /// the live ones that are cave-visible with a box in the cull frustum.
+    /// The GPU tests these again, so the commands are the full cull's.
+    /// Their count and the list's bindless index.
+    #[allow(clippy::too_many_arguments, reason = "one frame's cull context")]
+    fn cull_list(
+        &mut self,
+        ctx: &Context,
+        memory: &Memory,
+        bindless: &mut Bindless,
+        slot: usize,
+        frame: u64,
+        cull_proj: Mat4,
+    ) -> Result<(u32, u32), SetupError> {
+        let planes = fixed::planes(cull_proj);
+        let visibility = self.options.visibility;
+        let mut list = std::mem::take(&mut self.cull_candidates);
+        list.clear();
+        for (i, s) in self.slot_cpu[..self.slot_high as usize].iter().enumerate() {
+            let flags = s.info[2];
+            if flags & SLOT_LIVE == 0 {
+                continue;
+            }
+            if flags & SLOT_TRANSLUCENT == 0 {
+                if visibility && self.visible_bits[i / 32] >> (i % 32) & 1 == 0 {
+                    continue;
+                }
+                let origin = Vec3::new(
+                    s.origin_base[0] as f32,
+                    s.origin_base[1] as f32,
+                    s.origin_base[2] as f32,
+                );
+                let lo = origin + Vec3::from_slice(&s.lo[..3]);
+                let hi = origin + Vec3::from_slice(&s.hi[..3]);
+                if !fixed::in_frustum(&planes, lo, hi) {
+                    continue;
+                }
+            }
+            list.push(i as u32);
+        }
+        // Host-visible, one per frame in flight: no copy pass.
+        let bytes = (list.len().max(1) * 4) as u64;
+        if self.cull_lists[slot]
+            .as_ref()
+            .is_none_or(|(b, _)| b.size < bytes)
+        {
+            if let Some((old, index)) = self.cull_lists[slot].take() {
+                bindless.remove_buffer(index, frame);
+                self.retired.push((old, frame));
+            }
+            let buffer = memory.buffer(
+                ctx,
+                "terrain cull list",
+                bytes.next_power_of_two().max(4096),
+                vk::BufferUsageFlags::STORAGE_BUFFER,
+                MemoryLocation::CpuToGpu,
+            )?;
+            let index = bindless.add_buffer(ctx, buffer.raw).ok_or_else(full)?;
+            self.cull_lists[slot] = Some((buffer, index));
+        }
+        let (buffer, index) = self.cull_lists[slot].as_mut().expect("made above");
+        buffer.write(0, bytemuck::cast_slice(&list));
+        let len = list.len() as u32;
+        self.cull_candidates = list;
+        Ok((len, *index))
+    }
+
     /// `fill_visibility` over dense arrays (`MOBILE`): the visibility sets
     /// and each cell's slots laid out on the fill's own grid, so the fill
     /// and the marking index instead of hashing (~100k lookups each).
@@ -3252,7 +3328,22 @@ impl TerrainScene {
                 None => self.ranks_dirty = true,
             }
         }
-        let near_first = near_first();
+        let aspect = rotation.aspect;
+        let project = |c: &Camera| {
+            rotation.clip
+                * Mat4::perspective_infinite_reverse_rh(c.fov.to_radians(), aspect, NEAR)
+                * self.env.as_ref().map_or(Mat4::IDENTITY, |e| e.warp)
+                * Mat4::look_to_rh(c.eye, c.forward(), Vec3::Y)
+        };
+        let view_proj = project(&camera);
+        let cull_proj = project(&cull);
+        // Android culls from a list (`cull_list`), not in near-first order.
+        let near_first = near_first() && !MOBILE;
+        let listed = if MOBILE && self.slot_high > 0 {
+            Some(self.cull_list(ctx, memory, bindless, slot, frame, cull_proj)?)
+        } else {
+            None
+        };
         if !near_first {
             self.ordered_for = None;
         }
@@ -3377,15 +3468,6 @@ impl TerrainScene {
             return Ok(());
         };
 
-        let aspect = rotation.aspect;
-        let project = |c: &Camera| {
-            rotation.clip
-                * Mat4::perspective_infinite_reverse_rh(c.fov.to_radians(), aspect, NEAR)
-                * self.env.as_ref().map_or(Mat4::IDENTITY, |e| e.warp)
-                * Mat4::look_to_rh(c.eye, c.forward(), Vec3::Y)
-        };
-        let view_proj = project(&camera);
-        let cull_proj = project(&cull);
         // The fixed path this frame (`fixed`): not under a pack (its passes
         // read the GPU cull's lists) nor in the overdraw view.
         let fixed = pipes.fixed.is_some()
@@ -3443,6 +3525,9 @@ impl TerrainScene {
         }
         if MOBILE {
             flags |= CULL_LAZY;
+        }
+        if listed.is_some() {
+            flags |= CULL_LIST;
         }
         let cull_view = CullView {
             view_proj: cull_proj.to_cols_array_2d(),
@@ -3560,18 +3645,20 @@ impl TerrainScene {
                         ],
                         params: [
                             f32::from_bits(self.ranks.index),
-                            f32::from_bits(self.order.index),
-                            f32::from_bits(if near_first {
-                                self.order_cpu.len() as u32
-                            } else {
-                                0
+                            f32::from_bits(listed.map_or(self.order.index, |l| l.1)),
+                            // The list's length under CULL_LIST.
+                            f32::from_bits(match listed {
+                                Some((len, _)) => len,
+                                None if near_first => self.order_cpu.len() as u32,
+                                None => 0,
                             }),
                             0.0,
                         ],
                         view_proj: [[0.0; 4]; 4],
                     },
                 );
-                device.cmd_dispatch(cmd, slot_count.div_ceil(64).max(1), 1, 1);
+                let threads = listed.map_or(slot_count, |l| l.0);
+                device.cmd_dispatch(cmd, threads.div_ceil(64).max(1), 1, 1);
             });
 
             // Per-Face Culling: each drawn solid and cutout command's quads
@@ -4399,6 +4486,7 @@ impl TerrainScene {
         ];
         buffers.extend(self.readback);
         buffers.extend(self.views);
+        buffers.extend(self.cull_lists.into_iter().flatten().map(|(b, _)| b));
         buffers.extend(self.retired.into_iter().map(|(b, _)| b));
         for s in self.shadow {
             buffers.push(s.commands);

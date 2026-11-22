@@ -41,6 +41,8 @@ static const uint CULL_ANGLED_BUCKETS = 256;
 static const uint CULL_FACE_BANDS = 512;
 // Load a slot's draw ranges and bands only once it is kept (Android).
 static const uint CULL_LAZY = 1024;
+// Cull only the slots listed at params.y, params.z of them (Android).
+static const uint CULL_LIST = 2048;
 
 // VkDrawIndexedIndirectCommand.
 struct DrawCommand {

@@ -115,6 +115,7 @@ Perf report (`MC_PERF_AUTOSTART=90`, 10 s, pulled from
 | `smaps_rollup` off the main thread | 81.7 | 41.5 | 0 | 21 ms |
 | Pipelined render thread (`MC_NATIVE_PIPELINE=always`) | 102.0 | 74.4 | 0 | 12.3 ms |
 | In step (`never`, the old default below ~200 fps) | 79.2 | 42.9 | 0 | 22.2 ms |
+| GPU cull over a CPU candidate list (`CULL_LIST`) | 113.1 | 77.8 | 0 | 11.1 ms (GPU 9.65 -> 8.69, cull 2.2 -> 1.25) |
 
 In step, the main thread (~6 ms of Bevy) waits for the render thread
 (~7 ms) every frame, so the two add up; pipelined they overlap and the

@@ -105,11 +105,14 @@ uint through(Slot s, RWByteAddressBuffer slots, uint bands_at, uint b, uint k, u
 [numthreads(64, 1, 1)]
 void cull(uint3 id: SV_DispatchThreadID) {
     uint index = id.x;
-    if (index < asuint(pc.params.z)) {
-        index = buffer_at(asuint(pc.params.y)).Load(index * 4);
-    }
     RWByteAddressBuffer view = buffer_at(pc.more.z);
     uint flags = view.Load(VIEW_FLAGS);
+    if ((flags & CULL_LIST) != 0) {
+        // Past the list: no slot (an empty one, as past the slot count).
+        index = index < asuint(pc.params.z) ? buffer_at(asuint(pc.params.y)).Load(index * 4) : 0xFFFFFFFFu;
+    } else if (index < asuint(pc.params.z)) {
+        index = buffer_at(asuint(pc.params.y)).Load(index * 4);
+    }
     // Load4, not Load3: slangc turns a Load3 at an offset divisible by 12
     // into a uint3 array index (240 / 12) over a 16-byte stride, reading
     // past the view (zeros).
