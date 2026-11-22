@@ -587,12 +587,20 @@ fn draw_frame(
     thread.frame_time = thread.frame_time * 0.9 + dt * 0.1;
     // `MC_NATIVE_PIPELINE=always` or `never` overrides, for comparing.
     static FORCED: OnceLock<Option<bool>> = OnceLock::new();
-    let forced = *FORCED.get_or_init(|| match std::env::var("MC_NATIVE_PIPELINE").as_deref() {
-        Ok("always") => Some(false),
-        Ok("never") => Some(true),
-        _ => None,
-    });
-    thread.in_step = forced.unwrap_or(if thread.in_step {
+    let forced =
+        *FORCED.get_or_init(
+            || match crate::platform::env::var("MC_NATIVE_PIPELINE").as_deref() {
+                Ok("always") => Some(false),
+                Ok("never") => Some(true),
+                _ => None,
+            },
+        );
+    // Android always pipelines: the phone's main thread and render thread
+    // each take ~6-7 ms, so in step they add up (Pixel: 79 -> 102 fps,
+    // 1% low 43 -> 74; docs/ANDROID_PERF.md).
+    thread.in_step = forced.unwrap_or(if cfg!(target_os = "android") {
+        false
+    } else if thread.in_step {
         thread.frame_time > 1.0 / 220.0
     } else {
         thread.frame_time > 1.0 / 180.0

@@ -41,6 +41,7 @@ desktop (PC) build, and where. Keep the two from leaking into each other.
 | Pipeline cache | temp dir | `storage::dir()/native-pipelines.bin` |
 | Window | resizable, Fullscreen and size options | native size tracked each frame (`track_native_window_size`); no Fullscreen or window-size options |
 | Present mode | `AutoVsync` | `AutoNoVsync` |
+| Render thread | pipelined above ~200 fps, in step below | always pipelined (`draw_frame`); `MC_NATIVE_PIPELINE` (now read through `platform::env`) overrides both |
 | Cursor | grabbed / shown | no-op |
 | Input, GUI | mouse and keyboard | touch controls and phone layout (`mobile_ui`: chat, HUD, screens, options, slots, keyboard) |
 | Exit | normal | `Activity.finish()` through JNI |
