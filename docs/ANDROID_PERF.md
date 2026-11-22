@@ -49,6 +49,25 @@ CPU fits 60 fps. Dips with flat CPU mean the **GPU is the limit**: full native r
   conservative (1 px gaps), so Advanced Performance > Quarter-Res Occlusion
   ships off.
 
+## Measured 2026-11-22: fixed terrain (in-run A/B)
+
+`vkview --fixed-ab`, `dump5`, `--camera 0,110,0,30,-25`, 2856x1280, both
+sides on plain vertices (packing off). A GPU-driven, B fixed (CPU cull,
+fixed-function vertex input, direct draws, no Hi-Z). ms per frame.
+
+| Run | A terrain | B terrain | A total | B total |
+|---|---|---|---|---|
+| A with Hi-Z (default) | 8.03 | 17.47 | 10.47 | 18.12 |
+| Hi-Z off on both | 18.73 | 17.62 | 21.27 | 18.29 |
+
+- Vertex pulling is not the cost: fixed-function input with the same
+  culling saves ~1.1 ms of terrain (6%).
+- Occlusion is: Hi-Z cuts terrain from ~18 to 8 ms. Dropping it loses far
+  more than the compute, readback and pyramid (~1.8 ms) save.
+- Cause 1 (vertex pulling) of `ANDROID_SPECIFICS.md` is mostly refuted;
+  the fixed path stays off. Worth keeping from it: fixed-function input
+  under the GPU cull's indirect draws (~1 ms), or a CPU occlusion source.
+
 ## Options (rough order of payoff)
 
 - **Render scale**: draw the world at 50–75% and upscale in the rotation pass, which is free since that pass samples anyway. Make it dynamic from frame time or thermal headroom (`AThermal_getThermalHeadroom`).

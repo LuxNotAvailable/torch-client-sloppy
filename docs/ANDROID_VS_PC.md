@@ -56,8 +56,9 @@ desktop (PC) build, and where. Keep the two from leaking into each other.
 ### Fixed terrain (mobile path, under test)
 
 Switched by `MC_NATIVE_TERRAIN=fixed` (or `fixed_ab`) in the game, or
-`vkview --fixed` / `--fixed-ab`. Off by default on both builds until the
-Pixel A/B decides.
+`vkview --fixed` / `--fixed-ab`. Off by default on both builds: on the
+Pixel it lost to the GPU-driven path with Hi-Z (terrain 17.5 vs 8.0 ms;
+`ANDROID_PERF.md`).
 
 | | GPU-driven (PC) | Fixed (mobile) |
 |---|---|---|
