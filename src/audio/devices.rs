@@ -2,7 +2,10 @@
 //! voice chat. A device is kept by name; one that is gone falls back to the
 //! system default, as vanilla's `soundDevice` option does.
 //! Android has neither picker nor voice chat: only `output` runs there.
-#![cfg_attr(target_os = "android", allow(dead_code, reason = "no device picker or voice chat on Android"))]
+#![cfg_attr(
+    target_os = "android",
+    allow(dead_code, reason = "no device picker or voice chat on Android")
+)]
 
 use std::sync::Mutex;
 
