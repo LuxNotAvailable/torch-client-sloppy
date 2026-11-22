@@ -56,9 +56,12 @@ desktop (PC) build, and where. Keep the two from leaking into each other.
 ### Fixed terrain (mobile path, under test)
 
 Switched by `MC_NATIVE_TERRAIN=fixed` (or `fixed_ab`) in the game, or
-`vkview --fixed` / `--fixed-ab`. Off by default on both builds: on the
-Pixel it lost to the GPU-driven path with Hi-Z (terrain 17.5 vs 8.0 ms;
-`ANDROID_PERF.md`).
+`vkview --fixed` / `--fixed-ab`. `input` / `input_ab` (`--input`,
+`--input-ab`) keep the GPU cull and Hi-Z and only draw solid and cutout
+through the fixed vertex input; translucent stays pulled (its one indirect
+draw spans pools), and the pool buffers use `Use::VertexInputRead` in both
+passes so no barrier splits them. All off by default on both builds;
+Pixel results in `ANDROID_PERF.md` (`input` wins ~5% of frame).
 
 | | GPU-driven (PC) | Fixed (mobile) |
 |---|---|---|

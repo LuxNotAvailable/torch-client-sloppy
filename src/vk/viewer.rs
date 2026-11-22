@@ -6,7 +6,7 @@
 //!         [--view shaded|normals|texture] [--screenshot FILE.png]
 //!         [--terrain DIR [--camera X,Y,Z,YAW,PITCH|game] [--no-hiz] [--no-vis]
 //!          [--no-buckets] [--budget MB] [--greedy] [--no-greedy] [--aggressive]
-//!          [--fixed] [--fixed-ab]
+//!          [--fixed] [--fixed-ab] [--input] [--input-ab]
 //!          [--fxaa] [--ssaa SCALE] [--post creeper,spider,invert,blur|none]]`
 //!
 //! The scene is the test scene, or with `--terrain` a terrain dump the game
@@ -169,13 +169,14 @@ fn options(args: Vec<String>) -> Options {
             "--no-packed" => options.terrain_options.packed = false,
             "--no-greedy" => options.terrain_options.greedy = false,
             // The mobile path (`terrain::fixed`), alone or as an A/B.
-            "--fixed" | "--fixed-ab" => {
+            "--fixed" | "--fixed-ab" | "--input" | "--input-ab" => {
                 let t = &mut options.terrain_options;
                 (t.packed, t.greedy) = (false, false);
-                t.fixed = if arg == "--fixed" {
-                    terrain::FixedMode::On
-                } else {
-                    terrain::FixedMode::Ab
+                t.fixed = match arg.as_str() {
+                    "--fixed" => terrain::FixedMode::On,
+                    "--fixed-ab" => terrain::FixedMode::Ab,
+                    "--input" => terrain::FixedMode::Input,
+                    _ => terrain::FixedMode::InputAb,
                 };
             }
             "--aggressive" => options.aggressive = true,
@@ -1172,6 +1173,11 @@ impl Renderer {
                 s.indices,
                 s.records,
                 s.uploaded as f32 / 1048576.0
+            );
+            let (lo, hi) = scene.bounds();
+            println!(
+                "vkview: terrain bounds {:.0},{:.0},{:.0} to {:.0},{:.0},{:.0}",
+                lo.x, lo.y, lo.z, hi.x, hi.y, hi.z
             );
             println!(
                 "vkview: terrain draws {} solid, {} cutout commands, {} translucent; flood fill reached {} layers; Hi-Z on {} frames",

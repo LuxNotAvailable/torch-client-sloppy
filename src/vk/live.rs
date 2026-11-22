@@ -2026,7 +2026,8 @@ impl GuiPass {
 /// Terrain options, with stages turned off by `MC_NATIVE_TERRAIN`
 /// (comma list: `nohiz`, `novis`, `nobuckets`, `nopacked`, `nogreedy`), for
 /// bisecting; `fixed` / `fixed_ab` run the mobile path (`terrain::fixed`)
-/// alone or as an in-run A/B. Sections meshed for a pack keep raw vertices
+/// alone or as an in-run A/B; `input` / `input_ab` only its vertex input,
+/// under the GPU cull. Sections meshed for a pack keep raw vertices
 /// either way.
 fn terrain_options() -> super::terrain::Options {
     let mut o = super::terrain::Options::default();
@@ -2039,13 +2040,14 @@ fn terrain_options() -> super::terrain::Options {
             "nopacked" => o.packed = false,
             "nogreedy" => o.greedy = false,
             // The mobile path (docs/ANDROID_VS_PC.md): plain vertices only.
-            "fixed" | "fixed_ab" => {
+            "fixed" | "fixed_ab" | "input" | "input_ab" => {
                 o.packed = false;
                 o.greedy = false;
-                o.fixed = if flag == "fixed" {
-                    super::terrain::FixedMode::On
-                } else {
-                    super::terrain::FixedMode::Ab
+                o.fixed = match flag {
+                    "fixed" => super::terrain::FixedMode::On,
+                    "fixed_ab" => super::terrain::FixedMode::Ab,
+                    "input" => super::terrain::FixedMode::Input,
+                    _ => super::terrain::FixedMode::InputAb,
                 };
             }
             _ => {}

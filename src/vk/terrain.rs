@@ -1121,7 +1121,7 @@ impl TerrainScene {
 
         let module = pipelines.module(ctx, super::shaders::TERRAIN)?;
         FIXED_AB.store(
-            options.fixed == FixedMode::Ab,
+            matches!(options.fixed, FixedMode::Ab | FixedMode::InputAb),
             std::sync::atomic::Ordering::Relaxed,
         );
         // Built on a worker: the dump starts streaming in meanwhile (2.5).
@@ -1818,6 +1818,11 @@ impl TerrainScene {
 
     /// The camera when none is given: above the middle of the loaded
     /// terrain, looking down at it, circling and turning slowly.
+    /// The loaded sections' box (low corner, high corner).
+    pub fn bounds(&self) -> (Vec3, Vec3) {
+        (self.lo, self.hi)
+    }
+
     pub fn default_camera(&self, seconds: f32) -> Camera {
         let centre = if self.lo.x <= self.hi.x {
             Vec3::new(
@@ -3272,9 +3277,18 @@ impl TerrainScene {
             && !self.cull_only
             && view != View::Overdraw
             && match self.options.fixed {
-                FixedMode::Off => false,
+                FixedMode::Off | FixedMode::Input | FixedMode::InputAb => false,
                 FixedMode::On => true,
                 FixedMode::Ab => fixed_ab_side(),
+            };
+        // The GPU cull's draws through vertex input (`FixedMode::Input`).
+        let input = pipes.fixed.is_some()
+            && !self.cull_only
+            && view != View::Overdraw
+            && match self.options.fixed {
+                FixedMode::Input => true,
+                FixedMode::InputAb => fixed_ab_side(),
+                _ => false,
             };
 
         // Hi-Z only with a pyramid of this size, from a camera close by.
@@ -3541,6 +3555,9 @@ impl TerrainScene {
         ];
         let vertex_use = if fixed {
             Use::VertexInput
+        } else if input {
+            // Pulled again by the translucent pass.
+            Use::VertexInputRead
         } else {
             Use::VertexRead
         };
@@ -3640,10 +3657,17 @@ impl TerrainScene {
             );
             let capacity = self.list_capacity;
             let draw_lists = |pipelines: [vk::Pipeline; 2]| {
+                let pipelines = match pipes.fixed.filter(|_| input) {
+                    Some(f) => [f[0], f[1]],
+                    None => pipelines,
+                };
                 for (kind, pipeline) in pipelines.into_iter().enumerate() {
                     device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
                     for (p, pool) in self.pools.iter().enumerate() {
                         let list = p as u64 * 2 + kind as u64;
+                        if input {
+                            device.cmd_bind_vertex_buffers(cmd, 0, &[pool.vertices.raw], &[0]);
+                        }
                         device.cmd_bind_index_buffer(
                             cmd,
                             self.drawn_indices(pool),

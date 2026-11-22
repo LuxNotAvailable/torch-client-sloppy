@@ -49,24 +49,34 @@ CPU fits 60 fps. Dips with flat CPU mean the **GPU is the limit**: full native r
   conservative (1 px gaps), so Advanced Performance > Quarter-Res Occlusion
   ships off.
 
-## Measured 2026-11-22: fixed terrain (in-run A/B)
+## Measured 2026-11-22: fixed terrain and vertex input
 
-`vkview --fixed-ab`, `dump5`, `--camera 0,110,0,30,-25`, 2856x1280, both
-sides on plain vertices (packing off). A GPU-driven, B fixed (CPU cull,
-fixed-function vertex input, direct draws, no Hi-Z). ms per frame.
+`vkview`, `dump5`, camera at the dump's centre (`--camera
+-40,80,296,0,-10`; bounds -256,-64,80 to 176,102,512, printed by vkview),
+2856x1280, 3600 frames. GPU ms per frame.
 
-| Run | A terrain | B terrain | A total | B total |
+In-run A/Bs, both sides on plain vertices (packing off):
+
+| A/B | A terrain | B terrain | A total | B total |
 |---|---|---|---|---|
-| A with Hi-Z (default) | 8.03 | 17.47 | 10.47 | 18.12 |
-| Hi-Z off on both | 18.73 | 17.62 | 21.27 | 18.29 |
+| `--input-ab` (A pulled, B vertex input; both GPU cull + Hi-Z) | 3.39 | 3.01 | 6.06 | 5.45 |
+| `--fixed-ab` (A GPU-driven, B CPU cull, no Hi-Z) | 3.43 | 5.43 | 6.16 | 6.08 |
 
-- Vertex pulling is not the cost: fixed-function input with the same
-  culling saves ~1.1 ms of terrain (6%).
-- Occlusion is: Hi-Z cuts terrain from ~18 to 8 ms. Dropping it loses far
-  more than the compute, readback and pyramid (~1.8 ms) save.
-- Cause 1 (vertex pulling) of `ANDROID_SPECIFICS.md` is mostly refuted;
-  the fixed path stays off. Worth keeping from it: fixed-function input
-  under the GPU cull's indirect draws (~1 ms), or a CPU occlusion source.
+Separate runs against the shipped default (packed + greedy), alternated:
+
+| Run | terrain | frame avg |
+|---|---|---|
+| default | 3.37, 3.38 | 5.91, 6.03 |
+| `--input` | 3.01, 3.24 | 5.54, 5.76 |
+
+- Vertex input under the GPU cull: terrain -11%, frame -10% in-run; about
+  -5% frame against the packed default. The pool buffers must be one
+  `Use::VertexInputRead` across both passes: a `VertexInput` then
+  `VertexRead` barrier before the translucent pass cost +2.4 ms.
+- Fixed (CPU cull, no Hi-Z) ties on total: terrain +2 ms, offset by no
+  Hi-Z build, cull or readback. Its CPU side is unmeasured here.
+- An earlier run from z = 0 (outside the dump, looking over the edge) gave
+  fixed 18.1 vs 10.5 ms; that camera saw far more geometry. Use the centre.
 
 ## Options (rough order of payoff)
 

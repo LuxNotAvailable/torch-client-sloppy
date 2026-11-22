@@ -27,6 +27,9 @@ pub enum Use {
     VertexRead,
     /// Read as a vertex buffer (fixed-function input).
     VertexInput,
+    /// Both: a vertex buffer and a vertex-shader storage read, so passes
+    /// that differ get no barrier between them.
+    VertexInputRead,
     /// Read as indirect draw arguments or counts.
     IndirectRead,
     /// Read as an index buffer.
@@ -46,6 +49,7 @@ impl Use {
             Use::ComputeRead | Use::ComputeWrite => S::COMPUTE_SHADER,
             Use::VertexRead => S::VERTEX_SHADER,
             Use::VertexInput => S::VERTEX_ATTRIBUTE_INPUT,
+            Use::VertexInputRead => S::VERTEX_ATTRIBUTE_INPUT | S::VERTEX_SHADER,
             Use::IndirectRead => S::DRAW_INDIRECT,
             Use::IndexRead => S::INDEX_INPUT,
             // Copies, but also fills and inline updates, which count as
@@ -70,6 +74,7 @@ impl Use {
             Use::IndirectRead => A::INDIRECT_COMMAND_READ,
             Use::IndexRead => A::INDEX_READ,
             Use::VertexInput => A::VERTEX_ATTRIBUTE_READ,
+            Use::VertexInputRead => A::VERTEX_ATTRIBUTE_READ | A::SHADER_STORAGE_READ,
             Use::TransferDst => A::TRANSFER_WRITE,
             Use::TransferSrc => A::TRANSFER_READ,
             Use::Present => A::NONE,
@@ -103,7 +108,9 @@ impl Use {
             Use::TransferDst => L::TRANSFER_DST_OPTIMAL,
             Use::TransferSrc => L::TRANSFER_SRC_OPTIMAL,
             Use::Present => L::PRESENT_SRC_KHR,
-            Use::IndirectRead | Use::IndexRead | Use::VertexInput => L::GENERAL,
+            Use::IndirectRead | Use::IndexRead | Use::VertexInput | Use::VertexInputRead => {
+                L::GENERAL
+            }
         }
     }
 }

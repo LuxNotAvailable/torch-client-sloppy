@@ -36,6 +36,12 @@ pub enum Mode {
     /// Flips every two seconds (A GPU-driven, B fixed), both on plain
     /// vertices, for an in-run A/B.
     Ab,
+    /// The GPU cull's indirect draws, solid and cutout through
+    /// fixed-function input (translucent stays pulled: its one draw spans
+    /// pools).
+    Input,
+    /// `Input` as an in-run A/B (A pulled, B input).
+    InputAb,
 }
 
 /// One direct draw.

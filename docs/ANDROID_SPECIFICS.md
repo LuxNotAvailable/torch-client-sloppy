@@ -55,9 +55,10 @@ A terrain mode for phones:
 Keep the GPU-driven path on desktop. Make the mode switchable, so one run
 can A/B both.
 
-**Status (2026-11-22):** built and measured; it loses (`ANDROID_PERF.md`,
-fixed terrain): without occlusion the phone draws ~2x the geometry, and
-fixed-function input alone saves only ~6% of terrain. Off by default.
+**Status (2026-11-22):** built and measured (`ANDROID_PERF.md`). From the
+dump's centre, fixed ties the GPU path on GPU total (terrain +2 ms, no
+Hi-Z/cull cost). Vertex input under the GPU cull (`input`) wins: terrain
+-11%, frame ~-5% against the packed default. Both off by default.
 `MC_NATIVE_TERRAIN=fixed` / `fixed_ab` (game, via `env.txt`) or `vkview
 --fixed` / `--fixed-ab`; see `docs/ANDROID_VS_PC.md`. Draws pixel-identical
 to the GPU path on plain vertices (desktop, `dump5`). Depth is still stored
