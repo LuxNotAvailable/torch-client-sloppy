@@ -114,8 +114,8 @@ mod fixed;
 pub use fixed::Mode as FixedMode;
 
 const NEAR: f32 = 0.05;
-/// Android under a pack: the hand is never farther (blocks); the Hi-Z
-/// reads the hand mask only nearer than this.
+/// Under a pack with a hand mask (Android): the hand is never farther
+/// (blocks); the Hi-Z reads the mask only nearer than this.
 const HAND_REACH: f32 = 3.0;
 
 /// The phone's terrain bookkeeping (docs/ANDROID_VS_PC.md): remeshes that
@@ -139,11 +139,10 @@ const POOL_INDICES: u32 = 3_200_000;
 #[cfg(target_os = "android")]
 const POOL_INDICES: u32 = 2_400_000;
 const MAX_POOLS: u32 = 64;
-/// Pool vertices per pack-quad entry: PC keeps one entry per vertex slot
-/// (quad q at the section's first vertex + q); Android one per quad (at
-/// vertex / 4, sections start on a quad), a quarter of the memory.
-/// `iris/terrain.slang`'s `iris_vk_quad` reads the same.
-const QUAD_UNITS: u32 = if MOBILE { 4 } else { 1 };
+/// Pool vertices per pack-quad entry: one entry per quad (at vertex / 4;
+/// sections start on a quad). `iris/terrain.slang`'s `iris_vk_quad` and the
+/// GLSL prelude's `PACK_STREAM` (`compile::preludes`) read the same.
+const QUAD_UNITS: u32 = 4;
 
 const SLOT_SIZE: u64 = 320;
 const COMMAND_SIZE: u64 = 20;
@@ -174,7 +173,7 @@ const CULL_CUTOUT_BUCKETS: u32 = 128;
 const CULL_ANGLED_BUCKETS: u32 = 256;
 /// The solid axis buckets' plane bands (Exact Face Culling).
 const CULL_FACE_BANDS: u32 = 512;
-/// Load a slot's ranges and bands only once kept (`MOBILE`).
+/// Load a slot's ranges and bands only once kept.
 const CULL_LAZY: u32 = 1024;
 /// Cull the slots listed in the order buffer only (`cull_list`).
 const CULL_LIST: u32 = 2048;
@@ -578,8 +577,8 @@ struct Pool {
     vertices: Buffer,
     indices: Buffer,
     /// The main view's indices after Per-Face Culling (`face_filter`): each
-    /// drawn command's kept quads at its own offset. Android: 4 bytes until
-    /// the option is first on (`grow_filtered`).
+    /// drawn command's kept quads at its own offset. 4 bytes until the
+    /// option is first on (`grow_filtered`).
     filtered: Buffer,
     /// Bindless indices of `indices` and `filtered`.
     index_ids: (u32, u32),
@@ -894,7 +893,7 @@ struct Pipes {
     face_filter: vk::Pipeline,
     /// The fixed path's solid, cutout and translucent, when built.
     fixed: Option<[vk::Pipeline; 3]>,
-    /// Android: the pyramid from a shader pack's depth (`pack_pyramid`).
+    /// The pyramid from a shader pack's depth (`pack_pyramid`).
     hiz_pack: Option<vk::Pipeline>,
 }
 
@@ -909,11 +908,9 @@ impl Pipes {
             anim_blend: built[5],
             overdraw: built[6],
             face_filter: built[7],
-            // Android's `hiz_reduce_pack` comes before the fixed three.
-            hiz_pack: MOBILE.then(|| built[8]),
-            fixed: built
-                .get(8 + usize::from(MOBILE)..11 + usize::from(MOBILE))
-                .map(|f| [f[0], f[1], f[2]]),
+            // `hiz_reduce_pack` comes before the fixed three.
+            hiz_pack: Some(built[8]),
+            fixed: built.get(9..12).map(|f| [f[0], f[1], f[2]]),
         }
     }
 
@@ -1055,11 +1052,11 @@ pub struct TerrainScene {
     /// flight its host-visible buffer and bindless index.
     cull_candidates: Vec<u32>,
     cull_lists: Vec<Option<(Buffer, u32)>>,
-    /// `MOBILE`: `fill_dense`'s arrays, kept between fills.
+    /// `fill_dense`'s arrays, kept between fills.
     dense_vis: Vec<VisibilitySet>,
     dense_slots: Vec<[u32; 2]>,
     sort_pending: bool,
-    /// `MOBILE`: the ranks changed without a re-rank (a replaced layer took
+    /// The ranks changed without a re-rank (a replaced layer took
     /// its old rank); upload them.
     ranks_upload: bool,
     /// Section uploads and removals, for the shadow cache.
@@ -1134,7 +1131,7 @@ pub struct TerrainScene {
     pack_camera: Mat4,
     /// `record` only culls: a shader pack draws the world.
     cull_only: bool,
-    /// Android under a pack: the view the pack is drawing this frame, for
+    /// Under a pack: the view the pack is drawing this frame, for
     /// the pyramid its depth builds (`pack_pyramid`).
     pack_view: Option<(Mat4, Vec3)>,
     /// This frame's `record` wrote the GPU cull's commands and counts. A
@@ -1247,12 +1244,10 @@ impl TerrainScene {
                 entry: c"face_filter".to_owned(),
             },
         ];
-        if MOBILE {
-            specs.push(Spec::Compute {
-                module,
-                entry: c"hiz_reduce_pack".to_owned(),
-            });
-        }
+        specs.push(Spec::Compute {
+            module,
+            entry: c"hiz_reduce_pack".to_owned(),
+        });
         // The fixed path: its own vertex stage, the same fragment stages.
         let fixed_module = if options.fixed != FixedMode::Off {
             let m = pipelines.module(ctx, super::shaders::TERRAIN_MOBILE)?;
@@ -2129,7 +2124,8 @@ impl TerrainScene {
                 lists: (0..FRAMES_IN_FLIGHT).map(|_| None).collect(),
             });
         }
-        // Android: a thread per candidate (`shadow_list`), loads lazy.
+        // Android: a thread per candidate (`shadow_list`), loads lazy. Not
+        // on PC: the side planes ignore an outside pack's shadow distortion.
         let listed =
             if MOBILE && self.slot_high > 0 && crate::vk::pack::tiled::feature_on("shadowlist") {
                 Some(self.shadow_list(ctx, memory, bindless, list, slot, frame, view_proj)?)
@@ -2410,11 +2406,11 @@ impl TerrainScene {
             index_usage,
             MemoryLocation::GpuOnly,
         )?;
-        // Android: a stand-in until Per-Face Culling is on (`grow_filtered`).
+        // A stand-in until Per-Face Culling is on (`grow_filtered`).
         let filtered = memory.buffer(
             ctx,
             "terrain filtered indices",
-            if MOBILE && !face_filter_wanted() {
+            if !face_filter_wanted() {
                 4
             } else {
                 POOL_INDICES as u64 * 4
@@ -2441,7 +2437,7 @@ impl TerrainScene {
         Ok(self.pools.len() as u32 - 1)
     }
 
-    /// Android: gives every pool its full Per-Face Culling index buffer, the
+    /// Gives every pool its full Per-Face Culling index buffer, the
     /// first time the option is on (pools start with a stand-in, saving
     /// ~9 MB a pool while it is off).
     fn grow_filtered(
@@ -2531,8 +2527,8 @@ impl TerrainScene {
                 Record::Layer(section) => section,
             };
             let key = (section.origin, section.water);
-            // `MOBILE`: a remesh that keeps the cave visibility keeps the
-            // layer's visible bit and rank (see `MOBILE`).
+            // A remesh that keeps the cave visibility keeps the layer's
+            // visible bit and rank.
             let old = self.entries.get(&key).map(|e| {
                 let bit = self.visible_bits[e.slot as usize / 32] >> (e.slot % 32) & 1 != 0;
                 (bit, self.rank_of[e.slot as usize])
@@ -2550,7 +2546,7 @@ impl TerrainScene {
                 );
                 same_vis = previous == Some(section.vis);
             }
-            let quiet = MOBILE && same_vis && old.is_some() && !section.verts.is_empty();
+            let quiet = same_vis && old.is_some() && !section.verts.is_empty();
             let changed_before = (self.sections_changed, self.ranks_dirty);
             self.remove(key);
             let hash = (!section.verts.is_empty())
@@ -2634,13 +2630,9 @@ impl TerrainScene {
                 None => &section.verts,
             };
             let vertex_count = record_units + plain_verts.len() as u32;
-            // Android: whole quads, so every section starts on one and the
-            // pack quads index by vertex / 4 (`QUAD_UNITS`).
-            let vertex_count = if MOBILE {
-                vertex_count.next_multiple_of(4)
-            } else {
-                vertex_count
-            };
+            // Whole quads, so every section starts on one and the pack
+            // quads index by vertex / 4 (`QUAD_UNITS`).
+            let vertex_count = vertex_count.next_multiple_of(QUAD_UNITS);
 
             // Room for the vertices (and opaque indices) in some pool.
             let mut placed = None;
@@ -2741,7 +2733,7 @@ impl TerrainScene {
             });
             spent += staged_v.size + staged_i.size;
             self.stats.uploaded += staged_v.size + staged_i.size;
-            // Pack quads: quad q at the section's vertex offset + q.
+            // Pack quads: quad q at the section's vertex offset / 4 + q.
             if !section.pack.is_empty() && packed.is_none() {
                 if self.pools[pool as usize].quads.is_none() {
                     let buffer = memory.buffer(
@@ -3012,6 +3004,8 @@ impl TerrainScene {
         let eye_block = eye.floor().as_ivec3();
         // New layers go up sorted for the eye: only a new eye block or a
         // pass cut short by the budget leaves any stale.
+        // Android only: within the eye block an older order can blend a
+        // little differently (MakeUp: 2 pixels, 1/255).
         if MOBILE && self.sort_scanned == Some(eye_block) && !self.sort_pending {
             return;
         }
@@ -3157,31 +3151,7 @@ impl TerrainScene {
             y_lo = y_lo.min(y);
             y_hi = y_hi.max(y);
         }
-        if MOBILE {
-            self.fill_dense(here, radius.min(64), y_lo, y_hi);
-            return;
-        }
-        let vis = &self.vis;
-        let reached = crate::terrain::cave::flood_fill(
-            (here.x, here.y, here.z),
-            radius.min(64),
-            y_lo,
-            y_hi,
-            |pos| vis.get(&pos).copied().unwrap_or(VisibilitySet::all()),
-        );
-        self.visible_bits.iter_mut().for_each(|w| *w = 0);
-        let mut count = 0;
-        for (x, y, z) in reached {
-            for water in [false, true] {
-                if let Some(entry) = self.entries.get(&([x * 16, y, z * 16], water)) {
-                    let slot = entry.slot;
-                    self.visible_bits[slot as usize / 32] |= 1 << (slot % 32);
-                    count += 1;
-                }
-            }
-        }
-        self.stats.reached = count;
-        self.visible_dirty = true;
+        self.fill_dense(here, radius.min(64), y_lo, y_hi);
     }
 
     /// `MOBILE`: the slots the GPU cull need look at, written to this
@@ -3252,7 +3222,7 @@ impl TerrainScene {
         Ok((len, *index))
     }
 
-    /// `fill_visibility` over dense arrays (`MOBILE`): the visibility sets
+    /// `fill_visibility` over dense arrays: the visibility sets
     /// and each cell's slots laid out on the fill's own grid, so the fill
     /// and the marking index instead of hashing (~100k lookups each).
     fn fill_dense(&mut self, here: IVec3, radius: i32, y_lo: i32, y_hi: i32) {
@@ -3525,7 +3495,7 @@ impl TerrainScene {
         } else {
             None
         };
-        if MOBILE && face_filter_wanted() {
+        if face_filter_wanted() {
             self.grow_filtered(ctx, memory, bindless, frame)?;
         }
         if !near_first {
@@ -3678,7 +3648,7 @@ impl TerrainScene {
                 if self.options.hiz
                     && !fixed
                     // A pack's pyramid is at its render scale.
-                    && (*size == (extent.width, extent.height) || (MOBILE && self.cull_only))
+                    && (*size == (extent.width, extent.height) || self.cull_only)
                     && eye.distance(cull.eye) < HIZ_GUARD =>
             {
                 Some((grown.index, *size, *levels, prev))
@@ -3708,9 +3678,7 @@ impl TerrainScene {
         if !self.options.wave {
             flags |= CULL_NO_WAVE;
         }
-        if MOBILE {
-            flags |= CULL_LAZY;
-        }
+        flags |= CULL_LAZY;
         if listed.is_some() {
             flags |= CULL_LIST;
         }
@@ -3934,14 +3902,10 @@ impl TerrainScene {
         self.pack_camera = Mat4::look_to_rh(camera.eye, camera.forward(), Vec3::Y).inverse();
         lap.mark(9);
         // A shader pack draws the world itself: only the culls are wanted.
-        // Android keeps occlusion: the pack's depth builds the pyramid
+        // Occlusion stays: the pack's depth builds the pyramid
         // (`pack_pyramid`) for this frame's view.
         if self.cull_only {
-            if MOBILE {
-                self.pack_view = Some((view_proj, camera.eye));
-            } else {
-                self.pyramid_view = None;
-            }
+            self.pack_view = Some((view_proj, camera.eye));
             return Ok(());
         }
         let mut buffers = vec![
@@ -4371,16 +4335,16 @@ impl TerrainScene {
     /// Builds the occlusion pyramid from this frame's depth, for next
     /// frame's cull.
     #[allow(clippy::too_many_arguments, reason = "one pass's whole context")]
-    /// Android under a shader pack, occlusion off (its A/B): the next cull
+    /// Under a shader pack, occlusion off (its A/B): the next cull
     /// tests no pyramid.
     pub fn drop_pack_pyramid(&mut self) {
         self.pack_view = None;
         self.pyramid_view = None;
     }
 
-    /// Android under a shader pack: the occlusion pyramid from the pack's
-    /// opaque depth (0..1 between its planes, bottom row first), hand
-    /// pixels masked out by the texel target's flag (`HizSource`), for next
+    /// Under a shader pack: the occlusion pyramid from the pack's depth
+    /// before the hand (0..1 between its planes, bottom row first; on
+    /// Android depthtex1 with the hand masked out, `HizSource`), for next
     /// frame's cull. Every second frame with Half-Rate Occlusion, as the
     /// terrain's own.
     #[allow(clippy::too_many_arguments, reason = "one frame's pyramid context")]
@@ -4444,7 +4408,7 @@ impl TerrainScene {
         depth: (vk::Image, u32),
         extent: vk::Extent2D,
         frame: u64,
-        pack: Option<([f32; 2], (vk::Image, u32))>,
+        pack: Option<([f32; 2], Option<(vk::Image, u32)>)>,
     ) -> Result<(), SetupError> {
         let size = (extent.width, extent.height);
         if self.pyramid.as_ref().is_none_or(|(_, s, _)| *s != size) {
@@ -4485,7 +4449,7 @@ impl TerrainScene {
                 h = h.div_ceil(2);
             }
             let mut depth_use = vec![(depth.0, Use::ComputeRead)];
-            depth_use.extend(pack.map(|(_, t)| (t.0, Use::ComputeRead)));
+            depth_use.extend(pack.and_then(|(_, t)| t).map(|t| (t.0, Use::ComputeRead)));
             let images: &[(vk::Image, Use)] = if base == 0 { &depth_use } else { &[] };
             graph.pass(
                 if base == 0 {
@@ -4517,15 +4481,15 @@ impl TerrainScene {
                             ids: [
                                 grown.index,
                                 depth.1,
-                                pack.map_or(0, |(_, t)| t.1 + 1),
+                                pack.and_then(|(_, t)| t).map_or(0, |t| t.1 + 1),
                                 (NEAR / HAND_REACH).to_bits(),
                             ],
                             more: [base, size.0, size.1, *levels],
-                            // y: level 1 by gathers (`MOBILE`); zw: a
+                            // y: level 1 by gathers; zw: a
                             // pack depth's conversion (`hiz_reduce_pack`).
                             params: [
                                 f32::from(u8::from(quarter)),
-                                f32::from(u8::from(MOBILE)),
+                                1.0,
                                 pack.map_or(0.0, |p| p.0[0]),
                                 pack.map_or(0.0, |p| p.0[1]),
                             ],
@@ -4802,6 +4766,12 @@ mod tests {
         assert!(
             src.contains(&format!("static const uint IRIS_SLOT_WORDS = {words};")),
             "iris/terrain.slang IRIS_SLOT_WORDS must be SLOT_SIZE / 16 = {words}"
+        );
+        // The GLSL packs' prelude, likewise.
+        assert!(
+            crate::shaderpack::compile::preludes::VK_TERRAIN
+                .contains(&format!("int(gl_InstanceIndex) * {words};")),
+            "the GLSL prelude's slot stride must be SLOT_SIZE / 16 = {words}"
         );
     }
 

@@ -19,10 +19,11 @@ pub(crate) fn vulkan_terrain() -> bool {
 }
 
 /// The native renderer's terrain input: each vertex pulled from its
-/// section's pool (`vk::terrain`, 128-byte slots: origin at word 2, pool's
-/// bindless index at word 3's y). `IrisVkPool` is indexed by `iris_VkPool`
+/// section's pool (`vk::terrain`, slots of 20 16-byte words, `SLOT_SIZE` /
+/// 16, a test keeps them equal: origin at word 2, pool's bindless index at
+/// word 3's y). `IrisVkPool` is indexed by `iris_VkPool`
 /// (`vk::pack::bindless`).
-const VK_TERRAIN: &str = "layout(std430, set = 2, binding = 7) readonly buffer IrisVkSlots { uvec4 iris_VkSlot[]; };
+pub(crate) const VK_TERRAIN: &str = "layout(std430, set = 2, binding = 7) readonly buffer IrisVkSlots { uvec4 iris_VkSlot[]; };
 layout(std430, set = 2, binding = 8) readonly buffer IrisVkPool { uint iris_VkWords[]; };
 layout(std430, set = 2, binding = 9) readonly buffer IrisVkQuads { uvec4 iris_VkQuadWords[]; };
 layout(std430, set = 2, binding = 12) readonly buffer IrisVkAnim { uint iris_VkAnimWords[]; };
@@ -33,7 +34,7 @@ vec2 iris_RawUV0;
 vec4 iris_RawLight;
 vec4 iris_RawColor;
 ivec3 iris_origin() {
-    int slot = int(gl_InstanceIndex) * 8;
+    int slot = int(gl_InstanceIndex) * 20;
     iris_VkPool = iris_VkSlot[slot + 3].y;
     iris_VkQuadPool = iris_VkSlot[slot + 3].w;
     uint v = uint(gl_VertexIndex) * 5u;
@@ -143,8 +144,9 @@ const PACK_STREAM: &str = concat!(
     "}\n",
 );
 
-/// `PACK_STREAM` reading the section's pool of pack quads (a quad at its
-/// section's base vertex + its own number), none without a pack.
+/// `PACK_STREAM` reading the section's pool of pack quads (one entry per
+/// quad, at vertex / 4: sections start on a quad, `vk::terrain::QUAD_UNITS`),
+/// none without a pack.
 fn vk_pack_stream() -> String {
     let texture = "layout(set = 2, binding = 0) uniform utexture2D iris_PackQuads;\n";
     let read = "    int quad = int(gl_VertexIndex) >> 2;\n    \
@@ -153,8 +155,7 @@ fn vk_pack_stream() -> String {
     PACK_STREAM.replace(texture, "").replace(
         read,
         "    if (iris_VkQuadPool == 4294967295u) { return uvec4(0u, 0u, 0u, 65535u); }\n    \
-             uint base = uint(iris_VkSlot[int(gl_InstanceIndex) * 8 + 2].w);\n    \
-             return iris_VkQuadWords[base + ((uint(gl_VertexIndex) - base) >> 2)];\n",
+             return iris_VkQuadWords[uint(gl_VertexIndex) >> 2u];\n",
     )
 }
 

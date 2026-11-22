@@ -229,6 +229,14 @@ Lit fragment(Varyings v) {
     if (!iris_alpha_pass(tex.a)) {
         discard;
     }
+#ifndef MC_OS_ANDROID
+    // Behind the opaque scene: the depth test, moved after the shader by
+    // the claims, would drop it anyway; stop before the work. (Early depth
+    // as on Android would let an alpha-tested texel write depth.)
+    if (v.clip.z > depthtex1.Load(int3(int2(v.clip.xy), 0)).r) {
+        discard;
+    }
+#endif
     float3 face = normalize(v.normal);
     float vis = shadow_visibility(v.player, face, 2);
     Lit o;

@@ -47,7 +47,8 @@ fn failed(what: impl std::fmt::Display) -> SetupError {
 /// What `PackScreen::hiz_source` hands the terrain's Hi-Z.
 pub(crate) struct HizSource {
     pub depth: (vk::Image, u32),
-    pub texel: (vk::Image, u32),
+    /// The hand mask (Android), if any.
+    pub texel: Option<(vk::Image, u32)>,
     pub size: vk::Extent2D,
     pub planes: (f32, f32),
 }
@@ -1610,7 +1611,8 @@ impl PackScreen {
             if !self.shadow_reuse && self.shadow_rects.is_empty() {
                 clears.push((s.depth.raw, None));
             }
-            if !blending {
+            // Without blending the shadow copy overwrites it whole.
+            if !blending && self.copy_shadow_at.is_none() {
                 clears.push((s.depth_opaque.raw, None));
             }
             clears.extend(s.color.iter().flatten().map(|c| (c.raw, Some([1.0; 4]))));
@@ -2537,12 +2539,25 @@ impl PackScreen {
         self.settled = true;
     }
 
-    /// Android: the occluders for the terrain's next cull (`pack_pyramid`):
-    /// depthtex1 (opaque, hand included) and the built-in pack's texel
-    /// target (colortex2, whose hand flag masks the hand out), each image
-    /// and bindless index as the frame ends; the size and the projection
-    /// planes it was drawn with.
+    /// The occluders for the terrain's next cull (`pack_pyramid`): the
+    /// depth before the hand (depthtex2, any pack), its image and bindless
+    /// index, the size and the projection planes it was drawn with.
+    /// Android has no depthtex2: depthtex1 (hand included) and the built-in
+    /// pack's texel target (colortex2, whose hand flag masks the hand out)
+    /// as the frame ends.
     pub(crate) fn hiz_source(&self) -> Option<HizSource> {
+        if let (Some(image), Some(index)) = (
+            self.targets.depth_no_hand.as_ref(),
+            self.indexed.depth_no_hand,
+        ) {
+            self.copy_no_hand_at.or(self.copy_depth_at)?;
+            return Some(HizSource {
+                depth: (image.raw, index),
+                texel: None,
+                size: self.targets.size,
+                planes: self.depth_planes?,
+            });
+        }
         const TEXEL: u8 = 2;
         let (pair, _) = self.targets.color[TEXEL as usize].as_ref()?;
         let halves = self.indexed.color[TEXEL as usize]?;
@@ -2551,7 +2566,7 @@ impl PackScreen {
         let half = end.current(TEXEL);
         Some(HizSource {
             depth: (self.targets.depth_opaque.raw, self.indexed.depth_opaque),
-            texel: (pair[half].raw, halves[half]),
+            texel: Some((pair[half].raw, halves[half])),
             size: self.targets.size,
             planes: self.depth_planes?,
         })

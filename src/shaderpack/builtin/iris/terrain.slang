@@ -43,13 +43,8 @@ uint4 iris_vk_quad(IrisVertexIn input) {
     if (pool == 0xFFFFFFFFu) {
         return uint4(0, 0, 0, 65535);
     }
-#ifdef MC_OS_ANDROID
     // One entry per quad; sections start on a quad (`vk::terrain::QUAD_UNITS`).
     return iris_buffer_at(pool).Load4(16 * (input.vertex_index >> 2));
-#else
-    uint base = iris_vk_slot(input.instance_index, 2).w;
-    return iris_buffer_at(pool).Load4(16 * (base + ((input.vertex_index - base) >> 2)));
-#endif
 }
 
 int3 iris_origin(IrisVertexIn input) {

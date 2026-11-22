@@ -17,7 +17,7 @@ use crate::shaderpack::uniforms::MatrixSet;
 mod kinds;
 mod native;
 mod pack;
-mod preludes;
+pub(crate) mod preludes;
 mod program;
 
 pub(crate) use kinds::*;

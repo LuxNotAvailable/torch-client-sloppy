@@ -1076,11 +1076,9 @@ impl Live {
                 );
                 self.pack = Some((name, screen, extent));
                 self.pack_revision = revision;
-                // Android: the pack's pipelines (seconds cold) kept at once;
-                // the app is rarely closed cleanly to save them.
-                if cfg!(target_os = "android") {
-                    self.pipelines.save_cache(&self.ctx);
-                }
+                // The pack's pipelines (seconds cold) kept at once, not
+                // only on a clean exit (an Android app rarely gets one).
+                self.pipelines.save_cache(&self.ctx);
             }
             Err(e) => {
                 error!("native renderer: pack {name}: {}", e.0);
@@ -1510,11 +1508,10 @@ impl Live {
                         );
                     }),
                 );
-                // Android: the pack's depth is the next cull's occluder.
-                if cfg!(target_os = "android") && !super::pack::tiled::feature_on("hiz") {
+                // The pack's depth is the next cull's occluder.
+                if !super::pack::tiled::feature_on("hiz") {
                     terrain.drop_pack_pyramid();
-                } else if cfg!(target_os = "android")
-                    && let Some(source) = pack.hiz_source()
+                } else if let Some(source) = pack.hiz_source()
                     && let Err(e) = terrain.pack_pyramid(
                         &self.ctx,
                         &self.memory,
