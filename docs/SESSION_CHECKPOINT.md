@@ -24,6 +24,7 @@ For the next session or agent. Rules that still hold:
 | f3cd5c6 | Pack: occlusion from the pack's own depth (`hiz_reduce_pack`, `pack_pyramid`); early depth test on gbuffers_water; `vk::pack::tiled` (merged render passes, CLEAR/DONT_CARE ops; pixel-identical on desktop) |
 | 1ab2f66 | colortex2 as RGBA16UI on Android (`TexelWords`, `texel_at`, `iris_uint(colortex2)`); integer attachments never blend; shadow cascade culls over CPU lists (`shadow_list`) |
 | 4d73676 | Pack Hi-Z build uses one gather per 2x2 (2.3 -> 1.4 ms) |
+| e257b4a | No pack: drawn turned straight into the swapchain, no rotation pass (GPU 8.88 -> 8.20 ms, ~116-122 fps). Pack: Hi-Z from depthtex1 with the hand masked, no depthtex2; shadow depth clears deferred; pipeline cache saved after pack setup and on pause (4.6 s -> 0.2 s). Both: shadow cascade count race fixed. Compositor rotation tried: much worse |
 
 ## Pack GPU per frame (Pixel, RD 32, standing at spawn)
 
@@ -36,6 +37,7 @@ For the next session or agent. Rules that still hold:
 | Shadow cascade lists | 31.5 -> 31.35 |
 | RGBA16UI texel target | terrain −7%, deferred −4%, −128 MiB |
 | Hi-Z gather | about 30.7 |
+| Hi-Z from depthtex1 + hand mask, shadow clears | about 30.6 |
 
 Remaining, cool phone, side B (ms):
 - terrain group 7.2 (about 4.6 is geometry, about 2 is fragment)
@@ -114,18 +116,18 @@ The HUD showed 24–27 fps with the pack, against about 113 without.
 
 ## Open items / next steps
 
-1. Visually check the Hi-Z gather (4d73676): in-run `MC_PACK_AB=hiz`
-   screenshots of both sides, then diff them. Expect only foliage-wave and
-   FPS-text noise.
-2. Rebuild and install the real game APK (`com.torch.client`): it was
-   last installed at 94f4420 (no sound; none of the later pack work).
-   - Build: `cargo apk build --release --lib --features mobile_ui`, then
-     `adb install -r target/release/apk/torch_client.apk`.
-   - First launch offers the 375 MB sound download.
+1. Done: Hi-Z gather checked visually (both sides match, foliage noise
+   only); the real game APK rebuilt and installed at e257b4a. Its first
+   launch offers the 375 MB sound download.
+2. Logcat lags the A/B side flips by about a second: label screenshots by
+   a forced side (no A/B) or take many and compare all pairs.
 3. Pack speedups still to try:
-   - Merge the upright rotation (post 0.7 ms) into the pack's `final` pass.
-   - Build the Hi-Z from depthtex0 at the hand point instead of copying to
-     depth_no_hand (about 0.4 ms).
+   - Under a pack the frame is still drawn upright and turned (0.5-0.7
+     ms): have the pack's `final` write turned into the swapchain (its
+     fragment reads by SV_Position, so read by uv under MC_OS_ANDROID),
+     then overlays and the GUI turned as in the no-pack path.
+   - Pack setup (~4.6 s cold) runs on the render thread: move pipeline
+     creation to a worker, or keep the old frame showing meanwhile.
    - Pack terrain through vertex input, and slimmer varyings: pack
      normal/material/foliage into one flat uint, drop color.a if always 1
      (geometry about 4.6 ms).
