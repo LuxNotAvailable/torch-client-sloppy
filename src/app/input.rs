@@ -694,6 +694,26 @@ pub(crate) fn fullscreen_key(
     }
 }
 
+/// Screenshot key, global as vanilla's `handleGlobalKeyPress`: menus,
+/// screens and text fields too; not with F3 held. A press that binds a
+/// key in Controls is skipped (capture now or last frame, either order).
+pub(crate) fn screenshot_key(
+    keys: Res<ButtonInput<KeyCode>>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    state: Res<crate::gui::GuiState>,
+    mut commands: Commands,
+    mut was_capturing: Local<bool>,
+) {
+    let capturing = state.keybinds.capturing.is_some();
+    let binding = std::mem::replace(&mut *was_capturing, capturing) || capturing;
+    if !binding
+        && !state.keybinds.down(Action::DebugModifier, &keys, &buttons)
+        && state.keybinds.just(Action::Screenshot, &keys, &buttons)
+    {
+        crate::app::screenshot::request(&mut commands);
+    }
+}
+
 pub(crate) fn poll_module_binds(
     keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
@@ -1462,7 +1482,6 @@ pub(crate) fn handle_keybinds(
     buttons: Res<ButtonInput<MouseButton>>,
     mut state: ResMut<crate::gui::GuiState>,
     shared: Res<Shared>,
-    mut commands: Commands,
     mut key_events: MessageReader<bevy::input::keyboard::KeyboardInput>,
 ) {
     // The OS's key repeats, which vanilla counts as clicks (GLFW `REPEAT`):
@@ -1513,10 +1532,6 @@ pub(crate) fn handle_keybinds(
 
     if state.keybinds.just(Action::ToggleGui, &keys, &buttons) {
         state.hide_gui = !state.hide_gui;
-    }
-
-    if state.keybinds.just(Action::Screenshot, &keys, &buttons) {
-        crate::app::screenshot::request(&mut commands);
     }
 
     if state.keybinds.just(Action::SwapOffhand, &keys, &buttons) {

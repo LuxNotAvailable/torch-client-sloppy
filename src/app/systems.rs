@@ -2323,6 +2323,7 @@ pub fn run(
         .add_systems(Update, crate::app::input::track_lifecycle)
         .add_systems(Update, log_window_geometry)
         .add_systems(Update, fullscreen_key)
+        .add_systems(Update, crate::app::input::screenshot_key)
         .add_systems(
             Update,
             crate::platform::fullscreen::apply_desktop.after(fullscreen_key),
