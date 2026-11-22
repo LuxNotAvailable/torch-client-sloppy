@@ -924,7 +924,18 @@ void reduce(uint3 group, uint3 thread, bool pack) {
         for (int dx = 0; dx < 2; dx++) {
             int2 o = int2(group.xy) * 32 + t * 2 + int2(dx, dy);
             float far = 1;
-            if (level == 0 && n0 == 2 && pc.params.y > 0 && !pack) {
+            if (level == 0 && pack && pc.params.y > 0) {
+                // A pack's depth, rows flipped: the gather at the corner
+                // between rows H-2-2y and H-1-2y covers this block (the
+                // last odd row clamps to row 0, as the loop's past-edge 1
+                // never wins); each texel converted, then the farthest.
+                if (all(o * 2 < int2(size))) {
+                    float2 uv = float2(float(o.x * 2 + 1), float(int(size.y) - 1 - o.y * 2)) / float2(size);
+                    float4 g = texture_at(pc.ids.y).GatherRed(g_samplers[SAMPLER_NEAREST_CLAMP], uv);
+                    float4 r = select(g >= 1.0, float4(0.0), pc.params.z - pc.params.w * g);
+                    far = min(min(r.x, r.y), min(r.z, r.w));
+                }
+            } else if (level == 0 && n0 == 2 && pc.params.y > 0 && !pack) {
                 // Clamped to the edge: a texel past it repeats one inside,
                 // so the min is the loop's; blocks wholly outside stay 1.
                 if (all(o * 2 < int2(size))) {
