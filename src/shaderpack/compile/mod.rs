@@ -509,10 +509,13 @@ pub(crate) fn compile_frame(
                 &targets.settings[*buffer as usize]
             };
             let kind = settings.format.sample_kind();
+            // Precompiled (native) programs write integers as they are;
+            // the WGSL path can't yet.
             if matches!(
                 kind,
                 directives::SampleKind::Uint | directives::SampleKind::Sint
             ) && program.name != "final"
+                && program.spirv.is_none()
             {
                 return Err(format!(
                     "{} draws to target {buffer}, an integer format, which is not supported yet",

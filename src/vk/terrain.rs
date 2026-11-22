@@ -960,6 +960,9 @@ struct ShadowCull {
     counts: Buffer,
     counts_index: u32,
     views: Vec<(Buffer, u32)>,
+    /// Android: the cascade's candidate list per frame in flight
+    /// (`shadow_list`).
+    lists: Vec<Option<(Buffer, u32)>>,
 }
 
 /// A frame's terrain draws, for a pack's geometry passes.
@@ -2116,8 +2119,16 @@ impl TerrainScene {
                 counts,
                 counts_index,
                 views,
+                lists: (0..FRAMES_IN_FLIGHT).map(|_| None).collect(),
             });
         }
+        // Android: a thread per candidate (`shadow_list`), loads lazy.
+        let listed =
+            if MOBILE && self.slot_high > 0 && crate::vk::pack::tiled::feature_on("shadowlist") {
+                Some(self.shadow_list(ctx, memory, bindless, list, slot, frame, view_proj)?)
+            } else {
+                None
+            };
         let shadow = &mut self.shadow[list];
         // As big as the camera's commands, which `ensure_commands` sizes.
         if shadow.commands.size < self.commands.size {
@@ -2140,7 +2151,14 @@ impl TerrainScene {
             camera: [eye.x, eye.y, eye.z, eye.y - SHADOW_CASTER_BELOW],
             hiz: [0; 4],
             flags: [
-                CULL_FRUSTUM | CULL_BELOW | if hole.is_some() { CULL_HOLE } else { 0 },
+                CULL_FRUSTUM
+                    | CULL_BELOW
+                    | if hole.is_some() { CULL_HOLE } else { 0 }
+                    | if listed.is_some() {
+                        CULL_LIST | CULL_LAZY
+                    } else {
+                        0
+                    },
                 0,
                 0,
                 0,
@@ -2188,6 +2206,9 @@ impl TerrainScene {
         ];
         let ranks = self.ranks.index;
         let slot_count = self.slot_high;
+        // The list's index and length under CULL_LIST.
+        let (list_index, list_len) = listed.map_or((0, 0), |(len, index)| (index, len));
+        let threads = listed.map_or(slot_count, |l| l.0);
         let name = match list {
             0 => "shadow cull",
             1 => "shadow cull middle",
@@ -2211,13 +2232,76 @@ impl TerrainScene {
                 &Push {
                     ids,
                     more,
-                    params: [f32::from_bits(ranks), 0.0, 0.0, 0.0],
+                    params: [
+                        f32::from_bits(ranks),
+                        f32::from_bits(list_index),
+                        f32::from_bits(list_len),
+                        0.0,
+                    ],
                     view_proj: [[0.0; 4]; 4],
                 },
             );
-            device.cmd_dispatch(cmd, slot_count.div_ceil(64).max(1), 1, 1);
+            device.cmd_dispatch(cmd, threads.div_ceil(64).max(1), 1, 1);
         });
         Ok(())
+    }
+
+    /// Android: shadow cascade `list`'s candidates, as `cull_list` for the
+    /// camera: live sections inside the cascade's sides (no depth planes;
+    /// the GPU still tests all of it). A translucent one left out keeps
+    /// the zeroed command the reset wrote, as a culled one gets.
+    #[allow(clippy::too_many_arguments, reason = "the frame's recording context")]
+    fn shadow_list(
+        &mut self,
+        ctx: &Context,
+        memory: &Memory,
+        bindless: &mut Bindless,
+        list: usize,
+        slot: usize,
+        frame: u64,
+        view_proj: Mat4,
+    ) -> Result<(u32, u32), SetupError> {
+        let mut planes = fixed::planes(view_proj);
+        planes[4] = bevy::math::Vec4::W;
+        let mut found = std::mem::take(&mut self.cull_candidates);
+        found.clear();
+        for (i, s) in self.slot_cpu[..self.slot_high as usize].iter().enumerate() {
+            if s.info[2] & SLOT_LIVE == 0 {
+                continue;
+            }
+            let origin = Vec3::new(
+                s.origin_base[0] as f32,
+                s.origin_base[1] as f32,
+                s.origin_base[2] as f32,
+            );
+            let lo = origin + Vec3::from_slice(&s.lo[..3]);
+            let hi = origin + Vec3::from_slice(&s.hi[..3]);
+            if fixed::in_frustum(&planes, lo, hi) {
+                found.push(i as u32);
+            }
+        }
+        let bytes = (found.len().max(1) * 4) as u64;
+        let lists = &mut self.shadow[list].lists;
+        if lists[slot].as_ref().is_none_or(|(b, _)| b.size < bytes) {
+            if let Some((old, index)) = lists[slot].take() {
+                bindless.remove_buffer(index, frame);
+                self.retired.push((old, frame));
+            }
+            let buffer = memory.buffer(
+                ctx,
+                "shadow cull list",
+                bytes.next_power_of_two().max(4096),
+                vk::BufferUsageFlags::STORAGE_BUFFER,
+                MemoryLocation::CpuToGpu,
+            )?;
+            let index = bindless.add_buffer(ctx, buffer.raw).ok_or_else(full)?;
+            lists[slot] = Some((buffer, index));
+        }
+        let (buffer, index) = lists[slot].as_mut().expect("made above");
+        buffer.write(0, bytemuck::cast_slice(&found));
+        let result = (found.len() as u32, *index);
+        self.cull_candidates = found;
+        Ok(result)
     }
 
     /// The entity scene's numbers, when the dump has one.
@@ -4658,6 +4742,7 @@ impl TerrainScene {
             buffers.push(s.commands);
             buffers.push(s.counts);
             buffers.extend(s.views.into_iter().map(|(b, _)| b));
+            buffers.extend(s.lists.into_iter().flatten().map(|(b, _)| b));
         }
         for pool in self.pools {
             buffers.push(pool.vertices);

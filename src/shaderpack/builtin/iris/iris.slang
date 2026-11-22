@@ -9,6 +9,10 @@
 
 [[vk::binding(0, 0)]] Texture2D iris_textures[];
 [[vk::binding(0, 0)]] Texture2D<float> iris_depth_textures[];
+#ifdef MC_OS_ANDROID
+// Integer targets (Android's RGBA16UI texel target), the same descriptors.
+[[vk::binding(0, 0)]] Texture2D<uint4> iris_utextures[];
+#endif
 [[vk::binding(1, 0)]] SamplerState iris_samplers[];
 [[vk::binding(1, 0)]] SamplerComparisonState iris_comparison_samplers[];
 [[vk::binding(2, 0)]] ByteAddressBuffer iris_buffers[];
@@ -39,6 +43,12 @@ uint iris_index(uint slot) {
 
 Texture2D iris_texture(uint slot) { return iris_textures[iris_index(slot)]; }
 Texture2D<float> iris_depth_texture(uint slot) { return iris_depth_textures[iris_index(slot)]; }
+#ifdef MC_OS_ANDROID
+Texture2D<uint4> iris_utexture(uint slot) { return iris_utextures[iris_index(slot)]; }
+// An integer target by name, as `iris_uint(colortex2)`: the name stays in
+// the program's text, where the engine looks for what it reads.
+#define iris_uint(name) iris_utexture(IRIS_SLOT_##name)
+#endif
 SamplerState iris_sampler(uint slot) { return iris_samplers[iris_index(slot)]; }
 SamplerComparisonState iris_comparison_sampler(uint slot) { return iris_comparison_samplers[iris_index(slot)]; }
 ByteAddressBuffer iris_buffer(uint slot) { return iris_buffers[iris_index(slot)]; }

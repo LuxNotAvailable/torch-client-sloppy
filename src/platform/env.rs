@@ -217,7 +217,7 @@ const ALL: &[Var] = &[
     },
     Var {
         name: "MC_PACK_AB",
-        what: "an Android pack feature to alternate every 2 s, logging each side's GPU time: tiled (merged render passes, load/store ops) or hiz (occlusion from the pack's depth)",
+        what: "an Android pack feature to alternate every 2 s, logging each side's GPU time: tiled (merged render passes, load/store ops) hiz (occlusion from the pack's depth) or shadowlist (shadow cascade culls over a CPU candidate list)",
         default: "off",
         enabled: cfg!(feature = "vulkan"),
     },

@@ -100,7 +100,7 @@ float4 shade(Varyings v) {
         float3 dir = player_dir(view_pos(v.uv, 0.5));
         return float4(sky_color(dir) + base.rgb, 1.0);
     }
-    Texel texel = read_texel(colortex2.Load(px));
+    Texel texel = read_texel(texel_at(px));
     if (!texel.terrain) {
         return base;
     }

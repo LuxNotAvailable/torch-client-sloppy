@@ -17,7 +17,7 @@ struct Varyings {
 
 struct Lit {
     float4 color : SV_Target0;
-    float4 texel : SV_Target1;
+    TexelWords texel : SV_Target1;
 };
 
 Varyings vertex(IrisVertexIn input) {

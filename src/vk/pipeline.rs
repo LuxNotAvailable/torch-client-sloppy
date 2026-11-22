@@ -264,10 +264,12 @@ fn build_graphics(
     let blend_attachments: Vec<_> = desc
         .color
         .iter()
-        .map(|_| {
+        .map(|&format| {
             vk::PipelineColorBlendAttachmentState::default()
                 .color_write_mask(vk::ColorComponentFlags::RGBA)
-                .blend_enable(desc.blend)
+                // Integer attachments can't blend (Vulkan): they take the
+                // fragment's value (Android's RGBA16UI texel target).
+                .blend_enable(desc.blend && !super::pack::targets::is_integer(format))
                 .src_color_blend_factor(if desc.additive {
                     vk::BlendFactor::ONE
                 } else {

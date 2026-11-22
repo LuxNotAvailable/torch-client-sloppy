@@ -72,7 +72,7 @@ pub(crate) fn vk_format(format: TargetFormat) -> vk::Format {
 }
 
 /// Integer formats are drawn and sampled but never blended or filtered.
-fn is_integer(format: vk::Format) -> bool {
+pub(crate) fn is_integer(format: vk::Format) -> bool {
     use vk::Format as V;
     matches!(
         format,

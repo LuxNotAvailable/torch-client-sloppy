@@ -238,10 +238,11 @@ SCALED_RESOLVE=1
             assert!(names.contains(&wanted), "{wanted} missing from {names:?}");
         }
         assert!(frame.buffers.iter().all(|b| b.index != 0));
-        // RGBA16 may fall back to a float format there, too narrow for the words.
+        // The texel words as integers: RGBA16 may fall back to a float
+        // format there, and RGBA32F (exact) takes twice the bytes.
         assert_eq!(
             frame.targets.settings[2].format,
-            crate::shaderpack::directives::TargetFormat::Rgba32Float
+            crate::shaderpack::directives::TargetFormat::Rgba16Uint
         );
         assert!(
             frame.notes.iter().all(|n| !n.contains("did not compile")),

@@ -22,7 +22,7 @@ const int colortex7Format = RGBA16F;
 // RGBA16 may fall back to a float format that can't hold the words.
 #ifdef MC_OS_ANDROID
 /*
-const int colortex2Format = RGBA32F;
+const int colortex2Format = RGBA16UI;
 const int colortex6Format = RGBA16F;
 */
 #else
@@ -52,7 +52,7 @@ struct Varyings {
 
 struct Gbuffer {
     float4 albedo : SV_Target0;
-    float4 texel : SV_Target1;
+    TexelWords texel : SV_Target1;
 };
 
 Varyings vertex(IrisVertexIn input) {

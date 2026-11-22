@@ -27,7 +27,7 @@ float4 fragment(Varyings v) : SV_Target0 {
     float depth = depthtex0.Load(px).r;
     // The hand is drawn with its own projection, so its depth says nothing
     // of distance; it is in front of every fog.
-    if (is_hand(colortex2.Load(px).w)) {
+    if (is_hand(texel_at(px))) {
         return float4(c, 1.0);
     }
     float3 player = player_pos(view_pos(v.uv, min(depth, 0.99999)));
@@ -38,7 +38,7 @@ float4 fragment(Varyings v) : SV_Target0 {
     if (frame.isEyeInWater == 1) {
         // Caustics on floors seen from under water: the surface only draws
         // them when looked through from above.
-        Texel t = read_texel(colortex2.Load(px));
+        Texel t = read_texel(texel_at(px));
         if (WATER_CAUSTICS_ENABLED != 0 && WATER_CAUSTICS > 0.0 && !sky && t.terrain && t.surface.face == 2u && dist < 32.0) {
             float3 l = light_dir();
             float4x4 to_shadow = mul(frame.shadowProjection, frame.shadowModelView);

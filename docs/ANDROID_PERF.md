@@ -180,6 +180,23 @@ Not a measurement: an earlier "37 ms of attachment loads and stores" came
 from making every load DONT_CARE, depth included, which broke depth
 testing and skipped most terrain shading.
 
+| Shadow cascade culls over CPU lists (`shadowlist`) | 31.5 -> 31.35 | the map is cached, so the culls run only on changes |
+| colortex2 RGBA16UI | ~-4% deferred, ~-7% terrain group (against `final`, to cancel throttling) | and 128 MiB less: colortex2 halves 128.5 -> 64.2 MiB |
+
+Tried and dropped:
+- The texel cache (deferred_a / deferred_b) runs on the Pixel now (no driver
+  abort), but costs more: claims 2.6 + deferred 5.4 ms against 5.6 ms per
+  pixel. Its hash atomics are dear on PowerVR.
+- Deferred's own taps aren't its cost: 8 -> 2 taps, or TEXEL_DENOISE 1,
+  moved it ~5%. Splitting a quad's taps across its pixels (masked lanes)
+  made it slower: a warp still runs every iteration.
+- Full-screen passes don't follow their bytes alone: halving colortex2 moved
+  deferred and composite2 a few percent. composite2 is fog resolve and sky
+  colour per pixel.
+
+Phone heat: back-to-back runs throttle ~30%; compare against a pass the
+change doesn't touch (`final`), or A/B in one run.
+
 After the three (side B, ~31 ms): terrain group 7.2, deferred 5.6, the
 three shadow cascade culls ~1.9 each, composite2 3.8, water 2.9, Hi-Z
 build 2.3 (every second frame), composite 1.7, final 1.3, composite1 1.1,

@@ -67,7 +67,7 @@ void compute(uint3 id : SV_DispatchThreadID) {
     if (id.x >= size.x || id.y >= size.y) {
         return;
     }
-    Texel texel = read_texel(colortex2.Load(int3(int2(id.xy), 0)));
+    Texel texel = read_texel(texel_at(int3(int2(id.xy), 0)));
     if (!texel.terrain) {
         return;
     }

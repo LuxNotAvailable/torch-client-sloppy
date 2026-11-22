@@ -207,7 +207,8 @@ struct Surface {
 };
 
 /// A pixel of the texel target (colortex2): four 16-bit words, stored as
-/// RGBA16 (UNORM), or RGBA32F on Android. Terrain keeps its cell (relative
+/// RGBA16 (UNORM), or RGBA16UI on Android (`TexelWords`: integers there,
+/// 8 bytes a pixel where a float format exact for the words needs 16). Terrain keeps its cell (relative
 /// to the camera's block: x and z in 15 bits, y in 14) and a 20-bit word:
 /// a terrain flag, face (3 bits), material (2), block and sky light (7
 /// each). The word's low 16 bits are the fourth word, its top 4 the cell
@@ -219,11 +220,27 @@ struct Texel {
     Surface surface;
 };
 
+#ifdef MC_OS_ANDROID
+typedef uint4 TexelWords;
+static const uint4 TEXEL_LIT = uint4(0);
+static const uint4 TEXEL_HAND = uint4(0, 0, 0, 2);
+#else
+typedef float4 TexelWords;
 static const float4 TEXEL_LIT = float4(0.0);
 static const float4 TEXEL_HAND = float4(0.0, 0.0, 0.0, 2.0 / 65535.0);
+#endif
 static const int3 TEXEL_BIAS = int3(16384, 8192, 16384);
 
-float4 pack_texel(float3 cell, float face, float material, float2 light) {
+/// The texel target at `px`.
+TexelWords texel_at(int3 px) {
+#ifdef MC_OS_ANDROID
+    return iris_uint(colortex2).Load(px);
+#else
+    return colortex2.Load(px);
+#endif
+}
+
+TexelWords pack_texel(float3 cell, float face, float material, float2 light) {
     uint2 l = uint2(round(clamp(light, 0.0, 1.0) * 127.0));
     uint s = 1u | (uint(face) << 1u) | (uint(material) << 4u) | (l.x << 6u) | (l.y << 13u);
     uint3 c = uint3(clamp(int3(cell) + TEXEL_BIAS, int3(0), int3(32767, 16383, 32767)));
@@ -233,11 +250,15 @@ float4 pack_texel(float3 cell, float face, float material, float2 light) {
         c.y | ((hi >> 2u) << 14u),
         c.z | (((hi >> 1u) & 1u) << 15u),
         s & 65535u);
+#ifdef MC_OS_ANDROID
+    return words;
+#else
     return float4(words) / 65535.0;
+#endif
 }
 
 /// Fast foliage's texel: its shade in place of the cell.
-float4 pack_foliage_texel(float vis, float material, float2 light) {
+TexelWords pack_foliage_texel(float vis, float material, float2 light) {
     float x = round(clamp(vis, 0.0, 1.0) * 16383.0) - 16384.0;
     return pack_texel(float3(x, 0.0, 0.0), float(FACE_DIAGONAL), material, light);
 }
@@ -246,8 +267,12 @@ float foliage_of(Texel t) {
     return (t.cell.x + 16384.0) / 16383.0;
 }
 
-Texel read_texel(float4 texel) {
+Texel read_texel(TexelWords texel) {
+#ifdef MC_OS_ANDROID
+    uint4 w = texel;
+#else
     uint4 w = uint4(round(texel * 65535.0));
+#endif
     uint s = w.w | ((w.x >> 15u) << 16u) | ((w.z >> 15u) << 17u) | ((w.y >> 14u) << 18u);
     Texel t;
     t.terrain = (s & 1u) == 1u;
@@ -376,8 +401,12 @@ float3 sky_ambient() {
 
 /// Whether colortex2's fourth word marks the hand (which no fog or
 /// reflection touches).
-bool is_hand(float texel_w) {
-    return round(texel_w * 65535.0) == 2.0;
+bool is_hand(TexelWords texel) {
+#ifdef MC_OS_ANDROID
+    return texel.w == 2u;
+#else
+    return round(texel.w * 65535.0) == 2.0;
+#endif
 }
 
 static const float3 TORCH = float3(1.0, 0.6, 0.3);
