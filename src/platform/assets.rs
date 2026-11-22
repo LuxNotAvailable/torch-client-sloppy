@@ -399,8 +399,15 @@ pub(crate) mod android {
         entry(app, ARCHIVE).ok_or_else(|| format!("{ARCHIVE} is not in the apk"))
     }
 
+    /// The address and username: a `launch.txt` pushed to the external
+    /// files folder wins over the apk's (the bench's auto-join).
     pub(crate) fn launch_target(app: &AndroidApp) -> (Option<String>, Option<String>) {
-        let Some(text) = entry(app, LAUNCH).and_then(|b| String::from_utf8(b).ok()) else {
+        let pushed = app
+            .external_data_path()
+            .and_then(|d| std::fs::read_to_string(d.join(LAUNCH)).ok());
+        let Some(text) =
+            pushed.or_else(|| entry(app, LAUNCH).and_then(|b| String::from_utf8(b).ok()))
+        else {
             return (None, None);
         };
         let mut lines = text.lines().map(str::trim).filter(|l| !l.is_empty());

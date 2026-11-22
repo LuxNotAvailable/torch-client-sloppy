@@ -78,6 +78,26 @@ Separate runs against the shipped default (packed + greedy), alternated:
 - An earlier run from z = 0 (outside the dump, looking over the edge) gave
   fixed 18.1 vs 10.5 ms; that camera saw far more geometry. Use the centre.
 
+## Game bench (2026-11-22, `tools/bench-apk/run.sh`)
+
+The game as `com.torch.bench` against a local vanilla 26.3 server
+(`target/bench-server`: offline, creative, seed -4172144997902289642,
+view distance 32) through `adb reverse`; RD 32, uncapped, standing at
+spawn, steady state after chunks load (~35.7k section layers, 47 pools).
+
+| Step | fps | renderer system (CPU) | terrain record | GPU |
+|---|---|---|---|---|
+| Baseline (vertex input default) | ~55 | 12.9 | 6.9 (rank+order 4.3, sort translucent 1.6) | 14.7 |
+| `MOBILE` terrain bookkeeping | ~68 | 8.1 | 1.0 | 13.4 |
+
+Baseline cause: the world remeshes ~35 sections a second while standing
+still; each remesh re-ran the cave flood fill (~40 ms on the phone, up to
+9 times per 2 s) and the translucent ranking (~4 ms), and the re-sort
+scanned all 35k layers every frame.
+
+GPU at 68 fps: terrain 6.1, Hi-Z 1-6 2.6, terrain cull 1.2, entity counts
+readback 1.0, translucent 0.7, post 0.5.
+
 ## Options (rough order of payoff)
 
 - **Render scale**: draw the world at 50–75% and upscale in the rotation pass, which is free since that pass samples anyway. Make it dynamic from frame time or thermal headroom (`AThermal_getThermalHeadroom`).

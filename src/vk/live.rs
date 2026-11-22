@@ -2031,6 +2031,12 @@ impl GuiPass {
 /// either way.
 fn terrain_options() -> super::terrain::Options {
     let mut o = super::terrain::Options::default();
+    // Android draws solid and cutout through vertex input (plain
+    // vertices): ~5% of the Pixel's frame (docs/ANDROID_PERF.md).
+    if cfg!(target_os = "android") {
+        (o.packed, o.greedy) = (false, false);
+        o.fixed = super::terrain::FixedMode::Input;
+    }
     let flags = crate::platform::env::var("MC_NATIVE_TERRAIN").unwrap_or_default();
     for flag in flags.split(',').map(str::trim) {
         match flag {
@@ -2038,6 +2044,11 @@ fn terrain_options() -> super::terrain::Options {
             "novis" => o.visibility = false,
             "nobuckets" => o.buckets = false,
             "nopacked" => o.packed = false,
+            // The shared default: packed, pulled (Android A/B baseline).
+            "pulled" => {
+                (o.packed, o.greedy) = (true, true);
+                o.fixed = super::terrain::FixedMode::Off;
+            }
             "nogreedy" => o.greedy = false,
             // The mobile path (docs/ANDROID_VS_PC.md): plain vertices only.
             "fixed" | "fixed_ab" | "input" | "input_ab" => {

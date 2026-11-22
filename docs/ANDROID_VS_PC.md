@@ -35,6 +35,8 @@ desktop (PC) build, and where. Keep the two from leaking into each other.
 | | PC | Android |
 |---|---|---|
 | Env switches | process env | `env.txt` in the APK, then one pushed to `/sdcard/Android/data/com.torch.client/files/` (wins). Read with `platform::env::var`, never `std::env::var` |
+| Launch target | CLI args | `launch.txt` (address, username): a pushed one in the external files folder wins over the APK's |
+| Bench app | — | `tools/bench-apk` (`com.torch.bench`): the game beside the real install, for `run.sh` benches |
 | Storage, assets root | `%LOCALAPPDATA%` / temp | the package's data dir (`ANDROID_APP`) |
 | Pipeline cache | temp dir | `storage::dir()/native-pipelines.bin` |
 | Window | resizable, Fullscreen and size options | native size tracked each frame (`track_native_window_size`); no Fullscreen or window-size options |
@@ -51,7 +53,8 @@ desktop (PC) build, and where. Keep the two from leaking into each other.
 | Terrain pools | 1.6 M vertices, 3.2 M indices | 1.2 M vertices, 2.4 M indices |
 | Hi-Z | every frame | every second frame (`HIZ_EVERY_OTHER`) |
 | Detail atlas tiles | up to 32 px | `TILE_PX` |
-| Terrain path | GPU-driven | GPU-driven by default; **fixed** path under test (below) |
+| Terrain bookkeeping (`vk::terrain::MOBILE`) | every remesh re-runs the cave flood fill (every 10 frames) and re-ranks translucent layers; the translucent re-sort scans every layer each frame | a remesh that keeps its cave visibility keeps its visible bit and rank; the re-sort scans only on a new eye block or a budget-cut pass. Same output |
+| Terrain path | GPU-driven, packed + greedy, pulled vertices | GPU-driven, **vertex input** (`FixedMode::Input`): plain vertices, packing and greedy off (`live::terrain_options`). `MC_NATIVE_TERRAIN=pulled` restores the PC path |
 
 ### Fixed terrain (mobile path, under test)
 
@@ -60,7 +63,8 @@ Switched by `MC_NATIVE_TERRAIN=fixed` (or `fixed_ab`) in the game, or
 `--input-ab`) keep the GPU cull and Hi-Z and only draw solid and cutout
 through the fixed vertex input; translucent stays pulled (its one indirect
 draw spans pools), and the pool buffers use `Use::VertexInputRead` in both
-passes so no barrier splits them. All off by default on both builds;
+passes so no barrier splits them. `input` is the Android game default
+(vkview takes the flags explicitly); the rest are off on both builds.
 Pixel results in `ANDROID_PERF.md` (`input` wins ~5% of frame).
 
 | | GPU-driven (PC) | Fixed (mobile) |
@@ -83,3 +87,4 @@ vertices, so the A/B measures vertex fetch plus culling, not packing.
 | Option | PC | Android |
 |---|---|---|
 | Half-Rate Occlusion | off | on |
+| Greedy Meshing | as set | no effect (packing off under vertex input) |

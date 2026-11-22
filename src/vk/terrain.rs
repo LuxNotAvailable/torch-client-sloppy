@@ -115,6 +115,13 @@ pub use fixed::Mode as FixedMode;
 
 const NEAR: f32 = 0.05;
 
+/// The phone's terrain bookkeeping (docs/ANDROID_VS_PC.md): remeshes that
+/// keep a section's cave visibility keep its visible bit and translucent
+/// rank instead of re-running the flood fill and the ranking, and the
+/// translucent re-sort scans only when the eye's block changes. Same
+/// output; PC keeps the plain path.
+const MOBILE: bool = cfg!(target_os = "android");
+
 // The game's halved pools (clean-up 12d).
 #[cfg(not(target_os = "android"))]
 const POOL_VERTICES: u32 = 1_600_000;
@@ -1008,6 +1015,13 @@ pub struct TerrainScene {
     visible_dirty: bool,
     fill_for: Option<IVec3>,
     sections_changed: bool,
+    /// `MOBILE`: the eye block the translucent sort last scanned for, and
+    /// whether that scan left layers for later (budget).
+    sort_scanned: Option<IVec3>,
+    sort_pending: bool,
+    /// `MOBILE`: the ranks changed without a re-rank (a replaced layer took
+    /// its old rank); upload them.
+    ranks_upload: bool,
     /// Section uploads and removals, for the shadow cache.
     shadow_changes: ShadowChanges,
     frames_since_fill: u32,
@@ -1437,6 +1451,9 @@ impl TerrainScene {
             visible_bits: vec![0; slot_capacity as usize / 32],
             visible_dirty: true,
             fill_for: None,
+            sort_scanned: None,
+            sort_pending: false,
+            ranks_upload: false,
             sections_changed: false,
             shadow_changes: ShadowChanges::default(),
             frames_since_fill: 0,
@@ -2323,9 +2340,16 @@ impl TerrainScene {
                 Record::Layer(section) => section,
             };
             let key = (section.origin, section.water);
+            // `MOBILE`: a remesh that keeps the cave visibility keeps the
+            // layer's visible bit and rank (see `MOBILE`).
+            let old = self.entries.get(&key).map(|e| {
+                let bit = self.visible_bits[e.slot as usize / 32] >> (e.slot % 32) & 1 != 0;
+                (bit, self.rank_of[e.slot as usize])
+            });
+            let mut same_vis = true;
             if !section.water {
                 self.voxels.store(section.origin, section.voxels.clone());
-                self.vis.insert(
+                let previous = self.vis.insert(
                     (
                         section.origin[0] >> 4,
                         section.origin[1],
@@ -2333,7 +2357,10 @@ impl TerrainScene {
                     ),
                     section.vis,
                 );
+                same_vis = previous == Some(section.vis);
             }
+            let quiet = MOBILE && same_vis && old.is_some() && !section.verts.is_empty();
+            let changed_before = (self.sections_changed, self.ranks_dirty);
             self.remove(key);
             let hash = (!section.verts.is_empty())
                 .then(|| geometry_hash(&section.verts, &section.idx, &section.cutout_idx));
@@ -2611,11 +2638,17 @@ impl TerrainScene {
                 }),
             };
             self.dirty_slots.push(slot);
-            self.set_visible(slot, true);
+            let (visible, rank) = old.filter(|_| quiet).unwrap_or((true, 0));
+            self.set_visible(slot, visible);
             self.order_dirty = true;
             if sort.is_some() {
                 self.translucent_count += 1;
-                self.ranks_dirty = true;
+                if quiet {
+                    self.rank_of[slot as usize] = rank;
+                    self.ranks_upload = true;
+                } else {
+                    self.ranks_dirty = true;
+                }
             }
             self.pools[pool as usize].slots += 1;
             self.stats.vertices += vertex_count as u64;
@@ -2632,7 +2665,11 @@ impl TerrainScene {
                     sort,
                 },
             );
-            self.sections_changed = true;
+            if quiet {
+                (self.sections_changed, self.ranks_dirty) = changed_before;
+            } else {
+                self.sections_changed = true;
+            }
         }
         self.stats.sections = self.entries.len();
         self.stats.pools = self.pools.len();
@@ -2775,6 +2812,13 @@ impl TerrainScene {
     /// nearest first, within the quad budget.
     fn sort_translucent(&mut self, uploads: &mut Uploads, eye: Vec3, copies: &mut Vec<Copy>) {
         let eye_block = eye.floor().as_ivec3();
+        // New layers go up sorted for the eye: only a new eye block or a
+        // pass cut short by the budget leaves any stale.
+        if MOBILE && self.sort_scanned == Some(eye_block) && !self.sort_pending {
+            return;
+        }
+        self.sort_scanned = Some(eye_block);
+        self.sort_pending = false;
         let mut due: Vec<(f32, ([i32; 3], bool))> = self
             .entries
             .iter()
@@ -2797,11 +2841,13 @@ impl TerrainScene {
                 continue;
             };
             if sort.centres.len() > budget && budget < SORT_BUDGET {
+                self.sort_pending = true;
                 break;
             }
             budget = budget.saturating_sub(sort.centres.len());
             let order = sort.back_to_front(sort.eye_from(eye));
             let Some(staged) = uploads.stage(bytemuck::cast_slice(&order)) else {
+                self.sort_pending = true;
                 break;
             };
             copies.push(Copy {
@@ -3122,7 +3168,8 @@ impl TerrainScene {
         if self.options.visibility {
             self.fill_visibility(cull.eye);
         }
-        if self.rank_translucent(camera.eye) {
+        let reranked = self.rank_translucent(camera.eye);
+        if reranked || std::mem::take(&mut self.ranks_upload) {
             match uploads.stage(bytemuck::cast_slice(
                 &self.rank_of[..self.slot_high.max(1) as usize],
             )) {
