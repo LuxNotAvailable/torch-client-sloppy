@@ -13,3 +13,6 @@ of each is in `docs/ANDROID_VS_PC.md`; numbers in `docs/ANDROID_PERF.md`.
 | Pack attachments LOAD/STORE every pass, clears as transfers | `vk::pack::tiled` | ~1 ms on the phone (tile GPU); probably nothing on desktop GPUs, low priority |
 | Shadow cascade culls run a thread per slot and load whole slots | CPU candidate list per cascade + lazy loads (`shadow_list`) | small (0.2 ms on the phone; culls run only when the map changes) |
 | The native pipeline blends every attachment alike (`GraphicsDesc::blend`), ignoring the pack's `blend.<program>.colortex2=off`: blended clouds and entities blend into colortex2's encoded texel words | Android's integer colortex2 never blends | correctness: composite2 reads those words (hand, caustics) |
+| Every pack gets depthtex2 (`PackTargets::new(.., true)`) and a depth copy a frame, used or not | not made on Android (the built-in pack never samples it) | one full-size depth image and copy a frame for packs that don't sample depthtex2 |
+| shadowtex1 is cleared, then fully overwritten by the shadow depth copy (no Sun Step Blending) | the clear waits in `tiled::Batch` and the copy forgets it | one shadow-map clear a frame |
+| The pipeline cache is saved only on a clean exit | also saved once a pack is set up (and on pause) | a crash or kill no longer costs the next launch a cold pack compile (seconds) |

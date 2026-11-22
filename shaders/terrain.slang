@@ -864,6 +864,11 @@ float4 terrain_translucent(VertexOut in): SV_Target {
 
 groupshared float tile[32][32];
 
+// The pack's texel target (`hiz_reduce_pack`, ids.z - 1): its alpha word
+// is 2 on the hand.
+[[vk::binding(0, 0)]] Texture2D<uint4> g_utextures[];
+static const uint TEXEL_HAND = 2;
+
 float source_depth(int2 p, uint2 size, uint level, bool pack) {
     if (any(p < 0) || any(p >= int2(size))) {
         // Outside the image: nearest, which never wins the farthest.
@@ -873,8 +878,12 @@ float source_depth(int2 p, uint2 size, uint level, bool pack) {
         // A pack's depth (`hiz_reduce_pack`): 0..1 from near to its far
         // plane, bottom row first; as the terrain's reversed depth it is
         // params.z - params.w * d. Its clear (1) is open sky: 0.
-        float d = texture_at(pc.ids.y).Load(int3(p.x, int(size.y) - 1 - p.y, 0)).r;
-        return d >= 1.0 ? 0.0 : pc.params.z - pc.params.w * d;
+        int3 at = int3(p.x, int(size.y) - 1 - p.y, 0);
+        float d = texture_at(pc.ids.y).Load(at).r;
+        float r = pc.params.z - pc.params.w * d;
+        bool hand = pc.ids.z != 0 && r > asfloat(pc.ids.w)
+            && g_utextures[NonUniformResourceIndex(pc.ids.z - 1)].Load(at).w == TEXEL_HAND;
+        return d >= 1.0 || hand ? 0.0 : r;
     }
     if (level == 0) {
         return texture_at(pc.ids.y).Load(int3(p, 0)).r;
@@ -899,7 +908,8 @@ void store_level(uint level, int2 p, float depth) {
 //       more.yz the depth's size, more.w the top level; params.x > 0 reads
 //       one depth texel per 2 × 2 (quarter-res, not conservative);
 //       params.y > 0 reads each full-res 2 × 2 with one gather (Android;
-//       the same farthest depth).
+//       the same farthest depth). `hiz_reduce_pack`: params.zw the
+//       conversion, ids.z the hand mask + 1, ids.w its reach.
 [shader("compute")]
 [numthreads(16, 16, 1)]
 void hiz_reduce(uint3 group: SV_GroupID, uint3 thread: SV_GroupThreadID) {
@@ -907,8 +917,9 @@ void hiz_reduce(uint3 group: SV_GroupID, uint3 thread: SV_GroupThreadID) {
 }
 
 // `hiz_reduce` from a shader pack's depth (Android: the pack draws the
-// world, so its depth before the hand is the occluder): converted to the
-// terrain's reversed depth with params.z - params.w * d, rows flipped.
+// world, so its opaque depth is the occluder, the hand masked out by
+// ids.z): converted to the terrain's reversed depth with
+// params.z - params.w * d, rows flipped.
 [shader("compute")]
 [numthreads(16, 16, 1)]
 void hiz_reduce_pack(uint3 group: SV_GroupID, uint3 thread: SV_GroupThreadID) {
@@ -932,7 +943,17 @@ void reduce(uint3 group, uint3 thread, bool pack) {
                 if (all(o * 2 < int2(size))) {
                     float2 uv = float2(float(o.x * 2 + 1), float(int(size.y) - 1 - o.y * 2)) / float2(size);
                     float4 g = texture_at(pc.ids.y).GatherRed(g_samplers[SAMPLER_NEAREST_CLAMP], uv);
-                    float4 r = select(g >= 1.0, float4(0.0), pc.params.z - pc.params.w * g);
+                    bool4 open = g >= 1.0;
+                    float4 r = pc.params.z - pc.params.w * g;
+                    // The hand hides what is behind it only while it stays
+                    // put: as open sky. Read only where something is within
+                    // its reach (ids.w): the texel target is the dear read.
+                    if (pc.ids.z != 0 && any(r > asfloat(pc.ids.w))) {
+                        uint4 w = g_utextures[NonUniformResourceIndex(pc.ids.z - 1)].GatherAlpha(
+                            g_samplers[SAMPLER_NEAREST_CLAMP], uv);
+                        open = open || w == TEXEL_HAND;
+                    }
+                    r = select(open, float4(0.0), r);
                     far = min(min(r.x, r.y), min(r.z, r.w));
                 }
             } else if (level == 0 && n0 == 2 && pc.params.y > 0 && !pack) {

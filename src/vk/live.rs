@@ -220,7 +220,7 @@ struct Live {
     shots: Vec<Entity>,
     /// Frames copied back for screenshots: the buffer, its size and
     /// format, the entities waiting, and the frame it was copied on.
-    readbacks: Vec<(Buffer, vk::Extent2D, vk::Format, Vec<Entity>, u64)>,
+    readbacks: Vec<Readback>,
     frame: u64,
     size: (u32, u32),
     stale: bool,
@@ -643,6 +643,9 @@ impl Live {
                 if let Err(e) = self.ctx.set_surface(None) {
                     error!("native renderer: surface: {}", e.0);
                 }
+                // Android rarely exits cleanly (a paused app is killed):
+                // keep what's compiled now.
+                self.pipelines.save_cache(&self.ctx);
                 info!("native renderer: window lost, paused");
             }
             Some(SurfaceChange::New(Handles(display, window))) => {
@@ -784,7 +787,7 @@ impl Drop for Live {
             if let Some(p) = self.upright.take() {
                 p.destroy(&self.ctx, &memory);
             }
-            for (b, ..) in self.readbacks.drain(..) {
+            for Readback { buffer: b, .. } in self.readbacks.drain(..) {
                 memory.free_buffer(&self.ctx, b);
             }
             if let Some((_, pack, _)) = self.pack.take() {
@@ -1073,6 +1076,11 @@ impl Live {
                 );
                 self.pack = Some((name, screen, extent));
                 self.pack_revision = revision;
+                // Android: the pack's pipelines (seconds cold) kept at once;
+                // the app is rarely closed cleanly to save them.
+                if cfg!(target_os = "android") {
+                    self.pipelines.save_cache(&self.ctx);
+                }
             }
             Err(e) => {
                 error!("native renderer: pack {name}: {}", e.0);
@@ -1086,7 +1094,7 @@ impl Live {
         let now = self.frame;
         let (done, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut self.readbacks)
             .into_iter()
-            .partition(|r| now >= r.4 + FRAMES_IN_FLIGHT as u64);
+            .partition(|r| now >= r.frame + FRAMES_IN_FLIGHT as u64);
         self.readbacks = keep;
         // Screenshots are rare: wait out the copy rather than trust frame counts.
         if !done.is_empty() {
@@ -1094,7 +1102,15 @@ impl Live {
             let _ = unsafe { self.ctx.device.device_wait_idle() };
         }
         let mut out = Vec::new();
-        for (mut buffer, extent, format, entities, _) in done {
+        for Readback {
+            mut buffer,
+            extent,
+            format,
+            entities,
+            turn,
+            ..
+        } in done
+        {
             if let Some(bytes) = buffer.mapped() {
                 let mut rgba = bytes[..(extent.width * extent.height * 4) as usize].to_vec();
                 // Swapchains are mostly BGRA.
@@ -1106,6 +1122,10 @@ impl Live {
                         px.swap(0, 2);
                     }
                 }
+                let (rgba, extent) = match turn {
+                    Some(turn) => upright_pixels(&rgba, extent, turn),
+                    None => (rgba, extent),
+                };
                 for entity in entities {
                     let image = bevy::image::Image::new(
                         wgpu_types::Extent3d {
@@ -1298,9 +1318,14 @@ impl Live {
             vk::ImageLayout::UNDEFINED,
         );
         // A turned display: every pass draws upright into the upright
-        // image, turned onto the swapchain at the end.
+        // image, turned onto the swapchain at the end. Android without a
+        // pack draws turned instead (`rotation`), straight into the
+        // swapchain: no extra full-screen pass.
+        let direct = cfg!(target_os = "android")
+            && self.pack.is_none()
+            && super::pack::tiled::feature_on("turn");
         let mut turn = None;
-        if let Some((angle, upright)) = swapchain.upright() {
+        if let Some((angle, upright)) = swapchain.upright().filter(|_| !direct) {
             if self.upright.is_none() {
                 match super::post::PostPass::new(
                     &self.ctx,
@@ -1489,16 +1514,14 @@ impl Live {
                 if cfg!(target_os = "android") && !super::pack::tiled::feature_on("hiz") {
                     terrain.drop_pack_pyramid();
                 } else if cfg!(target_os = "android")
-                    && let Some((depth, size, planes)) = pack.hiz_source()
+                    && let Some(source) = pack.hiz_source()
                     && let Err(e) = terrain.pack_pyramid(
                         &self.ctx,
                         &self.memory,
                         &mut self.bindless,
                         &self.pipelines,
                         &mut graph,
-                        depth,
-                        size,
-                        planes,
+                        &source,
                         self.frame,
                     )
                 {
@@ -1557,6 +1580,7 @@ impl Live {
             &mut graph,
             slot,
             (image, view, extent),
+            rotation.clip,
             gui,
             textures,
             !drew_world,
@@ -1607,13 +1631,14 @@ impl Live {
                         },
                     );
                     let format = swapchain.format.format;
-                    self.readbacks.push((
+                    self.readbacks.push(Readback {
                         buffer,
                         extent,
                         format,
-                        std::mem::take(&mut self.shots),
-                        self.frame,
-                    ));
+                        entities: std::mem::take(&mut self.shots),
+                        frame: self.frame,
+                        turn: swapchain.upright().filter(|_| direct).map(|u| u.0),
+                    });
                 }
                 Err(e) => error!("native renderer: screenshot: {}", e.0),
             }
@@ -1643,6 +1668,53 @@ impl Live {
         }
         self.frame += 1;
     }
+}
+
+/// A screenshot copied back, read once its frame is done.
+struct Readback {
+    buffer: Buffer,
+    extent: vk::Extent2D,
+    format: vk::Format,
+    entities: Vec<Entity>,
+    frame: u64,
+    /// Drawn turned (`Swapchain::upright`'s cosine and sine): saved upright.
+    turn: Option<(f32, f32)>,
+}
+
+/// `rgba` (`extent`, drawn turned) as seen: each upright pixel from the
+/// swapchain pixel the turn pass would have sampled it into
+/// (`post.slang`'s mapping).
+fn upright_pixels(
+    rgba: &[u8],
+    extent: vk::Extent2D,
+    (c, s): (f32, f32),
+) -> (Vec<u8>, vk::Extent2D) {
+    let (w, h) = (extent.width, extent.height);
+    let up = vk::Extent2D {
+        width: h,
+        height: w,
+    };
+    let mut out = vec![0u8; rgba.len()];
+    for y in 0..h {
+        for x in 0..w {
+            let n = (
+                (x as f32 + 0.5) / w as f32 * 2.0 - 1.0,
+                (y as f32 + 0.5) / h as f32 * 2.0 - 1.0,
+            );
+            let u = (
+                (c * n.0 - s * n.1) * 0.5 + 0.5,
+                (s * n.0 + c * n.1) * 0.5 + 0.5,
+            );
+            let ux = ((u.0 * up.width as f32) as u32).min(up.width - 1);
+            let uy = ((u.1 * up.height as f32) as u32).min(up.height - 1);
+            let (from, to) = (
+                ((y * w + x) * 4) as usize,
+                ((uy * up.width + ux) * 4) as usize,
+            );
+            out[to..to + 4].copy_from_slice(&rgba[from..from + 4]);
+        }
+    }
+    (out, up)
 }
 
 /// The GUI painter's output, drawn over the frame (blended, no depth).
@@ -1753,6 +1825,7 @@ impl GuiPass {
         graph: &mut Graph,
         slot: usize,
         output: (vk::Image, vk::ImageView, vk::Extent2D),
+        turn: bevy::math::Mat4,
         frame: crate::gui::pool::GuiFrame,
         (textures, glint_data): (Option<[TextureData; 2]>, Option<TextureData>),
         clear: bool,
@@ -2063,7 +2136,7 @@ impl GuiPass {
                         ids: [vertex_index, 0, 0, 0],
                         more: [atlas, unihex, glint, figure_index],
                         params: [0.0; 4],
-                        view_proj: [[0.0; 4]; 4],
+                        view_proj: turn.to_cols_array_2d(),
                     },
                 );
                 for r in &ranges {

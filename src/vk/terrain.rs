@@ -114,6 +114,9 @@ mod fixed;
 pub use fixed::Mode as FixedMode;
 
 const NEAR: f32 = 0.05;
+/// Android under a pack: the hand is never farther (blocks); the Hi-Z
+/// reads the hand mask only nearer than this.
+const HAND_REACH: f32 = 3.0;
 
 /// The phone's terrain bookkeeping (docs/ANDROID_VS_PC.md): remeshes that
 /// keep a section's cave visibility keep its visible bit and translucent
@@ -2060,6 +2063,10 @@ impl TerrainScene {
             self.record_shadow_list(
                 ctx, memory, bindless, pipelines, graph, slot, frame, list, view_proj, eye, hole,
             )?;
+            // Unrecorded (no pipelines yet): none live past it.
+            if self.shadow.len() <= list {
+                break;
+            }
             self.shadow_live = list + 1;
         }
         Ok(())
@@ -4372,22 +4379,22 @@ impl TerrainScene {
     }
 
     /// Android under a shader pack: the occlusion pyramid from the pack's
-    /// depth before the hand (`depth`, its bindless index; 0..1 between
-    /// `planes`, bottom row first), for next frame's cull. Every second
-    /// frame with Half-Rate Occlusion, as the terrain's own.
+    /// opaque depth (0..1 between its planes, bottom row first), hand
+    /// pixels masked out by the texel target's flag (`HizSource`), for next
+    /// frame's cull. Every second frame with Half-Rate Occlusion, as the
+    /// terrain's own.
     #[allow(clippy::too_many_arguments, reason = "one frame's pyramid context")]
-    pub fn pack_pyramid(
+    pub(crate) fn pack_pyramid(
         &mut self,
         ctx: &Context,
         memory: &Memory,
         bindless: &mut Bindless,
         pipelines: &Pipelines,
         graph: &mut Graph,
-        depth: (vk::Image, u32),
-        extent: vk::Extent2D,
-        planes: (f32, f32),
+        source: &super::pack::screen::HizSource,
         frame: u64,
     ) -> Result<(), SetupError> {
+        let (depth, extent, planes) = (source.depth, source.size, source.planes);
         let (Some(pipes), Some(view)) = (self.pipes, self.pack_view.take()) else {
             return Ok(());
         };
@@ -4420,7 +4427,7 @@ impl TerrainScene {
             depth,
             extent,
             frame,
-            Some([a, b]),
+            Some(([a, b], source.texel)),
         )?;
         self.pyramid_view = Some(view);
         Ok(())
@@ -4437,7 +4444,7 @@ impl TerrainScene {
         depth: (vk::Image, u32),
         extent: vk::Extent2D,
         frame: u64,
-        pack: Option<[f32; 2]>,
+        pack: Option<([f32; 2], (vk::Image, u32))>,
     ) -> Result<(), SetupError> {
         let size = (extent.width, extent.height);
         if self.pyramid.as_ref().is_none_or(|(_, s, _)| *s != size) {
@@ -4477,7 +4484,8 @@ impl TerrainScene {
                 w = w.div_ceil(2);
                 h = h.div_ceil(2);
             }
-            let depth_use = [(depth.0, Use::ComputeRead)];
+            let mut depth_use = vec![(depth.0, Use::ComputeRead)];
+            depth_use.extend(pack.map(|(_, t)| (t.0, Use::ComputeRead)));
             let images: &[(vk::Image, Use)] = if base == 0 { &depth_use } else { &[] };
             graph.pass(
                 if base == 0 {
@@ -4504,15 +4512,22 @@ impl TerrainScene {
                         cmd,
                         pipelines.layout,
                         &Push {
-                            ids: [grown.index, depth.1, 0, 0],
+                            // z: the pack's hand mask + 1 (0: none); w:
+                            // the reversed depth nearer than which it's read.
+                            ids: [
+                                grown.index,
+                                depth.1,
+                                pack.map_or(0, |(_, t)| t.1 + 1),
+                                (NEAR / HAND_REACH).to_bits(),
+                            ],
                             more: [base, size.0, size.1, *levels],
                             // y: level 1 by gathers (`MOBILE`); zw: a
                             // pack depth's conversion (`hiz_reduce_pack`).
                             params: [
                                 f32::from(u8::from(quarter)),
                                 f32::from(u8::from(MOBILE)),
-                                pack.map_or(0.0, |p| p[0]),
-                                pack.map_or(0.0, |p| p[1]),
+                                pack.map_or(0.0, |p| p.0[0]),
+                                pack.map_or(0.0, |p| p.0[1]),
                             ],
                             view_proj: [[0.0; 4]; 4],
                         },

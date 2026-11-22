@@ -44,6 +44,14 @@ fn failed(what: impl std::fmt::Display) -> SetupError {
     SetupError(what.to_string())
 }
 
+/// What `PackScreen::hiz_source` hands the terrain's Hi-Z.
+pub(crate) struct HizSource {
+    pub depth: (vk::Image, u32),
+    pub texel: (vk::Image, u32),
+    pub size: vk::Extent2D,
+    pub planes: (f32, f32),
+}
+
 /// Bit `n` set: target `n` reads half 1.
 #[derive(Clone, Copy, Default)]
 struct Flips(u16);
@@ -253,7 +261,10 @@ impl PackScreen {
         output: vk::Format,
         terrain: Option<&crate::vk::terrain::PackGeometry>,
     ) -> Result<PackScreen, SetupError> {
-        let targets = PackTargets::new(ctx, memory, &installed, size, true)?;
+        // Android: no depthtex2; the built-in pack never samples it, and
+        // the Hi-Z reads depthtex1 with the hand masked (`hiz_source`).
+        let no_hand = !cfg!(target_os = "android");
+        let targets = PackTargets::new(ctx, memory, &installed, size, no_hand)?;
         let full = || failed("the bindless set is full");
         let texture = |bindless: &mut Bindless, image: &Image| {
             bindless
@@ -1617,6 +1628,11 @@ impl PackScreen {
             let start = self.plans[self.frames as usize % self.plans.len()].1;
             let mut waits = vec![t.depth.raw, t.depth_opaque.raw];
             waits.extend(t.depth_no_hand.iter().map(|d| d.raw));
+            // The shadow depths too: shadowtex0's clear joins its first
+            // pass; shadowtex1's goes when the copy overwrites it.
+            if let Some(s) = &t.shadow {
+                waits.extend([s.depth.raw, s.depth_opaque.raw]);
+            }
             for (n, slot) in t.color.iter().enumerate() {
                 if let Some((pair, _)) = slot
                     && self.installed.targets.settings[n].clear
@@ -1864,7 +1880,7 @@ impl PackScreen {
                 };
                 self.shadow_cache_filled = true;
                 let side = s.extent;
-                batch.before(graph, device, &[], &[]);
+                batch.before(graph, device, &[from], &[to]);
                 graph.pass(
                     "pack shadow cache copy",
                     &[(from, Use::TransferSrc), (to, Use::TransferDst)],
@@ -1896,7 +1912,7 @@ impl PackScreen {
                 && let Some(s) = &self.targets.shadow
             {
                 let (from, to, side) = (s.depth.raw, s.depth_opaque.raw, s.extent);
-                batch.before(graph, device, &[], &[]);
+                batch.before(graph, device, &[from], &[to]);
                 graph.pass(
                     "pack shadow depth copy",
                     &[(from, Use::TransferSrc), (to, Use::TransferDst)],
@@ -2522,13 +2538,23 @@ impl PackScreen {
     }
 
     /// Android: the occluders for the terrain's next cull (`pack_pyramid`):
-    /// the depth before the hand, its bindless index and size, and the
-    /// projection planes it was drawn with.
-    pub(crate) fn hiz_source(&self) -> Option<((vk::Image, u32), vk::Extent2D, (f32, f32))> {
-        self.copy_no_hand_at?;
-        let image = self.targets.depth_no_hand.as_ref()?;
-        let index = self.indexed.depth_no_hand?;
-        Some(((image.raw, index), self.targets.size, self.depth_planes?))
+    /// depthtex1 (opaque, hand included) and the built-in pack's texel
+    /// target (colortex2, whose hand flag masks the hand out), each image
+    /// and bindless index as the frame ends; the size and the projection
+    /// planes it was drawn with.
+    pub(crate) fn hiz_source(&self) -> Option<HizSource> {
+        const TEXEL: u8 = 2;
+        let (pair, _) = self.targets.color[TEXEL as usize].as_ref()?;
+        let halves = self.indexed.color[TEXEL as usize]?;
+        // The plan after this frame's starts where this one ends.
+        let end = self.plans[(self.frames as usize + 1) % self.plans.len()].1;
+        let half = end.current(TEXEL);
+        Some(HizSource {
+            depth: (self.targets.depth_opaque.raw, self.indexed.depth_opaque),
+            texel: (pair[half].raw, halves[half]),
+            size: self.targets.size,
+            planes: self.depth_planes?,
+        })
     }
 
     /// The pack's block ids, for the mesher's pack quads.

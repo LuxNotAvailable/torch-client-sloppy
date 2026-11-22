@@ -182,6 +182,17 @@ testing and skipped most terrain shading.
 
 | Shadow cascade culls over CPU lists (`shadowlist`) | 31.5 -> 31.35 | the map is cached, so the culls run only on changes |
 | colortex2 RGBA16UI | ~-4% deferred, ~-7% terrain group (against `final`, to cancel throttling) | and 128 MiB less: colortex2 halves 128.5 -> 64.2 MiB |
+| Hi-Z gather (one `GatherRed` per 2 x 2) | ~30.7 | Hi-Z build 2.3 -> 1.4 ms |
+| Hi-Z from depthtex1, hand masked by colortex2 | 30.7 -> 30.6 | no depthtex2 (copy 0.60 -> 0.32 ms, 14.6 MB). The mask read costs: 1.40 -> 2.49 ms reading it everywhere, 1.63 reading it only where a 2 x 2 is within 3 blocks |
+
+Without a pack, drawing turned straight into the swapchain (`turn`,
+in-run A/B): GPU 8.88 -> 8.20 ms (the 0.5-0.7 ms rotation pass), HUD
+110-112 -> 116-122 fps. Same picture apart from cloud drift.
+
+Pipeline cache: the bench force-stops the app, so it was never saved and
+every run compiled the pack cold (3-6.5 s on the render thread, tripping
+the 3 s frozen-window report when the phone is warm). Saved after pack
+setup now: 4557 ms cold, 227 ms on the next launch.
 
 Tried and dropped:
 - The texel cache (deferred_a / deferred_b) runs on the Pixel now (no driver
@@ -190,6 +201,10 @@ Tried and dropped:
 - Deferred's own taps aren't its cost: 8 -> 2 taps, or TEXEL_DENOISE 1,
   moved it ~5%. Splitting a quad's taps across its pixels (masked lanes)
   made it slower: a warp still runs every iteration.
+- Letting the compositor turn the frame (swapchain at the window's shape,
+  IDENTITY pre-transform) to drop the 0.5 ms rotation pass: SurfaceFlinger
+  composes the layer on the GPU (CLIENT, `ROT_90`), and without a pack the
+  game fell from ~100 to ~20 fps (GPU 12.6 -> 21.6 ms). Keep pre-rotation.
 - Full-screen passes don't follow their bytes alone: halving colortex2 moved
   deferred and composite2 a few percent. composite2 is fog resolve and sky
   colour per pixel.

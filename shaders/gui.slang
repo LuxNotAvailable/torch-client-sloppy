@@ -3,7 +3,8 @@
 // bytes: position in clip space, uv, colour), pulled from a buffer.
 //
 // Push: ids.x the vertex buffer; more.x the atlas, more.y the unihex font,
-// more.z the glint, more.w the inventory figure (texture indices).
+// more.z the glint, more.w the inventory figure (texture indices);
+// view_proj the pre-rotation.
 
 import common;
 
@@ -30,8 +31,11 @@ GuiOut gui_vertex(uint vertex : SV_VertexID) {
     uint at = vertex * 32;
     GuiOut o;
     float2 p = asfloat(v.Load2(at));
-    // The painter's y points up; Vulkan's clip y points down.
-    o.position = float4(p.x, -p.y, 0, 1);
+    // view_proj turns it onto a turned swapchain (identity otherwise), in
+    // y-up clip space as the world's (whose viewport flips y). The
+    // painter's y points up; Vulkan's clip y points down.
+    float4 turned = mul(pc.view_proj, float4(p, 0, 1));
+    o.position = float4(turned.x, -turned.y, 0, 1);
     o.uv = asfloat(v.Load2(at + 8));
     o.color = asfloat(v.Load4(at + 16));
     return o;

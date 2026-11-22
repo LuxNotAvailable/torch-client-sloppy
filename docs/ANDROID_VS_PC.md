@@ -41,14 +41,14 @@ desktop (PC) build, and where. Keep the two from leaking into each other.
 | Launch target | CLI args | `launch.txt` (address, username): a pushed one in the external files folder wins over the APK's |
 | Bench app | — | `tools/bench-apk` (`com.torch.bench`): the game beside the real install, for `run.sh` benches |
 | Storage, assets root | `%LOCALAPPDATA%` / temp | the package's data dir (`ANDROID_APP`) |
-| Pipeline cache | temp dir | `storage::dir()/native-pipelines.bin` |
+| Pipeline cache | temp dir; saved on exit | `storage::dir()/native-pipelines.bin`; also saved once a pack is set up and on pause (`live.rs`), since an Android app is rarely closed cleanly: the built-in pack's setup is ~4.6 s cold, 0.2 s warm |
 | Window | resizable, Fullscreen and size options | native size tracked each frame (`track_native_window_size`); no Fullscreen or window-size options |
 | Present mode | `AutoVsync` | `AutoNoVsync` |
 | Render thread | pipelined above ~200 fps, in step below | always pipelined (`draw_frame`); `MC_NATIVE_PIPELINE` (now read through `platform::env`) overrides both |
 | Cursor | grabbed / shown | no-op |
 | Input, GUI | mouse and keyboard | touch controls and phone layout (`mobile_ui`: chat, HUD, screens, options, slots, keyboard) |
 | Exit | normal | `Activity.finish()` through JNI |
-| Background | � | sound stops and its stream closes on suspend (`audio::suspend`, `engine::Command::Suspend`), reopens on resume (`platform::notify`) |
+| Background | - | sound stops and its stream closes on suspend (`audio::suspend`, `engine::Command::Suspend`), reopens on resume (`platform::notify`) |
 | Diagnostics | — | `log_frame_rate`; logcat; `/proc` CPU and memory metrics (also Linux); `smaps_rollup` read on its own thread (`diag::runtime`) |
 | Draw-count readbacks | yes | vkview only (`terrain::STATS_READBACK`) |
 
@@ -62,6 +62,7 @@ desktop (PC) build, and where. Keep the two from leaking into each other.
 | Hi-Z | every frame | every second frame (`HIZ_EVERY_OTHER`); level 1 from one `GatherRed` per 2 × 2 (`hiz_reduce` params.y, same values; vkview Hi-Z 2.2 -> 1.24 ms) |
 | Detail atlas tiles | up to 32 px | `TILE_PX` |
 | Terrain bookkeeping (`vk::terrain::MOBILE`) | every remesh re-runs the cave flood fill (every 10 frames) and re-ranks translucent layers; the translucent re-sort scans every layer each frame | a remesh that keeps its cave visibility keeps its visible bit and rank; the re-sort scans only on a new eye block or a budget-cut pass; the flood fill indexes dense arrays on its grid instead of hashing (`fill_dense`, ~40 -> ~10 ms per fill at RD 32). Same output |
+| Turned display | none (no pre-rotation) | without a pack every pass draws turned straight into the swapchain (`PreRotation`; the GUI through `gui.slang`'s view_proj, in y-up clip space; screenshots turned back on read, `upright_pixels`). Under a pack, drawn upright and turned by one pass (`Live::upright`). `MC_PACK_AB=turn` A/Bs it |
 | Terrain path | GPU-driven, packed + greedy, pulled vertices | GPU-driven, **vertex input** (`FixedMode::Input`): plain vertices, packing and greedy off (`live::terrain_options`). `MC_NATIVE_TERRAIN=pulled` restores the PC path |
 
 ### Fixed terrain (mobile path, under test)
@@ -101,9 +102,10 @@ vertices, so the A/B measures vertex fetch plus culling, not packing.
 | colortex6 (reflection claim) | RGBA32F: the key's high and low 16 bits, alpha, 1 | RGBA16F: key - 1 in 11, 11 and 10 bits, 1 + alpha (`refl_claim_pixel` / `refl_claim_key` / `refl_claim_alpha` in `lib/water.slang`) |
 | Texel cache | on | off (the PowerVR driver aborts on the depth texture its compute passes read); `deferred` looks shadows up per pixel |
 | Shadow cascade culls | one thread per slot, whole slots loaded | `CULL_LIST` + `CULL_LAZY` over a CPU list per cascade (`shadow_list`: live sections inside the cascade's sides; a translucent one left out keeps its zeroed command) |
-| Occlusion culling under a pack | none (the terrain only culls, so no pyramid; `pyramid_view` cleared) | the pack's depth before the hand builds the pyramid for the next cull: `PackScreen::hiz_source`, `TerrainScene::pack_pyramid`, `hiz_reduce_pack` (0..1 GL depth to reversed, `params.z - params.w * d`, rows flipped, one gather per 2 x 2; its clear reads as open sky). Half-Rate Occlusion applies; a scaled pack's pyramid is accepted at its own size |
+| Occlusion culling under a pack | none (the terrain only culls, so no pyramid; `pyramid_view` cleared) | the pack's opaque depth (depthtex1) builds the pyramid for the next cull, hand pixels masked out by colortex2's hand flag (alpha word 2) as open sky: `PackScreen::hiz_source` (`HizSource`), `TerrainScene::pack_pyramid`, `hiz_reduce_pack` (0..1 GL depth to reversed, `params.z - params.w * d`, rows flipped, one gather per 2 x 2 plus one `GatherAlpha` of the texel target; its clear reads as open sky). Half-Rate Occlusion applies; a scaled pack's pyramid is accepted at its own size. Assumes the built-in pack's colortex2 layout |
+| depthtex2 (depth before the hand) | made for every pack, copied each frame | not made (`PackTargets::new(.., no_hand = false)`): the built-in pack never samples it; a program that did would read the stub |
 | gbuffers_water depth test | after the shader (its reflection claims are side effects) | before it (`[earlydepthstencil]` under `MC_OS_ANDROID`): hidden water isn't shaded. An alpha-0 texel would still write depth (vanilla's translucent textures have none) |
-| Pack render passes | each pass alone, LOAD and STORE, clears as transfers | `vk::pack::tiled`: consecutive draw passes into the same attachments share a render pass; clears become CLEAR at first use (late transfer clears when read first); full-screen unblended passes without discard don't load; images nothing later uses (and not kept across frames) aren't stored. Pixel-identical (desktop, `MC_PACK_TILED=1`) |
+| Pack render passes | each pass alone, LOAD and STORE, clears as transfers | `vk::pack::tiled`: consecutive draw passes into the same attachments share a render pass; clears become CLEAR at first use (late transfer clears when read first); full-screen unblended passes without discard don't load; images nothing later uses (and not kept across frames) aren't stored. The shadow depths' clears wait too: shadowtex0's joins the shadow pass, shadowtex1's is dropped when the shadow depth copy overwrites it. Pixel-identical (desktop, `MC_PACK_TILED=1`) |
 
 PowerVR (Pixel 10 Pro) limits the Android pack must keep:
 - A colour image over 4 bytes a pixel is padded to power-of-two sides:
