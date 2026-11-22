@@ -23,6 +23,9 @@ Treat as our code. History: `git log -- vendor/azalea`. Main areas:
 - `azalea-block`, `azalea-registry`: modded IDs past `MAX_STATE`, regenerated
   tables (`tags/`, `builtin.rs`, `data.rs`).
 - `azalea-entity`: metadata, inventory, particles.
+- `azalea-client`: a configuration-phase custom payload triggers
+  `ConfigCustomPayloadEvent`, so the NeoForge handshake answers before the
+  next packet (`plugins/packet/config/`).
 - `azalea-client`: `handle_walk` no longer stops a sprint; the vanilla stop
   rules in `local_player_ai_step` do (`plugins/movement.rs`).
 - `azalea-client`: `ItemUseSlow`, set by the game each tick, scales input

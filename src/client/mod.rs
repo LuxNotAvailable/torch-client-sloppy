@@ -17,6 +17,7 @@ pub(crate) mod dialogs;
 pub(crate) mod dimension;
 pub(crate) mod envprobe;
 pub(crate) mod languages;
+pub(crate) mod neoforge;
 pub(crate) mod packets;
 pub(crate) mod post_effects;
 pub(crate) mod recipes;

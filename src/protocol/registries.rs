@@ -107,24 +107,34 @@ fn names<R: Registry + Display>() -> Vec<Identifier> {
         .collect()
 }
 
-/// One registry's entries, in network ID order.
+/// One registry's entries, in network ID order. A synced table may skip IDs.
 pub(crate) struct RegistryTable {
-    names: Vec<Identifier>,
+    names: Vec<Option<Identifier>>,
     ids: HashMap<Identifier, u32>,
 }
 
 impl RegistryTable {
     pub(crate) fn new(names: Vec<Identifier>) -> RegistryTable {
-        let ids = names
-            .iter()
-            .enumerate()
-            .map(|(id, name)| (name.clone(), id as u32))
-            .collect();
+        RegistryTable::from_ids(names.into_iter().enumerate().map(|(id, n)| (id as u32, n)))
+    }
+
+    /// From `(id, name)` pairs in any order; IDs left out name nothing.
+    pub(crate) fn from_ids(entries: impl IntoIterator<Item = (u32, Identifier)>) -> RegistryTable {
+        let mut names = Vec::new();
+        let mut ids = HashMap::new();
+        for (id, name) in entries {
+            let slot = id as usize;
+            if names.len() <= slot {
+                names.resize(slot + 1, None);
+            }
+            ids.insert(name.clone(), id);
+            names[slot] = Some(name);
+        }
         RegistryTable { names, ids }
     }
 
     pub(crate) fn name(&self, id: u32) -> Option<&Identifier> {
-        self.names.get(id as usize)
+        self.names.get(id as usize)?.as_ref()
     }
 
     pub(crate) fn id(&self, name: &Identifier) -> Option<u32> {
@@ -158,6 +168,12 @@ impl Registries {
     pub(crate) fn replace(&mut self, registry: RegistryId, names: Vec<Identifier>) {
         self.synced
             .insert(registry, Arc::new(RegistryTable::new(names)));
+    }
+
+    /// Takes a server's snapshot for one registry: `(id, name)` pairs.
+    pub(crate) fn replace_ids(&mut self, registry: RegistryId, entries: Vec<(u32, Identifier)>) {
+        self.synced
+            .insert(registry, Arc::new(RegistryTable::from_ids(entries)));
     }
 
     pub(crate) fn is_synced(&self, registry: RegistryId) -> bool {
@@ -212,6 +228,23 @@ mod tests {
         assert_eq!(cow, Some(EntityKind::Cow.to_u32() + 1));
         assert_eq!(registries.table(RegistryId::Item).len(), vanilla_items);
         assert!(registries.name(RegistryId::Item, u32::MAX).is_none());
+    }
+
+    #[test]
+    fn a_snapshot_with_gaps_names_only_its_ids() {
+        let mut registries = Registries::default();
+        registries.replace_ids(
+            RegistryId::Item,
+            vec![
+                (2, Identifier::new("examplemod:gear")),
+                (0, Identifier::new("minecraft:air")),
+            ],
+        );
+        let items = registries.table(RegistryId::Item);
+        assert_eq!(items.len(), 3);
+        assert_eq!(items.name(0).unwrap().to_string(), "minecraft:air");
+        assert!(items.name(1).is_none());
+        assert_eq!(items.id(&Identifier::new("examplemod:gear")), Some(2));
     }
 
     #[test]

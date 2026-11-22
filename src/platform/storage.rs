@@ -21,6 +21,8 @@ slots! {
     TUNE_BACKUP = "tune_backup.json";
     KEYBINDS = "keybinds.json";
     MODULES = "modules.json";
+    /// Mod channels each NeoForge server required, claimed on joining it.
+    NEOFORGE_CHANNELS = "neoforge_channels.json";
     PROFILE = "profile.json";
     ACCOUNTS = "accounts.json";
     COMMAND_HISTORY = "command_history.txt";

@@ -62,6 +62,7 @@ async fn run_client(
         .add_plugins(PacketRelayPlugin)
         .add_plugins(ProtocolPlugin)
         .add_plugins(crate::client::dialogs::ConfigRelayPlugin)
+        .add_plugins(crate::client::neoforge::NeoForgePlugin)
         .add_plugins(BotHeartbeatPlugin)
         .set_handler(handle)
         .set_state(State { generation })
@@ -253,6 +254,7 @@ pub(crate) fn start_bot(address: String) {
         s.session.status = Some(format!("Connecting to {address}...").into());
         s.session.current_address = Some(address.clone());
         crate::client::bus::reset();
+        crate::client::neoforge::begin(&address);
         s.session_ended = false;
         s.end_notice = None;
     }
@@ -589,6 +591,11 @@ fn reset_session_side_tables(blocking: bool) {
     crate::voice::on_leave();
     #[cfg(audio)]
     crate::audio::leave_world();
+}
+
+/// A connection is running or still winding down.
+pub(crate) fn is_started() -> bool {
+    BOT_STARTED.load(std::sync::atomic::Ordering::SeqCst)
 }
 
 pub(crate) fn request_disconnect() {

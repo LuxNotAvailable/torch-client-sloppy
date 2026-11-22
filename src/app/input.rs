@@ -75,6 +75,7 @@ pub(crate) fn apply_gui_nav(
     mut windows: Query<(&mut Window, &mut CursorOptions), With<PrimaryWindow>>,
     mut exit: bevy::ecs::message::MessageWriter<AppExit>,
     mut last_container_id: Local<i32>,
+    mut reconnect: Local<Option<String>>,
     #[cfg(feature = "skins")] mut faces: ResMut<crate::gui::player_faces::PlayerFaces>,
 ) {
     if std::mem::take(&mut state.quit) {
@@ -118,14 +119,32 @@ pub(crate) fn apply_gui_nav(
             }),
         }
     };
-    if let Some(reason) = poll.ended {
+    if let Some(mut reason) = poll.ended {
         reset_session_gui(
             &mut state,
             #[cfg(feature = "skins")]
             &mut faces,
         );
-        state.nav = Some(crate::gui::Screen::Disconnected);
-        state.disconnect_reason = reason;
+        // A NeoForge server named channels to claim: join again with them.
+        if let Some(address) = crate::client::neoforge::take_retry() {
+            *reconnect = Some(address);
+            state.nav = Some(crate::gui::Screen::None);
+        } else {
+            let lines = crate::client::neoforge::take_failure_lines();
+            if !lines.is_empty() {
+                let spans = reason.get_or_insert_with(Vec::new);
+                spans.push(crate::text::Span {
+                    text: format!("\n\n{}", lines.join("\n")),
+                    style: crate::text::Style::colored(0xAAAAAA),
+                });
+            }
+            state.nav = Some(crate::gui::Screen::Disconnected);
+            state.disconnect_reason = reason;
+        }
+    }
+    // The last connection must wind down first, or the new one is refused.
+    if reconnect.is_some() && !crate::client::bot::is_started() {
+        state.connect = reconnect.take();
     }
     if let Some(address) = state.connect.take() {
         crate::client::bot::start_bot(address);

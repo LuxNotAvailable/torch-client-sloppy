@@ -28,7 +28,7 @@ meshes chunk sections (on `client`'s worker). `vk` (native Vulkan) draws them;
 | `audio` | sound engine (rodio/cpal; on Android through Oboe, its stream closed on suspend and reopened on resume), categories, music, ambience, subtitles, output devices (desktop) | `mod.rs`, `engine.rs` |
 | `blockentities` | block entity models (`render/`) and client sim (`sim/`) | `mod.rs` |
 | `blocks` | blockstate registry, model baking, per-state `info` | `info.rs`, `bake.rs` |
-| `client` | connection, packet handlers, game tick, GUI bus, chunk meshing worker, dimension types, sky timelines, server post effects; the frame's `View` (cameras, fog) renderers read | `tick.rs`, `bus.rs`, `packets.rs`, `view.rs` |
+| `client` | connection, packet handlers, game tick, GUI bus, chunk meshing worker, dimension types, sky timelines, server post effects, the NeoForge handshake (`neoforge.rs`); the frame's `View` (cameras, fog) renderers read | `tick.rs`, `bus.rs`, `packets.rs`, `view.rs` |
 | `draw` | the frame's non-terrain draw lists as plain data (entity meshes and instances, particle sprites, env parts) the game fills and `vk` reads | `mod.rs` |
 | `diag` | logging, profiler (`prof_span!`), perf reports, watchdog | `perf_report.rs` |
 | `eagler` | Eaglercraft websocket transport, server query | `mod.rs` |
@@ -40,7 +40,7 @@ meshes chunk sections (on `client`'s worker). `vk` (native Vulkan) draws them;
 | `modules` | click-GUI modules (ESP, zoom, freecam, ...) and their store | `list.rs`, `registry.rs` |
 | `platform` | OS/web/Android abstraction: env (every `MC_*` variable, `env.rs`), storage, http, input, time, lifecycle notices (`notify`) | `mod.rs`, `env.rs` |
 | `play` | player actions: interaction, placement, riding, vehicles, commands | `interaction.rs`, `placement.rs` |
-| `protocol` | multi-version support: packet tables, id remaps, hops | `hop.rs` (recipe at top) |
+| `protocol` | multi-version support: packet tables, id remaps, hops; registry tables a modded server syncs (`registries.rs`) and NeoForge's payload codecs (`neoforge.rs`) | `hop.rs` (recipe at top) |
 | `scene` | the Bevy-side scene: cameras, entity and hand models, anims, skins, sky, clouds, weather, tethers, overlays, world text, block atlas; fills `draw` and `View` (`view_sync`) | `mod.rs`, `entity_draw.rs`, `hand.rs` |
 | `resourcepacks` | pack list, mounting, Modrinth, Torch Default pack | `mod.rs`, `TORCH_DEFAULT_PACK.md` |
 | `shaderpack` | Iris/OptiFine pack loading: properties, preprocess, programs; compiling GLSL packs to WGSL (the native terrain prelude, `compile/preludes.rs`, reads `vk::terrain`'s slots and pack quads), and binding the built-in pack's precompiled SPIR-V (`compile/`, `install`, `spirv`); which packs are offered (`discover`: the built-in one only on Android); pack block ids and vertex data; uniforms (`uniforms/`, `inputs`, `frame_state`) | `pipeline.rs`, `compile/mod.rs`, `install.rs` |

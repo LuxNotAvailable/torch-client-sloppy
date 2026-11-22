@@ -47,6 +47,15 @@ pub fn handle_outgoing_packets_observer(
     }
 }
 
+/// A custom payload in the configuration phase. Observers run before the
+/// next packet is read, so a mod loader's handshake can answer in order
+/// (NeoForge's query comes just before the ping its pong must follow).
+#[derive(Clone, Debug, Event)]
+pub struct ConfigCustomPayloadEvent {
+    pub entity: Entity,
+    pub packet: azalea_protocol::packets::config::ClientboundCustomPayload,
+}
+
 #[derive(Clone, Debug, Event)]
 pub struct ConfigPingEvent {
     pub entity: Entity,

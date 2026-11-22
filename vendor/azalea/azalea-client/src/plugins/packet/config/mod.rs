@@ -87,6 +87,13 @@ impl ConfigPacketHandler<'_> {
 
     pub fn custom_payload(&mut self, p: &ClientboundCustomPayload) {
         debug!("Got custom payload packet {p:?}");
+
+        as_system::<Commands>(self.ecs, |mut commands| {
+            commands.trigger(ConfigCustomPayloadEvent {
+                entity: self.player,
+                packet: p.clone(),
+            });
+        });
     }
 
     pub fn disconnect(&mut self, p: &ClientboundDisconnect) {
