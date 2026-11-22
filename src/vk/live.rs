@@ -1214,6 +1214,9 @@ impl Live {
         }
         if let Some((t, sums, since)) = &mut self.gpu_timing {
             t.begin_frame(&self.ctx, slot);
+            if !t.last.is_empty() {
+                super::pack::tiled::note_gpu(t.last.iter().map(|p| p.1).sum());
+            }
             if crate::gui::tune::running() && !t.last.is_empty() {
                 crate::gui::tune::note_gpu(t.last.iter().map(|p| p.1).sum());
             }
@@ -1482,6 +1485,25 @@ impl Live {
                         );
                     }),
                 );
+                // Android: the pack's depth is the next cull's occluder.
+                if cfg!(target_os = "android") && !super::pack::tiled::feature_on("hiz") {
+                    terrain.drop_pack_pyramid();
+                } else if cfg!(target_os = "android")
+                    && let Some((depth, size, planes)) = pack.hiz_source()
+                    && let Err(e) = terrain.pack_pyramid(
+                        &self.ctx,
+                        &self.memory,
+                        &mut self.bindless,
+                        &self.pipelines,
+                        &mut graph,
+                        depth,
+                        size,
+                        planes,
+                        self.frame,
+                    )
+                {
+                    error!("native renderer: pack occlusion: {}", e.0);
+                }
                 if target.0 != image
                     && let Some(post) = &self.pack_post
                 {

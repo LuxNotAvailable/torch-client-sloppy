@@ -13,6 +13,7 @@
 pub mod bindless;
 pub mod screen;
 pub mod targets;
+pub mod tiled;
 
 use crate::client::dimension::Dimension;
 use crate::shaderpack::install::{Installed, install};

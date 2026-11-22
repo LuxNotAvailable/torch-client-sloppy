@@ -81,7 +81,7 @@ impl Use {
         }
     }
 
-    fn writes(self) -> bool {
+    pub(crate) fn writes(self) -> bool {
         matches!(
             self,
             Use::ColorAttachment

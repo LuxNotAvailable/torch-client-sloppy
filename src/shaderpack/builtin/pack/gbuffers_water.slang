@@ -212,6 +212,13 @@ float ggx(float3 n, float3 v, float3 l, float roughness) {
     return a2 / (PI * d * d) * ndl * 0.25;
 }
 
+// Android: depth tests before the shader. Its reflection claims are side
+// effects, which otherwise move the test after it, so every water pixel
+// hidden behind terrain was shaded and claimed. Only an alpha-0 texel
+// (none in vanilla's translucent textures) would still write depth.
+#ifdef MC_OS_ANDROID
+[earlydepthstencil]
+#endif
 Lit fragment(Varyings v) {
     float4 tex = gtexture.Sample(gtexture_sampler, v.uv) * v.color;
     // Blocks of surface one pixel spans, along its longer side.

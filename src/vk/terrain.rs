@@ -463,6 +463,12 @@ fn hiz_ab_mode() -> bool {
     *AB.get_or_init(|| crate::platform::env::var("MC_HIZ_AB").is_ok_and(|v| v == "1"))
 }
 
+/// The in-run A/B clock: side (true: B) and seconds into it; every A/B
+/// (terrain's here, the pack's `vk::pack::tiled`) flips on it.
+pub fn ab_clock() -> (bool, f32) {
+    near_first_phase()
+}
+
 /// The A/B's side now (true: B) and seconds into it.
 fn near_first_phase() -> (bool, f32) {
     static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
@@ -885,6 +891,8 @@ struct Pipes {
     face_filter: vk::Pipeline,
     /// The fixed path's solid, cutout and translucent, when built.
     fixed: Option<[vk::Pipeline; 3]>,
+    /// Android: the pyramid from a shader pack's depth (`pack_pyramid`).
+    hiz_pack: Option<vk::Pipeline>,
 }
 
 impl Pipes {
@@ -898,7 +906,11 @@ impl Pipes {
             anim_blend: built[5],
             overdraw: built[6],
             face_filter: built[7],
-            fixed: built.get(8..11).map(|f| [f[0], f[1], f[2]]),
+            // Android's `hiz_reduce_pack` comes before the fixed three.
+            hiz_pack: MOBILE.then(|| built[8]),
+            fixed: built
+                .get(8 + usize::from(MOBILE)..11 + usize::from(MOBILE))
+                .map(|f| [f[0], f[1], f[2]]),
         }
     }
 
@@ -913,6 +925,7 @@ impl Pipes {
             self.overdraw,
             self.face_filter,
         ];
+        all.extend(self.hiz_pack);
         all.extend(self.fixed.into_iter().flatten());
         all
     }
@@ -1115,6 +1128,9 @@ pub struct TerrainScene {
     pack_camera: Mat4,
     /// `record` only culls: a shader pack draws the world.
     cull_only: bool,
+    /// Android under a pack: the view the pack is drawing this frame, for
+    /// the pyramid its depth builds (`pack_pyramid`).
+    pack_view: Option<(Mat4, Vec3)>,
     /// This frame's `record` wrote the GPU cull's commands and counts. A
     /// frame that didn't (pipelines still compiling) leaves them stale or
     /// never written, so `pack_geometry` hands a pack no terrain draws.
@@ -1225,6 +1241,12 @@ impl TerrainScene {
                 entry: c"face_filter".to_owned(),
             },
         ];
+        if MOBILE {
+            specs.push(Spec::Compute {
+                module,
+                entry: c"hiz_reduce_pack".to_owned(),
+            });
+        }
         // The fixed path: its own vertex stage, the same fragment stages.
         let fixed_module = if options.fixed != FixedMode::Off {
             let m = pipelines.module(ctx, super::shaders::TERRAIN_MOBILE)?;
@@ -1528,6 +1550,7 @@ impl TerrainScene {
             stats: Stats::default(),
             entities,
             cull_only: false,
+            pack_view: None,
             culled: false,
             particles,
             env,
@@ -3563,7 +3586,8 @@ impl TerrainScene {
             (Some((grown, size, levels)), Some((prev, eye)))
                 if self.options.hiz
                     && !fixed
-                    && *size == (extent.width, extent.height)
+                    // A pack's pyramid is at its render scale.
+                    && (*size == (extent.width, extent.height) || (MOBILE && self.cull_only))
                     && eye.distance(cull.eye) < HIZ_GUARD =>
             {
                 Some((grown.index, *size, *levels, prev))
@@ -3819,8 +3843,14 @@ impl TerrainScene {
         self.pack_camera = Mat4::look_to_rh(camera.eye, camera.forward(), Vec3::Y).inverse();
         lap.mark(9);
         // A shader pack draws the world itself: only the culls are wanted.
+        // Android keeps occlusion: the pack's depth builds the pyramid
+        // (`pack_pyramid`) for this frame's view.
         if self.cull_only {
-            self.pyramid_view = None;
+            if MOBILE {
+                self.pack_view = Some((view_proj, camera.eye));
+            } else {
+                self.pyramid_view = None;
+            }
             return Ok(());
         }
         let mut buffers = vec![
@@ -4068,6 +4098,7 @@ impl TerrainScene {
                 (depth, depth_index),
                 extent,
                 frame,
+                None,
             )?;
             self.pyramid_view = Some((view_proj, camera.eye));
         }
@@ -4249,6 +4280,68 @@ impl TerrainScene {
     /// Builds the occlusion pyramid from this frame's depth, for next
     /// frame's cull.
     #[allow(clippy::too_many_arguments, reason = "one pass's whole context")]
+    /// Android under a shader pack, occlusion off (its A/B): the next cull
+    /// tests no pyramid.
+    pub fn drop_pack_pyramid(&mut self) {
+        self.pack_view = None;
+        self.pyramid_view = None;
+    }
+
+    /// Android under a shader pack: the occlusion pyramid from the pack's
+    /// depth before the hand (`depth`, its bindless index; 0..1 between
+    /// `planes`, bottom row first), for next frame's cull. Every second
+    /// frame with Half-Rate Occlusion, as the terrain's own.
+    #[allow(clippy::too_many_arguments, reason = "one frame's pyramid context")]
+    pub fn pack_pyramid(
+        &mut self,
+        ctx: &Context,
+        memory: &Memory,
+        bindless: &mut Bindless,
+        pipelines: &Pipelines,
+        graph: &mut Graph,
+        depth: (vk::Image, u32),
+        extent: vk::Extent2D,
+        planes: (f32, f32),
+        frame: u64,
+    ) -> Result<(), SetupError> {
+        let (Some(pipes), Some(view)) = (self.pipes, self.pack_view.take()) else {
+            return Ok(());
+        };
+        let Some(hiz_pack) = pipes.hiz_pack.filter(|_| self.options.hiz) else {
+            return Ok(());
+        };
+        let skip = hiz_every_other()
+            && !self.pyramid_skipped
+            && self.pyramid_view.is_some()
+            && self
+                .pyramid
+                .as_ref()
+                .is_some_and(|p| p.1 == (extent.width, extent.height));
+        self.pyramid_skipped = skip;
+        if skip {
+            return Ok(());
+        }
+        // Reversed depth near / distance, from the pack's 0..1:
+        // distance = n f / (f - d (f - n)).
+        let (n, f) = planes;
+        let a = NEAR / n;
+        let b = NEAR * (f - n) / (f * n);
+        self.build_pyramid(
+            ctx,
+            memory,
+            bindless,
+            pipelines,
+            hiz_pack,
+            graph,
+            depth,
+            extent,
+            frame,
+            Some([a, b]),
+        )?;
+        self.pyramid_view = Some(view);
+        Ok(())
+    }
+
     fn build_pyramid(
         &mut self,
         ctx: &Context,
@@ -4260,6 +4353,7 @@ impl TerrainScene {
         depth: (vk::Image, u32),
         extent: vk::Extent2D,
         frame: u64,
+        pack: Option<[f32; 2]>,
     ) -> Result<(), SetupError> {
         let size = (extent.width, extent.height);
         if self.pyramid.as_ref().is_none_or(|(_, s, _)| *s != size) {
@@ -4328,12 +4422,13 @@ impl TerrainScene {
                         &Push {
                             ids: [grown.index, depth.1, 0, 0],
                             more: [base, size.0, size.1, *levels],
-                            // y: level 1 by gathers (`MOBILE`).
+                            // y: level 1 by gathers (`MOBILE`); zw: a
+                            // pack depth's conversion (`hiz_reduce_pack`).
                             params: [
                                 f32::from(u8::from(quarter)),
                                 f32::from(u8::from(MOBILE)),
-                                0.0,
-                                0.0,
+                                pack.map_or(0.0, |p| p[0]),
+                                pack.map_or(0.0, |p| p[1]),
                             ],
                             view_proj: [[0.0; 4]; 4],
                         },

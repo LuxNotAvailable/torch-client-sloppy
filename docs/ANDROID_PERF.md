@@ -167,6 +167,24 @@ composite2 3.8, composite_a 2.9, clears 2.2, three shadow culls 5.7. vkview's
 dump at the same size: terrain 2.1, cutout 1.3, water 4.7 (a smaller world,
 and its terrain is loaded before the pack starts).
 
+### Pack speedups (in-run A/Bs: `MC_PACK_AB=<feature>`, B on)
+
+| Step | GPU ms/frame | Notes |
+|---|---|---|
+| First working pack | 95.6 | |
+| Early depth test for gbuffers_water | 73.1 | water 29.9 -> 11.8: its reflection claims (atomics) moved depth testing after the shader, so the ocean behind the hills was shaded and claimed. Matches reflections off (73.1) |
+| Occlusion from the pack's depth (`hiz`) | 68.5 -> 31.4 | under a pack the terrain never drew depth, so the cull had no pyramid: every in-frustum section at RD 32 was drawn. Screenshots of both sides differ only where foliage waves |
+| Tiled recording (`tiled`) | 32.6 -> 31.4 | merged passes, CLEAR / DONT_CARE ops. 68.8 vs 68.8 before occlusion (shading hid the traffic) |
+
+Not a measurement: an earlier "37 ms of attachment loads and stores" came
+from making every load DONT_CARE, depth included, which broke depth
+testing and skipped most terrain shading.
+
+After the three (side B, ~31 ms): terrain group 7.2, deferred 5.6, the
+three shadow cascade culls ~1.9 each, composite2 3.8, water 2.9, Hi-Z
+build 2.3 (every second frame), composite 1.7, final 1.3, composite1 1.1,
+entity cull 1.1.
+
 ## Options (rough order of payoff)
 
 - **Render scale**: draw the world at 50–75% and upscale in the rotation pass, which is free since that pass samples anyway. Make it dynamic from frame time or thermal headroom (`AThermal_getThermalHeadroom`).

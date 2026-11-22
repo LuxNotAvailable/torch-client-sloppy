@@ -864,10 +864,17 @@ float4 terrain_translucent(VertexOut in): SV_Target {
 
 groupshared float tile[32][32];
 
-float source_depth(int2 p, uint2 size, uint level) {
+float source_depth(int2 p, uint2 size, uint level, bool pack) {
     if (any(p < 0) || any(p >= int2(size))) {
         // Outside the image: nearest, which never wins the farthest.
         return 1;
+    }
+    if (level == 0 && pack) {
+        // A pack's depth (`hiz_reduce_pack`): 0..1 from near to its far
+        // plane, bottom row first; as the terrain's reversed depth it is
+        // params.z - params.w * d. Its clear (1) is open sky: 0.
+        float d = texture_at(pc.ids.y).Load(int3(p.x, int(size.y) - 1 - p.y, 0)).r;
+        return d >= 1.0 ? 0.0 : pc.params.z - pc.params.w * d;
     }
     if (level == 0) {
         return texture_at(pc.ids.y).Load(int3(p, 0)).r;
@@ -896,15 +903,28 @@ void store_level(uint level, int2 p, float depth) {
 [shader("compute")]
 [numthreads(16, 16, 1)]
 void hiz_reduce(uint3 group: SV_GroupID, uint3 thread: SV_GroupThreadID) {
+    reduce(group, thread, false);
+}
+
+// `hiz_reduce` from a shader pack's depth (Android: the pack draws the
+// world, so its depth before the hand is the occluder): converted to the
+// terrain's reversed depth with params.z - params.w * d, rows flipped.
+[shader("compute")]
+[numthreads(16, 16, 1)]
+void hiz_reduce_pack(uint3 group: SV_GroupID, uint3 thread: SV_GroupThreadID) {
+    reduce(group, thread, true);
+}
+
+void reduce(uint3 group, uint3 thread, bool pack) {
     uint level = pc.more.x;
     uint2 size = level_size(level, pc.more.yz);
     int2 t = int2(thread.xy);
-    int n0 = level == 0 && pc.params.x > 0 ? 1 : 2;
+    int n0 = level == 0 && pc.params.x > 0 && !pack ? 1 : 2;
     for (int dy = 0; dy < 2; dy++) {
         for (int dx = 0; dx < 2; dx++) {
             int2 o = int2(group.xy) * 32 + t * 2 + int2(dx, dy);
             float far = 1;
-            if (level == 0 && n0 == 2 && pc.params.y > 0) {
+            if (level == 0 && n0 == 2 && pc.params.y > 0 && !pack) {
                 // Clamped to the edge: a texel past it repeats one inside,
                 // so the min is the loop's; blocks wholly outside stay 1.
                 if (all(o * 2 < int2(size))) {
@@ -915,7 +935,7 @@ void hiz_reduce(uint3 group: SV_GroupID, uint3 thread: SV_GroupThreadID) {
             } else {
                 for (int y = 0; y < n0; y++) {
                     for (int x = 0; x < n0; x++) {
-                        far = min(far, source_depth(o * 2 + int2(x, y), size, level));
+                        far = min(far, source_depth(o * 2 + int2(x, y), size, level, pack));
                     }
                 }
             }

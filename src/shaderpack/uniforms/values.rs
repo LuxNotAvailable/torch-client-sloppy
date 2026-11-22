@@ -331,6 +331,12 @@ impl FrameValues {
         self.projection * self.view_rotation
     }
 
+    /// The projection's near and far planes (its GL depth runs between).
+    pub(crate) fn depth_planes(&self) -> (f32, f32) {
+        let (m22, m32) = (self.projection.z_axis.z, self.projection.w_axis.z);
+        (m32 / (m22 - 1.0), m32 / (m22 + 1.0))
+    }
+
     pub(crate) fn camera(&self) -> Vec3 {
         self.camera
     }

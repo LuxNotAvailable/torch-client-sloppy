@@ -13,6 +13,7 @@ use gpu_allocator::MemoryLocation;
 
 use super::bindless::{Slot, SlotKind};
 use super::targets::{DEPTH_FORMAT, PackTargets};
+use super::tiled;
 use crate::shaderpack::compile::{EntityKind, ScreenStage, Step};
 use crate::shaderpack::directives::{MAX_COLOR_TARGETS, SampleKind};
 use crate::shaderpack::expressions::CustomState;
@@ -111,6 +112,9 @@ struct Pass {
     hand: bool,
     /// Draws the cloud layer (with `entity`, blended).
     clouds: bool,
+    /// A full-screen pass that writes every pixel unblended (no discard):
+    /// what it overwrites needn't be loaded (`tiled`).
+    full_cover: bool,
 }
 
 /// Which instance set an entity-style pass draws.
@@ -196,6 +200,13 @@ pub(crate) struct PackScreen {
     /// The game's frame inputs (time of day, sky), from the snapshot.
     pub(crate) inputs: crate::shaderpack::inputs::Inputs,
     pub(crate) skipped_computes: usize,
+    /// Per pass, the images a later pass of its plan may read or draw into
+    /// (`tiled`: what to store).
+    later: Vec<std::collections::HashSet<vk::Image>>,
+    /// Images whose contents outlive a frame: uncleared targets, shadows.
+    kept: std::collections::HashSet<vk::Image>,
+    /// The last frame's projection planes (`hiz_source`).
+    depth_planes: Option<(f32, f32)>,
 }
 
 fn sampler_for(installed: &Installed, source: TextureSource, comparison: bool) -> u32 {
@@ -410,6 +421,9 @@ impl PackScreen {
             last: None,
             inputs: Default::default(),
             skipped_computes: 0,
+            later: Vec::new(),
+            kept: Default::default(),
+            depth_planes: None,
             installed,
         };
 
@@ -629,7 +643,57 @@ impl PackScreen {
             let index = bindless.add_buffer(ctx, buffer.raw).ok_or_else(full)?;
             screen.tables.push((buffer, index));
         }
+        (screen.later, screen.kept) = screen.tiled_sets();
         Ok(screen)
+    }
+
+    /// `later` and `kept` (`tiled`): every plan's passes in order, with
+    /// what each reads or draws into, depth copies and mipmaps included.
+    fn tiled_sets(
+        &self,
+    ) -> (
+        Vec<std::collections::HashSet<vk::Image>>,
+        std::collections::HashSet<vk::Image>,
+    ) {
+        use std::collections::HashSet;
+        let t = &self.targets;
+        let color = |n: u8, h: usize| t.color[n as usize].as_ref().map(|(p, _)| p[h].raw);
+        let mut later = vec![HashSet::new(); self.passes.len()];
+        for (range, _) in &self.plans {
+            let mut seen: HashSet<vk::Image> = HashSet::new();
+            for i in range.clone().rev() {
+                later[i] = seen.clone();
+                let pass = &self.passes[i];
+                let at = i - range.start;
+                seen.extend(pass.sampled.iter().copied());
+                for &(n, h) in pass.attachments.iter().flatten().chain(&pass.mipmaps) {
+                    seen.extend(color(n, h));
+                }
+                // Draws test depthtex0; copies and final's overlay read it.
+                if pass.geometry.is_some()
+                    || pass.attachments.is_none()
+                    || self.copy_depth_at == Some(at)
+                    || self.copy_no_hand_at == Some(at)
+                {
+                    seen.insert(t.depth.raw);
+                }
+            }
+        }
+        let mut kept: HashSet<vk::Image> = HashSet::new();
+        for (n, slot) in t.color.iter().enumerate() {
+            if let Some((pair, _)) = slot
+                && !self.installed.targets.settings[n].clear
+            {
+                kept.extend(pair.iter().map(|i| i.raw));
+            }
+        }
+        if let Some(s) = &t.shadow {
+            kept.insert(s.depth.raw);
+            kept.insert(s.depth_opaque.raw);
+            kept.extend(s.depth_cache.iter().map(|c| c.raw));
+            kept.extend(s.color.iter().flatten().map(|c| c.raw));
+        }
+        (later, kept)
     }
 
     fn texture_index(
@@ -1160,6 +1224,7 @@ impl PackScreen {
                 mipmaps: mipmaps.clone(),
                 hand: false,
                 clouds: false,
+                full_cover: false,
             });
         }
         let pipeline = pipelines.graphics(
@@ -1210,6 +1275,11 @@ impl PackScreen {
             mipmaps: mipmaps.clone(),
             hand: false,
             clouds: false,
+            full_cover: geometry.is_none()
+                && fragment
+                    .spirv
+                    .as_deref()
+                    .is_some_and(|w| !tiled::discards(w)),
         })
     }
 
@@ -1534,6 +1604,30 @@ impl PackScreen {
             }
             clears.extend(s.color.iter().flatten().map(|c| (c.raw, Some([1.0; 4]))));
         }
+        // Tile-based GPUs: the frame's own targets clear at their first use
+        // (`tiled`). Not on the first frame (history zeroing) nor without
+        // terrain (the scene copy writes colortex0).
+        let draws_terrain = terrain.is_some() && self.passes.iter().any(|p| p.geometry.is_some());
+        let mut batch = tiled::Batch::new(
+            tiled::on() && self.settled && draws_terrain,
+            self.kept.clone(),
+        );
+        batch.keep(output.0);
+        {
+            let start = self.plans[self.frames as usize % self.plans.len()].1;
+            let mut waits = vec![t.depth.raw, t.depth_opaque.raw];
+            waits.extend(t.depth_no_hand.iter().map(|d| d.raw));
+            for (n, slot) in t.color.iter().enumerate() {
+                if let Some((pair, _)) = slot
+                    && self.installed.targets.settings[n].clear
+                {
+                    waits.push(pair[start.current(n as u8)].raw);
+                }
+            }
+            clears.retain(|&(image, color)| {
+                !(waits.contains(&image) && batch.defer_clear(image, color))
+            });
+        }
         let uses: Vec<_> = clears.iter().map(|c| (c.0, Use::TransferDst)).collect();
         graph.pass("pack clears", &uses, &[], |cmd| unsafe {
             // SAFETY: clears of images in TRANSFER_DST.
@@ -1643,6 +1737,7 @@ impl PackScreen {
         let Some(values) = self.values.take() else {
             return;
         };
+        self.depth_planes = Some(values.depth_planes());
         let mut table = self.table.clone();
         if let Some(t) = terrain {
             for &at in &self.terrain_slots {
@@ -1708,7 +1803,9 @@ impl PackScreen {
         }
 
         let (range, _) = self.plans[self.frames as usize % self.plans.len()].clone();
+        let first_pass = range.start;
         for (at, pass) in self.passes[range].iter().enumerate() {
+            let pass_index = first_pass + at;
             if skipped(&self.installed.programs[pass.program].name) {
                 continue;
             }
@@ -1727,6 +1824,7 @@ impl PackScreen {
             }
             if !to.is_empty() {
                 let from = self.targets.depth.raw;
+                batch.before(graph, device, &[from], &to);
                 let mut uses = vec![(from, Use::TransferSrc)];
                 uses.extend(to.iter().map(|d| (*d, Use::TransferDst)));
                 let extent = self.targets.size;
@@ -1766,6 +1864,7 @@ impl PackScreen {
                 };
                 self.shadow_cache_filled = true;
                 let side = s.extent;
+                batch.before(graph, device, &[], &[]);
                 graph.pass(
                     "pack shadow cache copy",
                     &[(from, Use::TransferSrc), (to, Use::TransferDst)],
@@ -1797,6 +1896,7 @@ impl PackScreen {
                 && let Some(s) = &self.targets.shadow
             {
                 let (from, to, side) = (s.depth.raw, s.depth_opaque.raw, s.extent);
+                batch.before(graph, device, &[], &[]);
                 graph.pass(
                     "pack shadow depth copy",
                     &[(from, Use::TransferSrc), (to, Use::TransferDst)],
@@ -1831,6 +1931,7 @@ impl PackScreen {
                 && let Some((pair, format)) = &self.targets.color[0]
                 && let Some(color) = pair.iter().find(|i| pass.sampled.contains(&i.raw))
             {
+                batch.before(graph, device, &[color.raw, self.targets.depth.raw], &[]);
                 // Pack clip: depth 0..1, eye-relative (targets are stored
                 // GL-style, bottom row first).
                 let fix = Mat4::from_cols(
@@ -1851,12 +1952,25 @@ impl PackScreen {
                     },
                 );
             }
+            if !pass.mipmaps.is_empty() {
+                let reads: Vec<vk::Image> = pass
+                    .mipmaps
+                    .iter()
+                    .filter_map(|&(n, h)| {
+                        self.targets.color[n as usize]
+                            .as_ref()
+                            .map(|(p, _)| p[h].raw)
+                    })
+                    .collect();
+                batch.before(graph, device, &reads, &[]);
+            }
             for &(n, h) in &pass.mipmaps {
                 if let Some((pair, _)) = &self.targets.color[n as usize] {
                     record_mipmaps(device, graph, &pair[h]);
                 }
             }
             if let Some(groups) = pass.compute {
+                batch.before(graph, device, &pass.sampled, &[]);
                 let uses: Vec<(vk::Image, Use)> = pass
                     .sampled
                     .iter()
@@ -1929,14 +2043,14 @@ impl PackScreen {
                 .iter()
                 .map(|i| (*i, Use::SampledFragment))
                 .collect();
-            let views: Vec<vk::ImageView> = match (&pass.shadow, &pass.attachments) {
+            let views: Vec<(vk::Image, vk::ImageView)> = match (&pass.shadow, &pass.attachments) {
                 (Some(colors), _) => colors
                     .iter()
                     .filter_map(|n| self.targets.shadow.as_ref()?.color[*n as usize].as_ref())
                     .map(|image| {
                         uses.retain(|u| u.0 != image.raw);
                         uses.push((image.raw, Use::ColorAttachment));
-                        image.view
+                        (image.raw, image.view)
                     })
                     .collect(),
                 (None, Some(list)) => list
@@ -1949,12 +2063,12 @@ impl PackScreen {
                     .map(|image| {
                         uses.retain(|u| u.0 != image.raw);
                         uses.push((image.raw, Use::ColorAttachment));
-                        image.view
+                        (image.raw, image.view)
                     })
                     .collect(),
                 (None, None) => {
                     uses.push((output.0, Use::ColorAttachment));
-                    vec![output.1]
+                    vec![(output.0, output.1)]
                 }
             };
             let mut pass_buffers = buffers.clone();
@@ -2095,258 +2209,259 @@ impl PackScreen {
                 Some(1) => intern(&format!("{program} cutout")),
                 _ => intern(program),
             };
-            graph.pass(name, &uses, &pass_buffers, |cmd| unsafe {
-                // SAFETY: attachments and sampled images in the layouts the
-                // graph set; the shared layout and set.
-                let colors: Vec<vk::RenderingAttachmentInfo> = views
-                    .iter()
-                    .map(|v| {
-                        vk::RenderingAttachmentInfo::default()
-                            .image_view(*v)
-                            .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                            .load_op(vk::AttachmentLoadOp::LOAD)
-                            .store_op(vk::AttachmentStoreOp::STORE)
-                    })
-                    .collect();
-                let depth = depth_view.map(|view| {
-                    vk::RenderingAttachmentInfo::default()
-                        .image_view(view)
-                        .image_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
-                        .load_op(vk::AttachmentLoadOp::LOAD)
-                        .store_op(vk::AttachmentStoreOp::STORE)
-                });
-                let mut info = vk::RenderingInfo::default()
-                    .render_area(vk::Rect2D {
-                        offset: vk::Offset2D::default(),
-                        extent,
-                    })
-                    .layer_count(1)
-                    .color_attachments(&colors);
-                if let Some(depth) = depth.as_ref() {
-                    info = info.depth_attachment(depth);
-                }
-                device.cmd_begin_rendering(cmd, &info);
-                // A plain viewport, as wgpu's: the SPIR-V flips clip y.
-                device.cmd_set_viewport(
-                    cmd,
-                    0,
-                    &[vk::Viewport {
-                        x: 0.0,
-                        y: 0.0,
-                        width: extent.width as f32,
-                        height: extent.height as f32,
-                        min_depth: 0.0,
-                        max_depth: 1.0,
-                    }],
-                );
-                device.cmd_set_scissor(
-                    cmd,
-                    0,
-                    &[vk::Rect2D {
-                        offset: vk::Offset2D::default(),
-                        extent,
-                    }],
-                );
-                if clear_here {
-                    let clears: Vec<vk::ClearRect> = rects
-                        .iter()
-                        .flatten()
-                        .map(|&rect| vk::ClearRect {
-                            rect,
-                            base_array_layer: 0,
-                            layer_count: 1,
-                        })
-                        .collect();
-                    device.cmd_clear_attachments(
+            let set = bindless.set;
+            let member = tiled::Member {
+                name,
+                images: uses,
+                buffers: pass_buffers,
+                colors: views,
+                depth: depth_view.map(|view| (depth_image, view)),
+                extent,
+                full_cover: pass.full_cover,
+                // Draw passes, but the shadow's (cascades, partial redraws).
+                mergeable: draw.is_some() && !shadow_pass,
+                sampled: pass.sampled.clone(),
+                later: self.later[pass_index].clone(),
+                body: Box::new(move |cmd| unsafe {
+                    // SAFETY: inside the render pass `Batch::flush` begins, with
+                    // the attachments and sampled images in the layouts the
+                    // graph set; the shared layout and set.
+                    // A plain viewport, as wgpu's: the SPIR-V flips clip y.
+                    device.cmd_set_viewport(
                         cmd,
-                        &[vk::ClearAttachment {
-                            aspect_mask: vk::ImageAspectFlags::DEPTH,
-                            color_attachment: 0,
-                            clear_value: vk::ClearValue {
-                                depth_stencil: vk::ClearDepthStencilValue {
-                                    depth: 1.0,
-                                    stencil: 0,
-                                },
-                            },
+                        0,
+                        &[vk::Viewport {
+                            x: 0.0,
+                            y: 0.0,
+                            width: extent.width as f32,
+                            height: extent.height as f32,
+                            min_depth: 0.0,
+                            max_depth: 1.0,
                         }],
-                        &clears,
                     );
-                }
-                device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
-                device.cmd_bind_descriptor_sets(
-                    cmd,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    pipelines.layout,
-                    0,
-                    &[bindless.set],
-                    &[],
-                );
-                for (n, &(cascade, area)) in cascades.iter().enumerate() {
-                    let commands = cascade_commands.get(n).copied().unwrap_or(commands);
-                    let solid_leaves = u32::from(n > 0);
-                    if cascades.len() > 1 {
-                        device.cmd_set_viewport(
-                            cmd,
-                            0,
-                            &[vk::Viewport {
-                                x: area.offset.x as f32,
-                                y: area.offset.y as f32,
-                                width: area.extent.width as f32,
-                                height: area.extent.height as f32,
-                                min_depth: 0.0,
-                                max_depth: 1.0,
-                            }],
-                        );
-                        device.cmd_set_scissor(cmd, 0, &[area]);
-                    }
-                    push(
-                        ctx,
+                    device.cmd_set_scissor(
                         cmd,
-                        pipelines.layout,
-                        &Push {
-                            ids: [table_index, base, 0, cascade],
-                            more: [solid_leaves, 0, 0, 0],
-                            params: [0.0; 4],
-                            view_proj: [[0.0; 4]; 4],
-                        },
+                        0,
+                        &[vk::Rect2D {
+                            offset: vk::Offset2D::default(),
+                            extent,
+                        }],
                     );
-                    match draw {
-                        // Sky pieces: one draw each, in the snapshot's order.
-                        Some((_, t)) if sky_pass.is_some() => {
-                            let Some(e) = &t.sky else { return };
-                            device.cmd_bind_index_buffer(cmd, e.indices, 0, vk::IndexType::UINT32);
-                            let (textured, adds) = sky_pass.unwrap_or_default();
-                            for (i, &(first, count, base_vertex, texture, add)) in
-                                e.draws.iter().enumerate()
-                            {
-                                // `blended` lists the textured pieces here.
-                                if add != adds || e.blended.contains(&(i as u32)) != textured {
-                                    continue;
+                    if clear_here {
+                        let clears: Vec<vk::ClearRect> = rects
+                            .iter()
+                            .flatten()
+                            .map(|&rect| vk::ClearRect {
+                                rect,
+                                base_array_layer: 0,
+                                layer_count: 1,
+                            })
+                            .collect();
+                        device.cmd_clear_attachments(
+                            cmd,
+                            &[vk::ClearAttachment {
+                                aspect_mask: vk::ImageAspectFlags::DEPTH,
+                                color_attachment: 0,
+                                clear_value: vk::ClearValue {
+                                    depth_stencil: vk::ClearDepthStencilValue {
+                                        depth: 1.0,
+                                        stencil: 0,
+                                    },
+                                },
+                            }],
+                            &clears,
+                        );
+                    }
+                    device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
+                    device.cmd_bind_descriptor_sets(
+                        cmd,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        pipelines.layout,
+                        0,
+                        &[set],
+                        &[],
+                    );
+                    for (n, &(cascade, area)) in cascades.iter().enumerate() {
+                        let commands = cascade_commands.get(n).copied().unwrap_or(commands);
+                        let solid_leaves = u32::from(n > 0);
+                        if cascades.len() > 1 {
+                            device.cmd_set_viewport(
+                                cmd,
+                                0,
+                                &[vk::Viewport {
+                                    x: area.offset.x as f32,
+                                    y: area.offset.y as f32,
+                                    width: area.extent.width as f32,
+                                    height: area.extent.height as f32,
+                                    min_depth: 0.0,
+                                    max_depth: 1.0,
+                                }],
+                            );
+                            device.cmd_set_scissor(cmd, 0, &[area]);
+                        }
+                        push(
+                            ctx,
+                            cmd,
+                            pipelines.layout,
+                            &Push {
+                                ids: [table_index, base, 0, cascade],
+                                more: [solid_leaves, 0, 0, 0],
+                                params: [0.0; 4],
+                                view_proj: [[0.0; 4]; 4],
+                            },
+                        );
+                        match draw {
+                            // Sky pieces: one draw each, in the snapshot's order.
+                            Some((_, t)) if sky_pass.is_some() => {
+                                let Some(e) = &t.sky else { return };
+                                device.cmd_bind_index_buffer(
+                                    cmd,
+                                    e.indices,
+                                    0,
+                                    vk::IndexType::UINT32,
+                                );
+                                let (textured, adds) = sky_pass.unwrap_or_default();
+                                for (i, &(first, count, base_vertex, texture, add)) in
+                                    e.draws.iter().enumerate()
+                                {
+                                    // `blended` lists the textured pieces here.
+                                    if add != adds || e.blended.contains(&(i as u32)) != textured {
+                                        continue;
+                                    }
+                                    let texture = if texture == u32::MAX { white } else { texture };
+                                    push(
+                                        ctx,
+                                        cmd,
+                                        pipelines.layout,
+                                        &Push {
+                                            ids: [table_index, base, texture, cascade],
+                                            more: [solid_leaves, 0, 0, 0],
+                                            params: [0.0; 4],
+                                            view_proj: [[0.0; 4]; 4],
+                                        },
+                                    );
+                                    device.cmd_draw_indexed(
+                                        cmd,
+                                        count,
+                                        1,
+                                        first,
+                                        base_vertex,
+                                        i as u32,
+                                    );
                                 }
-                                let texture = if texture == u32::MAX { white } else { texture };
-                                push(
-                                    ctx,
-                                    cmd,
-                                    pipelines.layout,
-                                    &Push {
-                                        ids: [table_index, base, texture, cascade],
-                                        more: [solid_leaves, 0, 0, 0],
-                                        params: [0.0; 4],
-                                        view_proj: [[0.0; 4]; 4],
-                                    },
-                                );
-                                device.cmd_draw_indexed(
-                                    cmd,
-                                    count,
-                                    1,
-                                    first,
-                                    base_vertex,
-                                    i as u32,
-                                );
                             }
-                        }
-                        // Entities: one draw each, its texture in the push.
-                        Some((_, t)) if entity_pass.is_some() => {
-                            let set = if hand_pass {
-                                &t.hand
-                            } else if clouds_pass {
-                                &t.clouds
-                            } else {
-                                &t.entities
-                            };
-                            let Some(e) = set else {
-                                return;
-                            };
-                            device.cmd_bind_index_buffer(cmd, e.indices, 0, vk::IndexType::UINT32);
-                            let order: Vec<u32> = if entity_pass == Some(true) {
-                                e.blended.clone()
-                            } else {
-                                // The shadow pass takes the shadow-only ones
-                                // too; the rest skip them.
-                                (0..e.draws.len() as u32)
-                                    .filter(|&i| {
-                                        let only =
-                                            e.shadow_only.get(i as usize).copied().unwrap_or(false);
-                                        !e.draws[i as usize].4 && (shadow_pass || !only)
-                                    })
-                                    .collect()
-                            };
-                            for i in order {
-                                let (first, count, base_vertex, texture, _) = e.draws[i as usize];
-                                // Untextured parts (the clouds) sample white.
-                                let texture = if texture == u32::MAX { white } else { texture };
-                                push(
-                                    ctx,
+                            // Entities: one draw each, its texture in the push.
+                            Some((_, t)) if entity_pass.is_some() => {
+                                let set = if hand_pass {
+                                    &t.hand
+                                } else if clouds_pass {
+                                    &t.clouds
+                                } else {
+                                    &t.entities
+                                };
+                                let Some(e) = set else {
+                                    return;
+                                };
+                                device.cmd_bind_index_buffer(
                                     cmd,
-                                    pipelines.layout,
-                                    &Push {
-                                        ids: [table_index, base, texture, cascade],
-                                        more: [solid_leaves, 0, 0, 0],
-                                        params: [0.0; 4],
-                                        view_proj: [[0.0; 4]; 4],
-                                    },
+                                    e.indices,
+                                    0,
+                                    vk::IndexType::UINT32,
                                 );
-                                device.cmd_draw_indexed(cmd, count, 1, first, base_vertex, i);
+                                let order: Vec<u32> = if entity_pass == Some(true) {
+                                    e.blended.clone()
+                                } else {
+                                    // The shadow pass takes the shadow-only ones
+                                    // too; the rest skip them.
+                                    (0..e.draws.len() as u32)
+                                        .filter(|&i| {
+                                            let only = e
+                                                .shadow_only
+                                                .get(i as usize)
+                                                .copied()
+                                                .unwrap_or(false);
+                                            !e.draws[i as usize].4 && (shadow_pass || !only)
+                                        })
+                                        .collect()
+                                };
+                                for i in order {
+                                    let (first, count, base_vertex, texture, _) =
+                                        e.draws[i as usize];
+                                    // Untextured parts (the clouds) sample white.
+                                    let texture = if texture == u32::MAX { white } else { texture };
+                                    push(
+                                        ctx,
+                                        cmd,
+                                        pipelines.layout,
+                                        &Push {
+                                            ids: [table_index, base, texture, cascade],
+                                            more: [solid_leaves, 0, 0, 0],
+                                            params: [0.0; 4],
+                                            view_proj: [[0.0; 4]; 4],
+                                        },
+                                    );
+                                    device.cmd_draw_indexed(cmd, count, 1, first, base_vertex, i);
+                                }
                             }
-                        }
-                        // The terrain's culled commands: per pool for solid and
-                        // cutout, one far-to-near list for translucent.
-                        Some((slot, t)) if slot < 2 => {
-                            let size = crate::vk::terrain::PACK_COMMAND_SIZE;
-                            let whole = [area];
-                            // A partial redraw: this cascade's rectangles,
-                            // none where it didn't change.
-                            let scissors: &[vk::Rect2D] = if rects.is_empty() {
-                                &whole[..]
-                            } else {
-                                rects.get(n).map_or(&[][..], |r| &r[..])
-                            };
-                            for scissor in scissors {
-                                device.cmd_set_scissor(cmd, 0, std::slice::from_ref(scissor));
-                                for (p, (_, indices)) in t.pools.iter().enumerate() {
-                                    let list = p as u64 * 2 + slot as u64;
+                            // The terrain's culled commands: per pool for solid and
+                            // cutout, one far-to-near list for translucent.
+                            Some((slot, t)) if slot < 2 => {
+                                let size = crate::vk::terrain::PACK_COMMAND_SIZE;
+                                let whole = [area];
+                                // A partial redraw: this cascade's rectangles,
+                                // none where it didn't change.
+                                let scissors: &[vk::Rect2D] = if rects.is_empty() {
+                                    &whole[..]
+                                } else {
+                                    rects.get(n).map_or(&[][..], |r| &r[..])
+                                };
+                                for scissor in scissors {
+                                    device.cmd_set_scissor(cmd, 0, std::slice::from_ref(scissor));
+                                    for (p, (_, indices)) in t.pools.iter().enumerate() {
+                                        let list = p as u64 * 2 + slot as u64;
+                                        device.cmd_bind_index_buffer(
+                                            cmd,
+                                            *indices,
+                                            0,
+                                            vk::IndexType::UINT32,
+                                        );
+                                        ctx.draw_indexed_indirect_count(
+                                            cmd,
+                                            commands.0,
+                                            list * u64::from(t.capacity) * size,
+                                            commands.1,
+                                            list * 4,
+                                            t.capacity,
+                                            size as u32,
+                                        );
+                                    }
+                                }
+                            }
+                            Some((_, t)) => {
+                                let (indices, start, count) = t.translucent;
+                                if count > 0 {
+                                    let size = crate::vk::terrain::PACK_COMMAND_SIZE;
                                     device.cmd_bind_index_buffer(
                                         cmd,
-                                        *indices,
+                                        indices,
                                         0,
                                         vk::IndexType::UINT32,
                                     );
-                                    ctx.draw_indexed_indirect_count(
+                                    device.cmd_draw_indexed_indirect(
                                         cmd,
                                         commands.0,
-                                        list * u64::from(t.capacity) * size,
-                                        commands.1,
-                                        list * 4,
-                                        t.capacity,
+                                        u64::from(start) * size,
+                                        count,
                                         size as u32,
                                     );
                                 }
                             }
+                            None => device.cmd_draw(cmd, 3, 1, 0, 0),
                         }
-                        Some((_, t)) => {
-                            let (indices, start, count) = t.translucent;
-                            if count > 0 {
-                                let size = crate::vk::terrain::PACK_COMMAND_SIZE;
-                                device.cmd_bind_index_buffer(
-                                    cmd,
-                                    indices,
-                                    0,
-                                    vk::IndexType::UINT32,
-                                );
-                                device.cmd_draw_indexed_indirect(
-                                    cmd,
-                                    commands.0,
-                                    u64::from(start) * size,
-                                    count,
-                                    size as u32,
-                                );
-                            }
-                        }
-                        None => device.cmd_draw(cmd, 3, 1, 0, 0),
                     }
-                }
-                device.cmd_end_rendering(cmd);
-            });
+                }),
+            };
+            batch.add(graph, device, member);
         }
 
         // Debug: MC_PACK_SHOW shows a target instead (shadowcolor0, or
@@ -2363,6 +2478,9 @@ impl PackScreen {
                 .as_ref()
                 .map(|(pair, _)| &pair[half.min(1)])
         });
+        let shown_raw: Vec<vk::Image> = shown.iter().map(|i| i.raw).collect();
+        batch.before(graph, device, &shown_raw, &[]);
+        batch.finish(graph, device);
         if let Some(image) = shown {
             let (src, dst) = (image.extent, output.2);
             graph.pass(
@@ -2401,6 +2519,16 @@ impl PackScreen {
             .collect();
         graph.pass("pack settle", &settle, &[], |_| {});
         self.settled = true;
+    }
+
+    /// Android: the occluders for the terrain's next cull (`pack_pyramid`):
+    /// the depth before the hand, its bindless index and size, and the
+    /// projection planes it was drawn with.
+    pub(crate) fn hiz_source(&self) -> Option<((vk::Image, u32), vk::Extent2D, (f32, f32))> {
+        self.copy_no_hand_at?;
+        let image = self.targets.depth_no_hand.as_ref()?;
+        let index = self.indexed.depth_no_hand?;
+        Some(((image.raw, index), self.targets.size, self.depth_planes?))
     }
 
     /// The pack's block ids, for the mesher's pack quads.
@@ -2789,7 +2917,7 @@ fn merge_rects(rects: &mut Vec<(Vec2, Vec2)>, most: usize) {
 }
 
 /// A program's name as a pass label for GPU timing (leaked once per name).
-fn intern(name: &str) -> &'static str {
+pub(super) fn intern(name: &str) -> &'static str {
     static NAMES: std::sync::Mutex<Vec<(String, &'static str)>> = std::sync::Mutex::new(Vec::new());
     let mut names = NAMES.lock().unwrap_or_else(|e| e.into_inner());
     if let Some((_, n)) = names.iter().find(|(k, _)| k == name) {

@@ -216,6 +216,24 @@ const ALL: &[Var] = &[
         enabled: cfg!(feature = "vulkan"),
     },
     Var {
+        name: "MC_PACK_AB",
+        what: "an Android pack feature to alternate every 2 s, logging each side's GPU time: tiled (merged render passes, load/store ops) or hiz (occlusion from the pack's depth)",
+        default: "off",
+        enabled: cfg!(feature = "vulkan"),
+    },
+    Var {
+        name: "MC_PACK_TILED",
+        what: "1 records the pack tiled (as on Android) on any GPU, to compare images",
+        default: "on Android only",
+        enabled: cfg!(feature = "vulkan"),
+    },
+    Var {
+        name: "MC_PACK_TILED_OFF",
+        what: "parts of the pack's tiled recording to leave out (comma-separated: merge, store, load, clear), to bisect a wrong image",
+        default: "off",
+        enabled: cfg!(feature = "vulkan"),
+    },
+    Var {
         name: "MC_PACK_SKIP",
         what: "leave out the named shader pack programs' passes (comma-separated), to bisect a pass that fails",
         default: "off",
