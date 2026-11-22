@@ -106,6 +106,18 @@ same GPU ms): compare GPU ms across runs, fps only within one.
 vkview (`--input-ab`, centre camera): terrain 3.5 / 2.5 ms, total 5.8 /
 4.6 ms, pulled / slim; pixel-identical on desktop.
 
+Perf report (`MC_PERF_AUTOSTART=90`, 10 s, pulled from
+`files/profiles/`):
+
+| Step | avg fps | 1% low | hitches > 50 ms | frame p99 |
+|---|---|---|---|---|
+| Before | 75.1 | 17.3 | 16 | 54 ms |
+| `smaps_rollup` off the main thread | 81.7 | 41.5 | 0 | 21 ms |
+
+The HUD's RAM readout (on by default) read `/proc/self/smaps_rollup` on
+the main thread every 500 ms: ~40 ms each on the Pixel at 800 MiB.
+Lazy cull loads (`CULL_LAZY`): vkview terrain cull 0.625 -> 0.557 ms.
+
 Baseline cause: the world remeshes ~35 sections a second while standing
 still; each remesh re-ran the cave flood fill (~40 ms on the phone, up to
 9 times per 2 s) and the translucent ranking (~4 ms), and the re-sort

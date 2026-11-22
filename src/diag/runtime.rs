@@ -128,7 +128,33 @@ fn rss_bytes() -> u64 {
     }
 }
 
+/// Android: `smaps_rollup` walks every mapping (~40 ms on the Pixel at
+/// 800 MiB), a hitch on the main thread twice a second. A thread of its
+/// own reads it; callers get the last value.
+#[cfg(target_os = "android")]
 fn rss_anon_bytes() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+    static LAST: AtomicU64 = AtomicU64::new(0);
+    static STARTED: OnceLock<()> = OnceLock::new();
+    STARTED.get_or_init(|| {
+        let _ = std::thread::Builder::new()
+            .name("smaps sampler".to_owned())
+            .spawn(|| {
+                loop {
+                    LAST.store(read_rss_anon_bytes(), Relaxed);
+                    std::thread::sleep(SAMPLE_WINDOW);
+                }
+            });
+    });
+    LAST.load(Relaxed)
+}
+
+#[cfg(not(target_os = "android"))]
+fn rss_anon_bytes() -> u64 {
+    read_rss_anon_bytes()
+}
+
+fn read_rss_anon_bytes() -> u64 {
     {
         if !MEMORY_METRICS {
             return 0;

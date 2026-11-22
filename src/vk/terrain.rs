@@ -166,6 +166,8 @@ const CULL_CUTOUT_BUCKETS: u32 = 128;
 const CULL_ANGLED_BUCKETS: u32 = 256;
 /// The solid axis buckets' plane bands (Exact Face Culling).
 const CULL_FACE_BANDS: u32 = 512;
+/// Load a slot's ranges and bands only once kept (`MOBILE`).
+const CULL_LAZY: u32 = 1024;
 const CULL_FRUSTUM: u32 = 8;
 const CULL_NO_WAVE: u32 = 16;
 const CULL_BELOW: u32 = 32;
@@ -3375,6 +3377,9 @@ impl TerrainScene {
         }
         if !self.options.wave {
             flags |= CULL_NO_WAVE;
+        }
+        if MOBILE {
+            flags |= CULL_LAZY;
         }
         let cull_view = CullView {
             view_proj: cull_proj.to_cols_array_2d(),

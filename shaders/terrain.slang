@@ -115,8 +115,19 @@ void cull(uint3 id: SV_DispatchThreadID) {
     // past the view (zeros).
     float3 camera = asfloat(view.Load4(VIEW_CULL_EYE).xyz);
     Slot s = (Slot)0;
+    bool lazy = (flags & CULL_LAZY) != 0;
     if (index < pc.more.x) {
-        s = buffer_at(pc.ids.x).Load<Slot>(index * SLOT_SIZE);
+        RWByteAddressBuffer at = buffer_at(pc.ids.x);
+        uint o = index * SLOT_SIZE;
+        if (lazy) {
+            // The box, origin and flags; the rest once kept (below).
+            s.lo = asfloat(at.Load4(o));
+            s.hi = asfloat(at.Load4(o + 16));
+            s.origin_base = asint(at.Load4(o + 32));
+            s.info = at.Load4(o + 48);
+        } else {
+            s = at.Load<Slot>(o);
+        }
     }
     bool live = (s.info.z & SLOT_LIVE) != 0;
     bool translucent = live && (s.info.z & SLOT_TRANSLUCENT) != 0;
@@ -147,6 +158,15 @@ void cull(uint3 id: SV_DispatchThreadID) {
     }
     if (keep && (flags & CULL_HIZ) != 0) {
         keep = !hiz_occluded(view, lo, hi);
+    }
+    if (lazy && (keep || translucent)) {
+        RWByteAddressBuffer at = buffer_at(pc.ids.x);
+        uint o = index * SLOT_SIZE;
+        s.ranges = at.Load4(o + 64);
+        s.buckets0 = at.Load4(o + 80);
+        s.buckets1 = at.Load4(o + 96);
+        s.spare = at.Load4(o + 112);
+        s.more = at.Load4(o + 128);
     }
     int base = s.origin_base.w;
     uint first = s.ranges.x;
@@ -182,7 +202,8 @@ void cull(uint3 id: SV_DispatchThreadID) {
     for (uint b = 0; b < 6; b++) {
         uint total = counts[b];
         // Counts through the first k stored bands: 0, the 15 stored, total.
-        uint first_band = band_count(s, slot_words, bands_at, b * 15);
+        // Culled under CULL_LAZY: no band words (and `through` reads none).
+        uint first_band = lazy && !solid ? 0xFFFFu : band_count(s, slot_words, bands_at, b * 15);
         bool has = banded && first_band != 0xFFFF;
         bool seen = any_side || facing[b];
         float e = b < 2 ? eye.x : (b < 4 ? eye.y : eye.z);
