@@ -71,7 +71,8 @@ Pixel results in `ANDROID_PERF.md` (`input` wins ~5% of frame).
 |---|---|---|
 | Vertices | 20-byte `PackedVertex` pulled from a storage buffer by bindless index; packed and greedy-merged records | the same vertex through fixed-function input (binding 0, stride 20; `terrain_fixed::ATTRIBUTES`) |
 | Packing, greedy | on | off (needs plain vertices) |
-| Vertex shader | `terrain_vertex` (`shaders/terrain.slang`) | `terrain_vertex_fixed` (`shaders/terrain_mobile.slang`); fragment stages shared |
+| Vertex shader | `terrain_vertex` (`shaders/terrain.slang`) | `terrain_vertex_fixed` (`shaders/terrain_mobile.slang`) |
+| Vertex-to-fragment | `VertexOut`: uv, colour (4), world, slot, flags, merged (15 values) | `MobileOut`: uv, colour (3), world, flags (9 values); `*_mobile` fragment entries widen it and run the shared `terrain_shade`. The texture-index debug view colours every slot alike |
 | Culling | compute: caves, frustum, Hi-Z, face buckets and bands, cutout rings | CPU (`terrain_fixed::cull`): caves, frustum, solid axis buckets, torch reach |
 | Draws | one `DrawIndexedIndirectCount` per pool and kind | one `vkCmdDrawIndexed` per bucket run, first instance = slot |
 | Translucent | one indirect draw, ranked far to near | direct draws in the same rank order |

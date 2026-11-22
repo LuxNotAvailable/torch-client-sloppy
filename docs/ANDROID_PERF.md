@@ -91,6 +91,21 @@ spawn, steady state after chunks load (~35.7k section layers, 47 pools).
 | `MOBILE` terrain bookkeeping | ~68 | 8.1 | 1.0 | 13.4 |
 | Hi-Z level 1 by gathers | ~76 | 7.0 | 1.0 | 11.75 (Hi-Z 2.6 -> 1.4) |
 
+The rows above ran with time and weather advancing (noon-ish, clear by
+luck); from here the server's gamerules stop time, weather and mob spawns,
+and every run starts at noon, clear (`rcon.py`). One later run under rain
+showed translucent 6.8 ms and 54 fps: never bench with weather on.
+The phone also heats over back-to-back runs (fps drifts 74 -> 67 at the
+same GPU ms): compare GPU ms across runs, fps only within one.
+
+| Locked conditions | fps | renderer system | GPU | terrain |
+|---|---|---|---|---|
+| Slim vertex input (default) | 74, 67 | 6.7, 7.2 | 11.67, 11.74 | 5.23, 5.43 |
+| `MC_NATIVE_TERRAIN=pulled` (PC path) | 68, 72 | 7.4, 7.0 | 12.74, 12.68 | 7.13, 7.20 |
+
+vkview (`--input-ab`, centre camera): terrain 3.5 / 2.5 ms, total 5.8 /
+4.6 ms, pulled / slim; pixel-identical on desktop.
+
 Baseline cause: the world remeshes ~35 sections a second while standing
 still; each remesh re-ran the cave flood fill (~40 ms on the phone, up to
 9 times per 2 s) and the translucent ranking (~4 ms), and the re-sort

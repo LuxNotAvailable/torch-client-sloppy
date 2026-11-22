@@ -3,7 +3,8 @@
 # real game, never over it), joins the local bench server through
 # `adb reverse`, stands at spawn for $SECS seconds and writes the game's
 # log to $OUT/bench.log. The server: target/bench-server (official jar,
-# offline, creative, fixed seed), started separately.
+# offline, creative, fixed seed, RCON on localhost; gamerules advance_time,
+# advance_weather and spawn_* false), started separately.
 #
 #   tools/bench-apk/run.sh [KEY=VALUE ...]   # extra env.txt lines
 #
@@ -42,6 +43,9 @@ adb push "$(win "$tmp/launch.txt")" $D/launch.txt > /dev/null
 adb push "$(win "$tmp/options.json")" $D/options.json > /dev/null
 rm -rf "$tmp"
 adb reverse tcp:25565 tcp:25565 > /dev/null
+# Fixed conditions: the world's gamerules stop time, weather and mob
+# spawns (set once); every run starts at noon in clear weather.
+python -I "$(win "$here/rcon.py")" "time set noon" "weather clear" > /dev/null
 adb shell input keyevent KEYCODE_WAKEUP
 adb shell am force-stop $P
 adb logcat -c

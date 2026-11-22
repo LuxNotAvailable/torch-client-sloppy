@@ -835,6 +835,9 @@ impl EntityScene {
             );
             device.cmd_dispatch(cmd, count.div_ceil(64).max(1), 1, 1);
         });
+        if !super::terrain::STATS_READBACK {
+            return Ok(());
+        }
         let readback = self.readback[slot].raw;
         graph.pass(
             "entity counts readback",

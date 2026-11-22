@@ -122,6 +122,10 @@ const NEAR: f32 = 0.05;
 /// output; PC keeps the plain path.
 const MOBILE: bool = cfg!(target_os = "android");
 
+/// The draw-count readbacks feed only vkview's summary: the phone's game
+/// skips them, and the transfers that split its compute from its draws.
+pub(super) const STATS_READBACK: bool = !(MOBILE && cfg!(not(feature = "vkview_apk")));
+
 // The game's halved pools (clean-up 12d).
 #[cfg(not(target_os = "android"))]
 const POOL_VERTICES: u32 = 1_600_000;
@@ -1204,9 +1208,9 @@ impl TerrainScene {
         let fixed_module = if options.fixed != FixedMode::Off {
             let m = pipelines.module(ctx, super::shaders::TERRAIN_MOBILE)?;
             for (fragment, blend) in [
-                (c"terrain_solid", false),
-                (c"terrain_cutout", false),
-                (c"terrain_translucent", true),
+                (c"terrain_solid_mobile", false),
+                (c"terrain_cutout_mobile", false),
+                (c"terrain_translucent_mobile", true),
             ] {
                 let Spec::Graphics(mut g) = stream(fragment, vk::CullModeFlags::BACK, true, blend)
                 else {
@@ -1214,7 +1218,6 @@ impl TerrainScene {
                 };
                 g.module = m;
                 g.vertex = c"terrain_vertex_fixed".to_owned();
-                g.fragment_module = Some(module);
                 g.vertex_input = Some(super::pipeline::VertexInput {
                     stride: fixed::STRIDE,
                     attributes: fixed::ATTRIBUTES,
@@ -3563,7 +3566,7 @@ impl TerrainScene {
 
             let readback = self.readback[slot].raw;
             let lists = self.pools.len() as u64 * 2;
-            if lists > 0 {
+            if lists > 0 && STATS_READBACK {
                 graph.pass(
                     "terrain counts readback",
                     &[],
