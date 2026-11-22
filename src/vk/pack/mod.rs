@@ -7,8 +7,13 @@
 //! - `targets`: the colour targets (each a pair the passes flip between),
 //!   the depth copies and the shadow maps, at the formats the pack asks for
 //!   or the closest the device can blend and filter (6.2, step 1).
-//!
-//! Passes, pipelines and bindings follow in the next steps.
+//! - `bindless`: each program's resources moved onto the shared bindless set.
+//! - `screen`: the passes, pipelines and bindings: shadow, geometry (the
+//!   terrain's culled commands), deferred, composite, final; and the depth
+//!   the terrain's next occlusion cull reads (`hiz_source`).
+//! - `tiled`: render passes merged, with load and store ops to suit tile
+//!   GPUs (Android; `MC_PACK_TILED=1` on desktop), and the in-run A/B
+//!   switches (`MC_PACK_AB`).
 
 pub mod bindless;
 pub mod screen;

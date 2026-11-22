@@ -3,6 +3,12 @@
 Map for finding code. Start here, then the target module's `mod.rs` `//!` doc.
 Searches skip data files (`.ignore`); use `rg --no-ignore` to reach them.
 
+**Two builds, one tree.** PC (desktop) and Android share this code. Every
+Android-only path sits behind `cfg(target_os = "android")`, `mobile_ui`,
+`vk::terrain::MOBILE` or the built-in pack's `MC_OS_ANDROID`, and every
+difference is listed in `docs/ANDROID_VS_PC.md` (read it before touching
+platform-split code).
+
 ## Flow
 
 Network (`eagler`/azalea, `protocol` hops) feeds `client` (packets, tick,
@@ -19,7 +25,7 @@ meshes chunk sections (on `client`'s worker). `vk` (native Vulkan) draws them;
 |---|---|---|
 | `lib.rs` | crate root, `run()`, shared statics | `run` |
 | `app` | Bevy app setup (`systems::run`), input and keybind actions, intents, the frame's `FrameView`, app state, screenshots | `systems.rs`, `input.rs` |
-| `audio` | sound engine, categories, music, ambience, subtitles | `mod.rs` |
+| `audio` | sound engine (rodio/cpal; on Android through Oboe, its stream closed on suspend and reopened on resume), categories, music, ambience, subtitles, output devices (desktop) | `mod.rs`, `engine.rs` |
 | `blockentities` | block entity models (`render/`) and client sim (`sim/`) | `mod.rs` |
 | `blocks` | blockstate registry, model baking, per-state `info` | `info.rs`, `bake.rs` |
 | `client` | connection, packet handlers, game tick, GUI bus, chunk meshing worker, dimension types, sky timelines, server post effects; the frame's `View` (cameras, fog) renderers read | `tick.rs`, `bus.rs`, `packets.rs`, `view.rs` |
@@ -32,16 +38,16 @@ meshes chunk sections (on `client`'s worker). `vk` (native Vulkan) draws them;
 | `lighting` | client light engine (sky + block), light thread, lightmap colours and levels (`lightmap`) | `level.rs`, `engine.rs` |
 | `mobile` | touch controls (`mobile_ui`) | `mod.rs` |
 | `modules` | click-GUI modules (ESP, zoom, freecam, ...) and their store | `list.rs`, `registry.rs` |
-| `platform` | OS/web/Android abstraction: env, storage, http, input, time | `mod.rs` |
+| `platform` | OS/web/Android abstraction: env (every `MC_*` variable, `env.rs`), storage, http, input, time, lifecycle notices (`notify`) | `mod.rs`, `env.rs` |
 | `play` | player actions: interaction, placement, riding, vehicles, commands | `interaction.rs`, `placement.rs` |
 | `protocol` | multi-version support: packet tables, id remaps, hops | `hop.rs` (recipe at top) |
 | `scene` | the Bevy-side scene: cameras, entity and hand models, anims, skins, sky, clouds, weather, tethers, overlays, world text, block atlas; fills `draw` and `View` (`view_sync`) | `mod.rs`, `entity_draw.rs`, `hand.rs` |
 | `resourcepacks` | pack list, mounting, Modrinth, Torch Default pack | `mod.rs`, `TORCH_DEFAULT_PACK.md` |
-| `shaderpack` | Iris/OptiFine pack loading: properties, preprocess, programs; compiling GLSL packs to WGSL, and binding the built-in pack's precompiled SPIR-V (`compile/`, `install`, `spirv`); pack block ids and vertex data; uniforms (`uniforms/`, `inputs`, `frame_state`) | `pipeline.rs`, `compile/mod.rs`, `install.rs` |
+| `shaderpack` | Iris/OptiFine pack loading: properties, preprocess, programs; compiling GLSL packs to WGSL (the native terrain prelude, `compile/preludes.rs`, reads `vk::terrain`'s slots and pack quads), and binding the built-in pack's precompiled SPIR-V (`compile/`, `install`, `spirv`); which packs are offered (`discover`: the built-in one only on Android); pack block ids and vertex data; uniforms (`uniforms/`, `inputs`, `frame_state`) | `pipeline.rs`, `compile/mod.rs`, `install.rs` |
 | `terrain` | section meshing for both renderers: block geometry, light, CTM, vertex layout, cave visibility, block animations; streaming section changes to the renderer and its listeners (`stream`); the renderer's terrain inputs (`textures`) and occlusion switch (`hiz`) | `mod.rs`, `mesh.rs`, `stream.rs` |
 | `text` | fonts, glyph layout, text components | `mod.rs` |
 | `util` | vanilla-parity helpers (`mth`, `javarandom`), particles, packs, zip | `mth.rs` |
-| `vk` | native Vulkan renderer and `vkview`; the mobile fixed terrain path (`terrain_fixed.rs`) | `mod.rs`, `live.rs` |
+| `vk` | native Vulkan renderer and `vkview`: the game's frame (`live.rs`; on a turned display, drawn turned straight into the swapchain, or upright and turned once under a pack), terrain (`terrain.rs`: GPU cull, Hi-Z occlusion, also from a pack's depth, `pack_pyramid`), shader packs (`pack/`: targets, screen passes, bindless, `tiled` render passes for tile GPUs); the mobile fixed terrain path (`terrain_fixed.rs`) | `mod.rs`, `live.rs`, `pack/mod.rs` |
 | `voice` | Simple Voice Chat client | `mod.rs` |
 
 ## Outside `src/`
@@ -50,11 +56,12 @@ meshes chunk sections (on `client`'s worker). `vk` (native Vulkan) draws them;
 |---|---|
 | `shaders/*.slang` | Vulkan shaders (`build.rs` compiles them) |
 | `src/shaderpack/builtin/pack/**/*.slang` | the built-in shader pack, in Slang; `build.rs` compiles it to SPIR-V behind the engine prelude in `builtin/iris/` |
-| `tools/` | generators (`gen_*.py`, `protogen.py`), asset and build scripts |
+| `tools/` | generators (`gen_*.py`, `protogen.py`), asset and build scripts; `bench-apk/` (the Android game bench, beside the real app) and `vkview-apk/` (the viewer as an Android app) |
 | `vendor/` | patched crates; read `vendor/PATCHES.md` first |
 | `crates/torch-opus` | safe Opus bindings |
 | `reference/minecraft-<ver>/` | decompiled vanilla, for parity checks (git-ignored) |
 | `android/`, `web/`, `fastlane/` | platform shells and store metadata |
+| `docs/` | `ANDROID_VS_PC.md` (every build difference), `ANDROID_SPECIFICS.md` (why the phone differs), `ANDROID_PERF.md` (Pixel measurements), `PC_CANDIDATES.md` (Android findings for PC: applied, and why the rest wasn't), `SESSION_CHECKPOINT.md` (the Android work's state and next steps) |
 
 ## Data files (skip unless the task is about their values)
 
