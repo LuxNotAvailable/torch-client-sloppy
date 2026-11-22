@@ -55,7 +55,7 @@ desktop (PC) build, and where. Keep the two from leaking into each other.
 | Terrain cull | loads the whole slot | `CULL_LAZY`: ranges and band words only for kept slots (same commands) |
 | Hi-Z | every frame | every second frame (`HIZ_EVERY_OTHER`); level 1 from one `GatherRed` per 2 × 2 (`hiz_reduce` params.y, same values; vkview Hi-Z 2.2 -> 1.24 ms) |
 | Detail atlas tiles | up to 32 px | `TILE_PX` |
-| Terrain bookkeeping (`vk::terrain::MOBILE`) | every remesh re-runs the cave flood fill (every 10 frames) and re-ranks translucent layers; the translucent re-sort scans every layer each frame | a remesh that keeps its cave visibility keeps its visible bit and rank; the re-sort scans only on a new eye block or a budget-cut pass. Same output |
+| Terrain bookkeeping (`vk::terrain::MOBILE`) | every remesh re-runs the cave flood fill (every 10 frames) and re-ranks translucent layers; the translucent re-sort scans every layer each frame | a remesh that keeps its cave visibility keeps its visible bit and rank; the re-sort scans only on a new eye block or a budget-cut pass; the flood fill indexes dense arrays on its grid instead of hashing (`fill_dense`, ~40 -> ~10 ms per fill at RD 32). Same output |
 | Terrain path | GPU-driven, packed + greedy, pulled vertices | GPU-driven, **vertex input** (`FixedMode::Input`): plain vertices, packing and greedy off (`live::terrain_options`). `MC_NATIVE_TERRAIN=pulled` restores the PC path |
 
 ### Fixed terrain (mobile path, under test)

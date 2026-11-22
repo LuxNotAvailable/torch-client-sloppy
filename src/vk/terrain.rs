@@ -1024,6 +1024,9 @@ pub struct TerrainScene {
     /// `MOBILE`: the eye block the translucent sort last scanned for, and
     /// whether that scan left layers for later (budget).
     sort_scanned: Option<IVec3>,
+    /// `MOBILE`: `fill_dense`'s arrays, kept between fills.
+    dense_vis: Vec<VisibilitySet>,
+    dense_slots: Vec<[u32; 2]>,
     sort_pending: bool,
     /// `MOBILE`: the ranks changed without a re-rank (a replaced layer took
     /// its old rank); upload them.
@@ -1457,6 +1460,8 @@ impl TerrainScene {
             visible_dirty: true,
             fill_for: None,
             sort_scanned: None,
+            dense_vis: Vec::new(),
+            dense_slots: Vec::new(),
             sort_pending: false,
             ranks_upload: false,
             sections_changed: false,
@@ -2964,6 +2969,10 @@ impl TerrainScene {
             y_lo = y_lo.min(y);
             y_hi = y_hi.max(y);
         }
+        if MOBILE {
+            self.fill_dense(here, radius.min(64), y_lo, y_hi);
+            return;
+        }
         let vis = &self.vis;
         let reached = crate::terrain::cave::flood_fill(
             (here.x, here.y, here.z),
@@ -2983,6 +2992,60 @@ impl TerrainScene {
                 }
             }
         }
+        self.stats.reached = count;
+        self.visible_dirty = true;
+    }
+
+    /// `fill_visibility` over dense arrays (`MOBILE`): the visibility sets
+    /// and each cell's slots laid out on the fill's own grid, so the fill
+    /// and the marking index instead of hashing (~100k lookups each).
+    fn fill_dense(&mut self, here: IVec3, radius: i32, y_lo: i32, y_hi: i32) {
+        let (ox, oz) = (here.x - radius, here.z - radius);
+        let side = (2 * radius + 1) as usize;
+        let dim_y = (((y_hi - y_lo) / 16) + 1).max(1) as usize;
+        // As `cave::Grid::index`.
+        let index = |(x, y, z): (i32, i32, i32)| -> Option<usize> {
+            let (x, z, y) = (x - ox, z - oz, (y - y_lo).div_euclid(16));
+            if x < 0 || z < 0 || y < 0 {
+                return None;
+            }
+            let (x, y, z) = (x as usize, y as usize, z as usize);
+            (x < side && z < side && y < dim_y).then(|| (y * side + z) * side + x)
+        };
+        let cells = side * side * dim_y;
+        let mut dense = std::mem::take(&mut self.dense_vis);
+        dense.clear();
+        dense.resize(cells, VisibilitySet::all());
+        for (&pos, &set) in &self.vis {
+            if let Some(i) = index(pos) {
+                dense[i] = set;
+            }
+        }
+        let mut slots = std::mem::take(&mut self.dense_slots);
+        slots.clear();
+        slots.resize(cells, [u32::MAX; 2]);
+        for (&(o, water), entry) in &self.entries {
+            if let Some(i) = index((o[0] >> 4, o[1], o[2] >> 4)) {
+                slots[i][usize::from(water)] = entry.slot;
+            }
+        }
+        let reached =
+            crate::terrain::cave::flood_fill((here.x, here.y, here.z), radius, y_lo, y_hi, |pos| {
+                index(pos).map_or(VisibilitySet::all(), |i| dense[i])
+            });
+        self.visible_bits.iter_mut().for_each(|w| *w = 0);
+        let mut count = 0;
+        for pos in reached {
+            let Some(i) = index(pos) else { continue };
+            for slot in slots[i] {
+                if slot != u32::MAX {
+                    self.visible_bits[slot as usize / 32] |= 1 << (slot % 32);
+                    count += 1;
+                }
+            }
+        }
+        self.dense_vis = dense;
+        self.dense_slots = slots;
         self.stats.reached = count;
         self.visible_dirty = true;
     }
