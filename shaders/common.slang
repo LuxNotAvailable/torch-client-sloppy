@@ -27,6 +27,7 @@ struct Push {
 // The sampler slots `bindless.rs` fills at startup.
 static const uint SAMPLER_NEAREST = 0;
 static const uint SAMPLER_LINEAR = 1;
+static const uint SAMPLER_NEAREST_CLAMP = 2;
 
 Texture2D texture_at(uint index) {
     return g_textures[NonUniformResourceIndex(index)];

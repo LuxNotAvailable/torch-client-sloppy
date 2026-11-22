@@ -4099,7 +4099,13 @@ impl TerrainScene {
                         &Push {
                             ids: [grown.index, depth.1, 0, 0],
                             more: [base, size.0, size.1, *levels],
-                            params: [f32::from(u8::from(quarter)), 0.0, 0.0, 0.0],
+                            // y: level 1 by gathers (`MOBILE`).
+                            params: [
+                                f32::from(u8::from(quarter)),
+                                f32::from(u8::from(MOBILE)),
+                                0.0,
+                                0.0,
+                            ],
                             view_proj: [[0.0; 4]; 4],
                         },
                     );

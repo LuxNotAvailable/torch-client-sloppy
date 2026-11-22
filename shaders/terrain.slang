@@ -866,7 +866,9 @@ void store_level(uint level, int2 p, float depth) {
 // texel keeps the farthest depth (the smallest, with reversed depth).
 // Push: ids.x pyramid buffer, ids.y depth texture, more.x source level,
 //       more.yz the depth's size, more.w the top level; params.x > 0 reads
-//       one depth texel per 2 × 2 (quarter-res, not conservative).
+//       one depth texel per 2 × 2 (quarter-res, not conservative);
+//       params.y > 0 reads each full-res 2 × 2 with one gather (Android;
+//       the same farthest depth).
 [shader("compute")]
 [numthreads(16, 16, 1)]
 void hiz_reduce(uint3 group: SV_GroupID, uint3 thread: SV_GroupThreadID) {
@@ -878,9 +880,19 @@ void hiz_reduce(uint3 group: SV_GroupID, uint3 thread: SV_GroupThreadID) {
         for (int dx = 0; dx < 2; dx++) {
             int2 o = int2(group.xy) * 32 + t * 2 + int2(dx, dy);
             float far = 1;
-            for (int y = 0; y < n0; y++) {
-                for (int x = 0; x < n0; x++) {
-                    far = min(far, source_depth(o * 2 + int2(x, y), size, level));
+            if (level == 0 && n0 == 2 && pc.params.y > 0) {
+                // Clamped to the edge: a texel past it repeats one inside,
+                // so the min is the loop's; blocks wholly outside stay 1.
+                if (all(o * 2 < int2(size))) {
+                    float4 g = texture_at(pc.ids.y).GatherRed(
+                        g_samplers[SAMPLER_NEAREST_CLAMP], (float2(o * 2) + 1.0) / float2(size));
+                    far = min(min(g.x, g.y), min(g.z, g.w));
+                }
+            } else {
+                for (int y = 0; y < n0; y++) {
+                    for (int x = 0; x < n0; x++) {
+                        far = min(far, source_depth(o * 2 + int2(x, y), size, level));
+                    }
                 }
             }
             tile[t.y * 2 + dy][t.x * 2 + dx] = far;

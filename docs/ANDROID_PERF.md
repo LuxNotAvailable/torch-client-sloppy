@@ -89,6 +89,7 @@ spawn, steady state after chunks load (~35.7k section layers, 47 pools).
 |---|---|---|---|---|
 | Baseline (vertex input default) | ~55 | 12.9 | 6.9 (rank+order 4.3, sort translucent 1.6) | 14.7 |
 | `MOBILE` terrain bookkeeping | ~68 | 8.1 | 1.0 | 13.4 |
+| Hi-Z level 1 by gathers | ~76 | 7.0 | 1.0 | 11.75 (Hi-Z 2.6 -> 1.4) |
 
 Baseline cause: the world remeshes ~35 sections a second while standing
 still; each remesh re-ran the cave flood fill (~40 ms on the phone, up to
