@@ -6,6 +6,7 @@
 //!         [--view shaded|normals|texture] [--screenshot FILE.png]
 //!         [--terrain DIR [--camera X,Y,Z,YAW,PITCH|game] [--no-hiz] [--no-vis]
 //!          [--no-buckets] [--budget MB] [--greedy] [--no-greedy] [--aggressive]
+//!          [--fixed] [--fixed-ab]
 //!          [--fxaa] [--ssaa SCALE] [--post creeper,spider,invert,blur|none]]`
 //!
 //! The scene is the test scene, or with `--terrain` a terrain dump the game
@@ -167,6 +168,16 @@ fn options(args: Vec<String>) -> Options {
             "--no-wave" => options.terrain_options.wave = false,
             "--no-packed" => options.terrain_options.packed = false,
             "--no-greedy" => options.terrain_options.greedy = false,
+            // The mobile path (`terrain::fixed`), alone or as an A/B.
+            "--fixed" | "--fixed-ab" => {
+                let t = &mut options.terrain_options;
+                (t.packed, t.greedy) = (false, false);
+                t.fixed = if arg == "--fixed" {
+                    terrain::FixedMode::On
+                } else {
+                    terrain::FixedMode::Ab
+                };
+            }
             "--aggressive" => options.aggressive = true,
             "--budget" => {
                 if let Some(mb) = args.next().and_then(|v| v.parse::<f64>().ok()) {

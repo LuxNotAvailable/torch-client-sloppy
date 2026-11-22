@@ -41,7 +41,7 @@ meshes chunk sections (on `client`'s worker). `vk` (native Vulkan) draws them;
 | `terrain` | section meshing for both renderers: block geometry, light, CTM, vertex layout, cave visibility, block animations; streaming section changes to the renderer and its listeners (`stream`); the renderer's terrain inputs (`textures`) and occlusion switch (`hiz`) | `mod.rs`, `mesh.rs`, `stream.rs` |
 | `text` | fonts, glyph layout, text components | `mod.rs` |
 | `util` | vanilla-parity helpers (`mth`, `javarandom`), particles, packs, zip | `mth.rs` |
-| `vk` | native Vulkan renderer and `vkview` | `mod.rs`, `live.rs` |
+| `vk` | native Vulkan renderer and `vkview`; the mobile fixed terrain path (`terrain_fixed.rs`) | `mod.rs`, `live.rs` |
 | `voice` | Simple Voice Chat client | `mod.rs` |
 
 ## Outside `src/`

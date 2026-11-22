@@ -1633,6 +1633,7 @@ impl GuiPass {
                 blend: true,
                 additive: false,
                 fragment_module: None,
+                vertex_input: None,
             },
         )?;
         let one = vk::Extent2D {
@@ -2024,10 +2025,12 @@ impl GuiPass {
 
 /// Terrain options, with stages turned off by `MC_NATIVE_TERRAIN`
 /// (comma list: `nohiz`, `novis`, `nobuckets`, `nopacked`, `nogreedy`), for
-/// bisecting. Sections meshed for a pack keep raw vertices either way.
+/// bisecting; `fixed` / `fixed_ab` run the mobile path (`terrain::fixed`)
+/// alone or as an in-run A/B. Sections meshed for a pack keep raw vertices
+/// either way.
 fn terrain_options() -> super::terrain::Options {
     let mut o = super::terrain::Options::default();
-    let flags = std::env::var("MC_NATIVE_TERRAIN").unwrap_or_default();
+    let flags = crate::platform::env::var("MC_NATIVE_TERRAIN").unwrap_or_default();
     for flag in flags.split(',').map(str::trim) {
         match flag {
             "nohiz" => o.hiz = false,
@@ -2035,6 +2038,16 @@ fn terrain_options() -> super::terrain::Options {
             "nobuckets" => o.buckets = false,
             "nopacked" => o.packed = false,
             "nogreedy" => o.greedy = false,
+            // The mobile path (docs/ANDROID_VS_PC.md): plain vertices only.
+            "fixed" | "fixed_ab" => {
+                o.packed = false;
+                o.greedy = false;
+                o.fixed = if flag == "fixed" {
+                    super::terrain::FixedMode::On
+                } else {
+                    super::terrain::FixedMode::Ab
+                };
+            }
             _ => {}
         }
     }

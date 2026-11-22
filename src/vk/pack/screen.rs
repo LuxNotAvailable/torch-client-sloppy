@@ -1154,6 +1154,7 @@ impl PackScreen {
             &GraphicsDesc {
                 module: modules[0],
                 fragment_module: Some(modules[1]),
+                vertex_input: None,
                 vertex: c"main",
                 fragment: c"main",
                 color: &formats,

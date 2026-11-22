@@ -109,6 +109,10 @@ use super::{Context, SetupError};
 use crate::terrain::mesh::PackedVertex;
 use crate::terrain::visgraph::VisibilitySet;
 
+#[path = "terrain_fixed.rs"]
+mod fixed;
+pub use fixed::Mode as FixedMode;
+
 const NEAR: f32 = 0.05;
 
 // The game's halved pools (clean-up 12d).
@@ -450,7 +454,26 @@ fn near_first_phase() -> (bool, f32) {
 /// each flip; None outside an A/B or while settling.
 pub fn ab_side() -> Option<bool> {
     let (on, into) = near_first_phase();
-    ((near_first_ab_mode() || hiz_ab_mode() || hiz_quarter_ab_mode()) && into >= 0.3).then_some(on)
+    ((near_first_ab_mode() || hiz_ab_mode() || hiz_quarter_ab_mode() || fixed_ab_mode())
+        && into >= 0.3)
+        .then_some(on)
+}
+
+/// Set by `TerrainScene::new` when the fixed path runs as an A/B.
+static FIXED_AB: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn fixed_ab_mode() -> bool {
+    FIXED_AB.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The fixed A/B's side now (true: B, fixed), logged at each flip.
+fn fixed_ab_side() -> bool {
+    let on = near_first_phase().0;
+    static SIDE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(2);
+    if SIDE.swap(u8::from(on), std::sync::atomic::Ordering::Relaxed) != u8::from(on) {
+        bevy::log::info!("fixed terrain A/B: side {}", if on { "B" } else { "A" });
+    }
+    on
 }
 
 /// Which culling the terrain does, for comparing with each off.
@@ -477,6 +500,8 @@ pub struct Options {
     pub packed: bool,
     /// Merge packed records into rectangles (`vk::packed::merge`).
     pub greedy: bool,
+    /// The CPU-culled, fixed-function path (`fixed`); needs `packed` off.
+    pub fixed: FixedMode,
 }
 
 impl Default for Options {
@@ -489,6 +514,7 @@ impl Default for Options {
             budget: UPLOAD_BUDGET,
             packed: true,
             greedy: true,
+            fixed: FixedMode::Off,
             post: super::post::Settings::default(),
         }
     }
@@ -836,6 +862,8 @@ struct Pipes {
     overdraw: vk::Pipeline,
     /// Per-Face Culling: drops each drawn quad the cull eye sees the back of.
     face_filter: vk::Pipeline,
+    /// The fixed path's solid, cutout and translucent, when built.
+    fixed: Option<[vk::Pipeline; 3]>,
 }
 
 impl Pipes {
@@ -849,11 +877,12 @@ impl Pipes {
             anim_blend: built[5],
             overdraw: built[6],
             face_filter: built[7],
+            fixed: built.get(8..11).map(|f| [f[0], f[1], f[2]]),
         }
     }
 
-    fn all(self) -> [vk::Pipeline; 8] {
-        [
+    fn all(self) -> Vec<vk::Pipeline> {
+        let mut all = vec![
             self.cull,
             self.hiz_reduce,
             self.solid,
@@ -862,7 +891,9 @@ impl Pipes {
             self.anim_blend,
             self.overdraw,
             self.face_filter,
-        ]
+        ];
+        all.extend(self.fixed.into_iter().flatten());
+        all
     }
 }
 
@@ -939,6 +970,10 @@ pub struct TerrainScene {
     /// Hi-Z as built (`Options::hiz`); the debug toggle can only turn it off.
     hiz_allowed: bool,
     module: vk::ShaderModule,
+    /// `shaders/terrain_mobile.slang`, when the fixed path is on.
+    fixed_module: Option<vk::ShaderModule>,
+    /// This frame's fixed-path draws.
+    fixed_lists: fixed::Lists,
     /// The pipelines, once the worker has built them; until then frames
     /// only stream sections in and clear.
     pipes: Option<Pipes>,
@@ -1085,6 +1120,10 @@ impl TerrainScene {
         let atlas_size = atlas.dimensions();
 
         let module = pipelines.module(ctx, super::shaders::TERRAIN)?;
+        FIXED_AB.store(
+            options.fixed == FixedMode::Ab,
+            std::sync::atomic::Ordering::Relaxed,
+        );
         // Built on a worker: the dump starts streaming in meanwhile (2.5).
         let stream = |fragment: &std::ffi::CStr, cull, depth_write, blend| {
             Spec::Graphics(GraphicsSpec {
@@ -1100,54 +1139,79 @@ impl TerrainScene {
                 blend,
                 additive: false,
                 fragment_module: None,
+                vertex_input: None,
             })
         };
-        let pending = pipelines.build_on_worker(
-            ctx,
-            vec![
-                Spec::Compute {
-                    module,
-                    entry: c"cull".to_owned(),
-                },
-                Spec::Compute {
-                    module,
-                    entry: c"hiz_reduce".to_owned(),
-                },
-                // Solid faces are one-sided, as vanilla's; cutout (plants,
-                // leaves) draw both sides. Translucent faces are one-sided
-                // and write depth, as the game's water material (vanilla's
-                // translucent layer): a water surface's top and its
-                // underside are two faces, and drawing both from one side
-                // stacked their alpha.
-                stream(c"terrain_solid", vk::CullModeFlags::BACK, true, false),
-                // The mesher emits both sides of two-sided quads (plants), as
-                // the game's culls back faces on every layer.
-                stream(c"terrain_cutout", vk::CullModeFlags::BACK, true, false),
-                stream(c"terrain_translucent", vk::CullModeFlags::BACK, true, true),
-                Spec::Compute {
-                    module,
-                    entry: c"anim_blend".to_owned(),
-                },
-                Spec::Graphics(GraphicsSpec {
-                    module,
-                    vertex: c"terrain_vertex".to_owned(),
-                    fragment: c"terrain_overdraw".to_owned(),
-                    color: vec![color_format],
-                    depth: Some(DEPTH_FORMAT),
-                    depth_test: None,
-                    depth_write: false,
-                    cull: vk::CullModeFlags::BACK,
-                    topology: vk::PrimitiveTopology::TRIANGLE_LIST,
-                    blend: true,
-                    additive: true,
-                    fragment_module: None,
-                }),
-                Spec::Compute {
-                    module,
-                    entry: c"face_filter".to_owned(),
-                },
-            ],
-        );
+        let mut specs = vec![
+            Spec::Compute {
+                module,
+                entry: c"cull".to_owned(),
+            },
+            Spec::Compute {
+                module,
+                entry: c"hiz_reduce".to_owned(),
+            },
+            // Solid faces are one-sided, as vanilla's; cutout (plants,
+            // leaves) draw both sides. Translucent faces are one-sided
+            // and write depth, as the game's water material (vanilla's
+            // translucent layer): a water surface's top and its
+            // underside are two faces, and drawing both from one side
+            // stacked their alpha.
+            stream(c"terrain_solid", vk::CullModeFlags::BACK, true, false),
+            // The mesher emits both sides of two-sided quads (plants), as
+            // the game's culls back faces on every layer.
+            stream(c"terrain_cutout", vk::CullModeFlags::BACK, true, false),
+            stream(c"terrain_translucent", vk::CullModeFlags::BACK, true, true),
+            Spec::Compute {
+                module,
+                entry: c"anim_blend".to_owned(),
+            },
+            Spec::Graphics(GraphicsSpec {
+                module,
+                vertex: c"terrain_vertex".to_owned(),
+                fragment: c"terrain_overdraw".to_owned(),
+                color: vec![color_format],
+                depth: Some(DEPTH_FORMAT),
+                depth_test: None,
+                depth_write: false,
+                cull: vk::CullModeFlags::BACK,
+                topology: vk::PrimitiveTopology::TRIANGLE_LIST,
+                blend: true,
+                additive: true,
+                fragment_module: None,
+                vertex_input: None,
+            }),
+            Spec::Compute {
+                module,
+                entry: c"face_filter".to_owned(),
+            },
+        ];
+        // The fixed path: its own vertex stage, the same fragment stages.
+        let fixed_module = if options.fixed != FixedMode::Off {
+            let m = pipelines.module(ctx, super::shaders::TERRAIN_MOBILE)?;
+            for (fragment, blend) in [
+                (c"terrain_solid", false),
+                (c"terrain_cutout", false),
+                (c"terrain_translucent", true),
+            ] {
+                let Spec::Graphics(mut g) = stream(fragment, vk::CullModeFlags::BACK, true, blend)
+                else {
+                    unreachable!()
+                };
+                g.module = m;
+                g.vertex = c"terrain_vertex_fixed".to_owned();
+                g.fragment_module = Some(module);
+                g.vertex_input = Some(super::pipeline::VertexInput {
+                    stride: fixed::STRIDE,
+                    attributes: fixed::ATTRIBUTES,
+                });
+                specs.push(Spec::Graphics(g));
+            }
+            Some(m)
+        } else {
+            None
+        };
+        let pending = pipelines.build_on_worker(ctx, specs);
         let post = super::post::PostPass::new(ctx, pipelines, color_format)?;
 
         let storage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
@@ -1345,6 +1409,8 @@ impl TerrainScene {
         Ok(TerrainScene {
             pack_camera: Mat4::IDENTITY,
             hiz_allowed: options.hiz,
+            fixed_module,
+            fixed_lists: fixed::Lists::default(),
             options,
             module,
             pipes: None,
@@ -2146,11 +2212,17 @@ impl TerrainScene {
         if self.pools.len() as u32 >= MAX_POOLS {
             return Err(SetupError("the terrain pools are full".to_owned()));
         }
+        // Vertex input only for the fixed path.
+        let mut vertex_usage =
+            vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
+        if self.options.fixed != FixedMode::Off {
+            vertex_usage |= vk::BufferUsageFlags::VERTEX_BUFFER;
+        }
         let vertices = memory.buffer(
             ctx,
             "terrain vertices",
             POOL_VERTICES as u64 * 20,
-            vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+            vertex_usage,
             MemoryLocation::GpuOnly,
         )?;
         let index_usage = vk::BufferUsageFlags::INDEX_BUFFER
@@ -3194,11 +3266,22 @@ impl TerrainScene {
         };
         let view_proj = project(&camera);
         let cull_proj = project(&cull);
+        // The fixed path this frame (`fixed`): not under a pack (its passes
+        // read the GPU cull's lists) nor in the overdraw view.
+        let fixed = pipes.fixed.is_some()
+            && !self.cull_only
+            && view != View::Overdraw
+            && match self.options.fixed {
+                FixedMode::Off => false,
+                FixedMode::On => true,
+                FixedMode::Ab => fixed_ab_side(),
+            };
 
         // Hi-Z only with a pyramid of this size, from a camera close by.
         let hiz = match (&self.pyramid, self.pyramid_view) {
             (Some((grown, size, levels)), Some((prev, eye)))
                 if self.options.hiz
+                    && !fixed
                     && *size == (extent.width, extent.height)
                     && eye.distance(cull.eye) < HIZ_GUARD =>
             {
@@ -3251,19 +3334,21 @@ impl TerrainScene {
         self.views[slot].write(0, bytemuck::bytes_of(&cull_view));
 
         let zeroed = u64::from(self.translucent_start) * COMMAND_SIZE;
-        graph.pass(
-            "reset counts",
-            &[],
-            &[
-                (self.counts.raw, Use::TransferDst),
-                (self.commands.raw, Use::TransferDst),
-            ],
-            |cmd| unsafe {
-                // SAFETY: fills of buffers this pass owns.
-                device.cmd_fill_buffer(cmd, self.counts.raw, 0, vk::WHOLE_SIZE, 0);
-                ctx.zero_unused(cmd, self.commands.raw, zeroed);
-            },
-        );
+        if !fixed {
+            graph.pass(
+                "reset counts",
+                &[],
+                &[
+                    (self.counts.raw, Use::TransferDst),
+                    (self.commands.raw, Use::TransferDst),
+                ],
+                |cmd| unsafe {
+                    // SAFETY: fills of buffers this pass owns.
+                    device.cmd_fill_buffer(cmd, self.counts.raw, 0, vk::WHOLE_SIZE, 0);
+                    ctx.zero_unused(cmd, self.commands.raw, zeroed);
+                },
+            );
+        }
 
         let slot_count = self.slot_high;
         let mut cull_buffers = vec![
@@ -3292,73 +3377,30 @@ impl TerrainScene {
             )?;
         }
         lap.mark(8);
-        graph.pass("terrain cull", &[], &cull_buffers, |cmd| unsafe {
-            // SAFETY: recording with the shared layout and the bindless set;
-            // the push names live buffers.
-            device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipes.cull);
-            device.cmd_bind_descriptor_sets(
-                cmd,
-                vk::PipelineBindPoint::COMPUTE,
-                pipelines.layout,
-                0,
-                &[bindless.set],
-                &[],
+        if fixed {
+            let visible = self.options.visibility.then_some(&self.visible_bits[..]);
+            fixed::cull(
+                &self.slot_cpu[..self.slot_high as usize],
+                visible,
+                &self.rank_of,
+                cull_proj,
+                cull.eye,
+                self.options.buckets,
+                torch_reach_sq(),
+                &mut self.fixed_lists,
             );
-            push(
-                ctx,
-                cmd,
-                pipelines.layout,
-                &Push {
-                    ids: [
-                        self.slots.index,
-                        self.visible.index,
-                        self.commands_index,
-                        self.counts_index,
-                    ],
-                    more: [
-                        slot_count,
-                        self.list_capacity,
-                        self.view_indices[slot],
-                        self.translucent_start,
-                    ],
-                    params: [
-                        f32::from_bits(self.ranks.index),
-                        f32::from_bits(self.order.index),
-                        f32::from_bits(if near_first {
-                            self.order_cpu.len() as u32
-                        } else {
-                            0
-                        }),
-                        0.0,
-                    ],
-                    view_proj: [[0.0; 4]; 4],
-                },
-            );
-            device.cmd_dispatch(cmd, slot_count.div_ceil(64).max(1), 1, 1);
-        });
-
-        // Per-Face Culling: each drawn solid and cutout command's quads
-        // facing away from the cull eye go; the kept ones move to the
-        // pool's filtered indices. Not under a pack: its shadow pass draws
-        // the pools' indices with commands of its own.
-        self.face_filtered = face_filter_wanted();
-        if self.face_filtered && !self.pools.is_empty() {
-            let mut buffers = vec![
-                (self.slots.buffer.raw, Use::ComputeRead),
-                (self.counts.raw, Use::ComputeRead),
-                (self.commands.raw, Use::ComputeWrite),
+            self.face_filtered = false;
+            let l = &self.fixed_lists;
+            self.stats.commands = [
+                l.solid.len() as u32,
+                l.cutout.len() as u32,
+                l.translucent.len() as u32,
             ];
-            for pool in &self.pools {
-                buffers.push((pool.vertices.raw, Use::ComputeRead));
-                buffers.push((pool.indices.raw, Use::ComputeRead));
-                buffers.push((pool.filtered.raw, Use::ComputeWrite));
-            }
-            let capacity = self.list_capacity;
-            let view_index = self.view_indices[slot];
-            graph.pass("terrain face filter", &[], &buffers, |cmd| unsafe {
-                // SAFETY: recording with the shared layout and the bindless
-                // set; the push names live buffers.
-                device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipes.face_filter);
+        } else {
+            graph.pass("terrain cull", &[], &cull_buffers, |cmd| unsafe {
+                // SAFETY: recording with the shared layout and the bindless set;
+                // the push names live buffers.
+                device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, pipes.cull);
                 device.cmd_bind_descriptor_sets(
                     cmd,
                     vk::PipelineBindPoint::COMPUTE,
@@ -3367,52 +3409,120 @@ impl TerrainScene {
                     &[bindless.set],
                     &[],
                 );
-                for (p, pool) in self.pools.iter().enumerate() {
-                    push(
-                        ctx,
-                        cmd,
-                        pipelines.layout,
-                        &Push {
-                            ids: [
-                                self.slots.index,
-                                self.commands_index,
-                                self.counts_index,
-                                view_index,
-                            ],
-                            more: [capacity, p as u32 * 2, pool.index_ids.0, pool.index_ids.1],
-                            params: [0.0; 4],
-                            view_proj: [[0.0; 4]; 4],
-                        },
-                    );
-                    // A group per command slot of the solid and the cutout
-                    // list; those past the cull's count leave at once.
-                    device.cmd_dispatch(cmd, capacity.max(1), 2, 1);
-                }
+                push(
+                    ctx,
+                    cmd,
+                    pipelines.layout,
+                    &Push {
+                        ids: [
+                            self.slots.index,
+                            self.visible.index,
+                            self.commands_index,
+                            self.counts_index,
+                        ],
+                        more: [
+                            slot_count,
+                            self.list_capacity,
+                            self.view_indices[slot],
+                            self.translucent_start,
+                        ],
+                        params: [
+                            f32::from_bits(self.ranks.index),
+                            f32::from_bits(self.order.index),
+                            f32::from_bits(if near_first {
+                                self.order_cpu.len() as u32
+                            } else {
+                                0
+                            }),
+                            0.0,
+                        ],
+                        view_proj: [[0.0; 4]; 4],
+                    },
+                );
+                device.cmd_dispatch(cmd, slot_count.div_ceil(64).max(1), 1, 1);
             });
-        }
 
-        let readback = self.readback[slot].raw;
-        let lists = self.pools.len() as u64 * 2;
-        if lists > 0 {
-            graph.pass(
-                "terrain counts readback",
-                &[],
-                &[(self.counts.raw, Use::TransferSrc)],
-                |cmd| unsafe {
-                    // SAFETY: a copy from the counts into this slot's
-                    // readback buffer, read after the slot's fence.
-                    device.cmd_copy_buffer(
+            // Per-Face Culling: each drawn solid and cutout command's quads
+            // facing away from the cull eye go; the kept ones move to the
+            // pool's filtered indices. Not under a pack: its shadow pass draws
+            // the pools' indices with commands of its own.
+            self.face_filtered = face_filter_wanted();
+            if self.face_filtered && !self.pools.is_empty() {
+                let mut buffers = vec![
+                    (self.slots.buffer.raw, Use::ComputeRead),
+                    (self.counts.raw, Use::ComputeRead),
+                    (self.commands.raw, Use::ComputeWrite),
+                ];
+                for pool in &self.pools {
+                    buffers.push((pool.vertices.raw, Use::ComputeRead));
+                    buffers.push((pool.indices.raw, Use::ComputeRead));
+                    buffers.push((pool.filtered.raw, Use::ComputeWrite));
+                }
+                let capacity = self.list_capacity;
+                let view_index = self.view_indices[slot];
+                graph.pass("terrain face filter", &[], &buffers, |cmd| unsafe {
+                    // SAFETY: recording with the shared layout and the bindless
+                    // set; the push names live buffers.
+                    device.cmd_bind_pipeline(
                         cmd,
-                        self.counts.raw,
-                        readback,
-                        &[vk::BufferCopy {
-                            src_offset: 0,
-                            dst_offset: 0,
-                            size: lists * 4,
-                        }],
+                        vk::PipelineBindPoint::COMPUTE,
+                        pipes.face_filter,
                     );
-                },
-            );
+                    device.cmd_bind_descriptor_sets(
+                        cmd,
+                        vk::PipelineBindPoint::COMPUTE,
+                        pipelines.layout,
+                        0,
+                        &[bindless.set],
+                        &[],
+                    );
+                    for (p, pool) in self.pools.iter().enumerate() {
+                        push(
+                            ctx,
+                            cmd,
+                            pipelines.layout,
+                            &Push {
+                                ids: [
+                                    self.slots.index,
+                                    self.commands_index,
+                                    self.counts_index,
+                                    view_index,
+                                ],
+                                more: [capacity, p as u32 * 2, pool.index_ids.0, pool.index_ids.1],
+                                params: [0.0; 4],
+                                view_proj: [[0.0; 4]; 4],
+                            },
+                        );
+                        // A group per command slot of the solid and the cutout
+                        // list; those past the cull's count leave at once.
+                        device.cmd_dispatch(cmd, capacity.max(1), 2, 1);
+                    }
+                });
+            }
+
+            let readback = self.readback[slot].raw;
+            let lists = self.pools.len() as u64 * 2;
+            if lists > 0 {
+                graph.pass(
+                    "terrain counts readback",
+                    &[],
+                    &[(self.counts.raw, Use::TransferSrc)],
+                    |cmd| unsafe {
+                        // SAFETY: a copy from the counts into this slot's
+                        // readback buffer, read after the slot's fence.
+                        device.cmd_copy_buffer(
+                            cmd,
+                            self.counts.raw,
+                            readback,
+                            &[vk::BufferCopy {
+                                src_offset: 0,
+                                dst_offset: 0,
+                                size: lists * 4,
+                            }],
+                        );
+                    },
+                );
+            }
         }
 
         // The camera's turn, for particles drawn into a pack's targets.
@@ -3429,8 +3539,13 @@ impl TerrainScene {
             (self.counts.raw, Use::IndirectRead),
             (self.translucent.buffer.raw, Use::IndexRead),
         ];
+        let vertex_use = if fixed {
+            Use::VertexInput
+        } else {
+            Use::VertexRead
+        };
         for pool in &self.pools {
-            buffers.push((pool.vertices.raw, Use::VertexRead));
+            buffers.push((pool.vertices.raw, vertex_use));
             buffers.push((self.drawn_indices(pool), Use::IndexRead));
         }
         let stats_pool = self.stats_pools.get(slot).copied();
@@ -3547,7 +3662,32 @@ impl TerrainScene {
                     }
                 }
             };
-            draw_lists([pipes.solid, pipes.cutout]);
+            if let Some(f) = pipes.fixed.filter(|_| fixed) {
+                let lists = [
+                    (f[0], &self.fixed_lists.solid),
+                    (f[1], &self.fixed_lists.cutout),
+                ];
+                for (pipeline, list) in lists {
+                    device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
+                    let mut bound = u32::MAX;
+                    for d in list {
+                        if d.pool != bound {
+                            bound = d.pool;
+                            let pool = &self.pools[d.pool as usize];
+                            device.cmd_bind_vertex_buffers(cmd, 0, &[pool.vertices.raw], &[0]);
+                            device.cmd_bind_index_buffer(
+                                cmd,
+                                pool.indices.raw,
+                                0,
+                                vk::IndexType::UINT32,
+                            );
+                        }
+                        device.cmd_draw_indexed(cmd, d.count, 1, d.first, d.base, d.slot);
+                    }
+                }
+            } else {
+                draw_lists([pipes.solid, pipes.cutout]);
+            }
             if overdraw {
                 // The depth stays the normal draw's (the occlusion pyramid
                 // reads it); the colour restarts black, then every drawn
@@ -3614,7 +3754,10 @@ impl TerrainScene {
                 .as_ref()
                 .is_some_and(|p| p.1 == (extent.width, extent.height));
         self.pyramid_skipped = skip;
-        if !frozen && !skip {
+        if fixed {
+            // No pyramid; the GPU side of an A/B rebuilds one first.
+            self.pyramid_view = None;
+        } else if !frozen && !skip {
             self.build_pyramid(
                 ctx,
                 memory,
@@ -3673,7 +3816,24 @@ impl TerrainScene {
                 },
             );
             // Translucent last, far to near over everything opaque.
-            if self.translucent_count > 0 {
+            if let Some(f) = pipes.fixed.filter(|_| fixed) {
+                device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, f[2]);
+                device.cmd_bind_index_buffer(
+                    cmd,
+                    self.translucent.buffer.raw,
+                    0,
+                    vk::IndexType::UINT32,
+                );
+                let mut bound = u32::MAX;
+                for d in &self.fixed_lists.translucent {
+                    if d.pool != bound {
+                        bound = d.pool;
+                        let vertices = self.pools[d.pool as usize].vertices.raw;
+                        device.cmd_bind_vertex_buffers(cmd, 0, &[vertices], &[0]);
+                    }
+                    device.cmd_draw_indexed(cmd, d.count, 1, d.first, d.base, d.slot);
+                }
+            } else if self.translucent_count > 0 {
                 let pipeline = if overdraw {
                     pipes.overdraw
                 } else {
@@ -4071,6 +4231,9 @@ impl TerrainScene {
                 ctx.device.destroy_pipeline(pipeline, None);
             }
             ctx.device.destroy_shader_module(self.module, None);
+            if let Some(m) = self.fixed_module {
+                ctx.device.destroy_shader_module(m, None);
+            }
             for pool in self.stats_pools {
                 ctx.device.destroy_query_pool(pool, None);
             }

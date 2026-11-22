@@ -101,6 +101,7 @@ impl TestScene {
                 blend: false,
                 additive: false,
                 fragment_module: None,
+                vertex_input: None,
             },
         )?;
         let storage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;

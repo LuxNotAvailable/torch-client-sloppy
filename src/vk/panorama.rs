@@ -72,6 +72,7 @@ impl PanoramaScene {
                 blend: false,
                 additive: false,
                 fragment_module: None,
+                vertex_input: None,
             })],
         );
 

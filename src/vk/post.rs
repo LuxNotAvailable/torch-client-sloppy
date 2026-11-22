@@ -74,6 +74,7 @@ impl PostPass {
                 blend: false,
                 additive: false,
                 fragment_module: None,
+                vertex_input: None,
             },
         )?;
         Ok(PostPass {

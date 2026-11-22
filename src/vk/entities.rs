@@ -257,6 +257,7 @@ impl EntityScene {
                 blend,
                 additive,
                 fragment_module: None,
+                vertex_input: None,
             })
         };
         let stream = |fragment: &std::ffi::CStr, depth_write, compare, blend, additive| {

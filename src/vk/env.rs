@@ -146,6 +146,7 @@ impl EnvScene {
                 blend: true,
                 additive,
                 fragment_module: None,
+                vertex_input: None,
             })
         };
         let pending = pipelines.build_on_worker(
@@ -988,6 +989,7 @@ impl EnvScene {
                     blend: true,
                     additive: false,
                     fragment_module: None,
+                    vertex_input: None,
                 })
             };
             let pending =

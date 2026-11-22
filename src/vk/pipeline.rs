@@ -53,6 +53,16 @@ pub struct GraphicsDesc<'a> {
     pub additive: bool,
     /// The fragment stage's own module (pack programs); else `module`.
     pub fragment_module: Option<vk::ShaderModule>,
+    /// Fixed-function vertex input; else the shader pulls its vertices.
+    pub vertex_input: Option<VertexInput>,
+}
+
+/// One vertex buffer at binding 0: its stride and its attributes as
+/// (location, format, offset).
+#[derive(Clone, Copy)]
+pub struct VertexInput {
+    pub stride: u32,
+    pub attributes: &'static [(u32, vk::Format, u32)],
 }
 
 impl Pipelines {
@@ -153,6 +163,7 @@ impl Pipelines {
                                 blend: g.blend,
                                 additive: g.additive,
                                 fragment_module: g.fragment_module,
+                                vertex_input: g.vertex_input,
                             },
                         ),
                     };
@@ -211,7 +222,30 @@ fn build_graphics(
             .module(desc.fragment_module.unwrap_or(desc.module))
             .name(desc.fragment),
     ];
-    let vertex_input = vk::PipelineVertexInputStateCreateInfo::default();
+    let (bindings, attributes) = match desc.vertex_input {
+        Some(v) => (
+            vec![
+                vk::VertexInputBindingDescription::default()
+                    .binding(0)
+                    .stride(v.stride)
+                    .input_rate(vk::VertexInputRate::VERTEX),
+            ],
+            v.attributes
+                .iter()
+                .map(|&(location, format, offset)| {
+                    vk::VertexInputAttributeDescription::default()
+                        .location(location)
+                        .binding(0)
+                        .format(format)
+                        .offset(offset)
+                })
+                .collect(),
+        ),
+        None => (Vec::new(), Vec::new()),
+    };
+    let vertex_input = vk::PipelineVertexInputStateCreateInfo::default()
+        .vertex_binding_descriptions(&bindings)
+        .vertex_attribute_descriptions(&attributes);
     let assembly = vk::PipelineInputAssemblyStateCreateInfo::default().topology(desc.topology);
     let viewport = vk::PipelineViewportStateCreateInfo::default()
         .viewport_count(1)
@@ -326,6 +360,8 @@ pub struct GraphicsSpec {
     pub additive: bool,
     /// The fragment stage's own module (pack programs); else `module`.
     pub fragment_module: Option<vk::ShaderModule>,
+    /// Fixed-function vertex input; else the shader pulls its vertices.
+    pub vertex_input: Option<VertexInput>,
 }
 
 /// A worker's batch: its pipelines and milliseconds, or why it failed.
