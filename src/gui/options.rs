@@ -552,8 +552,13 @@ const Y_AUDIO_ROW_4: f32 = Y_AUDIO_ROW_3 + ROW_H;
 
 #[cfg(audio)]
 const Y_AUDIO_DEVICES: f32 = Y_AUDIO_ROW_4 + ROW_H;
+/// Android has no speaker row: the system routes the sound.
 #[cfg(audio)]
-const AUDIO_CONTENT_H: f32 = Y_AUDIO_DEVICES + ROW_H;
+const AUDIO_CONTENT_H: f32 = if cfg!(target_os = "android") {
+    Y_AUDIO_DEVICES
+} else {
+    Y_AUDIO_DEVICES + ROW_H
+};
 
 #[cfg(voice)]
 const VOICE_PLAYER_SLIDER_ID_BASE: u32 = 1000;
@@ -2349,7 +2354,11 @@ pub fn draw_audio(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
         }
     }
 
+    // Android: the system picks the speaker (and follows headphones).
+    #[cfg(not(target_os = "android"))]
     draw_devices(p, state, ctx, &cell);
+    #[cfg(target_os = "android")]
+    let _ = &cell;
 
     if draw_done(p, ctx) {
         state.nav = Some(Screen::Options);
@@ -2373,7 +2382,7 @@ pub(in crate::gui) fn fit(p: &Painter, label: &str, name: &str, width: f32) -> S
 /// The speaker and (with voice chat) the microphone. A click moves to the
 /// next device, after the last back to the system default; the list is
 /// read again on each click, so a device plugged in shows up.
-#[cfg(audio)]
+#[cfg(all(audio, not(target_os = "android")))]
 fn draw_devices(
     p: &mut Painter,
     state: &mut GuiState,

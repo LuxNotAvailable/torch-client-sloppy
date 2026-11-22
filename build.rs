@@ -6,11 +6,14 @@ fn main() {
         println!("cargo::rustc-cfg=packed_assets");
     }
 
-    // Sound is desktop-only: rodio's backend is not built for Android. The
-    // `audio` feature is on by default and simply off there.
+    // Sound on every OS (Android through cpal's Oboe backend).
     println!("cargo::rustc-check-cfg=cfg(audio)");
-    if std::env::var_os("CARGO_FEATURE_AUDIO").is_some() && os != "android" {
+    if std::env::var_os("CARGO_FEATURE_AUDIO").is_some() {
         println!("cargo::rustc-cfg=audio");
+        // Oboe links libc++ statically, but not its ABI half (`__cxa_*`).
+        if os == "android" {
+            println!("cargo::rustc-link-lib=c++abi");
+        }
     }
 
     println!("cargo::rustc-check-cfg=cfg(voice)");

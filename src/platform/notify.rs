@@ -23,6 +23,8 @@ pub(crate) fn disconnected(reason: Option<&str>) {
 pub(crate) fn suspended() {
     #[cfg(target_os = "android")]
     BACKGROUNDED.store(true, Ordering::Relaxed);
+    #[cfg(all(target_os = "android", audio))]
+    crate::audio::suspend();
 }
 
 pub(crate) fn resumed() {
@@ -31,6 +33,8 @@ pub(crate) fn resumed() {
         BACKGROUNDED.store(false, Ordering::Relaxed);
         android::call(android::Call::Clear);
     }
+    #[cfg(all(target_os = "android", audio))]
+    crate::audio::resume();
 }
 
 #[cfg(target_os = "android")]

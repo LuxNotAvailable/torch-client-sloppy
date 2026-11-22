@@ -13,6 +13,8 @@ desktop (PC) build, and where. Keep the two from leaking into each other.
   `shaders/terrain_mobile.slang`), so PC code stays readable without them.
 - Why the phone differs, and what to try next: `docs/ANDROID_SPECIFICS.md`.
   Measurements: `docs/ANDROID_PERF.md`.
+- Android findings that could help PC go in `docs/PC_CANDIDATES.md`, not
+  into PC code, until asked.
 
 ## Build and packaging
 
@@ -21,7 +23,8 @@ desktop (PC) build, and where. Keep the two from leaking into each other.
 | Entry | `main.rs` → `start_from_cli` | `android_main` in `lib.rs` (`vkview_apk`: the viewer instead) |
 | Bevy features | `x11`, `wayland` | `android-native-activity` |
 | Features | defaults | `--features mobile_ui` (cargo-apk ignores metadata features) |
-| Sound, voice | `audio`, `voice` | off (`build.rs`: no rodio backend) |
+| Sound | rodio through cpal's desktop backend | rodio through cpal's Oboe backend (AAudio); Oboe's static libc++ needs `libc++abi` linked (`build.rs`); rodio is also listed in the Android dependency table |
+| Voice chat | `voice` | off (`build.rs`; no microphone permission) |
 | Resource packs | `resourcepacks` | off (`build.rs`) |
 | Assets | download / folder | packed into the APK (`cfg(packed_assets)`, `platform::assets::archive`) |
 | Allocator | mimalloc (or `tracked`) | system |
@@ -45,6 +48,7 @@ desktop (PC) build, and where. Keep the two from leaking into each other.
 | Cursor | grabbed / shown | no-op |
 | Input, GUI | mouse and keyboard | touch controls and phone layout (`mobile_ui`: chat, HUD, screens, options, slots, keyboard) |
 | Exit | normal | `Activity.finish()` through JNI |
+| Background | � | sound stops and its stream closes on suspend (`audio::suspend`, `engine::Command::Suspend`), reopens on resume (`platform::notify`) |
 | Diagnostics | — | `log_frame_rate`; logcat; `/proc` CPU and memory metrics (also Linux); `smaps_rollup` read on its own thread (`diag::runtime`) |
 | Draw-count readbacks | yes | vkview only (`terrain::STATS_READBACK`) |
 
@@ -123,4 +127,4 @@ swapchain is portrait, and portrait targets stretched the picture.
 | Antialiasing | Off, FXAA, MSAA, Supersampling | no Supersampling (`antialias::SUPERSAMPLE`); a saved `ssaa` reads as FXAA |
 | Shader packs | any | the built-in one |
 | Window Size, Fullscreen, Open Client Folder | shown | hidden |
-| Music & Sounds | shown | absent (no `audio` cfg) |
+| Music & Sounds | volumes and a Speaker button | volumes only: the system picks the speaker and follows headphones; a saved speaker is ignored |

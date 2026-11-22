@@ -124,6 +124,19 @@ pub fn set_output_device(name: Option<String>) {
     }
 }
 
+/// Android: the app went to the background; sound stops and the output
+/// closes until `resume`.
+#[cfg(target_os = "android")]
+pub fn suspend() {
+    engine::send(Command::Suspend);
+}
+
+/// Android: back in the foreground; the output opens again.
+#[cfg(target_os = "android")]
+pub fn resume() {
+    engine::send(Command::Reopen);
+}
+
 fn volume_of(category: SoundCategory) -> f32 {
     VOLUMES[category.index()].load(Ordering::Relaxed) as f32 / 100.0
 }
@@ -297,6 +310,7 @@ static NEXT_VOICE: AtomicU64 = AtomicU64::new(1);
 
 /// A sound fed as it plays: voice chat. Mono samples at `rate`; dropped, it
 /// plays out what it holds and ends.
+#[cfg_attr(not(voice), allow(dead_code, reason = "voice chat's"))]
 pub struct Stream {
     id: u64,
     buffer: Arc<StreamBuffer>,
@@ -309,6 +323,7 @@ pub enum StreamPlace {
     At { at: [f32; 3], range: f32 },
 }
 
+#[cfg_attr(not(voice), allow(dead_code, reason = "voice chat's"))]
 impl StreamPlace {
     fn engine(self) -> Place {
         match self {
@@ -319,6 +334,7 @@ impl StreamPlace {
 }
 
 /// A new stream in `category`, or `None` with no mixer.
+#[cfg_attr(not(voice), allow(dead_code, reason = "voice chat's"))]
 pub fn open_stream(
     category: SoundCategory,
     volume: f32,
@@ -339,6 +355,7 @@ pub fn open_stream(
     Some(Stream { id, buffer })
 }
 
+#[cfg_attr(not(voice), allow(dead_code, reason = "voice chat's"))]
 impl Stream {
     /// The stream's volume from now on (a player's voice volume moved).
     pub fn set_volume(&self, volume: f32) {

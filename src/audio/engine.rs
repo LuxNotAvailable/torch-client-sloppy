@@ -18,6 +18,7 @@ use super::store::Pack;
 pub(super) enum Command {
     Play(Play),
     /// A sound fed as it plays (a voice), from `buffer` at `rate` Hz, mono.
+    #[cfg_attr(not(voice), allow(dead_code, reason = "voice chat's"))]
     Stream {
         id: u64,
         category: SoundCategory,
@@ -54,6 +55,10 @@ pub(super) enum Command {
     /// The speaker changed: everything playing stops, and the mixer opens
     /// the new one (`SoundEngine.reload` on a `soundDevice` change).
     Reopen,
+    /// Android, the app went to the background: everything stops and the
+    /// stream closes; nothing starts until `Reopen` (on resume).
+    #[cfg(target_os = "android")]
+    Suspend,
 }
 
 pub(super) struct Play {
@@ -203,9 +208,11 @@ pub(crate) struct StreamBuffer {
 
 /// Half a second at 48 kHz: more than this queued means the playback has
 /// fallen behind, and the oldest is dropped rather than heard late.
+#[cfg_attr(not(voice), allow(dead_code, reason = "voice chat's"))]
 const STREAM_BACKLOG: usize = 24_000;
 
 impl StreamBuffer {
+    #[cfg_attr(not(voice), allow(dead_code, reason = "voice chat's"))]
     pub(crate) fn push(&self, samples: impl IntoIterator<Item = f32>) {
         if let Ok(mut queue) = self.samples.lock() {
             queue.extend(samples);
@@ -552,7 +559,8 @@ fn run(index_id: &str) {
 
 /// The chosen speaker opened, or the default; `None` with no speaker at all.
 fn open_output() -> Option<(rodio::OutputStream, rodio::OutputStreamHandle)> {
-    let wanted = super::output_device();
+    // Android: always the system's choice (it follows headphones).
+    let wanted = super::output_device().filter(|_| cfg!(not(target_os = "android")));
     let opened = super::devices::output(wanted.as_deref())
         .ok_or_else(|| "no output device".to_owned())
         .and_then(|device| {
@@ -574,8 +582,10 @@ fn open_output() -> Option<(rodio::OutputStream, rodio::OutputStreamHandle)> {
 fn mix(
     rx: &Receiver<Command>,
     pack: &mut Pack,
-    mut output: (rodio::OutputStream, rodio::OutputStreamHandle),
+    output: (rodio::OutputStream, rodio::OutputStreamHandle),
 ) {
+    // `None` while suspended (Android, in the background).
+    let mut output = Some(output);
     let mut cache = Cache {
         sounds: HashMap::new(),
         order: VecDeque::new(),
@@ -599,11 +609,36 @@ fn mix(
                 }
                 // The old stream goes first, so the device is free to reopen.
                 if let Some(opened) = open_output() {
-                    output = opened;
+                    output = Some(opened);
                 }
                 continue;
             }
-            apply(command, &mut playing, &mut cache, pack, &output.1);
+            #[cfg(target_os = "android")]
+            if matches!(command, Command::Suspend) {
+                output = None;
+                let mut finished = Vec::new();
+                for voice in playing.drain(..) {
+                    finished.push(voice.id);
+                    if let Ok(mut live) = LIVE.lock() {
+                        live.remove(&voice.id);
+                    }
+                }
+                if let Ok(mut list) = FINISHED.lock() {
+                    list.extend(finished);
+                }
+                continue;
+            }
+            match &output {
+                Some(o) => apply(command, &mut playing, &mut cache, pack, &o.1),
+                // Suspended: nothing starts.
+                None => {
+                    if let Command::Play(Play { id, .. }) | Command::Stream { id, .. } = &command
+                        && let Ok(mut live) = LIVE.lock()
+                    {
+                        live.remove(id);
+                    }
+                }
+            }
         }
         let listener = super::listener();
         let mut finished = Vec::new();
@@ -704,6 +739,8 @@ fn apply(
             }
         }
         Command::Reopen => {}
+        #[cfg(target_os = "android")]
+        Command::Suspend => {}
         Command::StopVoice { id } => {
             for voice in playing.iter().filter(|v| v.id == id) {
                 voice.control.stop.store(true, Ordering::Relaxed);

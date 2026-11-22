@@ -227,6 +227,8 @@ ctrlc = { version = "3.5", features = ["termination"] }
 bevy = { version = "0.18", default-features = false, features = ["multi_threaded", "android-native-activity"] }
 jni = "0.22"
 webpki-roots = "1"
+# Sound (not voice chat): cpal plays through Oboe (AAudio / OpenSL ES).
+rodio = { version = "0.20", default-features = false, features = ["vorbis"], optional = true }
 
 # ---------------------------------------------------------------------------
 # Profiles
