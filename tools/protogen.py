@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Generate the per-version protocol tables in `src/protocol/data/`.
+`tools/new_version.py` fills `reference/` and runs this.
 
     python3 protogen.py packets [--source PATH] [--version NAME] [--output PATH]
     python3 protogen.py remap --from NAME --to NAME [--output PATH]
@@ -148,7 +149,30 @@ CLIENT_REGISTRIES = [
     "sound_event",
     "villager_profession",
     "villager_type",
+    "command_argument_type",
 ]
+
+# Entries renamed between versions: old name -> new name, per id space.
+# Applied both ways. Add one only after the hole report (and the decompile)
+# shows the rename; the report suggests likely ones.
+RENAMES = {
+    "block": {"minecraft:chain": "minecraft:iron_chain"},  # 1.21.9
+    "item": {"minecraft:chain": "minecraft:iron_chain"},  # 1.21.9
+    "sound_event": {
+        # Merged into the plain goat's sound (GoatAi).
+        "minecraft:entity.goat.screaming.horn_break": "minecraft:entity.goat.horn_break",
+        # LeashFenceKnotEntity: dropping, then placing a knot.
+        "minecraft:entity.leash_knot.break": "minecraft:item.lead.untied",
+        "minecraft:entity.leash_knot.place": "minecraft:item.lead.tied",
+    },
+    "entity_data_serializer": {"OPTIONAL_UUID": "OPTIONAL_LIVING_ENTITY_REFERENCE"},
+    "command_argument_type": {"minecraft:color": "minecraft:team_color"},  # 26.3
+}
+
+# Prefixes a whole space dropped: `generic.armor` became `armor` (1.21.2).
+RENAME_PREFIXES = {
+    "attribute": ("minecraft:generic.", "minecraft:player.", "minecraft:zombie."),
+}
 
 SERIALIZERS = "net/minecraft/network/syncher/EntityDataSerializers.java"
 
@@ -175,6 +199,78 @@ def block_state_ids(source):
             out[(block, props)] = state["id"]
     return out
 
+def block_defaults(source):
+    """Each block's default state properties."""
+    out = {}
+    for block, info in reports(source, "blocks").items():
+        state = next((s for s in info["states"] if s.get("default")), info["states"][0])
+        out[block] = dict(state.get("properties", {}))
+    return out
+
+def renamed(name, renames, prefixes, forward):
+    """The names `name` may have been renamed to (or from, going back)."""
+    out = [renames[name]] if name in renames else []
+    for prefix in prefixes:
+        if forward and name.startswith(prefix):
+            out.append("minecraft:" + name[len(prefix):])
+        elif not forward and name.startswith("minecraft:"):
+            out.append(prefix + name[len("minecraft:"):])
+    return out
+
+def landing_by_name(source, target, renames, prefixes=(), forward=True):
+    """Where each source name lands: itself, or a rename. A rename may share
+    its target (two entries merged)."""
+    out = {}
+    for name in source:
+        if name in target:
+            out[name] = (target[name], True)
+            continue
+        hit = next((n for n in renamed(name, renames, prefixes, forward) if n in target), None)
+        if hit is not None:
+            out[name] = (target[hit], False)
+    return out
+
+def landing_by_state(source, target, renames, target_defaults):
+    """States land exactly, or on the closest state of the same block: shared
+    properties kept, new ones at the block's default. A fallback landing may
+    share its target with another state (a property was dropped)."""
+    by_block = {}
+    for (block, props), id in target.items():
+        by_block.setdefault(block, []).append((dict(props), id))
+    out = {}
+    for key, _ in source.items():
+        block, props = key
+        new_block = block if block in by_block else renames.get(block)
+        if new_block not in by_block:
+            continue
+        exact = target.get((new_block, props))
+        if exact is not None:
+            out[key] = (exact, True)
+            continue
+        old = dict(props)
+        default = target_defaults.get(new_block, {})
+
+        def score(candidate):
+            props, id = candidate
+            shared = sum(1 for k, v in old.items() if props.get(k) == v)
+            # New properties, and values the target lacks, at the default.
+            unmatched = sum(1 for k, v in props.items() if old.get(k) != v and default.get(k) == v)
+            return (shared, unmatched, -id)
+
+        out[key] = (max(by_block[new_block], key=score)[1], False)
+    return out
+
+def suggest_rename(name, unmatched_targets):
+    """A likely new name for an entry with no counterpart, or None."""
+    ns, _, path = name.partition(":")
+    for new in unmatched_targets:
+        new_ns, _, new_path = new.partition(":")
+        if new_ns != ns:
+            continue
+        if new_path.endswith("_" + path) or path.endswith("." + new_path):
+            return new
+    return None
+
 def serializer_ids(source):
     text = read(source / SERIALIZERS)
     names = re.findall(r"registerSerializer\(([A-Z0-9_]+)\)", text)
@@ -182,7 +278,9 @@ def serializer_ids(source):
         raise Fail(f"no registerSerializer calls in {source / SERIALIZERS}")
     return {name: i for i, name in enumerate(names)}
 
-def runs(source, target, what):
+def runs(source, landings, what):
+    """`landings` maps a source name to (target id, exact). Two exact
+    landings on one target are a bug; a fallback may share."""
     by_id = {}
     for name, id in source.items():
         if id in by_id:
@@ -196,8 +294,8 @@ def runs(source, target, what):
         name = by_id.get(id)
         if name is None:
             raise Fail(f"{what}: the source version has a hole at id {id}")
-        landing = target.get(name)
-        if landing is not None:
+        landing, exact = landings.get(name, (None, True))
+        if landing is not None and exact:
             if landing in taken:
                 raise Fail(f"{what}: ids {taken[landing]} and {id} both land on {landing}")
             taken[landing] = id
@@ -206,6 +304,24 @@ def runs(source, target, what):
             out.append([id, offset])
             previous = (offset,)
     return out
+
+def hole_report(space, old_ids, new_ids, landings, limit=12):
+    """Lines naming the forward holes, with a rename guess where one fits."""
+    holes = sorted((n for n in old_ids if n not in landings), key=old_ids.get)
+    if not holes:
+        return []
+    if space == "block_state":
+        blocks = sorted({b for b, _ in holes})
+        lines = [f"    {len(blocks)} block(s) with no states in the target: {', '.join(blocks[:limit])}"]
+        return lines + (["    ..."] if len(blocks) > limit else [])
+    unmatched = sorted(set(new_ids) - {n for n in new_ids if n in old_ids})
+    lines = []
+    for name in holes[:limit]:
+        guess = suggest_rename(name, unmatched)
+        lines.append(f"    {name}" + (f"  (renamed to {guess}?)" if guess else ""))
+    if len(holes) > limit:
+        lines.append(f"    ... {len(holes) - limit} more")
+    return lines
 
 def generate_remap(old_source, old_version, new_source, new_version, out):
     def meta(source, version):
@@ -224,17 +340,35 @@ def generate_remap(old_source, old_version, new_source, new_version, out):
 
     table = {"from": old_meta, "to": new_meta, "forward": {}, "back": {}}
     identity = []
+    notes = {}
     for name, reader in sources:
         if reader is registry_ids:
             old_ids, new_ids = reader(old_source, name), reader(new_source, name)
         else:
             old_ids, new_ids = reader(old_source), reader(new_source)
-        forward = runs(old_ids, new_ids, name)
-        back = runs(new_ids, old_ids, f"{name} (reversed)")
+        if name == "block_state":
+            renames = RENAMES.get("block", {})
+            back_renames = {new: old for old, new in renames.items()}
+            forward_land = landing_by_state(old_ids, new_ids, renames, block_defaults(new_source))
+            back_land = landing_by_state(new_ids, old_ids, back_renames, block_defaults(old_source))
+        else:
+            renames = RENAMES.get(name, {})
+            back_renames = {new: old for old, new in renames.items()}
+            prefixes = RENAME_PREFIXES.get(name, ())
+            forward_land = landing_by_name(old_ids, new_ids, renames, prefixes, True)
+            back_land = landing_by_name(new_ids, old_ids, back_renames, prefixes, False)
+        forward = runs(old_ids, forward_land, name)
+        back = runs(new_ids, back_land, f"{name} (reversed)")
         table["forward"][name] = {"count": len(old_ids), "runs": forward}
         table["back"][name] = {"count": len(new_ids), "runs": back}
         if forward == [[0, 0]] and len(old_ids) == len(new_ids):
             identity.append(name)
+        fallback = sum(1 for _, exact in forward_land.values() if not exact)
+        notes[name] = (
+            len(old_ids) - len(forward_land),
+            fallback,
+            hole_report(name, old_ids, new_ids, forward_land),
+        )
 
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(table, indent=2) + "\n", encoding="utf-8")
@@ -247,7 +381,13 @@ def generate_remap(old_source, old_version, new_source, new_version, out):
         note = "identity" if name in identity else f"{len(forward['runs'])} runs"
         holes = sum(1 for _, offset in table["back"][name]["runs"] if offset is None)
         holes = f", {holes} back with no counterpart" if holes else ""
-        print(f"  {name:<24} {forward['count']:>6} ids  {note}{holes}")
+        lost, fallback, lines = notes[name]
+        lost = f", {lost} forward with no counterpart" if lost else ""
+        how = "by nearest state" if name == "block_state" else "by rename"
+        fallback = f", {fallback} {how}" if fallback else ""
+        print(f"  {name:<24} {forward['count']:>6} ids  {note}{holes}{lost}{fallback}")
+        for line in lines:
+            print(line)
 
 def generate(source, version, out):
     meta = json.loads(read(source / "version.json"))

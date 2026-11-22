@@ -101,27 +101,48 @@ lines today for two small steps).
   `generated/reports/{registries,blocks}.json`. 1.21.1 is obfuscated, so the
   decompile needs Mojang's official mappings applied first (26.x ships
   unobfuscated, which is why the existing references didn't need this).
-- `reference/neoforge-21.1/`: NeoForge 21.1.x source, for section 5.
+- `reference/neoforge-1.21.1/`: NeoForge's `1.21.1` branch, for section 5.
+
+Both come from `tools/new_version.py` (6.1).
 
 ### 3.3 `protogen.py` gaps the 1.21.1 jump exposes
 
 Exact-name matching was enough for one release. Across eight it isn't.
+Items 1 to 3 have landed.
 
-1. **Renames.** An entry renamed between versions maps to nothing. Example:
-   `minecraft:chain` became `minecraft:iron_chain` in the copper update
-   (1.21.9) *(confirm)*. Add a small `RENAMES` table per space (old name to
-   new name), applied before matching, and print every hole so none slips
-   through.
+1. **Renames.** An entry renamed between versions maps to nothing.
+   `RENAMES` in `protogen.py` holds old name to new name per space,
+   applied both ways, and `RENAME_PREFIXES` a prefix a whole space dropped.
+   Only entries confirmed in the decompile go in. For 767 to 774: `chain`
+   to `iron_chain` (block, item), every attribute's `generic.`/`player.`/
+   `zombie.` prefix, `OPTIONAL_UUID` to `OPTIONAL_LIVING_ENTITY_REFERENCE`
+   (serializer), and three sounds (the screaming goat's horn break merged
+   into the plain one; leash knot break/place to `item.lead.untied`/`tied`).
 2. **Block states that gained properties.** A block that gained a property
-   loses every state under exact matching. Fallback: match on the block
-   name, take the old properties, fill new properties from the new
-   version's default state, then look that up.
-3. **More id spaces.** `v775.rs` hand-codes `argument_type_775_to_777`. Add
-   `command_argument_type` (and any other registry a rewrite currently
-   hard-codes, such as `stat_type`) to `CLIENT_REGISTRIES`, so the 767 hop
-   gets it generated.
-4. **Hole report as a test.** Fail generation (or a unit test) when a
-   forward run has holes the `RENAMES` table doesn't explain.
+   loses every state under exact matching. `landing_by_state` falls back to
+   the same block's closest state: shared properties kept, new ones at the
+   block's default. Fallback landings may share a target; exact ones may
+   not.
+3. **More id spaces.** `command_argument_type` is in `CLIENT_REGISTRIES`.
+   Its generated 775-to-777 map matches the hand-written
+   `argument_type_775_to_777` exactly (with the `color` to `team_color`
+   rename). `Remap::parse` ignores spaces it has no `IdSpace` for, so the
+   Rust side picks a space up only when a hop needs it.
+4. **Hole report.** Each remap run lists the forward holes by name, with a
+   rename guess where one name ends like the other. Turn that into a hard
+   failure only if holes start slipping through.
+
+What 767 to 774 still leaves unmapped is shape change, so the hop handles
+it, not the table:
+
+| Space | Old entry | What became of it | Hop |
+|---|---|---|---|
+| data component | `hide_tooltip`, `hide_additional_tooltip` | `tooltip_display` | 4.4 |
+| data component | `fire_resistant` | `damage_resistant` (a tag) | 4.4 |
+| entity type | `boat`, `chest_boat` | one type per wood | 4.3: pick by the boat's variant metadata |
+| entity type | `potion` | `splash_potion`, `lingering_potion` | 4.3: pick by the thrown item |
+| serializer | `COMPOUND_TAG` | removed (parrot shoulders) | 4.3 |
+| sound | `item.goat_horn.play`, `entity.puffer_fish.ambient`, `entity.wolf.howl` | removed | drop the sound |
 
 ### 3.4 Per-connection hop state
 
@@ -276,16 +297,15 @@ first: it is the cheapest of the four targets.
 ### 5.2 1.21.1 NeoForge (21.1.x): the handshake
 
 `client/neoforge.rs` follows NeoForge 26.3.x. Diff it against 21.1.x
-(`reference/neoforge-21.1/`, `network/` and `registries/`):
+(`reference/neoforge-1.21.1/`, `network/` and `registries/`):
 
 - Payload names and codecs: `neoforge:register`, `neoforge:network`,
   `neoforge:modded_network_setup_failed`, the frozen registry trio, config
   files, data maps.
-- Which configuration tasks exist in 21.1.x. Extensible enum data and
-  feature flag payloads may not exist yet *(confirm)*. Offering a channel
-  the server doesn't know is harmless; answering a task it never starts is
-  dead code.
-- `c:version` and `c:register` support in 21.1.x *(confirm)*.
+- The 1.21.1 branch has every payload the 26.3 handshake handles,
+  extensible enums, feature flags and the `c:` channels included
+  (`network/payload/`). What's left to compare is their codecs and the
+  order the tasks run in.
 - `ConnectionProtocol` ordinals (`PLAY = 1`, `CONFIGURATION = 4` in
   `protocol/neoforge.rs`): check they hold in 1.21.1.
 - The registry snapshot codec (ids, aliases, any extra fields).
@@ -332,21 +352,18 @@ pure data.**
 
 ### 6.1 One-command version intake (fully automatable)
 
-`tools/new_version.py <ver>`:
+Landed as `tools/new_version.py` (usage in its header):
 
-1. Download and verify the official server jar (reuse
-   `dump_game_data.server_jar`; official jars only).
-2. Run the data generator (`--reports`) into
-   `reference/minecraft-<ver>/generated/`.
-3. For obfuscated versions (1.21.1): fetch the official mappings from the
-   same manifest, remap, then decompile. Needs a JDK and a decompiler such
-   as Vineflower, both as pinned downloads.
-4. Write `version.json`.
-5. Run `protogen.py packets` and `protogen.py remap --from <ver> --to <next>`.
-6. Print the hole report (3.3).
-
-Same script for NeoForge sources: clone NeoForge at a release tag into
-`reference/neoforge-<ver>/` (it is open source, no decompile needed).
+- `vanilla <ver> [--remap-to V] [--remap-from V]`: official client and
+  server jars, client mappings and client libraries from Mojang's manifest,
+  each checked against its SHA-1. The server jar's data generator writes
+  `generated/reports/`. Obfuscated clients (up to 1.21.11) are renamed with
+  AutoRenamingTool; Vineflower decompiles. Both tools are pinned by
+  SHA-256. Then `protogen.py packets` and `remap`, which prints the hole
+  report (3.3).
+- `neoforge <ver>`: shallow clone of NeoForge's branch for that version
+  (`1.21.1`, `26.3.x`). NeoForge doesn't tag most releases, so branches,
+  not tags.
 
 ### 6.2 Codec diff report (automatable, saves the most time)
 

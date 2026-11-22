@@ -56,7 +56,7 @@ meshes chunk sections (on `client`'s worker). `vk` (native Vulkan) draws them;
 |---|---|
 | `shaders/*.slang` | Vulkan shaders (`build.rs` compiles them) |
 | `src/shaderpack/builtin/pack/**/*.slang` | the built-in shader pack, in Slang; `build.rs` compiles it to SPIR-V behind the engine prelude in `builtin/iris/` |
-| `tools/` | generators (`gen_*.py`, `protogen.py`), asset and build scripts; `bench-apk/` (the Android game bench, beside the real app) and `vkview-apk/` (the viewer as an Android app) |
+| `tools/` | generators (`gen_*.py`, `protogen.py`; `new_version.py` brings a game or NeoForge version into `reference/`), asset and build scripts; `bench-apk/` (the Android game bench, beside the real app) and `vkview-apk/` (the viewer as an Android app) |
 | `vendor/` | patched crates; read `vendor/PATCHES.md` first |
 | `crates/torch-opus` | safe Opus bindings |
 | `reference/minecraft-<ver>/` | decompiled vanilla, for parity checks (git-ignored) |

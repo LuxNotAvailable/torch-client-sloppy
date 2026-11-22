@@ -414,7 +414,9 @@ mod tests {
         assert_eq!(missing(IdSpace::Item), 1);
         assert_eq!(missing(IdSpace::DataComponentType), 110 - 104);
         assert_eq!(missing(IdSpace::EntityDataSerializer), 4);
-        assert_eq!(missing(IdSpace::BlockState), 29_873 - 29_671);
+        // Only the two new blocks' states; new property values (trumpet note
+        // blocks and the like) fall back to the block's nearest state.
+        assert_eq!(missing(IdSpace::BlockState), 2);
         assert_eq!(missing(IdSpace::EntityType), 0, "identity has no holes");
     }
 }

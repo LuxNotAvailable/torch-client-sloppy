@@ -4,7 +4,7 @@
     "protocol": 774
   },
   "to": {
-    "version": "26.1.1",
+    "version": "26.1.2",
     "protocol": 775
   },
   "forward": {
@@ -315,6 +315,15 @@
     },
     "villager_type": {
       "count": 7,
+      "runs": [
+        [
+          0,
+          0
+        ]
+      ]
+    },
+    "command_argument_type": {
+      "count": 57,
       "runs": [
         [
           0,
@@ -812,6 +821,15 @@
         ]
       ]
     },
+    "command_argument_type": {
+      "count": 57,
+      "runs": [
+        [
+          0,
+          0
+        ]
+      ]
+    },
     "block_state": {
       "count": 29873,
       "runs": [
@@ -821,7 +839,19 @@
         ],
         [
           1381,
-          null
+          -800
+        ],
+        [
+          1431,
+          -850
+        ],
+        [
+          1481,
+          -900
+        ],
+        [
+          1531,
+          -950
         ],
         [
           1581,

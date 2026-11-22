@@ -68,6 +68,8 @@ mod tests {
     #[test]
     fn a_modded_block_reads_as_a_full_solid_cube() {
         use azalea::physics::collision::BlockWithShape;
+        // Solidity comes from baked models, which need the atlas.
+        crate::blocks::tests::atlas_once();
         let modded = BlockState::from_network(BlockState::MAX_STATE as u32 + 3);
         assert!(modded.is_collision_shape_full());
         assert!(!modded.is_collision_shape_empty());
