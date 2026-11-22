@@ -61,7 +61,7 @@ meshes chunk sections (on `client`'s worker). `vk` (native Vulkan) draws them;
 | `crates/torch-opus` | safe Opus bindings |
 | `reference/minecraft-<ver>/` | decompiled vanilla, for parity checks (git-ignored) |
 | `android/`, `web/`, `fastlane/` | platform shells and store metadata |
-| `docs/` | `ANDROID_VS_PC.md` (every build difference), `ANDROID_SPECIFICS.md` (why the phone differs), `ANDROID_PERF.md` (Pixel measurements), `PC_CANDIDATES.md` (Android findings for PC: applied, and why the rest wasn't), `SESSION_CHECKPOINT.md` (the Android work's state and next steps) |
+| `docs/` | `ANDROID_VS_PC.md` (every build difference), `ANDROID_SPECIFICS.md` (why the phone differs), `ANDROID_PERF.md` (Pixel measurements), `PC_CANDIDATES.md` (Android findings for PC: applied, and why the rest wasn't), `SESSION_CHECKPOINT.md` (the Android work's state and next steps), `MULTIVERSION_PLAN.md` (what 1.21.1 and NeoForge 1.21.1 support needs, and what can be generated) |
 
 ## Data files (skip unless the task is about their values)
 
