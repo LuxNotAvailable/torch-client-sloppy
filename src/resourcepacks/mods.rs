@@ -29,6 +29,8 @@ pub(crate) struct Package {
     pub(crate) blocks: Option<String>,
     /// `connected.json`: Create-style connected textures.
     pub(crate) connected: Option<String>,
+    /// `plugin.wasm`: ported client code (`docs/MOD_API.md`).
+    pub(crate) plugin: Option<Vec<u8>>,
 }
 
 /// Every readable package in `dir`, in name order.
@@ -122,6 +124,7 @@ fn package(path: &Path, name: &str) -> Result<Package, String> {
             .collect(),
         blocks: source.read_text("/blocks.json"),
         connected: source.read_text("/connected.json"),
+        plugin: source.read("/plugin.wasm"),
     })
 }
 

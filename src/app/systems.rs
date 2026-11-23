@@ -2187,6 +2187,7 @@ pub fn run(
         startup,
     })
     .add_plugins(crate::blockentities::BlockEntityPlugin)
+    .add_plugins(crate::modapi::plugin)
     .add_plugins(crate::scene::player_model::PlayerModelPlugin)
     .add_plugins(crate::scene::hand::HandPlugin)
     .add_plugins(crate::scene::panorama::PanoramaPlugin)

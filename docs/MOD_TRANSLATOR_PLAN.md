@@ -152,6 +152,15 @@ Limits:
 
 ### 4. Behaviour: agent ports
 
+Landed 2026-11-23 (API v1, not yet used by a real port): `MOD_API.md` is
+the contract; `crates/torch-mod-api` the SDK a port is written against;
+`src/modapi` the client host (wasmi; plugins called on change, the client
+plays their animations); `ports/example` the template; `docs/porting/`
+the agent's instructions (`AGENT_GUIDE.md`, `JAVA_TO_API.md`);
+`torch-convert --ports` builds ports into packages. Modded block entities
+reach the API from the last protocol hop (`v775.rs`). The text below is
+the design it came from.
+
 Mod client code calls into Minecraft's client classes everywhere, so it
 can't be run or translated mechanically (embedding a JVM would need most of
 Minecraft's client API rebuilt underneath, and can't run on Android or

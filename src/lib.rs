@@ -26,6 +26,7 @@ mod modules;
 mod platform;
 mod play;
 #[cfg(feature = "multiversion")]
+mod modapi;
 mod protocol;
 #[cfg(resource_packs)]
 mod resourcepacks;

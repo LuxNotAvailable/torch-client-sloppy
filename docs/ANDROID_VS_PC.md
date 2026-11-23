@@ -25,7 +25,7 @@ desktop (PC) build, and where. Keep the two from leaking into each other.
 | Features | defaults | `--features mobile_ui` (cargo-apk ignores metadata features) |
 | Sound | rodio through cpal's desktop backend | rodio through cpal's Oboe backend (AAudio); Oboe's static libc++ needs `libc++abi` linked (`build.rs`); rodio is also listed in the Android dependency table |
 | Voice chat | `voice` | off (`build.rs`; no microphone permission) |
-| Resource packs and mod assets | `resourcepacks` (`.torchmod` packages in `<storage>/mods`: `resourcepacks/mods.rs`) | off (`build.rs`) |
+| Resource packs and mod packages | `resourcepacks` (`.torchmod` packages in `<storage>/mods`: `resourcepacks/mods.rs`; their `plugin.wasm` runs in `modapi`) | off (`build.rs`): no packages, so no plugins |
 | Assets | download / folder | packed into the APK (`cfg(packed_assets)`, `platform::assets::archive`) |
 | Allocator | mimalloc (or `tracked`) | system |
 | TLS | rustls default roots | `android_tls_config` (webpki roots) |

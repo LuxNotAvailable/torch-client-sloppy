@@ -134,7 +134,13 @@ fn file_safe(s: &str) -> String {
 
 /// The package for `jar`, or `None` when it has nothing the client uses
 /// (a library with no assets, blocks, entities or items).
-pub fn write(env: &Env, jar: &ModJar, dump: &Value, out: &Path) -> Result<Option<PathBuf>, String> {
+pub fn write(
+    env: &Env,
+    jar: &ModJar,
+    dump: &Value,
+    out: &Path,
+    port: Option<&crate::ports::Port>,
+) -> Result<Option<PathBuf>, String> {
     let Some(main) = jar.mods.first() else {
         return Ok(None);
     };
@@ -164,7 +170,7 @@ pub fn write(env: &Env, jar: &ModJar, dump: &Value, out: &Path) -> Result<Option
         "game": {"minecraft": "1.21.1", "loader": "neoforge", "loader_version": env.neoforge},
         "dependencies": jar.dependencies,
         "converter": concat!("torch-convert ", env!("CARGO_PKG_VERSION")),
-        "api": 0,
+        "api": port.map_or(0, |p| p.api),
     });
     let path = out.join(format!(
         "{}-{}.torchmod",
@@ -197,6 +203,12 @@ pub fn write(env: &Env, jar: &ModJar, dump: &Value, out: &Path) -> Result<Option
     }
     if !connected.is_empty() {
         add("connected.json", &pretty(&json!(connected)))?;
+    }
+    if let Some(port) = port {
+        add("plugin.wasm", &port.wasm)?;
+        if let Some(notes) = &port.notes {
+            add("PORTED.md", notes.as_bytes())?;
+        }
     }
     let mut seen = BTreeSet::new();
     for (key, bytes) in &jar.assets {

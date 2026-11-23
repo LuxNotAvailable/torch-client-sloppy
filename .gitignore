@@ -15,3 +15,5 @@ __pycache__/
 /tools/moddump/Mods/
 /crates/torch-convert/target/
 /tools/moddump/converted/
+/crates/*/target/
+/ports/*/target/

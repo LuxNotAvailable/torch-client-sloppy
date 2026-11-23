@@ -241,7 +241,11 @@ pub(crate) fn mount() {
     let mod_count = packages.len();
     let mut blocks = Vec::new();
     let mut connected = Vec::new();
+    let mut plugins = Vec::new();
     for package in packages {
+        if let Some(wasm) = package.plugin {
+            plugins.push((package.name.clone(), wasm));
+        }
         if let Some(text) = package.connected {
             connected.push((package.name.clone(), text));
         }
@@ -252,6 +256,7 @@ pub(crate) fn mount() {
     }
     crate::blocks::modded::load_packages(&blocks);
     crate::terrain::ctm::set_package_rules(connected);
+    crate::modapi::load(plugins);
     if layers.is_empty() {
         return;
     }

@@ -196,6 +196,12 @@ impl Blocks {
         self.atlas_rows
     }
 
+    /// A block state's model by name (`stone`, `create:shaft`), not cached:
+    /// for mod API parts, which cache their own meshes.
+    pub fn baked_by_name(&self, name: &str, props: &HashMap<&str, &str>) -> BakedBlock {
+        self.build(name, props)
+    }
+
     fn build(&self, name: &str, props: &HashMap<&str, &str>) -> BakedBlock {
         let Some(def) = self.defs.get(name) else {
             self.missing_defs.fetch_add(1, Ordering::Relaxed);

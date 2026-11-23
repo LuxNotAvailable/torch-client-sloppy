@@ -1,0 +1,137 @@
+# The mod API
+
+How a converted mod's behaviour runs in this client. A mod's client code
+(renderers, animations, later payload handlers and screens) is ported to
+Rust against this API, compiled to WebAssembly, and shipped inside its
+`.torchmod` package as `plugin.wasm` (`TORCHMOD_FORMAT.md`). The client
+loads it at run time in a sandbox. Nothing is compiled into the client, so
+a package works for anyone whose client has the API version it targets.
+
+The API is mod-neutral: it describes what any mod's client code needs (a
+block entity's moving parts, its data, its neighbours), not one mod's
+features. `docs/porting/` tells an agent how to port Java to it.
+
+## Pieces
+
+| Piece | Where | Role |
+|---|---|---|
+| Guest SDK | `crates/torch-mod-api` | The types and the `export_plugin!` macro a port is written against. Builds for `wasm32-unknown-unknown`. |
+| Host | `src/modapi/` | Loads each package's `plugin.wasm` (wasmi, an interpreter: it runs on every platform the client does), feeds it data, draws what it returns. |
+| Ports | `ports/<modid>/` (or outside the repo, by the mod's licence) | One crate per mod; `torch-convert` builds it into the package. |
+| Porting docs | `docs/porting/` | For the agent: the workflow, Java-to-API mappings, checks. |
+
+## Design: describe once, animate natively
+
+A plugin is never called per frame. It's called when something it draws
+changes (a block entity appears, its data or block state changes, a
+neighbour changes), and it answers with a description: the parts to draw,
+each with a transform and an animation the client plays every frame in
+native code (a spin at so many degrees per tick, a swing, a slide). A
+spinning shaft costs one call when its speed changes, not one per frame.
+This keeps the interpreter off the hot path and makes the API declarative,
+which is also easier to port to and to check.
+
+## Version 1
+
+`api: 1` in a package manifest. The host refuses a plugin whose
+`torch_api()` is newer than it knows.
+
+### Handlers
+
+A plugin registers handlers in `init`:
+
+| Handler | Registered for | Called | Returns |
+|---|---|---|---|
+| `block_entity` | block entity type ids (`create:kinetic`) | when one appears, its data (NBT) or its block state changes, or a neighbour it asked about changes | a `Rig` |
+
+Planned for later versions (not in v1): entity visuals, mod network
+payloads (a codec and a handler per channel), screens and HUD elements, a
+per-tick hook, item renderers.
+
+### What a plugin gets: `BlockEntityView`
+
+```json
+{"type": "create:simple_kinetic", "pos": [10, 64, -3],
+ "block": "create:shaft", "props": {"axis": "y", "waterlogged": "false"},
+ "nbt": {"Speed": 32.0, "Network": {"Id": 12}}, "time": 120345}
+```
+
+- `nbt`: the block entity's data as the server sent it, NBT as JSON:
+  compounds are objects, lists and arrays are arrays, numbers are numbers
+  (their NBT type is dropped), strings are strings.
+- `props`: the block state's properties; `block` its id.
+- `time`: the game time, in ticks, when the view was made.
+
+### What a plugin answers: `Rig`
+
+```json
+{"parts": [
+  {"geometry": {"model": {"model": "create:block/shaft"}},
+   "transform": {"pivot": [8, 8, 8], "rotate": [0, 0, 0]},
+   "animation": {"spin": {"axis": [0, 1, 0], "pivot": [8, 8, 8],
+                          "degrees_per_tick": 9.6, "phase": 0}}}
+]}
+```
+
+A `Part` is geometry, a static transform, and an animation. Units are
+sixteenths of a block (model units) from the block's corner; angles are
+degrees.
+
+Geometry:
+
+| Kind | Fields | Use |
+|---|---|---|
+| `model` | `model` (a block model id), `x`, `y` (quarter turns, as a blockstate variant), `uvlock` | the mod's partial models: shafts, cogs, lids, arms |
+| `block` | `block`, `props` | a whole block state's model (a carried block, a display) |
+| `cuboid` | `from`, `to`, `texture` (a sprite id), `faces` (which of down, up, north, south, west, east), `tint` (ARGB), `uv` (optional rect in sixteenths) | simple boxes: a tank's fluid, a gauge needle |
+
+Transform, applied to the geometry in this order: scale about `pivot`,
+rotate about `pivot` (X, then Y, then Z), translate.
+
+Animation, played after the transform:
+
+| Kind | Fields | Motion |
+|---|---|---|
+| `none` | | static |
+| `spin` | `axis`, `pivot`, `degrees_per_tick`, `phase` | angle = `phase` + `degrees_per_tick` x ticks |
+| `swing` | `axis`, `pivot`, `amplitude`, `period_ticks`, `phase` | angle = `amplitude` x sin(2 pi (ticks / `period_ticks`) + `phase`) |
+| `slide` | `offset`, `period_ticks`, `phase` | moves to `offset` and back, a smooth (cosine) ping-pong |
+
+Ticks are the client's game time with the partial tick, so motion is
+smooth between server updates.
+
+### Host functions (imports, module `torch`)
+
+| Function | Does |
+|---|---|
+| `log(ptr, len)` | writes a UTF-8 line to the client log, tagged with the mod |
+| `block_at(x, y, z, out_ptr, out_cap) -> len` | the block at a position as JSON (`{"block": ..., "props": {...}}`), for connection logic; writes nothing and returns the needed length if `out_cap` is too small. v1 sees the blocks within 2 of the block entity (a copy made before the call); farther ones return 0 |
+
+### ABI
+
+Data crosses as UTF-8 JSON in the plugin's memory.
+
+| Export | Signature | Does |
+|---|---|---|
+| `torch_api` | `() -> i32` | the API version the plugin was built for |
+| `torch_alloc` | `(len: i32) -> i32` | a buffer the host writes input into |
+| `torch_free` | `(ptr: i32, len: i32)` | frees a buffer from `torch_alloc` or a result |
+| `torch_init` | `() -> i64` | the `Registration` JSON, as `ptr << 32 \| len` |
+| `torch_block_entity` | `(ptr: i32, len: i32) -> i64` | a `BlockEntityView` in, a `Rig` out (same packing) |
+
+The SDK writes all of these; a port only implements the `Plugin` trait.
+
+### Limits
+
+- A call that runs past its fuel (a step budget) or traps is abandoned:
+  the block entity draws nothing, and the client logs it once.
+- A plugin can't reach the file system, the network or other plugins.
+
+## Where the data comes from
+
+A modded block entity's type and data reach the client in chunk packets
+and `block_entity_data`. azalea can't hold a modded block entity type, so
+the last protocol hop takes modded ones out of those packets before azalea
+reads them and hands them to `modapi` with the server's type id
+(`protocol/v775.rs`). Native-protocol (26.3) NeoForge servers don't go
+through a hop yet; their modded block entities aren't captured.

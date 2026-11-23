@@ -294,6 +294,7 @@ pub(crate) fn forget_chunk(
     cz: i32,
 ) {
     blockentities::feed::on_forget_chunk(cx, cz);
+    crate::modapi::store::on_forget_chunk(cx, cz);
     bump_chunk_generation();
     received_chunks().lock().unwrap().remove(&(cx, cz));
     meshed_chunks().lock().unwrap().remove(&(cx, cz));
@@ -331,6 +332,7 @@ pub(crate) fn reset_level(shared: &Arc<SharedMutex>) {
         q.reset();
     }
     blockentities::feed::reset();
+    crate::modapi::store::reset();
     reset_maps();
     let mut s = shared.lock().unwrap();
     s.session.world.map_updates.clear();

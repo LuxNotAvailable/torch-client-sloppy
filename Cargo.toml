@@ -129,6 +129,10 @@ azalea-protocol = { path = "vendor/azalea/azalea-protocol", default-features = f
 azalea-registry = { path = "vendor/azalea/azalea-registry" }
 azalea-world = { path = "vendor/azalea/azalea-world" }
 simdnbt = "0.10"
+# The mod API: the types ported mods return, and the sandbox their
+# plugin.wasm runs in (an interpreter, so every platform runs it).
+torch-mod-api = { path = "crates/torch-mod-api" }
+wasmi = { version = "2", default-features = false, features = ["std", "validate", "stable", "auto-dispatch"] }
 
 # The engine. Platform windowing features are added per target below.
 bevy = { version = "0.18", default-features = false, features = [

@@ -21,7 +21,7 @@ A zip archive, `<modid>-<version>.torchmod`:
 | `entities.json` | the mod's entity types and sizes |
 | `items.json` | the mod's items: stack size, damage, block |
 | `connected.json` | Create-style connected textures whose sheets the mod ships |
-| `plugin.wasm` | ported behaviour against the mod API (reserved; not written yet) |
+| `plugin.wasm` | ported client code against the mod API (`MOD_API.md`), built by `torch-convert --ports` |
 | `PORTED.md` | what was ported, skipped and why (with `plugin.wasm`) |
 
 Only the namespaces the manifest lists may appear under `assets/`, and
@@ -65,7 +65,8 @@ cull against nothing.
   version's.
 - `dependencies`: mod ids that had to load for the dump. They need their
   own packages only if they add blocks.
-- `api`: the mod API version `plugin.wasm` targets; `0` means no plugin.
+- `api`: the mod API version `plugin.wasm` targets (`MOD_API.md`); `0`
+  means no plugin.
 
 ## `blocks.json`
 

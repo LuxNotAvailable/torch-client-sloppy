@@ -4,8 +4,12 @@
 //!
 //! ```text
 //! torch-convert setup                      install NeoForge, accept the EULA
-//! torch-convert convert JAR|DIR... [--with JAR|DIR]... [--skip NAME]... [--out DIR]
+//! torch-convert convert JAR|DIR... [--with JAR|DIR]... [--skip NAME]... [--out DIR] [--ports DIR]
 //! ```
+//!
+//! `--ports DIR` adds ported client code: for a mod `create`, the crate in
+//! `DIR/create/` (`docs/porting/AGENT_GUIDE.md`) is built for wasm32 and
+//! packaged as its `plugin.wasm`.
 //!
 //! `convert` starts a headless NeoForge server once with every jar given
 //! (and `--with` ones, loaded but not packaged) plus the embedded dumper
@@ -17,6 +21,7 @@ mod dump;
 mod jar;
 mod models;
 mod package;
+mod ports;
 mod setup;
 
 use std::path::{Path, PathBuf};
@@ -49,7 +54,7 @@ fn default_work() -> PathBuf {
 
 const USAGE: &str = "usage:
   torch-convert setup [options]
-  torch-convert convert JAR|DIR... [--with JAR|DIR]... [--skip NAME]... [--out DIR] [options]
+  torch-convert convert JAR|DIR... [--with JAR|DIR]... [--skip NAME]... [--out DIR] [--ports DIR] [options]
 
 options: --work DIR (default: the user data folder's torch-convert)
          --neoforge VERSION (default 21.1.264)  --java PATH  --javac PATH";
@@ -76,6 +81,7 @@ fn run(args: Vec<String>) -> Result<(), String> {
     let mut with = Vec::new();
     let mut skip = Vec::new();
     let mut out = PathBuf::from("converted");
+    let mut ports: Option<PathBuf> = None;
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
         let mut value = |name: &str| it.next().ok_or(format!("{name} needs a value"));
@@ -87,6 +93,7 @@ fn run(args: Vec<String>) -> Result<(), String> {
             "--with" => with.push(PathBuf::from(value("--with")?)),
             "--skip" => skip.push(value("--skip")?.to_lowercase()),
             "--out" => out = PathBuf::from(value("--out")?),
+            "--ports" => ports = Some(PathBuf::from(value("--ports")?)),
             "-h" | "--help" => {
                 println!("{USAGE}");
                 return Ok(());
@@ -106,7 +113,11 @@ fn run(args: Vec<String>) -> Result<(), String> {
             }
             let targets = jars(&targets, &skip)?;
             let with = jars(&with, &skip)?;
-            convert(&env, &targets, &with, &out)
+            let ports = match ports {
+                Some(p) => Some(std::path::absolute(p).map_err(|e| e.to_string())?),
+                None => None,
+            };
+            convert(&env, &targets, &with, &out, ports.as_deref())
         }
         _ => Err(USAGE.to_owned()),
     }
@@ -144,7 +155,13 @@ fn jars(paths: &[PathBuf], skip: &[String]) -> Result<Vec<PathBuf>, String> {
     Ok(out)
 }
 
-fn convert(env: &Env, targets: &[PathBuf], with: &[PathBuf], out: &Path) -> Result<(), String> {
+fn convert(
+    env: &Env,
+    targets: &[PathBuf],
+    with: &[PathBuf],
+    out: &Path,
+    ports: Option<&Path>,
+) -> Result<(), String> {
     let server = env.server();
     if !setup::installed(env) {
         return Err(format!(
@@ -176,7 +193,14 @@ fn convert(env: &Env, targets: &[PathBuf], with: &[PathBuf], out: &Path) -> Resu
     std::fs::create_dir_all(out).map_err(|e| format!("{}: {e}", out.display()))?;
     let mut written = 0;
     for m in &mods {
-        match package::write(env, m, &dumped, out)? {
+        let port = match (ports, m.mods.first()) {
+            (Some(dir), Some(main)) => ports::build(dir, &main.id)?,
+            _ => None,
+        };
+        if let Some(port) = &port {
+            println!("{}: ported code, {} bytes", m.file, port.wasm.len());
+        }
+        match package::write(env, m, &dumped, out, port.as_ref())? {
             Some(path) => {
                 written += 1;
                 println!("wrote {}", path.display());

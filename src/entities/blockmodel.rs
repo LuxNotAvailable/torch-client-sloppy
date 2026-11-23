@@ -34,6 +34,23 @@ pub fn mesh(block: BlockRef) -> Option<Mesh> {
     out.finish()
 }
 
+/// A mesh of `quads` (block units), every vertex's colour multiplied by
+/// `tint` (RGBA): for mod API parts (`modapi::render`).
+pub(crate) fn mesh_of(quads: &[BakedQuad], tint: [f32; 4]) -> Option<Mesh> {
+    let mut out = QuadBuf::default();
+    for quad in quads {
+        out.push(quad);
+    }
+    if tint != [1.0; 4] {
+        for colour in &mut out.colors {
+            colour[0] *= tint[0];
+            colour[1] *= tint[1];
+            colour[2] *= tint[2];
+        }
+    }
+    out.finish()
+}
+
 fn state_model(id: u32) -> Option<std::sync::Arc<crate::blocks::BakedBlock>> {
     use azalea::block::BlockState;
 

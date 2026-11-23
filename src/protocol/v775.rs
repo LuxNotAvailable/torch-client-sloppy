@@ -279,6 +279,16 @@ fn level_chunk(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
         let head = r.take(1 + 2)?;
         let kind = hop::shifted(ids, IdSpace::BlockEntityType, r.varint()?);
         let tag = nbt(&mut r)?;
+        // A mod's block entity goes to the mod API: azalea can't hold its type.
+        if let Some(name) = kind.and_then(|k| modded_block_entity(ids, k)) {
+            let pos = [
+                x * 16 + i32::from(head[0] >> 4),
+                i32::from(i16::from_be_bytes([head[1], head[2]])),
+                z * 16 + i32::from(head[0] & 15),
+            ];
+            crate::modapi::store::on_block_entity(pos, name, tag);
+            continue;
+        }
         // Beds are baked into the block model since 26.3 and carry no entity.
         if let Some(kind) = kind {
             kept.extend_from_slice(head);
@@ -294,6 +304,23 @@ fn level_chunk(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     Some(out.into_boxed_slice())
 }
 
+/// A block entity type past this client's (a mod's): its server id
+/// (`create:kinetic`), which the server's registry sync named.
+fn modded_block_entity(ids: &Ids, native: i32) -> Option<String> {
+    let vanilla = ids.from_native.count(IdSpace::BlockEntityType);
+    if native < vanilla {
+        return None;
+    }
+    let protocol = crate::protocol::session();
+    let wire = native - vanilla
+        + hop::wire_vanilla_count(protocol, IdSpace::BlockEntityType).unwrap_or(vanilla);
+    let name = crate::protocol::wire_registry_name(
+        crate::protocol::registries::RegistryId::BlockEntityType,
+        u32::try_from(wire).ok()?,
+    );
+    Some(name.flatten().unwrap_or_else(|| format!("unknown:{wire}")))
+}
+
 fn block_entity_data(ids: &Ids, body: &[u8]) -> Option<Rewritten> {
     let mut r = Reader::new(body);
     let mut out = Vec::with_capacity(body.len());
@@ -301,6 +328,17 @@ fn block_entity_data(ids: &Ids, body: &[u8]) -> Option<Rewritten> {
     let Some(kind) = hop::shifted(ids, IdSpace::BlockEntityType, r.varint()?) else {
         return Some(Rewritten::Drop);
     };
+    if let Some(name) = modded_block_entity(ids, kind) {
+        // A position packs x (26 bits), z (26), y (12).
+        let packed = i64::from_be_bytes(body.get(..8)?.try_into().ok()?);
+        let pos = [
+            (packed >> 38) as i32,
+            ((packed << 52) >> 52) as i32,
+            ((packed << 26) >> 38) as i32,
+        ];
+        crate::modapi::store::on_block_entity(pos, name, r.rest());
+        return Some(Rewritten::Drop);
+    }
     write_varint(&mut out, kind);
     out.extend_from_slice(r.rest());
     Some(Rewritten::Body(out.into_boxed_slice()))
@@ -1049,6 +1087,27 @@ mod tests {
             assert_eq!(r.varint(), Some(1), "creative");
             assert_eq!(r.varint(), Some(expected));
         }
+    }
+
+    #[test]
+    fn a_mods_block_entity_goes_to_the_mod_api() {
+        // From the server, a type id 3 past 775's: past 777's once shifted.
+        let wire = Remap::v775_to_v777().count(IdSpace::BlockEntityType) + 3;
+        let pos = [-1234, -60, 987];
+        let packed = ((i64::from(pos[0]) & 0x3FF_FFFF) << 38)
+            | ((i64::from(pos[2]) & 0x3FF_FFFF) << 12)
+            | (i64::from(pos[1]) & 0xFFF);
+        let mut body = packed.to_be_bytes().to_vec();
+        write_varint(&mut body, wire);
+        // {Speed: 1b}
+        body.extend_from_slice(&[10, 1, 0, 5, b'S', b'p', b'e', b'e', b'd', 1, 0]);
+        assert!(matches!(
+            block_entity_data(ids(), &body),
+            Some(Rewritten::Drop)
+        ));
+        // No registry sync here, so no name: its server id stands in.
+        let kind = crate::modapi::store::kind_at(pos).expect("captured at its position");
+        assert!(kind.starts_with("unknown:"), "{kind}");
     }
 
     #[test]

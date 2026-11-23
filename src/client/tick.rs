@@ -358,6 +358,7 @@ fn read_tick_snapshot(bot: &Client, shared: &Arc<SharedMutex>) -> Option<TickSna
         let snapshot = {
             let world = world.read();
             crate::entities::cull::run(&world);
+            crate::modapi::store::tick(&world, game_time);
             blockentities::feed::publish(&world, game_time, &players)
         };
         if let Some(snapshot) = snapshot {
