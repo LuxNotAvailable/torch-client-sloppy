@@ -158,7 +158,7 @@ pub fn block_visual(state: azalea::block::BlockState) -> RenderedBlock {
     };
 
     if !state.is_vanilla() {
-        return modded_visual(state);
+        return dumped_visual(state).unwrap_or_else(|| modded_visual(state));
     }
 
     if matches!(name, "air" | "cave_air" | "void_air") {
@@ -248,6 +248,55 @@ fn translucent_layer(name: &str) -> bool {
         "ice" | "frosted_ice" | "slime_block" | "honey_block" | "tinted_glass" | "nether_portal"
     ) || name.ends_with("_stained_glass")
         || name.ends_with("_stained_glass_pane")
+}
+
+/// A modded state a dump named (`blocks::modded`): its mod's own model.
+/// `None` when the state isn't dumped or its model didn't load.
+fn dumped_visual(state: azalea::block::BlockState) -> Option<RenderedBlock> {
+    use crate::blocks::modded::Render;
+    let (name, props, light, render) = crate::blocks::modded::with_state(state.id(), |s| {
+        let props: HashMap<&str, &str> = s.props.iter().copied().collect();
+        (s.name, props, s.fact.light, s.fact.render)
+    })?;
+    let empty = |state: azalea::block::BlockState| RenderedBlock {
+        geom: BlockGeom::Model(Default::default()),
+        is_solid: false,
+        waterlogged: false,
+        full_cube: false,
+        emission: light,
+        emissive: false,
+        cull_group: 0,
+        tint_kind: TintKind::None,
+        offset: ShapeOffset::None,
+        state: state.id(),
+        translucent: false,
+        shape: 0,
+        torch: false,
+    };
+    if render == Render::Invisible {
+        return Some(empty(state));
+    }
+    let baked = crate::blocks::registry().baked(state.id(), name, &props);
+    if baked.parts.is_empty() {
+        // A block entity renderer draws it in the mod; nothing to show here.
+        return (render == Render::Animated).then(|| empty(state));
+    }
+    let shape = crate::blocks::shape::intern(crate::blocks::shape::sides_of(&baked));
+    Some(RenderedBlock {
+        is_solid: baked.is_solid,
+        full_cube: baked.full_cube,
+        geom: BlockGeom::Model(baked),
+        emission: light,
+        emissive: false,
+        waterlogged: bool_prop(&props, "waterlogged"),
+        cull_group: 0,
+        tint_kind: TintKind::None,
+        offset: ShapeOffset::None,
+        state: state.id(),
+        translucent: false,
+        shape,
+        torch: false,
+    })
 }
 
 /// A modded block (VULKAN_REWRITE_CHECKLIST.md 3.8): a full cube in the

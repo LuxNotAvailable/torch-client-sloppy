@@ -48,9 +48,10 @@ pub(crate) fn is_experimental(protocol: i32) -> bool {
 }
 
 /// Whether entity metadata indices for players and mannequins match the native
-/// layout. They last moved between 1.21.11 and 26.1.
+/// layout. They last moved between 1.21.11 and 26.1. The 767 hop writes
+/// native indices itself (`v767::entity_data`).
 pub(crate) fn metadata_matches_native(protocol: i32) -> bool {
-    protocol >= 775
+    protocol >= 775 || protocol == 767
 }
 
 pub(crate) fn joinable(protocol: i32) -> bool {

@@ -105,6 +105,51 @@ pub fn read(jar: &[u8], entry: &Entry) -> Result<Vec<u8>, String> {
     }
 }
 
+/// Writes `files` as a stored (uncompressed) zip, for tests.
+#[cfg(test)]
+pub(crate) fn write_test_archive(path: &std::path::Path, files: &[(&str, &[u8])]) {
+    let mut out = Vec::new();
+    let mut central = Vec::new();
+    for (name, data) in files {
+        let mut crc = flate2::Crc::new();
+        crc.update(data);
+        let offset = out.len() as u32;
+        let fields = |out: &mut Vec<u8>| {
+            out.extend_from_slice(&0u16.to_le_bytes()); // flags
+            out.extend_from_slice(&0u16.to_le_bytes()); // stored
+            out.extend_from_slice(&0u32.to_le_bytes()); // time, date
+            out.extend_from_slice(&crc.sum().to_le_bytes());
+            out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            out.extend_from_slice(&(name.len() as u16).to_le_bytes());
+            out.extend_from_slice(&0u16.to_le_bytes()); // extra
+        };
+        out.extend_from_slice(&LOCAL_SIG.to_le_bytes());
+        out.extend_from_slice(&20u16.to_le_bytes());
+        fields(&mut out);
+        out.extend_from_slice(name.as_bytes());
+        out.extend_from_slice(data);
+        central.extend_from_slice(&CENTRAL_SIG.to_le_bytes());
+        central.extend_from_slice(&20u16.to_le_bytes());
+        central.extend_from_slice(&20u16.to_le_bytes());
+        fields(&mut central);
+        central.extend_from_slice(&[0; 8]); // comment, disk, attributes
+        central.extend_from_slice(&0u32.to_le_bytes()[..2]);
+        central.extend_from_slice(&offset.to_le_bytes());
+        central.extend_from_slice(name.as_bytes());
+    }
+    let cd_offset = out.len() as u32;
+    out.extend_from_slice(&central);
+    out.extend_from_slice(&EOCD_SIG.to_le_bytes());
+    out.extend_from_slice(&[0; 4]);
+    out.extend_from_slice(&(files.len() as u16).to_le_bytes());
+    out.extend_from_slice(&(files.len() as u16).to_le_bytes());
+    out.extend_from_slice(&(central.len() as u32).to_le_bytes());
+    out.extend_from_slice(&cd_offset.to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes());
+    std::fs::write(path, out).unwrap();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

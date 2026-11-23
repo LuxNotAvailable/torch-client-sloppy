@@ -71,6 +71,24 @@ impl RegistryId {
         RegistryId::ALL.into_iter().find(|id| id.key() == key)
     }
 
+    /// The hops' id space for this registry, where they remap it.
+    pub(crate) fn id_space(self) -> Option<crate::protocol::remap::IdSpace> {
+        use crate::protocol::remap::IdSpace;
+        Some(match self {
+            RegistryId::Block => IdSpace::Block,
+            RegistryId::Item => IdSpace::Item,
+            RegistryId::EntityType => IdSpace::EntityType,
+            RegistryId::BlockEntityType => IdSpace::BlockEntityType,
+            RegistryId::ParticleType => IdSpace::ParticleType,
+            RegistryId::Menu => IdSpace::Menu,
+            RegistryId::MobEffect => IdSpace::MobEffect,
+            RegistryId::SoundEvent => IdSpace::SoundEvent,
+            RegistryId::DataComponentType => IdSpace::DataComponentType,
+            RegistryId::Attribute => IdSpace::Attribute,
+            RegistryId::Fluid | RegistryId::CommandArgumentType => return None,
+        })
+    }
+
     fn vanilla(self) -> &'static Arc<RegistryTable> {
         static TABLES: LazyLock<Vec<Arc<RegistryTable>>> = LazyLock::new(|| {
             RegistryId::ALL

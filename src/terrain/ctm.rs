@@ -7,6 +7,10 @@
 //! orderings), `top`, `random`, `repeat`, `fixed`. `ctm_compact` and
 //! overlays are not supported yet.
 //!
+//! Converted mods add Create's connected textures (`connected.json` in a
+//! `.torchmod`, `set_package_rules`): a face showing a texture takes a tile
+//! of its `_connected` sheet, picked by Create's own type (`CreateType`).
+//!
 //! The built-in Torch pack adds connected glass. Its 47 tiles are cut from
 //! each glass texture at startup (the frame erased on connected sides), so
 //! no art ships and any pack's glass texture connects.
@@ -14,8 +18,181 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+/// Create's `AllCTTypes`: how a sheet's tiles are picked.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum CreateType {
+    Horizontal,
+    HorizontalKryppers,
+    Vertical,
+    Omnidirectional,
+    Roof,
+    RoofStair,
+    Cross,
+    Rectangle,
+}
+
+impl CreateType {
+    fn parse(id: &str) -> Option<CreateType> {
+        Some(match id.strip_prefix("create:")? {
+            "horizontal" => CreateType::Horizontal,
+            "horizontal_kryppers" => CreateType::HorizontalKryppers,
+            "vertical" => CreateType::Vertical,
+            "omnidirectional" => CreateType::Omnidirectional,
+            "roof" => CreateType::Roof,
+            "roof_stair" => CreateType::RoofStair,
+            "cross" => CreateType::Cross,
+            "rectangle" => CreateType::Rectangle,
+            _ => return None,
+        })
+    }
+}
+
+/// Which neighbours connect, as Create's `CTContext` has them.
+#[derive(Clone, Copy, Default, Debug)]
+struct Context {
+    up: bool,
+    down: bool,
+    left: bool,
+    right: bool,
+    top_left: bool,
+    top_right: bool,
+    bottom_left: bool,
+    bottom_right: bool,
+}
+
+/// `AllCTTypes.getTextureIndex`: a tile of a `sheet`-wide sheet, row by row.
+fn create_index(kind: CreateType, c: Context) -> usize {
+    let b = usize::from;
+    match kind {
+        CreateType::Horizontal => b(c.right) + b(c.left) * 2,
+        CreateType::HorizontalKryppers => match (c.left, c.right) {
+            (false, false) => 0,
+            (_, false) => 3,
+            (false, _) => 2,
+            _ => 1,
+        },
+        CreateType::Vertical => b(c.up) + b(c.down) * 2,
+        CreateType::Omnidirectional => {
+            let mut x = b(c.up) as i32 + b(c.down) as i32 * 2;
+            let mut y = b(c.left) as i32 + b(c.right) as i32 * 2;
+            let borders = [c.up, c.down, c.left, c.right]
+                .iter()
+                .filter(|s| !**s)
+                .count();
+            if borders == 0 {
+                x += b(c.top_right) as i32 + b(c.top_left) as i32 * 2;
+                y += b(c.bottom_right) as i32 * 2 + b(c.bottom_left) as i32;
+            }
+            if borders == 1 {
+                if !c.right && (c.top_left || c.bottom_left) {
+                    y = 4;
+                    x = -1 + b(c.bottom_left) as i32 + b(c.top_left) as i32 * 2;
+                }
+                if !c.left && (c.top_right || c.bottom_right) {
+                    y = 5;
+                    x = -1 + b(c.bottom_right) as i32 + b(c.top_right) as i32 * 2;
+                }
+                if !c.down && (c.top_left || c.top_right) {
+                    y = 6;
+                    x = -1 + b(c.top_left) as i32 + b(c.top_right) as i32 * 2;
+                }
+                if !c.up && (c.bottom_left || c.bottom_right) {
+                    y = 7;
+                    x = -1 + b(c.bottom_left) as i32 + b(c.bottom_right) as i32 * 2;
+                }
+            }
+            if borders == 2
+                && (c.up && c.left && c.top_left
+                    || c.down && c.left && c.bottom_left
+                    || c.up && c.right && c.top_right
+                    || c.down && c.right && c.bottom_right)
+            {
+                x += 3;
+            }
+            (x + 8 * y).max(0) as usize
+        }
+        CreateType::Roof => {
+            let up_drops = c.down && !c.up && (c.left || c.right);
+            let down_drops = !c.down && c.up && (c.left || c.right);
+            let left_drops = !c.left && c.right && (c.up || c.down);
+            let right_drops = c.left && !c.right && (c.up || c.down);
+            if up_drops {
+                if left_drops {
+                    return if c.bottom_right { 0 } else { 5 };
+                }
+                if right_drops {
+                    return if c.bottom_left { 2 } else { 5 };
+                }
+                return 1;
+            }
+            if down_drops {
+                if left_drops {
+                    return if c.top_right { 8 } else { 5 };
+                }
+                if right_drops {
+                    return if c.top_left { 10 } else { 5 };
+                }
+                return 9;
+            }
+            if left_drops {
+                return 4;
+            }
+            if right_drops {
+                return 6;
+            }
+            if c.up && c.down && c.left && c.right {
+                if c.bottom_left && c.top_right {
+                    if c.top_left && !c.bottom_right {
+                        return 12;
+                    }
+                    if c.bottom_right && !c.top_left {
+                        return 15;
+                    }
+                    if !c.bottom_right && !c.top_left {
+                        return 7;
+                    }
+                }
+                if c.bottom_right && c.top_left {
+                    if c.top_right && !c.bottom_left {
+                        return 13;
+                    }
+                    if c.bottom_left && !c.top_right {
+                        return 14;
+                    }
+                    if !c.bottom_left && !c.top_right {
+                        return 11;
+                    }
+                }
+            }
+            5
+        }
+        CreateType::RoofStair => {
+            const MAPPING: [[usize; 4]; 4] =
+                [[1, 6, 9, 4], [14, 12, 13, 15], [2, 10, 8, 0], [5, 5, 5, 5]];
+            MAPPING[b(c.up) * 2 + b(c.right)][b(c.left) * 2 + b(c.down)]
+        }
+        CreateType::Cross => b(c.up) + b(c.down) * 2 + b(c.left) * 4 + b(c.right) * 8,
+        CreateType::Rectangle => {
+            let x = match (c.left, c.right) {
+                (true, true) => 2,
+                (true, false) => 3,
+                (false, true) => 1,
+                _ => 0,
+            };
+            let y = match (c.up, c.down) {
+                (true, true) => 1,
+                (true, false) => 2,
+                (false, true) => 0,
+                _ => 3,
+            };
+            x + y * 4
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Method {
+    Create(CreateType),
     Ctm,
     Horizontal,
     Vertical,
@@ -48,6 +225,94 @@ pub(crate) struct Resolved {
 }
 
 static RULES: OnceLock<Vec<Rule>> = OnceLock::new();
+
+/// Packages' `connected.json` files, as `(package, text)`; read when the
+/// atlas is built.
+static PACKAGE_RULES: std::sync::Mutex<Vec<(String, String)>> = std::sync::Mutex::new(Vec::new());
+
+#[cfg_attr(
+    not(resource_packs),
+    allow(dead_code, reason = "packages mount with resource packs")
+)]
+pub(crate) fn set_package_rules(rules: Vec<(String, String)>) {
+    *PACKAGE_RULES.lock().unwrap_or_else(|e| e.into_inner()) = rules;
+}
+
+/// Rules for packages' connected textures: each `original` texture's faces
+/// take tiles cut from its `connected` sheet (`sheet` tiles a side).
+fn package_rules(images: &mut Vec<(String, image::RgbaImage)>) -> Vec<Rule> {
+    let packages = std::mem::take(&mut *PACKAGE_RULES.lock().unwrap_or_else(|e| e.into_inner()));
+    let mut rules = Vec::new();
+    let mut sheets: HashMap<String, Vec<String>> = HashMap::new();
+    for (package, text) in packages {
+        let Ok(serde_json::Value::Array(entries)) = serde_json::from_str(&text) else {
+            crate::log_warn!("ctm", "{package}: connected.json doesn't read");
+            continue;
+        };
+        for entry in entries {
+            let (Some(original), Some(connected), Some(kind), Some(sheet)) = (
+                entry["original"].as_str(),
+                entry["connected"].as_str(),
+                entry["type"].as_str().and_then(CreateType::parse),
+                entry["sheet"].as_u64().map(|n| n as u32),
+            ) else {
+                continue;
+            };
+            let tiles = match sheets.get(connected) {
+                Some(tiles) => tiles.clone(),
+                None => {
+                    let tiles = cut_sheet(connected, sheet, images);
+                    sheets.insert(connected.to_owned(), tiles.clone());
+                    tiles
+                }
+            };
+            if tiles.len() != (sheet * sheet) as usize {
+                continue;
+            }
+            rules.push(Rule {
+                method: Method::Create(kind),
+                blocks: Vec::new(),
+                textures: vec![crate::blocks::bake::sprite_key(original).to_owned()],
+                faces: 63,
+                tiles,
+            });
+        }
+    }
+    if !rules.is_empty() {
+        crate::log_info!("ctm", "{} connected texture(s) from packages", rules.len());
+    }
+    rules
+}
+
+/// A `sheet` x `sheet` sheet cut into tiles, row by row, as atlas keys.
+fn cut_sheet(id: &str, sheet: u32, images: &mut Vec<(String, image::RgbaImage)>) -> Vec<String> {
+    let (ns, path) = id.split_once(':').unwrap_or(("minecraft", id));
+    let Some(assets) = crate::assets_root().parent() else {
+        return Vec::new();
+    };
+    let png = assets.join(ns).join("textures").join(format!("{path}.png"));
+    let Some(image) = crate::platform::assets::read(&png)
+        .and_then(|b| image::load_from_memory(&b).ok())
+        .map(|i| i.to_rgba8())
+    else {
+        return Vec::new();
+    };
+    let side = image.width() / sheet.max(1);
+    if side == 0 || image.height() < side * sheet {
+        return Vec::new();
+    }
+    let mut keys = Vec::new();
+    for i in 0..sheet * sheet {
+        let (x, y) = (i % sheet, i / sheet);
+        let key = format!("ctm!{id}#{i}");
+        images.push((
+            key.clone(),
+            image::imageops::crop_imm(&image, x * side, y * side, side, side).to_image(),
+        ));
+        keys.push(key);
+    }
+    keys
+}
 static RESOLVED: OnceLock<(
     HashMap<u32, Vec<usize>>,
     HashMap<u32, Vec<usize>>,
@@ -63,6 +328,7 @@ pub(crate) fn tile_images(
     let mut images = Vec::new();
     RULES.get_or_init(|| {
         let mut rules = load(&mut images);
+        rules.extend(package_rules(&mut images));
         if builtin_on() {
             rules.extend(builtin(block, &mut images));
         }
@@ -492,6 +758,21 @@ pub(crate) fn tile_for(
     let connects = |at: V| kind_at(at) == kind && !(flush && kind_at(add(at, normal)) == kind);
     let dirs = dirs.unwrap_or(DIRS[face]);
     let index = match rule.method {
+        Method::Create(kind) => {
+            let at = |d: &[usize]| connects(d.iter().fold(pos, |p, &i| add(p, dirs[i])));
+            // dirs: left, down, right, up.
+            let c = Context {
+                left: at(&[0]),
+                down: at(&[1]),
+                right: at(&[2]),
+                up: at(&[3]),
+                top_left: at(&[3, 0]),
+                top_right: at(&[3, 2]),
+                bottom_left: at(&[1, 0]),
+                bottom_right: at(&[1, 2]),
+            };
+            create_index(kind, c)
+        }
         Method::Ctm => {
             let mut mask = 0u8;
             for i in 0..4 {
@@ -570,12 +851,84 @@ pub(crate) fn kind_of(state: u16) -> u32 {
             })
             .collect()
     });
-    u32::from(kinds.get(usize::from(state)).copied().unwrap_or(0))
+    match kinds.get(usize::from(state)) {
+        Some(&kind) => u32::from(kind),
+        // A modded state: its block's own kind, when a package named it.
+        None => crate::blocks::modded::with_state(state, |s| s.kind).unwrap_or(0),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ctx(up: bool, down: bool, left: bool, right: bool) -> Context {
+        Context {
+            up,
+            down,
+            left,
+            right,
+            ..Context::default()
+        }
+    }
+
+    #[test]
+    fn creates_rectangle_and_omni_tiles_match_its_tables() {
+        // Rectangle: x by left/right, y by up/down (AllCTTypes.RECTANGLE).
+        assert_eq!(
+            create_index(CreateType::Rectangle, ctx(false, false, false, false)),
+            3 * 4
+        );
+        assert_eq!(
+            create_index(CreateType::Rectangle, ctx(true, true, true, true)),
+            2 + 4
+        );
+        assert_eq!(
+            create_index(CreateType::Rectangle, ctx(false, true, false, true)),
+            1
+        );
+        // Omni: alone is tile 0; joined on all sides with every corner, 3 + 3 rows in.
+        assert_eq!(
+            create_index(CreateType::Omnidirectional, ctx(false, false, false, false)),
+            0
+        );
+        let all = Context {
+            top_left: true,
+            top_right: true,
+            bottom_left: true,
+            bottom_right: true,
+            ..ctx(true, true, true, true)
+        };
+        assert_eq!(create_index(CreateType::Omnidirectional, all), 6 + 8 * 6);
+        assert_eq!(
+            create_index(CreateType::Vertical, ctx(true, true, false, false)),
+            3
+        );
+        assert_eq!(
+            create_index(CreateType::Horizontal, ctx(false, false, true, false)),
+            2
+        );
+        for kind in [
+            CreateType::Roof,
+            CreateType::RoofStair,
+            CreateType::Cross,
+            CreateType::HorizontalKryppers,
+        ] {
+            for bits in 0..256u32 {
+                let c = Context {
+                    up: bits & 1 != 0,
+                    down: bits & 2 != 0,
+                    left: bits & 4 != 0,
+                    right: bits & 8 != 0,
+                    top_left: bits & 16 != 0,
+                    top_right: bits & 32 != 0,
+                    bottom_left: bits & 64 != 0,
+                    bottom_right: bits & 128 != 0,
+                };
+                assert!(create_index(kind, c) < 16);
+            }
+        }
+    }
 
     #[test]
     fn every_tile_has_a_mask() {

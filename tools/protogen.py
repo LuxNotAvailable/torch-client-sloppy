@@ -4,6 +4,7 @@
 
     python3 protogen.py packets [--source PATH] [--version NAME] [--output PATH]
     python3 protogen.py remap --from NAME --to NAME [--output PATH]
+    python3 protogen.py names --version NAME --registry REGISTRY [--output PATH]
     mkdir -p /tmp/gen && cd /tmp/gen
     java -DbundlerMainClass=net.minecraft.data.Main -jar server.jar          --reports --output /tmp/gen
     cp /tmp/gen/reports/{registries,blocks}.json        <crate>/reference/minecraft-<version>/generated/reports/
@@ -443,6 +444,12 @@ def main():
     packets.add_argument("--source")
     packets.add_argument("--output")
 
+    names = modes.add_parser("names", help="one registry's entry names in id order")
+    names.add_argument("--version", required=True)
+    names.add_argument("--registry", required=True)
+    names.add_argument("--source")
+    names.add_argument("--output")
+
     remap = modes.add_parser("remap", help="one version's ids into another's")
     remap.add_argument("--from", dest="old", required=True)
     remap.add_argument("--to", dest="new", required=True)
@@ -455,7 +462,20 @@ def main():
     data = CRATE / "src" / "protocol" / "data"
 
     try:
-        if args.mode == "packets":
+        if args.mode == "names":
+            source = Path(args.source) if args.source else tree(args.version)
+            ids = registry_ids(source, args.registry)
+            ordered = [n for n, _ in sorted(ids.items(), key=lambda e: e[1])]
+            if [ids[n] for n in ordered] != list(range(len(ordered))):
+                raise Fail(f"{args.registry} has holes in its ids")
+            out = (
+                Path(args.output)
+                if args.output
+                else data / f"{args.registry}-{args.version}.json"
+            )
+            out.write_text(json.dumps(ordered, indent=0) + "\n", encoding="utf-8")
+            print(f"protogen: {args.version} {args.registry}: {len(ordered)} names -> {out}")
+        elif args.mode == "packets":
             source = Path(args.source) if args.source else tree(args.version)
             out = Path(args.output) if args.output else data / f"packets-{args.version}.json"
             generate(source, args.version, out)

@@ -41,6 +41,21 @@ impl StateInfo {
         }
     }
 
+    /// A dumped modded state's row (`blocks::modded`).
+    pub(super) fn modded(
+        id: &'static str,
+        props: Box<[(&'static str, &'static str)]>,
+        fact: &super::modded::Fact,
+    ) -> StateInfo {
+        StateInfo {
+            id,
+            friction: fact.friction,
+            destroy_time: fact.destroy_time,
+            needs_tool: fact.needs_tool,
+            props,
+        }
+    }
+
     /// The value of property `name`, if the block has it.
     pub fn get(&self, name: &str) -> Option<&'static str> {
         self.props.iter().find(|(n, _)| *n == name).map(|(_, v)| *v)
@@ -63,8 +78,8 @@ impl StateInfo {
 }
 
 /// The facts about `state`. A modded state (past vanilla's: a block from a
-/// mod this client doesn't have) shares one row, [`MODDED_ID`], with stone's
-/// behaviour and no properties.
+/// mod this client doesn't have) gets its dumped row (`blocks::modded`), or
+/// else shares one, [`MODDED_ID`], with stone's behaviour and no properties.
 pub fn info(state: BlockState) -> &'static StateInfo {
     const STATES: usize = BlockState::MAX_STATE as usize + 1;
     static TABLE: OnceLock<Box<[OnceLock<StateInfo>]>> = OnceLock::new();
@@ -72,10 +87,12 @@ pub fn info(state: BlockState) -> &'static StateInfo {
     let table = TABLE.get_or_init(|| (0..STATES).map(|_| OnceLock::new()).collect());
     match table.get(state.id() as usize) {
         Some(slot) => slot.get_or_init(|| StateInfo::of(state)),
-        None => MODDED.get_or_init(|| StateInfo {
-            id: MODDED_ID,
-            props: Box::new([]),
-            ..StateInfo::of(stand_in(state))
+        None => super::modded::with_state(state.id(), |s| s.info).unwrap_or_else(|| {
+            MODDED.get_or_init(|| StateInfo {
+                id: MODDED_ID,
+                props: Box::new([]),
+                ..StateInfo::of(stand_in(state))
+            })
         }),
     }
 }

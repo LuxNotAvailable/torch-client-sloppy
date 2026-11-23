@@ -24,16 +24,22 @@ pub fn tile_uv_rect(tile: u32, atlas_rows: u32) -> [f32; 4] {
     ]
 }
 
+/// A texture's key in the block atlas: its file stem for `minecraft`
+/// (`block/stone` as `stone`), the whole id for a mod's (`create:block/shaft`).
+pub fn sprite_key(path: &str) -> &str {
+    if path.contains(':') {
+        path
+    } else {
+        path.rsplit('/').next().unwrap_or(path)
+    }
+}
+
 fn tile_of(path: &str) -> Option<u32> {
-    let stem = path.rsplit('/').next()?;
-    crate::TEXTURE_MAP.get()?.get(stem).copied()
+    crate::TEXTURE_MAP.get()?.get(sprite_key(path)).copied()
 }
 
 fn texture_is_opaque(path: &str) -> bool {
-    match path.rsplit('/').next() {
-        Some(stem) => crate::scene::texture_is_opaque(stem),
-        None => false,
-    }
+    crate::scene::texture_is_opaque(sprite_key(path))
 }
 
 #[derive(Clone, Debug)]
@@ -149,7 +155,7 @@ pub fn bake_resolved(resolved: &Resolved, rot: Rot, atlas_rows: u32) -> BakedMod
         .and_then(|path| tile_of(&path))
         .map(|tile| tile_uv_rect(tile, atlas_rows));
     let mut out = BakedModel {
-        had_elements: !resolved.elements.is_empty(),
+        had_elements: !resolved.elements.is_empty() || !resolved.quads.is_empty(),
         ambient_occlusion: resolved.ambient_occlusion,
         particle_uv,
         ..Default::default()
@@ -251,7 +257,68 @@ pub fn bake_resolved(resolved: &Resolved, rot: Rot, atlas_rows: u32) -> BakedMod
             });
         }
     }
+    for quad in &resolved.quads {
+        bake_free_quad(resolved, quad, &matrix, identity, atlas_rows, &mut out);
+    }
     out
+}
+
+/// A free quad (`torch_quads`), turned with the variant. It culls against
+/// nothing and shades by the side its normal faces most.
+fn bake_free_quad(
+    resolved: &Resolved,
+    quad: &crate::items::model::FreeQuad,
+    matrix: &Mat3,
+    identity: bool,
+    atlas_rows: u32,
+    out: &mut BakedModel,
+) {
+    let Some(path) = resolved.texture_path(&quad.texture) else {
+        out.missing_textures += 1;
+        return;
+    };
+    let Some(tile) = tile_of(&path) else {
+        out.missing_textures += 1;
+        return;
+    };
+    let mut pos = quad.pos.map(|p| p.map(|c| c / 16.0));
+    if !identity {
+        for p in pos.iter_mut() {
+            *p = rotation::rotate_about_centre(matrix, *p);
+        }
+    }
+    let [au0, av0, au1, av1] = tile_uv_rect(tile, atlas_rows);
+    let uv = quad.uv.map(|[u, v]| {
+        let (u, v) = ((u / 16.0).clamp(0.0, 1.0), (v / 16.0).clamp(0.0, 1.0));
+        [au0 + (au1 - au0) * u, av0 + (av1 - av0) * v]
+    });
+    let normal = quad_normal(&pos, matrix, 1);
+    let face = dominant_dir(normal);
+    out.quads.push(BakedQuad {
+        pos,
+        uv,
+        normal,
+        face: face as u8,
+        cull: None,
+        shaded: true,
+        tint: -1,
+        opaque: texture_is_opaque(&path),
+    });
+}
+
+/// The `Direction` index (down, up, north, south, west, east) a normal
+/// points along most.
+fn dominant_dir(n: [f32; 3]) -> usize {
+    let [x, y, z] = n;
+    if y.abs() >= x.abs() && y.abs() >= z.abs() {
+        if y < 0.0 { 0 } else { 1 }
+    } else if z.abs() >= x.abs() {
+        if z < 0.0 { 2 } else { 3 }
+    } else if x < 0.0 {
+        4
+    } else {
+        5
+    }
 }
 
 fn is_full_cube(elem: &Elem) -> bool {

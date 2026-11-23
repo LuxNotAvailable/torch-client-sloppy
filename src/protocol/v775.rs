@@ -277,7 +277,7 @@ fn level_chunk(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     let mut count = 0;
     for _ in 0..entities {
         let head = r.take(1 + 2)?;
-        let kind = ids.to_native.map(IdSpace::BlockEntityType, r.varint()?);
+        let kind = hop::shifted(ids, IdSpace::BlockEntityType, r.varint()?);
         let tag = nbt(&mut r)?;
         // Beds are baked into the block model since 26.3 and carry no entity.
         if let Some(kind) = kind {
@@ -298,7 +298,7 @@ fn block_entity_data(ids: &Ids, body: &[u8]) -> Option<Rewritten> {
     let mut r = Reader::new(body);
     let mut out = Vec::with_capacity(body.len());
     copy(&mut r, &mut out, 8)?;
-    let Some(kind) = ids.to_native.map(IdSpace::BlockEntityType, r.varint()?) else {
+    let Some(kind) = hop::shifted(ids, IdSpace::BlockEntityType, r.varint()?) else {
         return Some(Rewritten::Drop);
     };
     write_varint(&mut out, kind);
@@ -311,7 +311,7 @@ fn add_entity(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     let mut out = Vec::with_capacity(body.len() + 2);
     copy_varint(&mut r, &mut out)?;
     copy(&mut r, &mut out, 16)?;
-    let kind = ids.to_native.map(IdSpace::EntityType, r.varint()?)?;
+    let kind = hop::shifted(ids, IdSpace::EntityType, r.varint()?)?;
     write_varint(&mut out, kind);
     let start = r.pos();
     r.take(3 * 8)?;
@@ -510,7 +510,7 @@ fn update_advancements(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     Some(out.into_boxed_slice())
 }
 
-fn update_attributes(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
+pub(super) fn update_attributes(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     let mut r = Reader::new(body);
     let mut out = Vec::with_capacity(body.len());
     copy_varint(&mut r, &mut out)?;
@@ -518,7 +518,7 @@ fn update_attributes(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     let mut kept = Vec::with_capacity(body.len());
     let mut count = 0;
     for _ in 0..snapshots {
-        let attribute = ids.to_native.map(IdSpace::Attribute, r.varint()?);
+        let attribute = hop::shifted(ids, IdSpace::Attribute, r.varint()?);
         let start = r.pos();
         r.take(8)?;
         let modifiers = r.count()?;
@@ -778,7 +778,7 @@ fn component(ids: &Ids, r: &mut Reader, out: &mut Vec<u8>) -> Option<bool> {
         let sides = r.count()?;
         let mut items = [None; 4];
         for side in 0..sides {
-            let item = ids.to_native.map(IdSpace::Item, r.varint()?)?;
+            let item = hop::shifted(ids, IdSpace::Item, r.varint()?)?;
             if let Some(slot) = items.get_mut(side) {
                 *slot = Some(item);
             }

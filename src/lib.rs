@@ -428,6 +428,8 @@ fn run(args: platform::cli::Args) -> eyre::Result<()> {
     log_info!("assets", "root {}", assets_root.display());
     log_info!("assets", "textures {textures_dir}");
 
+    // Before any chunk decodes: modded states get compact ids.
+    blocks::modded::install_ids();
     let have_assets = assets_present();
     #[cfg(resource_packs)]
     if have_assets {

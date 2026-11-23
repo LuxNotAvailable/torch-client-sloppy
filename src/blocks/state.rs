@@ -57,10 +57,7 @@ fn parse_ref(node: &Json) -> Option<ModelRef> {
         (deg.div_euclid(90).rem_euclid(4)) as u8
     };
     Some(ModelRef {
-        model: model
-            .split_once(':')
-            .map_or(model, |(_, rest)| rest)
-            .to_string(),
+        model: crate::items::model::strip_namespace(model).to_string(),
         rot: Rot {
             x: quadrant("x"),
             y: quadrant("y"),
@@ -187,6 +184,15 @@ impl StateDef {
             return Some(StateDef::Multipart(out));
         }
         None
+    }
+
+    /// Every model the definition can pick.
+    pub fn models(&self) -> impl Iterator<Item = &ModelRef> {
+        let slots: Vec<&Slot> = match self {
+            StateDef::Variants(entries) => entries.iter().map(|(_, slot)| slot).collect(),
+            StateDef::Multipart(parts) => parts.iter().map(|(_, slot)| slot).collect(),
+        };
+        slots.into_iter().flat_map(|slot| slot.choices.iter())
     }
 
     pub fn select(&self, props: &HashMap<&str, &str>) -> Vec<&Slot> {

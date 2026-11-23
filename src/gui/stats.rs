@@ -86,9 +86,10 @@ fn translate(key: &str) -> String {
 }
 
 fn item_name(item: &str) -> String {
-    let name = translate(&format!("item.minecraft.{item}"));
-    if name.starts_with("item.minecraft.") {
-        translate(&format!("block.minecraft.{item}"))
+    let key = crate::gui::tooltip::lang_key("item", item);
+    let name = translate(&key);
+    if name == key {
+        translate(&crate::gui::tooltip::lang_key("block", item))
     } else {
         name
     }
@@ -194,7 +195,7 @@ pub fn draw(p: &mut Painter, state: &mut StatsState, ctx: &ScreenCtx) -> Option<
                 }
             }
             for (mob, (killed, by)) in per {
-                let name = translate(&format!("entity.minecraft.{mob}"));
+                let name = translate(&crate::gui::tooltip::lang_key("entity", &mob));
                 let first = if killed == 0 {
                     format!("You have never killed {name}")
                 } else {

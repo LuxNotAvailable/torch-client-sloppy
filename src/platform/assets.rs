@@ -158,6 +158,33 @@ fn walk_base(dir: &Path) -> Vec<PathBuf> {
     }
 }
 
+/// The asset namespaces besides `minecraft` (mods' and packs' own), from
+/// the base assets, mounted packs and the folders beside the root.
+pub(crate) fn namespaces() -> Vec<String> {
+    let mut out = std::collections::BTreeSet::new();
+    let first = |rest: &str| rest.split_once('/').map(|(ns, _)| ns.to_owned());
+    if archive::active() {
+        out.extend(archive::descendants("assets").filter_map(first));
+    }
+    #[cfg(resource_packs)]
+    if archive::PACKS.active() {
+        out.extend(archive::PACKS.descendants("assets").filter_map(first));
+    }
+    #[cfg(not(packed_assets))]
+    if let Some(assets) = crate::assets_root().parent()
+        && let Ok(entries) = std::fs::read_dir(assets)
+    {
+        out.extend(
+            entries
+                .flatten()
+                .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+                .filter_map(|e| e.file_name().into_string().ok()),
+        );
+    }
+    out.remove("minecraft");
+    out.into_iter().collect()
+}
+
 #[cfg(resource_packs)]
 fn pack_key(path: &Path) -> Option<String> {
     if !archive::PACKS.active() {

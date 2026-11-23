@@ -248,6 +248,9 @@ impl DisplayTransforms {
 pub struct Resolved {
     pub textures: HashMap<String, String>,
     pub elements: Vec<Elem>,
+    /// Free quads (`torch_quads`): what `torch-convert` bakes a mod's OBJ
+    /// model to.
+    pub quads: Vec<FreeQuad>,
     pub gui: Option<Transform>,
     pub display: DisplayTransforms,
     pub generated: bool,
@@ -259,6 +262,7 @@ impl Default for Resolved {
         Self {
             textures: HashMap::new(),
             elements: Vec::new(),
+            quads: Vec::new(),
             gui: None,
             display: DisplayTransforms::default(),
             generated: false,
@@ -514,6 +518,11 @@ impl Assets {
                     out.elements = parse_elements(elements);
                 }
             }
+            if out.quads.is_empty()
+                && let Some(quads) = node.get("torch_quads")
+            {
+                out.quads = parse_free_quads(quads);
+            }
             if out.gui.is_none() {
                 if let Some(gui) = node.get("display").and_then(|d| d.get("gui")) {
                     out.gui = Some(Transform::parse(gui));
@@ -529,6 +538,39 @@ impl Assets {
         }
         out
     }
+}
+
+/// One free quad: four corners in sixteenths of a block, each with its UV
+/// in sixteenths of its texture.
+#[derive(Clone, Debug)]
+pub struct FreeQuad {
+    pub pos: [[f32; 3]; 4],
+    pub uv: [[f32; 2]; 4],
+    pub texture: String,
+}
+
+pub(crate) fn parse_free_quads(node: &Json) -> Vec<FreeQuad> {
+    node.arr()
+        .iter()
+        .filter_map(|q| {
+            let texture = q.get("texture")?.as_str()?.to_string();
+            let corners = q.get("vertices")?.arr();
+            if corners.len() != 4 {
+                return None;
+            }
+            let mut pos = [[0.0; 3]; 4];
+            let mut uv = [[0.0; 2]; 4];
+            for (i, corner) in corners.iter().enumerate() {
+                let n: Vec<f32> = corner.arr().iter().filter_map(Json::as_f32).collect();
+                if n.len() != 5 {
+                    return None;
+                }
+                pos[i] = [n[0], n[1], n[2]];
+                uv[i] = [n[3], n[4]];
+            }
+            Some(FreeQuad { pos, uv, texture })
+        })
+        .collect()
 }
 
 pub(crate) fn parse_elements(node: &Json) -> Vec<Elem> {

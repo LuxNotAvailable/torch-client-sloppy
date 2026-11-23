@@ -204,11 +204,12 @@ mod tests {
 
     #[test]
     fn a_quad_names_the_tile_under_its_middle() {
-        // Tile (3, 2) of a 16 x 4 atlas.
-        let (u0, v0) = (3.0 / 16.0, 2.0 / 4.0);
-        let (u1, v1) = (4.0 / 16.0, 3.0 / 4.0);
+        // Tile (3, 2) of an atlas 4 rows tall.
+        let cols = crate::terrain::ATLAS_COLS as f32;
+        let (u0, v0) = (3.0 / cols, 2.0 / 4.0);
+        let (u1, v1) = (4.0 / cols, 3.0 / 4.0);
         let uv = [[u0, v0], [u1, v0], [u1, v1], [u0, v1]];
-        assert_eq!(tile_at(&uv, 4), 2 * 16 + 3);
+        assert_eq!(tile_at(&uv, 4), 2 * crate::terrain::ATLAS_COLS + 3);
     }
 
     #[test]

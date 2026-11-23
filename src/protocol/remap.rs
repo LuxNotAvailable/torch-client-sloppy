@@ -20,10 +20,11 @@ pub(crate) enum IdSpace {
     SoundEvent,
     VillagerProfession,
     VillagerType,
+    CommandArgumentType,
 }
 
 impl IdSpace {
-    pub(crate) const ALL: [IdSpace; 16] = [
+    pub(crate) const ALL: [IdSpace; 17] = [
         IdSpace::Attribute,
         IdSpace::Block,
         IdSpace::BlockEntityType,
@@ -40,6 +41,7 @@ impl IdSpace {
         IdSpace::SoundEvent,
         IdSpace::VillagerProfession,
         IdSpace::VillagerType,
+        IdSpace::CommandArgumentType,
     ];
 
     fn key(self) -> &'static str {
@@ -60,6 +62,7 @@ impl IdSpace {
             IdSpace::SoundEvent => "sound_event",
             IdSpace::VillagerProfession => "villager_profession",
             IdSpace::VillagerType => "villager_type",
+            IdSpace::CommandArgumentType => "command_argument_type",
         }
     }
 }

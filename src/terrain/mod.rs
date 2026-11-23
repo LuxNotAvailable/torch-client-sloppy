@@ -78,8 +78,9 @@ pub static HIZ_QUARTER: std::sync::atomic::AtomicBool = std::sync::atomic::Atomi
 /// and the pack preludes read it at this width).
 pub const ORIGIN_ROW: u32 = 256;
 
-/// Block atlas width in tiles.
-pub const ATLAS_COLS: u32 = 16;
+/// Block atlas width in tiles. Wide, so a modpack's sprites (17k with
+/// Create's connected textures) stay under the GPU's image height.
+pub const ATLAS_COLS: u32 = 64;
 pub const TILE_PX: u32 = 16;
 
 #[derive(Clone, Debug)]

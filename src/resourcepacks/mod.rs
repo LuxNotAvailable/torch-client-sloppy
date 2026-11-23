@@ -3,6 +3,7 @@
 
 #[cfg(explore_modrinth)]
 pub(crate) mod modrinth;
+pub(crate) mod mods;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -234,17 +235,33 @@ pub(crate) fn mount() {
             Err(e) => crate::log_warn!("resourcepacks", "{name} is not mounted: {e}"),
         }
     }
+    let count = layers.len();
+    // Mods' own namespaces, below every pack.
+    let packages = mods::packages(&mods::dir());
+    let mod_count = packages.len();
+    let mut blocks = Vec::new();
+    let mut connected = Vec::new();
+    for package in packages {
+        if let Some(text) = package.connected {
+            connected.push((package.name.clone(), text));
+        }
+        if let Some(text) = package.blocks {
+            blocks.push((package.name, text));
+        }
+        layers.push(package.layer);
+    }
+    crate::blocks::modded::load_packages(&blocks);
+    crate::terrain::ctm::set_package_rules(connected);
     if layers.is_empty() {
         return;
     }
-    let count = layers.len();
     if let Err(e) = archive::PACKS.install(layers) {
         crate::log_warn!("resourcepacks", "{e}");
         return;
     }
     crate::log_info!(
         "resourcepacks",
-        "mounted {count} pack(s) in {:.0} ms",
+        "mounted {count} pack(s) and {mod_count} mod(s) in {:.0} ms",
         started.elapsed().as_secs_f32() * 1000.0
     );
 }

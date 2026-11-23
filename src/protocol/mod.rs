@@ -6,6 +6,7 @@
     reason = "the tables carry lookups no hop written yet reads"
 )]
 
+mod entity_data;
 pub(crate) mod hop;
 mod modded;
 pub(crate) mod neoforge;
@@ -13,6 +14,7 @@ pub(crate) mod packets;
 pub(crate) mod registries;
 pub(crate) mod remap;
 mod v767;
+mod v767_items;
 mod v775;
 pub(crate) mod version;
 pub(crate) mod wire;
@@ -118,6 +120,8 @@ pub(crate) fn set_session(protocol: Option<i32>) {
         .filter(|p| joinable(*p))
         .unwrap_or(version::NATIVE.protocol);
     SESSION.store(protocol, Ordering::Relaxed);
+    WIRE_IDS.write().unwrap().clear();
+    crate::blocks::modded::clear();
     azalea::join::HANDSHAKE_PROTOCOL.store(protocol, Ordering::Relaxed);
     if protocol != version::NATIVE.protocol {
         let name = version::ProtocolVersion::from_protocol(protocol)
@@ -142,6 +146,91 @@ pub(crate) fn session() -> i32 {
 
 pub(crate) fn entity_metadata_is_native() -> bool {
     version::metadata_matches_native(session())
+}
+
+/// A synced registry snapshot from a translated server, renumbered the way
+/// this session's packets arrive (`hop::native_registry_id`). Entries with
+/// no native counterpart are left out.
+pub(crate) fn native_snapshot(
+    registry: registries::RegistryId,
+    entries: Vec<(u32, azalea_registry::identifier::Identifier)>,
+) -> Vec<(u32, azalea_registry::identifier::Identifier)> {
+    let wire: HashMap<u32, String> = entries
+        .iter()
+        .map(|(id, name)| (*id, name.to_string()))
+        .collect();
+    let protocol = session();
+    if registry == registries::RegistryId::Block {
+        crate::blocks::modded::on_block_sync(&wire, protocol);
+    }
+    WIRE_IDS.write().unwrap().insert(registry, wire);
+    let Some(space) = registry.id_space() else {
+        return entries;
+    };
+    entries
+        .into_iter()
+        .filter_map(|(id, name)| {
+            let id = hop::native_registry_id(protocol, space, i32::try_from(id).ok()?)?;
+            Some((u32::try_from(id).ok()?, name))
+        })
+        .collect()
+}
+
+/// Where vanilla's blocks and states end in the server's own numbering.
+pub(crate) fn wire_vanilla(protocol: i32) -> crate::blocks::modded::WireVanilla {
+    let count =
+        |space| hop::wire_vanilla_count(protocol, space).and_then(|n| u32::try_from(n).ok());
+    crate::blocks::modded::WireVanilla {
+        blocks: count(remap::IdSpace::Block).unwrap_or_else(|| {
+            (0..)
+                .map_while(
+                    <azalea_registry::builtin::BlockKind as azalea_registry::Registry>::from_u32,
+                )
+                .count() as u32
+        }),
+        states: count(remap::IdSpace::BlockState)
+            .unwrap_or(azalea::block::BlockState::MAX_STATE as u32 + 1),
+    }
+}
+
+/// A block state id as the server sent it, in this client's numbering.
+pub(crate) fn native_state_id(protocol: i32, id: u32) -> Option<u32> {
+    let id = hop::native_registry_id(
+        protocol,
+        remap::IdSpace::BlockState,
+        i32::try_from(id).ok()?,
+    )?;
+    u32::try_from(id).ok()
+}
+
+/// The ids a modded server's synced registries hold, in its own numbering,
+/// for this session. Lets a hop tell a mod's component from garbage.
+#[allow(clippy::type_complexity, reason = "one id-to-name map per registry")]
+static WIRE_IDS: std::sync::LazyLock<
+    std::sync::RwLock<HashMap<registries::RegistryId, HashMap<u32, String>>>,
+> = std::sync::LazyLock::new(Default::default);
+
+/// Whether the server's synced `registry` has `id` (its own numbering);
+/// `None` when it synced none.
+pub(crate) fn wire_registry_has(registry: registries::RegistryId, id: u32) -> Option<bool> {
+    WIRE_IDS
+        .read()
+        .unwrap()
+        .get(&registry)
+        .map(|ids| ids.contains_key(&id))
+}
+
+/// The name the server's synced `registry` gives `id`: `None` when it
+/// synced none, `Some(None)` when it has no such id.
+pub(crate) fn wire_registry_name(
+    registry: registries::RegistryId,
+    id: u32,
+) -> Option<Option<String>> {
+    WIRE_IDS
+        .read()
+        .unwrap()
+        .get(&registry)
+        .map(|ids| ids.get(&id).cloned())
 }
 
 pub(crate) fn translator() -> Option<Box<dyn azalea::connection::PacketTranslator>> {

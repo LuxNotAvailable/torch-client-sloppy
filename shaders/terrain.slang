@@ -630,7 +630,7 @@ void anim_blend(uint3 id: SV_DispatchThreadID) {
 // The atlas through the animation table (more.z, its bindless index plus
 // one): the tile a mesh names swapped for the frame showing, blended into
 // the next for interpolated textures, as terrain.wgsl's `sample_atlas`.
-static const uint ATLAS_COLS = 16;
+static const uint ATLAS_COLS = 64; // terrain::ATLAS_COLS
 
 float4 sample_atlas(float2 uv, float2 gx, float2 gy) {
     Texture2D atlas = texture_at(pc.more.x);

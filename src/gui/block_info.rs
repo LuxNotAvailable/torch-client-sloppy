@@ -225,16 +225,14 @@ fn block_icon(id: &str) -> std::borrow::Cow<'_, str> {
 /// after the standing banner they drop, so a block without a name takes its
 /// item's.
 fn block_name(id: &str) -> String {
+    use crate::gui::tooltip::lang_key;
     use crate::gui::tooltip::{has_translation, translate};
-    let own = format!("block.minecraft.{id}");
+    let own = lang_key("block", id);
     if has_translation(&own) {
         return translate(&own, &[]);
     }
     let item = block_icon(id);
-    for key in [
-        format!("block.minecraft.{item}"),
-        format!("item.minecraft.{item}"),
-    ] {
+    for key in [lang_key("block", &item), lang_key("item", &item)] {
         if has_translation(&key) {
             return translate(&key, &[]);
         }
@@ -316,7 +314,7 @@ pub fn draw(
                 lines.push((format!("\u{2764} {health:.1} / {max:.1}"), 0xFF5555));
             }
             name.clone().unwrap_or_else(|| {
-                crate::gui::tooltip::translate(&format!("entity.minecraft.{id}"), &[])
+                crate::gui::tooltip::translate(&crate::gui::tooltip::lang_key("entity", id), &[])
             })
         }
     };

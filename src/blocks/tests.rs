@@ -912,3 +912,95 @@ fn shapes_cover_what_vanilla_culls_against() {
     // Glass covers nothing: a see-through face hides nothing behind it.
     assert_eq!(sides_of_state("glass", &[]), [[0; 4]; 6]);
 }
+
+/// A mod's blockstates, models and textures live under its namespace:
+/// `testmod:gizmo` reads `assets/testmod/blockstates/gizmo.json`, and its
+/// model and textures keep the namespace.
+#[test]
+fn mod_blocks_keep_their_namespace() {
+    let dir = crate::util::pack::fixture("mod-namespace");
+    let root = dir.join("assets/minecraft");
+    let ns = dir.join("assets/testmod");
+    std::fs::create_dir_all(root.join("blockstates")).unwrap();
+    std::fs::create_dir_all(ns.join("blockstates")).unwrap();
+    std::fs::create_dir_all(ns.join("models/block")).unwrap();
+    std::fs::write(
+        ns.join("blockstates/gizmo.json"),
+        r#"{"variants": {"facing=north": {"model": "testmod:block/gizmo"},
+                         "facing=east": {"model": "testmod:block/gizmo", "y": 90}}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        ns.join("models/block/gizmo.json"),
+        r##"{"textures": {"side": "testmod:block/parts/gizmo_side", "particle": "#side"},
+            "elements": [{"from": [0, 0, 0], "to": [16, 8, 16],
+                          "faces": {"up": {"texture": "#side"}}}]}"##,
+    )
+    .unwrap();
+    let assets = Assets::new(&root);
+    let defs = super::read_definitions(&root, &assets, &["testmod".to_owned()]);
+    let def = defs.get("testmod:gizmo").expect("the mod's blockstate");
+    assert!(defs.keys().all(|k| k.starts_with("testmod:")));
+    let models: Vec<&str> = def.models().map(|r| r.model.as_str()).collect();
+    assert_eq!(models, ["testmod:block/gizmo", "testmod:block/gizmo"]);
+    let resolved = assets.model("testmod:block/gizmo");
+    assert_eq!(resolved.elements.len(), 1);
+    assert_eq!(
+        resolved.texture_path("#particle").as_deref(),
+        Some("testmod:block/parts/gizmo_side")
+    );
+    assert_eq!(
+        super::mod_sprites_of(&defs, &assets),
+        ["testmod:block/parts/gizmo_side"]
+    );
+}
+
+#[test]
+fn free_quads_bake_turned_with_the_variant() {
+    atlas_once();
+    let node = Json::parse(
+        r##"{"textures": {"t": "block/stone"},
+            "torch_quads": [{"texture": "#t", "vertices": [[0,0,0, 0,0], [16,0,0, 16,0], [16,16,0, 16,16], [0,16,0, 0,16]]}]}"##,
+    )
+    .unwrap();
+    let resolved = Resolved {
+        textures: [("t".to_string(), "block/stone".to_string())].into(),
+        quads: crate::items::model::parse_free_quads(node.get("torch_quads").unwrap()),
+        ..Resolved::default()
+    };
+    let rows = crate::ATLAS_ROWS.get().copied().unwrap_or(16);
+    let flat = bake_resolved(&resolved, Rot::default(), rows);
+    assert!(flat.had_elements);
+    assert_eq!(flat.quads.len(), 1);
+    let q = &flat.quads[0];
+    assert_eq!(q.pos[2], [1.0, 1.0, 0.0]);
+    // A quad in the z = 0 plane faces north or south.
+    assert!(q.face == 2 || q.face == 3);
+    assert!(q.uv[0] != q.uv[2]);
+    let turned = bake_resolved(
+        &resolved,
+        Rot {
+            y: 1,
+            ..Rot::default()
+        },
+        rows,
+    );
+    // Turned a quarter about the block's centre: now in an x plane.
+    let xs: Vec<f32> = turned.quads[0].pos.iter().map(|p| p[0]).collect();
+    assert!(xs.iter().all(|x| (x - xs[0]).abs() < 1e-5));
+}
+
+#[test]
+fn sprite_keys_are_stems_for_vanilla_and_ids_for_mods() {
+    use super::bake::sprite_key;
+    assert_eq!(sprite_key("block/stone"), "stone");
+    assert_eq!(
+        sprite_key("testmod:block/parts/gizmo_side"),
+        "testmod:block/parts/gizmo_side"
+    );
+    let def = StateDef::parse(
+        &Json::parse(r#"{"variants": {"": {"model": "minecraft:block/stone"}}}"#).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(def.models().next().unwrap().model, "block/stone");
+}

@@ -42,15 +42,39 @@ impl BlockState {
     }
 
     /// A state as a server sent it, kept even when it's past vanilla's
-    /// states (a modded block); ids too large to store become the last one.
+    /// states (a modded block). With [`MODDED_IDS`] set, a modded id becomes
+    /// a compact local one; without, ids too large to store become the last.
     #[inline]
-    pub const fn from_network(id: u32) -> Self {
+    pub fn from_network(id: u32) -> Self {
+        if id <= Self::MAX_STATE as u32 {
+            return BlockState {
+                id: id as BlockStateIntegerRepr,
+            };
+        }
+        if let Some(ids) = MODDED_IDS.get() {
+            return BlockState {
+                id: (ids.to_local)(id),
+            };
+        }
         let id = if id > BlockStateIntegerRepr::MAX as u32 {
             BlockStateIntegerRepr::MAX
         } else {
             id as BlockStateIntegerRepr
         };
         BlockState { id }
+    }
+
+    /// The id a server knows this state by: [`BlockState::id`], or for a
+    /// modded state the server's own id ([`MODDED_IDS`]).
+    #[inline]
+    pub fn network_id(&self) -> u32 {
+        if self.is_vanilla() {
+            return self.id as u32;
+        }
+        match MODDED_IDS.get() {
+            Some(ids) => (ids.to_network)(self.id),
+            None => self.id as u32,
+        }
     }
 
     /// Whether this is one of vanilla's states. Others come from mods the
@@ -61,6 +85,16 @@ impl BlockState {
         Self::is_valid_state(self.id)
     }
 }
+
+/// Maps modded states between a server's ids (past vanilla's, any size)
+/// and the compact ids a [`BlockState`] holds, so a modpack's states fit.
+/// Set once by the client; palettes and packets keep the server's ids.
+pub struct ModdedIds {
+    pub to_local: fn(u32) -> BlockStateIntegerRepr,
+    pub to_network: fn(BlockStateIntegerRepr) -> u32,
+}
+
+pub static MODDED_IDS: std::sync::OnceLock<ModdedIds> = std::sync::OnceLock::new();
 
 impl TryFrom<u32> for BlockState {
     type Error = ();
@@ -93,9 +127,10 @@ impl TryFrom<u16> for BlockState {
         Ok(BlockState { id })
     }
 }
+/// The server's id (`network_id`): what palettes store and packets carry.
 impl From<BlockState> for u32 {
     fn from(value: BlockState) -> Self {
-        value.id as u32
+        value.network_id()
     }
 }
 
@@ -104,7 +139,7 @@ impl AzBuf for BlockState {
         Ok(Self::from_network(u32::azalea_read_var(buf)?))
     }
     fn azalea_write(&self, buf: &mut impl Write) -> io::Result<()> {
-        u32::azalea_write_var(&(self.id as u32), buf)
+        u32::azalea_write_var(&self.network_id(), buf)
     }
 }
 

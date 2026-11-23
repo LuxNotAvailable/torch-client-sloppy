@@ -147,6 +147,11 @@ const V774: HopSpec = HopSpec {
         (Phase::Game, "update_recipes", body!(update_recipes)),
         (Phase::Configuration, "update_tags", body!(update_tags)),
         (Phase::Game, "update_tags", body!(update_tags)),
+        (
+            Phase::Game,
+            "update_advancements",
+            body!(update_advancements),
+        ),
     ],
     outbound: &[
         (Phase::Game, "attack", "interact", attack),
@@ -338,12 +343,15 @@ impl Hop {
         };
         let body = r.rest();
 
-        let rewritten = hop
+        let rewrite = hop
             .inbound_rewrite
             .get(native_id as usize)
             .copied()
-            .flatten()
-            .and_then(|rewrite| rewrite(&self.ids, body));
+            .flatten();
+        let rewritten = rewrite.and_then(|rewrite| rewrite(&self.ids, body));
+        if rewrite.is_some() && rewritten.is_none() {
+            self.unread_once(key, native_id, body.len());
+        }
 
         let target = match &rewritten {
             Some(Rewritten::Body(_)) | None => Some(native_id),
@@ -435,6 +443,34 @@ impl Hop {
         }
     }
 
+    /// Says once per packet kind that this hop's rewrite couldn't read one,
+    /// so it went on as it came (and likely won't decode).
+    fn unread_once(&self, phase: Phase, native_id: u32, len: usize) {
+        static SEEN: std::sync::Mutex<Vec<(i32, i32, Phase, u32)>> =
+            std::sync::Mutex::new(Vec::new());
+        let key = (
+            self.wire.version().protocol,
+            self.native.version().protocol,
+            phase,
+            native_id,
+        );
+        let mut seen = SEEN.lock().unwrap();
+        if seen.contains(&key) {
+            return;
+        }
+        seen.push(key);
+        let name = self
+            .native
+            .name_of(phase, Direction::Clientbound, native_id)
+            .unwrap_or("?");
+        crate::log_warn!(
+            "proto",
+            "the {} -> {} hop couldn't rewrite {name} ({len} bytes); it went on as it came",
+            self.wire.version().name,
+            self.native.version().name
+        );
+    }
+
     fn trace_frame(
         &self,
         way: &str,
@@ -498,6 +534,27 @@ impl Translator {
             _ => return None,
         };
         Some(Self { hops })
+    }
+}
+
+/// A registry id as a translated server numbers it, carried through every
+/// hop to the native numbering: a vanilla entry to its native id, a modded
+/// one shifted past the native range as packets carry it. `None` for a
+/// vanilla entry the native version doesn't have.
+/// How many ids vanilla has in `space` in the server's own numbering, when
+/// it's translated: where a modded server's own entries start.
+pub(crate) fn wire_vanilla_count(protocol: i32, space: IdSpace) -> Option<i32> {
+    let hops = Translator::for_protocol(protocol)?.hops;
+    Some(hops.first()?.ids.to_native.count(space))
+}
+
+pub(crate) fn native_registry_id(protocol: i32, space: IdSpace, id: i32) -> Option<i32> {
+    match Translator::for_protocol(protocol) {
+        Some(t) => t
+            .hops
+            .iter()
+            .try_fold(id, |id, hop| shifted(&hop.ids, space, id)),
+        None => Some(id),
     }
 }
 
@@ -639,7 +696,7 @@ pub(super) fn particle(
     out: &mut Vec<u8>,
     probe: &mut Vec<u8>,
 ) -> Option<()> {
-    let native = ids.to_native.map(IdSpace::ParticleType, r.varint()?)?;
+    let native = shifted(ids, IdSpace::ParticleType, r.varint()?)?;
     write_varint(out, native);
     let kind = ids.kind(IdSpace::ParticleType, native)?;
 
@@ -674,7 +731,7 @@ pub(super) fn sound_holder(ids: &Ids, r: &mut Reader, out: &mut Vec<u8>) -> Opti
         }
         return Some(());
     }
-    let moved = ids.to_native.map(IdSpace::SoundEvent, raw - 1)?;
+    let moved = shifted(ids, IdSpace::SoundEvent, raw - 1)?;
     write_varint(out, moved + 1);
     Some(())
 }
@@ -697,6 +754,76 @@ pub(super) fn item_stack(ids: &Ids, r: &mut Reader, out: &mut Vec<u8>) -> Option
 }
 
 /// The `ItemStackTemplate` layout nested stacks use: item, count, patch.
+/// Advancements as 1.21.11 sends them, their icons (stacks) made 26.1's
+/// templates. Nothing else in the packet changed.
+fn update_advancements(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
+    let mut r = Reader::new(body);
+    let mut out = Vec::with_capacity(body.len());
+    let copy = |r: &mut Reader, out: &mut Vec<u8>, n: usize| -> Option<()> {
+        out.extend_from_slice(r.take(n)?);
+        Some(())
+    };
+    let nbt = |r: &mut Reader, out: &mut Vec<u8>| -> Option<()> {
+        let start = r.pos();
+        r.skip_nbt()?;
+        out.extend_from_slice(r.slice_from(start));
+        Some(())
+    };
+    copy(&mut r, &mut out, 1)?;
+    let added = r.count()?;
+    write_varint(&mut out, added as i32);
+    for _ in 0..added {
+        identifier(&mut r, &mut out)?;
+        let parent = r.u8()?;
+        out.push(parent);
+        if parent != 0 {
+            identifier(&mut r, &mut out)?;
+        }
+        let display = r.u8()?;
+        out.push(display);
+        if display != 0 {
+            nbt(&mut r, &mut out)?;
+            nbt(&mut r, &mut out)?;
+            stack_as_template(ids, &mut r, &mut out, false)?;
+            write_varint(&mut out, r.varint()?);
+            let flags = r.take(4)?;
+            out.extend_from_slice(flags);
+            if flags[3] & 1 != 0 {
+                identifier(&mut r, &mut out)?;
+            }
+            copy(&mut r, &mut out, 8)?;
+        }
+        let groups = r.count()?;
+        write_varint(&mut out, groups as i32);
+        for _ in 0..groups {
+            let names = r.count()?;
+            write_varint(&mut out, names as i32);
+            for _ in 0..names {
+                identifier(&mut r, &mut out)?;
+            }
+        }
+        copy(&mut r, &mut out, 1)?;
+    }
+    out.extend_from_slice(r.rest());
+    Some(out.into_boxed_slice())
+}
+
+/// A 1.21.11 stack (count, item, patch) as 26.1's template (item, count,
+/// patch). In an optional slot an empty stack becomes "absent".
+fn stack_as_template(ids: &Ids, r: &mut Reader, out: &mut Vec<u8>, optional: bool) -> Option<()> {
+    let count = r.varint()?;
+    if optional {
+        if count <= 0 {
+            out.push(0);
+            return Some(());
+        }
+        out.push(1);
+    }
+    item(ids, r, out)?;
+    write_varint(out, count);
+    (ids.patch)(ids, r, out)
+}
+
 pub(super) fn template(ids: &Ids, r: &mut Reader, out: &mut Vec<u8>) -> Option<()> {
     item(ids, r, out)?;
     write_varint(out, r.varint()?);
@@ -753,26 +880,39 @@ pub(super) fn component_payload(
     r: &mut Reader,
     out: &mut Vec<u8>,
 ) -> Option<()> {
+    // Up to 1.21.11 these held stacks (count, item, patch); 26.1 holds
+    // templates (item, count, patch), absent where a slot is empty.
+    let stacks_on_wire = ids.to_native.from().protocol < 775;
+    let one = |r: &mut Reader, out: &mut Vec<u8>, optional: bool| -> Option<()> {
+        if stacks_on_wire {
+            stack_as_template(ids, r, out, optional)
+        } else {
+            if optional {
+                let present = r.u8()?;
+                out.push(present);
+                if present == 0 {
+                    return Some(());
+                }
+            }
+            template(ids, r, out)
+        }
+    };
     match kind {
         DataComponentKind::Container => {
             let slots = r.count()?;
             write_varint(out, slots as i32);
             for _ in 0..slots {
-                let present = r.u8()?;
-                out.push(present);
-                if present != 0 {
-                    template(ids, r, out)?;
-                }
+                one(r, out, true)?;
             }
         }
         DataComponentKind::BundleContents | DataComponentKind::ChargedProjectiles => {
             let stacks = r.count()?;
             write_varint(out, stacks as i32);
             for _ in 0..stacks {
-                template(ids, r, out)?;
+                one(r, out, false)?;
             }
         }
-        DataComponentKind::UseRemainder => template(ids, r, out)?,
+        DataComponentKind::UseRemainder => one(r, out, false)?,
         _ => {
             let mut cursor = std::io::Cursor::new(r.rest());
             azalea_inventory::components::DataComponentUnion::skip_as(kind, &mut cursor).ok()?;
@@ -962,7 +1102,7 @@ pub(super) fn identifier(r: &mut Reader, out: &mut Vec<u8>) -> Option<()> {
 }
 
 pub(super) fn item(ids: &Ids, r: &mut Reader, out: &mut Vec<u8>) -> Option<()> {
-    let id = ids.to_native.map(IdSpace::Item, r.varint()?)?;
+    let id = shifted(ids, IdSpace::Item, r.varint()?)?;
     write_varint(out, id);
     Some(())
 }
@@ -1216,7 +1356,7 @@ pub(super) fn award_stats(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
         let value = match kind {
             STAT_MINED => block(ids, value)?,
             k if (STAT_MINED + 1..=STAT_DROPPED).contains(&k) => {
-                ids.to_native.map(IdSpace::Item, value)?
+                shifted(ids, IdSpace::Item, value)?
             }
             _ => value,
         };
@@ -1230,7 +1370,7 @@ fn add_entity(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     let mut r = Reader::new(body);
     r.varint()?;
     r.take(16)?;
-    let native = ids.to_native.map(IdSpace::EntityType, r.varint()?)?;
+    let native = shifted(ids, IdSpace::EntityType, r.varint()?)?;
     if ids.kind(IdSpace::EntityType, native)? != EntityKind::FallingBlock.to_u32() as i32 {
         return None;
     }

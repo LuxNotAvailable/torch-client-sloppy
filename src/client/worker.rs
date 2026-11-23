@@ -17,15 +17,24 @@ use crate::session::{SharedMutex, SideMutex};
 use crate::terrain::{self, Occupancy, PendingSection, RenderedBlock, build_section_mesh};
 use crate::util::block_model::block_visual;
 
-struct BlockCache(Vec<Option<RenderedBlock>>);
+/// Visuals by state id, and the `blocks::modded` generation its modded
+/// rows were made in.
+struct BlockCache(Vec<Option<RenderedBlock>>, u32);
 
 impl BlockCache {
     fn new() -> Self {
-        Self(Vec::new())
+        Self(Vec::new(), crate::blocks::modded::generation())
     }
 
     #[inline]
     fn get(&mut self, state: BlockState) -> &RenderedBlock {
+        if !state.is_vanilla() {
+            let generation = crate::blocks::modded::generation();
+            if generation != self.1 {
+                self.0.truncate(BlockState::MAX_STATE as usize + 1);
+                self.1 = generation;
+            }
+        }
         let id = state.id() as usize;
         if id >= self.0.len() {
             self.0.resize(id + 1, None);
@@ -35,6 +44,9 @@ impl BlockCache {
 
     #[inline]
     fn peek(&self, state: BlockState) -> Option<&RenderedBlock> {
+        if !state.is_vanilla() && self.1 != crate::blocks::modded::generation() {
+            return None;
+        }
         self.0.get(state.id() as usize)?.as_ref()
     }
 }

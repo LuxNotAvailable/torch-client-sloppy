@@ -102,7 +102,14 @@ terrain work. `v767.rs` translates so far:
 - World: `login`/`respawn` (sea level), chunks (heightmaps, unprefixed
   data arrays, state and block entity ids), block and section updates,
   spawn position (with the last dimension).
-- Entities: `player_position`, `teleport_entity`, `set_entity_motion`.
+- Entities: `player_position`, `teleport_entity` (trailing mod bytes
+  dropped), `set_entity_motion`, `add_entity` (velocity packed, type
+  remapped, boats and potions to their plain split type, falling block
+  state), `set_entity_data` by generated layouts (6.3): fields matched by
+  name along the class chain, `OPTIONAL_UUID`, main hand and mooshroom type
+  converted, dropped fields left out, modded entities keep no data.
+  Particles, stacks with components and inline wolf variants end the
+  entry list (what follows is lost).
 - Ours: `player_input` (sneak changes become `player_command` through
   `HopSpec::outbound_as`), `player_command` actions, `use_item_on`, move
   flags, `move_vehicle`, `container_click` (no claimed slots, so the server
@@ -116,8 +123,44 @@ terrain work. `v767.rs` translates so far:
   mismatches are learned in either argument order, and retries wait 4 s for
   Velocity's login rate limit.
 
-Next: `set_entity_data` and `add_entity` (generated layouts, 6.3), item
-stacks (`patch_767`), `commands`, recipes, advancements.
+- Items (`v767_items.rs`): every 1.21.1 component read by name and
+  rewritten to 1.21.11's shape; `show_in_tooltip` flags and `hide_tooltip`
+  gathered into `tooltip_display`; `fire_resistant` to `damage_resistant`;
+  custom model data to float lists; profiles to partial ones. Entity and
+  block entity data (typed since 1.21.9), bees and goat horns are dropped.
+  An unreadable (modded) component keeps the stack's item and count, and
+  the packet's later slots arrive empty. Used by `container_set_content`,
+  `container_set_slot`, `set_equipment` and stacks in entity data.
+- The 774 hop read container, bundle, crossbow and use-remainder stacks as
+  26.1 templates; it now reads 1.21.11's stacks (a bug for 1.21.11 servers
+  too).
+
+- Mod components (`v767_items.rs`): a mod's component has no length on
+  the wire, so its shape is guessed (int, VarInt, byte, long, UUID, string,
+  NBT, nothing; NBT or byte first when the lead byte suggests it), and a
+  guess stands only if the rest of the packet reads exactly to its end.
+  Names come from the server's synced registry; a component may appear
+  once per item; inventory counts stay within 99. Shapes that worked are
+  remembered per name for the session. The first inventory that still
+  can't be read is dumped to the log.
+- Also: attributes (ids moved, 1.21.2), sounds, level and block events,
+  stats, block entity types, set_time, cooldowns (item to group), particles
+  (dust colours packed, block states, item stacks; also in entity data),
+  explosions (1.21.2 layout), teams (visibility and collision enums),
+  biome updates, merchant offers, commands (parser ids, properties),
+  advancements (icons, `showAdvancements`). Recipes arrive empty.
+
+Next: recipes (the 1.21.1 recipe book), the
+teleport/`entity_position_sync` split if entity motion still looks off,
+chat and player info checks against a live server.
+Boat wood and the thrown potion's kind are lost (picked at spawn).
+
+Entity data indices: the 767 hop writes 26.3's (`entity-data-26.3.json`),
+so 1.21.1 is right. The 774 and 775 hops still pass indices through, which
+is wrong for 1.21.11 and 26.1 servers: 26.1 added `AgeableMob.AGE_LOCKED`
+(every ageable mob's later fields move up one) and 26.3 made slimes and
+magma cubes ageable. Fix: track entity types per hop and re-index with the
+generated layouts, as `v767::entity_data` does.
 
 | File | Change |
 |---|---|
@@ -408,7 +451,7 @@ component codec, extract the `STREAM_CODEC` / `CODEC` definition (or
 checklist: one row per changed codec, with the diff. That replaces the
 *(confirm)* guesses in section 4 with a complete, exact list.
 
-### 6.3 Generated entity metadata layouts (automatable)
+### 6.3 Generated entity metadata layouts (landed: `tools/gen_entity_data.py`)
 
 Entity data indices come from each class's `defineSynchedData` calls, in
 class hierarchy order. Parse those from the decompile for each version and

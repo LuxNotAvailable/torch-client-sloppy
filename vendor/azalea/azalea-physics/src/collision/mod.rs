@@ -23,7 +23,7 @@ use azalea_entity::{
 use azalea_registry::builtin::BlockKind;
 use azalea_world::{ChunkStorage, World};
 use bevy_ecs::{entity::Entity, world::Mut};
-pub use blocks::BlockWithShape;
+pub use blocks::{BlockWithShape, MODDED_SHAPES, ModdedShape};
 pub use discrete_voxel_shape::*;
 use entity_collisions::{CollidableEntityQuery, get_entity_collisions};
 pub use shape::*;

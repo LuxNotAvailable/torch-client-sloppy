@@ -6123,6 +6123,30 @@ static SHAPE924: LazyLock<VoxelShape> = LazyLock::new(|| {
 static SHAPE925: LazyLock<VoxelShape> =
     LazyLock::new(|| collision::box_shape(0.0625, 0.125, 0.0625, 0.9375, 1., 0.9375));
 
+/// A modded state's shapes (past vanilla's), from the client's modpack
+/// dump. Ids without one stay full cubes.
+#[derive(Clone, Copy, Debug)]
+pub struct ModdedShape {
+    pub collision: &'static VoxelShape,
+    pub outline: &'static VoxelShape,
+    pub empty: bool,
+    pub full: bool,
+}
+
+/// Set by the client for each server, by `BlockState::network_id`.
+pub static MODDED_SHAPES: std::sync::RwLock<
+    Option<std::sync::Arc<std::collections::HashMap<u32, ModdedShape>>>,
+> = std::sync::RwLock::new(None);
+
+fn modded(state: &BlockState) -> Option<ModdedShape> {
+    MODDED_SHAPES
+        .read()
+        .ok()?
+        .as_ref()?
+        .get(&state.network_id())
+        .copied()
+}
+
 impl BlockWithShape for BlockState {
     fn collision_shape(&self, pos: BlockPos) -> Cow<'static, VoxelShape> {
         super::shape_offset::apply_shape_offset(*self, pos, self.base_collision_shape())
@@ -6132,27 +6156,32 @@ impl BlockWithShape for BlockState {
     }
 
     fn base_collision_shape(&self) -> &'static VoxelShape {
-        COLLISION_SHAPES_MAP
-            .get(self.id() as usize)
-            .unwrap_or(&&SHAPE1)
+        match COLLISION_SHAPES_MAP.get(self.id() as usize) {
+            Some(shape) => shape,
+            None => modded(self).map_or(&*SHAPE1, |m| m.collision),
+        }
     }
     fn base_outline_shape(&self) -> &'static VoxelShape {
-        OUTLINE_SHAPES_MAP
-            .get(self.id() as usize)
-            .unwrap_or(&&SHAPE1)
+        match OUTLINE_SHAPES_MAP.get(self.id() as usize) {
+            Some(shape) => shape,
+            None => modded(self).map_or(&*SHAPE1, |m| m.outline),
+        }
     }
 
-    // A modded state (past vanilla's) is a full cube, as its shapes are.
+    // A modded state (past vanilla's) is a full cube unless the client
+    // gave it shapes (`MODDED_SHAPES`).
     fn is_collision_shape_empty(&self) -> bool {
-        BASIC_COLLISION_SHAPES_MAP
-            .get(self.id() as usize)
-            .is_some_and(|&shape| shape == 0)
+        match BASIC_COLLISION_SHAPES_MAP.get(self.id() as usize) {
+            Some(&shape) => shape == 0,
+            None => modded(self).is_some_and(|m| m.empty),
+        }
     }
 
     fn is_collision_shape_full(&self) -> bool {
-        BASIC_COLLISION_SHAPES_MAP
-            .get(self.id() as usize)
-            .is_none_or(|&shape| shape == 1)
+        match BASIC_COLLISION_SHAPES_MAP.get(self.id() as usize) {
+            Some(&shape) => shape == 1,
+            None => modded(self).is_none_or(|m| m.full),
+        }
     }
 }
 

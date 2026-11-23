@@ -39,6 +39,14 @@ pub struct Textures {
 impl Textures {
     pub fn blocks(textures_dir: &str) -> Textures {
         let mut block = decode_dir(&format!("{textures_dir}/block"));
+        let mods: Vec<(String, std::path::PathBuf)> = crate::blocks::mod_sprites()
+            .into_iter()
+            .map(|key| {
+                let png = sprite_png(textures_dir, &key);
+                (key, png)
+            })
+            .collect();
+        block.extend(decode_all(&mods));
         // Resource packs' connected-texture tiles.
         let tiles = crate::terrain::ctm::tile_images(&block);
         block.extend(tiles);
@@ -51,18 +59,40 @@ impl Textures {
     }
 }
 
+/// Where a block atlas key's png is: `textures/block/<stem>.png` for
+/// vanilla, `assets/<namespace>/textures/<path>.png` for a mod's id.
+fn sprite_png(textures_dir: &str, key: &str) -> std::path::PathBuf {
+    match key.split_once(':') {
+        Some((namespace, path)) => crate::assets_root()
+            .parent()
+            .unwrap_or(crate::assets_root())
+            .join(namespace)
+            .join("textures")
+            .join(format!("{path}.png")),
+        None => std::path::Path::new(textures_dir)
+            .join("block")
+            .join(format!("{key}.png")),
+    }
+}
+
 fn decode_dir(dir: &str) -> BTreeMap<String, image::RgbaImage> {
-    let paths: Vec<std::path::PathBuf> = crate::platform::assets::read_dir(dir)
+    let paths: Vec<(String, std::path::PathBuf)> = crate::platform::assets::read_dir(dir)
         .into_iter()
         .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("png"))
+        .filter_map(|p| Some((p.file_stem()?.to_str()?.to_owned(), p)))
         .collect();
+    decode_all(&paths)
+}
 
-    let decode = |path: &std::path::Path| -> Option<(String, image::RgbaImage)> {
-        let stem = path.file_stem()?.to_str()?.to_owned();
-        let bytes = crate::platform::assets::read(path)?;
-        let decoded = image::load_from_memory(&bytes).ok()?;
-        Some((stem, decoded.to_rgba8()))
-    };
+/// Decodes `(key, png)` pairs across threads; unreadable ones are left out.
+fn decode_all(paths: &[(String, std::path::PathBuf)]) -> BTreeMap<String, image::RgbaImage> {
+    let decode =
+        |(key, path): &(String, std::path::PathBuf)| -> Option<(String, image::RgbaImage)> {
+            let stem = key.clone();
+            let bytes = crate::platform::assets::read(path)?;
+            let decoded = image::load_from_memory(&bytes).ok()?;
+            Some((stem, decoded.to_rgba8()))
+        };
 
     {
         let threads = std::thread::available_parallelism()
@@ -213,9 +243,7 @@ fn animation_frames(
             continue;
         }
         let count = rgba.height() / side;
-        let png = std::path::Path::new(textures_dir)
-            .join("block")
-            .join(format!("{stem}.png"));
+        let png = sprite_png(textures_dir, stem);
         let Some(meta) = crate::terrain::block_anim::read_meta(&png, count) else {
             continue;
         };
@@ -329,9 +357,8 @@ fn cutout_biases(names: &[&str], textures_dir: &str) -> Vec<f32> {
     for name in names {
         let stem = name.split('#').next().unwrap_or(name);
         let bias = *by_stem.entry(stem).or_insert_with(|| {
-            let meta = std::path::Path::new(textures_dir)
-                .join("block")
-                .join(format!("{stem}.png.mcmeta"));
+            let mut meta = sprite_png(textures_dir, stem).into_os_string();
+            meta.push(".mcmeta");
             crate::platform::assets::read_to_string(meta)
                 .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
                 .and_then(|json| json.get("texture")?.get("alpha_cutoff_bias")?.as_f64())

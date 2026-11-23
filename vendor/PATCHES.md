@@ -23,7 +23,11 @@ Treat as our code. History: `git log -- vendor/azalea`. Main areas:
 - `azalea-block`, `azalea-registry`: modded IDs past `MAX_STATE` (a modded
   state has no properties, so no fluid; `azalea-block-macros`; section
   updates keep one, `c_section_blocks_update`; property and shape-offset
-  lookups are bounds-checked, `property/generate.rs`, `shape_offset.rs`), regenerated
+  lookups are bounds-checked, `property/generate.rs`, `shape_offset.rs`;
+  `azalea-physics` takes their shapes from `MODDED_SHAPES`, which the
+  client fills from its packages, `collision/blocks.rs`; `MODDED_IDS` lets
+  the client give modded states compact ids while palettes and packets
+  keep the server's, `block_state.rs`), regenerated
   tables (`tags/`, `builtin.rs`, `data.rs`).
 - `azalea-entity`: metadata, inventory, particles.
 - `azalea-client`: a configuration-phase custom payload triggers

@@ -212,6 +212,8 @@ fn on_config_payload(
     {
         let mut s = shared.lock().unwrap();
         for (registry, entries) in outcome.synced {
+            // Over a hop, ids are renumbered on the way in; the names must be too.
+            let entries = crate::protocol::native_snapshot(registry, entries);
             s.session.registries.replace_ids(registry, entries);
         }
     }

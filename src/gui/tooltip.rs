@@ -28,7 +28,19 @@ const TORCH_ENGLISH: &str = include_str!("lang/en_us.json");
 
 static ENGLISH: LazyLock<HashMap<String, String>> = LazyLock::new(|| {
     let mut out: HashMap<String, String> = serde_json::from_str(TORCH_ENGLISH).unwrap_or_default();
-    for text in crate::platform::assets::read_stack(crate::assets_root().join("lang/en_us.json")) {
+    // Mods' namespaces first (`resourcepacks::mods`), so vanilla's and
+    // packs' strings win a clash.
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+    if let Some(assets) = crate::assets_root().parent() {
+        for ns in crate::platform::assets::namespaces() {
+            files.push(assets.join(ns).join("lang/en_us.json"));
+        }
+    }
+    files.push(crate::assets_root().join("lang/en_us.json"));
+    let texts = files
+        .into_iter()
+        .flat_map(crate::platform::assets::read_stack);
+    for text in texts {
         let Ok(serde_json::Value::Object(map)) = serde_json::from_str(&text) else {
             continue;
         };
@@ -208,6 +220,16 @@ mod localize_tests {
         assert_eq!(localize_in("FOV: 70", &key_of, &german), "Sichtfeld: 70");
         assert_eq!(localize_in("FOV: ON", &key_of, &german), "Sichtfeld: AN");
         assert_eq!(localize_in("Player123", &key_of, &german), "Player123");
+    }
+}
+
+/// A registry id's translation key: `block.minecraft.stone` for `stone`
+/// or `minecraft:stone`, `block.create.belt` for `create:belt`.
+pub(crate) fn lang_key(kind: &str, id: &str) -> String {
+    let id = id.strip_prefix("minecraft:").unwrap_or(id);
+    match id.split_once(':') {
+        Some((ns, path)) => format!("{kind}.{ns}.{}", path.replace('/', ".")),
+        None => format!("{kind}.minecraft.{id}"),
     }
 }
 
@@ -711,6 +733,20 @@ fn draw_lines_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_mods_id_keys_under_its_own_namespace() {
+        assert_eq!(lang_key("block", "stone"), "block.minecraft.stone");
+        assert_eq!(
+            lang_key("block", "minecraft:stone"),
+            "block.minecraft.stone"
+        );
+        assert_eq!(lang_key("block", "create:belt"), "block.create.belt");
+        assert_eq!(
+            lang_key("entity", "create:stationary_contraption"),
+            "entity.create.stationary_contraption"
+        );
+    }
 
     fn text_of(line: &[Span]) -> String {
         line.iter().map(|s| s.text.as_str()).collect()
