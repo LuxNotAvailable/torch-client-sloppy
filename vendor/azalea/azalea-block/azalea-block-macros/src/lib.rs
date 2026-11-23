@@ -520,7 +520,12 @@ pub fn make_block_states(input: TokenStream) -> TokenStream {
         impl BlockState {
             pub const MAX_STATE: BlockStateIntegerRepr = #last_state_id;
 
+            /// A modded state (past vanilla's) has none: the property tables
+            /// cover vanilla's states only.
             pub fn property<P: Property>(self) -> Option<P::Value> {
+                if !self.is_vanilla() {
+                    return None;
+                }
                 P::try_from_block_state(self)
             }
 

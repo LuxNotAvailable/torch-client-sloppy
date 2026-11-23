@@ -86,11 +86,21 @@ impl PacketTable {
         })
     }
 
+    pub(crate) fn v1_21_1() -> &'static PacketTable {
+        static TABLE: OnceLock<PacketTable> = OnceLock::new();
+        TABLE.get_or_init(|| {
+            let version = ProtocolVersion::from_name("1.21.1").expect("1.21.1 is a known version");
+            Self::parse(include_str!("data/packets-1.21.1.json"), version)
+                .unwrap_or_else(|e| panic!("embedded 1.21.1 packet table: {e}"))
+        })
+    }
+
     pub(crate) fn for_protocol(protocol: i32) -> Option<&'static PacketTable> {
         match protocol {
             p if p == NATIVE.protocol => Some(Self::native()),
             775 => Some(Self::v26_1()),
             774 => Some(Self::v1_21_11()),
+            767 => Some(Self::v1_21_1()),
             _ => None,
         }
     }

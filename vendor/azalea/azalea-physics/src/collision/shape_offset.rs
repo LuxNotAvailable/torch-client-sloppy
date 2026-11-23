@@ -18,7 +18,11 @@ pub fn apply_shape_offset(
         return Cow::Borrowed(shape);
     }
 
-    let offset_kind = RANDOM_SHAPE_OFFSETS_MAP[block.id() as usize];
+    // A modded state (past the table) is never offset.
+    let offset_kind = RANDOM_SHAPE_OFFSETS_MAP
+        .get(block.id() as usize)
+        .copied()
+        .unwrap_or(0);
     if offset_kind == 0 {
         return Cow::Borrowed(shape);
     }

@@ -106,6 +106,8 @@ pub(super) const SPEC: HopSpec = HopSpec {
             hop::creative_slot,
         ),
     ],
+    outbound_as: &[],
+    renamed: &[],
 };
 
 fn copy(r: &mut Reader, out: &mut Vec<u8>, n: usize) -> Option<()> {

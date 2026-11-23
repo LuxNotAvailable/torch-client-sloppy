@@ -60,6 +60,15 @@ const OWN: [(&str, Option<Flow>); 9] = [
 
 const OWN_VERSION: &str = "1";
 
+/// Channels mods send on without registering them with NeoForge, which
+/// kicks a client that didn't list them (as ad hoc channels, in
+/// `minecraft:register`). Their payloads are skipped.
+const AD_HOC: [&str; 2] = [
+    // Iron's Lib, on join ("Invalid player data").
+    "irons_lib:sync_patreon_data",
+    "irons_lib:sync_attribute_remaps",
+];
+
 /// Tries in a row that may each learn more before the client gives up:
 /// a channel takes up to three (missing, flow, version), per phase.
 const MAX_RETRIES: u32 = 6;
@@ -99,6 +108,8 @@ struct Handshake {
     failures: Vec<(String, FormattedText)>,
     /// The reasons taught something new: try again.
     learned: bool,
+    /// Every channel the server registered, by protocol, from its query.
+    server: Vec<(i32, Vec<Offer>)>,
 }
 
 /// What one payload asks of the connection.
@@ -229,10 +240,11 @@ impl Handshake {
                     .map(|(id, _)| *id);
                 out.replies.push((
                     "minecraft:register",
-                    wire::write_channels(BUILTIN.into_iter().chain(listening)),
+                    wire::write_channels(BUILTIN.into_iter().chain(listening).chain(AD_HOC)),
                 ));
             }
             "neoforge:register" => {
+                self.server = wire::read_query(data).unwrap_or_default();
                 out.replies
                     .push(("neoforge:register", wire::query(&self.offers())));
             }
@@ -262,7 +274,12 @@ impl Handshake {
                     return out;
                 };
                 for (channel, reason) in &reasons {
-                    log_warn!("neoforge", "channel {channel} failed: {reason}");
+                    match failure(reason) {
+                        Some((key, args)) => {
+                            log_warn!("neoforge", "channel {channel} failed: {key} {args:?}")
+                        }
+                        None => log_warn!("neoforge", "channel {channel} failed: {reason}"),
+                    }
                     self.learned |= learn(&mut self.claims, channel, reason);
                 }
                 if self.learned {
@@ -374,10 +391,29 @@ impl Handshake {
                 flow: *flow,
                 optional: true,
             });
-        vec![
-            (CONFIGURATION, own.chain(learned.clone()).collect()),
+        let mut protocols = vec![
+            (
+                CONFIGURATION,
+                own.chain(learned.clone()).collect::<Vec<_>>(),
+            ),
             (PLAY, learned.collect()),
-        ]
+        ];
+        // The server's other channels, echoed as it registered them: some
+        // mods send their payloads without checking the client agreed
+        // (Iron's Lib on join), which NeoForge turns into a kick. Their
+        // payloads are skipped like a claimed channel's.
+        for (protocol, offers) in &mut protocols {
+            let theirs = self.server.iter().filter(|(p, _)| p == protocol);
+            for offer in theirs.flat_map(|(_, o)| o) {
+                if !offers.iter().any(|o| o.id == offer.id) {
+                    offers.push(Offer {
+                        optional: true,
+                        ..offer.clone()
+                    });
+                }
+            }
+        }
+        protocols
     }
 }
 
@@ -406,7 +442,17 @@ fn learn(claims: &mut Vec<Claim>, channel: &str, reason: &FormattedText) -> bool
                 }
                 "flow.server.mismatch" => (Some(arg(1).and_then(Flow::parse)), None),
                 "flow.server.missing" => (Some(None), None),
-                "version.mismatch" => (None, arg(1)),
+                // The server's version is the one that isn't ours: which
+                // argument it is depends on the side that ran the check
+                // (1.21.1 names it first).
+                "version.mismatch" => {
+                    let ours = at.map(|i| claims[i].version.as_str());
+                    let theirs = [arg(1), arg(0)]
+                        .into_iter()
+                        .flatten()
+                        .find(|v| Some(*v) != ours);
+                    (None, theirs)
+                }
                 _ => return false,
             };
             let i = at.unwrap_or_else(|| {
@@ -541,7 +587,12 @@ mod tests {
         let mismatch = wrapped(reason("version.mismatch", &["1", "3.2"]));
         assert!(learn(&mut claims, ch, &mismatch));
         assert_eq!(claims[0].version, "3.2");
-        assert!(!learn(&mut claims, ch, &mismatch), "nothing new");
+
+        // NeoForge 1.21.1 names the server's version first.
+        let mut first = vec![Claim::guess("create_connected:sync_config")];
+        let reversed = wrapped(reason("version.mismatch", &["2.0.0", "1"]));
+        assert!(learn(&mut first, "create_connected:sync_config", &reversed));
+        assert_eq!(first[0].version, "2.0.0");
 
         assert!(learn(
             &mut claims,
@@ -589,6 +640,7 @@ mod tests {
         assert!(listening.contains(&"neoforge:register".to_string()));
         assert!(listening.contains(&"neoforge:frozen_registry".to_string()));
         assert!(!listening.contains(&"neoforge:feature_flags_ack".to_string()));
+        assert!(listening.contains(&"irons_lib:sync_patreon_data".to_string()));
         assert!(h.receive("minecraft:register", b"").replies.is_empty());
 
         let offers = h.offers();
@@ -599,6 +651,24 @@ mod tests {
         assert!(offers.iter().all(|(_, o)| o.iter().all(|o| o.optional)));
         let answer = h.receive("neoforge:register", b"");
         assert_eq!(answer.replies[0].0, "neoforge:register");
+    }
+
+    #[test]
+    fn the_answer_echoes_the_servers_own_channels() {
+        let mut h = Handshake::default();
+        let patreon = Offer {
+            id: "irons_lib:sync_patreon_data".into(),
+            version: "1.0.0".into(),
+            flow: Some(Flow::Clientbound),
+            optional: false,
+        };
+        let query = wire::query(&[(PLAY, vec![patreon.clone()])]);
+        let answer = h.receive("neoforge:register", &query);
+        let ours = wire::read_query(&answer.replies[0].1).unwrap();
+        let play = &ours.iter().find(|(p, _)| *p == PLAY).unwrap().1;
+        let echoed = play.iter().find(|o| o.id == patreon.id).unwrap();
+        assert_eq!(echoed.version, "1.0.0");
+        assert_eq!(echoed.flow, Some(Flow::Clientbound));
     }
 
     #[test]

@@ -187,7 +187,8 @@ pub fn generate_try_from_block_state(
 
         try_from_block_state = quote! {
             static TABLE: &[BlockStateIntegerRepr; #table_size] = &[#table_inner];
-            let res = TABLE[block_state.id() as usize];
+            // A modded state (past the table) has no vanilla property.
+            let res = *TABLE.get(block_state.id() as usize)?;
             if res == 0 { return None };
         };
         try_from_block_state.extend(match property_kind {

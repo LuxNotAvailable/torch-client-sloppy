@@ -20,7 +20,10 @@ Treat as our code. History: `git log -- vendor/azalea`. Main areas:
   (`collision/world_collisions.rs`, `collision/blocks.rs`).
 - `azalea-inventory`: components (paintings, bundles, trims), click
   prediction (`operations.rs`, `slot.rs`).
-- `azalea-block`, `azalea-registry`: modded IDs past `MAX_STATE`, regenerated
+- `azalea-block`, `azalea-registry`: modded IDs past `MAX_STATE` (a modded
+  state has no properties, so no fluid; `azalea-block-macros`; section
+  updates keep one, `c_section_blocks_update`; property and shape-offset
+  lookups are bounds-checked, `property/generate.rs`, `shape_offset.rs`), regenerated
   tables (`tags/`, `builtin.rs`, `data.rs`).
 - `azalea-entity`: metadata, inventory, particles.
 - `azalea-client`: a configuration-phase custom payload triggers

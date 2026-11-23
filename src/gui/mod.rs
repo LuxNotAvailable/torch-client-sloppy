@@ -582,6 +582,8 @@ crate::options! {
         pub accessibility: more_options::AccessibilityOptions = more_options::AccessibilityOptions::defaults() => group(),
         pub force_unicode: bool = false => key("forceUnicodeFont"),
         pub allow_listing: bool = true => key("allowServerListing"),
+        /// Lists and joins versions only partly translated (1.21.1).
+        pub experimental_versions: bool = false => key("experimentalVersions"),
         pub pause_on_lost_focus: bool = true => key("pauseOnLostFocus"),
         /// The recipe viewer (item list, recipes, bookmarks) beside inventories.
         pub recipe_viewer: bool = true => key("recipeViewer"),

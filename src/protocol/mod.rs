@@ -12,6 +12,7 @@ pub(crate) mod neoforge;
 pub(crate) mod packets;
 pub(crate) mod registries;
 pub(crate) mod remap;
+mod v767;
 mod v775;
 pub(crate) mod version;
 pub(crate) mod wire;
@@ -31,6 +32,15 @@ pub(crate) fn forced() -> Option<i32> {
     match FORCED.load(Ordering::Relaxed) {
         0 => None,
         protocol => Some(protocol),
+    }
+}
+
+/// The Online Options toggle for experimental versions. Turning it off
+/// drops a picked experimental version.
+pub(crate) fn set_experimental(on: bool) {
+    version::set_experimental(on);
+    if !on && version::is_experimental(FORCED.load(Ordering::Relaxed)) {
+        FORCED.store(0, Ordering::Relaxed);
     }
 }
 
@@ -114,6 +124,12 @@ pub(crate) fn set_session(protocol: Option<i32>) {
             .map(|v| v.name)
             .unwrap_or("?");
         crate::log_info!("net", "translating this connection as {name} ({protocol})");
+        if version::is_experimental(protocol) {
+            crate::log_warn!(
+                "net",
+                "{name} translation is experimental: ids are remapped, most packet shapes are not"
+            );
+        }
     }
 }
 

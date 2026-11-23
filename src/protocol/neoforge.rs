@@ -79,6 +79,37 @@ pub(crate) fn query(protocols: &[(i32, Vec<Offer>)]) -> Vec<u8> {
     out
 }
 
+/// The server's `neoforge:register`: every channel it registered, by protocol.
+pub(crate) fn read_query(data: &[u8]) -> Option<Vec<(i32, Vec<Offer>)>> {
+    let buf = &mut Cursor::new(data);
+    let mut protocols = Vec::new();
+    for _ in 0..count(buf)? {
+        let protocol = varint(buf)?;
+        let mut offers = Vec::new();
+        for _ in 0..count(buf)? {
+            let id = id(buf)?.to_string();
+            let version = string(buf)?;
+            let flow = match u8::azalea_read(buf).ok()? {
+                0 => None,
+                _ => Some(match varint(buf)? {
+                    0 => Flow::Serverbound,
+                    1 => Flow::Clientbound,
+                    _ => return None,
+                }),
+            };
+            let optional = bool::azalea_read(buf).ok()?;
+            offers.push(Offer {
+                id,
+                version,
+                flow,
+                optional,
+            });
+        }
+        protocols.push((protocol, offers));
+    }
+    done(buf, protocols)
+}
+
 /// `neoforge:network`: the negotiated channels as `(protocol, id)`.
 pub(crate) fn network_setup(data: &[u8]) -> Option<Vec<(i32, String)>> {
     let buf = &mut Cursor::new(data);

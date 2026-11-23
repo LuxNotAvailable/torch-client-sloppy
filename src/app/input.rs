@@ -9,6 +9,9 @@ use crate::session::{
     MOVE_RIGHT, MOVE_SNEAK, MOVE_SPRINT,
 };
 
+/// The wait before a NeoForge retry joins again.
+const RECONNECT_DELAY: std::time::Duration = std::time::Duration::from_secs(4);
+
 #[derive(Resource, Default)]
 pub(crate) struct CameraAngles {
     pub(crate) yaw: f32,
@@ -75,7 +78,7 @@ pub(crate) fn apply_gui_nav(
     mut windows: Query<(&mut Window, &mut CursorOptions), With<PrimaryWindow>>,
     mut exit: bevy::ecs::message::MessageWriter<AppExit>,
     mut last_container_id: Local<i32>,
-    mut reconnect: Local<Option<String>>,
+    mut reconnect: Local<Option<(String, crate::platform::time::Instant)>>,
     #[cfg(feature = "skins")] mut faces: ResMut<crate::gui::player_faces::PlayerFaces>,
 ) {
     if std::mem::take(&mut state.quit) {
@@ -127,7 +130,7 @@ pub(crate) fn apply_gui_nav(
         );
         // A NeoForge server named channels to claim: join again with them.
         if let Some(address) = crate::client::neoforge::take_retry() {
-            *reconnect = Some(address);
+            *reconnect = Some((address, crate::platform::time::Instant::now()));
             state.nav = Some(crate::gui::Screen::None);
         } else {
             let lines = crate::client::neoforge::take_failure_lines();
@@ -142,9 +145,15 @@ pub(crate) fn apply_gui_nav(
             state.disconnect_reason = reason;
         }
     }
-    // The last connection must wind down first, or the new one is refused.
-    if reconnect.is_some() && !crate::client::bot::is_started() {
-        state.connect = reconnect.take();
+    // The last connection must wind down first, or the new one is refused;
+    // and a proxy refuses a login from the same address too soon after the
+    // last (Velocity's `login-ratelimit`, 3 s by default).
+    if reconnect
+        .as_ref()
+        .is_some_and(|(_, at)| at.elapsed() >= RECONNECT_DELAY)
+        && !crate::client::bot::is_started()
+    {
+        state.connect = reconnect.take().map(|(address, _)| address);
     }
     if let Some(address) = state.connect.take() {
         crate::client::bot::start_bot(address);

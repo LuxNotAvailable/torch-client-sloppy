@@ -42,6 +42,8 @@ pub fn apply(options: &crate::gui::GuiOptions) {
     APPLIED.call_once(|| crate::client::languages::apply(&options.language));
     crate::text::FORCE_UNICODE.store(options.force_unicode, std::sync::atomic::Ordering::Relaxed);
     crate::entities::cull::set_enabled(options.entity_culling);
+    #[cfg(feature = "multiversion")]
+    crate::protocol::set_experimental(options.experimental_versions);
 
     crate::vk::entities::set_backface_culling(options.entity_backface_culling);
     crate::vk::entities::set_away_faces(options.entity_away_faces);
@@ -96,9 +98,14 @@ pub fn draw_accessibility(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx
 }
 
 pub fn draw_online(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
-    let mut form = Form::new(p, ctx, "Online Options", 1, 0);
+    let mut form = Form::new(p, ctx, "Online Options", 2, 0);
     form.toggle("Allow Server Listings", &mut state.options.allow_listing);
     form.toggle("Only Show Secure Chat", &mut state.options.chat.only_secure);
+    #[cfg(feature = "multiversion")]
+    form.toggle(
+        "1.21.1 (Experimental)",
+        &mut state.options.experimental_versions,
+    );
     if form.finish() {
         crate::gui::save_options(&state.options);
     }

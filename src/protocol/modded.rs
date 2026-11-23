@@ -66,6 +66,17 @@ mod tests {
     }
 
     #[test]
+    fn a_modded_block_has_no_properties_and_holds_no_fluid() {
+        use azalea::block::fluid_state::{FluidKind, FluidState};
+        let modded = BlockState::from_network(BlockState::MAX_STATE as u32 + 3015);
+        assert_eq!(
+            modded.property::<azalea::block::properties::Waterlogged>(),
+            None
+        );
+        assert_eq!(FluidState::from(modded).kind, FluidKind::Empty);
+    }
+
+    #[test]
     fn a_modded_block_reads_as_a_full_solid_cube() {
         use azalea::physics::collision::BlockWithShape;
         // Solidity comes from baked models, which need the atlas.

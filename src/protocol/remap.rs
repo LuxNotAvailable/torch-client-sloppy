@@ -111,6 +111,14 @@ impl Remap {
         self.to
     }
 
+    pub(crate) fn v767_to_v774() -> &'static Remap {
+        &pair_767().0
+    }
+
+    pub(crate) fn v774_to_v767() -> &'static Remap {
+        &pair_767().1
+    }
+
     pub(crate) fn v774_to_v775() -> &'static Remap {
         &pair_774().0
     }
@@ -192,6 +200,14 @@ impl Remap {
             },
         ))
     }
+}
+
+fn pair_767() -> &'static (Remap, Remap) {
+    static PAIR: OnceLock<(Remap, Remap)> = OnceLock::new();
+    PAIR.get_or_init(|| {
+        Remap::parse(include_str!("data/remap-767-774.json"))
+            .unwrap_or_else(|e| panic!("embedded 767 -> 774 remap: {e}"))
+    })
 }
 
 fn pair_774() -> &'static (Remap, Remap) {

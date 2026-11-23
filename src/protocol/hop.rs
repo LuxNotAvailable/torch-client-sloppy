@@ -9,9 +9,10 @@
 //!    `(Phase, "ours", "theirs", name)`.
 //! 3. Packets with no entry pass through by id remap alone.
 //!
-//! Add a version: `protogen.py packets` and `remap` for its tables, a loader
-//! in `packets.rs`/`remap.rs`, a `HopSpec`, and an arm in
-//! `Translator::for_protocol`.
+//! Add a version: `tools/new_version.py` for its tables, a loader in
+//! `packets.rs`/`remap.rs`, a `HopSpec`, an arm in
+//! `Translator::for_protocol`, and the version in `version.rs` (in
+//! `EXPERIMENTAL` until its rewrites are done).
 
 use std::fmt;
 use std::sync::OnceLock;
@@ -62,6 +63,8 @@ pub(crate) enum Rewritten {
 
 pub(super) type Rewrite = fn(&Ids, &[u8]) -> Option<Rewritten>;
 pub(super) type OutRewrite = fn(&Ids, &[u8]) -> Option<Box<[u8]>>;
+/// An outbound rewrite that picks the wire packet it becomes, by name.
+pub(super) type OutRewriteAs = fn(&Ids, &[u8]) -> Option<(&'static str, Box<[u8]>)>;
 
 /// Lifts a rewrite that only ever produces a new body.
 macro_rules! body {
@@ -80,6 +83,27 @@ pub(super) struct HopSpec {
     pub(super) patch: PatchWalker,
     pub(super) inbound: &'static [(Phase, &'static str, Rewrite)],
     pub(super) outbound: &'static [(Phase, &'static str, &'static str, OutRewrite)],
+    /// Outbound rewrites that choose their wire packet per frame.
+    pub(super) outbound_as: &'static [(Phase, &'static str, OutRewriteAs)],
+    /// Packets renamed between the two versions, as `(wire, native)`: their
+    /// ids map across, and rewrites name them by their native name.
+    pub(super) renamed: &'static [(Phase, Direction, &'static str, &'static str)],
+}
+
+impl HopSpec {
+    fn renamed_to_native<'a>(&self, phase: Phase, dir: Direction, wire: &'a str) -> &'a str {
+        self.renamed
+            .iter()
+            .find(|r| r.0 == phase && r.1 == dir && r.2 == wire)
+            .map_or(wire, |r| r.3)
+    }
+
+    fn renamed_to_wire<'a>(&self, phase: Phase, dir: Direction, native: &'a str) -> &'a str {
+        self.renamed
+            .iter()
+            .find(|r| r.0 == phase && r.1 == dir && r.3 == native)
+            .map_or(native, |r| r.2)
+    }
 }
 
 const V774: HopSpec = HopSpec {
@@ -140,6 +164,8 @@ const V774: HopSpec = HopSpec {
             creative_slot,
         ),
     ],
+    outbound_as: &[],
+    renamed: &[],
 };
 
 /// One phase's id maps and rewrites.
@@ -150,6 +176,7 @@ struct PhaseHop {
     outbound: Box<[Option<u32>]>,
     inbound_rewrite: Box<[Option<Rewrite>]>,
     outbound_rewrite: Box<[Option<(Option<u32>, OutRewrite)>]>,
+    outbound_as: Box<[Option<OutRewriteAs>]>,
     /// Nothing in this phase moves or changes shape.
     passthrough: bool,
 }
@@ -173,6 +200,11 @@ fn phase_of(phase: ConnectionProtocol) -> Phase {
 }
 
 impl Hop {
+    pub(crate) fn v767() -> &'static Hop {
+        static HOP: OnceLock<Hop> = OnceLock::new();
+        HOP.get_or_init(|| Hop::build(&super::v767::SPEC))
+    }
+
     pub(crate) fn v774() -> &'static Hop {
         static HOP: OnceLock<Hop> = OnceLock::new();
         HOP.get_or_init(|| Hop::build(&V774))
@@ -192,6 +224,7 @@ impl Hop {
                     let name = old
                         .name_of(phase, Direction::Clientbound, wire as u32)
                         .expect("in range");
+                    let name = spec.renamed_to_native(phase, Direction::Clientbound, name);
                     new.id(phase, Direction::Clientbound, name)
                 })
                 .collect();
@@ -200,6 +233,7 @@ impl Hop {
                     let name = new
                         .name_of(phase, Direction::Serverbound, native as u32)
                         .expect("in range");
+                    let name = spec.renamed_to_wire(phase, Direction::Serverbound, name);
                     old.id(phase, Direction::Serverbound, name)
                 })
                 .collect();
@@ -233,15 +267,30 @@ impl Hop {
             let identity = |map: &[Option<u32>], other: usize| {
                 map.len() == other && map.iter().enumerate().all(|(i, id)| *id == Some(i as u32))
             };
+            let mut outbound_as: Box<[Option<OutRewriteAs>]> =
+                vec![None; new.count(phase, Direction::Serverbound)].into_boxed_slice();
+            for &(_, name, rewrite) in spec.outbound_as.iter().filter(|e| e.0 == phase) {
+                let native = new
+                    .id(phase, Direction::Serverbound, name)
+                    .unwrap_or_else(|| panic!("{phase:?} has no native serverbound {name}"));
+                assert!(
+                    outbound_rewrite[native as usize].is_none()
+                        && outbound_as[native as usize].replace(rewrite).is_none(),
+                    "{name} is rewritten outbound twice"
+                );
+            }
+
             let passthrough = identity(&inbound, new.count(phase, Direction::Clientbound))
                 && identity(&outbound, old.count(phase, Direction::Serverbound))
                 && inbound_rewrite.iter().all(Option::is_none)
-                && outbound_rewrite.iter().all(Option::is_none);
+                && outbound_rewrite.iter().all(Option::is_none)
+                && outbound_as.iter().all(Option::is_none);
             PhaseHop {
                 inbound,
                 outbound,
                 inbound_rewrite,
                 outbound_rewrite,
+                outbound_as,
                 passthrough,
             }
         });
@@ -327,6 +376,28 @@ impl Hop {
             return raw;
         };
         let body = r.rest();
+
+        if let Some(&Some(rewrite)) = hop.outbound_as.get(native_id as usize) {
+            let target = rewrite(&self.ids, body).and_then(|(name, body)| {
+                Some((self.wire.id(key, Direction::Serverbound, name)?, body))
+            });
+            if self.trace {
+                let wire_id = target.as_ref().map(|(id, _)| *id);
+                let rewrote = target.is_some();
+                self.trace_frame(
+                    "out",
+                    key,
+                    Direction::Serverbound,
+                    native_id,
+                    wire_id,
+                    rewrote,
+                );
+            }
+            return match target {
+                Some((wire_id, body)) => frame(wire_id, &body),
+                None => Box::new([]),
+            };
+        }
 
         if let Some(&Some((wire_id, rewrite))) = hop.outbound_rewrite.get(native_id as usize) {
             let body = rewrite(&self.ids, body);
@@ -419,9 +490,11 @@ impl Translator {
     pub(crate) fn for_protocol(protocol: i32) -> Option<Self> {
         static V775: OnceLock<[&'static Hop; 1]> = OnceLock::new();
         static V774: OnceLock<[&'static Hop; 2]> = OnceLock::new();
+        static V767: OnceLock<[&'static Hop; 3]> = OnceLock::new();
         let hops: &'static [&'static Hop] = match protocol {
             775 => V775.get_or_init(|| [Hop::v775()]),
             774 => V774.get_or_init(|| [Hop::v774(), Hop::v775()]),
+            767 => V767.get_or_init(|| [Hop::v767(), Hop::v774(), Hop::v775()]),
             _ => return None,
         };
         Some(Self { hops })
@@ -507,11 +580,24 @@ fn interact_use(_ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
 }
 
 pub(super) fn state(ids: &Ids, id: i32) -> Option<i32> {
-    ids.to_native.map(IdSpace::BlockState, id)
+    shifted(ids, IdSpace::BlockState, id)
 }
 
 pub(super) fn block(ids: &Ids, id: i32) -> Option<i32> {
-    ids.to_native.map(IdSpace::Block, id)
+    shifted(ids, IdSpace::Block, id)
+}
+
+/// An id past the wire's vanilla range is a modded server's own: it keeps
+/// its distance past the native vanilla range, where the native side keeps
+/// modded ids (`docs/MULTIVERSION_PLAN.md` 3.5).
+pub(super) fn shifted(ids: &Ids, space: IdSpace, id: i32) -> Option<i32> {
+    ids.to_native.map(space, id).or_else(|| {
+        let wire = ids.to_native.count(space);
+        if id < wire {
+            return None;
+        }
+        (id - wire).checked_add(ids.from_native.count(space))
+    })
 }
 
 pub(super) fn skip_lp_vec3(r: &mut Reader) -> Option<()> {
@@ -1210,10 +1296,10 @@ pub(super) fn section_blocks_update(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>>
     Some(out.into_boxed_slice())
 }
 
-const SECTION_STATES: usize = 4096;
-const SECTION_BIOMES: usize = 64;
-const STATES_INDIRECT_MAX: u8 = 8;
-const BIOMES_INDIRECT_MAX: u8 = 3;
+pub(super) const SECTION_STATES: usize = 4096;
+pub(super) const SECTION_BIOMES: usize = 64;
+pub(super) const STATES_INDIRECT_MAX: u8 = 8;
+pub(super) const BIOMES_INDIRECT_MAX: u8 = 3;
 
 fn level_chunk(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     match rewrite_level_chunk(ids, body) {
@@ -1894,39 +1980,33 @@ mod tests {
     }
 
     #[test]
-    fn an_unmappable_state_says_which_id_stopped_it() {
-        let past_the_end = (0..)
-            .find(|id| state(ids(), *id).is_none())
-            .expect("the table ends somewhere");
+    fn a_modded_state_keeps_its_distance_past_the_native_range() {
+        let wire = ids().to_native.count(IdSpace::BlockState);
+        let native = ids().from_native.count(IdSpace::BlockState);
+        assert_eq!(state(ids(), wire), Some(native));
+        assert_eq!(state(ids(), wire + 9), Some(native + 9));
+        assert_eq!(state(ids(), -1), None);
+        assert_eq!(state(ids(), i32::MAX), None, "no overflow");
 
-        let single = sections(
+        let single = sections(ids(), &section_bytes(&container_bytes(0, &[wire], &[])));
+        assert!(single.is_ok());
+        let indirect = sections(
             ids(),
-            &section_bytes(&container_bytes(0, &[past_the_end], &[])),
+            &section_bytes(&container_bytes(4, &[wire], &[0; 256])),
         );
+        assert!(indirect.is_ok());
+    }
+
+    #[test]
+    fn an_unmappable_state_says_which_id_stopped_it() {
+        let single = sections(ids(), &section_bytes(&container_bytes(0, &[-1], &[])));
         assert!(matches!(
             single,
             Err(Failure {
-                bail: Bail::NoTarget(id),
+                bail: Bail::NoTarget(-1),
                 part: "block states",
                 ..
-            }) if id == past_the_end
-        ));
-
-        let indirect = sections(
-            ids(),
-            &section_bytes(&container_bytes(4, &[past_the_end], &[0; 256])),
-        );
-        assert!(matches!(
-            indirect,
-            Err(Failure { bail: Bail::NoTarget(id), .. }) if id == past_the_end
-        ));
-
-        let mut packed = [0u64; 1024];
-        packed[0] = u64::try_from(past_the_end).expect("a positive id");
-        let direct = sections(ids(), &section_bytes(&container_bytes(15, &[], &packed)));
-        assert!(matches!(
-            direct,
-            Err(Failure { bail: Bail::NoTarget(id), .. }) if id == past_the_end
+            })
         ));
     }
 
@@ -1957,7 +2037,7 @@ mod tests {
     #[test]
     fn the_failure_names_its_section() {
         let good = section_bytes(&container_bytes(0, &[FIRST_RUN], &[]));
-        let bad = section_bytes(&container_bytes(0, &[i32::MAX], &[]));
+        let bad = section_bytes(&container_bytes(0, &[-1], &[]));
         let mut blob = good.clone();
         blob.extend_from_slice(&good);
         blob.extend_from_slice(&bad);
@@ -2011,7 +2091,7 @@ mod tests {
     #[test]
     fn an_impossible_state_does_not_rewrite() {
         let mut body = vec![0u8; 8];
-        write_varint(&mut body, 29_671);
+        write_varint(&mut body, -1);
         assert!(block_update(ids(), &body).is_none());
     }
 

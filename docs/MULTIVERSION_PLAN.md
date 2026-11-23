@@ -85,6 +85,40 @@ lines today for two small steps).
 
 ### 3.1 Version registration
 
+Landed, with 767 in `version::EXPERIMENTAL`: joinable and in the version
+picker only while Online Options > "1.21.1 (Experimental)" is on
+(`experimentalVersions`, off by default). Move 767 to `TRANSLATED` once
+section 4 is done.
+
+Tested against a Velocity + NeoForge 21.1.264 server (Create pack): login,
+configuration, the NeoForge handshake and play up to walking around loaded
+terrain work. `v767.rs` translates so far:
+
+- Login and configuration: `game_profile` renamed `login_finished` (its
+  strict flag dropped), `client_information` (particle setting dropped),
+  tag ids.
+- Packet renames (`HopSpec::renamed`): `set_carried_item`,
+  `horse_screen_open`.
+- World: `login`/`respawn` (sea level), chunks (heightmaps, unprefixed
+  data arrays, state and block entity ids), block and section updates,
+  spawn position (with the last dimension).
+- Entities: `player_position`, `teleport_entity`, `set_entity_motion`.
+- Ours: `player_input` (sneak changes become `player_command` through
+  `HopSpec::outbound_as`), `player_command` actions, `use_item_on`, move
+  flags, `move_vehicle`, `container_click` (no claimed slots, so the server
+  resends), creative slots (item and count only), recipe packets dropped,
+  chat checksums.
+- Modded ids keep their distance past the native range in every hop
+  (`hop::shifted`), and azalea no longer indexes vanilla-only tables with
+  them (`vendor/PATCHES.md`).
+- NeoForge: the server's own channels are echoed back, a short list of
+  channels mods send unregistered is claimed ad hoc (`AD_HOC`), version
+  mismatches are learned in either argument order, and retries wait 4 s for
+  Velocity's login rate limit.
+
+Next: `set_entity_data` and `add_entity` (generated layouts, 6.3), item
+stacks (`patch_767`), `commands`, recipes, advancements.
+
 | File | Change |
 |---|---|
 | `src/protocol/version.rs` | Add `v("1.21.1", 767)` (and `1.21`, same protocol) to `VERSIONS`; add `767` to `TRANSLATED`; check `metadata_matches_native` still means what it says; extend the tests (`selectable_is_the_joinable_set`, `lookups`, `a_translated_version_is_joinable...`). |
