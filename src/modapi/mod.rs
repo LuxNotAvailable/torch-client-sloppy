@@ -28,6 +28,20 @@ struct Plugins {
     loaded: Vec<Loaded>,
     /// Block entity type id to the plugin that draws it.
     block_entities: HashMap<String, usize>,
+    /// Types whose block model a plugin draws instead.
+    replaces_block_model: std::collections::HashSet<String>,
+    /// Sprites plugins draw that block models don't use.
+    sprites: Vec<String>,
+}
+
+/// Whether a plugin draws `block_entity`'s block in place of its model.
+pub fn replaces_block_model(block_entity: &str) -> bool {
+    PLUGINS.lock().replaces_block_model.contains(block_entity)
+}
+
+/// Sprites plugins declared, for the block atlas.
+pub fn declared_sprites() -> Vec<String> {
+    PLUGINS.lock().sprites.clone()
 }
 
 static PLUGINS: std::sync::LazyLock<Mutex<Plugins>> = std::sync::LazyLock::new(Default::default);
@@ -41,9 +55,13 @@ pub fn load(plugins: Vec<(String, Vec<u8>)>) {
         match runtime::Runtime::load(&name, &wasm) {
             Ok(runtime) => {
                 let index = out.loaded.len();
-                for kind in &runtime.registration.block_entities {
+                let registration = &runtime.registration;
+                for kind in &registration.block_entities {
                     out.block_entities.entry(kind.clone()).or_insert(index);
                 }
+                out.replaces_block_model
+                    .extend(registration.replaces_block_model.iter().cloned());
+                out.sprites.extend(registration.sprites.iter().cloned());
                 crate::log_info!(
                     "modapi",
                     "{name}: plugin loaded, draws {} block entity type(s)",

@@ -254,10 +254,11 @@ fn translucent_layer(name: &str) -> bool {
 /// `None` when the state isn't dumped or its model didn't load.
 fn dumped_visual(state: azalea::block::BlockState) -> Option<RenderedBlock> {
     use crate::blocks::modded::Render;
-    let (name, props, light, render) = crate::blocks::modded::with_state(state.id(), |s| {
-        let props: HashMap<&str, &str> = s.props.iter().copied().collect();
-        (s.name, props, s.fact.light, s.fact.render)
-    })?;
+    let (name, props, light, render, block_entity) =
+        crate::blocks::modded::with_state(state.id(), |s| {
+            let props: HashMap<&str, &str> = s.props.iter().copied().collect();
+            (s.name, props, s.fact.light, s.fact.render, s.block_entity)
+        })?;
     let empty = |state: azalea::block::BlockState| RenderedBlock {
         geom: BlockGeom::Model(Default::default()),
         is_solid: false,
@@ -273,7 +274,8 @@ fn dumped_visual(state: azalea::block::BlockState) -> Option<RenderedBlock> {
         shape: 0,
         torch: false,
     };
-    if render == Render::Invisible {
+    let drawn_by_plugin = block_entity.is_some_and(crate::modapi::replaces_block_model);
+    if render == Render::Invisible || drawn_by_plugin {
         return Some(empty(state));
     }
     let baked = crate::blocks::registry().baked(state.id(), name, &props);
@@ -391,8 +393,11 @@ pub fn block_id(state: azalea::block::BlockState) -> &'static str {
 
 pub fn is_solid(state: azalea::block::BlockState) -> bool {
     use std::sync::atomic::{AtomicU8, Ordering::Relaxed};
-    // A modded state is solid, as stone (`blocks::info::stand_in`).
-    let state = crate::blocks::info::stand_in(state);
+    // A modded state by its dump; one no dump names is solid, as stone.
+    if !state.is_vanilla() {
+        return crate::blocks::modded::with_state(state.id(), |s| s.fact.solid_render)
+            .unwrap_or(true);
+    }
     const UNKNOWN: u8 = 0;
     const SOLID: u8 = 1;
     const OPEN: u8 = 2;

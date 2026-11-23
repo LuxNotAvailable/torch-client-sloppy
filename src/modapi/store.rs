@@ -1,7 +1,8 @@
 //! Modded block entities: what the last protocol hop took out of chunk and
 //! `block_entity_data` packets (azalea can't hold a modded type), kept by
 //! position. Each tick, `tick` asks the owning plugin for a rig wherever
-//! something changed, and publishes every rig for the renderer.
+//! something changed (its NBT, its block state, or a face neighbour's
+//! state), and publishes every rig for the renderer.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -15,8 +16,21 @@ struct Entry {
     nbt: Value,
     /// The block state it had when its rig was last made; a change re-asks.
     state: Option<u16>,
+    /// Its six face neighbours' states then (`FACES` order); a change
+    /// re-asks, for connection logic.
+    around: Option<[u16; 6]>,
     dirty: bool,
 }
+
+/// Face neighbour offsets: down, up, north, south, west, east.
+const FACES: [[i32; 3]; 6] = [
+    [0, -1, 0],
+    [0, 1, 0],
+    [0, 0, -1],
+    [0, 0, 1],
+    [-1, 0, 0],
+    [1, 0, 0],
+];
 
 /// A rig for the renderer, with the revision it was made at.
 pub struct Placed {
@@ -31,6 +45,8 @@ struct Store {
     next_rev: u64,
     /// Types no loaded plugin handles, logged once each.
     unhandled: HashSet<String>,
+    /// Rigs logged so far, by type: the first few of each go to the log.
+    logged: HashMap<String, u32>,
 }
 
 static STORE: std::sync::LazyLock<Mutex<Store>> = std::sync::LazyLock::new(Default::default);
@@ -49,15 +65,31 @@ pub fn rigs() -> Arc<HashMap<[i32; 3], (Arc<torch_mod_api::Rig>, u64)>> {
 /// its type id and its network NBT.
 pub fn on_block_entity(pos: [i32; 3], kind: String, nbt: &[u8]) {
     let nbt = read_network_nbt(nbt).unwrap_or(Value::Null);
-    STORE.lock().entries.insert(
-        pos,
-        Entry {
-            kind,
-            nbt,
-            state: None,
-            dirty: true,
-        },
-    );
+    let mut store = STORE.lock();
+    let new = store
+        .entries
+        .insert(
+            pos,
+            Entry {
+                kind,
+                nbt,
+                state: None,
+                around: None,
+                dirty: true,
+            },
+        )
+        .is_none();
+    // A neighbour's connection logic may care what block entity is here.
+    if new {
+        for [dx, dy, dz] in FACES {
+            if let Some(e) = store
+                .entries
+                .get_mut(&[pos[0] + dx, pos[1] + dy, pos[2] + dz])
+            {
+                e.dirty = true;
+            }
+        }
+    }
 }
 
 /// A chunk left: its block entities go with it.
@@ -106,22 +138,32 @@ pub fn tick(world: &azalea_world::World, game_time: u64) {
         }
         out
     };
+    let state_at = |at: [i32; 3]| {
+        world.get_block_state(azalea_core::position::BlockPos::new(at[0], at[1], at[2]))
+    };
     let mut gone = Vec::new();
+    let mut todo = Vec::new();
     for (pos, entry) in store.entries.iter_mut() {
-        let Some(state) =
-            world.get_block_state(azalea_core::position::BlockPos::new(pos[0], pos[1], pos[2]))
-        else {
+        let Some(state) = state_at(*pos) else {
             gone.push(*pos);
             continue;
         };
-        if entry.state != Some(state.id()) {
+        let around = FACES.map(|[dx, dy, dz]| {
+            state_at([pos[0] + dx, pos[1] + dy, pos[2] + dz]).map_or(u16::MAX, |s| s.id())
+        });
+        if entry.state != Some(state.id()) || entry.around != Some(around) {
             entry.state = Some(state.id());
+            entry.around = Some(around);
             entry.dirty = true;
         }
-        if !entry.dirty {
-            continue;
+        if entry.dirty {
+            entry.dirty = false;
+            todo.push((*pos, state));
         }
-        entry.dirty = false;
+    }
+    for (pos, state) in todo {
+        let pos = &pos;
+        let entry = &store.entries[pos];
         let info = crate::blocks::info::info(state);
         let view = torch_mod_api::BlockEntityView {
             kind: entry.kind.clone(),
@@ -151,6 +193,25 @@ pub fn tick(world: &azalea_world::World, game_time: u64) {
         changed = true;
         match rig {
             Some(rig) if !rig.parts.is_empty() => {
+                let seen = store.logged.entry(entry.kind.clone()).or_insert(0);
+                if *seen < 3 {
+                    *seen += 1;
+                    let nbt = entry.nbt.to_string();
+                    let nbt = &nbt[..nbt.len().min(240)];
+                    let parts: Vec<String> = rig
+                        .parts
+                        .iter()
+                        .map(|p| serde_json::to_string(p).unwrap_or_default())
+                        .map(|p| p[..p.len().min(200)].to_owned())
+                        .collect();
+                    crate::log_info!(
+                        "modapi",
+                        "{} at {pos:?} ({}): nbt {nbt}; parts {}",
+                        entry.kind,
+                        view.block,
+                        parts.join(" | ")
+                    );
+                }
                 store.next_rev += 1;
                 store.rigs.insert(
                     *pos,

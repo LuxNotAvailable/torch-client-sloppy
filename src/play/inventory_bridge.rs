@@ -79,7 +79,7 @@ pub(crate) fn slot_cooldown(stack: &ItemStack) -> u8 {
     if !crate::client::cooldowns::any_active() {
         return 0;
     }
-    let item = data.kind.to_str().trim_start_matches("minecraft:");
+    let item = crate::items::stack_id(data);
     let use_cooldown = data.get_component::<comp::UseCooldown>();
     let group = use_cooldown
         .as_ref()
@@ -107,17 +107,17 @@ pub(crate) fn slot_stack(
         .get_component::<comp::CustomName>()
         .map(|c| chat_text::to_spans(&c.name))
         .or_else(|| {
-            // An item from a mod this client doesn't have shows as its
-            // stand-in (the barrier's no-entry icon, a placeholder), named
-            // for what it is rather than "Barrier" (VULKAN_REWRITE_CHECKLIST
-            // 4.5). The server's registry sync isn't read yet, so the raw id
-            // stands in for the registry name.
-            data.modded_kind.map(|raw| {
-                vec![crate::text::Span {
-                    text: format!("Modded item #{raw}"),
-                    style: crate::text::Style::colored(0xFF55FF),
-                }]
-            })
+            // An item from a mod the server didn't name (no registry
+            // sync) shows as its stand-in, the barrier, named by its raw
+            // id rather than "Barrier" (VULKAN_REWRITE_CHECKLIST 4.5).
+            data.modded_kind
+                .filter(|raw| crate::protocol::modded_item(raw.get()).is_none())
+                .map(|raw| {
+                    vec![crate::text::Span {
+                        text: format!("Modded item #{raw}"),
+                        style: crate::text::Style::colored(0xFF55FF),
+                    }]
+                })
         });
     let lore = data
         .get_component::<comp::Lore>()
@@ -164,7 +164,7 @@ pub(crate) fn slot_stack(
         0
     };
 
-    let item = data.kind.to_str().trim_start_matches("minecraft:");
+    let item = crate::items::stack_id(data);
     let cooldown = if crate::client::cooldowns::any_active() {
         let use_cooldown = data.get_component::<comp::UseCooldown>();
         let group = use_cooldown
@@ -214,7 +214,7 @@ pub(crate) fn slot_stack(
 /// few fields a variant reads, not a whole `SlotStack`.
 pub(crate) fn variant_key(data: &azalea_inventory::ItemStackData) -> Option<std::sync::Arc<str>> {
     use azalea_inventory::components as comp;
-    let item = data.kind.to_str().trim_start_matches("minecraft:");
+    let item = crate::items::stack_id(data);
     let has_model = data.get_component::<comp::ItemModel>().is_some();
     if !has_model && !crate::items::icons::is_dynamic(item) {
         return None;

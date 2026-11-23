@@ -158,8 +158,17 @@ the contract; `crates/torch-mod-api` the SDK a port is written against;
 plays their animations); `ports/example` the template; `docs/porting/`
 the agent's instructions (`AGENT_GUIDE.md`, `JAVA_TO_API.md`);
 `torch-convert --ports` builds ports into packages. Modded block entities
-reach the API from the last protocol hop (`v775.rs`). The text below is
-the design it came from.
+reach the API from the last protocol hop (`v775.rs`).
+
+First port (2026-11-23): `ports/create`, Create 6.0.10's kinetic parts and
+tank fluid (18 of its 100 block entity renderers; `ports/create/PORTED.md`
+lists them all). It added two registration fields: `replaces_block_model`
+(Create hides a shaft's chunk model and draws it turning) and `sprites`
+(a fluid's sprite no block model uses). The atlas now also takes every
+mod block model's textures, so parts a port names (Create's partial
+models) have theirs. Not yet checked in game.
+
+The text below is the design it came from.
 
 Mod client code calls into Minecraft's client classes everywhere, so it
 can't be run or translated mechanically (embedding a JVM would need most of

@@ -121,6 +121,7 @@ pub(crate) fn set_session(protocol: Option<i32>) {
         .unwrap_or(version::NATIVE.protocol);
     SESSION.store(protocol, Ordering::Relaxed);
     WIRE_IDS.write().unwrap().clear();
+    MODDED_ITEMS.write().unwrap().clear();
     crate::blocks::modded::clear();
     azalea::join::HANDSHAKE_PROTOCOL.store(protocol, Ordering::Relaxed);
     if protocol != version::NATIVE.protocol {
@@ -164,16 +165,51 @@ pub(crate) fn native_snapshot(
         crate::blocks::modded::on_block_sync(&wire, protocol);
     }
     WIRE_IDS.write().unwrap().insert(registry, wire);
-    let Some(space) = registry.id_space() else {
-        return entries;
+    let entries: Vec<_> = match registry.id_space() {
+        Some(space) => entries
+            .into_iter()
+            .filter_map(|(id, name)| {
+                let id = hop::native_registry_id(protocol, space, i32::try_from(id).ok()?)?;
+                Some((u32::try_from(id).ok()?, name))
+            })
+            .collect(),
+        None => entries,
     };
+    if registry == registries::RegistryId::Item {
+        let mut names = MODDED_ITEMS.write().unwrap();
+        names.clear();
+        for (id, name) in &entries {
+            names.insert(*id, intern(&name.to_string()));
+        }
+    }
     entries
-        .into_iter()
-        .filter_map(|(id, name)| {
-            let id = hop::native_registry_id(protocol, space, i32::try_from(id).ok()?)?;
-            Some((u32::try_from(id).ok()?, name))
-        })
-        .collect()
+}
+
+/// The server's item names by native id, for stacks of items this client
+/// doesn't have (`ItemStackData::modded_kind`).
+static MODDED_ITEMS: std::sync::LazyLock<std::sync::RwLock<HashMap<u32, &'static str>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// `name` as an item id string: vanilla ones bare (`stone`), others
+/// namespaced (`create:cogwheel`). Kept for the process, so a reconnect
+/// reuses them.
+fn intern(name: &str) -> &'static str {
+    static NAMES: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<&'static str>>> =
+        std::sync::LazyLock::new(Default::default);
+    let name = name.strip_prefix("minecraft:").unwrap_or(name);
+    let mut names = NAMES.lock().unwrap();
+    if let Some(found) = names.get(name) {
+        return found;
+    }
+    let leaked: &'static str = Box::leak(name.to_owned().into_boxed_str());
+    names.insert(leaked);
+    leaked
+}
+
+/// The id string of a modded item's native id, when the server synced its
+/// item registry.
+pub(crate) fn modded_item(id: u32) -> Option<&'static str> {
+    MODDED_ITEMS.read().unwrap().get(&id).copied()
 }
 
 /// Where vanilla's blocks and states end in the server's own numbering.

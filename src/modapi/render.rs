@@ -1,19 +1,22 @@
 //! Draws plugins' rigs: each part a mesh (a block model, a whole block's
 //! model, or a cuboid) lit like a block entity at its position, moved every
 //! frame by its animation. Parts are ordinary `EntityMaterial` meshes, so
-//! both renderers draw them (`scene::entity_draw`).
+//! both renderers draw them (`scene::entity_draw`). A scrolling texture
+//! swaps between meshes built per quarter texel of its offset.
 
 use std::collections::HashMap;
 
 use bevy::math::Affine3A;
 use bevy::prelude::*;
-use torch_mod_api::{Animation, Geometry, Part};
+use torch_mod_api::{Animation, Geometry, Part, Scroll};
 
 use crate::blocks::BakedQuad;
 use crate::scene::entity_material::{EntityMaterial, LightMode, Lit, diffuse_lights};
 
 /// Rigs farther than this from the player aren't drawn.
 const DRAW_DISTANCE: f32 = 96.0;
+/// Scroll offsets a tile: a quarter texel of a 16 px sprite.
+const SCROLL_STEPS: f32 = 64.0;
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Live>().add_systems(
@@ -31,6 +34,8 @@ struct LivePart {
     entity: Entity,
     transform: torch_mod_api::Transform,
     animation: Animation,
+    /// The part, while its texture scrolls, and the step its mesh shows.
+    scroll: Option<(Part, u32)>,
 }
 
 struct LiveRig {
@@ -58,7 +63,7 @@ fn sync_rigs(
     lightmap: Res<crate::app::systems::LightmapState>,
     chunk_material: Option<Res<crate::app::systems::ChunkMaterial>>,
     standard: Res<Assets<crate::draw::SimpleMaterial>>,
-    mut transforms: Query<&mut Transform, With<ModPart>>,
+    mut transforms: Query<(&mut Transform, &mut Mesh3d), With<ModPart>>,
 ) {
     let live = &mut *live;
     let rigs = super::store::rigs();
@@ -136,7 +141,8 @@ fn sync_rigs(
                 .clone();
             let mut parts = Vec::with_capacity(rig.parts.len());
             for part in &rig.parts {
-                let Some(mesh) = part_mesh(&mut live.meshes, &mut meshes, part) else {
+                let step = part.scroll.as_ref().and_then(|s| scroll_step(s, ticks));
+                let Some(mesh) = part_mesh(&mut live.meshes, &mut meshes, part, step) else {
                     continue;
                 };
                 let entity = commands
@@ -152,6 +158,7 @@ fn sync_rigs(
                     entity,
                     transform: part.transform,
                     animation: part.animation,
+                    scroll: step.map(|step| (part.clone(), step)),
                 });
             }
             live.rigs.insert(
@@ -164,11 +171,28 @@ fn sync_rigs(
             );
             continue;
         }
-        // Moving parts: placed again this frame.
-        if let Some(rig) = live.rigs.get(pos) {
-            for part in rig.parts.iter().filter(|p| p.animation != Animation::None) {
-                if let Ok(mut t) = transforms.get_mut(part.entity) {
-                    *t = place(*pos, part.transform, part.animation, ticks);
+        // Moving parts: placed again this frame; scrolling ones re-meshed.
+        let Some(rig) = live.rigs.get_mut(pos) else {
+            continue;
+        };
+        for part in &mut rig.parts {
+            let moving = part.animation != Animation::None;
+            if !moving && part.scroll.is_none() {
+                continue;
+            }
+            let Ok((mut t, mut mesh)) = transforms.get_mut(part.entity) else {
+                continue;
+            };
+            if moving {
+                *t = place(*pos, part.transform, part.animation, ticks);
+            }
+            if let Some((source, shown)) = &mut part.scroll {
+                let step = source.scroll.as_ref().and_then(|s| scroll_step(s, ticks));
+                if let Some(step) = step.filter(|s| s != shown)
+                    && let Some(next) = part_mesh(&mut live.meshes, &mut meshes, source, Some(step))
+                {
+                    *shown = step;
+                    mesh.0 = next;
                 }
             }
         }
@@ -249,21 +273,151 @@ fn place(
     Transform::from_matrix(Mat4::from(corner * motion(animation, ticks) * local))
 }
 
-/// The mesh for a part's geometry, built once per distinct geometry.
+/// The mesh for a part's geometry (at a scroll step), built once per
+/// distinct one.
 fn part_mesh(
     cache: &mut HashMap<String, Option<Handle<Mesh>>>,
     meshes: &mut Assets<Mesh>,
     part: &Part,
+    step: Option<u32>,
 ) -> Option<Handle<Mesh>> {
-    let key = serde_json::to_string(&part.geometry).ok()?;
+    let mut key = serde_json::to_string(&part.geometry).ok()?;
+    let scroll = part.scroll.as_ref().zip(step);
+    if let Some((s, step)) = scroll {
+        key.push_str(&format!("|{}>{}@{step}", s.from, s.to));
+    }
     if let Some(hit) = cache.get(&key) {
         return hit.clone();
     }
     let built = geometry_quads(&part.geometry)
+        .map(|(quads, tint)| match scroll {
+            Some((s, step)) => (scrolled(&quads, s, step).unwrap_or(quads), tint),
+            None => (quads, tint),
+        })
         .and_then(|(quads, tint)| crate::entities::blockmodel::mesh_of(&quads, tint))
         .map(|mesh| meshes.add(mesh));
     cache.insert(key, built.clone());
     built
+}
+
+/// A sprite's atlas rect, by its id.
+fn sprite_rect(id: &str) -> Option<[f32; 4]> {
+    let rows = crate::ATLAS_ROWS.get().copied()?;
+    let sprite = crate::items::model::strip_namespace(id);
+    let tile = crate::TEXTURE_MAP
+        .get()?
+        .get(crate::blocks::bake::sprite_key(sprite))
+        .copied()?;
+    Some(crate::blocks::bake::tile_uv_rect(tile, rows))
+}
+
+/// A scroll target's tiles, top first: the sprite, then the squares the
+/// atlas keeps under it (`<id>@<k>`, `scene::atlas::tall_pieces`).
+fn scroll_tiles(to: &str) -> Vec<[f32; 4]> {
+    let mut tiles: Vec<[f32; 4]> = sprite_rect(to).into_iter().collect();
+    while let Some(rect) = sprite_rect(&format!("{to}@{}", tiles.len())) {
+        tiles.push(rect);
+    }
+    tiles
+}
+
+/// The scroll's offset at `ticks`, in steps down its target; `None` when
+/// the target isn't in the atlas.
+fn scroll_step(scroll: &Scroll, ticks: f32) -> Option<u32> {
+    let tiles = scroll_tiles(&scroll.to).len() as f32;
+    if tiles == 0.0 {
+        return None;
+    }
+    let cycle = (scroll.per_tick * ticks + scroll.phase).rem_euclid(1.0);
+    let steps = tiles * SCROLL_STEPS;
+    Some(((cycle * scroll.span * steps).round() as u32) % steps as u32)
+}
+
+/// `quads` with the texels of `scroll.from` moved `step` down `scroll.to`.
+fn scrolled(quads: &[BakedQuad], scroll: &Scroll, step: u32) -> Option<Vec<BakedQuad>> {
+    let from = sprite_rect(&scroll.from)?;
+    let tiles = scroll_tiles(&scroll.to);
+    (!tiles.is_empty()).then(|| shift_quads(quads, from, &tiles, step as f32 / SCROLL_STEPS))
+}
+
+/// Each quad on `from` mapped `shift` tiles down `tiles` (top first), cut
+/// where it crosses a tile's edge; past the last tile it wraps.
+fn shift_quads(
+    quads: &[BakedQuad],
+    from: [f32; 4],
+    tiles: &[[f32; 4]],
+    shift: f32,
+) -> Vec<BakedQuad> {
+    const EPS: f32 = 1e-4;
+    let n = tiles.len() as f32;
+    // A corner's place in `from`, 0..1 each way.
+    let inside = |uv: [f32; 2]| {
+        let s = (uv[0] - from[0]) / (from[2] - from[0]);
+        let t = (uv[1] - from[1]) / (from[3] - from[1]);
+        let fits = |x: f32| (-EPS..=1.0 + EPS).contains(&x);
+        (fits(s) && fits(t)).then_some([s, t])
+    };
+    let mut out = Vec::with_capacity(quads.len());
+    for q in quads {
+        let st: Option<Vec<[f32; 2]>> = q.uv.iter().map(|uv| inside(*uv)).collect();
+        let Some(st) = st else {
+            out.push(q.clone());
+            continue;
+        };
+        let st = [st[0], st[1], st[2], st[3]];
+        // `t` runs along a (corner 0 to 3) or b (corner 0 to 1).
+        let (da, db) = (st[3][1] - st[0][1], st[1][1] - st[0][1]);
+        let along_a = da.abs() >= db.abs();
+        let dt = if along_a { da } else { db };
+        let flat = dt.abs() < EPS;
+        let (lo, hi) = (
+            st[0][1].min(st[0][1] + dt) + shift,
+            st[0][1].max(st[0][1] + dt) + shift,
+        );
+        let mut cuts = vec![lo];
+        let mut edge = lo.floor() + 1.0;
+        while edge < hi - EPS {
+            cuts.push(edge);
+            edge += 1.0;
+        }
+        cuts.push(hi);
+        for w in cuts.windows(2) {
+            let tile = ((w[0] + w[1]) * 0.5).floor();
+            let rect = tiles[tile.rem_euclid(n) as usize];
+            let corners: [[f32; 2]; 4] = if flat {
+                [[0.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0]]
+            } else {
+                let at = |t: f32| (t - shift - st[0][1]) / dt;
+                let (p0, p1) = (at(w[0]).min(at(w[1])), at(w[0]).max(at(w[1])));
+                if along_a {
+                    [[p0, 0.0], [p0, 1.0], [p1, 1.0], [p1, 0.0]]
+                } else {
+                    [[0.0, p0], [0.0, p1], [1.0, p1], [1.0, p0]]
+                }
+            };
+            let mut piece = q.clone();
+            for (i, [a, b]) in corners.into_iter().enumerate() {
+                piece.pos[i] = bilerp(&q.pos, a, b);
+                let [s, t] = bilerp(&st, a, b);
+                let local = (t + shift - tile).clamp(0.0, 1.0);
+                piece.uv[i] = [
+                    rect[0] + s * (rect[2] - rect[0]),
+                    rect[1] + local * (rect[3] - rect[1]),
+                ];
+            }
+            out.push(piece);
+        }
+    }
+    out
+}
+
+/// A point on a quad, corners 0..3 at (a, b) = (0,0) (0,1) (1,1) (1,0).
+fn bilerp<const N: usize>(c: &[[f32; N]; 4], a: f32, b: f32) -> [f32; N] {
+    std::array::from_fn(|i| {
+        let near = c[0][i] + (c[3][i] - c[0][i]) * a;
+        let far = c[1][i] + (c[2][i] - c[1][i]) * a;
+        near + (far - near) * b
+    })
 }
 
 /// A geometry's quads (in blocks, 0..1 inside its cell) and the colour
@@ -385,6 +539,65 @@ mod tests {
             50.0,
         );
         assert!((t.transform_point(Vec3::ZERO) - Vec3::new(1.0, 2.0, 3.0)).length() < 1e-5);
+    }
+
+    /// A unit quad whose `t` runs with b (corner 0 to 1), `v[0]` to `v[1]`.
+    fn quad(v: [f32; 2]) -> BakedQuad {
+        BakedQuad {
+            pos: [
+                [0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [1.0, 1.0, 0.0],
+                [1.0, 0.0, 0.0],
+            ],
+            uv: [[0.0, v[0]], [0.0, v[1]], [1.0, v[1]], [1.0, v[0]]],
+            normal: [0.0, 0.0, 1.0],
+            face: 3,
+            cull: None,
+            shaded: true,
+            tint: -1,
+            opaque: false,
+        }
+    }
+
+    #[test]
+    fn a_scroll_cuts_a_quad_at_the_tile_edge() {
+        let from = [0.0, 0.0, 1.0, 1.0];
+        let tiles = [[10.0, 0.0, 11.0, 1.0], [10.0, 1.0, 11.0, 2.0]];
+        // A quarter down a two-tile target: three quarters in tile 0, a
+        // quarter in tile 1.
+        let out = shift_quads(&[quad([0.0, 1.0])], from, &tiles, 0.25);
+        assert_eq!(out.len(), 2);
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-5;
+        assert!(near(out[0].uv[0][1], 0.25) && near(out[0].uv[1][1], 1.0));
+        assert!(near(out[0].pos[1][1], 0.75));
+        assert!(near(out[1].uv[0][1], 1.0) && near(out[1].uv[1][1], 1.25));
+        assert!(near(out[1].pos[0][1], 0.75) && near(out[1].pos[1][1], 1.0));
+        assert!(out.iter().all(|q| q.uv.iter().all(|uv| uv[0] >= 10.0)));
+        // A quad on another sprite stays.
+        let other = BakedQuad {
+            uv: [[5.0, 5.0]; 4],
+            ..quad([0.0, 1.0])
+        };
+        assert_eq!(
+            shift_quads(&[other], from, &tiles, 0.25)[0].uv,
+            [[5.0, 5.0]; 4]
+        );
+    }
+
+    #[test]
+    fn a_scroll_past_the_end_wraps_to_the_top() {
+        let from = [0.0, 0.0, 1.0, 1.0];
+        let tiles = [[0.0, 0.0, 1.0, 1.0], [0.0, 1.0, 1.0, 2.0]];
+        // `t` flipped, a tile and a half down: half in tile 1, half back in
+        // tile 0.
+        let out = shift_quads(&[quad([1.0, 0.0])], from, &tiles, 1.5);
+        assert_eq!(out.len(), 2);
+        let v: Vec<f32> = out.iter().flat_map(|q| q.uv.map(|uv| uv[1])).collect();
+        assert!(v.iter().all(|v| (0.0..=2.0).contains(v)), "{v:?}");
+        // Corner 0 (t = 1, so 2.5 down) sits in tile 0 at half.
+        let first = out.iter().find(|q| q.pos[0][1] == 0.0).unwrap();
+        assert!((first.uv[0][1] - 0.5).abs() < 1e-5, "{:?}", first.uv);
     }
 
     #[test]

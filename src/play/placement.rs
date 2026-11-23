@@ -81,6 +81,11 @@ pub fn predict(
     let ItemStack::Present(item) = held else {
         return None;
     };
+    // A mod's item stands in as a barrier; what it does is the server's
+    // (a wrench places nothing, a mod's block item its own block).
+    if item.modded_kind.is_some() {
+        return None;
+    }
 
     let block = survival::item_block(item.kind.to_str())?;
     if survival::unpredicted(block) {
@@ -1423,6 +1428,26 @@ mod tests {
 
     fn property(state: BlockState, name: &str) -> Option<&'static str> {
         crate::blocks::info::property(state, name)
+    }
+
+    #[test]
+    fn a_modded_item_is_not_placed_as_its_barrier_stand_in() {
+        assert!(place(ItemKind::Barrier, Direction::Up, 1.0, 0., BlockKind::Stone).is_some());
+        let mut modded = ItemStack::new(ItemKind::Barrier, 1);
+        if let ItemStack::Present(data) = &mut modded {
+            data.modded_kind = std::num::NonZeroU32::new(70_123);
+        }
+        let placed = predict(
+            &modded,
+            &hit(Direction::Up, 1.0),
+            0.,
+            0.,
+            false,
+            MIN_Y,
+            HEIGHT,
+            world(BlockKind::Stone),
+        );
+        assert_eq!(placed, None);
     }
 
     #[test]

@@ -61,7 +61,7 @@ meshes chunk sections (on `client`'s worker). `vk` (native Vulkan) draws them;
 | `vendor/` | patched crates; read `vendor/PATCHES.md` first |
 | `crates/torch-opus` | safe Opus bindings |
 | `crates/torch-mod-api` | the mod API's SDK: the types ports return and the client reads, host calls, `export_plugin!` (`docs/MOD_API.md`) |
-| `ports/` | ported mods' client code, one crate each, built to `plugin.wasm` (`docs/porting/AGENT_GUIDE.md`); `example/` is the template |
+| `ports/` | ported mods' client code, one crate each, built to `plugin.wasm` (`docs/porting/AGENT_GUIDE.md`); `example/` is the template, `create/` the first real port |
 | `crates/torch-convert` | the standalone mod converter: jar to `.torchmod` (`docs/MOD_TRANSLATOR_PLAN.md`); its own workspace, never built into the client |
 | `reference/minecraft-<ver>/` | decompiled vanilla, for parity checks (git-ignored) |
 | `android/`, `web/`, `fastlane/` | platform shells and store metadata |

@@ -233,6 +233,16 @@ pub(crate) fn lang_key(kind: &str, id: &str) -> String {
     }
 }
 
+/// An item's name from the language (`item.` then `block.` keys, as a mod's
+/// lang names its items); the id itself when neither is there.
+fn lang_name(item: &str) -> String {
+    ["item", "block"]
+        .into_iter()
+        .map(|kind| lang_key(kind, item))
+        .find(|key| has_translation(key))
+        .map_or_else(|| item.to_owned(), |key| translate(&key, &[]))
+}
+
 /// Whether the language has a string for `key`.
 pub(crate) fn has_translation(key: &str) -> bool {
     lang().contains_key(key)
@@ -480,7 +490,7 @@ pub(crate) fn styled_hover_name(stack: &SlotStack) -> Vec<Span> {
             let name = book_title(stack)
                 .or_else(|| potion_name(stack))
                 .or_else(|| def.map(|d| d.name.to_string()))
-                .unwrap_or_else(|| stack.item.to_string());
+                .unwrap_or_else(|| lang_name(stack.item));
             plain(name, rarity)
         }
     }

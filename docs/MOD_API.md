@@ -42,7 +42,16 @@ A plugin registers handlers in `init`:
 
 | Handler | Registered for | Called | Returns |
 |---|---|---|---|
-| `block_entity` | block entity type ids (`create:kinetic`) | when one appears, its data (NBT) or its block state changes, or a neighbour it asked about changes | a `Rig` |
+| `block_entity` | block entity type ids (`create:kinetic`) | when one appears, its data (NBT) or its block state changes, a face neighbour's block state changes, or a modded block entity appears beside it | a `Rig` |
+
+The registration also lists:
+
+- `replaces_block_model`: of those types, the ones whose block's own
+  model the plugin draws instead (a spinning shaft). The client leaves
+  those blocks' static models out of the terrain. A type not listed keeps
+  its block model, and the plugin's parts draw over it (a tank's fluid).
+- `sprites`: textures the plugin's cuboids use that no block model does
+  (a fluid's still sprite), so the client puts them in its atlas.
 
 Planned for later versions (not in v1): entity visuals, mod network
 payloads (a codec and a handler per channel), screens and HUD elements, a
@@ -99,6 +108,23 @@ Animation, played after the transform:
 
 Ticks are the client's game time with the partial tick, so motion is
 smooth between server updates.
+
+Scroll (optional, `scroll`): a texture moving across the part, Java's
+`SpriteShiftEntry` with `shiftUVScrolling` (a belt's surface). Quads drawn
+with sprite `from` draw from sprite `to` instead, at the same texel offset,
+moved down `to` by `fract(per_tick x ticks + phase) x span` of its height.
+
+| Field | Meaning |
+|---|---|
+| `from`, `to` | sprite ids; `to` is usually a taller strip, so the moved rect stays in it (past its end the host wraps to its top) |
+| `per_tick` | cycles a tick; negative runs up |
+| `phase` | cycles at tick 0 |
+| `span` | the share of `to`'s height one cycle moves through |
+
+No model names a scroll target, so declare `to` in `sprites`. The atlas
+keeps a mod sprite taller than wide (and not animated) as stacked squares;
+the host cuts quads at their edges and rebuilds the mesh per quarter texel
+of offset.
 
 ### Host functions (imports, module `torch`)
 

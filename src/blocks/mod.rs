@@ -107,7 +107,44 @@ fn read_definitions(
 /// The textures mods' block models use, as atlas keys (`create:block/shaft`).
 /// Vanilla's are already in the atlas from `textures/block`.
 pub fn mod_sprites() -> Vec<String> {
-    mod_sprites_of(definitions(), crate::items::model::shared())
+    let assets = crate::items::model::shared();
+    let mut sprites = mod_sprites_of(definitions(), assets);
+    // Models no blockstate names (the parts a mod's renderer draws, which
+    // its port names): their textures too.
+    if let Some(root) = crate::assets_root().parent() {
+        let mut extra = std::collections::BTreeSet::new();
+        for ns in crate::platform::assets::namespaces() {
+            let dir = root.join(&ns).join("models").join("block");
+            for file in crate::platform::assets::walk(&dir) {
+                let Ok(rest) = file.strip_prefix(&dir) else {
+                    continue;
+                };
+                let rest = rest.to_string_lossy().replace('\\', "/");
+                let Some(path) = rest.strip_suffix(".json") else {
+                    continue;
+                };
+                let resolved = assets.model(&format!("{ns}:block/{path}"));
+                for value in resolved.textures.values() {
+                    let path = crate::items::model::strip_namespace(value);
+                    if !path.starts_with('#') && path.contains(':') {
+                        extra.insert(path.to_string());
+                    }
+                }
+            }
+        }
+        for sprite in extra {
+            if !sprites.contains(&sprite) {
+                sprites.push(sprite);
+            }
+        }
+    }
+    for sprite in crate::modapi::declared_sprites() {
+        let sprite = crate::items::model::strip_namespace(&sprite).to_owned();
+        if sprite.contains(':') && !sprites.contains(&sprite) {
+            sprites.push(sprite);
+        }
+    }
+    sprites
 }
 
 fn mod_sprites_of(

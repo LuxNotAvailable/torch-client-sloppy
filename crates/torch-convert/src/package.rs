@@ -39,6 +39,18 @@ fn vanilla_run(dump: &Value) -> usize {
 /// what they use and renumbered.
 fn blocks(dump: &Value, namespaces: &BTreeSet<String>, claims: &BTreeSet<String>) -> Option<Value> {
     let vanilla = vanilla_run(dump);
+    // Each block's block entity type, from the types' valid blocks.
+    let mut block_entity: HashMap<&str, &str> = HashMap::new();
+    for be in dump["block_entities"].as_array().into_iter().flatten() {
+        let Some(kind) = be["name"].as_str() else {
+            continue;
+        };
+        for block in be["blocks"].as_array().into_iter().flatten() {
+            if let Some(block) = block.as_str() {
+                block_entity.entry(block).or_insert(kind);
+            }
+        }
+    }
     let all_facts = dump["facts"].as_array()?;
     let all_shapes = dump["shapes"].as_array()?;
     let mut facts = Vec::new();
@@ -55,6 +67,9 @@ fn blocks(dump: &Value, namespaces: &BTreeSet<String>, claims: &BTreeSet<String>
             continue;
         }
         let mut block = block.clone();
+        if let Some(kind) = block_entity.get(name) {
+            block["block_entity"] = json!(kind);
+        }
         for state in block["states"].as_array_mut()? {
             let row = state.as_array_mut()?;
             let old = row.first()?.as_u64()?;
@@ -117,6 +132,26 @@ fn named(dump: &Value, key: &str, namespaces: &BTreeSet<String>) -> Vec<Value> {
                 .is_some_and(|n| namespaces.contains(namespace_of(n)))
         })
         .cloned()
+        .collect()
+}
+
+/// 1.21.4's item definitions (`assets/<ns>/items/<path>.json`) for items a
+/// 1.21.1 jar gives only an item model (`models/item/<path>.json`): each
+/// points at that model, as 1.21.1 looked it up.
+fn item_definitions(items: &[Value], assets: &BTreeSet<&str>) -> Vec<(String, Vec<u8>)> {
+    items
+        .iter()
+        .filter_map(|item| {
+            let (ns, path) = item["name"].as_str()?.split_once(':')?;
+            let definition = format!("assets/{ns}/items/{path}.json");
+            let model = format!("assets/{ns}/models/item/{path}.json");
+            if assets.contains(definition.as_str()) || !assets.contains(model.as_str()) {
+                return None;
+            }
+            let json =
+                json!({"model": {"type": "minecraft:model", "model": format!("{ns}:item/{path}")}});
+            Some((definition, serde_json::to_vec(&json).ok()?))
+        })
         .collect()
 }
 
@@ -216,6 +251,34 @@ pub fn write(
             add(key, bytes)?;
         }
     }
+    for (key, bytes) in item_definitions(&items, &seen) {
+        add(&key, &bytes)?;
+    }
     z.finish().map_err(|e| e.to_string())?;
     Ok(Some(path))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_item_with_only_a_model_gets_a_definition() {
+        let items = [
+            json!({"name": "ex:gear"}),
+            json!({"name": "ex:has_def"}),
+            json!({"name": "ex:no_model"}),
+        ];
+        let assets: BTreeSet<&str> = [
+            "assets/ex/models/item/gear.json",
+            "assets/ex/models/item/has_def.json",
+            "assets/ex/items/has_def.json",
+        ]
+        .into();
+        let out = item_definitions(&items, &assets);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].0, "assets/ex/items/gear.json");
+        let json: Value = serde_json::from_slice(&out[0].1).unwrap();
+        assert_eq!(json["model"]["model"], "ex:item/gear");
+    }
 }

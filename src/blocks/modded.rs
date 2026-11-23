@@ -26,6 +26,8 @@ pub struct ModdedState {
     /// Its block's kind for connected textures (`terrain::ctm::kind_of`):
     /// past every vanilla kind, one per block.
     pub kind: u32,
+    /// Its block entity's type (`create:simple_kinetic`), if it has one.
+    pub block_entity: Option<&'static str>,
 }
 
 /// How vanilla's renderer draws a state (`RenderShape`).
@@ -48,6 +50,8 @@ pub struct Fact {
     pub collision: Option<Arc<[[f32; 6]]>>,
     pub outline: Option<Arc<[[f32; 6]]>>,
     pub light: u8,
+    /// `getLightBlock`: how much light the state takes from light passing.
+    pub light_block: u8,
     pub occludes: bool,
     pub solid_render: bool,
     pub render: Render,
@@ -65,6 +69,7 @@ pub struct Dump {
 struct ModdedStateRow {
     props: Vec<(String, String)>,
     fact: Arc<Fact>,
+    block_entity: Option<&'static str>,
 }
 
 impl Dump {
@@ -109,6 +114,7 @@ impl Dump {
                 })
                 .collect();
             let friction = block["friction"].as_f64().unwrap_or(0.6) as f32;
+            let block_entity = block["block_entity"].as_str().map(intern);
             let mut states = Vec::new();
             for row in block["states"]
                 .as_array()
@@ -134,12 +140,17 @@ impl Dump {
                     return Err(format!("{name} has a state with bad property values"));
                 }
                 props.sort_unstable();
+                let solid_render = f["solid_render"].as_bool().unwrap_or(false);
                 let fact = Fact {
                     collision: shape(&f["collision"]),
                     outline: shape(&f["outline"]),
                     light: f["light"].as_u64().unwrap_or(0).min(15) as u8,
+                    // Vanilla's rule when the mod's needed a real level.
+                    light_block: f["light_block"]
+                        .as_u64()
+                        .map_or(if solid_render { 15 } else { 1 }, |v| v.min(15) as u8),
                     occludes: f["occludes"].as_bool().unwrap_or(true),
-                    solid_render: f["solid_render"].as_bool().unwrap_or(false),
+                    solid_render,
                     render: match f["render"].as_str() {
                         Some("INVISIBLE") => Render::Invisible,
                         Some("ENTITYBLOCK_ANIMATED") => Render::Animated,
@@ -153,6 +164,7 @@ impl Dump {
                 states.push(ModdedStateRow {
                     props,
                     fact: Arc::new(fact),
+                    block_entity,
                 });
             }
             out.insert(name.to_owned(), states);
@@ -251,6 +263,7 @@ impl Table {
                         props,
                         fact: row.fact.clone(),
                         kind,
+                        block_entity: row.block_entity,
                     },
                 );
             }
@@ -576,7 +589,7 @@ mod tests {
     /// One mod's package: a block with an axis and a flag.
     const DUMP: &str = r#"{"format": 1,
         "shapes": [[], [[0, 0, 0, 1, 1, 1]], [[0.375, 0, 0.375, 0.625, 1, 0.625]]],
-        "facts": [{"collision": 2, "outline": null, "light": 3, "occludes": false,
+        "facts": [{"collision": 2, "outline": null, "light": 3, "light_block": 0, "occludes": false,
                    "solid_render": false, "render": "MODEL", "destroy_time": 0.8,
                    "needs_tool": false, "air": false}],
         "blocks": [
@@ -675,11 +688,17 @@ mod tests {
         // No model for it here: the stand-in cube, not a panic.
         let visual = crate::util::block_model::block_visual(state);
         assert!(visual.is_solid);
+        // It lights and occludes by its fact, not as stone.
+        assert!(!crate::util::block_model::is_solid(state));
+        let light = crate::lighting::props::of(state);
+        assert_eq!((light.emission, light.dampening), (3, 0));
         let before = generation();
         clear();
         assert!(generation() > before);
         assert!(with_state(state.id(), |_| ()).is_none());
         assert!(state.is_collision_shape_full());
+        assert!(crate::util::block_model::is_solid(state));
+        assert_eq!(crate::lighting::props::of(state).dampening, 15);
     }
 
     #[test]

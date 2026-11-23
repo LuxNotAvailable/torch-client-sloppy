@@ -25,6 +25,14 @@ pub struct Registration {
     /// plugin draws.
     #[serde(default)]
     pub block_entities: Vec<String>,
+    /// Of those, the types whose block's own model the plugin draws instead
+    /// (a shaft that spins): the client leaves the block's static model out.
+    #[serde(default)]
+    pub replaces_block_model: Vec<String>,
+    /// Sprites the plugin draws that no block model uses (a fluid's
+    /// `create:fluid/honey_still`), so the client puts them in its atlas.
+    #[serde(default)]
+    pub sprites: Vec<String>,
 }
 
 /// A block entity as the plugin sees it.
@@ -81,6 +89,29 @@ pub struct Part {
     pub transform: Transform,
     #[serde(default)]
     pub animation: Animation,
+    /// A texture moving across the part's quads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scroll: Option<Scroll>,
+}
+
+/// Java's `SpriteShiftEntry` with `shiftUVScrolling`: the part's quads drawn
+/// with sprite `from` draw from sprite `to` instead, the same texel offset
+/// into it, moved down `to` by `offset` of its height:
+/// `offset = fract(per_tick * ticks + phase) * span`. `to` is usually
+/// taller than `from` (a strip of it repeated), so the moved rect stays
+/// inside it; past its end the host wraps to its top. Declare `to` in
+/// [`Registration::sprites`]: no model names it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Scroll {
+    pub from: String,
+    pub to: String,
+    /// Cycles a tick; negative runs up.
+    pub per_tick: f32,
+    /// Cycles at tick 0.
+    #[serde(default)]
+    pub phase: f32,
+    /// The share of `to`'s height one cycle moves through.
+    pub span: f32,
 }
 
 impl Part {
@@ -95,6 +126,7 @@ impl Part {
             },
             transform: Transform::default(),
             animation: Animation::None,
+            scroll: None,
         }
     }
 
@@ -105,6 +137,11 @@ impl Part {
 
     pub fn with_animation(mut self, animation: Animation) -> Part {
         self.animation = animation;
+        self
+    }
+
+    pub fn with_scroll(mut self, scroll: Scroll) -> Part {
+        self.scroll = Some(scroll);
         self
     }
 }

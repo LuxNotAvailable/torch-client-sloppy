@@ -40,9 +40,11 @@ the API works in sixteenths, so multiply translations by 16.
 | `Mth.sin(time * k) * amp` used as an angle | `Animation::Swing { amplitude: amp, period_ticks: 2pi/k, ... }` |
 | an offset that moves back and forth | `Animation::Slide` |
 
-Several `mulPose` calls compose: the API applies X, then Y, then Z. If the
-Java order differs, keep the angles but check the result in a test with a
-known point.
+Several `mulPose` calls compose: the API applies X, then Y, then Z. Java
+applies the last call to the vertex first, so `rotateY(a).rotateX(b)` is
+`[b, a, 0]`; any other order (Z before Y) needs converting: the Create
+port's `dir::java_rotations` takes the calls in Java order and returns the
+API's angles.
 
 ## Drawing
 
@@ -67,6 +69,7 @@ the same mapping applies to any mod using them.
 | `SuperByteBuffer.rotateCentered(angle, axis)` | `transform.rotate` (static) or `Animation::Spin` (from speed) about `[8, 8, 8]` |
 | `KineticBlockEntityRenderer.getAngleForBe(be, pos, axis)`: angle from `AnimationTickHolder.getRenderTime() * speed * 3 / 10` plus an offset | `Animation::Spin { degrees_per_tick: speed * 0.3, phase: <the offset> }`; `speed` is the block entity's `Speed` NBT (rpm) |
 | `getRotationOffsetForPosition(be, pos, axis)` (cogs meshing by position parity) | `phase`: compute it from `view.pos` the same way |
+| `SuperByteBuffer.shiftUVScrolling(SpriteShiftEntry, scroll)` with `scroll = fract(t) * targetHeight * k` | `Part::with_scroll(Scroll { from, to, per_tick, phase, span: k })`; declare `to` in `sprites` |
 | Flywheel `Visual`s / instancing (`createInstance`, `beginFrame`) | the same as the renderer they replace: parts and animations |
 
 ## When nothing fits

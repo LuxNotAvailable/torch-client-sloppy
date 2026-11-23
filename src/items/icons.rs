@@ -1224,16 +1224,8 @@ pub fn bake_item_icons(assets: &Path) -> ItemIcons {
     // Item definitions in other namespaces (resource packs, mod ports), as
     // `namespace:name`.
     if let Some(root) = assets.parent() {
-        for namespace in crate::platform::assets::read_dir(root) {
-            let Some(ns) = namespace
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-            else {
-                continue;
-            };
-            if ns == "minecraft" {
-                continue;
-            }
+        for ns in crate::platform::assets::namespaces() {
+            let namespace = root.join(&ns);
             ids.extend(
                 crate::platform::assets::read_dir(namespace.join("items"))
                     .iter()

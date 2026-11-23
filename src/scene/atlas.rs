@@ -170,9 +170,11 @@ pub fn build_block_atlas(textures: &Textures, textures_dir: &str) -> (Image, Has
     OPAQUE_TEXTURES.set(opaque).ok();
 
     let (frames, strips) = animation_frames(&entries, textures_dir);
+    let pieces = tall_pieces(&entries, &strips);
     let base_count = entries.len();
     let mut packed = entries.clone();
     packed.extend(frames.iter().map(|f| (f.name.as_str(), &f.image)));
+    packed.extend(pieces.iter().map(|(name, image)| (name.as_str(), image)));
     let (atlas_data, atlas_w, atlas_h, mut tex_to_tile) = pack_tiles(&packed);
     let biases = cutout_biases(
         &packed.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
@@ -214,6 +216,30 @@ pub fn build_block_atlas(textures: &Textures, textures_dir: &str) -> (Image, Has
         n_mips
     );
     (image, tex_to_tile)
+}
+
+/// A tile holds one square, the top of a texture. A mod's taller one that
+/// isn't animated (a scroll target, `modapi::render`) gets the squares under
+/// it too, as `<key>@<k>` from `k = 1`.
+fn tall_pieces(
+    entries: &[(&str, &image::RgbaImage)],
+    strips: &[AnimatedStrip],
+) -> Vec<(String, image::RgbaImage)> {
+    let mut pieces = Vec::new();
+    for (stem, rgba) in entries {
+        let side = rgba.width();
+        if !stem.contains(':') || side == 0 || rgba.height() < side * 2 {
+            continue;
+        }
+        if strips.iter().any(|s| s.stem == *stem) {
+            continue;
+        }
+        for k in 1..rgba.height() / side {
+            let piece = image::imageops::crop_imm(*rgba, 0, k * side, side, side).to_image();
+            pieces.push((format!("{stem}@{k}"), piece));
+        }
+    }
+    pieces
 }
 
 struct AnimationFrame {
@@ -355,7 +381,7 @@ fn cutout_biases(names: &[&str], textures_dir: &str) -> Vec<f32> {
     let mut out = Vec::with_capacity(names.len() + 1);
     out.push(0.0);
     for name in names {
-        let stem = name.split('#').next().unwrap_or(name);
+        let stem = name.split(['#', '@']).next().unwrap_or(name);
         let bias = *by_stem.entry(stem).or_insert_with(|| {
             let mut meta = sprite_png(textures_dir, stem).into_os_string();
             meta.push(".mcmeta");

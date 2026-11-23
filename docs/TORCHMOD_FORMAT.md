@@ -17,6 +17,7 @@ A zip archive, `<modid>-<version>.torchmod`:
 |---|---|
 | `torchmod.json` | the manifest (below) |
 | `assets/<namespace>/blockstates/`, `models/`, `items/`, `textures/`, `lang/` | the mod's own assets, from its jar |
+| `assets/<namespace>/items/<item>.json` (written) | for each item a 1.21.1 jar gives only `models/item/<item>.json`: a 1.21.4 item definition pointing at that model |
 | `blocks.json` | the mod's blocks: properties, states, shapes, behaviour |
 | `entities.json` | the mod's entity types and sizes |
 | `items.json` | the mod's items: stack size, damage, block |
@@ -79,8 +80,9 @@ game version has as that vanilla block; it carries no assets for them.
 - `blocks`: in the mod's registry order. Each has `name`, `properties`
   (`[name, [values in declared order]]`), `friction`, `speed_factor`,
   `jump_factor`, `explosion_resistance`, `sound`, `default` (the default
-  state's index) and `states` in `getPossibleStates` order, each
-  `[fact, value index per property]`.
+  state's index), `block_entity` (its block entity type, if it has one)
+  and `states` in `getPossibleStates` order, each `[fact, value index per
+  property]`.
 - `facts`: shared per-state behaviour rows: `collision` and `outline`
   (indices into `shapes`, or `null` where the mod's shape needed a real
   level), `light`, `light_block`, `occludes`, `solid_render`, `render`

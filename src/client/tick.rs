@@ -1930,7 +1930,7 @@ pub(crate) fn held_item(stack: &ItemStack) -> crate::scene::HeldItem {
     let ItemStack::Present(data) = stack else {
         return crate::scene::HeldItem::default();
     };
-    let id = data.kind.to_str().trim_start_matches("minecraft:");
+    let id = crate::items::stack_id(data);
     crate::scene::HeldItem {
         tint: potion_contents(data).map(|c| c.color()),
         id,
@@ -1950,7 +1950,7 @@ pub(crate) fn item_id(stack: &ItemStack) -> Option<&'static str> {
     let ItemStack::Present(data) = stack else {
         return None;
     };
-    Some(data.kind.to_str().trim_start_matches("minecraft:"))
+    Some(crate::items::stack_id(data))
 }
 
 fn health_display(

@@ -146,12 +146,45 @@ pub fn air() -> &'static LightProps {
 
 #[inline]
 pub fn of(state: BlockState) -> &'static LightProps {
-    // A modded state lights as stone does (`blocks::info::stand_in`).
-    let state = crate::blocks::info::stand_in(state);
+    if !state.is_vanilla() {
+        return modded(state);
+    }
     match by_state().get(state.id() as usize) {
         Some(slot) => slot.get_or_init(|| intern(build(state))),
         None => intern(build(state)),
     }
+}
+
+/// A modded state lights by its dump fact: emission and `getLightBlock`.
+/// No shape occlusion (vanilla's needs `useShapeForLightOcclusion`, which
+/// few mod blocks set). One no dump names lights as stone.
+fn modded(state: BlockState) -> &'static LightProps {
+    type Cache = (u32, HashMap<u16, &'static LightProps>);
+    static CACHE: RwLock<Option<Cache>> = RwLock::new(None);
+    let generation = crate::blocks::modded::generation();
+    let id = state.id();
+    if let Some((g, known)) = CACHE.read().as_ref()
+        && *g == generation
+        && let Some(props) = known.get(&id)
+    {
+        return props;
+    }
+    let props = match crate::blocks::modded::with_state(id, |s| LightProps {
+        emission: s.fact.light,
+        dampening: s.fact.light_block,
+        empty_shape: true,
+        faces: [EMPTY_FACE; 6],
+    }) {
+        Some(built) => intern(built),
+        None => of(crate::blocks::info::stand_in(state)),
+    };
+    let mut guard = CACHE.write();
+    let cache = guard.get_or_insert_with(|| (generation, HashMap::new()));
+    if cache.0 != generation {
+        *cache = (generation, HashMap::new());
+    }
+    cache.1.insert(id, props);
+    props
 }
 
 #[cold]
