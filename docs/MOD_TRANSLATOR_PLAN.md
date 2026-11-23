@@ -14,7 +14,7 @@ onto the server; this gets the mods' content into the client.
 | Static data defined in code: block properties and their value order, collision shapes, entity sizes, entity model geometry, block entity types | the shaft's `axis` property and shape, a train model | Yes, by running the mod once | The dumper (step 2) |
 | Mod network payloads | config sync, contraption packets | Skipped generically | Already skipped. Reading one needs that mod's codec; acting on it needs its logic |
 | Block entity NBT | kinetic speed, belt contents | Readable | Plain NBT, already received. Showing it needs logic |
-| Client code: renderers, animations, screens, HUD | spinning shafts, contraptions, Ponder | No | Hand ports per mod (step 4) |
+| Client code: renderers, animations, screens, HUD | spinning shafts, contraptions, Ponder | Not mechanically | Agent ports against a mod-port API and conversion docs (step 4) |
 
 ## Why modded blocks are stone today
 
@@ -65,25 +65,71 @@ client loads when that server's registry sync matches it.
   imported textures, without animation.
 - Unknown modded content keeps today's fallbacks.
 
-### 4. Behaviour, by hand
+### 4. Behaviour: agent ports
 
 Mod client code calls into Minecraft's client classes everywhere, so it
-can't be run or translated generically. The options:
+can't be run or translated mechanically (embedding a JVM would need most of
+Minecraft's client API rebuilt underneath, and can't run on Android or
+web). Instead, the tool writes the docs a port needs into the mod's
+conversion directory and an agent ports the Java, batch by batch. Four
+things make that reliable.
 
-- **Embed a JVM** and run mod client code. It would need most of
-  Minecraft's client API rebuilt underneath. Not realistic, and impossible
-  on Android and web.
-- **Hand ports in Rust** for the mods that matter, the way vanilla is done
-  now. First candidate: Create's kinetics (rotation from block entity NBT
-  plus the dumped models).
-- **A plugin system** (for example WASM) so ports ship apart from the
-  client. Worth it only once several ports exist.
+**A mod-port API in the client.** A port needs fixed places to land, or
+each one reaches into internals and breaks on every refactor. Today
+vanilla's equivalents are spread over `blockentities/render`,
+`entities/models`, `gui` and `client/packets` with no extension points.
+The API:
+
+- block entity renderer hook: state in, draw list parts out (`draw`)
+- entity renderer and model hook: dumped geometry plus a pose function
+- mod payload handler, registered by channel with its codec, feeding state
+  into the world or session (Create's contraption and train data arrive
+  this way, so codecs are ported too)
+- screens and HUD elements: `gui` widgets behind a stable interface
+- a per-tick client logic hook
+
+**Conversion docs, one per Java API area.** Each pairs a vanilla example
+with its existing Torch port (`reference/` holds the vanilla side):
+
+- `PoseStack` / `VertexConsumer` to draw lists
+- `BlockEntityRenderer` and `EntityRenderer` to the hooks
+- `AbstractContainerScreen` and HUD layers to `gui`
+- `StreamCodec` / `CustomPacketPayload` to `AzBuf` and the payload handler
+- `Mth`, `RandomSource` to `util::mth`, `util::javarandom`
+
+The tool copies the relevant ones into the conversion directory with the
+mod's own class list, so the agent works from local context.
+
+**Scope control.** A big mod's client side is hundreds of classes (Create's
+Ponder alone is large). The tool lists the mod's client classes, sorts
+them by kind (renderer, model, screen, payload, other) and hands the agent
+one bounded batch at a time. A class that fits no API kind is flagged in
+`PORTED.md`, not guessed at.
+
+**Verification.** Without checks, ported code compiles and still looks
+wrong:
+
+- build and tests per batch: codecs round-trip, models match the dumped
+  geometry
+- side-by-side screenshots: a real modded client and Torch at the same
+  spot, positioned by hand
+- a `PORTED.md` per mod: what is done, skipped and why, and the mod version
+  it was ported from, so a mod update is a diff against that version
+
+**Constraints.**
+
+- Licence: a code port is a derivative work, so each mod's licence decides
+  whether its port can live in this repo or stays local, like converted
+  assets.
+- Compiled-in ports mean a rebuild per modpack. Loading ports into a
+  shipped client (for example as WASM plugins) is worth building once
+  ports are many or must ship separately.
 
 ## Jar or source
 
-The tool needs only jars: the dumper runs them and the assets come from
-them. A mod's source helps only for hand ports, as a reference, the way
-`reference/` serves vanilla parity.
+The dumper runs jars and the assets come from them. For ports the agent
+needs readable Java: a mod's source directory as given, or the jar
+decompiled (Vineflower, as `tools/new_version.py` does for vanilla).
 
 ## Distribution
 
@@ -97,6 +143,9 @@ cache. Converted mod assets don't ship with the client: mod licences vary.
 2. Namespace-aware block models (checklist item 16).
 3. Asset import (step 1).
 4. Dumper and client loaders (steps 2 and 3).
-5. Create kinetics port, if moving machines are wanted (step 4).
+5. The mod-port API and the conversion docs (step 4).
+6. Pilot: an agent ports Create's kinetics against them, which tests the
+   docs before porting at scale.
 
-After 3 and 4, a Create world looks right standing still.
+After 3 and 4, a Create world looks right standing still; after 6, its
+machines move.
