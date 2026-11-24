@@ -922,12 +922,44 @@ pub struct BaseColor {
     pub color: DyeColor,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PotDecorations {
     pub back: Option<ItemStack>,
     pub left: Option<ItemStack>,
     pub right: Option<ItemStack>,
     pub front: Option<ItemStack>,
+}
+// Java's `PotDecorations.CODEC`: absent sides left out, each side an
+// `ItemStackTemplate` (`id`, `count` only when not 1, `components`).
+impl Serialize for PotDecorations {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        struct Template<'a>(&'a crate::ItemStackData);
+        impl Serialize for Template<'_> {
+            fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                let mut map = serializer.serialize_map(None)?;
+                map.serialize_entry("id", &self.0.kind)?;
+                if self.0.count != 1 {
+                    map.serialize_entry("count", &self.0.count)?;
+                }
+                if !is_default(&self.0.component_patch) {
+                    map.serialize_entry("components", &self.0.component_patch)?;
+                }
+                map.end()
+            }
+        }
+        let mut map = serializer.serialize_map(None)?;
+        for (name, side) in [
+            ("back", &self.back),
+            ("left", &self.left),
+            ("right", &self.right),
+            ("front", &self.front),
+        ] {
+            if let Some(ItemStack::Present(data)) = side {
+                map.serialize_entry(name, &Template(data))?;
+            }
+        }
+        map.end()
+    }
 }
 impl AzBuf for PotDecorations {
     fn azalea_read(buf: &mut Cursor<&[u8]>) -> Result<Self, BufReadError> {

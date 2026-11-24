@@ -25,6 +25,14 @@ pub fn generate(input: &DeclareMenus) -> TokenStream {
         pub enum Menu {
             Player(Player),
             #variants
+            /// A mod's menu this client has no layout for: its slots as the
+            /// server sends them, sized by the first full content packet.
+            /// `player` is where the player's 36 slots start (`None`: last).
+            Modded {
+                kind: u32,
+                slots: Vec<ItemStack>,
+                player: Option<usize>,
+            },
         }
     }
 }

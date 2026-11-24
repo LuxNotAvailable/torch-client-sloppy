@@ -39,6 +39,13 @@ pub fn generate(input: &DeclareMenus) -> TokenStream {
         #[derive(Debug)]
         pub enum MenuLocation {
             #menu_location_variants
+            Modded(ModdedMenuLocation),
+        }
+
+        #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+        pub enum ModdedMenuLocation {
+            Contents,
+            Player,
         }
 
         #enums

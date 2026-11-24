@@ -173,7 +173,13 @@ impl Plugin for GuiPlugin {
             .add_systems(Update, apply_window_request)
             .add_systems(
                 Update,
-                (collect_input, draw_gui, upload_banner_icons).chain(),
+                (
+                    collect_input,
+                    draw_gui,
+                    upload_banner_icons,
+                    upload_screen_textures,
+                )
+                    .chain(),
             );
 
         #[cfg(feature = "skins")]
@@ -310,6 +316,26 @@ fn upload_banner_icons(
             icon.as_raw().clone(),
         );
         crate::gui::banner_icons::mark_ready(slot);
+    }
+}
+
+fn upload_screen_textures(
+    assets: Option<Res<GuiAssets>>,
+    mut writes: ResMut<crate::gui::atlas_writes::AtlasWrites>,
+) {
+    let Some(assets) = assets else {
+        return;
+    };
+    for (slot, key) in crate::gui::screen_textures::take_pending() {
+        let Some(region) = assets.atlas.screen_texture(slot) else {
+            continue;
+        };
+        match crate::gui::screen_textures::load(&key) {
+            Some(pixels) => writes.push(region, pixels),
+            None => crate::log_warn!("gui", "mod screen texture {key} doesn't load"),
+        }
+        // Ready either way: a missing texture draws as the empty cell.
+        crate::gui::screen_textures::mark_ready(slot);
     }
 }
 

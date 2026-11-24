@@ -94,19 +94,35 @@ pub fn generate(input: &DeclareMenus) -> TokenStream {
             pub fn slot_mut(&mut self, i: usize) -> Option<&mut ItemStack> {
                 Some(match self {
                     #slot_mut_match_variants
+                    Menu::Modded { slots, .. } => slots.get_mut(i)?,
                 })
             }
 
             pub fn slot(&self, i: usize) -> Option<&ItemStack> {
                 Some(match self {
                     #slot_match_variants
+                    Menu::Modded { slots, .. } => slots.get(i)?,
                 })
             }
 
             #[allow(clippy::len_without_is_empty)]
-            pub const fn len(&self) -> usize {
+            pub fn len(&self) -> usize {
                 match self {
                     #len_match_variants
+                    Menu::Modded { slots, .. } => slots.len(),
+                }
+            }
+
+            /// A mod's menu, empty until the server sends its slots.
+            pub fn modded(kind: u32) -> Self {
+                Menu::Modded { kind, slots: Vec::new(), player: None }
+            }
+
+            /// Grows or shrinks a mod's menu to `len` slots; vanilla menus
+            /// keep their size.
+            pub fn fit(&mut self, len: usize) {
+                if let Menu::Modded { slots, .. } = self {
+                    slots.resize(len, ItemStack::Empty);
                 }
             }
 
@@ -119,24 +135,48 @@ pub fn generate(input: &DeclareMenus) -> TokenStream {
             pub fn slots(&self) -> Vec<ItemStack> {
                 match self {
                     #slots_match_variants
+                    Menu::Modded { slots, .. } => slots.clone(),
                 }
             }
 
             pub fn contents(&self) -> Vec<ItemStack> {
                 match self {
                     #contents_match_variants
+                    Menu::Modded { slots, .. } => {
+                        let player = self.player_slots_range();
+                        slots
+                            .iter()
+                            .enumerate()
+                            .filter(|(i, _)| !player.contains(i))
+                            .map(|(_, s)| s.clone())
+                            .collect()
+                    }
                 }
             }
 
             pub fn location_for_slot(&self, i: usize) -> Option<MenuLocation> {
                 Some(match self {
                     #location_match_variants
+                    Menu::Modded { slots, .. } => {
+                        if i >= slots.len() {
+                            return None;
+                        }
+                        MenuLocation::Modded(if self.player_slots_range().contains(&i) {
+                            ModdedMenuLocation::Player
+                        } else {
+                            ModdedMenuLocation::Contents
+                        })
+                    }
                 })
             }
 
             pub fn player_slots_range(&self) -> RangeInclusive<usize> {
                 match self {
                     #player_slots_range_match_variants
+                    Menu::Modded { slots, player, .. } => {
+                        let start = player.unwrap_or(slots.len().saturating_sub(36));
+                        start..=start + 35
+                    }
                 }
             }
 

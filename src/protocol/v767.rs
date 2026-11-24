@@ -92,6 +92,7 @@ pub(super) const SPEC: HopSpec = HopSpec {
         (Phase::Game, "container_set_slot", body!(container_set_slot)),
         (Phase::Game, "set_equipment", body!(set_equipment)),
         (Phase::Game, "set_entity_data", body!(entity_data)),
+        (Phase::Game, "custom_payload", custom_payload),
         (Phase::Game, "set_entity_motion", body!(set_entity_motion)),
         (
             Phase::Game,
@@ -1801,6 +1802,30 @@ fn update_advancements(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     Some(out.into())
 }
 
+/// NeoForge opens a mod's menu with extra data (`AdvancedOpenScreenPayload`:
+/// window, menu, title, bytes): azalea gets a plain `open_screen`, the
+/// mod's screen gets the bytes (`modapi::screens`). Other payloads pass.
+fn custom_payload(ids: &Ids, body: &[u8]) -> Option<Rewritten> {
+    let mut r = Reader::new(body);
+    let len = r.count()?;
+    if r.take(len)? != b"neoforge:advanced_open_screen" {
+        return Some(Rewritten::Body(body.into()));
+    }
+    let window = r.varint()?;
+    let menu = hop::shifted(ids, IdSpace::Menu, r.varint()?)?;
+    let start = r.pos();
+    r.skip_nbt()?;
+    let title = r.slice_from(start);
+    let data_len = r.count()?;
+    let data = r.take(data_len)?;
+    crate::modapi::screens::on_open_data(window, data.to_vec());
+    let mut out = Vec::with_capacity(10 + title.len());
+    write_varint(&mut out, window);
+    write_varint(&mut out, menu);
+    out.extend_from_slice(title);
+    Some(Rewritten::As("open_screen", out.into()))
+}
+
 /// Component patches changed shape across 1.21.2 to 1.21.5; until the
 /// walker exists, a stack that needs one fails its rewrite.
 fn patch(_ids: &Ids, _r: &mut Reader, _out: &mut Vec<u8>) -> Option<()> {
@@ -1832,6 +1857,35 @@ mod tests {
         );
         assert_eq!(data_json("OPTIONAL_UNSIGNED_INT", &[5]), Some(json!(4)));
         assert_eq!(data_json("PARTICLE", &[1, 2]), None);
+    }
+
+    #[test]
+    fn neoforge_s_menu_open_becomes_open_screen() {
+        let mut body = Vec::new();
+        let channel = b"neoforge:advanced_open_screen";
+        write_varint(&mut body, channel.len() as i32);
+        body.extend_from_slice(channel);
+        write_varint(&mut body, 7); // window
+        write_varint(&mut body, 30); // a modded menu
+        body.extend_from_slice(&[8, 0, 2, b'H', b'i']); // title "Hi"
+        body.extend_from_slice(&[2, 0xAB, 0xCD]); // extra data
+        let Some(Rewritten::As("open_screen", out)) = custom_payload(Hop::v767().ids(), &body)
+        else {
+            panic!("not an open_screen");
+        };
+        assert_eq!(&*out, &[7, 30, 8, 0, 2, b'H', b'i']);
+        assert_eq!(
+            crate::modapi::screens::take_open_data(7),
+            Some(vec![0xAB, 0xCD])
+        );
+
+        let mut other = vec![3];
+        other.extend_from_slice(b"a:b");
+        other.push(9);
+        assert!(matches!(
+            custom_payload(Hop::v767().ids(), &other),
+            Some(Rewritten::Body(b)) if *b == *other
+        ));
     }
 
     /// Tests that reset or read the per-connection entity map run one at a time.

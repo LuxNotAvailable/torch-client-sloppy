@@ -13,6 +13,7 @@ mod book;
 mod enchant;
 mod horse;
 mod merchant;
+pub(crate) mod modded;
 mod plain;
 mod recipe;
 
@@ -85,6 +86,7 @@ pub fn draw(
         ContainerKind::Lectern => book::draw(p, state, ctx, snap, out),
         ContainerKind::Horse(columns) => horse::draw(p, state, ctx, snap, columns, out),
         ContainerKind::Anvil => anvil::draw(p, state, ctx, snap, out),
+        ContainerKind::Modded(kind) => modded::draw(p, state, ctx, snap, kind, out),
     }
 }
 

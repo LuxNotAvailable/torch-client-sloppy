@@ -45,6 +45,10 @@ pub struct Registration {
     /// reads ([`Plugin::payload`]).
     #[serde(default)]
     pub channels: Vec<String>,
+    /// Menu type ids (`mymod:press`) whose screens this plugin draws
+    /// ([`Plugin::screen`]): Java's `MenuScreens.register`.
+    #[serde(default)]
+    pub screens: Vec<String>,
 }
 
 /// What a payload changed: the rigs to ask for again.
@@ -403,6 +407,107 @@ pub enum Animation {
     Path { points: Vec<[f32; 4]> },
 }
 
+/// A mod's menu screen as the plugin sees it: when it opens, and again
+/// whenever its container data or slot count changes.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ScreenView {
+    /// The menu type id (`mymod:press`).
+    pub menu: String,
+    /// The screen's title, as plain text.
+    #[serde(default)]
+    pub title: String,
+    /// The extra data NeoForge opened the menu with (what the mod's
+    /// `IContainerFactory` reads; a block position, often): read it with
+    /// [`buf::Reader`]. Empty for a plain open.
+    #[serde(default)]
+    pub extra: Vec<u8>,
+    /// The menu's data slots (`ContainerData`, synced by
+    /// `ClientboundContainerSetDataPacket`) by index.
+    #[serde(default)]
+    pub data: Vec<i32>,
+    /// How many slots the server sent, the player's 36 included.
+    #[serde(default)]
+    pub slots: usize,
+}
+
+/// A menu screen: Java's `AbstractContainerScreen`. Coordinates are GUI
+/// pixels from the screen's top left corner (`leftPos`, `topPos`).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Screen {
+    /// `imageWidth` and `imageHeight`; the client centres the screen.
+    pub width: i32,
+    pub height: i32,
+    /// `renderBg`'s blits, drawn in order under the slots.
+    #[serde(default)]
+    pub background: Vec<Blit>,
+    /// Each menu slot's `x` and `y` (the slot's top left, inside its
+    /// border), by slot index; `null` hides one (an inactive slot).
+    #[serde(default)]
+    pub slots: Vec<Option<[i32; 2]>>,
+    /// Where the player's 36 slots start among the menu's; the last 36
+    /// when left out.
+    #[serde(default)]
+    pub player_start: Option<usize>,
+    /// `titleLabelX`/`Y`; `[8, 6]` when left out.
+    #[serde(default)]
+    pub title_at: Option<[i32; 2]>,
+    /// `inventoryLabelX`/`Y`; `[8, height - 94]` when left out.
+    #[serde(default)]
+    pub inventory_label_at: Option<[i32; 2]>,
+    /// Hide the title or the inventory label (a `renderLabels` that skips
+    /// them).
+    #[serde(default)]
+    pub hide_title: bool,
+    #[serde(default)]
+    pub hide_inventory_label: bool,
+    /// `renderLabels`'s other text, over the slots.
+    #[serde(default)]
+    pub texts: Vec<ScreenText>,
+}
+
+/// One `GuiGraphics.blit`: a `width` x `height` piece of `texture` from
+/// (`u`, `v`), drawn at (`x`, `y`).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Blit {
+    /// A texture id (`mymod:textures/gui/press.png`). A GUI sprite
+    /// (`blitSprite`) is its file: `mymod:textures/gui/sprites/arrow.png`.
+    pub texture: String,
+    pub x: i32,
+    pub y: i32,
+    #[serde(default)]
+    pub u: f32,
+    #[serde(default)]
+    pub v: f32,
+    pub width: i32,
+    pub height: i32,
+    /// The texture's size in UV units (`blit`'s `textureWidth`/`Height`).
+    #[serde(default = "texture_size")]
+    pub texture_width: i32,
+    #[serde(default = "texture_size")]
+    pub texture_height: i32,
+}
+
+fn texture_size() -> i32 {
+    256
+}
+
+/// A line of text on a screen (`GuiGraphics.drawString`).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ScreenText {
+    pub text: String,
+    pub x: i32,
+    pub y: i32,
+    /// `0xRRGGBB`; vanilla's label grey when left out.
+    #[serde(default = "label_grey")]
+    pub color: u32,
+    #[serde(default)]
+    pub shadow: bool,
+}
+
+fn label_grey() -> u32 {
+    0x404040
+}
+
 /// What a port implements.
 pub trait Plugin {
     /// What this plugin handles. Called once, before anything else.
@@ -433,6 +538,13 @@ pub trait Plugin {
     fn block_tint(&mut self, block: &BlockStateView) -> Tint {
         let _ = block;
         Tint::None
+    }
+
+    /// The screen of a menu type it registered in `screens`. `None` leaves
+    /// it to the client's plain grid of slots.
+    fn screen(&mut self, view: &ScreenView) -> Option<Screen> {
+        let _ = view;
+        None
     }
 }
 
@@ -622,12 +734,42 @@ macro_rules! export_plugin {
             };
             $crate::abi::pack(::serde_json::to_vec(&tint).unwrap_or_default())
         }
+
+        #[unsafe(no_mangle)]
+        pub extern "C" fn torch_screen(ptr: i32, len: i32) -> i64 {
+            // SAFETY: the host wrote the view into a buffer from torch_alloc.
+            let input = unsafe { $crate::abi::input(ptr, len) };
+            let screen = match ::serde_json::from_slice::<$crate::ScreenView>(input) {
+                Ok(view) => PLUGIN.with(|p| p.borrow_mut().screen(&view)),
+                Err(e) => {
+                    $crate::host::log_line(&format!("unreadable screen view: {e}"));
+                    None
+                }
+            };
+            $crate::abi::pack(::serde_json::to_vec(&screen).unwrap_or_default())
+        }
     };
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_screen_fills_java_s_defaults() {
+        let screen: Screen = serde_json::from_str(
+            r#"{"width": 176, "height": 166,
+                "background": [{"texture": "m:textures/gui/press.png",
+                                "x": 0, "y": 0, "width": 176, "height": 166}],
+                "slots": [[56, 17], null],
+                "texts": [{"text": "50%", "x": 80, "y": 60}]}"#,
+        )
+        .unwrap();
+        assert_eq!(screen.background[0].texture_width, 256);
+        assert_eq!(screen.slots, vec![Some([56, 17]), None]);
+        assert_eq!(screen.texts[0].color, 0x404040);
+        assert_eq!(screen.title_at, None);
+    }
 
     #[test]
     fn a_rig_reads_as_the_spec_writes_it() {

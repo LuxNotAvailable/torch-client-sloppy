@@ -57,6 +57,7 @@ pub mod recipe_viewer;
 pub mod render;
 #[cfg(resource_packs)]
 pub mod resourcepacks;
+pub mod screen_textures;
 pub mod screens;
 pub mod scroll_list;
 pub mod serverlist;

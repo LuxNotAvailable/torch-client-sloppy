@@ -127,6 +127,7 @@ pub fn kind_at(pos: [i32; 3]) -> Option<String> {
 pub fn reset() {
     *STORE.lock() = Store::default();
     super::ENTITY_DATA.lock().clear();
+    super::screens::reset();
     *PUBLISHED.write() = Arc::default();
 }
 

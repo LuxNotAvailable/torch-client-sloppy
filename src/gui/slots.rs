@@ -39,9 +39,12 @@ pub enum Layout {
     Merchant,
     Horse(u8),
     Anvil,
+    /// A mod's menu: the open screen lays its slots out
+    /// (`container::modded`).
+    Modded,
 }
 
-fn standard_inventory(k: usize, x: f32, y: f32) -> (f32, f32) {
+pub(crate) fn standard_inventory(k: usize, x: f32, y: f32) -> (f32, f32) {
     if k < 27 {
         (x + (k % 9) as f32 * 18.0, y + (k / 9) as f32 * 18.0)
     } else {
@@ -301,7 +304,9 @@ static MERCHANT: MenuDef = MenuDef {
 impl Layout {
     fn def(self) -> Option<&'static MenuDef> {
         Some(match self {
-            Layout::PlayerMenu | Layout::Chest(_) | Layout::Horse(_) => return None,
+            Layout::PlayerMenu | Layout::Chest(_) | Layout::Horse(_) | Layout::Modded => {
+                return None;
+            }
             Layout::Crafting => &CRAFTING,
             Layout::Furnace => &FURNACE,
             Layout::Hopper => &HOPPER,
@@ -324,6 +329,7 @@ impl Layout {
         }
         match self {
             Layout::Chest(rows) => (CONTAINER_W, 114.0 + rows as f32 * 18.0),
+            Layout::Modded => crate::gui::container::modded::size(),
             _ => (INV_W, INV_H),
         }
     }
@@ -335,6 +341,7 @@ impl Layout {
         match self {
             Layout::Chest(rows) => PLAYER_SLOTS + rows as usize * 9,
             Layout::Horse(columns) => PLAYER_SLOTS + 2 + columns as usize * 3,
+            Layout::Modded => crate::gui::container::modded::slot_count(),
             _ => MENU_SLOTS,
         }
     }
@@ -344,6 +351,7 @@ impl Layout {
             return def.slot_pos(i);
         }
         match self {
+            Layout::Modded => crate::gui::container::modded::slot_pos(i),
             Layout::Horse(columns) => {
                 let chest = columns as usize * 3;
                 match i {

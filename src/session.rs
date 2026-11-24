@@ -824,6 +824,8 @@ pub enum ContainerKind {
     Lectern,
     Horse(u8),
     Anvil,
+    /// A mod's menu, by the server's menu type id.
+    Modded(u32),
 }
 
 impl ContainerKind {
@@ -843,7 +845,8 @@ impl FurnaceKind {}
 
 pub type ContainerData = [i16; CONTAINER_DATA_LEN];
 
-pub const CONTAINER_DATA_LEN: usize = 10;
+/// Vanilla menus use at most 10; mods' can use more.
+pub const CONTAINER_DATA_LEN: usize = 32;
 
 #[derive(Clone, Default)]
 pub struct MerchantOffers {

@@ -32,6 +32,7 @@ pub(super) struct Runtime {
     block_tint: Option<TypedFunc<(i32, i32), i64>>,
     entity: Option<TypedFunc<(i32, i32), i64>>,
     payload: Option<TypedFunc<(i32, i32), i64>>,
+    screen: Option<TypedFunc<(i32, i32), i64>>,
     pub(super) registration: torch_mod_api::Registration,
 }
 
@@ -157,6 +158,9 @@ impl Runtime {
         let payload = instance
             .get_typed_func::<(i32, i32), i64>(&store, "torch_payload")
             .ok();
+        let screen = instance
+            .get_typed_func::<(i32, i32), i64>(&store, "torch_screen")
+            .ok();
         let mut runtime = Runtime {
             store,
             memory,
@@ -166,6 +170,7 @@ impl Runtime {
             block_tint,
             entity,
             payload,
+            screen,
             registration: torch_mod_api::Registration::default(),
         };
         let packed = runtime.call_fuelled(|store| init.call(store, ()))?;
@@ -233,6 +238,17 @@ impl Runtime {
         let _ = self.call_fuelled(|store| free.call(store, (ptr, len)));
         let bytes = self.take_result(packed?)?;
         serde_json::from_slice(&bytes).map_err(|e| format!("its entity rig: {e}"))
+    }
+
+    /// A menu's screen, from its view as JSON; `None` for the client's own.
+    pub(super) fn screen(&mut self, view: &[u8]) -> Result<Option<torch_mod_api::Screen>, String> {
+        let func = self.screen.ok_or("it has no torch_screen")?;
+        let (ptr, len) = self.put(view)?;
+        let packed = self.call_fuelled(|store| func.call(store, (ptr, len)));
+        let free = self.free;
+        let _ = self.call_fuelled(|store| free.call(store, (ptr, len)));
+        let bytes = self.take_result(packed?)?;
+        serde_json::from_slice(&bytes).map_err(|e| format!("its screen: {e}"))
     }
 
     /// A block state's tint, from its view as JSON.

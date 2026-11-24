@@ -31,6 +31,7 @@ fn test_close_open_container() {
     simulation.receive_packet(ClientboundOpenScreen {
         container_id: 1,
         menu_type: MenuKind::Generic9x3,
+        modded_type: None,
         title: FormattedText::default(),
     });
     simulation.tick();
@@ -44,6 +45,7 @@ fn test_close_open_container() {
     simulation.receive_packet(ClientboundOpenScreen {
         container_id: 2,
         menu_type: MenuKind::Generic9x3,
+        modded_type: None,
         title: FormattedText::default(),
     });
     simulation.tick();

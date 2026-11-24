@@ -1,7 +1,7 @@
 # The mod API
 
 How a converted mod's behaviour runs in this client. A mod's client code
-(renderers, animations, later payload handlers and screens) is ported to
+(renderers, animations, payload handlers, screens) is ported to
 Rust against this API, compiled to WebAssembly, and shipped inside its
 `.torchmod` package as `plugin.wasm` (`TORCHMOD_FORMAT.md`). The client
 loads it at run time in a sandbox. Nothing is compiled into the client, so
@@ -46,6 +46,7 @@ A plugin registers handlers in `init`:
 | `entity` | entity type ids in `entities` (`mymod:biplane`) | when an entity of the type appears, and when its data or a `payload` changes it | a `Rig`, in the entity's own frame |
 | `payload` | the mod's packet channels in `channels` (`mymod:sync_state`) | each play-phase packet the server sends on one | a `Redraw`: entity ids and block entity positions whose rigs to ask for again |
 | `block_tint` | block ids in `tinted_blocks` (`mymod:maple_leaves`) | once per block state, then kept | a `Tint`: `none`, `grass`, `foliage`, `dry_foliage`, `water` (the biome's colour, blended by position) or `color` (`0xRRGGBB`) |
+| `screen` | menu type ids in `screens` (`mymod:press`) | when the menu opens, and when its data slots or slot count change | a `Screen`, or `null` for the client's plain grid |
 
 The registration also lists:
 
@@ -80,7 +81,36 @@ sends in its own packets comes through `payload`.
 `block_tint` gets a `BlockStateView` (`{"block": ..., "props": {...}}`); it
 can't depend on position or time, since the answer is kept per state.
 
-Planned for later versions: screens and HUD elements, a
+`screen` is Java's `MenuScreens.register` plus the screen class. It gets a
+`ScreenView` (`{"menu": ..., "title": ..., "extra": [...], "data": [...],
+"slots": 38}`): `extra` is the data NeoForge opened the menu with (the
+buffer the mod's `IContainerFactory` reads, often a block position; read it
+with `buf::Reader`), `data` the menu's `ContainerData` slots by index (32;
+unsent ones read 0), `slots` how many slots the server sent. It answers a
+`Screen`, an `AbstractContainerScreen` in GUI pixels from its top left:
+
+- `width`, `height`: `imageWidth`, `imageHeight`; the client centres it.
+- `background`: `renderBg`'s blits in order, each `{"texture":
+  "mymod:textures/gui/press.png", "x", "y", "u", "v", "width", "height",
+  "texture_width": 256, "texture_height": 256}`. A GUI sprite is its file
+  (`mymod:textures/gui/sprites/arrow.png`). Progress bars are blits sized
+  from `data`, as `renderBg` computes them.
+- `slots`: each menu slot's `x`, `y` (`Slot.x`/`y`) by slot index; `null`
+  hides one. Player slots left off the end sit where vanilla puts them (8
+  across, `height - 82` down). `player_start`: where the player's 36 start,
+  when not last.
+- `title_at`, `inventory_label_at` (default `[8, 6]` and
+  `[8, height - 94]`), `hide_title`, `hide_inventory_label`, and `texts`
+  (`renderLabels`'s other strings: `text`, `x`, `y`, `color`, `shadow`).
+
+The client draws the blits, then the slots and items, then the labels, and
+handles clicks as on vanilla menus. Shift-click isn't predicted (the mod's
+`quickMoveStack` runs on the server; its answer moves the items). A menu
+type no plugin registers opens as a plain grid: its slots nine to a row
+over the inventory. Textures load on demand, up to 8 per screen, each
+squeezed into a 256-pixel cell.
+
+Planned for later versions: screen buttons and widgets, HUD elements, a
 per-tick hook, item renderers.
 
 ### What a plugin gets: `BlockEntityView`
@@ -184,6 +214,13 @@ Data crosses as UTF-8 JSON in the plugin's memory.
 | `torch_free` | `(ptr: i32, len: i32)` | frees a buffer from `torch_alloc` or a result |
 | `torch_init` | `() -> i64` | the `Registration` JSON, as `ptr << 32 \| len` |
 | `torch_block_entity` | `(ptr: i32, len: i32) -> i64` | a `BlockEntityView` in, a `Rig` out (same packing) |
+| `torch_entity` | `(ptr: i32, len: i32) -> i64` | an `EntityView` in, a `Rig` out |
+| `torch_payload` | `(ptr: i32, len: i32) -> i64` | the channel's length (u16, big-endian), the channel, then the data in; a `Redraw` out |
+| `torch_block_tint` | `(ptr: i32, len: i32) -> i64` | a `BlockStateView` in, a `Tint` out |
+| `torch_screen` | `(ptr: i32, len: i32) -> i64` | a `ScreenView` in, a `Screen` or `null` out |
+
+All but `torch_api`, `torch_alloc`, `torch_free` and `torch_init` are
+optional: a plugin built before a hook existed lacks its export.
 
 The SDK writes all of these; a port only implements the `Plugin` trait.
 
@@ -199,5 +236,10 @@ A modded block entity's type and data reach the client in chunk packets
 and `block_entity_data`. azalea can't hold a modded block entity type, so
 the last protocol hop takes modded ones out of those packets before azalea
 reads them and hands them to `modapi` with the server's type id
-(`protocol/v775.rs`). Native-protocol (26.3) NeoForge servers don't go
+(`protocol/v775.rs`).
+
+A modded menu opens through NeoForge's `neoforge:advanced_open_screen`
+payload; the 1.21.1 hop turns it into a plain `open_screen` and keeps its
+extra data for the screen (`protocol/v767.rs`). azalea holds a modded menu
+as `Menu::Modded`, sized by the first full content packet. Native-protocol (26.3) NeoForge servers don't go
 through a hop yet; their modded block entities aren't captured.

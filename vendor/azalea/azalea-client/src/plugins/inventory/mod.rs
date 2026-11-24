@@ -56,12 +56,17 @@ pub struct MenuOpenedEvent {
     pub entity: Entity,
     pub window_id: i32,
     pub menu_type: MenuKind,
+    /// A mod's menu type id, which `menu_type` then stands in for.
+    pub modded_type: Option<u32>,
     pub title: FormattedText,
 }
 fn handle_menu_opened_trigger(event: On<MenuOpenedEvent>, mut query: Query<&mut Inv>) {
     let mut inventory = query.get_mut(event.entity).unwrap();
     inventory.id = event.window_id;
-    inventory.container_menu = Some(Menu::from_kind(event.menu_type));
+    inventory.container_menu = Some(match event.modded_type {
+        Some(kind) => Menu::modded(kind),
+        None => Menu::from_kind(event.menu_type),
+    });
     inventory.container_menu_title = Some(event.title.clone());
 }
 
@@ -107,9 +112,14 @@ pub fn handle_client_side_close_container_trigger(
 
     if let Some(inventory_menu) = inventory.container_menu.take() {
 
-        let new_inventory = inventory_menu.slots()[inventory_menu.player_slots_range()].to_vec();
-        let new_inventory = <[ItemStack; 36]>::try_from(new_inventory).unwrap();
-        *inventory.inventory_menu.as_player_mut().inventory = new_inventory;
+        // A mod's menu closed before its slots came has no player slots.
+        let new_inventory = inventory_menu
+            .slots()
+            .get(inventory_menu.player_slots_range())
+            .and_then(|s| <[ItemStack; 36]>::try_from(s.to_vec()).ok());
+        if let Some(new_inventory) = new_inventory {
+            *inventory.inventory_menu.as_player_mut().inventory = new_inventory;
+        }
     }
 
     inventory.id = 0;
@@ -206,6 +216,7 @@ pub fn handle_set_container_content_trigger(
     }
 
     let menu = inventory.menu_mut();
+    menu.fit(set_container_content.slots.len());
     for (i, slot) in set_container_content.slots.iter().enumerate() {
         if let Some(slot_mut) = menu.slot_mut(i) {
             *slot_mut = slot.clone();

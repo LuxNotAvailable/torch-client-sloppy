@@ -20,6 +20,13 @@ const BANNER_ICON_COLUMNS: usize = 4;
 
 pub const PLAYER_FACE_SLOTS: usize = 80;
 
+/// Mod screens' textures (`gui::screen_textures`), each in a square cell.
+pub const SCREEN_TEXTURE_PX: u32 = 256;
+
+pub const SCREEN_TEXTURE_SLOTS: usize = 8;
+
+const SCREEN_TEXTURE_COLUMNS: usize = 4;
+
 const PLAYER_FACE_COLUMNS: usize = 10;
 
 const PLAYER_FACE_W: u32 = SKIN_HEAD_SIZE * 2;
@@ -82,6 +89,12 @@ const BANNER_ICON_GRID: ReservedGrid = ReservedGrid::new(
     BANNER_ICON_COLUMNS,
     BANNER_ICON_SLOTS,
 );
+const SCREEN_TEXTURE_GRID: ReservedGrid = ReservedGrid::new(
+    SCREEN_TEXTURE_PX,
+    SCREEN_TEXTURE_PX,
+    SCREEN_TEXTURE_COLUMNS,
+    SCREEN_TEXTURE_SLOTS,
+);
 const PLAYER_FACE_GRID: ReservedGrid = ReservedGrid::new(
     PLAYER_FACE_W,
     PLAYER_FACE_H,
@@ -133,6 +146,7 @@ pub struct GuiAtlas {
     font_origin: (u32, u32),
     server_icons: ReservedGrid,
     banner_icons: ReservedGrid,
+    screen_textures: ReservedGrid,
     player_faces: ReservedGrid,
     pub white: Region,
     pub font: Font,
@@ -182,6 +196,16 @@ impl GuiAtlas {
             y,
             w: BANNER_ICON_PX,
             h: BANNER_ICON_PX,
+        })
+    }
+
+    pub fn screen_texture(&self, slot: usize) -> Option<Region> {
+        let (x, y) = self.screen_textures.cell(slot)?;
+        Some(Region {
+            x,
+            y,
+            w: SCREEN_TEXTURE_PX,
+            h: SCREEN_TEXTURE_PX,
         })
     }
 
@@ -241,6 +265,7 @@ impl GuiAtlas {
             font_origin: (0, 0),
             server_icons: SERVER_ICON_GRID,
             banner_icons: BANNER_ICON_GRID,
+            screen_textures: SCREEN_TEXTURE_GRID,
             player_faces: PLAYER_FACE_GRID,
             white: Region {
                 x: 0,
@@ -937,6 +962,13 @@ pub fn build_gui_atlas(assets: &Path) -> GuiAtlas {
         scaling: Scaling::Stretch,
     });
 
+    entries.push(Entry {
+        kind: Kind::ScreenTextures,
+        key: String::new(),
+        image: SCREEN_TEXTURE_GRID.blank(),
+        scaling: Scaling::Stretch,
+    });
+
     #[cfg(feature = "skins")]
     {
         entries.push(Entry {
@@ -991,6 +1023,7 @@ pub fn build_gui_atlas(assets: &Path) -> GuiAtlas {
     let mut items_origin = (0, 0);
     let mut server_icons = SERVER_ICON_GRID;
     let mut banner_icons = BANNER_ICON_GRID;
+    let mut screen_textures = SCREEN_TEXTURE_GRID;
     let mut player_faces = PLAYER_FACE_GRID;
     let mut white = Region {
         x: 0,
@@ -1020,6 +1053,7 @@ pub fn build_gui_atlas(assets: &Path) -> GuiAtlas {
             Kind::Items => items_origin = (r.x, r.y),
             Kind::ServerIcons => server_icons = SERVER_ICON_GRID.at((r.x, r.y)),
             Kind::BannerIcons => banner_icons = BANNER_ICON_GRID.at((r.x, r.y)),
+            Kind::ScreenTextures => screen_textures = SCREEN_TEXTURE_GRID.at((r.x, r.y)),
             Kind::PlayerFaces => player_faces = PLAYER_FACE_GRID.at((r.x, r.y)),
         }
     }
@@ -1068,6 +1102,7 @@ pub fn build_gui_atlas(assets: &Path) -> GuiAtlas {
         font_origin,
         server_icons,
         banner_icons,
+        screen_textures,
         player_faces,
         white,
         font,
@@ -1082,6 +1117,7 @@ enum Kind {
     Items,
     ServerIcons,
     BannerIcons,
+    ScreenTextures,
     PlayerFaces,
 }
 

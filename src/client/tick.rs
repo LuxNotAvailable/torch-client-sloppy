@@ -1355,6 +1355,18 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
         }
     }
 
+    // A mod screen saying where its menu's player slots start.
+    if let Some((window, start)) = crate::modapi::screens::player_start() {
+        let mut ecs = bot.ecs.write();
+        if let Some(mut inv) = ecs.get_mut::<azalea::entity::inventory::Inventory>(bot.entity)
+            && inv.id == window
+            && let Some(azalea_inventory::Menu::Modded { player, .. }) = inv.container_menu.as_mut()
+            && *player != Some(start)
+        {
+            *player = Some(start);
+        }
+    }
+
     if let Some(update) = sign_update {
         bot.write_packet(ServerboundSignUpdate {
             pos: update.pos,

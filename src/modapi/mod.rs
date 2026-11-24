@@ -8,6 +8,7 @@
 
 mod render;
 mod runtime;
+pub mod screens;
 pub mod store;
 
 use std::collections::HashMap;
@@ -38,6 +39,8 @@ struct Plugins {
     entities: HashMap<String, usize>,
     /// Mod packet channel to the plugin that reads it.
     channels: HashMap<String, usize>,
+    /// Menu type id to the plugin that draws its screen.
+    screens: HashMap<String, usize>,
     /// Tints asked so far, by modded table generation and state id.
     tints: HashMap<(u32, u16), torch_mod_api::Tint>,
 }
@@ -78,6 +81,9 @@ pub fn load(plugins: Vec<(String, Vec<u8>)>) {
                 }
                 for channel in &registration.channels {
                     out.channels.entry(channel.clone()).or_insert(index);
+                }
+                for menu in &registration.screens {
+                    out.screens.entry(menu.clone()).or_insert(index);
                 }
                 crate::log_info!(
                     "modapi",
@@ -190,6 +196,25 @@ fn entity(view: &torch_mod_api::EntityView) -> Option<Result<torch_mod_api::Rig,
             .entity(&input)
             .map_err(|e| format!("{}: {e}", loaded.name)),
     )
+}
+
+/// A modded menu's screen, from the plugin that registered its menu type;
+/// `None` when none did or it left it to the client.
+fn screen(view: &torch_mod_api::ScreenView) -> Option<torch_mod_api::Screen> {
+    let mut plugins = PLUGINS.lock();
+    let index = *plugins.screens.get(&view.menu)?;
+    let input = serde_json::to_vec(view).ok()?;
+    let loaded = plugins.loaded.get_mut(index)?;
+    match loaded.runtime.screen(&input) {
+        Ok(screen) => screen,
+        Err(e) => {
+            loaded.failures += 1;
+            if loaded.failures <= 3 {
+                crate::log_warn!("modapi", "{}: screen of {}: {e}", loaded.name, view.menu);
+            }
+            None
+        }
+    }
 }
 
 /// The tint a plugin gives a modded block state (`Plugin::block_tint`), or
@@ -319,6 +344,28 @@ mod tests {
         };
         // Its type's size, in sixteenths about its feet.
         assert_eq!((*from, *to), ([-8.0, 0.0, -8.0], [8.0, 8.0, 8.0]));
+    }
+
+    #[test]
+    fn the_example_plugin_lays_out_its_press_screen() {
+        let mut runtime = runtime::Runtime::load("example", EXAMPLE).unwrap();
+        assert_eq!(runtime.registration.screens, ["example:press"]);
+        // Half done; opened at the press at (1, 64, -2).
+        let packed: i64 = ((1i64 & 0x3FF_FFFF) << 38) | ((-2i64 & 0x3FF_FFFF) << 12) | 64;
+        let view = torch_mod_api::ScreenView {
+            menu: "example:press".into(),
+            title: "Press".into(),
+            extra: packed.to_be_bytes().to_vec(),
+            data: vec![50, 100],
+            slots: 38,
+        };
+        let input = serde_json::to_vec(&view).unwrap();
+        let screen = runtime.screen(&input).unwrap().unwrap();
+        assert_eq!((screen.width, screen.height), (176, 166));
+        assert_eq!(screen.slots, [Some([56, 35]), Some([116, 35])]);
+        // The arrow, half full.
+        assert_eq!(screen.background[1].width, 12);
+        assert_eq!(screen.texts[0].text, "1 64 -2");
     }
 
     #[test]

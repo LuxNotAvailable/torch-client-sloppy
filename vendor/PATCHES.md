@@ -41,6 +41,15 @@ Treat as our code. History: `git log -- vendor/azalea`. Main areas:
   and blocks starting a sprint while an item is in use (`plugins/movement.rs`).
 - `azalea-client`: closing a container empties the cursor, as the closed
   menu's carried stack goes with it (`plugins/inventory/mod.rs`).
+- Modded menus: `c_open_screen` keeps a menu type azalea doesn't know as
+  `modded_type` (like `c_add_entity`); `azalea-inventory-macros` add
+  `Menu::Modded` (slots sized by the content packet, `fit`; player slots
+  last unless `player` says), `MenuLocation::Modded`; quick-move isn't
+  predicted for it (`operations.rs`); `MenuOpenedEvent.modded_type`, and
+  closing a menu with no player slots yet keeps the inventory
+  (`azalea-client/src/plugins/inventory/mod.rs`).
+- `azalea-inventory`: `PotDecorations` hashes as Java's codec writes it
+  (absent sides left out, `count` 1 left out), `components/mod.rs`.
 - `azalea-client`: `queue_held_instant_mine` breaks instant blocks in the
   same tick while the game sets `HOLD_TO_MINE` (`plugins/mining.rs`).
 - `azalea-client`: `ON_LOCAL_BREAK` is called with each predicted break

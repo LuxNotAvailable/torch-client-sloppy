@@ -580,6 +580,9 @@ impl Menu {
                     self.try_move_item_to_slots(slot_index, self.player_slots_range());
                 }
             },
+            // The mod's `quickMoveStack` runs on the server only; its reply
+            // corrects the slots.
+            MenuLocation::Modded(_) => {}
         }
 
         ItemStack::Empty

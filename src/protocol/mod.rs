@@ -123,6 +123,7 @@ pub(crate) fn set_session(protocol: Option<i32>) {
     WIRE_IDS.write().unwrap().clear();
     MODDED_ITEMS.write().unwrap().clear();
     MODDED_ENTITIES.write().unwrap().clear();
+    MODDED_MENUS.write().unwrap().clear();
     crate::blocks::modded::clear();
     azalea::join::HANDSHAKE_PROTOCOL.store(protocol, Ordering::Relaxed);
     if protocol != version::NATIVE.protocol {
@@ -183,6 +184,13 @@ pub(crate) fn native_snapshot(
             names.insert(*id, intern(&name.to_string()));
         }
     }
+    if registry == registries::RegistryId::Menu {
+        let mut names = MODDED_MENUS.write().unwrap();
+        names.clear();
+        for (id, name) in &entries {
+            names.insert(*id, intern(&name.to_string()));
+        }
+    }
     if registry == registries::RegistryId::Item {
         let mut names = MODDED_ITEMS.write().unwrap();
         names.clear();
@@ -222,6 +230,16 @@ static MODDED_ENTITIES: std::sync::LazyLock<std::sync::RwLock<HashMap<u32, &'sta
 /// synced its entity type registry.
 pub(crate) fn modded_entity(id: u32) -> Option<&'static str> {
     MODDED_ENTITIES.read().unwrap().get(&id).copied()
+}
+
+/// The server's menu type names by native id (`modapi::screens`).
+static MODDED_MENUS: std::sync::LazyLock<std::sync::RwLock<HashMap<u32, &'static str>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// The id string of a modded menu type's native id, when the server synced
+/// its menu registry.
+pub(crate) fn modded_menu(id: u32) -> Option<&'static str> {
+    MODDED_MENUS.read().unwrap().get(&id).copied()
 }
 
 /// The id string of a modded item's native id, when the server synced its

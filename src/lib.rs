@@ -22,11 +22,11 @@ mod items;
 mod lighting;
 #[cfg(feature = "mobile_ui")]
 mod mobile;
+#[cfg(feature = "multiversion")]
+mod modapi;
 mod modules;
 mod platform;
 mod play;
-#[cfg(feature = "multiversion")]
-mod modapi;
 mod protocol;
 #[cfg(resource_packs)]
 mod resourcepacks;

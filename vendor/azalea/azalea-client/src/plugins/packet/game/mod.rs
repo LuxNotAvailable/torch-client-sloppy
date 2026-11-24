@@ -1211,6 +1211,7 @@ impl GamePacketHandler<'_> {
                 entity: self.player,
                 window_id: p.container_id,
                 menu_type: p.menu_type,
+                modded_type: p.modded_type,
                 title: p.title.to_owned(),
             });
         });

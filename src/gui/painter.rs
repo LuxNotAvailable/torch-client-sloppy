@@ -422,6 +422,28 @@ impl<'a> Painter<'a> {
         self.region_part(r, sx, sy, w, h, x, y, w, h, [1.0; 4]);
     }
 
+    /// `GuiGraphics.blit` from a mod screen's texture: a `w` x `h` piece
+    /// at (`u`, `v`) of a `tex_w` x `tex_h` UV space, drawn at (`x`, `y`).
+    /// Draws nothing until the texture is uploaded.
+    pub fn texture_part(
+        &mut self,
+        texture: &str,
+        (u, v, w, h): (f32, f32, f32, f32),
+        (tex_w, tex_h): (f32, f32),
+        x: f32,
+        y: f32,
+    ) {
+        let Some(slot) = crate::gui::screen_textures::slot(texture) else {
+            return;
+        };
+        let Some(r) = self.atlas.screen_texture(slot) else {
+            return;
+        };
+        let cell = crate::gui::screen_textures::CELL as f32;
+        let (kx, ky) = (cell / tex_w.max(1.0), cell / tex_h.max(1.0));
+        self.region_part(r, u * kx, v * ky, w * kx, h * ky, x, y, w, h, [1.0; 4]);
+    }
+
     pub fn sprite_part(&mut self, name: &str, sx: f32, sy: f32, w: f32, h: f32, x: f32, y: f32) {
         let Some(sp) = self.atlas.sprite(name).copied() else {
             self.fill(x, y, w, h, 0xFFFF_00FF);

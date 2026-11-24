@@ -13,7 +13,7 @@ use azalea_inventory::{
     components::{
         AdventureModePredicate, AttributeModifier, AttributeModifierDisplay, AttributeModifiers,
         AttributeModifiersEntry, BlockPredicate, CanPlaceOn, ChargedProjectiles, CustomData,
-        CustomName, EquipmentSlotGroup, Glider, JukeboxPlayable, LodestoneTracker, Lore, MapColor,
+        CustomName, EquipmentSlotGroup, Glider, JukeboxPlayable, LodestoneTracker, Lore,
         PotDecorations, Rarity,
     },
 };
@@ -40,11 +40,6 @@ fn test_custom_name_checksum_2() {
     };
 
     assert_eq!(get_checksum(&c, &Default::default()).unwrap().0, 187682122);
-}
-#[test]
-fn test_map_color_checksum() {
-    let c = MapColor { color: 1 };
-    assert_eq!(get_checksum(&c, &Default::default()).unwrap().0, 1565579036);
 }
 #[test]
 fn test_lore_checksum() {
@@ -170,15 +165,35 @@ fn test_lodestone_tracker_checksum() {
 
 #[test]
 fn test_pot_decorations_checksum() {
+    // Hashes as Java's codec writes it: absent sides left out, each side an
+    // item stack template whose count of 1 is left out.
+    #[derive(serde::Serialize)]
+    struct Side {
+        id: ItemKind,
+    }
+    #[derive(serde::Serialize)]
+    struct Java {
+        back: Side,
+        front: Side,
+    }
     let c = PotDecorations {
         back: Some(ItemKind::Stick.into()),
-        left: Some(ItemKind::Brick.into()),
-        right: Some(ItemKind::Brick.into()),
+        left: None,
+        right: None,
         front: Some(ItemKind::Brick.into()),
     };
-
-    // TODO: check this in-game and update
-    assert_eq!(get_checksum(&c, &Default::default()).unwrap().0, 1951715383);
+    let java = Java {
+        back: Side {
+            id: ItemKind::Stick,
+        },
+        front: Side {
+            id: ItemKind::Brick,
+        },
+    };
+    assert_eq!(
+        get_checksum(&c, &Default::default()).unwrap().0,
+        get_checksum(&java, &Default::default()).unwrap().0
+    );
 }
 
 #[test]

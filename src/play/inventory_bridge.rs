@@ -29,6 +29,7 @@ pub(crate) fn container_kind(menu: &Menu) -> ContainerKind {
         Menu::Merchant { .. } => ContainerKind::Merchant,
         Menu::Lectern { .. } => ContainerKind::Lectern,
         Menu::Anvil { .. } => ContainerKind::Anvil,
+        Menu::Modded { kind, .. } => ContainerKind::Modded(*kind),
         _ => ContainerKind::None,
     }
 }
