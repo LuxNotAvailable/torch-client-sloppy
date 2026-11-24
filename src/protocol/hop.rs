@@ -731,6 +731,24 @@ pub(super) fn sound_holder(ids: &Ids, r: &mut Reader, out: &mut Vec<u8>) -> Opti
         }
         return Some(());
     }
+    // A mod's sound event: past this hop's table, so no native id names it.
+    // Sent inline by its synced name instead, which the client plays from
+    // the mod's package (`audio::load_mod_sounds`).
+    if ids.to_native.map(IdSpace::SoundEvent, raw - 1).is_none()
+        && raw - 1 >= ids.to_native.count(IdSpace::SoundEvent)
+        && let Some(Some(Some(name))) = u32::try_from(raw - 1).ok().map(|id| {
+            crate::protocol::wire_registry_name(
+                crate::protocol::registries::RegistryId::SoundEvent,
+                id,
+            )
+        })
+    {
+        write_varint(out, 0);
+        write_varint(out, name.len() as i32);
+        out.extend_from_slice(name.as_bytes());
+        out.push(0);
+        return Some(());
+    }
     let moved = shifted(ids, IdSpace::SoundEvent, raw - 1)?;
     write_varint(out, moved + 1);
     Some(())
@@ -2587,6 +2605,28 @@ mod tests {
             "the holder is id + 1, not the id"
         );
         assert_eq!(r.rest(), [0xAA; 4], "the rest of the packet is copied");
+    }
+
+    #[test]
+    fn a_mod_s_sound_goes_inline_by_its_synced_name() {
+        let modded = ids().to_native.count(IdSpace::SoundEvent) + 40;
+        crate::protocol::native_snapshot(
+            crate::protocol::registries::RegistryId::SoundEvent,
+            vec![(
+                modded as u32,
+                azalea_registry::identifier::Identifier::new("create:cog"),
+            )],
+        );
+        let mut body = Vec::new();
+        write_varint(&mut body, modded + 1);
+        body.extend_from_slice(&[0; 40]);
+        let mut r = Reader::new(&body);
+        let mut out = Vec::new();
+        sound_holder(ids(), &mut r, &mut out).expect("a holder");
+        let mut expected = vec![0u8, 10];
+        expected.extend_from_slice(b"create:cog");
+        expected.push(0);
+        assert_eq!(out, expected);
     }
 
     #[test]

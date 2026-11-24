@@ -73,6 +73,8 @@ pub struct BakedModel {
     pub occludes: bool,
     pub full_cube: bool,
     pub ambient_occlusion: bool,
+    /// Its model asked for the translucent layer (`render_type`).
+    pub translucent: bool,
     pub missing_textures: u32,
     pub particle_uv: Option<[f32; 4]>,
 }
@@ -85,6 +87,7 @@ impl Default for BakedModel {
             occludes: false,
             full_cube: false,
             ambient_occlusion: true,
+            translucent: false,
             missing_textures: 0,
             particle_uv: None,
         }
@@ -118,6 +121,8 @@ pub struct BakedBlock {
     pub full_cube: bool,
     pub ambient_occlusion: bool,
     pub randomized: bool,
+    /// Some part's model asked for the translucent layer.
+    pub translucent: bool,
 }
 
 impl Default for BakedBlock {
@@ -128,6 +133,7 @@ impl Default for BakedBlock {
             full_cube: false,
             ambient_occlusion: true,
             randomized: false,
+            translucent: false,
         }
     }
 }
@@ -157,6 +163,7 @@ pub fn bake_resolved(resolved: &Resolved, rot: Rot, atlas_rows: u32) -> BakedMod
     let mut out = BakedModel {
         had_elements: !resolved.elements.is_empty() || !resolved.quads.is_empty(),
         ambient_occlusion: resolved.ambient_occlusion,
+        translucent: resolved.translucent,
         particle_uv,
         ..Default::default()
     };

@@ -8,8 +8,9 @@ pub fn position_seed(x: i32, y: i32, z: i32) -> i64 {
     seed >> 16
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum ShapeOffset {
+    #[default]
     None,
     Xz {
         max_horizontal: f32,

@@ -47,6 +47,9 @@ pub struct ItemUse {
     pub ticks: i32,
     /// `Some(can_always_eat)` for food.
     pub food: Option<bool>,
+    /// Its default `max_damage` (0: not damageable) and stack size.
+    pub max_damage: u32,
+    pub max_stack: u32,
 }
 
 static ITEMS: RwLock<Option<HashMap<String, ItemUse>>> = RwLock::new(None);
@@ -71,6 +74,8 @@ pub fn load_packages(packages: &[(String, String)]) {
                 animation: item["use_animation"].as_str().and_then(Use::parse),
                 ticks: item["use_ticks"].as_i64().unwrap_or(0) as i32,
                 food,
+                max_damage: item["max_damage"].as_u64().unwrap_or(0) as u32,
+                max_stack: item["max_stack"].as_u64().unwrap_or(64).max(1) as u32,
             };
             out.entry(name.to_owned()).or_insert(entry);
         }
@@ -92,6 +97,20 @@ pub fn of_stack(stack: &azalea_inventory::ItemStack) -> Option<ItemUse> {
     get(super::stack_id(data))
 }
 
+/// A modded stack's default max damage, when it has one (the server only
+/// sends it changed).
+pub fn max_damage(data: &azalea_inventory::ItemStackData) -> Option<i32> {
+    data.modded_kind?;
+    let u = get(super::stack_id(data))?;
+    (u.max_damage > 0).then_some(u.max_damage as i32)
+}
+
+/// A modded stack's default stack size.
+pub fn max_stack(data: &azalea_inventory::ItemStackData) -> Option<i32> {
+    data.modded_kind?;
+    Some(get(super::stack_id(data))?.max_stack as i32)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -103,7 +122,7 @@ mod tests {
             r#"[{"name": "fd:tomato", "use_animation": "eat", "use_ticks": 32,
                  "food": {"can_always_eat": false, "nutrition": 1}},
                 {"name": "fd:cocoa", "use_animation": "drink", "use_ticks": 32},
-                {"name": "fd:knife"}]"#
+                {"name": "fd:knife", "max_damage": 250, "max_stack": 1}]"#
                 .into(),
         )]);
         let tomato = get("fd:tomato").unwrap();
@@ -113,6 +132,14 @@ mod tests {
         );
         assert_eq!(get("fd:cocoa").unwrap().animation, Some(Use::Drink));
         assert_eq!(get("fd:knife").unwrap().ticks, 0);
+        assert_eq!(
+            (
+                get("fd:knife").unwrap().max_damage,
+                get("fd:knife").unwrap().max_stack
+            ),
+            (250, 1)
+        );
+        assert_eq!(get("fd:tomato").unwrap().max_stack, 64);
         assert!(get("fd:nothing").is_none());
     }
 }

@@ -23,7 +23,7 @@ use azalea_entity::{
 use azalea_registry::builtin::BlockKind;
 use azalea_world::{ChunkStorage, World};
 use bevy_ecs::{entity::Entity, world::Mut};
-pub use blocks::{BlockWithShape, MODDED_SHAPES, ModdedShape};
+pub use blocks::{BlockWithShape, MODDED_SHAPES, ModdedShape, modded};
 pub use discrete_voxel_shape::*;
 use entity_collisions::{CollidableEntityQuery, get_entity_collisions};
 pub use shape::*;
@@ -300,14 +300,17 @@ fn is_horizontal_collision_minor(
 }
 
 fn block_speed_factor_for(world: &World, position: Vec3, attributes: &Attributes) -> f32 {
-    let here = BlockKind::from(world.get_block_state(BlockPos::from(position)).unwrap_or_default());
-    let factor = block_speed_factor(here);
+    let state_here = world.get_block_state(BlockPos::from(position)).unwrap_or_default();
+    let here = BlockKind::from(state_here);
+    // A modded block's own factor (`ModdedShape`), else vanilla's table.
+    let factor_of = |state: azalea_block::BlockState| {
+        blocks::modded(&state).map_or_else(|| block_speed_factor(BlockKind::from(state)), |m| m.speed_factor)
+    };
+    let factor = factor_of(state_here);
 
     let factor = if factor == 1.0 && !matches!(here, BlockKind::Water | BlockKind::BubbleColumn) {
         let below = get_block_pos_below_that_affects_movement(Position::new(position));
-        block_speed_factor(BlockKind::from(
-            world.get_block_state(below).unwrap_or_default(),
-        ))
+        factor_of(world.get_block_state(below).unwrap_or_default())
     } else {
         factor
     };

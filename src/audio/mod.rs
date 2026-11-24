@@ -34,6 +34,48 @@ use engine::{Command, Place, StreamBuffer};
 
 static DEFS: OnceLock<defs::Defs> = OnceLock::new();
 
+/// The mods' sound events (`ns:event`), from their packages' `sounds.json`;
+/// looked up after vanilla's.
+static MODDED: parking_lot::RwLock<Option<Arc<defs::Defs>>> = parking_lot::RwLock::new(None);
+
+/// Reads every mounted mod namespace's `sounds.json` (`resourcepacks::mods`
+/// mounts them); its files are read from the package as they play.
+pub fn load_mod_sounds() {
+    let Some(root) = crate::assets_root()
+        .parent()
+        .map(std::path::Path::to_path_buf)
+    else {
+        return;
+    };
+    let mut merged: Option<defs::Defs> = None;
+    let mut namespaces = 0;
+    for ns in crate::platform::assets::namespaces() {
+        let Some(text) =
+            crate::platform::assets::read_to_string(root.join(&ns).join("sounds.json"))
+        else {
+            continue;
+        };
+        match defs::Defs::parse_mod(&text, &ns) {
+            Ok(parsed) => {
+                namespaces += 1;
+                match &mut merged {
+                    Some(all) => all.extend(parsed),
+                    None => merged = Some(parsed),
+                }
+            }
+            Err(e) => crate::log_warn!("audio", "{ns}'s sounds.json will not parse: {e}"),
+        }
+    }
+    if let Some(all) = &merged {
+        crate::log_info!(
+            "audio",
+            "{} mod sound event(s) from {namespaces} namespace(s)",
+            all.len()
+        );
+    }
+    *MODDED.write() = merged.map(Arc::new);
+}
+
 static VOLUMES: [AtomicU32; SoundCategory::COUNT] =
     [const { AtomicU32::new(DEFAULT_VOLUME) }; SoundCategory::COUNT];
 
@@ -218,15 +260,24 @@ fn submit_looping(
     let defs = DEFS.get()?;
     debug_assert_ne!(category, SoundCategory::Master, "{event} played on Master");
     let mut random = crate::util::javarandom::JavaRandom::new(seed);
-    let picked = defs.pick(event, &mut |bound| random.next_int(bound))?;
+    let modded = MODDED.read().clone();
+    let picked = defs.pick_with(
+        event,
+        &mut |bound| random.next_int(bound),
+        modded.as_deref(),
+    )?;
     // `AbstractSoundInstance.getVolume`/`getPitch`: the instance's times the
     // chosen sound's.
     let volume = volume * picked.volume;
     let pitch = pitch * picked.pitch;
     // `SoundEngine.play` tells its listeners before any culling.
-    let subtitle = defs.subtitle(event).filter(|_| subtitles::shown());
+    let subtitle = defs
+        .subtitle(event)
+        .or_else(|| modded.as_deref()?.subtitle(event))
+        .cloned()
+        .filter(|_| subtitles::shown());
     let heard_range = at.map_or(f32::INFINITY, |_| volume.max(1.0) * picked.attenuation);
-    if let Some(key) = subtitle {
+    if let Some(key) = &subtitle {
         subtitles::notify(key, at, heard_range, looping);
     }
     let place = match at {

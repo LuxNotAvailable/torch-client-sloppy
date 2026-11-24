@@ -451,8 +451,15 @@ fn block_jump_factor(world: &World, position: Position) -> f32 {
         .chunks
         .get_block_state(get_block_pos_below_that_affects_movement(position));
 
+    // A modded block's own factor (`ModdedShape`), else vanilla's.
+    let jump_factor = |block: azalea_block::BlockState| {
+        collision::modded(&block).map_or_else(
+            || Box::<dyn BlockTrait>::from(block).behavior().jump_factor,
+            |m| m.jump_factor,
+        )
+    };
     let block_at_pos_jump_factor = if let Some(block) = block_at_pos {
-        Box::<dyn BlockTrait>::from(block).behavior().jump_factor
+        jump_factor(block)
     } else {
         1.
     };
@@ -461,7 +468,7 @@ fn block_jump_factor(world: &World, position: Position) -> f32 {
     }
 
     if let Some(block) = block_below {
-        Box::<dyn BlockTrait>::from(block).behavior().jump_factor
+        jump_factor(block)
     } else {
         1.
     }

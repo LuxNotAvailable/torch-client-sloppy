@@ -251,6 +251,7 @@ impl Blocks {
             out.full_cube |= part.choices.iter().all(|m| m.full_cube);
             out.ambient_occlusion &= part.choices.iter().all(|m| m.ambient_occlusion);
             out.randomized |= part.choices.len() > 1;
+            out.translucent |= part.choices.iter().any(|m| m.translucent);
             out.parts.push(part);
         }
         out

@@ -10,6 +10,7 @@ pub mod feed;
 pub mod geom;
 pub mod keyframe;
 pub mod models;
+pub mod modded;
 pub mod physics;
 pub mod quads;
 pub mod registry;

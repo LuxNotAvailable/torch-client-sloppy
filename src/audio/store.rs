@@ -86,6 +86,13 @@ impl Pack {
         if let Some(hit) = self.cache.get(key) {
             return Some(hit.clone());
         }
+        // A mod's sound (`@<ns>/sounds/...`): from its mounted package.
+        if let Some(rest) = key.strip_prefix('@') {
+            let path = crate::assets_root().parent()?.join(rest);
+            let bytes: Arc<[u8]> = crate::platform::assets::read(path)?.into_owned().into();
+            self.cache.insert(key.to_owned(), bytes.clone());
+            return Some(bytes);
+        }
         let span = *self.table.get(key)?;
         let bytes: Arc<[u8]> = {
             self.file.seek(SeekFrom::Start(span.offset)).ok()?;

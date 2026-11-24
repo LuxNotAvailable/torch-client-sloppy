@@ -101,7 +101,11 @@ pub(crate) fn slot_stack(
 
     let get = |f: fn(&azalea_inventory::ItemStackData) -> Option<i32>| f(data).unwrap_or(0);
     let damage = get(|d| d.get_component::<comp::Damage>().map(|c| c.amount)) as u16;
-    let max_damage = get(|d| d.get_component::<comp::MaxDamage>().map(|c| c.amount)) as u16;
+    let max_damage = get(|d| {
+        d.get_component::<comp::MaxDamage>()
+            .map(|c| c.amount)
+            .or_else(|| crate::items::modded::max_damage(d))
+    }) as u16;
 
     let custom_name = data
         .get_component::<comp::CustomName>()
@@ -224,7 +228,11 @@ pub(crate) fn variant_key(data: &azalea_inventory::ItemStackData) -> Option<std:
         item,
         count: data.count.clamp(0, 255) as u8,
         damage: get(|d| d.get_component::<comp::Damage>().map(|c| c.amount)) as u16,
-        max_damage: get(|d| d.get_component::<comp::MaxDamage>().map(|c| c.amount)) as u16,
+        max_damage: get(|d| {
+            d.get_component::<comp::MaxDamage>()
+                .map(|c| c.amount)
+                .or_else(|| crate::items::modded::max_damage(d))
+        }) as u16,
         charged: data
             .get_component::<comp::ChargedProjectiles>()
             .is_some_and(|c| !c.items.is_empty()),
@@ -593,6 +601,7 @@ fn stack_weight(stack: &ItemStack) -> f64 {
         .and_then(|d| {
             d.get_component::<azalea_inventory::components::MaxStackSize>()
                 .map(|m| m.count)
+                .or_else(|| crate::items::modded::max_stack(d))
         })
         .unwrap_or(64)
         .max(1);

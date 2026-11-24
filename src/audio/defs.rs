@@ -50,12 +50,32 @@ struct Event {
 
 pub struct Defs {
     events: HashMap<String, Event>,
+    /// A mod's set: an event entry naming an event it lacks (vanilla's)
+    /// weighs 1, since that event lives in another set.
+    foreign: bool,
 }
 
 const MAX_INDIRECTION: usize = 3;
 
 impl Defs {
     pub fn parse(text: &str) -> Result<Defs, String> {
+        Defs::parse_in(text, None)
+    }
+
+    /// A mod's `assets/<ns>/sounds.json`: its events named `ns:event`.
+    pub fn parse_mod(text: &str, ns: &str) -> Result<Defs, String> {
+        Defs::parse_in(text, Some(ns))
+    }
+
+    /// Adds `other`'s events this set lacks, then weighs again.
+    pub fn extend(&mut self, other: Defs) {
+        for (name, event) in other.events {
+            self.events.entry(name).or_insert(event);
+        }
+        self.weigh();
+    }
+
+    fn parse_in(text: &str, ns: Option<&str>) -> Result<Defs, String> {
         let json: Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
         let object = json
             .as_object()
@@ -73,7 +93,10 @@ impl Defs {
             }
             let total_weight = 0;
             events.insert(
-                name.clone(),
+                match ns {
+                    Some(ns) => format!("{ns}:{name}"),
+                    None => name.clone(),
+                },
                 Event {
                     entries,
                     total_weight,
@@ -81,7 +104,10 @@ impl Defs {
                 },
             );
         }
-        let mut defs = Defs { events };
+        let mut defs = Defs {
+            events,
+            foreign: ns.is_some(),
+        };
         defs.weigh();
         Ok(defs)
     }
@@ -95,7 +121,7 @@ impl Defs {
                 return 0;
             }
             let Some(event) = defs.events.get(name) else {
-                return 0;
+                return u32::from(defs.foreign);
             };
             event
                 .entries
@@ -154,11 +180,22 @@ impl Defs {
 
     /// One of `event`'s files, chosen as `WeighedSoundEvents.getSound` does:
     /// one roll of the event's total weight per level, from the same random.
+    #[cfg(test)]
     pub fn pick(&self, event: &str, roll: &mut impl FnMut(u32) -> u32) -> Option<Picked> {
+        self.pick_with(event, roll, None)
+    }
+
+    /// As [`Self::pick`], looking events up in `more` (the mods' sets) too.
+    pub fn pick_with(
+        &self,
+        event: &str,
+        roll: &mut impl FnMut(u32) -> u32,
+        more: Option<&Defs>,
+    ) -> Option<Picked> {
         let mut name = event;
         let (mut volume, mut pitch, mut stream) = (1.0, 1.0, false);
         for _ in 0..MAX_INDIRECTION {
-            let event = self.events.get(name)?;
+            let event = self.events.get(name).or_else(|| more?.events.get(name))?;
             if event.total_weight == 0 {
                 return None;
             }
@@ -218,7 +255,7 @@ fn parse_entry(value: &Value) -> Option<Entry> {
     Some(Entry {
         target: match kind {
             EntryKind::File => object_key(name),
-            EntryKind::Event => Arc::from(name),
+            EntryKind::Event => Arc::from(name.strip_prefix("minecraft:").unwrap_or(name)),
         },
         volume: number("volume", 1.0),
         pitch: number("pitch", 1.0),
@@ -235,13 +272,46 @@ fn parse_entry(value: &Value) -> Option<Entry> {
     })
 }
 
+/// The pack key of a sound file: vanilla's (`sounds/<path>.ogg`, in the
+/// sound pack), or a mod's as `@<ns>/sounds/<path>.ogg` (in its package).
 fn object_key(name: &str) -> Arc<str> {
-    Arc::from(format!("sounds/{name}.ogg"))
+    match name.split_once(':') {
+        Some((ns, path)) if ns != "minecraft" => Arc::from(format!("@{ns}/sounds/{path}.ogg")),
+        Some((_, path)) => Arc::from(format!("sounds/{path}.ogg")),
+        None => Arc::from(format!("sounds/{name}.ogg")),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_mod_s_events_are_namespaced_and_its_files_come_from_its_package() {
+        let mut vanilla =
+            Defs::parse(r#"{"block.wood.place": {"sounds": ["dig/wood1"]}}"#).unwrap();
+        let modded = Defs::parse_mod(
+            r#"{"cog": {"sounds": ["create:block/cog", "minecraft:dig/stone1"]},
+                "alias": {"sounds": [{"name": "minecraft:block.wood.place", "type": "event"}]}}"#,
+            "create",
+        )
+        .unwrap();
+        let keys = modded.object_keys();
+        assert_eq!(
+            keys,
+            ["@create/sounds/block/cog.ogg", "sounds/dig/stone1.ogg"]
+        );
+        assert!(vanilla.pick_with("create:cog", &mut first, None).is_none());
+        let cog = vanilla
+            .pick_with("create:cog", &mut first, Some(&modded))
+            .unwrap();
+        assert_eq!(&*cog.object_key(), "@create/sounds/block/cog.ogg");
+        // A mod's event naming a vanilla one resolves through both sets.
+        let alias = vanilla.pick_with("create:alias", &mut first, Some(&modded));
+        assert_eq!(&*alias.unwrap().object_key(), "sounds/dig/wood1.ogg");
+        vanilla.extend(modded);
+        assert!(vanilla.pick("create:cog", &mut first).is_some());
+    }
 
     fn first(bound: u32) -> u32 {
         let _ = bound;

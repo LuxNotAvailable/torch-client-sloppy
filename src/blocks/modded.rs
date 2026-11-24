@@ -59,11 +59,57 @@ pub struct Fact {
     pub needs_tool: bool,
     pub air: bool,
     pub friction: f32,
+    /// Its block's speed factor (soul sand 0.4) and jump factor (honey 0.5).
+    pub speed_factor: f32,
+    pub jump_factor: f32,
+    /// The random offset it's drawn at (flowers, grass).
+    pub offset: crate::blocks::rand::ShapeOffset,
+}
+
+/// A dumped offset: `false`, or `{vertical, max_horizontal, max_vertical}`.
+fn parse_offset(v: &Value) -> crate::blocks::rand::ShapeOffset {
+    use crate::blocks::rand::ShapeOffset;
+    let Some(o) = v.as_object() else {
+        return ShapeOffset::None;
+    };
+    let max_horizontal = o
+        .get("max_horizontal")
+        .and_then(Value::as_f64)
+        .unwrap_or(0.25) as f32;
+    if o.get("vertical").and_then(Value::as_bool).unwrap_or(false) {
+        ShapeOffset::Xyz {
+            max_horizontal,
+            max_vertical: o.get("max_vertical").and_then(Value::as_f64).unwrap_or(0.2) as f32,
+        }
+    } else {
+        ShapeOffset::Xz { max_horizontal }
+    }
 }
 
 /// A parsed dump: blocks by name, each with its states in order.
 pub struct Dump {
     blocks: HashMap<String, Vec<ModdedStateRow>>,
+    /// Each block's `SoundType` (break, step, place, hit, fall).
+    sounds: HashMap<String, &'static crate::util::block_model::SoundGroup>,
+}
+
+/// A dumped `SoundType`: its events (vanilla's without `minecraft:`, as
+/// the sound definitions name them), volume and pitch.
+fn parse_sound(v: &Value) -> Option<&'static crate::util::block_model::SoundGroup> {
+    let event = |key: &str| -> Option<&'static str> {
+        let id = v[key].as_str()?;
+        Some(intern(id.strip_prefix("minecraft:").unwrap_or(id)))
+    };
+    let group = crate::util::block_model::SoundGroup {
+        volume: v["volume"].as_f64().unwrap_or(1.0) as f32,
+        pitch: v["pitch"].as_f64().unwrap_or(1.0) as f32,
+        break_event: event("break")?,
+        place_event: event("place")?,
+        step_event: event("step")?,
+        hit_event: event("hit")?,
+        fall_event: event("fall")?,
+    };
+    Some(Box::leak(Box::new(group)))
 }
 
 struct ModdedStateRow {
@@ -102,8 +148,12 @@ impl Dump {
         };
         let facts: Vec<Value> = root["facts"].as_array().ok_or("no facts")?.clone();
         let mut out = HashMap::new();
+        let mut sounds = HashMap::new();
         for block in root["blocks"].as_array().ok_or("no blocks")? {
             let name = block["name"].as_str().ok_or("a block has no name")?;
+            if let Some(group) = parse_sound(&block["sound"]) {
+                sounds.insert(name.to_owned(), group);
+            }
             let properties: Vec<(&str, Vec<&str>)> = block["properties"]
                 .as_array()
                 .ok_or_else(|| format!("{name} has no properties list"))?
@@ -114,6 +164,8 @@ impl Dump {
                 })
                 .collect();
             let friction = block["friction"].as_f64().unwrap_or(0.6) as f32;
+            let speed_factor = block["speed_factor"].as_f64().unwrap_or(1.0) as f32;
+            let jump_factor = block["jump_factor"].as_f64().unwrap_or(1.0) as f32;
             let block_entity = block["block_entity"].as_str().map(intern);
             let mut states = Vec::new();
             for row in block["states"]
@@ -160,6 +212,9 @@ impl Dump {
                     needs_tool: f["needs_tool"].as_bool().unwrap_or(false),
                     air: f["air"].as_bool().unwrap_or(false),
                     friction,
+                    speed_factor,
+                    jump_factor,
+                    offset: parse_offset(&f["offset"]),
                 };
                 states.push(ModdedStateRow {
                     props,
@@ -169,7 +224,10 @@ impl Dump {
             }
             out.insert(name.to_owned(), states);
         }
-        Ok(Dump { blocks: out })
+        Ok(Dump {
+            blocks: out,
+            sounds,
+        })
     }
 }
 
@@ -430,6 +488,8 @@ fn physics_shape(fact: &Fact) -> azalea_physics::collision::ModdedShape {
         outline: voxel_shape(outline),
         empty: collision.is_empty(),
         full: collision == full,
+        speed_factor: fact.speed_factor,
+        jump_factor: fact.jump_factor,
     }
 }
 
@@ -524,12 +584,16 @@ static DUMP: RwLock<Option<Arc<Dump>>> = RwLock::new(None);
 pub fn load_packages(packages: &[(String, String)]) {
     let mut merged = Dump {
         blocks: HashMap::new(),
+        sounds: HashMap::new(),
     };
     for (package, text) in packages {
         match Dump::parse(text) {
             Ok(dump) => {
                 // Two jars can bundle the same library mod; the first wins.
                 let mut repeated = 0;
+                for (name, group) in dump.sounds {
+                    merged.sounds.entry(name).or_insert(group);
+                }
                 for (name, rows) in dump.blocks {
                     if merged.blocks.contains_key(&name) {
                         repeated += 1;
@@ -548,6 +612,11 @@ pub fn load_packages(packages: &[(String, String)]) {
         }
     }
     *DUMP.write() = Some(Arc::new(merged));
+}
+
+/// A modded block's sound type, by its name (`create:cogwheel`).
+pub fn sound_group(name: &str) -> Option<&'static crate::util::block_model::SoundGroup> {
+    DUMP.read().as_ref()?.sounds.get(name).copied()
 }
 
 /// The server synced its block registry: name its modded states from the
@@ -591,10 +660,14 @@ mod tests {
         "shapes": [[], [[0, 0, 0, 1, 1, 1]], [[0.375, 0, 0.375, 0.625, 1, 0.625]]],
         "facts": [{"collision": 2, "outline": null, "light": 3, "light_block": 0, "occludes": false,
                    "solid_render": false, "render": "MODEL", "destroy_time": 0.8,
-                   "needs_tool": false, "air": false}],
+                   "needs_tool": false, "air": false,
+                   "offset": {"vertical": true, "max_horizontal": 0.25, "max_vertical": 0.2}}],
         "blocks": [
           {"name": "gizmos:shaft", "properties": [["axis", ["x", "y", "z"]], ["lit", ["true", "false"]]],
-           "friction": 0.5,
+           "friction": 0.5, "speed_factor": 0.4, "jump_factor": 0.5,
+           "sound": {"volume": 1.0, "pitch": 1.5, "break": "minecraft:block.metal.break",
+                     "step": "gizmos:shaft_step", "place": "minecraft:block.metal.place",
+                     "hit": "minecraft:block.metal.hit", "fall": "minecraft:block.metal.fall"},
            "states": [[0, 0, 0], [0, 0, 1], [0, 1, 0], [0, 1, 1], [0, 2, 0], [0, 2, 1]]}
         ]}"#;
 
@@ -679,6 +752,20 @@ mod tests {
         assert!(!info.flag("lit"));
         assert_eq!(info.friction, 0.5);
         assert_eq!(info.destroy_time, 0.8);
+        // Its sound type and offset, as dumped.
+        let group = dump.sounds.get("gizmos:shaft").copied().unwrap();
+        assert_eq!(
+            (group.break_event, group.step_event, group.pitch),
+            ("block.metal.break", "gizmos:shaft_step", 1.5)
+        );
+        let offset = with_state(state.id(), |s| s.fact.offset).unwrap();
+        assert_eq!(
+            offset,
+            crate::blocks::rand::ShapeOffset::Xyz {
+                max_horizontal: 0.25,
+                max_vertical: 0.2
+            }
+        );
         // Its shape reaches azalea's physics.
         use azalea_physics::collision::BlockWithShape;
         assert!(!state.is_collision_shape_full());

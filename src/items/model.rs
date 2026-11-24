@@ -255,6 +255,8 @@ pub struct Resolved {
     pub display: DisplayTransforms,
     pub generated: bool,
     pub ambient_occlusion: bool,
+    /// NeoForge's `render_type` is `translucent` (a mod's glass, ice).
+    pub translucent: bool,
 }
 
 impl Default for Resolved {
@@ -267,6 +269,7 @@ impl Default for Resolved {
             display: DisplayTransforms::default(),
             generated: false,
             ambient_occlusion: true,
+            translucent: false,
         }
     }
 }
@@ -499,6 +502,14 @@ impl Assets {
                 break;
             }
         }
+        // The nearest `render_type` (NeoForge; vanilla's own blocks set
+        // their layer in code).
+        if let Some(kind) = chain
+            .iter()
+            .find_map(|n| n.get("render_type").and_then(Json::as_str))
+        {
+            out.translucent = strip_namespace(kind) == "translucent";
+        }
 
         for node in chain.iter().rev() {
             if let Some(Json::Obj(fields)) = node.get("textures") {
@@ -655,5 +666,36 @@ mod namespace_tests {
         );
         assert_eq!(strip_namespace("minecraft:stone"), "stone");
         assert_eq!(strip_namespace("mymod:gem"), "mymod:gem");
+    }
+}
+
+#[cfg(test)]
+mod render_type_tests {
+    use super::*;
+
+    #[test]
+    fn a_render_type_is_inherited_and_translucent_marks_it() {
+        let root = std::env::temp_dir().join(format!("torch-render-type-{}", std::process::id()));
+        let models = root.join("models").join("block");
+        std::fs::create_dir_all(&models).unwrap();
+        std::fs::write(
+            models.join("glass_base.json"),
+            r#"{"render_type": "minecraft:translucent"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            models.join("glass.json"),
+            r#"{"parent": "block/glass_base"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            models.join("leaves.json"),
+            r#"{"render_type": "cutout_mipped"}"#,
+        )
+        .unwrap();
+        let assets = Assets::new(&root);
+        assert!(assets.model("block/glass").translucent);
+        assert!(!assets.model("block/leaves").translucent);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

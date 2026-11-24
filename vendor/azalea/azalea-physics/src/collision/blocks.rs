@@ -6131,6 +6131,10 @@ pub struct ModdedShape {
     pub outline: &'static VoxelShape,
     pub empty: bool,
     pub full: bool,
+    /// Its block's `speed_factor` (soul sand 0.4) and `jump_factor`
+    /// (honey 0.5).
+    pub speed_factor: f32,
+    pub jump_factor: f32,
 }
 
 /// Set by the client for each server, by `BlockState::network_id`.
@@ -6138,7 +6142,8 @@ pub static MODDED_SHAPES: std::sync::RwLock<
     Option<std::sync::Arc<std::collections::HashMap<u32, ModdedShape>>>,
 > = std::sync::RwLock::new(None);
 
-fn modded(state: &BlockState) -> Option<ModdedShape> {
+/// A modded state's shapes and movement factors, set by the client.
+pub fn modded(state: &BlockState) -> Option<ModdedShape> {
     MODDED_SHAPES
         .read()
         .ok()?

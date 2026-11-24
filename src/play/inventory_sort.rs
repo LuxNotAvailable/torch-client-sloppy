@@ -170,7 +170,9 @@ fn is_bundle(stack: &ItemStackData) -> bool {
 fn max_stack(stack: &ItemStackData) -> i32 {
     stack
         .get_component::<azalea_inventory::components::MaxStackSize>()
-        .map_or_else(|| stack.kind.max_stack_size(), |m| m.count)
+        .map(|m| m.count)
+        .or_else(|| crate::items::modded::max_stack(stack))
+        .unwrap_or_else(|| stack.kind.max_stack_size())
 }
 
 /// The clicks that carry out `request` on `inventory`; none when the

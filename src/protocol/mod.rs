@@ -122,6 +122,7 @@ pub(crate) fn set_session(protocol: Option<i32>) {
     SESSION.store(protocol, Ordering::Relaxed);
     WIRE_IDS.write().unwrap().clear();
     MODDED_ITEMS.write().unwrap().clear();
+    MODDED_ENTITIES.write().unwrap().clear();
     crate::blocks::modded::clear();
     azalea::join::HANDSHAKE_PROTOCOL.store(protocol, Ordering::Relaxed);
     if protocol != version::NATIVE.protocol {
@@ -175,6 +176,13 @@ pub(crate) fn native_snapshot(
             .collect(),
         None => entries,
     };
+    if registry == registries::RegistryId::EntityType {
+        let mut names = MODDED_ENTITIES.write().unwrap();
+        names.clear();
+        for (id, name) in &entries {
+            names.insert(*id, intern(&name.to_string()));
+        }
+    }
     if registry == registries::RegistryId::Item {
         let mut names = MODDED_ITEMS.write().unwrap();
         names.clear();
@@ -204,6 +212,16 @@ fn intern(name: &str) -> &'static str {
     let leaked: &'static str = Box::leak(name.to_owned().into_boxed_str());
     names.insert(leaked);
     leaked
+}
+
+/// The server's entity type names by native id (`entities::modded`).
+static MODDED_ENTITIES: std::sync::LazyLock<std::sync::RwLock<HashMap<u32, &'static str>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// The id string of a modded entity type's native id, when the server
+/// synced its entity type registry.
+pub(crate) fn modded_entity(id: u32) -> Option<&'static str> {
+    MODDED_ENTITIES.read().unwrap().get(&id).copied()
 }
 
 /// The id string of a modded item's native id, when the server synced its

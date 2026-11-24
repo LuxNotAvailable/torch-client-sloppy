@@ -432,11 +432,17 @@ pub(crate) struct HitboxOverlay {
 /// A modded entity's placeholder: the 0.6 × 1.8 box vanilla gives a
 /// player-sized mob, in magenta, since the server never says how big a type
 /// this client doesn't know is.
-fn boxed_placeholder(pos: [f32; 3], positions: &mut Vec<[f32; 3]>, colors: &mut Vec<[f32; 4]>) {
+fn boxed_placeholder(
+    pos: [f32; 3],
+    size: crate::entities::modded::Size,
+    positions: &mut Vec<[f32; 3]>,
+    colors: &mut Vec<[f32; 4]>,
+) {
     let magenta = [1.0, 0.0, 1.0, 1.0];
+    let half = size.width / 2.0;
     let corners = box_corners(
-        [pos[0] - 0.3, pos[1], pos[2] - 0.3],
-        [pos[0] + 0.3, pos[1] + 1.8, pos[2] + 0.3],
+        [pos[0] - half, pos[1], pos[2] - half],
+        [pos[0] + half, pos[1] + size.height, pos[2] + half],
     );
     for (a, b) in BOX_EDGES {
         positions.extend([corners[a], corners[b]]);
@@ -525,8 +531,12 @@ pub(crate) fn update_hitboxes(
         colors.push(blue);
         colors.push(blue);
     };
-    for anim in view.entities.iter().filter(|a| modded.contains_key(&a.id)) {
-        boxed_placeholder(anim.position(partial), &mut positions, &mut colors);
+    for anim in view.entities.iter() {
+        // Its type's dumped size (`entities::modded`).
+        if let Some(raw) = modded.get(&anim.id) {
+            let size = crate::entities::modded::size_of_raw(*raw);
+            boxed_placeholder(anim.position(partial), size, &mut positions, &mut colors);
+        }
     }
     if !state.hitboxes {
         return finish_hitboxes(&mut overlay, positions, colors);

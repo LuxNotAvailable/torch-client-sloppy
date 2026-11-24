@@ -70,7 +70,7 @@ pub fn emissive_rendering(name: &str, props: &HashMap<&str, &str>) -> bool {
 }
 
 /// A block's `SoundType`: its events, and the volume and pitch they scale.
-#[cfg(audio)]
+#[cfg_attr(not(audio), allow(dead_code))]
 pub struct SoundGroup {
     pub volume: f32,
     pub pitch: f32,
@@ -82,8 +82,17 @@ pub struct SoundGroup {
     pub fall_event: &'static str,
 }
 
+/// A block's sound type by its id: vanilla's table, or a modded block's
+/// own from its package (`blocks::modded`), else stone's.
 #[cfg(audio)]
-pub use crate::generated_block_sounds::sound_group;
+pub fn sound_group(id: &str) -> &'static SoundGroup {
+    if id.contains(':')
+        && let Some(group) = crate::blocks::modded::sound_group(id)
+    {
+        return group;
+    }
+    crate::generated_block_sounds::sound_group(id)
+}
 
 #[cfg(all(test, audio))]
 mod sound_group_tests {
@@ -250,14 +259,46 @@ fn translucent_layer(name: &str) -> bool {
         || name.ends_with("_stained_glass_pane")
 }
 
+/// The tint of a modded block whose model has tinted faces. A mod's block
+/// colour handler is client code no dump reaches, so this goes by name the
+/// way vanilla's handlers are assigned: leaves and vines take the foliage
+/// map, grass-like plants the grass map, water the water colour; anything
+/// else tinted, foliage. Untinted models stay untinted.
+fn dumped_tint(name: &str, baked: &crate::blocks::BakedBlock) -> TintKind {
+    let tinted = baked
+        .parts
+        .iter()
+        .flat_map(|p| &p.choices)
+        .any(|m| m.quads.iter().any(|q| q.tint >= 0));
+    if !tinted {
+        return TintKind::None;
+    }
+    let path = name.rsplit(':').next().unwrap_or(name);
+    let has = |words: &[&str]| words.iter().any(|w| path.contains(w));
+    if has(&["water"]) {
+        TintKind::Water
+    } else if has(&["grass", "fern", "sugar_cane", "lily", "moss_carpet"]) && !has(&["leaves"]) {
+        TintKind::Grass
+    } else {
+        TintKind::Foliage
+    }
+}
+
 /// A modded state a dump named (`blocks::modded`): its mod's own model.
 /// `None` when the state isn't dumped or its model didn't load.
 fn dumped_visual(state: azalea::block::BlockState) -> Option<RenderedBlock> {
     use crate::blocks::modded::Render;
-    let (name, props, light, render, block_entity) =
+    let (name, props, light, render, block_entity, offset) =
         crate::blocks::modded::with_state(state.id(), |s| {
             let props: HashMap<&str, &str> = s.props.iter().copied().collect();
-            (s.name, props, s.fact.light, s.fact.render, s.block_entity)
+            (
+                s.name,
+                props,
+                s.fact.light,
+                s.fact.render,
+                s.block_entity,
+                s.fact.offset,
+            )
         })?;
     let empty = |state: azalea::block::BlockState| RenderedBlock {
         geom: BlockGeom::Model(Default::default()),
@@ -283,19 +324,27 @@ fn dumped_visual(state: azalea::block::BlockState) -> Option<RenderedBlock> {
         // A block entity renderer draws it in the mod; nothing to show here.
         return (render == Render::Animated).then(|| empty(state));
     }
-    let shape = crate::blocks::shape::intern(crate::blocks::shape::sides_of(&baked));
+    let tint_kind = dumped_tint(name, &baked);
+    // A see-through layer, or a block drawn off its cell, covers none of
+    // its neighbours' faces.
+    let translucent = baked.translucent;
+    let shape = if translucent || offset != ShapeOffset::None {
+        0
+    } else {
+        crate::blocks::shape::intern(crate::blocks::shape::sides_of(&baked))
+    };
     Some(RenderedBlock {
-        is_solid: baked.is_solid,
+        is_solid: baked.is_solid && !translucent,
         full_cube: baked.full_cube,
         geom: BlockGeom::Model(baked),
         emission: light,
         emissive: false,
         waterlogged: bool_prop(&props, "waterlogged"),
         cull_group: 0,
-        tint_kind: TintKind::None,
-        offset: ShapeOffset::None,
+        tint_kind,
+        offset,
         state: state.id(),
-        translucent: false,
+        translucent,
         shape,
         torch: false,
     })
@@ -341,6 +390,7 @@ fn modded_visual(state: azalea::block::BlockState) -> RenderedBlock {
                             occludes: model.occludes,
                             full_cube: model.full_cube,
                             ambient_occlusion: model.ambient_occlusion,
+                            translucent: false,
                             missing_textures: 0,
                             particle_uv: Some(to),
                         })
@@ -356,6 +406,7 @@ fn modded_visual(state: azalea::block::BlockState) -> RenderedBlock {
             full_cube: stone.full_cube,
             ambient_occlusion: stone.ambient_occlusion,
             randomized: false,
+            translucent: false,
         })
     });
     RenderedBlock {

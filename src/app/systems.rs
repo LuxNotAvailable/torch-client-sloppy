@@ -821,7 +821,10 @@ fn collect_nametags(
         // (`overlays::boxed_placeholder`), always shown.
         if let Some(name) = modded.get(&anim.id) {
             let pos = anim.position(partial);
-            let world = Vec3::new(pos[0], pos[1] + 1.8 + 0.5, pos[2]);
+            let height = crate::entities::modded::size(name.as_str())
+                .unwrap_or(crate::entities::modded::FALLBACK)
+                .height;
+            let world = Vec3::new(pos[0], pos[1] + height + 0.5, pos[2]);
             let spans = [crate::text::Span {
                 text: name.clone(),
                 style: crate::text::Style::default(),

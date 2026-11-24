@@ -19,7 +19,14 @@ pub(crate) fn dir() -> PathBuf {
 const FORMAT: u64 = 1;
 
 /// The folders under `assets/<namespace>/` a package may hold.
-const KEPT: &[&str] = &["blockstates", "models", "items", "textures", "lang"];
+const KEPT: &[&str] = &[
+    "blockstates",
+    "models",
+    "items",
+    "textures",
+    "lang",
+    "sounds",
+];
 
 /// What one package gives the client.
 pub(crate) struct Package {
@@ -29,6 +36,8 @@ pub(crate) struct Package {
     pub(crate) blocks: Option<String>,
     /// `items.json`: its items' uses (`items::modded`).
     pub(crate) items: Option<String>,
+    /// `entities.json`: its entity types' sizes (`entities::modded`).
+    pub(crate) entities: Option<String>,
     /// `connected.json`: Create-style connected textures.
     pub(crate) connected: Option<String>,
     /// `plugin.wasm`: ported client code (`docs/MOD_API.md`).
@@ -79,6 +88,13 @@ pub(crate) fn packages(dir: &Path) -> Vec<Package> {
 /// Whether `key` (`assets/<namespace>/<folder>/...`) is an asset the
 /// package may give: one of its own namespaces, never `minecraft`.
 fn kept(key: &str, namespaces: &[String]) -> bool {
+    // A namespace's sound definitions sit at its top (`audio`).
+    if let Some(ns) = key
+        .strip_prefix("assets/")
+        .and_then(|k| k.strip_suffix("/sounds.json"))
+    {
+        return ns != "minecraft" && namespaces.iter().any(|n| n == ns);
+    }
     let mut parts = key.splitn(4, '/');
     parts.next() == Some("assets")
         && parts
@@ -126,6 +142,7 @@ fn package(path: &Path, name: &str) -> Result<Package, String> {
             .collect(),
         blocks: source.read_text("/blocks.json"),
         items: source.read_text("/items.json"),
+        entities: source.read_text("/entities.json"),
         connected: source.read_text("/connected.json"),
         plugin: source.read("/plugin.wasm"),
     })
@@ -148,7 +165,11 @@ mod tests {
             "assets/minecraft/textures/block/stone.png",
             &["minecraft".to_owned()]
         ));
-        assert!(!kept("assets/create/sounds/cogs.ogg", &own));
+        // Its sounds and their definitions (`audio::load_mod_sounds`).
+        assert!(kept("assets/create/sounds/cogs.ogg", &own));
+        assert!(kept("assets/create/sounds.json", &own));
+        assert!(!kept("assets/other/sounds.json", &own));
+        assert!(!kept("assets/create/particles/spark.json", &own));
         assert!(!kept("assets/create/textures", &own));
         assert!(!kept("torchmod.json", &own));
     }
