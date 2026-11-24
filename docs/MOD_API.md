@@ -70,6 +70,9 @@ per-tick hook, item renderers.
   (their NBT type is dropped), strings are strings.
 - `props`: the block state's properties; `block` its id.
 - `time`: the game time, in ticks, when the view was made.
+- `nbt_time`: the game time its `nbt` arrived. A view is made again with
+  the same NBT when a neighbour changes, so time-based state in the NBT
+  (an angle, an item's position) is as of `nbt_time`, not `time`.
 
 ### What a plugin answers: `Rig`
 
@@ -93,6 +96,15 @@ Geometry:
 | `model` | `model` (a block model id), `x`, `y` (quarter turns, as a blockstate variant), `uvlock` | the mod's partial models: shafts, cogs, lids, arms |
 | `block` | `block`, `props` | a whole block state's model (a carried block, a display) |
 | `cuboid` | `from`, `to`, `texture` (a sprite id), `faces` (which of down, up, north, south, west, east), `tint` (ARGB), `uv` (optional rect in sixteenths) | simple boxes: a tank's fluid, a gauge needle |
+| `item` | `item` (an item id), `flat` (optional transform) | an item as Java's `ItemDisplayContext.FIXED` draws it: items on belts, depots, displays |
+
+An `item` is the item's model with its `fixed` display transform, centred
+on the part's origin: the block's corner before the transform, so give
+the transform a pivot of 0. `flat`, when given, replaces the transform
+for an item whose model is a flat sprite (`item/generated`): Java's
+renderers check `BakedModel.isGui3d()` and lay sprites down, and the
+plugin can't see the model. A modded item draws from its package's
+assets.
 
 Transform, applied to the geometry in this order: scale about `pivot`,
 rotate about `pivot` (X, then Y, then Z), translate.
@@ -105,6 +117,7 @@ Animation, played after the transform:
 | `spin` | `axis`, `pivot`, `degrees_per_tick`, `phase` | angle = `phase` + `degrees_per_tick` x ticks |
 | `swing` | `axis`, `pivot`, `amplitude`, `period_ticks`, `phase` | angle = `amplitude` x sin(2 pi (ticks / `period_ticks`) + `phase`) |
 | `slide` | `offset`, `period_ticks`, `phase` | moves to `offset` and back, a smooth (cosine) ping-pong |
+| `path` | `points` (`[tick, x, y, z]`, game ticks and an offset) | straight legs between the points; held at the first before it and at the last after (an item gliding to a belt's end) |
 
 Ticks are the client's game time with the partial tick, so motion is
 smooth between server updates.

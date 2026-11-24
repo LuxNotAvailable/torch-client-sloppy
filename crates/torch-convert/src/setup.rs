@@ -7,7 +7,7 @@ use std::process::Command;
 
 use sha2::{Digest, Sha256};
 
-use crate::Env;
+use crate::{Env, progress};
 
 const MAVEN: &str = "https://maven.neoforged.net/releases/net/neoforged/neoforge";
 const EULA_URL: &str = "https://aka.ms/MinecraftEULA";
@@ -26,8 +26,11 @@ pub fn eula_accepted(server: &Path) -> bool {
     })
 }
 
-pub fn setup(env: &Env) -> Result<(), String> {
+/// `accept_eula`: the user accepted the EULA in a front end, which showed
+/// them its link; no prompt then.
+pub fn setup(env: &Env, accept_eula: bool) -> Result<(), String> {
     let server = env.server();
+    progress::stage("setup", "Setting up the NeoForge dump server", 3);
     if installed(env) {
         println!(
             "NeoForge {} is installed at {}",
@@ -37,21 +40,42 @@ pub fn setup(env: &Env) -> Result<(), String> {
     } else {
         std::fs::create_dir_all(&server).map_err(|e| format!("{}: {e}", server.display()))?;
         let jar = installer(env)?;
+        progress::step("setup", "Installer", "downloaded and checked", 1, 3);
         println!("installing NeoForge {} server", env.neoforge);
-        let status = Command::new(&env.java)
-            .arg("-jar")
+        let mut cmd = Command::new(&env.java);
+        cmd.arg("-jar")
             .arg(&jar)
             .arg("--installServer")
             .arg(&server)
-            .current_dir(&server)
+            .current_dir(&server);
+        progress::command(&cmd);
+        let status = cmd
             .status()
             .map_err(|e| format!("can't run {}: {e} (a JDK 21 or newer is needed)", env.java))?;
         if !status.success() || !installed(env) {
             return Err(format!("the NeoForge installer failed ({status})"));
         }
     }
+    progress::step(
+        "setup",
+        "NeoForge server",
+        &format!("{} installed", env.neoforge),
+        2,
+        3,
+    );
     if eula_accepted(&server) {
         println!("the EULA is accepted");
+        progress::done("setup", "ready");
+        return Ok(());
+    }
+    if accept_eula {
+        std::fs::write(
+            server.join("eula.txt"),
+            format!("# {EULA_URL}\neula=true\n"),
+        )
+        .map_err(|e| e.to_string())?;
+        progress::step("setup", "EULA", "accepted", 3, 3);
+        progress::done("setup", "ready");
         return Ok(());
     }
     print!("The dump server needs Minecraft's EULA ({EULA_URL}). Do you accept it? [y/N] ");
@@ -85,6 +109,7 @@ fn installer(env: &Env) -> Result<std::path::PathBuf, String> {
         return Ok(path);
     }
     println!("downloading {url}");
+    progress::step("setup", "Downloading the NeoForge installer", &url, 0, 3);
     let bytes = fetch(&url)?;
     if sha256(&bytes) != expected {
         return Err(format!("{url} doesn't match its published SHA-256"));

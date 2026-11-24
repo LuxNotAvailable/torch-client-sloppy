@@ -115,7 +115,25 @@ pub fn use_animation(id: &str) -> UseAnimation {
         _ if DRINKS.contains(&id) => UseAnimation::Drink,
         _ if FOODS.contains(&id) => UseAnimation::Eat,
         _ if SPEARS.contains(&id) => UseAnimation::Spear,
+        _ if id.contains(':') => modded_use_animation(id),
         _ => UseAnimation::None,
+    }
+}
+
+/// A mod's item, from its package. 1.21.1's `SPEAR` is the trident's.
+fn modded_use_animation(id: &str) -> UseAnimation {
+    use crate::items::modded::Use;
+    match crate::items::modded::get(id).and_then(|u| u.animation) {
+        Some(Use::Eat) => UseAnimation::Eat,
+        Some(Use::Drink) => UseAnimation::Drink,
+        Some(Use::Block) => UseAnimation::Block,
+        Some(Use::Bow) => UseAnimation::Bow,
+        Some(Use::Spear) => UseAnimation::Trident,
+        Some(Use::Crossbow) => UseAnimation::Crossbow,
+        Some(Use::Spyglass) => UseAnimation::Spyglass,
+        Some(Use::TootHorn) => UseAnimation::TootHorn,
+        Some(Use::Brush) => UseAnimation::Brush,
+        None => UseAnimation::None,
     }
 }
 

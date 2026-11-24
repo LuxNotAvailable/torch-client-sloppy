@@ -27,6 +27,8 @@ pub(crate) struct Package {
     pub(crate) layer: Layer,
     /// `blocks.json`, when it has one.
     pub(crate) blocks: Option<String>,
+    /// `items.json`: its items' uses (`items::modded`).
+    pub(crate) items: Option<String>,
     /// `connected.json`: Create-style connected textures.
     pub(crate) connected: Option<String>,
     /// `plugin.wasm`: ported client code (`docs/MOD_API.md`).
@@ -123,6 +125,7 @@ fn package(path: &Path, name: &str) -> Result<Package, String> {
             .map(|(key, range)| (key, &bytes[range]))
             .collect(),
         blocks: source.read_text("/blocks.json"),
+        items: source.read_text("/items.json"),
         connected: source.read_text("/connected.json"),
         plugin: source.read("/plugin.wasm"),
     })

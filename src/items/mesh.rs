@@ -32,7 +32,7 @@ pub struct ItemMesh {
     pub indices: Vec<u32>,
     pub image: RgbaImage,
     pub display: DisplayTransforms,
-    #[allow(dead_code, reason = "asserted on by this module's tests")]
+    /// Built from a flat sprite (`item/generated`).
     pub generated: bool,
 }
 

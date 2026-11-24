@@ -131,14 +131,14 @@ mod tests {
                 uvlock: false
             }
         );
-        match rig.parts[0].animation {
+        match &rig.parts[0].animation {
             torch_mod_api::Animation::Spin {
                 axis,
                 degrees_per_tick,
                 ..
             } => {
-                assert_eq!(axis, [0.0, 0.0, 1.0]);
-                assert_eq!(degrees_per_tick, 18.0);
+                assert_eq!(*axis, [0.0, 0.0, 1.0]);
+                assert_eq!(*degrees_per_tick, 18.0);
             }
             other => panic!("{other:?}"),
         }

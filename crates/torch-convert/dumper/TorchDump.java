@@ -352,8 +352,41 @@ public class TorchDump {
             if (item instanceof BlockItem blockItem) {
                 i.addProperty("block", BuiltInRegistries.BLOCK.getKey(blockItem.getBlock()).toString());
             }
+            use(stack, i);
             out.add(i);
         }
         return out;
+    }
+
+    /** How the client uses an item (the server never sends a modded item's
+     *  defaults): its use animation, ticks in use, and food. A mod's
+     *  override that needs a real entity is left out. */
+    static void use(ItemStack stack, JsonObject i) {
+        try {
+            net.minecraft.world.item.UseAnim anim = stack.getUseAnimation();
+            if (anim != net.minecraft.world.item.UseAnim.NONE) {
+                i.addProperty("use_animation", anim.name().toLowerCase(java.util.Locale.ROOT));
+            }
+        } catch (Throwable e) {
+            // A mod's getUseAnimation that needs more than a stack.
+        }
+        net.minecraft.world.food.FoodProperties food = stack.get(net.minecraft.core.component.DataComponents.FOOD);
+        int ticks = 0;
+        try {
+            ticks = stack.getUseDuration(null);
+        } catch (Throwable e) {
+            ticks = food != null ? food.eatDurationTicks() : 0;
+        }
+        if (ticks > 0) {
+            i.addProperty("use_ticks", ticks);
+        }
+        if (food != null) {
+            JsonObject f = new JsonObject();
+            f.addProperty("nutrition", food.nutrition());
+            f.addProperty("saturation", food.saturation());
+            f.addProperty("can_always_eat", food.canAlwaysEat());
+            f.addProperty("eat_seconds", food.eatSeconds());
+            i.add("food", f);
+        }
     }
 }

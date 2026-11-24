@@ -21,17 +21,17 @@ pub fn build(dir: &Path, mod_id: &str) -> Result<Option<Port>, String> {
         return Ok(None);
     }
     println!("building the {mod_id} port");
-    let status = Command::new("cargo")
-        .args([
-            "build",
-            "--release",
-            "--target",
-            "wasm32-unknown-unknown",
-            "--manifest-path",
-        ])
-        .arg(&manifest)
-        .status()
-        .map_err(|e| format!("can't run cargo: {e}"))?;
+    let mut cmd = Command::new("cargo");
+    cmd.args([
+        "build",
+        "--release",
+        "--target",
+        "wasm32-unknown-unknown",
+        "--manifest-path",
+    ])
+    .arg(&manifest);
+    crate::progress::command(&cmd);
+    let status = cmd.status().map_err(|e| format!("can't run cargo: {e}"))?;
     if !status.success() {
         return Err(format!("the {mod_id} port didn't build ({status})"));
     }

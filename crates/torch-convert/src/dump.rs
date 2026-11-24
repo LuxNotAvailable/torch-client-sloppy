@@ -14,6 +14,11 @@ const DUMPER_TOML: &str = include_str!("../dumper/neoforge.mods.toml");
 
 pub fn run(env: &Env, jars: &[&Path]) -> Result<Value, String> {
     let server = env.server();
+    crate::progress::stage(
+        "dump",
+        "Dumping blocks, items and entities (NeoForge server)",
+        3,
+    );
     let build = server.join("torchdump-build");
     let dumper = build_dumper(env, &server, &build)?;
     stage(&server, jars, &dumper)?;
@@ -32,11 +37,23 @@ pub fn run(env: &Env, jars: &[&Path]) -> Result<Value, String> {
         "starting the dump server with {} jar(s); it stops itself",
         jars.len()
     );
-    let status = Command::new(&env.java)
-        .arg(format!("-Dtorchdump.out={}", out.display()))
+    crate::progress::step(
+        "dump",
+        "Dump server",
+        &format!(
+            "NeoForge with {} jar(s): block, item and entity data",
+            jars.len()
+        ),
+        2,
+        3,
+    );
+    let mut cmd = Command::new(&env.java);
+    cmd.arg(format!("-Dtorchdump.out={}", out.display()))
         .arg(format!("@{}", args.display()))
         .arg("nogui")
-        .current_dir(&server)
+        .current_dir(&server);
+    crate::progress::command(&cmd);
+    let status = cmd
         .status()
         .map_err(|e| format!("can't run {}: {e}", env.java))?;
     let text = std::fs::read_to_string(&out).map_err(|_| {
@@ -73,12 +90,15 @@ fn build_dumper(env: &Env, server: &Path, build: &Path) -> Result<PathBuf, Strin
     let argfile = build.join("classpath.txt");
     std::fs::write(&argfile, format!("-cp\n\"{}\"\n", classpath.join(sep)))
         .map_err(|e| e.to_string())?;
-    let status = Command::new(&env.javac)
-        .args(["--release", "21", "-nowarn"])
+    let mut cmd = Command::new(&env.javac);
+    cmd.args(["--release", "21", "-nowarn"])
         .arg(format!("@{}", argfile.display()))
         .arg("-d")
         .arg(&classes)
-        .arg(&source)
+        .arg(&source);
+    crate::progress::step("dump", "Dumper", "compiling the dumper mod", 1, 3);
+    crate::progress::command(&cmd);
+    let status = cmd
         .status()
         .map_err(|e| format!("can't run {}: {e} (a JDK 21 or newer is needed)", env.javac))?;
     if !status.success() {

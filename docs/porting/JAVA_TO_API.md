@@ -44,7 +44,13 @@ Several `mulPose` calls compose: the API applies X, then Y, then Z. Java
 applies the last call to the vertex first, so `rotateY(a).rotateX(b)` is
 `[b, a, 0]`; any other order (Z before Y) needs converting: the Create
 port's `dir::java_rotations` takes the calls in Java order and returns the
-API's angles.
+API's angles. For a longer chain of `translate`/`rotate`/`scale` calls
+(an item's pose on a belt), replay them on the Create port's `pose::Pose`
+and take `.transform()`: one `Transform` with a pivot of 0.
+
+Time in the NBT: something the server sends once and the client then
+advances (an angle, an item's position) is as of `view.nbt_time`, not
+`view.time`: a view is made again with old NBT when a neighbour changes.
 
 ## Drawing
 
@@ -54,6 +60,8 @@ API's angles.
 | `blockRenderer.renderSingleBlock(state, ...)` | `Geometry::Block { block, props }` |
 | a hand-built box (`VertexConsumer` vertices) with one sprite | `Geometry::Cuboid { from, to, texture, faces, tint, uv }` |
 | a fluid box (`FluidRenderer.renderFluidBox`, a fluid's still sprite and tint) | `Geometry::Cuboid` with the fluid's still sprite (`minecraft:block/water_still`) and its tint |
+| `itemRenderer.render(stack, ItemDisplayContext.FIXED, ...)` / `renderStatic` | `Part::item(id)` with the pose up to the call; the `isGui3d() ? a : b` branch as `transform` (3D) and `Geometry::Item.flat` (sprite) |
+| something moved each client tick (`tick()` advancing a position) | `Animation::Path` through where it will be, from `view.nbt_time`; the server's next update replaces it |
 | `RenderType.translucent()` and other layers | not in v1: parts draw cutout |
 | packed `light` | nothing: the client lights parts at the block entity |
 

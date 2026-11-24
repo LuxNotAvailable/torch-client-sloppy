@@ -381,6 +381,10 @@ fn use_duration_ticks(id: &str) -> f32 {
     match id {
         "honey_bottle" => 40.0,
         "dried_kelp" => 16.0,
+        // A mod's item, from its package.
+        _ if id.contains(':') => crate::items::modded::get(id)
+            .filter(|u| u.ticks > 0)
+            .map_or(DEFAULT_CONSUME_TICKS, |u| u.ticks as f32),
         _ => DEFAULT_CONSUME_TICKS,
     }
 }

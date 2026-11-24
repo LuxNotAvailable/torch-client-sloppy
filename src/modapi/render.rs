@@ -1,6 +1,6 @@
 //! Draws plugins' rigs: each part a mesh (a block model, a whole block's
-//! model, or a cuboid) lit like a block entity at its position, moved every
-//! frame by its animation. Parts are ordinary `EntityMaterial` meshes, so
+//! model, a cuboid, or an item's model) lit like a block entity at its
+//! position, moved every frame by its animation. Parts are ordinary `EntityMaterial` meshes, so
 //! both renderers draw them (`scene::entity_draw`). A scrolling texture
 //! swaps between meshes built per quarter texel of its offset.
 
@@ -33,6 +33,8 @@ struct ModPart;
 struct LivePart {
     entity: Entity,
     transform: torch_mod_api::Transform,
+    /// An item's display transform, after the part's; identity otherwise.
+    display: Transform,
     animation: Animation,
     /// The part, while its texture scrolls, and the step its mesh shows.
     scroll: Option<(Part, u32)>,
@@ -49,6 +51,8 @@ struct Live {
     rigs: HashMap<[i32; 3], LiveRig>,
     meshes: HashMap<String, Option<Handle<Mesh>>>,
     materials: HashMap<(u8, u8), Handle<EntityMaterial>>,
+    /// Item parts' materials, by light levels and the item's texture.
+    item_materials: HashMap<(u8, u8, AssetId<Image>), Handle<EntityMaterial>>,
     atlas: Option<Handle<Image>>,
     lights: crate::lighting::lightmap::LightCells,
 }
@@ -62,7 +66,9 @@ fn sync_rigs(
     mut materials: ResMut<Assets<EntityMaterial>>,
     lightmap: Res<crate::app::systems::LightmapState>,
     chunk_material: Option<Res<crate::app::systems::ChunkMaterial>>,
-    standard: Res<Assets<crate::draw::SimpleMaterial>>,
+    mut standard: ResMut<Assets<crate::draw::SimpleMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+    mut item_assets: Option<ResMut<crate::scene::item_assets::ItemAssets>>,
     mut transforms: Query<(&mut Transform, &mut Mesh3d), With<ModPart>>,
 ) {
     let live = &mut *live;
@@ -139,25 +145,73 @@ fn sync_rigs(
                     ))
                 })
                 .clone();
+            let lit = Lit {
+                tint: [1.0; 4],
+                light: cell,
+                dirs,
+                overlay_alpha: 1.0,
+                overlay_white: false,
+                glint: false,
+            };
             let mut parts = Vec::with_capacity(rig.parts.len());
             for part in &rig.parts {
                 let step = part.scroll.as_ref().and_then(|s| scroll_step(s, ticks));
-                let Some(mesh) = part_mesh(&mut live.meshes, &mut meshes, part, step) else {
-                    continue;
+                let (mesh, material, transform, display) = match &part.geometry {
+                    Geometry::Item { item, flat } => {
+                        let Some(items) = item_assets.as_deref_mut() else {
+                            continue;
+                        };
+                        let id = item.strip_prefix("minecraft:").unwrap_or(item);
+                        let Some(gpu) =
+                            items.get(id, "fixed", false, &mut meshes, &mut images, &mut standard)
+                        else {
+                            continue;
+                        };
+                        let texture = gpu.texture.clone();
+                        let material = live
+                            .item_materials
+                            .entry((levels.0, levels.1, texture.id()))
+                            .or_insert_with(|| {
+                                materials.add(EntityMaterial::new(
+                                    Some(texture),
+                                    LightMode::Cardinal,
+                                    crate::draw::Alpha::Mask(0.1),
+                                    0.1,
+                                    lit,
+                                    0,
+                                ))
+                            })
+                            .clone();
+                        let transform = match flat {
+                            Some(flat) if gpu.flat => *flat,
+                            _ => part.transform,
+                        };
+                        let display =
+                            crate::entities::item_display_transform(&gpu.transform("fixed"));
+                        (gpu.mesh.clone(), material, transform, display)
+                    }
+                    _ => {
+                        let Some(mesh) = part_mesh(&mut live.meshes, &mut meshes, part, step)
+                        else {
+                            continue;
+                        };
+                        (mesh, material.clone(), part.transform, Transform::IDENTITY)
+                    }
                 };
                 let entity = commands
                     .spawn((
                         Mesh3d(mesh),
-                        crate::draw::Material3d(material.clone()),
-                        place(*pos, part.transform, part.animation, ticks),
+                        crate::draw::Material3d(material),
+                        place(*pos, transform, &part.animation, ticks).mul_transform(display),
                         Visibility::Inherited,
                         ModPart,
                     ))
                     .id();
                 parts.push(LivePart {
                     entity,
-                    transform: part.transform,
-                    animation: part.animation,
+                    transform,
+                    display,
+                    animation: part.animation.clone(),
                     scroll: step.map(|step| (part.clone(), step)),
                 });
             }
@@ -184,7 +238,8 @@ fn sync_rigs(
                 continue;
             };
             if moving {
-                *t = place(*pos, part.transform, part.animation, ticks);
+                *t =
+                    place(*pos, part.transform, &part.animation, ticks).mul_transform(part.display);
             }
             if let Some((source, shown)) = &mut part.scroll {
                 let step = source.scroll.as_ref().and_then(|s| scroll_step(s, ticks));
@@ -201,6 +256,9 @@ fn sync_rigs(
     if live.materials.len() > 256 {
         live.materials.clear();
     }
+    if live.item_materials.len() > 1024 {
+        live.item_materials.clear();
+    }
 }
 
 /// A sixteenths point as blocks.
@@ -214,7 +272,7 @@ fn about(pivot: Vec3, inner: Affine3A) -> Affine3A {
 }
 
 /// The animation's motion at `ticks`.
-fn motion(animation: Animation, ticks: f32) -> Affine3A {
+fn motion(animation: &Animation, ticks: f32) -> Affine3A {
     let turn = |axis: [f32; 3], pivot: [f32; 3], degrees: f32| {
         let axis = Vec3::from(axis).try_normalize().unwrap_or(Vec3::Y);
         about(
@@ -229,7 +287,7 @@ fn motion(animation: Animation, ticks: f32) -> Affine3A {
             pivot,
             degrees_per_tick,
             phase,
-        } => turn(axis, pivot, (phase + degrees_per_tick * ticks) % 360.0),
+        } => turn(*axis, *pivot, (phase + degrees_per_tick * ticks) % 360.0),
         Animation::Swing {
             axis,
             pivot,
@@ -238,7 +296,7 @@ fn motion(animation: Animation, ticks: f32) -> Affine3A {
             phase,
         } => {
             let t = std::f32::consts::TAU * ticks / period_ticks.max(1e-3) + phase;
-            turn(axis, pivot, amplitude * t.sin())
+            turn(*axis, *pivot, amplitude * t.sin())
         }
         Animation::Slide {
             offset,
@@ -246,9 +304,30 @@ fn motion(animation: Animation, ticks: f32) -> Affine3A {
             phase,
         } => {
             let t = std::f32::consts::TAU * ticks / period_ticks.max(1e-3) + phase;
-            Affine3A::from_translation(blocks(offset) * (0.5 - 0.5 * t.cos()))
+            Affine3A::from_translation(blocks(*offset) * (0.5 - 0.5 * t.cos()))
+        }
+        Animation::Path { points } => Affine3A::from_translation(blocks(path_at(points, ticks))),
+    }
+}
+
+/// Where a path is at `ticks`: straight between its points, held past
+/// either end.
+fn path_at(points: &[[f32; 4]], ticks: f32) -> [f32; 3] {
+    let at = |p: &[f32; 4]| [p[1], p[2], p[3]];
+    let (Some(first), Some(last)) = (points.first(), points.last()) else {
+        return [0.0; 3];
+    };
+    if ticks <= first[0] {
+        return at(first);
+    }
+    for leg in points.windows(2) {
+        let (a, b) = (&leg[0], &leg[1]);
+        if ticks < b[0] {
+            let t = ((ticks - a[0]) / (b[0] - a[0]).max(1e-6)).clamp(0.0, 1.0);
+            return std::array::from_fn(|i| a[i + 1] + (b[i + 1] - a[i + 1]) * t);
         }
     }
+    at(last)
 }
 
 /// A part's world transform: the block's corner, then its animation, then
@@ -256,7 +335,7 @@ fn motion(animation: Animation, ticks: f32) -> Affine3A {
 fn place(
     pos: [i32; 3],
     t: torch_mod_api::Transform,
-    animation: Animation,
+    animation: &Animation,
     ticks: f32,
 ) -> Transform {
     let pivot = blocks(t.pivot);
@@ -504,12 +583,28 @@ fn geometry_quads(geometry: &Geometry) -> Option<(Vec<BakedQuad>, [f32; 4])> {
             let channel = |shift: u32| ((argb >> shift) & 0xFF) as f32 / 255.0;
             Some((quads, [channel(16), channel(8), channel(0), channel(24)]))
         }
+        // Drawn from the item's own mesh, not block quads.
+        Geometry::Item { .. } => None,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_path_runs_its_legs_and_holds_at_the_ends() {
+        let points = [
+            [100.0, 0.0, 0.0, 0.0],
+            [110.0, 16.0, 0.0, 0.0],
+            [120.0, 16.0, 8.0, 0.0],
+        ];
+        assert_eq!(path_at(&points, 50.0), [0.0, 0.0, 0.0]);
+        assert_eq!(path_at(&points, 105.0), [8.0, 0.0, 0.0]);
+        assert_eq!(path_at(&points, 115.0), [16.0, 4.0, 0.0]);
+        assert_eq!(path_at(&points, 500.0), [16.0, 8.0, 0.0]);
+        assert_eq!(path_at(&[], 1.0), [0.0; 3]);
+    }
 
     #[test]
     fn a_spin_turns_about_its_pivot() {
@@ -520,7 +615,12 @@ mod tests {
             phase: 0.0,
         };
         // 10 ticks: a quarter turn about the block's centre line.
-        let t = place([10, 64, 0], torch_mod_api::Transform::default(), spin, 10.0);
+        let t = place(
+            [10, 64, 0],
+            torch_mod_api::Transform::default(),
+            &spin,
+            10.0,
+        );
         let corner = t.transform_point(Vec3::ZERO);
         assert!(
             (corner - Vec3::new(10.0, 64.0, 1.0)).length() < 1e-4,
@@ -535,7 +635,7 @@ mod tests {
         let t = place(
             [1, 2, 3],
             torch_mod_api::Transform::default(),
-            Animation::None,
+            &Animation::None,
             50.0,
         );
         assert!((t.transform_point(Vec3::ZERO) - Vec3::new(1.0, 2.0, 3.0)).length() < 1e-5);
@@ -607,7 +707,7 @@ mod tests {
             period_ticks: 20.0,
             phase: 0.0,
         };
-        assert!(motion(slide, 0.0).translation.length() < 1e-5);
-        assert!((motion(slide, 10.0).translation.y - 1.0).abs() < 1e-5);
+        assert!(motion(&slide, 0.0).translation.length() < 1e-5);
+        assert!((motion(&slide, 10.0).translation.y - 1.0).abs() < 1e-5);
     }
 }

@@ -54,6 +54,11 @@ pub struct BlockEntityView {
     /// The game time, in ticks, when this view was made.
     #[serde(default)]
     pub time: i64,
+    /// The game time its NBT arrived. A view can be made again later with
+    /// the same NBT (a neighbour changed): time-based state in the NBT (an
+    /// angle, an item's position) is as of this tick, not `time`.
+    #[serde(default)]
+    pub nbt_time: i64,
 }
 
 impl BlockEntityView {
@@ -140,6 +145,20 @@ impl Part {
         self
     }
 
+    /// An item (`minecraft:iron_ingot`, `create:cogwheel`) with no
+    /// transform or animation.
+    pub fn item(item: impl Into<String>) -> Part {
+        Part {
+            geometry: Geometry::Item {
+                item: item.into(),
+                flat: None,
+            },
+            transform: Transform::default(),
+            animation: Animation::None,
+            scroll: None,
+        }
+    }
+
     pub fn with_scroll(mut self, scroll: Scroll) -> Part {
         self.scroll = Some(scroll);
         self
@@ -183,6 +202,19 @@ pub enum Geometry {
         /// whole sprite when left out.
         #[serde(default)]
         uv: Option<[f32; 4]>,
+    },
+    /// An item's model as `ItemDisplayContext.FIXED` draws it (item frames,
+    /// Create's belts): its `fixed` display transform, centred on the
+    /// part's origin, the block's corner before the part's transform (so
+    /// use a pivot of 0). Lit like the rest of the rig.
+    Item {
+        /// Its id (`minecraft:iron_ingot`).
+        item: String,
+        /// Used in place of the part's transform when the item's model is
+        /// a flat sprite (`item/generated`), where Java checks
+        /// `BakedModel.isGui3d()`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        flat: Option<Transform>,
     },
 }
 
@@ -228,7 +260,7 @@ impl Default for Transform {
 }
 
 /// Motion the client plays every frame, from the game time in ticks.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Animation {
     #[default]
@@ -259,6 +291,11 @@ pub enum Animation {
         #[serde(default)]
         phase: f32,
     },
+    /// Moves in straight legs: `points` are `[tick, x, y, z]` (game ticks,
+    /// an offset in sixteenths) in time order. Before the first it sits at
+    /// the first, after the last at the last (an item stopping at a
+    /// belt's end).
+    Path { points: Vec<[f32; 4]> },
 }
 
 /// What a port implements.

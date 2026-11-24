@@ -197,6 +197,44 @@ pub fn encased_cog(view: &BlockEntityView, large: bool) -> Vec<Part> {
     parts
 }
 
+/// `EncasedFanRenderer`: the casing's half shaft and the propeller, both
+/// out the back and turning about the facing axis. The shaft turns at the
+/// raw speed (through `standardKineticRotationTransform`); the propeller
+/// at 5× it, clamped, with no position offset.
+pub fn fan(view: &BlockEntityView) -> Vec<Part> {
+    let facing = view
+        .prop("facing")
+        .and_then(Dir::parse)
+        .unwrap_or(Dir::North);
+    let axis = facing.axis();
+    let raw = speed(view);
+    let back = dir::to_face(facing.opposite());
+    let shaft = model(
+        SHAFT_HALF,
+        back,
+        spin(axis, raw, 1.0, rotation_offset(false, axis, view.pos)),
+    );
+    let propeller = model(
+        "create:block/encased_fan/propeller",
+        back,
+        spin(axis, scaled_speed(raw), 1.0, 0.0),
+    );
+    vec![shaft, propeller]
+}
+
+/// `EncasedFanRenderer`: the propeller's 5× the speed, clamped to
+/// [80, 1280] by its sign (`Mth.clamp`).
+fn scaled_speed(raw: f32) -> f32 {
+    let s = raw * 5.0;
+    if s > 0.0 {
+        s.clamp(80.0, 1280.0)
+    } else if s < 0.0 {
+        s.clamp(-1280.0, -80.0)
+    } else {
+        0.0
+    }
+}
+
 /// `GearboxRenderer`: a half shaft on each side off the box's axis, each
 /// turning one way or the other by where the drive comes from.
 pub fn gearbox(view: &BlockEntityView) -> Vec<Part> {
@@ -391,7 +429,8 @@ pub fn bearing(view: &BlockEntityView) -> Vec<Part> {
             axis: axis.vector(),
             pivot: [8.0; 3],
             degrees_per_tick: per_tick,
-            phase: angle - per_tick * view.time as f32,
+            // `Angle` is as of when the NBT came.
+            phase: angle - per_tick * view.nbt_time as f32,
         });
     vec![shaft, plate]
 }
@@ -442,16 +481,17 @@ mod tests {
                 .collect(),
             nbt,
             time: 0,
+            nbt_time: 0,
         }
     }
 
     fn rate(part: &Part) -> (f32, f32) {
-        match part.animation {
+        match &part.animation {
             Animation::Spin {
                 degrees_per_tick,
                 phase,
                 ..
-            } => (degrees_per_tick, phase),
+            } => (*degrees_per_tick, *phase),
             other => panic!("{other:?}"),
         }
     }
@@ -546,6 +586,49 @@ mod tests {
         assert_eq!(parts.len(), 2);
         // The half shaft faces south (the positive end).
         assert_eq!(parts[1].transform.rotate, dir::to_face(Dir::South).rotate);
+    }
+
+    #[test]
+    fn a_fan_turns_its_shaft_and_propeller_out_the_back() {
+        let v = view(
+            "create:encased_fan",
+            "create:encased_fan",
+            &[("facing", "east")],
+            serde_json::json!({"Speed": 20.0}),
+        );
+        let parts = fan(&v);
+        assert_eq!(parts.len(), 2);
+        assert!(
+            matches!(parts[0].geometry, Geometry::Model { ref model, .. } if model == "create:block/shaft_half")
+        );
+        assert!(
+            matches!(parts[1].geometry, Geometry::Model { ref model, .. } if model == "create:block/encased_fan/propeller")
+        );
+        // Facing east: both parts out the west face.
+        let back = dir::to_face(Dir::West).rotate;
+        assert_eq!(parts[0].transform.rotate, back);
+        assert_eq!(parts[1].transform.rotate, back);
+        // About the facing (x) axis, both at the block's centre.
+        let axis = match &parts[1].animation {
+            Animation::Spin { axis, pivot, .. } => (*axis, *pivot),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(axis, ([1.0, 0.0, 0.0], [8.0; 3]));
+        // The shaft spins at the raw speed (20 -> 6.0/tick).
+        assert!((rate(&parts[0]).0 - 6.0).abs() < 1e-4);
+        // The propeller at 5× (100 -> 30.0/tick), with no position offset.
+        assert!((rate(&parts[1]).0 - 30.0).abs() < 1e-4);
+        assert_eq!(rate(&parts[1]).1, 0.0);
+    }
+
+    #[test]
+    fn a_fan_propeller_clamps_its_speed_by_sign() {
+        let dpt = |raw: f32| scaled_speed(raw) * 0.3;
+        assert!((dpt(5.0) - 24.0).abs() < 1e-4); // 25 clamps up to 80
+        assert!((dpt(100.0) - 150.0).abs() < 1e-4); // 500, in range
+        assert!((dpt(500.0) - 384.0).abs() < 1e-4); // 2500 clamps down to 1280
+        assert!((dpt(-5.0) - -24.0).abs() < 1e-4); // -25 clamps down to -80
+        assert_eq!(dpt(0.0), 0.0);
     }
 
     #[test]

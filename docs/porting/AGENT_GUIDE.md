@@ -92,9 +92,10 @@ animation. You never draw a frame; the client plays the animations. So:
 - No `unsafe`, no threads, no file or network access (the sandbox has
   none). Keep dependencies to `torch-mod-api` and small pure crates.
 - Deterministic: the same view gives the same rig. Time-based motion goes
-  in `Animation`, never in the static transform. `view.time` is for
-  phases that depend on when the block entity was made, if the Java does
-  that.
+  in `Animation`, never in the static transform. State the client
+  advances from NBT (an angle, an item's position) is as of
+  `view.nbt_time`: a view is made again with old NBT when a neighbour
+  changes.
 - Units: model units are sixteenths of a block from the block's corner;
   angles are degrees; animation speeds are per tick (20 ticks a second).
 - Plugins are called again when something changes, so read state fresh
@@ -123,15 +124,65 @@ with a version bump, by whoever maintains the API.
 
 ## Renderers
 
-| Java class | Block entity types | Status | Notes |
+| Block entity type | Java renderer | Status | Notes |
 |---|---|---|---|
-| `...ShaftRenderer` | `create:simple_kinetic` | done | spin about the axis property |
-| `...BeltRenderer` | `create:belt` | skipped | items on belts need item rendering |
+| `create:simple_kinetic` | `BracketedKineticBlockEntityRenderer` | done | spin about the axis property |
+| `create:schematicannon` | `SchematicannonRenderer` | not yet |  |
+
+Status is one of `done`, `partial`, `skipped`, `not yet` or `next` (a
+simple one to do soon); `tools/port_agent.py` takes `next` rows first.
 
 ## Needs from the API
 
 - <what, and the Java it would serve>
 ```
+
+## Unattended runs: `tools/port_agent.py`
+
+The same workflow, driven by a local model (Qwen Code on Ollama), one
+renderer per session, behind gates. Setup once per machine:
+
+    python tools/port_agent_model.py     # Ollama tuned; model qwen3.8-port
+
+That turns on flash attention and a q8 KV cache, and builds `qwen3.8-port`
+from a Qwen 3.8 27B base with the largest context that loads fully on the
+GPU (112k on a 24 GB card) and temperature 0.6. Then:
+
+    python tools/port_agent.py <modid> [--all | --batch N | --targets a:b,c:d]
+        [--apply] [--install] [--keep] [--dry-run] [--inventory] [--retry]
+
+- **Inventory.** The renderer list comes from the decompiled Java
+  (Registrate `.renderer(...)` chains, NeoForge
+  `registerBlockEntityRenderer`, vanilla `BlockEntityRenderers.register`);
+  rows missing from `PORTED.md` are added as `not yet`. A mod with no port
+  gets `ports/<modid>/` from a skeleton (the example crate, a `lib.rs`
+  with empty `HANDLED`, and the Create port's `dir.rs`/`pose.rs` helpers).
+- **Sessions.** Each renderer gets a fresh session, its prompt carrying
+  the renderer's Java, the NBT lines its block entity writes, the partial
+  models it names (as model ids), the block's state properties, and the
+  port's existing helper signatures. Edits are allowed under the
+  worktree; the shell only for `cargo`, `rg`, `ls` and read-only `git`;
+  no personal Qwen extensions.
+- **Gates**, per renderer: changes only under `ports/<modid>/`; no
+  `Cargo.toml` change or `unsafe`; its `PORTED.md` row set; for a done or
+  partial one, the type in `HANDLED` and a new test; `cargo test`; the
+  wasm build with no warnings; and `crates/torch-port-check`, which runs
+  the built plugin over every block state carrying the type (with a few
+  NBT shapes) and checks every model, block (and its properties), sprite
+  and item named exists in the mod's package or vanilla's assets, and
+  every number is sane. A failure gets a fix session with the problems
+  (`--fixes`, 2), then the renderer is rolled back and counted in
+  `tools/port_agent_work/<modid>/attempts.json`; after `--max-attempts`
+  failed runs it's skipped (`--retry` to try again).
+- **Results.** Each passing renderer is a commit in the worktree; the run
+  writes one patch of them (`logs/<run>.patch`), a report (`.json`) and
+  every agent event (`.jsonl`). `--apply` applies the patch to your tree,
+  `--install` builds the plugin and swaps it into the mod's `.torchmod`
+  packages.
+
+The gates catch broken, made-up and unregistered output, not every
+mismatch with the Java: review the patch, and check in game, before
+committing.
 
 ## Checks before handing over
 

@@ -14,6 +14,8 @@ use serde_json::{Map, Value};
 struct Entry {
     kind: String,
     nbt: Value,
+    /// The game time its NBT arrived (the first tick after it did).
+    nbt_time: Option<i64>,
     /// The block state it had when its rig was last made; a change re-asks.
     state: Option<u16>,
     /// Its six face neighbours' states then (`FACES` order); a change
@@ -73,6 +75,7 @@ pub fn on_block_entity(pos: [i32; 3], kind: String, nbt: &[u8]) {
             Entry {
                 kind,
                 nbt,
+                nbt_time: None,
                 state: None,
                 around: None,
                 dirty: true,
@@ -156,12 +159,13 @@ pub fn tick(world: &azalea_world::World, game_time: u64) {
             entry.around = Some(around);
             entry.dirty = true;
         }
+        let nbt_time = *entry.nbt_time.get_or_insert(game_time as i64);
         if entry.dirty {
             entry.dirty = false;
-            todo.push((*pos, state));
+            todo.push((*pos, state, nbt_time));
         }
     }
-    for (pos, state) in todo {
+    for (pos, state, nbt_time) in todo {
         let pos = &pos;
         let entry = &store.entries[pos];
         let info = crate::blocks::info::info(state);
@@ -176,6 +180,7 @@ pub fn tick(world: &azalea_world::World, game_time: u64) {
                 .collect(),
             nbt: entry.nbt.clone(),
             time: game_time as i64,
+            nbt_time,
         };
         let rig = match super::block_entity(&view, near(*pos)) {
             Some(Ok(rig)) => Some(rig),

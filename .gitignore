@@ -17,3 +17,10 @@ __pycache__/
 /tools/moddump/converted/
 /crates/*/target/
 /ports/*/target/
+# tools/port_agent.py: decompiled mods, worktrees, logs
+/tools/port_agent_work/
+
+# tools/converter_app: the standalone build and its local settings
+/dist/
+/tools/converter_app/build/
+/crates/torch-converter/settings.json

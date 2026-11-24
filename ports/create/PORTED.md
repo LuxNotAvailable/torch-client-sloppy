@@ -17,7 +17,7 @@
 | `create:encased_cogwheel` | `EncasedCogRenderer` | done | cog and the half shafts it has |
 | `create:encased_large_cogwheel` | `EncasedCogRenderer` | done | cog and the half shafts it has |
 | `create:adjustable_chain_gearshift` | `ShaftRenderer` | done | a shaft in the casing |
-| `create:encased_fan` | `EncasedFanRenderer` | next | round 2 |
+| `create:encased_fan` | `EncasedFanRenderer` | done | shaft and propeller out the back; the propeller at 5× the speed, clamped; the air current (particles) isn't drawn |
 | `create:clutch` | `SplitShaftRenderer` | done | half shafts; far side stops when powered |
 | `create:gearshift` | `SplitShaftRenderer` | done | half shafts; far side reverses when powered |
 | `create:turntable` | `KineticBlockEntityRenderer` | done | own model turning |
@@ -28,7 +28,7 @@
 | `create:gantry_pinion` | `GantryCarriageRenderer` | not yet |  |
 | `create:chain_conveyor` | `ChainConveyorRenderer` | not yet |  |
 | `create:mechanical_pump` | `PumpRenderer` | done | the cog; drains (`PipeAttachmentModel`) |
-| `create:smart_fluid_pipe` | `SmartBlockEntityRenderer` | partial | rims (`PipeAttachmentModel`); the filter needs item rendering |
+| `create:smart_fluid_pipe` | `SmartBlockEntityRenderer` | partial | rims (`PipeAttachmentModel`); the filter item not yet |
 | `create:glass_fluid_pipe` | `TransparentStraightPipeRenderer` | partial | rims (`PipeAttachmentModel`); the fluid inside isn't drawn |
 | `create:fluid_valve` | `FluidValveRenderer` | partial | rims (`PipeAttachmentModel`); the pointer and shaft aren't drawn |
 | `create:fluid_tank` | `FluidTankRenderer` | done | fluid box; boiler gauges skipped; one sprite stretched over the box |
@@ -36,8 +36,8 @@
 | `create:hose_pulley` | `HosePulleyRenderer` | not yet |  |
 | `create:spout` | `SpoutRenderer` | not yet |  |
 | `create:item_drain` | `ItemDrainRenderer` | not yet |  |
-| `create:belt` | `BeltRenderer` | partial | segments with scrolling texture, dyes and pulleys; items need item rendering |
-| `create:chute` | `ChuteRenderer` | not yet | needs item rendering |
+| `create:belt` | `BeltRenderer` | partial | segments with scrolling texture, dyes and pulleys; items glide to the end and queue (slope tilt as of the update; upright items, packages, shadows skipped; lit at the controller) |
+| `create:chute` | `ChuteRenderer` | not yet | items: `Part::item` |
 | `create:smart_chute` | `SmartChuteRenderer` | not yet |  |
 | `create:andesite_tunnel` | `BeltTunnelRenderer` | not yet |  |
 | `create:brass_tunnel` | `BeltTunnelRenderer` | not yet |  |
@@ -74,7 +74,7 @@
 | `create:mechanical_press` | `MechanicalPressRenderer` | next | round 2 |
 | `create:mechanical_mixer` | `MechanicalMixerRenderer` | next | round 2 |
 | `create:deployer` | `DeployerRenderer` | next | round 2 |
-| `create:basin` | `BasinRenderer` | not yet | needs item rendering |
+| `create:basin` | `BasinRenderer` | not yet | items: `Part::item` |
 | `create:blaze_heater` | `BlazeBurnerRenderer` | not yet |  |
 | `create:mechanical_crafter` | `MechanicalCrafterRenderer` | not yet |  |
 | `create:sequenced_gearshift` | `SplitShaftRenderer` | done | half shafts; its instruction's modifier isn't ported |
@@ -82,16 +82,16 @@
 | `create:speedometer` | `GaugeRenderer` | next | round 2: needle as a swing |
 | `create:stressometer` | `GaugeRenderer` | next | round 2: needle |
 | `create:analog_lever` | `AnalogLeverRenderer` | not yet |  |
-| `create:placard` | `PlacardRenderer` | not yet | needs item rendering |
+| `create:placard` | `PlacardRenderer` | not yet | items: `Part::item` |
 | `create:factory_panel` | `FactoryPanelRenderer` | not yet | needs text and items |
 | `create:redstone_link` | `SmartBlockEntityRenderer` | not yet |  |
 | `create:nixie_tube` | `NixieTubeRenderer` | not yet | needs text rendering |
 | `create:display_link` | `LinkBulbRenderer` | not yet |  |
 | `create:stockpile_switch` | `SmartBlockEntityRenderer` | not yet |  |
 | `create:creative_crate` | `SmartBlockEntityRenderer` | not yet |  |
-| `create:depot` | `DepotRenderer` | not yet | needs item rendering |
+| `create:depot` | `DepotRenderer` | done | held stack and outputs; an incoming item's ease to the centre isn't played |
 | `create:weighted_ejector` | `EjectorRenderer` | not yet |  |
-| `create:funnel` | `FunnelRenderer` | not yet | needs item rendering |
+| `create:funnel` | `FunnelRenderer` | not yet | items: `Part::item` |
 | `create:content_observer` | `SmartBlockEntityRenderer` | not yet |  |
 | `create:pulse_extender` | `BrassDiodeRenderer` | not yet |  |
 | `create:pulse_repeater` | `BrassDiodeRenderer` | not yet |  |
@@ -123,7 +123,6 @@ rim), and a neighbour pipe's bracket is taken as absent.
 ## Needs from the API
 
 - Texture overrides on a part (`WaterWheelRenderer` swaps the oak templates for the wheel's `Material` wood).
-- Item rendering on a block entity (belts, depots, basins, funnels, placards).
 - Text rendering (nixie tubes, flap displays, stations, factory panels).
 - Tiled UVs on a cuboid (a tall tank's fluid shows one sprite stretched; `renderFluidBox` tiles it per block).
 - Which block entities have a fluid capability (`FluidHandler.BLOCK`): a converter fact would let pipes drain into any mod's tank.

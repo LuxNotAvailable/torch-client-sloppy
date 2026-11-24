@@ -691,10 +691,17 @@ fn can_consume(bot: &Client, offhand: bool) -> bool {
     } else {
         Some(inventory.held_item())
     };
-    let Some(food) = stack.and_then(|s| s.get_component::<Food>()) else {
-        return true;
+    let can_always_eat = match stack.and_then(|s| s.get_component::<Food>()) {
+        Some(food) => food.can_always_eat,
+        // A mod's food: from its package.
+        None => match stack
+            .and_then(crate::items::modded::of_stack)
+            .and_then(|u| u.food)
+        {
+            Some(always) => always,
+            None => return true,
+        },
     };
-    let can_always_eat = food.can_always_eat;
     drop(inventory);
 
     if can_always_eat {
@@ -794,7 +801,9 @@ fn consume_fx(bot: &Client) -> Option<ConsumeFx> {
         .component::<azalea::entity::inventory::Inventory>()
         .ok()?;
     let held = inventory.held_item();
-    let consumable = held.get_component::<Consumable>()?;
+    let Some(consumable) = held.get_component::<Consumable>() else {
+        return modded_consume_fx(held);
+    };
     let sound = {
         #[cfg(audio)]
         {
@@ -817,6 +826,34 @@ fn consume_fx(bot: &Client) -> Option<ConsumeFx> {
         drink: consumable.animation == ItemUseAnimation::Drink,
         particles: consumable.has_consume_particles,
         ticks: (consumable.consume_seconds * 20.0) as i32,
+    })
+}
+
+/// A mod's food or drink, from its package: vanilla's default consumable
+/// (the generic eat or drink sound, crumbs when eaten).
+fn modded_consume_fx(held: &ItemStack) -> Option<ConsumeFx> {
+    use crate::items::modded::Use;
+    let item_use = crate::items::modded::of_stack(held)?;
+    let drink = match item_use.animation? {
+        Use::Eat => false,
+        Use::Drink => true,
+        _ => return None,
+    };
+    #[cfg(audio)]
+    let sound = crate::audio::event_name(if drink {
+        "minecraft:entity.generic.drink"
+    } else {
+        "minecraft:entity.generic.eat"
+    })
+    .to_owned();
+    #[cfg(not(audio))]
+    let sound = String::new();
+    Some(ConsumeFx {
+        item: held.clone(),
+        sound,
+        drink,
+        particles: !drink,
+        ticks: item_use.ticks,
     })
 }
 
@@ -1240,7 +1277,8 @@ fn use_duration(held: &ItemStack) -> i32 {
     {
         return HELD_INDEFINITELY;
     }
-    0
+    // A mod's item: its defaults came in its package, not from the server.
+    crate::items::modded::of_stack(held).map_or(0, |u| u.ticks)
 }
 
 fn send_use_item_on(bot: &Client, hit: &BlockHitResult, interacted: bool) {

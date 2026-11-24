@@ -2,15 +2,18 @@
 //! (`docs/porting/AGENT_GUIDE.md`). Round 1: kinetic parts (shafts, cogs,
 //! gearboxes, gearshifts, motors, water wheels, crushing wheels) and tank
 //! fluid. Round 2: belts, pumps, hand cranks, speed controllers, bearings.
-//! Round 3: pipe attachments. What's done and skipped: `PORTED.md`.
+//! Round 3: pipe attachments. Round 4: items on belts and depots. What's done and skipped: `PORTED.md`.
 //!
 //! Create's code is MIT; its assets are All Rights Reserved, so this port
 //! names models and sprites but carries none.
 
 mod belt;
+mod depot;
 mod dir;
+mod items;
 mod kinetic;
 mod pipe;
+mod pose;
 mod tank;
 
 use torch_mod_api::{BlockEntityView, Plugin, Registration, Rig, export_plugin};
@@ -34,6 +37,7 @@ const HANDLED: &[&str] = &[
     "create:adjustable_chain_gearshift",
     "create:encased_cogwheel",
     "create:encased_large_cogwheel",
+    "create:encased_fan",
     "create:gearbox",
     "create:clutch",
     "create:gearshift",
@@ -58,6 +62,7 @@ const HANDLED: &[&str] = &[
     "create:glass_fluid_pipe",
     "create:smart_fluid_pipe",
     "create:fluid_valve",
+    "create:depot",
 ];
 
 #[derive(Default)]
@@ -87,6 +92,7 @@ impl Plugin for Create {
             }
             "create:encased_cogwheel" => kinetic::encased_cog(view, false),
             "create:encased_large_cogwheel" => kinetic::encased_cog(view, true),
+            "create:encased_fan" => kinetic::fan(view),
             "create:gearbox" => kinetic::gearbox(view),
             "create:clutch" | "create:gearshift" | "create:sequenced_gearshift" => {
                 kinetic::split_shaft(view)
@@ -100,6 +106,7 @@ impl Plugin for Create {
             "create:large_water_wheel" => kinetic::water_wheel(view, true),
             "create:fluid_tank" | "create:creative_fluid_tank" => tank::tank(view),
             "create:belt" => belt::belt(view),
+            "create:depot" => depot::depot(view),
             "create:mechanical_pump" => {
                 let mut parts = kinetic::pump(view);
                 parts.extend(pipe::attachments(view, |d| pipe::neighbour(view.pos, d)));

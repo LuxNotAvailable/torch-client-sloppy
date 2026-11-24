@@ -1,0 +1,16 @@
+[package]
+name = "torch-port-check"
+version = "0.1.0"
+edition = "2024"
+description = "Runs a port's plugin.wasm over every block state it draws and checks what it names exists"
+license = "MIT"
+publish = false
+
+# Its own workspace: a porting tool, never built with the client.
+[workspace]
+
+[dependencies]
+torch-mod-api = { path = "../torch-mod-api" }
+serde_json = "1"
+wasmi = { version = "2", default-features = false, features = ["std", "validate", "stable", "auto-dispatch"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }

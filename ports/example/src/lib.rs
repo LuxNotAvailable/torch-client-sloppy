@@ -27,6 +27,7 @@ impl Plugin for Example {
     fn init(&mut self) -> Registration {
         Registration {
             block_entities: vec!["example:spinner".into()],
+            ..Registration::default()
         }
     }
 
@@ -65,14 +66,14 @@ mod tests {
         .unwrap();
         let rig = Example.block_entity(&view);
         assert_eq!(rig.parts.len(), 1);
-        match rig.parts[0].animation {
+        match &rig.parts[0].animation {
             Animation::Spin {
                 axis,
                 degrees_per_tick,
                 ..
             } => {
-                assert_eq!(axis, [1.0, 0.0, 0.0]);
-                assert_eq!(degrees_per_tick, 18.0);
+                assert_eq!(*axis, [1.0, 0.0, 0.0]);
+                assert_eq!(*degrees_per_tick, 18.0);
             }
             other => panic!("{other:?}"),
         }

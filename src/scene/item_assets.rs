@@ -15,6 +15,8 @@ pub struct ItemGpu {
     pub texture: Handle<Image>,
     pub display: DisplayTransforms,
     pub bounds: (Vec3, Vec3),
+    /// A flat sprite model (`item/generated`): not `isGui3d`.
+    pub flat: bool,
 }
 
 impl ItemGpu {
@@ -181,6 +183,7 @@ impl ItemAssets {
             texture,
             display: built.display,
             bounds: (min, max),
+            flat: built.generated,
         })
     }
 }

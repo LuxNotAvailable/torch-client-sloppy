@@ -1837,7 +1837,7 @@ fn clear_copies(commands: &mut Commands, copies: &[Entity]) {
     }
 }
 
-fn item_display_transform(t: &crate::items::mesh::Transform) -> Transform {
+pub(crate) fn item_display_transform(t: &crate::items::mesh::Transform) -> Transform {
     const DEG_TO_RAD: f32 = std::f32::consts::PI / 180.0;
     let rotation = Quat::from_rotation_x(t.rotation[0] * DEG_TO_RAD)
         * Quat::from_rotation_y(t.rotation[1] * DEG_TO_RAD)
