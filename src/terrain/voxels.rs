@@ -84,6 +84,7 @@ fn tint_of(rb: &RenderedBlock, occ: &super::Occupancy, (x, y, z): (i32, i32, i32
         TintKind::Stem(age) => bc::stem_ratio(age),
         TintKind::Water => occ.blend(x, y, z, radius, bc::pack_water),
         TintKind::Modded(id) => crate::util::block_model::modded_tint(id),
+        TintKind::Color(rgb) => crate::util::block_model::rgb_ratio(rgb),
     }
 }
 

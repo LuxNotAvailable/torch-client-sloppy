@@ -166,6 +166,40 @@ pub fn sign_text_mesh(
     builder.finish()
 }
 
+/// Lines of text centred on the origin, a sign's line spacing apart (a
+/// plugin's `Geometry::Text`); `None` when there's nothing to draw.
+pub fn text_mesh(atlas: &GuiAtlas, lines: &[Vec<Span>], color: u32, shadow: bool) -> Option<Mesh> {
+    const LINE: f32 = 10.0;
+    let mut builder = TextMesh::new(atlas);
+    let midpoint = lines.len() as f32 * LINE / 2.0;
+    for (i, line) in lines.iter().enumerate() {
+        let mut spans = line.clone();
+        for span in &mut spans {
+            if span.style.color == INHERIT_COLOR {
+                span.style.color = color & 0xFF_FFFF;
+            }
+        }
+        spans.retain(|span| !span.text.is_empty());
+        if spans.is_empty() {
+            continue;
+        }
+        let width = atlas.font.width(&spans).ceil() as i32;
+        let x = -(width / 2) as f32;
+        let y = i as f32 * LINE - midpoint;
+        if shadow {
+            builder.shadow_line(&spans, x, y, shadow_color(color));
+        }
+        builder.line(&spans, x, y);
+    }
+    builder.finish()
+}
+
+/// Vanilla's text shadow: the colour at a quarter brightness.
+fn shadow_color(color: u32) -> u32 {
+    let c = |shift: u32| ((color >> shift) & 0xFF) / 4;
+    (c(16) << 16) | (c(8) << 8) | c(0)
+}
+
 fn first_split_line(atlas: &GuiAtlas, spans: &[Span], color: u32, max_width: f32) -> Vec<Span> {
     if spans.is_empty() {
         return Vec::new();
@@ -351,6 +385,12 @@ mod tests {
             glowing,
             ..SignFace::default()
         }
+    }
+
+    #[test]
+    fn a_text_shadow_is_a_quarter_as_bright() {
+        assert_eq!(shadow_color(0xFF_FFFF), 0x3F_3F3F);
+        assert_eq!(shadow_color(0xFF80_4000), 0x20_1000);
     }
 
     #[test]

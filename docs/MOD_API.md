@@ -43,6 +43,9 @@ A plugin registers handlers in `init`:
 | Handler | Registered for | Called | Returns |
 |---|---|---|---|
 | `block_entity` | block entity type ids (`create:kinetic`) | when one appears, its data (NBT) or its block state changes, a face neighbour's block state changes, or a modded block entity appears beside it | a `Rig` |
+| `entity` | entity type ids in `entities` (`mymod:biplane`) | once when an entity of the type appears | a `Rig`, in the entity's own frame |
+| `payload` | the mod's packet channels in `channels` (`mymod:sync_state`) | each play-phase packet the server sends on one | a `Redraw`: entity ids and block entity positions whose rigs to ask for again |
+| `block_tint` | block ids in `tinted_blocks` (`mymod:maple_leaves`) | once per block state, then kept | a `Tint`: `none`, `grass`, `foliage`, `dry_foliage`, `water` (the biome's colour, blended by position) or `color` (`0xRRGGBB`) |
 
 The registration also lists:
 
@@ -52,9 +55,30 @@ The registration also lists:
   its block model, and the plugin's parts draw over it (a tank's fluid).
 - `sprites`: textures the plugin's cuboids use that no block model does
   (a fluid's still sprite), so the client puts them in its atlas.
+- `tinted_blocks`: blocks whose tinted model faces (`tintindex`) the
+  plugin colours: Java's `BlockColor`. Without one, a modded block with
+  tinted faces gets foliage, grass or water by its name.
 
-Planned for later versions (not in v1): entity visuals, mod network
-payloads (a codec and a handler per channel), screens and HUD elements, a
+`payload` gets the channel and the raw bytes the mod's server side wrote;
+`torch_mod_api::buf::Reader` reads them as Java's `FriendlyByteBuf` does
+(VarInts, strings, block positions, UUIDs, network NBT as JSON). A plugin
+keeps what a packet says in its own state (the plugin value lives for the
+session) and reads it when the client asks for the rigs the `Redraw`
+names. Payloads reach the plugin in arrival order, on the network thread.
+
+`entity` gets an `EntityView` (`{"type": ..., "id": ..., "width": ...,
+"height": ..., "time": ...}`; the size is the type's own). Its parts are in
+the entity's frame: the origin at its feet, `+Z` the way it faces,
+sixteenths of a block. The client places the rig at the entity every frame
+and turns it by the entity's yaw; animations play as on block entities. An
+entity a plugin draws loses the placeholder box. v1 sends no entity data
+(synced values or mod payloads), so a rig can't follow an entity's state
+yet.
+
+`block_tint` gets a `BlockStateView` (`{"block": ..., "props": {...}}`); it
+can't depend on position or time, since the answer is kept per state.
+
+Planned for later versions: entity data (synced values) in the view, screens and HUD elements, a
 per-tick hook, item renderers.
 
 ### What a plugin gets: `BlockEntityView`
@@ -96,6 +120,7 @@ Geometry:
 | `model` | `model` (a block model id), `x`, `y` (quarter turns, as a blockstate variant), `uvlock` | the mod's partial models: shafts, cogs, lids, arms |
 | `block` | `block`, `props` | a whole block state's model (a carried block, a display) |
 | `cuboid` | `from`, `to`, `texture` (a sprite id), `faces` (which of down, up, north, south, west, east), `tint` (ARGB), `uv` (optional rect in sixteenths) | simple boxes: a tank's fluid, a gauge needle |
+| `text` | `lines` (with `§` codes), `color` (ARGB), `shadow`, `glowing` | text as a sign draws it, readable from `+Z`, one font pixel a sixteenth: displays, nixie tubes, labels |
 | `item` | `item` (an item id), `flat` (optional transform) | an item as Java's `ItemDisplayContext.FIXED` draws it: items on belts, depots, displays |
 
 An `item` is the item's model with its `fixed` display transform, centred

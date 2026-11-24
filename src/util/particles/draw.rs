@@ -560,6 +560,9 @@ pub(super) fn tint_ratio(
     if let TintKind::Modded(id) = kind {
         return crate::util::block_model::modded_tint(id);
     }
+    if let TintKind::Color(rgb) = kind {
+        return crate::util::block_model::rgb_ratio(rgb);
+    }
     if kind == TintKind::None {
         return crate::util::biome_color::NEUTRAL;
     }
@@ -583,7 +586,9 @@ pub(super) fn tint_ratio(
 
     match kind {
         TintKind::None => unreachable!(),
-        TintKind::Redstone(_) | TintKind::Stem(_) | TintKind::Modded(_) => unreachable!(),
+        TintKind::Redstone(_) | TintKind::Stem(_) | TintKind::Modded(_) | TintKind::Color(_) => {
+            unreachable!()
+        }
         TintKind::Grass => crate::util::biome_color::grass_ratio(idx),
         TintKind::Foliage => crate::util::biome_color::foliage_ratio(idx),
         TintKind::DryFoliage => crate::util::biome_color::dry_foliage_ratio(idx),

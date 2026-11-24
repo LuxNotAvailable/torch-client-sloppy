@@ -710,6 +710,7 @@ fn emit_baked(
             crate::util::biome_color::water_ratio,
         ),
         super::TintKind::Modded(id) => crate::util::block_model::modded_tint(id),
+        super::TintKind::Color(rgb) => crate::util::block_model::rgb_ratio(rgb),
     };
     #[cfg(feature = "shader_support")]
     if let Some(block) = buf.pack_block.as_mut() {
@@ -726,6 +727,7 @@ fn emit_baked(
             super::TintKind::Stem(age) => bc::stem_ratio(age),
             super::TintKind::Water => occ.blend(bx, by, bz, biome_blend(), bc::pack_water),
             super::TintKind::Modded(id) => crate::util::block_model::modded_tint(id),
+            super::TintKind::Color(rgb) => crate::util::block_model::rgb_ratio(rgb),
         };
     }
 

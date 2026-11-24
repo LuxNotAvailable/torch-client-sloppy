@@ -43,6 +43,8 @@ pub(crate) fn handle_packet(
     }
     // Every mod channel, for whatever listens (client plugins, mod ports).
     if let ClientboundGamePacket::CustomPayload(p) = packet {
+        // A mod port reading this channel keeps what it says.
+        crate::modapi::on_payload(&p.identifier.to_string(), &p.data);
         crate::client::bus::emit(crate::client::bus::ClientEvent::CustomPayload {
             channel: p.identifier.to_string(),
             data: p.data.to_vec(),

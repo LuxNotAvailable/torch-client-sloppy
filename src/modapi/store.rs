@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use parking_lot::Mutex;
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 /// A modded block entity as the server sent it.
 struct Entry {
@@ -91,6 +91,20 @@ pub fn on_block_entity(pos: [i32; 3], kind: String, nbt: &[u8]) {
             {
                 e.dirty = true;
             }
+        }
+    }
+}
+
+/// Asks again for the rigs of the block entities at `positions` (a mod
+/// packet changed what the plugin knows about them).
+pub fn redraw(positions: &[[i32; 3]]) {
+    if positions.is_empty() {
+        return;
+    }
+    let mut store = STORE.lock();
+    for pos in positions {
+        if let Some(entry) = store.entries.get_mut(pos) {
+            entry.dirty = true;
         }
     }
 }
@@ -259,96 +273,7 @@ fn full_id(id: &str) -> String {
 /// Network NBT (a nameless root tag) as JSON: compounds as objects, lists
 /// and arrays as arrays, numbers as numbers.
 pub(crate) fn read_network_nbt(bytes: &[u8]) -> Option<Value> {
-    let mut at = 0usize;
-    let kind = *bytes.first()?;
-    at += 1;
-    if kind == 0 {
-        return Some(Value::Null);
-    }
-    let value = read_payload(bytes, &mut at, kind, 0)?;
-    Some(value)
-}
-
-fn take<'a>(bytes: &'a [u8], at: &mut usize, n: usize) -> Option<&'a [u8]> {
-    let slice = bytes.get(*at..at.checked_add(n)?)?;
-    *at += n;
-    Some(slice)
-}
-
-fn be_i32(bytes: &[u8], at: &mut usize) -> Option<i32> {
-    Some(i32::from_be_bytes(take(bytes, at, 4)?.try_into().ok()?))
-}
-
-fn string(bytes: &[u8], at: &mut usize) -> Option<String> {
-    let len = u16::from_be_bytes(take(bytes, at, 2)?.try_into().ok()?) as usize;
-    // Modified UTF-8: close enough to UTF-8 for ids and text a port reads.
-    Some(String::from_utf8_lossy(take(bytes, at, len)?).into_owned())
-}
-
-fn read_payload(bytes: &[u8], at: &mut usize, kind: u8, depth: u32) -> Option<Value> {
-    if depth > 64 {
-        return None;
-    }
-    let number = |v: f64| serde_json::Number::from_f64(v).map(Value::Number);
-    Some(match kind {
-        1 => Value::from(take(bytes, at, 1)?[0] as i8),
-        2 => Value::from(i16::from_be_bytes(take(bytes, at, 2)?.try_into().ok()?)),
-        3 => Value::from(be_i32(bytes, at)?),
-        4 => Value::from(i64::from_be_bytes(take(bytes, at, 8)?.try_into().ok()?)),
-        5 => number(f32::from_be_bytes(take(bytes, at, 4)?.try_into().ok()?) as f64)?,
-        6 => number(f64::from_be_bytes(take(bytes, at, 8)?.try_into().ok()?))?,
-        7 => {
-            let n = usize::try_from(be_i32(bytes, at)?).ok()?;
-            Value::Array(
-                take(bytes, at, n)?
-                    .iter()
-                    .map(|b| Value::from(*b as i8))
-                    .collect(),
-            )
-        }
-        8 => Value::String(string(bytes, at)?),
-        9 => {
-            let element = take(bytes, at, 1)?[0];
-            let n = usize::try_from(be_i32(bytes, at)?).ok()?;
-            let mut out = Vec::with_capacity(n.min(4096));
-            for _ in 0..n {
-                out.push(read_payload(bytes, at, element, depth + 1)?);
-            }
-            Value::Array(out)
-        }
-        10 => {
-            let mut map = Map::new();
-            loop {
-                let tag = take(bytes, at, 1)?[0];
-                if tag == 0 {
-                    break;
-                }
-                let name = string(bytes, at)?;
-                let value = read_payload(bytes, at, tag, depth + 1)?;
-                map.insert(name, value);
-            }
-            Value::Object(map)
-        }
-        11 => {
-            let n = usize::try_from(be_i32(bytes, at)?).ok()?;
-            let mut out = Vec::with_capacity(n.min(4096));
-            for _ in 0..n {
-                out.push(Value::from(be_i32(bytes, at)?));
-            }
-            Value::Array(out)
-        }
-        12 => {
-            let n = usize::try_from(be_i32(bytes, at)?).ok()?;
-            let mut out = Vec::with_capacity(n.min(4096));
-            for _ in 0..n {
-                out.push(Value::from(i64::from_be_bytes(
-                    take(bytes, at, 8)?.try_into().ok()?,
-                )));
-            }
-            Value::Array(out)
-        }
-        _ => return None,
-    })
+    torch_mod_api::buf::Reader::new(bytes).nbt()
 }
 
 #[cfg(test)]

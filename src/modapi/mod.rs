@@ -32,6 +32,14 @@ struct Plugins {
     replaces_block_model: std::collections::HashSet<String>,
     /// Sprites plugins draw that block models don't use.
     sprites: Vec<String>,
+    /// Block id to the plugin that tints it.
+    tinted: HashMap<String, usize>,
+    /// Entity type id to the plugin that draws it.
+    entities: HashMap<String, usize>,
+    /// Mod packet channel to the plugin that reads it.
+    channels: HashMap<String, usize>,
+    /// Tints asked so far, by modded table generation and state id.
+    tints: HashMap<(u32, u16), torch_mod_api::Tint>,
 }
 
 /// Whether a plugin draws `block_entity`'s block in place of its model.
@@ -62,6 +70,15 @@ pub fn load(plugins: Vec<(String, Vec<u8>)>) {
                 out.replaces_block_model
                     .extend(registration.replaces_block_model.iter().cloned());
                 out.sprites.extend(registration.sprites.iter().cloned());
+                for block in &registration.tinted_blocks {
+                    out.tinted.entry(block.clone()).or_insert(index);
+                }
+                for kind in &registration.entities {
+                    out.entities.entry(kind.clone()).or_insert(index);
+                }
+                for channel in &registration.channels {
+                    out.channels.entry(channel.clone()).or_insert(index);
+                }
                 crate::log_info!(
                     "modapi",
                     "{name}: plugin loaded, draws {} block entity type(s)",
@@ -77,6 +94,92 @@ pub fn load(plugins: Vec<(String, Vec<u8>)>) {
         }
     }
     *PLUGINS.lock() = out;
+}
+
+/// Entity rigs a payload asked to redraw, taken by `render` each frame.
+static REDRAW_ENTITIES: Mutex<Vec<i32>> = Mutex::new(Vec::new());
+
+/// A mod packet from the server: to the plugin reading its channel, if
+/// one does; the rigs it names are asked for again.
+pub fn on_payload(channel: &str, data: &[u8]) {
+    let redraw = {
+        let mut plugins = PLUGINS.lock();
+        let Some(&index) = plugins.channels.get(channel) else {
+            return;
+        };
+        let Some(loaded) = plugins.loaded.get_mut(index) else {
+            return;
+        };
+        match loaded.runtime.payload(channel, data) {
+            Ok(redraw) => redraw,
+            Err(e) => {
+                loaded.failures += 1;
+                if loaded.failures <= 3 {
+                    crate::log_warn!("modapi", "{}: payload on {channel}: {e}", loaded.name);
+                }
+                return;
+            }
+        }
+    };
+    store::redraw(&redraw.block_entities);
+    REDRAW_ENTITIES.lock().extend(redraw.entities);
+}
+
+/// Entity ids whose rigs a payload changed since the last call.
+pub(crate) fn take_entity_redraws() -> Vec<i32> {
+    std::mem::take(&mut *REDRAW_ENTITIES.lock())
+}
+
+/// Whether a plugin draws entities of type `kind` (`mymod:biplane`).
+pub fn draws_entity(kind: &str) -> bool {
+    PLUGINS.lock().entities.contains_key(kind)
+}
+
+/// The rig for an entity, from the plugin that registered its type; `None`
+/// when none did.
+fn entity(view: &torch_mod_api::EntityView) -> Option<Result<torch_mod_api::Rig, String>> {
+    let mut plugins = PLUGINS.lock();
+    let index = *plugins.entities.get(&view.kind)?;
+    let input = match serde_json::to_vec(view) {
+        Ok(bytes) => bytes,
+        Err(e) => return Some(Err(e.to_string())),
+    };
+    let loaded = plugins.loaded.get_mut(index)?;
+    Some(
+        loaded
+            .runtime
+            .entity(&input)
+            .map_err(|e| format!("{}: {e}", loaded.name)),
+    )
+}
+
+/// The tint a plugin gives a modded block state (`Plugin::block_tint`), or
+/// `None` when no plugin tints its block. Asked once per state and kept.
+pub fn block_tint(state: u16, block: &str, props: &[(&str, &str)]) -> Option<torch_mod_api::Tint> {
+    let mut plugins = PLUGINS.lock();
+    let index = *plugins.tinted.get(block)?;
+    let key = (crate::blocks::modded::generation(), state);
+    if let Some(tint) = plugins.tints.get(&key) {
+        return Some(*tint);
+    }
+    let view = torch_mod_api::BlockStateView {
+        block: block.to_owned(),
+        props: props
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect(),
+    };
+    let input = serde_json::to_vec(&view).ok()?;
+    let loaded = plugins.loaded.get_mut(index)?;
+    let tint = match loaded.runtime.block_tint(&input) {
+        Ok(tint) => tint,
+        Err(e) => {
+            crate::log_warn!("modapi", "{}: tint of {block}: {e}", loaded.name);
+            torch_mod_api::Tint::None
+        }
+    };
+    plugins.tints.insert(key, tint);
+    Some(tint)
 }
 
 /// The rig for a block entity, from the plugin that registered its type;
@@ -147,6 +250,55 @@ mod tests {
             .block_entity(b"{not json", runtime::Near::new())
             .unwrap();
         assert!(rig.parts.is_empty());
+    }
+
+    #[test]
+    fn the_example_plugin_tints_its_leaves() {
+        let mut runtime = runtime::Runtime::load("example", EXAMPLE).unwrap();
+        assert_eq!(runtime.registration.tinted_blocks, ["example:leaves"]);
+        let mut tint = |props: serde_json::Value| {
+            let view = serde_json::json!({"block": "example:leaves", "props": props});
+            runtime.block_tint(view.to_string().as_bytes()).unwrap()
+        };
+        assert_eq!(tint(serde_json::json!({})), torch_mod_api::Tint::Foliage);
+        assert_eq!(
+            tint(serde_json::json!({"snowy": "true"})),
+            torch_mod_api::Tint::Color(0xFF_FFFF)
+        );
+    }
+
+    #[test]
+    fn the_example_plugin_draws_its_drone_entity() {
+        let mut runtime = runtime::Runtime::load("example", EXAMPLE).unwrap();
+        assert_eq!(runtime.registration.entities, ["example:drone"]);
+        let view =
+            serde_json::json!({"type": "example:drone", "id": 7, "width": 1.0, "height": 0.5});
+        let rig = runtime.entity(view.to_string().as_bytes()).unwrap();
+        assert_eq!(rig.parts.len(), 1);
+        let torch_mod_api::Geometry::Cuboid { from, to, .. } = &rig.parts[0].geometry else {
+            panic!("{:?}", rig.parts[0].geometry);
+        };
+        // Its type's size, in sixteenths about its feet.
+        assert_eq!((*from, *to), ([-8.0, 0.0, -8.0], [8.0, 8.0, 8.0]));
+    }
+
+    #[test]
+    fn a_payload_reaches_the_plugin_and_names_what_to_redraw() {
+        let mut runtime = runtime::Runtime::load("example", EXAMPLE).unwrap();
+        assert_eq!(runtime.registration.channels, ["example:paint"]);
+        // Entity 7 painted red: VarInt 7, then the int 0xFFFF0000.
+        let mut data = vec![7u8];
+        data.extend(0xFFFF_0000u32.to_be_bytes());
+        let redraw = runtime.payload("example:paint", &data).unwrap();
+        assert_eq!(redraw.entities, [7]);
+        // The plugin kept it: the drone's rig is red now.
+        let view =
+            serde_json::json!({"type": "example:drone", "id": 7, "width": 1.0, "height": 0.5});
+        let rig = runtime.entity(view.to_string().as_bytes()).unwrap();
+        let torch_mod_api::Geometry::Cuboid { tint, .. } = &rig.parts[0].geometry else {
+            panic!("{:?}", rig.parts[0].geometry);
+        };
+        assert_eq!(*tint, 0xFFFF_0000);
     }
 
     #[test]

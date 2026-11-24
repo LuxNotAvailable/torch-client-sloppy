@@ -820,6 +820,10 @@ fn collect_nametags(
         // A modded entity: its registry name over the placeholder box
         // (`overlays::boxed_placeholder`), always shown.
         if let Some(name) = modded.get(&anim.id) {
+            // Drawn by a plugin: no placeholder, so no debug tag either.
+            if crate::modapi::draws_entity(name) {
+                continue;
+            }
             let pos = anim.position(partial);
             let height = crate::entities::modded::size(name.as_str())
                 .unwrap_or(crate::entities::modded::FALLBACK)

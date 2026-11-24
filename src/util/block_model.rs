@@ -259,6 +259,18 @@ fn translucent_layer(name: &str) -> bool {
         || name.ends_with("_stained_glass_pane")
 }
 
+/// A plugin's tint as the mesher's kind.
+fn tint_kind_of(tint: torch_mod_api::Tint) -> TintKind {
+    match tint {
+        torch_mod_api::Tint::None => TintKind::None,
+        torch_mod_api::Tint::Grass => TintKind::Grass,
+        torch_mod_api::Tint::Foliage => TintKind::Foliage,
+        torch_mod_api::Tint::DryFoliage => TintKind::DryFoliage,
+        torch_mod_api::Tint::Water => TintKind::Water,
+        torch_mod_api::Tint::Color(rgb) => TintKind::Color(rgb & 0xFF_FFFF),
+    }
+}
+
 /// The tint of a modded block whose model has tinted faces. A mod's block
 /// colour handler is client code no dump reaches, so this goes by name the
 /// way vanilla's handlers are assigned: leaves and vines take the foliage
@@ -324,7 +336,14 @@ fn dumped_visual(state: azalea::block::BlockState) -> Option<RenderedBlock> {
         // A block entity renderer draws it in the mod; nothing to show here.
         return (render == Render::Animated).then(|| empty(state));
     }
-    let tint_kind = dumped_tint(name, &baked);
+    // A plugin's tint (`Plugin::block_tint`) wins over the name guess.
+    let tint_kind = {
+        let props: Vec<(&str, &str)> = props.iter().map(|(k, v)| (*k, *v)).collect();
+        match crate::modapi::block_tint(state.id(), name, &props) {
+            Some(tint) => tint_kind_of(tint),
+            None => dumped_tint(name, &baked),
+        }
+    };
     // A see-through layer, or a block drawn off its cell, covers none of
     // its neighbours' faces.
     let translucent = baked.translucent;
@@ -428,6 +447,12 @@ fn modded_visual(state: azalea::block::BlockState) -> RenderedBlock {
 }
 
 /// A modded block's tint: a bright colour picked by hashing its raw id.
+/// `0xRRGGBB` as the 0..1 multipliers a tint is.
+pub fn rgb_ratio(rgb: u32) -> [f32; 3] {
+    let c = |shift: u32| ((rgb >> shift) & 0xFF) as f32 / 255.0;
+    [c(16), c(8), c(0)]
+}
+
 pub fn modded_tint(id: u32) -> [f32; 3] {
     let h = id
         .wrapping_mul(0x9E37_79B9)

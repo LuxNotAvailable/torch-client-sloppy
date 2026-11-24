@@ -112,6 +112,8 @@ pub enum TintKind {
     Water,
     /// A modded block, coloured by its raw state id so blocks tell apart.
     Modded(u32),
+    /// A fixed colour, `0xRRGGBB` (a plugin's `Tint::Color`).
+    Color(u32),
 }
 
 #[derive(Clone)]

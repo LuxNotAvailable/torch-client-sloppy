@@ -21,10 +21,20 @@ const SCROLL_STEPS: f32 = 64.0;
 pub fn plugin(app: &mut App) {
     app.init_resource::<Live>().add_systems(
         Update,
-        sync_rigs
+        (sync_rigs, sync_entity_rigs)
+            .chain()
             .after(crate::app::FrameViewSystems)
             .run_if(in_state(crate::app::AppState::InGame)),
     );
+}
+
+/// An entity's rig: parts are its children, in its own frame.
+#[derive(Component)]
+struct ModEntityRoot;
+
+struct LiveEntity {
+    root: Entity,
+    parts: Vec<LivePart>,
 }
 
 #[derive(Component)]
@@ -55,6 +65,8 @@ struct Live {
     item_materials: HashMap<(u8, u8, AssetId<Image>), Handle<EntityMaterial>>,
     atlas: Option<Handle<Image>>,
     lights: crate::lighting::lightmap::LightCells,
+    /// Entities a plugin draws, by entity id.
+    entities: HashMap<i32, LiveEntity>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -69,6 +81,7 @@ fn sync_rigs(
     mut standard: ResMut<Assets<crate::draw::SimpleMaterial>>,
     mut images: ResMut<Assets<Image>>,
     mut item_assets: Option<ResMut<crate::scene::item_assets::ItemAssets>>,
+    gui: Option<Res<crate::gui::render::GuiAssets>>,
     mut transforms: Query<(&mut Transform, &mut Mesh3d), With<ModPart>>,
 ) {
     let live = &mut *live;
@@ -124,97 +137,24 @@ fn sync_rigs(
                 }
             }
             let cell = live.lights.get(&lightmap.current, levels.0, levels.1);
-            let material = live
-                .materials
-                .entry(levels)
-                .or_insert_with(|| {
-                    materials.add(EntityMaterial::new(
-                        Some(atlas.clone()),
-                        LightMode::Cardinal,
-                        crate::draw::Alpha::Mask(0.1),
-                        0.1,
-                        Lit {
-                            tint: [1.0; 4],
-                            light: cell,
-                            dirs,
-                            overlay_alpha: 1.0,
-                            overlay_white: false,
-                            glint: false,
-                        },
-                        0,
-                    ))
-                })
-                .clone();
-            let lit = Lit {
-                tint: [1.0; 4],
-                light: cell,
-                dirs,
-                overlay_alpha: 1.0,
-                overlay_white: false,
-                glint: false,
-            };
-            let mut parts = Vec::with_capacity(rig.parts.len());
-            for part in &rig.parts {
-                let step = part.scroll.as_ref().and_then(|s| scroll_step(s, ticks));
-                let (mesh, material, transform, display) = match &part.geometry {
-                    Geometry::Item { item, flat } => {
-                        let Some(items) = item_assets.as_deref_mut() else {
-                            continue;
-                        };
-                        let id = item.strip_prefix("minecraft:").unwrap_or(item);
-                        let Some(gpu) =
-                            items.get(id, "fixed", false, &mut meshes, &mut images, &mut standard)
-                        else {
-                            continue;
-                        };
-                        let texture = gpu.texture.clone();
-                        let material = live
-                            .item_materials
-                            .entry((levels.0, levels.1, texture.id()))
-                            .or_insert_with(|| {
-                                materials.add(EntityMaterial::new(
-                                    Some(texture),
-                                    LightMode::Cardinal,
-                                    crate::draw::Alpha::Mask(0.1),
-                                    0.1,
-                                    lit,
-                                    0,
-                                ))
-                            })
-                            .clone();
-                        let transform = match flat {
-                            Some(flat) if gpu.flat => *flat,
-                            _ => part.transform,
-                        };
-                        let display =
-                            crate::entities::item_display_transform(&gpu.transform("fixed"));
-                        (gpu.mesh.clone(), material, transform, display)
-                    }
-                    _ => {
-                        let Some(mesh) = part_mesh(&mut live.meshes, &mut meshes, part, step)
-                        else {
-                            continue;
-                        };
-                        (mesh, material.clone(), part.transform, Transform::IDENTITY)
-                    }
-                };
-                let entity = commands
-                    .spawn((
-                        Mesh3d(mesh),
-                        crate::draw::Material3d(material),
-                        place(*pos, transform, &part.animation, ticks).mul_transform(display),
-                        Visibility::Inherited,
-                        ModPart,
-                    ))
-                    .id();
-                parts.push(LivePart {
-                    entity,
-                    transform,
-                    display,
-                    animation: part.animation.clone(),
-                    scroll: step.map(|step| (part.clone(), step)),
-                });
-            }
+            let bright = live.lights.get(&lightmap.current, 15, 15);
+            let parts = spawn_parts(
+                &mut commands,
+                live,
+                Assets3 {
+                    gui: gui.as_deref(),
+                    meshes: &mut meshes,
+                    materials: &mut materials,
+                    standard: &mut standard,
+                    images: &mut images,
+                    items: item_assets.as_deref_mut(),
+                },
+                &atlas,
+                (levels, cell, bright, dirs),
+                &rig.parts,
+                (*pos, None),
+                ticks,
+            );
             live.rigs.insert(
                 *pos,
                 LiveRig {
@@ -259,6 +199,292 @@ fn sync_rigs(
     if live.item_materials.len() > 1024 {
         live.item_materials.clear();
     }
+}
+
+/// Entities of a type a plugin draws (`Plugin::entity`): each rig asked for
+/// when the entity appears, placed at it and turned by its yaw each frame.
+#[allow(clippy::too_many_arguments)]
+fn sync_entity_rigs(
+    mut commands: Commands,
+    view: Res<crate::app::FrameView>,
+    mut live: ResMut<Live>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<EntityMaterial>>,
+    lightmap: Res<crate::app::systems::LightmapState>,
+    chunk_material: Option<Res<crate::app::systems::ChunkMaterial>>,
+    mut standard: ResMut<Assets<crate::draw::SimpleMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+    mut item_assets: Option<ResMut<crate::scene::item_assets::ItemAssets>>,
+    gui: Option<Res<crate::gui::render::GuiAssets>>,
+    mut roots: Query<&mut Transform, (With<ModEntityRoot>, Without<ModPart>)>,
+    mut part_transforms: Query<&mut Transform, (With<ModPart>, Without<ModEntityRoot>)>,
+) {
+    let live = &mut *live;
+    let modded = crate::client::tracking::modded_entity_types()
+        .lock()
+        .unwrap()
+        .clone();
+    // Modded entities in view whose type a plugin draws.
+    let drawn: HashMap<i32, (usize, &'static str)> = view
+        .entities
+        .iter()
+        .enumerate()
+        .filter_map(|(i, a)| {
+            let name = crate::protocol::modded_entity(*modded.get(&a.id)?)?;
+            super::draws_entity(name).then_some((a.id, (i, name)))
+        })
+        .collect();
+    // Rigs a mod packet changed: dropped here, asked for again below.
+    let redraw = super::take_entity_redraws();
+    live.entities.retain(|id, e| {
+        let keep = drawn.contains_key(id) && !redraw.contains(id);
+        if !keep {
+            commands.entity(e.root).despawn();
+        }
+        keep
+    });
+    if drawn.is_empty() {
+        return;
+    }
+    if live.atlas.is_none() {
+        live.atlas = chunk_material
+            .as_ref()
+            .and_then(|m| standard.get(&m.0))
+            .and_then(|m| m.base_color_texture.clone());
+    }
+    let Some(atlas) = live.atlas.clone() else {
+        return;
+    };
+    let ticks = view.game_time as f32 + view.partial;
+    let light_map = crate::client::worldsync::light_map().read();
+    live.lights.begin(&lightmap.current);
+    let dirs = diffuse_lights(crate::client::dimension::current());
+    for (id, (index, name)) in &drawn {
+        let anim = &view.entities[*index];
+        let pos = anim.position(view.partial);
+        let (yaw, _) = anim.look(view.partial);
+        // +Z (the rig's front) turned to where the entity faces.
+        let root_at = Transform::from_translation(Vec3::from(pos))
+            .with_rotation(Quat::from_rotation_y((-yaw).to_radians()));
+        if let Some(e) = live.entities.get(id) {
+            if let Ok(mut t) = roots.get_mut(e.root) {
+                *t = root_at;
+            }
+            for part in e.parts.iter().filter(|p| p.animation != Animation::None) {
+                if let Ok(mut t) = part_transforms.get_mut(part.entity) {
+                    *t = place([0; 3], part.transform, &part.animation, ticks)
+                        .mul_transform(part.display);
+                }
+            }
+            continue;
+        }
+        let size = crate::entities::modded::size(name).unwrap_or(crate::entities::modded::FALLBACK);
+        let entity_view = torch_mod_api::EntityView {
+            kind: (*name).to_owned(),
+            id: *id,
+            width: size.width,
+            height: size.height,
+            time: view.game_time as i64,
+        };
+        let rig = match super::entity(&entity_view) {
+            Some(Ok(rig)) => rig,
+            Some(Err(e)) => {
+                crate::log_warn!("modapi", "{name} #{id}: {e}");
+                torch_mod_api::Rig::default()
+            }
+            None => continue,
+        };
+        let root = commands
+            .spawn((root_at, Visibility::Inherited, ModEntityRoot))
+            .id();
+        let block = pos.map(|v| v.floor() as i32);
+        let levels =
+            crate::lighting::lightmap::resolved_levels(light_map.at(block[0], block[1], block[2]));
+        let cell = live.lights.get(&lightmap.current, levels.0, levels.1);
+        let bright = live.lights.get(&lightmap.current, 15, 15);
+        let parts = spawn_parts(
+            &mut commands,
+            live,
+            Assets3 {
+                gui: gui.as_deref(),
+                meshes: &mut meshes,
+                materials: &mut materials,
+                standard: &mut standard,
+                images: &mut images,
+                items: item_assets.as_deref_mut(),
+            },
+            &atlas,
+            (levels, cell, bright, dirs),
+            &rig.parts,
+            ([0; 3], Some(root)),
+            ticks,
+        );
+        live.entities.insert(*id, LiveEntity { root, parts });
+    }
+}
+
+/// The assets parts are built from.
+struct Assets3<'a> {
+    /// The font, for text parts.
+    gui: Option<&'a crate::gui::render::GuiAssets>,
+    meshes: &'a mut Assets<Mesh>,
+    materials: &'a mut Assets<EntityMaterial>,
+    standard: &'a mut Assets<crate::draw::SimpleMaterial>,
+    images: &'a mut Assets<Image>,
+    items: Option<&'a mut crate::scene::item_assets::ItemAssets>,
+}
+
+/// Spawns a rig's parts, lit at `light` (levels, cell, directions), at
+/// `origin` (a block's corner) or, with a parent, in the parent's frame.
+fn spawn_parts(
+    commands: &mut Commands,
+    live: &mut Live,
+    mut a: Assets3,
+    atlas: &Handle<Image>,
+    light: (
+        (u8, u8),
+        crate::lighting::lightmap::CellLight,
+        crate::lighting::lightmap::CellLight,
+        [Vec3; 2],
+    ),
+    rig_parts: &[Part],
+    (origin, parent): ([i32; 3], Option<Entity>),
+    ticks: f32,
+) -> Vec<LivePart> {
+    // The light at the part, and full bright (glowing text).
+    let (levels, cell, bright, dirs) = light;
+    let lit = Lit {
+        tint: [1.0; 4],
+        light: cell,
+        dirs,
+        overlay_alpha: 1.0,
+        overlay_white: false,
+        glint: false,
+    };
+    let material = live
+        .materials
+        .entry(levels)
+        .or_insert_with(|| {
+            a.materials.add(EntityMaterial::new(
+                Some(atlas.clone()),
+                LightMode::Cardinal,
+                crate::draw::Alpha::Mask(0.1),
+                0.1,
+                lit,
+                0,
+            ))
+        })
+        .clone();
+    let mut parts = Vec::with_capacity(rig_parts.len());
+    for part in rig_parts {
+        let step = part.scroll.as_ref().and_then(|s| scroll_step(s, ticks));
+        let (mesh, material, transform, display) = match &part.geometry {
+            Geometry::Text {
+                lines,
+                color,
+                shadow,
+                glowing,
+            } => {
+                let Some(gui) = a.gui else {
+                    continue;
+                };
+                let spans: Vec<_> = lines
+                    .iter()
+                    .map(|l| crate::text::parse_formatted(l))
+                    .collect();
+                let Some(mesh) =
+                    crate::blockentities::text::text_mesh(&gui.atlas, &spans, *color, *shadow)
+                else {
+                    continue;
+                };
+                // Glowing text is lit as full bright.
+                let text_levels = if *glowing { (15, 15) } else { levels };
+                let text_lit = if *glowing {
+                    Lit {
+                        light: bright,
+                        ..lit
+                    }
+                } else {
+                    lit
+                };
+                let texture = gui.image.clone();
+                let material = live
+                    .item_materials
+                    .entry((text_levels.0, text_levels.1, texture.id()))
+                    .or_insert_with(|| {
+                        a.materials.add(EntityMaterial::new(
+                            Some(texture),
+                            LightMode::Cardinal,
+                            crate::draw::Alpha::Mask(0.1),
+                            0.1,
+                            text_lit,
+                            0,
+                        ))
+                    })
+                    .clone();
+                // Font pixels to sixteenths, y up as a sign's.
+                let display = Transform::from_scale(Vec3::new(1.0 / 16.0, -1.0 / 16.0, 1.0 / 16.0));
+                (a.meshes.add(mesh), material, part.transform, display)
+            }
+            Geometry::Item { item, flat } => {
+                let Some(items) = a.items.as_deref_mut() else {
+                    continue;
+                };
+                let id = item.strip_prefix("minecraft:").unwrap_or(item);
+                let Some(gpu) = items.get(id, "fixed", false, a.meshes, a.images, a.standard)
+                else {
+                    continue;
+                };
+                let texture = gpu.texture.clone();
+                let material = live
+                    .item_materials
+                    .entry((levels.0, levels.1, texture.id()))
+                    .or_insert_with(|| {
+                        a.materials.add(EntityMaterial::new(
+                            Some(texture),
+                            LightMode::Cardinal,
+                            crate::draw::Alpha::Mask(0.1),
+                            0.1,
+                            lit,
+                            0,
+                        ))
+                    })
+                    .clone();
+                let transform = match flat {
+                    Some(flat) if gpu.flat => *flat,
+                    _ => part.transform,
+                };
+                let display = crate::entities::item_display_transform(&gpu.transform("fixed"));
+                (gpu.mesh.clone(), material, transform, display)
+            }
+            _ => {
+                let Some(mesh) = part_mesh(&mut live.meshes, a.meshes, part, step) else {
+                    continue;
+                };
+                (mesh, material.clone(), part.transform, Transform::IDENTITY)
+            }
+        };
+        let entity = commands
+            .spawn((
+                Mesh3d(mesh),
+                crate::draw::Material3d(material),
+                place(origin, transform, &part.animation, ticks).mul_transform(display),
+                Visibility::Inherited,
+                ModPart,
+            ))
+            .id();
+        if let Some(parent) = parent {
+            commands.entity(parent).add_child(entity);
+        }
+        parts.push(LivePart {
+            entity,
+            transform,
+            display,
+            animation: part.animation.clone(),
+            scroll: step.map(|step| (part.clone(), step)),
+        });
+    }
+    parts
 }
 
 /// A sixteenths point as blocks.
@@ -583,8 +809,8 @@ fn geometry_quads(geometry: &Geometry) -> Option<(Vec<BakedQuad>, [f32; 4])> {
             let channel = |shift: u32| ((argb >> shift) & 0xFF) as f32 / 255.0;
             Some((quads, [channel(16), channel(8), channel(0), channel(24)]))
         }
-        // Drawn from the item's own mesh, not block quads.
-        Geometry::Item { .. } => None,
+        // Drawn from the item's own mesh or the font, not block quads.
+        Geometry::Item { .. } | Geometry::Text { .. } => None,
     }
 }
 

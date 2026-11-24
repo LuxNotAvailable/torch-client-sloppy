@@ -33,6 +33,83 @@ pub struct Registration {
     /// `create:fluid/honey_still`), so the client puts them in its atlas.
     #[serde(default)]
     pub sprites: Vec<String>,
+    /// Block ids (`mymod:maple_leaves`) whose tinted faces this plugin
+    /// colours ([`Plugin::block_tint`]).
+    #[serde(default)]
+    pub tinted_blocks: Vec<String>,
+    /// Entity type ids (`mymod:biplane`) this plugin draws
+    /// ([`Plugin::entity`]).
+    #[serde(default)]
+    pub entities: Vec<String>,
+    /// The mod's own packet channels (`mymod:sync_state`) this plugin
+    /// reads ([`Plugin::payload`]).
+    #[serde(default)]
+    pub channels: Vec<String>,
+}
+
+/// What a payload changed: the rigs to ask for again.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Redraw {
+    /// Entity ids whose [`Plugin::entity`] rigs change.
+    #[serde(default)]
+    pub entities: Vec<i32>,
+    /// Block entity positions whose [`Plugin::block_entity`] rigs change.
+    #[serde(default)]
+    pub block_entities: Vec<[i32; 3]>,
+}
+
+/// An entity as the plugin sees it, when it appears.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct EntityView {
+    /// Its type id (`mymod:biplane`).
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// The server's entity id (stable while it's in view).
+    pub id: i32,
+    /// The type's size, as the mod declares it (`EntityDimensions`).
+    #[serde(default)]
+    pub width: f32,
+    #[serde(default)]
+    pub height: f32,
+    /// The game time, in ticks, when this view was made.
+    #[serde(default)]
+    pub time: i64,
+}
+
+/// A block state, for hooks that depend on the state alone.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlockStateView {
+    /// Its block's id (`mymod:maple_leaves`).
+    pub block: String,
+    #[serde(default)]
+    pub props: BTreeMap<String, String>,
+}
+
+impl BlockStateView {
+    pub fn prop(&self, name: &str) -> Option<&str> {
+        self.props.get(name).map(String::as_str)
+    }
+}
+
+/// Where a block's tinted faces (model faces with a `tintindex`) take their
+/// colour: Java's `BlockColor`. The biome sources blend by position as
+/// vanilla's do; a fixed colour is the same everywhere.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Tint {
+    /// No tint: the texture as it is.
+    #[default]
+    None,
+    /// The biome's grass colour (grass blocks, ferns).
+    Grass,
+    /// The biome's foliage colour (most leaves, vines).
+    Foliage,
+    /// The biome's dry foliage colour (leaf litter).
+    DryFoliage,
+    /// The biome's water colour.
+    Water,
+    /// A fixed colour, `0xRRGGBB` (birch and spruce leaves use these).
+    Color(u32),
 }
 
 /// A block entity as the plugin sees it.
@@ -203,6 +280,23 @@ pub enum Geometry {
         #[serde(default)]
         uv: Option<[f32; 4]>,
     },
+    /// Text in the game's font, as a sign draws it: in the part's XY
+    /// plane, readable from `+Z`, each line centred on the origin and the
+    /// lines centred as a block, one font pixel a sixteenth (a line is 10
+    /// high). Scale it with the part's transform.
+    Text {
+        /// Lines, with `§` formatting codes (colours, bold, ...).
+        lines: Vec<String>,
+        /// ARGB for text with no colour code.
+        #[serde(default = "black")]
+        color: u32,
+        /// A drop shadow, as the HUD draws text.
+        #[serde(default)]
+        shadow: bool,
+        /// Full bright, as glowing sign text.
+        #[serde(default)]
+        glowing: bool,
+    },
     /// An item's model as `ItemDisplayContext.FIXED` draws it (item frames,
     /// Create's belts): its `fixed` display transform, centred on the
     /// part's origin, the block's corner before the part's transform (so
@@ -224,6 +318,10 @@ fn all_faces() -> u8 {
 
 fn white() -> u32 {
     0xFFFF_FFFF
+}
+
+fn black() -> u32 {
+    0xFF00_0000
 }
 
 /// Scale about `pivot`, rotate about `pivot` (X, then Y, then Z), then
@@ -305,6 +403,30 @@ pub trait Plugin {
 
     /// The visuals of a block entity of a type it registered.
     fn block_entity(&mut self, view: &BlockEntityView) -> Rig;
+
+    /// The visuals of an entity of a type it registered in `entities`.
+    /// Parts are in the entity's own frame: the origin at its feet, `+Z`
+    /// the way it faces, sixteenths of a block; the client places the rig
+    /// at the entity and turns it by its yaw every frame.
+    fn entity(&mut self, view: &EntityView) -> Rig {
+        let _ = view;
+        Rig::default()
+    }
+
+    /// A packet on one of its `channels`, as the mod's server side wrote it
+    /// (read it with [`buf::Reader`]). Keep what it says; the client asks
+    /// again for the rigs it names.
+    fn payload(&mut self, channel: &str, data: &[u8]) -> Redraw {
+        let _ = (channel, data);
+        Redraw::default()
+    }
+
+    /// The tint of a block it registered in `tinted_blocks`. Asked once per
+    /// block state and kept, so it can't depend on position or time.
+    fn block_tint(&mut self, block: &BlockStateView) -> Tint {
+        let _ = block;
+        Tint::None
+    }
 }
 
 /// A block in the world, as `block_at` reports it.
@@ -314,6 +436,8 @@ pub struct BlockAt {
     #[serde(default)]
     pub props: BTreeMap<String, String>,
 }
+
+pub mod buf;
 
 /// Calls into the client.
 pub mod host {
@@ -392,6 +516,14 @@ pub mod abi {
         drop(unsafe { Box::from_raw(slice) });
     }
 
+    /// A payload as the host passes it: the channel's length (two bytes,
+    /// big-endian), the channel, then the data.
+    pub fn split_payload(input: &[u8]) -> Option<(&str, &[u8])> {
+        let len = u16::from_be_bytes(input.get(..2)?.try_into().ok()?) as usize;
+        let channel = std::str::from_utf8(input.get(2..2 + len)?).ok()?;
+        Some((channel, input.get(2 + len..)?))
+    }
+
     /// # Safety
     /// `ptr` and `len` name a live buffer from [`alloc`].
     pub unsafe fn input<'a>(ptr: i32, len: i32) -> &'a [u8] {
@@ -443,6 +575,45 @@ macro_rules! export_plugin {
                 }
             };
             $crate::abi::pack(::serde_json::to_vec(&rig).unwrap_or_default())
+        }
+
+        #[unsafe(no_mangle)]
+        pub extern "C" fn torch_entity(ptr: i32, len: i32) -> i64 {
+            // SAFETY: the host wrote the view into a buffer from torch_alloc.
+            let input = unsafe { $crate::abi::input(ptr, len) };
+            let rig = match ::serde_json::from_slice::<$crate::EntityView>(input) {
+                Ok(view) => PLUGIN.with(|p| p.borrow_mut().entity(&view)),
+                Err(e) => {
+                    $crate::host::log_line(&format!("unreadable entity view: {e}"));
+                    $crate::Rig::default()
+                }
+            };
+            $crate::abi::pack(::serde_json::to_vec(&rig).unwrap_or_default())
+        }
+
+        #[unsafe(no_mangle)]
+        pub extern "C" fn torch_payload(ptr: i32, len: i32) -> i64 {
+            // SAFETY: the host wrote the payload into a buffer from torch_alloc.
+            let input = unsafe { $crate::abi::input(ptr, len) };
+            let redraw = match $crate::abi::split_payload(input) {
+                Some((channel, data)) => PLUGIN.with(|p| p.borrow_mut().payload(channel, data)),
+                None => $crate::Redraw::default(),
+            };
+            $crate::abi::pack(::serde_json::to_vec(&redraw).unwrap_or_default())
+        }
+
+        #[unsafe(no_mangle)]
+        pub extern "C" fn torch_block_tint(ptr: i32, len: i32) -> i64 {
+            // SAFETY: the host wrote the view into a buffer from torch_alloc.
+            let input = unsafe { $crate::abi::input(ptr, len) };
+            let tint = match ::serde_json::from_slice::<$crate::BlockStateView>(input) {
+                Ok(view) => PLUGIN.with(|p| p.borrow_mut().block_tint(&view)),
+                Err(e) => {
+                    $crate::host::log_line(&format!("unreadable block state view: {e}"));
+                    $crate::Tint::None
+                }
+            };
+            $crate::abi::pack(::serde_json::to_vec(&tint).unwrap_or_default())
         }
     };
 }

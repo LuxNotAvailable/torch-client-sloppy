@@ -29,6 +29,9 @@ pub(super) struct Runtime {
     alloc: TypedFunc<i32, i32>,
     free: TypedFunc<(i32, i32), ()>,
     block_entity: Option<TypedFunc<(i32, i32), i64>>,
+    block_tint: Option<TypedFunc<(i32, i32), i64>>,
+    entity: Option<TypedFunc<(i32, i32), i64>>,
+    payload: Option<TypedFunc<(i32, i32), i64>>,
     pub(super) registration: torch_mod_api::Registration,
 }
 
@@ -144,12 +147,25 @@ impl Runtime {
         let block_entity = instance
             .get_typed_func::<(i32, i32), i64>(&store, "torch_block_entity")
             .ok();
+        // Plugins built before the tint hook don't export it.
+        let block_tint = instance
+            .get_typed_func::<(i32, i32), i64>(&store, "torch_block_tint")
+            .ok();
+        let entity = instance
+            .get_typed_func::<(i32, i32), i64>(&store, "torch_entity")
+            .ok();
+        let payload = instance
+            .get_typed_func::<(i32, i32), i64>(&store, "torch_payload")
+            .ok();
         let mut runtime = Runtime {
             store,
             memory,
             alloc,
             free,
             block_entity,
+            block_tint,
+            entity,
+            payload,
             registration: torch_mod_api::Registration::default(),
         };
         let packed = runtime.call_fuelled(|store| init.call(store, ()))?;
@@ -186,6 +202,48 @@ impl Runtime {
             .write(&mut self.store, ptr.max(0) as usize, input)
             .map_err(|e| e.to_string())?;
         Ok((ptr, len))
+    }
+
+    /// A mod packet on `channel`, for the plugin to keep.
+    pub(super) fn payload(
+        &mut self,
+        channel: &str,
+        data: &[u8],
+    ) -> Result<torch_mod_api::Redraw, String> {
+        let func = self.payload.ok_or("it has no torch_payload")?;
+        let name = u16::try_from(channel.len()).map_err(|_| "channel name too long")?;
+        let mut input = Vec::with_capacity(2 + channel.len() + data.len());
+        input.extend(name.to_be_bytes());
+        input.extend(channel.as_bytes());
+        input.extend(data);
+        let (ptr, len) = self.put(&input)?;
+        let packed = self.call_fuelled(|store| func.call(store, (ptr, len)));
+        let free = self.free;
+        let _ = self.call_fuelled(|store| free.call(store, (ptr, len)));
+        let bytes = self.take_result(packed?)?;
+        serde_json::from_slice(&bytes).map_err(|e| format!("its redraw: {e}"))
+    }
+
+    /// An entity's rig, from its view as JSON.
+    pub(super) fn entity(&mut self, view: &[u8]) -> Result<torch_mod_api::Rig, String> {
+        let func = self.entity.ok_or("it has no torch_entity")?;
+        let (ptr, len) = self.put(view)?;
+        let packed = self.call_fuelled(|store| func.call(store, (ptr, len)));
+        let free = self.free;
+        let _ = self.call_fuelled(|store| free.call(store, (ptr, len)));
+        let bytes = self.take_result(packed?)?;
+        serde_json::from_slice(&bytes).map_err(|e| format!("its entity rig: {e}"))
+    }
+
+    /// A block state's tint, from its view as JSON.
+    pub(super) fn block_tint(&mut self, view: &[u8]) -> Result<torch_mod_api::Tint, String> {
+        let func = self.block_tint.ok_or("it has no torch_block_tint")?;
+        let (ptr, len) = self.put(view)?;
+        let packed = self.call_fuelled(|store| func.call(store, (ptr, len)));
+        let free = self.free;
+        let _ = self.call_fuelled(|store| free.call(store, (ptr, len)));
+        let bytes = self.take_result(packed?)?;
+        serde_json::from_slice(&bytes).map_err(|e| format!("its tint: {e}"))
     }
 
     /// A block entity's rig, from its view as JSON. `near` answers the

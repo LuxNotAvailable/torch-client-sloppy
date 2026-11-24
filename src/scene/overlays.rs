@@ -532,8 +532,11 @@ pub(crate) fn update_hitboxes(
         colors.push(blue);
     };
     for anim in view.entities.iter() {
-        // Its type's dumped size (`entities::modded`).
-        if let Some(raw) = modded.get(&anim.id) {
+        // Its type's dumped size (`entities::modded`); none when a plugin
+        // draws it.
+        if let Some(raw) = modded.get(&anim.id)
+            && !crate::protocol::modded_entity(*raw).is_some_and(crate::modapi::draws_entity)
+        {
             let size = crate::entities::modded::size_of_raw(*raw);
             boxed_placeholder(anim.position(partial), size, &mut positions, &mut colors);
         }
