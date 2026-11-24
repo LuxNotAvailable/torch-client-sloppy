@@ -234,12 +234,17 @@ fn sync_entity_rigs(
             super::draws_entity(name).then_some((a.id, (i, name)))
         })
         .collect();
-    // Rigs a mod packet changed: dropped here, asked for again below.
+    super::keep_entity_data(|id| modded.contains_key(&id));
+    // Rigs a mod packet or new entity data changed: dropped here, asked for
+    // again below.
     let redraw = super::take_entity_redraws();
     live.entities.retain(|id, e| {
         let keep = drawn.contains_key(id) && !redraw.contains(id);
         if !keep {
             commands.entity(e.root).despawn();
+            if !drawn.contains_key(id) {
+                super::forget_entity(*id);
+            }
         }
         keep
     });
@@ -285,6 +290,7 @@ fn sync_entity_rigs(
             width: size.width,
             height: size.height,
             time: view.game_time as i64,
+            data: super::entity_data(*id),
         };
         let rig = match super::entity(&entity_view) {
             Some(Ok(rig)) => rig,

@@ -74,6 +74,13 @@ pub struct EntityView {
     /// The game time, in ticks, when this view was made.
     #[serde(default)]
     pub time: i64,
+    /// Its synced entity data the client could read, by data index
+    /// (`{"8": 3, "9": [0.0, 1.5, 0.0]}`): numbers, booleans, strings,
+    /// positions, vectors, UUIDs (hex), poses and NBT. The client asks for
+    /// the rig again when it changes. Read the mod's `EntityDataAccessor`
+    /// ids for the indices.
+    #[serde(default)]
+    pub data: Value,
 }
 
 /// A block state, for hooks that depend on the state alone.

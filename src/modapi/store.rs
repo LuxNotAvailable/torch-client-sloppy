@@ -126,6 +126,7 @@ pub fn kind_at(pos: [i32; 3]) -> Option<String> {
 /// A new connection: nothing from the last one stays.
 pub fn reset() {
     *STORE.lock() = Store::default();
+    super::ENTITY_DATA.lock().clear();
     *PUBLISHED.write() = Arc::default();
 }
 

@@ -125,6 +125,45 @@ pub fn on_payload(channel: &str, data: &[u8]) {
     REDRAW_ENTITIES.lock().extend(redraw.entities);
 }
 
+/// Modded entities' synced data the client could read, by entity id, then
+/// data index (`"8"`): what `EntityView::data` carries.
+static ENTITY_DATA: std::sync::LazyLock<
+    Mutex<HashMap<i32, serde_json::Map<String, serde_json::Value>>>,
+> = std::sync::LazyLock::new(Default::default);
+
+/// A modded entity's data values arrived (the protocol hop reads the plain
+/// kinds): kept, and its rig asked for again.
+pub fn on_entity_data(id: i32, values: Vec<(u8, serde_json::Value)>) {
+    {
+        let mut data = ENTITY_DATA.lock();
+        let entry = data.entry(id).or_default();
+        for (index, value) in values {
+            entry.insert(index.to_string(), value);
+        }
+    }
+    REDRAW_ENTITIES.lock().push(id);
+}
+
+/// What the client knows of a modded entity's data.
+pub(crate) fn entity_data(id: i32) -> serde_json::Value {
+    ENTITY_DATA
+        .lock()
+        .get(&id)
+        .map_or(serde_json::Value::Null, |m| {
+            serde_json::Value::Object(m.clone())
+        })
+}
+
+/// Forgets an entity's data (it left).
+pub(crate) fn forget_entity(id: i32) {
+    ENTITY_DATA.lock().remove(&id);
+}
+
+/// Forgets the data of entities the client no longer tracks.
+pub(crate) fn keep_entity_data(tracked: impl Fn(i32) -> bool) {
+    ENTITY_DATA.lock().retain(|id, _| tracked(*id));
+}
+
 /// Entity ids whose rigs a payload changed since the last call.
 pub(crate) fn take_entity_redraws() -> Vec<i32> {
     std::mem::take(&mut *REDRAW_ENTITIES.lock())

@@ -852,6 +852,9 @@ fn entity_data(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
         .as_ref()
         .and_then(|e| e.get(&id).copied());
     let moves = kind.and_then(|kind| tables.moves.get(&kind));
+    // A modded entity: the values this hop can read go to the mod API
+    // (`modapi::on_entity_data`), by data index, before they're dropped.
+    let mut modded: Vec<(u8, serde_json::Value)> = Vec::new();
     loop {
         let index = r.u8()?;
         if index == 0xFF {
@@ -869,6 +872,11 @@ fn entity_data(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
             Value::Stop => break,
         };
         let Some(moved) = moves.and_then(|m| m.get(usize::from(index))?.as_ref()) else {
+            if kind.is_none()
+                && let Some(value) = data_json(old, &bytes)
+            {
+                modded.push((index, value));
+            }
             if last {
                 break;
             }
@@ -888,7 +896,48 @@ fn entity_data(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
         }
     }
     out.push(0xFF);
+    if !modded.is_empty() {
+        crate::modapi::on_entity_data(id, modded);
+    }
     Some(out.into())
+}
+
+/// An entity data value as JSON, for a mod port: the plain kinds (numbers,
+/// text, positions, vectors, UUIDs, NBT, poses); `None` for the rest.
+fn data_json(serializer: &str, bytes: &[u8]) -> Option<serde_json::Value> {
+    use serde_json::{Value as J, json};
+    let mut r = torch_mod_api::buf::Reader::new(bytes);
+    let floats = |r: &mut torch_mod_api::buf::Reader, n: usize| -> Option<J> {
+        (0..n)
+            .map(|_| r.f32().map(|f| json!(f)))
+            .collect::<Option<Vec<_>>>()
+            .map(J::Array)
+    };
+    Some(match serializer {
+        "BYTE" => json!(r.u8()?),
+        "BOOLEAN" => json!(r.bool()?),
+        "INT" | "DIRECTION" | "POSE" | "BLOCK_STATE" => json!(r.varint()?),
+        "LONG" => json!(r.varlong()?),
+        "FLOAT" => json!(r.f32()?),
+        "STRING" => json!(r.string()?),
+        "ROTATIONS" | "VECTOR3" => floats(&mut r, 3)?,
+        "QUATERNION" => floats(&mut r, 4)?,
+        "BLOCK_POS" => json!(r.block_pos()?),
+        "OPTIONAL_BLOCK_POS" => match r.bool()? {
+            true => json!(r.block_pos()?),
+            false => J::Null,
+        },
+        "OPTIONAL_UUID" => match r.bool()? {
+            true => json!(format!("{:032x}", r.uuid()?)),
+            false => J::Null,
+        },
+        "OPTIONAL_UNSIGNED_INT" | "OPTIONAL_BLOCK_STATE" => match r.varint()? {
+            0 => J::Null,
+            v => json!(v - 1),
+        },
+        "COMPOUND_TAG" => r.nbt()?,
+        _ => return None,
+    })
 }
 
 /// Stacks walked one by one. Once one can't be read to its end, the rest
@@ -1763,6 +1812,27 @@ mod tests {
     use super::*;
     use crate::protocol::hop::Hop;
     use crate::protocol::wire::write_varint;
+
+    #[test]
+    fn a_modded_entity_s_plain_data_reads_as_json() {
+        use serde_json::json;
+        assert_eq!(data_json("INT", &[0xAC, 0x02]), Some(json!(300)));
+        assert_eq!(data_json("BOOLEAN", &[1]), Some(json!(true)));
+        let mut floats = Vec::new();
+        for f in [1.0f32, -2.5, 0.25] {
+            floats.extend(f.to_be_bytes());
+        }
+        assert_eq!(
+            data_json("VECTOR3", &floats),
+            Some(json!([1.0, -2.5, 0.25]))
+        );
+        assert_eq!(
+            data_json("OPTIONAL_UNSIGNED_INT", &[0]),
+            Some(serde_json::Value::Null)
+        );
+        assert_eq!(data_json("OPTIONAL_UNSIGNED_INT", &[5]), Some(json!(4)));
+        assert_eq!(data_json("PARTICLE", &[1, 2]), None);
+    }
 
     /// Tests that reset or read the per-connection entity map run one at a time.
     static ENTITY_TEST: Mutex<()> = Mutex::new(());

@@ -43,7 +43,7 @@ A plugin registers handlers in `init`:
 | Handler | Registered for | Called | Returns |
 |---|---|---|---|
 | `block_entity` | block entity type ids (`create:kinetic`) | when one appears, its data (NBT) or its block state changes, a face neighbour's block state changes, or a modded block entity appears beside it | a `Rig` |
-| `entity` | entity type ids in `entities` (`mymod:biplane`) | once when an entity of the type appears | a `Rig`, in the entity's own frame |
+| `entity` | entity type ids in `entities` (`mymod:biplane`) | when an entity of the type appears, and when its data or a `payload` changes it | a `Rig`, in the entity's own frame |
 | `payload` | the mod's packet channels in `channels` (`mymod:sync_state`) | each play-phase packet the server sends on one | a `Redraw`: entity ids and block entity positions whose rigs to ask for again |
 | `block_tint` | block ids in `tinted_blocks` (`mymod:maple_leaves`) | once per block state, then kept | a `Tint`: `none`, `grass`, `foliage`, `dry_foliage`, `water` (the biome's colour, blended by position) or `color` (`0xRRGGBB`) |
 
@@ -67,18 +67,20 @@ session) and reads it when the client asks for the rigs the `Redraw`
 names. Payloads reach the plugin in arrival order, on the network thread.
 
 `entity` gets an `EntityView` (`{"type": ..., "id": ..., "width": ...,
-"height": ..., "time": ...}`; the size is the type's own). Its parts are in
+"height": ..., "time": ..., "data": {...}}`; the size is the type's own). Its parts are in
 the entity's frame: the origin at its feet, `+Z` the way it faces,
 sixteenths of a block. The client places the rig at the entity every frame
 and turns it by the entity's yaw; animations play as on block entities. An
-entity a plugin draws loses the placeholder box. v1 sends no entity data
-(synced values or mod payloads), so a rig can't follow an entity's state
-yet.
+entity a plugin draws loses the placeholder box. `data` holds the synced
+entity data the client could read, by data index (numbers, booleans,
+strings, positions, vectors, UUIDs, poses, NBT; item stacks, text and
+particles are left out); a change asks for the rig again. State a mod
+sends in its own packets comes through `payload`.
 
 `block_tint` gets a `BlockStateView` (`{"block": ..., "props": {...}}`); it
 can't depend on position or time, since the answer is kept per state.
 
-Planned for later versions: entity data (synced values) in the view, screens and HUD elements, a
+Planned for later versions: screens and HUD elements, a
 per-tick hook, item renderers.
 
 ### What a plugin gets: `BlockEntityView`
