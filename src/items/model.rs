@@ -296,6 +296,52 @@ pub fn strip_namespace(name: &str) -> &str {
 
 /// Where a `folder/namespace:path` reference lives: under the root for
 /// `minecraft`, else beside it in `assets/<namespace>`.
+/// A modded item's definition (`items/<ns>:<path>.json`) takes the colours
+/// its plugin gives its tint indices (`modapi::item_tints`): Java's
+/// `ItemColor`, on every model in it that names none of its own.
+fn plugin_tints(relative: &str, json: Json) -> Json {
+    let Some(id) = relative
+        .strip_prefix("items/")
+        .and_then(|r| r.strip_suffix(".json"))
+        .filter(|id| id.contains(':') && !id.starts_with("minecraft:"))
+    else {
+        return json;
+    };
+    match crate::modapi::item_tints(id) {
+        Some(tints) => with_tints(json, &tints),
+        None => json,
+    }
+}
+
+fn with_tints(json: Json, tints: &[u32]) -> Json {
+    match json {
+        Json::Obj(fields) => {
+            let model = fields.iter().any(|(k, v)| {
+                k == "type" && v.as_str().is_some_and(|t| strip_namespace(t) == "model")
+            });
+            let mut fields: Vec<(String, Json)> = fields
+                .into_iter()
+                .map(|(k, v)| (k, with_tints(v, tints)))
+                .collect();
+            if model && !fields.iter().any(|(k, _)| k == "tints") {
+                let constant = |rgb: &u32| {
+                    Json::Obj(vec![
+                        ("type".into(), Json::Str("minecraft:constant".into())),
+                        ("value".into(), Json::Num(f64::from(rgb & 0xFF_FFFF))),
+                    ])
+                };
+                fields.push((
+                    "tints".into(),
+                    Json::Arr(tints.iter().map(constant).collect()),
+                ));
+            }
+            Json::Obj(fields)
+        }
+        Json::Arr(items) => Json::Arr(items.into_iter().map(|j| with_tints(j, tints)).collect()),
+        other => other,
+    }
+}
+
 fn locate(root: &Path, relative: &str) -> PathBuf {
     if let Some((folder, rest)) = relative.split_once('/')
         && let Some((namespace, tail)) = rest.split_once(':')
@@ -362,6 +408,7 @@ impl Assets {
         }
         let parsed = crate::platform::assets::read_to_string(locate(&self.root, relative))
             .and_then(|text| Json::parse(&text))
+            .map(|json| plugin_tints(relative, json))
             .map(Arc::new);
         self.files
             .lock()
@@ -643,6 +690,34 @@ pub(crate) fn parse_elements(node: &Json) -> Vec<Elem> {
 
 #[cfg(test)]
 mod namespace_tests {
+    #[test]
+    fn plugin_tints_go_on_every_model_without_its_own() {
+        let json = Json::parse(
+            r#"{"model": {"type": "minecraft:composite", "models": [
+                {"type": "minecraft:model", "model": "m:item/egg"},
+                {"type": "model", "model": "m:item/x", "tints": []}]}}"#,
+        )
+        .unwrap();
+        let out = super::with_tints(json, &[0x3C_44AA, 0xF9_801D]);
+        let models = out.get("model").unwrap().get("models").unwrap();
+        let tints = models.idx(0).unwrap().get("tints").unwrap();
+        assert_eq!(tints.arr().len(), 2);
+        assert_eq!(
+            tints.idx(1).unwrap().get("value"),
+            Some(&Json::Num(f64::from(0xF9_801Du32)))
+        );
+        // A model with tints of its own keeps them.
+        assert!(
+            models
+                .idx(1)
+                .unwrap()
+                .get("tints")
+                .unwrap()
+                .arr()
+                .is_empty()
+        );
+    }
+
     use super::*;
 
     #[test]

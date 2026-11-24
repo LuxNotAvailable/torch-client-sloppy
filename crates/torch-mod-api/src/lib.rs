@@ -49,6 +49,10 @@ pub struct Registration {
     /// ([`Plugin::screen`]): Java's `MenuScreens.register`.
     #[serde(default)]
     pub screens: Vec<String>,
+    /// Item ids (`mymod:custom_egg`) whose tinted layers this plugin
+    /// colours ([`Plugin::item_tints`]): Java's `ItemColor`.
+    #[serde(default)]
+    pub tinted_items: Vec<String>,
 }
 
 /// What a payload changed: the rigs to ask for again.
@@ -407,6 +411,13 @@ pub enum Animation {
     Path { points: Vec<[f32; 4]> },
 }
 
+/// An item, for hooks that depend on its type alone.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ItemView {
+    /// Its id (`mymod:custom_egg`).
+    pub item: String,
+}
+
 /// A mod's menu screen as the plugin sees it: when it opens, and again
 /// whenever its container data or slot count changes.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -538,6 +549,15 @@ pub trait Plugin {
     fn block_tint(&mut self, block: &BlockStateView) -> Tint {
         let _ = block;
         Tint::None
+    }
+
+    /// The colours of an item it registered in `tinted_items`, by tint
+    /// index (a model face's `tintindex`), each `0xRRGGBB`. Asked once per
+    /// item and kept, so it can't depend on the stack's data; an index past
+    /// the end stays untinted.
+    fn item_tints(&mut self, item: &ItemView) -> Vec<u32> {
+        let _ = item;
+        Vec::new()
     }
 
     /// The screen of a menu type it registered in `screens`. `None` leaves
@@ -733,6 +753,20 @@ macro_rules! export_plugin {
                 }
             };
             $crate::abi::pack(::serde_json::to_vec(&tint).unwrap_or_default())
+        }
+
+        #[unsafe(no_mangle)]
+        pub extern "C" fn torch_item_tints(ptr: i32, len: i32) -> i64 {
+            // SAFETY: the host wrote the view into a buffer from torch_alloc.
+            let input = unsafe { $crate::abi::input(ptr, len) };
+            let tints = match ::serde_json::from_slice::<$crate::ItemView>(input) {
+                Ok(view) => PLUGIN.with(|p| p.borrow_mut().item_tints(&view)),
+                Err(e) => {
+                    $crate::host::log_line(&format!("unreadable item view: {e}"));
+                    Vec::new()
+                }
+            };
+            $crate::abi::pack(::serde_json::to_vec(&tints).unwrap_or_default())
         }
 
         #[unsafe(no_mangle)]

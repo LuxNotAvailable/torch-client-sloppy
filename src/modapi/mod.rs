@@ -41,6 +41,10 @@ struct Plugins {
     channels: HashMap<String, usize>,
     /// Menu type id to the plugin that draws its screen.
     screens: HashMap<String, usize>,
+    /// Item id to the plugin that tints it.
+    tinted_items: HashMap<String, usize>,
+    /// Item tints asked so far.
+    item_tints: HashMap<String, Vec<u32>>,
     /// Tints asked so far, by modded table generation and state id.
     tints: HashMap<(u32, u16), torch_mod_api::Tint>,
 }
@@ -84,6 +88,9 @@ pub fn load(plugins: Vec<(String, Vec<u8>)>) {
                 }
                 for menu in &registration.screens {
                     out.screens.entry(menu.clone()).or_insert(index);
+                }
+                for item in &registration.tinted_items {
+                    out.tinted_items.entry(item.clone()).or_insert(index);
                 }
                 crate::log_info!(
                     "modapi",
@@ -217,6 +224,27 @@ fn screen(view: &torch_mod_api::ScreenView) -> Option<torch_mod_api::Screen> {
     }
 }
 
+/// The colours a plugin gives an item's tint indices (`Plugin::item_tints`),
+/// or `None` when no plugin tints it. Asked once per item and kept.
+pub fn item_tints(item: &str) -> Option<Vec<u32>> {
+    let mut plugins = PLUGINS.lock();
+    let index = *plugins.tinted_items.get(item)?;
+    if let Some(tints) = plugins.item_tints.get(item) {
+        return Some(tints.clone());
+    }
+    let view = torch_mod_api::ItemView {
+        item: item.to_owned(),
+    };
+    let input = serde_json::to_vec(&view).ok()?;
+    let loaded = plugins.loaded.get_mut(index)?;
+    let tints = loaded.runtime.item_tints(&input).unwrap_or_else(|e| {
+        crate::log_warn!("modapi", "{}: tints of {item}: {e}", loaded.name);
+        Vec::new()
+    });
+    plugins.item_tints.insert(item.to_owned(), tints.clone());
+    Some(tints)
+}
+
 /// The tint a plugin gives a modded block state (`Plugin::block_tint`), or
 /// `None` when no plugin tints its block. Asked once per state and kept.
 pub fn block_tint(state: u16, block: &str, props: &[(&str, &str)]) -> Option<torch_mod_api::Tint> {
@@ -344,6 +372,16 @@ mod tests {
         };
         // Its type's size, in sixteenths about its feet.
         assert_eq!((*from, *to), ([-8.0, 0.0, -8.0], [8.0, 8.0, 8.0]));
+    }
+
+    #[test]
+    fn the_example_plugin_colours_its_egg() {
+        let mut runtime = runtime::Runtime::load("example", EXAMPLE).unwrap();
+        assert_eq!(runtime.registration.tinted_items, ["example:drone_egg"]);
+        let tints = runtime
+            .item_tints(br#"{"item": "example:drone_egg"}"#)
+            .unwrap();
+        assert_eq!(tints, [0x3C_44AA, 0xF9_801D]);
     }
 
     #[test]

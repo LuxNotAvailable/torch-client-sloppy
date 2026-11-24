@@ -33,6 +33,7 @@ pub(super) struct Runtime {
     entity: Option<TypedFunc<(i32, i32), i64>>,
     payload: Option<TypedFunc<(i32, i32), i64>>,
     screen: Option<TypedFunc<(i32, i32), i64>>,
+    item_tints: Option<TypedFunc<(i32, i32), i64>>,
     pub(super) registration: torch_mod_api::Registration,
 }
 
@@ -161,6 +162,9 @@ impl Runtime {
         let screen = instance
             .get_typed_func::<(i32, i32), i64>(&store, "torch_screen")
             .ok();
+        let item_tints = instance
+            .get_typed_func::<(i32, i32), i64>(&store, "torch_item_tints")
+            .ok();
         let mut runtime = Runtime {
             store,
             memory,
@@ -171,6 +175,7 @@ impl Runtime {
             entity,
             payload,
             screen,
+            item_tints,
             registration: torch_mod_api::Registration::default(),
         };
         let packed = runtime.call_fuelled(|store| init.call(store, ()))?;
@@ -249,6 +254,17 @@ impl Runtime {
         let _ = self.call_fuelled(|store| free.call(store, (ptr, len)));
         let bytes = self.take_result(packed?)?;
         serde_json::from_slice(&bytes).map_err(|e| format!("its screen: {e}"))
+    }
+
+    /// An item's tint colours, from its view as JSON.
+    pub(super) fn item_tints(&mut self, view: &[u8]) -> Result<Vec<u32>, String> {
+        let func = self.item_tints.ok_or("it has no torch_item_tints")?;
+        let (ptr, len) = self.put(view)?;
+        let packed = self.call_fuelled(|store| func.call(store, (ptr, len)));
+        let free = self.free;
+        let _ = self.call_fuelled(|store| free.call(store, (ptr, len)));
+        let bytes = self.take_result(packed?)?;
+        serde_json::from_slice(&bytes).map_err(|e| format!("its item tints: {e}"))
     }
 
     /// A block state's tint, from its view as JSON.
