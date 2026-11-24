@@ -53,6 +53,10 @@ pub struct Registration {
     /// colours ([`Plugin::item_tints`]): Java's `ItemColor`.
     #[serde(default)]
     pub tinted_items: Vec<String>,
+    /// Fluid ids (`mymod:honey`, the source fluid) whose looks this plugin
+    /// gives ([`Plugin::fluid`]): NeoForge's `IClientFluidTypeExtensions`.
+    #[serde(default)]
+    pub fluids: Vec<String>,
 }
 
 /// What a payload changed: the rigs to ask for again.
@@ -418,6 +422,28 @@ pub struct ItemView {
     pub item: String,
 }
 
+/// A fluid, by its id (`mymod:honey`; its flowing form asks as the source).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FluidView {
+    pub fluid: String,
+}
+
+/// How a fluid draws in the world: `getStillTexture`,
+/// `getFlowingTexture` and `getTintColor`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FluidLook {
+    /// Block atlas sprites (`mymod:block/honey_still`).
+    pub still: String,
+    pub flowing: String,
+    /// `0xRRGGBB` the textures are multiplied by; white when left out.
+    #[serde(default = "white_rgb")]
+    pub tint: u32,
+}
+
+fn white_rgb() -> u32 {
+    0xFF_FFFF
+}
+
 /// A mod's menu screen as the plugin sees it: when it opens, and again
 /// whenever its container data or slot count changes.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -558,6 +584,14 @@ pub trait Plugin {
     fn item_tints(&mut self, item: &ItemView) -> Vec<u32> {
         let _ = item;
         Vec::new()
+    }
+
+    /// The look of a fluid it registered in `fluids`. Asked once per
+    /// fluid and kept; `None` leaves it to the client's guess from the
+    /// mod's texture names.
+    fn fluid(&mut self, fluid: &FluidView) -> Option<FluidLook> {
+        let _ = fluid;
+        None
     }
 
     /// The screen of a menu type it registered in `screens`. `None` leaves
@@ -753,6 +787,20 @@ macro_rules! export_plugin {
                 }
             };
             $crate::abi::pack(::serde_json::to_vec(&tint).unwrap_or_default())
+        }
+
+        #[unsafe(no_mangle)]
+        pub extern "C" fn torch_fluid(ptr: i32, len: i32) -> i64 {
+            // SAFETY: the host wrote the view into a buffer from torch_alloc.
+            let input = unsafe { $crate::abi::input(ptr, len) };
+            let look = match ::serde_json::from_slice::<$crate::FluidView>(input) {
+                Ok(view) => PLUGIN.with(|p| p.borrow_mut().fluid(&view)),
+                Err(e) => {
+                    $crate::host::log_line(&format!("unreadable fluid view: {e}"));
+                    None
+                }
+            };
+            $crate::abi::pack(::serde_json::to_vec(&look).unwrap_or_default())
         }
 
         #[unsafe(no_mangle)]

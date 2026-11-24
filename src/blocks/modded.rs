@@ -64,6 +64,24 @@ pub struct Fact {
     pub jump_factor: f32,
     /// The random offset it's drawn at (flowers, grass).
     pub offset: crate::blocks::rand::ShapeOffset,
+    /// Its fluid (`FluidState`), if any: a fluid block's own, or the water
+    /// a waterlogged block holds.
+    pub fluid: Option<FluidFact>,
+}
+
+/// A state's fluid: its type (`create:honey`, `minecraft:water`) and
+/// amount (1 to 8; 8 for a source).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FluidFact {
+    pub kind: &'static str,
+    pub amount: u8,
+}
+
+fn parse_fluid(v: &Value) -> Option<FluidFact> {
+    Some(FluidFact {
+        kind: intern(v["type"].as_str()?),
+        amount: v["amount"].as_u64().unwrap_or(8).clamp(1, 8) as u8,
+    })
 }
 
 /// A dumped offset: `false`, or `{vertical, max_horizontal, max_vertical}`.
@@ -215,6 +233,7 @@ impl Dump {
                     speed_factor,
                     jump_factor,
                     offset: parse_offset(&f["offset"]),
+                    fluid: parse_fluid(&f["fluid"]),
                 };
                 states.push(ModdedStateRow {
                     props,
@@ -612,6 +631,25 @@ pub fn load_packages(packages: &[(String, String)]) {
         }
     }
     *DUMP.write() = Some(Arc::new(merged));
+    super::modded_fluids::clear();
+}
+
+/// Every modded fluid type the packages' states hold (`create:honey`).
+pub fn fluid_types() -> Vec<&'static str> {
+    let Some(dump) = DUMP.read().clone() else {
+        return Vec::new();
+    };
+    let mut out: Vec<&'static str> = dump
+        .blocks
+        .values()
+        .flatten()
+        .filter_map(|row| row.fact.fluid)
+        .map(|f| f.kind)
+        .filter(|k| !k.starts_with("minecraft:"))
+        .collect();
+    out.sort_unstable();
+    out.dedup();
+    out
 }
 
 /// A modded block's sound type, by its name (`create:cogwheel`).

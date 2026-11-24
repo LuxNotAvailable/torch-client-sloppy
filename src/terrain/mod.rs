@@ -91,8 +91,18 @@ pub enum BlockGeom {
         still: u32,
         flow: u32,
         lava: bool,
+        /// Which fluid, for joining neighbours: [`FLUID_WATER`],
+        /// [`FLUID_LAVA`], or a modded fluid's slot past them.
+        kind: u8,
+        /// A modded fluid's `0xRRGGBB` tint; water's comes from its biome.
+        tint: u32,
     },
 }
+
+pub const FLUID_WATER: u8 = 0;
+pub const FLUID_LAVA: u8 = 1;
+/// The first modded fluid kind; six follow (`blocks::modded_fluids::slot`).
+pub const FLUID_MODDED: u8 = 2;
 
 pub fn fluid_surface(amount: u8) -> f32 {
     amount as f32 / 9.0

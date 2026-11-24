@@ -1,6 +1,9 @@
 const W: i32 = 18;
 const LAYER: i32 = W * W;
-const LAVA_BIT: u8 = 0x80;
+/// A fluid cell's byte: its amount (0 to 8) in the low four bits, its kind
+/// (`terrain::fluid_kind`) above them.
+const FLUID_AMOUNT: u8 = 0x0F;
+const FLUID_KIND_SHIFT: u8 = 4;
 /// How far around the window the quart grid reaches, in blocks: vanilla's
 /// largest Biome Blend radius (7), rounded up to whole quarts.
 pub const BLEND_REACH: i32 = 8;
@@ -311,16 +314,19 @@ impl Occupancy {
     }
 
     #[inline]
-    pub fn set_fluid(&mut self, x: i32, y: i32, z: i32, amount: u8, lava: bool) {
+    pub fn set_fluid(&mut self, x: i32, y: i32, z: i32, amount: u8, kind: u8) {
         if let Some(i) = self.index(x, y, z) {
-            self.fluid[i] = amount | if lava { LAVA_BIT } else { 0 };
+            self.fluid[i] = (amount & FLUID_AMOUNT) | (kind << FLUID_KIND_SHIFT);
         }
     }
 
+    /// Whether a cell holds the fluid of `kind` (Java's `Fluid.isSame`).
     #[inline]
-    pub fn same_fluid(&self, x: i32, y: i32, z: i32, lava: bool) -> bool {
+    pub fn same_fluid(&self, x: i32, y: i32, z: i32, kind: u8) -> bool {
         match self.index(x, y, z) {
-            Some(i) => self.fluid[i] != 0 && (self.fluid[i] & LAVA_BIT != 0) == lava,
+            Some(i) => {
+                self.fluid[i] & FLUID_AMOUNT != 0 && self.fluid[i] >> FLUID_KIND_SHIFT == kind
+            }
             None => false,
         }
     }
@@ -382,7 +388,7 @@ impl Occupancy {
     #[inline]
     pub fn fluid_amount(&self, x: i32, y: i32, z: i32) -> u8 {
         match self.index(x, y, z) {
-            Some(i) => self.fluid[i] & !LAVA_BIT,
+            Some(i) => self.fluid[i] & FLUID_AMOUNT,
             None => 0,
         }
     }
@@ -445,5 +451,27 @@ mod blend_tests {
         assert!((blended - 4.0 * 2.0 / 5.0).abs() < 1e-5, "{blended}");
         // Far from the edge nothing changes.
         assert_eq!(occ.blend(1, 70, 5, 2, colour)[0], 0.0);
+    }
+}
+
+#[cfg(test)]
+mod fluid_tests {
+    use super::*;
+    use crate::terrain::{FLUID_LAVA, FLUID_MODDED, FLUID_WATER};
+
+    #[test]
+    fn fluids_join_only_their_own_kind() {
+        let mut occ = Occupancy::new(0, 0, 64, 16);
+        occ.set_fluid(1, 70, 1, 8, FLUID_WATER);
+        occ.set_fluid(2, 70, 1, 3, FLUID_LAVA);
+        occ.set_fluid(3, 70, 1, 5, FLUID_MODDED + 5);
+        assert!(occ.same_fluid(1, 70, 1, FLUID_WATER));
+        assert!(!occ.same_fluid(1, 70, 1, FLUID_LAVA));
+        assert!(occ.same_fluid(2, 70, 1, FLUID_LAVA));
+        assert!(occ.same_fluid(3, 70, 1, FLUID_MODDED + 5));
+        assert!(!occ.same_fluid(3, 70, 1, FLUID_MODDED));
+        assert_eq!(occ.fluid_amount(3, 70, 1), 5);
+        // An empty cell is no fluid, water's kind included.
+        assert!(!occ.same_fluid(4, 70, 1, FLUID_WATER));
     }
 }

@@ -13,6 +13,7 @@ pub mod bake;
 pub mod facing;
 pub mod info;
 pub mod modded;
+pub mod modded_fluids;
 pub mod rand;
 pub mod rotation;
 pub mod shape;
@@ -138,7 +139,15 @@ pub fn mod_sprites() -> Vec<String> {
             }
         }
     }
-    for sprite in crate::modapi::declared_sprites() {
+    // Modded fluids' sprites, which no model names.
+    let fluid_sprites = modded::fluid_types()
+        .into_iter()
+        .filter_map(modded_fluids::look)
+        .flat_map(|l| [l.still.clone(), l.flowing.clone()]);
+    for sprite in crate::modapi::declared_sprites()
+        .into_iter()
+        .chain(fluid_sprites)
+    {
         let sprite = crate::items::model::strip_namespace(&sprite).to_owned();
         if sprite.contains(':') && !sprites.contains(&sprite) {
             sprites.push(sprite);

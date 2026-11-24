@@ -575,9 +575,19 @@ pub fn build_section_mesh(
                 still,
                 flow,
                 lava,
+                kind,
+                tint: rgb,
             } => {
-                let is_water = !*lava;
-                let tint = if is_water {
+                let is_water = *kind == super::FLUID_WATER;
+                let modded = *kind >= super::FLUID_MODDED;
+                let rgb = [
+                    ((rgb >> 16) & 0xFF) as f32 / 255.0,
+                    ((rgb >> 8) & 0xFF) as f32 / 255.0,
+                    (rgb & 0xFF) as f32 / 255.0,
+                ];
+                let tint = if modded {
+                    rgb
+                } else if is_water {
                     occ.blend(
                         *bx,
                         *by,
@@ -588,23 +598,41 @@ pub fn build_section_mesh(
                 } else {
                     crate::util::biome_color::NEUTRAL
                 };
-                let dest = if is_water { &mut water } else { &mut buf };
+                // A modded fluid draws in the translucent layer, as NeoForge's
+                // fluids usually ask; lava stays solid.
+                let dest = if *lava { &mut buf } else { &mut water };
                 #[cfg(feature = "shader_support")]
                 if let Some(block) = dest.pack_block.as_mut() {
                     block.tint = if is_water {
                         crate::util::biome_color::pack_water(occ.biome(*bx, *by, *bz))
+                    } else if modded {
+                        rgb
                     } else {
                         [1.0; 3]
                     };
                 }
                 let material = if is_water {
                     MATERIAL_WATER
-                } else {
+                } else if *lava {
                     MATERIAL_LAVA
+                } else {
+                    MATERIAL_SOLID
                 };
                 emit_fluid(
-                    wx, wy, wz, material, *amount, *still, *flow, atlas_rows, occ, *bx, *by, *bz,
-                    tint, dest,
+                    wx,
+                    wy,
+                    wz,
+                    (material, *kind),
+                    *amount,
+                    *still,
+                    *flow,
+                    atlas_rows,
+                    occ,
+                    *bx,
+                    *by,
+                    *bz,
+                    tint,
+                    dest,
                 );
             }
         }
@@ -627,7 +655,7 @@ pub fn build_section_mesh(
                 wx,
                 wy,
                 wz,
-                MATERIAL_WATER,
+                (MATERIAL_WATER, super::FLUID_WATER),
                 8,
                 water_still,
                 water_flow,
@@ -1112,9 +1140,9 @@ fn flowing_top_uvs(flow_x: f32, flow_z: f32, tile: u32, ar: u32) -> [[f32; 2]; 4
     ]
 }
 
-fn corner_height_input(occ: &Occupancy, x: i32, y: i32, z: i32, lava: bool) -> f32 {
-    if occ.same_fluid(x, y, z, lava) {
-        if occ.same_fluid(x, y + 1, z, lava) {
+fn corner_height_input(occ: &Occupancy, x: i32, y: i32, z: i32, kind: u8) -> f32 {
+    if occ.same_fluid(x, y, z, kind) {
+        if occ.same_fluid(x, y + 1, z, kind) {
             1.0
         } else {
             occ.fluid_own_height(x, y, z)
@@ -1221,7 +1249,7 @@ fn emit_fluid(
     wx: f32,
     wy: f32,
     wz: f32,
-    material: u8,
+    (material, kind): (u8, u8),
     amount: u8,
     still: u32,
     flow: u32,
@@ -1237,40 +1265,38 @@ fn emit_fluid(
     // (1/256 block) and would round away, leaving the fluid's faces on the
     // neighbour's to z-fight; one step is the smallest gap that survives.
     const EPS: f32 = 1.0 / 256.0;
-    let lava = material == MATERIAL_LAVA;
-
-    let above_fluid = occ.same_fluid(bx, by + 1, bz, lava);
+    let above_fluid = occ.same_fluid(bx, by + 1, bz, kind);
     let (top_nw, top_ne, top_se, top_sw) = if above_fluid {
         (1.0, 1.0, 1.0, 1.0)
     } else {
         let self_height = super::fluid_surface(amount);
-        let north = corner_height_input(occ, bx, by, bz - 1, lava);
-        let south = corner_height_input(occ, bx, by, bz + 1, lava);
-        let east = corner_height_input(occ, bx + 1, by, bz, lava);
-        let west = corner_height_input(occ, bx - 1, by, bz, lava);
+        let north = corner_height_input(occ, bx, by, bz - 1, kind);
+        let south = corner_height_input(occ, bx, by, bz + 1, kind);
+        let east = corner_height_input(occ, bx + 1, by, bz, kind);
+        let west = corner_height_input(occ, bx - 1, by, bz, kind);
         let ne = corner_height(
             self_height,
             north,
             east,
-            corner_height_input(occ, bx + 1, by, bz - 1, lava),
+            corner_height_input(occ, bx + 1, by, bz - 1, kind),
         );
         let nw = corner_height(
             self_height,
             north,
             west,
-            corner_height_input(occ, bx - 1, by, bz - 1, lava),
+            corner_height_input(occ, bx - 1, by, bz - 1, kind),
         );
         let se = corner_height(
             self_height,
             south,
             east,
-            corner_height_input(occ, bx + 1, by, bz + 1, lava),
+            corner_height_input(occ, bx + 1, by, bz + 1, kind),
         );
         let sw = corner_height(
             self_height,
             south,
             west,
-            corner_height_input(occ, bx - 1, by, bz + 1, lava),
+            corner_height_input(occ, bx - 1, by, bz + 1, kind),
         );
         (nw - EPS, ne - EPS, se - EPS, sw - EPS)
     };
@@ -1291,7 +1317,7 @@ fn emit_fluid(
         (0, 0, 1),
         (0, 0, -1),
     ];
-    let render_down = !occ.same_fluid(bx, by - 1, bz, lava) && !occ.is_solid(bx, by - 1, bz);
+    let render_down = !occ.same_fluid(bx, by - 1, bz, kind) && !occ.is_solid(bx, by - 1, bz);
     let bottom = if render_down { EPS } else { 0.0 };
     for fi in 0..6usize {
         let (dx, dy, dz) = NBR[fi];
@@ -1316,7 +1342,7 @@ fn emit_fluid(
                     flowing_top_uvs(flow_x, flow_z, flow, ar)
                 };
                 buf.push_quad(&corners, &face_uvs, light, tint, material);
-                if backward_up_face(occ, bx, by + 1, bz, lava) {
+                if backward_up_face(occ, bx, by + 1, bz, kind) {
                     push_back_face(buf, &corners, &face_uvs, light, tint, material);
                 }
             }
@@ -1330,7 +1356,7 @@ fn emit_fluid(
                 );
             }
             _ => {
-                if occ.same_fluid(nx, ny, nz, lava) || occ.is_solid(nx, ny, nz) {
+                if occ.same_fluid(nx, ny, nz, kind) || occ.is_solid(nx, ny, nz) {
                     continue;
                 }
                 let (hh0, hh1) = match fi {
@@ -1347,10 +1373,10 @@ fn emit_fluid(
     }
 }
 
-fn backward_up_face(occ: &Occupancy, x: i32, y: i32, z: i32, lava: bool) -> bool {
+fn backward_up_face(occ: &Occupancy, x: i32, y: i32, z: i32, kind: u8) -> bool {
     (-1..=1).any(|ox| {
         (-1..=1)
-            .any(|oz| !occ.same_fluid(x + ox, y, z + oz, lava) && !occ.is_solid(x + ox, y, z + oz))
+            .any(|oz| !occ.same_fluid(x + ox, y, z + oz, kind) && !occ.is_solid(x + ox, y, z + oz))
     })
 }
 

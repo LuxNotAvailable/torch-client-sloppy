@@ -1055,10 +1055,10 @@ fn fill_occupancy(
                             && terrain::mesh::fast_leaves())
                     {
                         occ.set_solid(x, y, z);
-                    } else if let terrain::BlockGeom::Fluid { amount, lava, .. } = rb.geom {
-                        occ.set_fluid(x, y, z, amount, lava);
+                    } else if let terrain::BlockGeom::Fluid { amount, kind, .. } = rb.geom {
+                        occ.set_fluid(x, y, z, amount, kind);
                     } else if rb.waterlogged {
-                        occ.set_fluid(x, y, z, 8, false);
+                        occ.set_fluid(x, y, z, 8, terrain::FLUID_WATER);
                     }
                 }
             }

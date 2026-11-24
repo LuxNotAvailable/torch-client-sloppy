@@ -205,6 +205,12 @@ pub fn block_visual(state: azalea::block::BlockState) -> RenderedBlock {
                 still,
                 flow,
                 lava: is_lava,
+                kind: if is_lava {
+                    crate::terrain::FLUID_LAVA
+                } else {
+                    crate::terrain::FLUID_WATER
+                },
+                tint: 0xFF_FFFF,
             },
             is_solid: false,
             waterlogged: false,
@@ -300,7 +306,7 @@ fn dumped_tint(name: &str, baked: &crate::blocks::BakedBlock) -> TintKind {
 /// `None` when the state isn't dumped or its model didn't load.
 fn dumped_visual(state: azalea::block::BlockState) -> Option<RenderedBlock> {
     use crate::blocks::modded::Render;
-    let (name, props, light, render, block_entity, offset) =
+    let (name, props, light, render, block_entity, offset, fluid) =
         crate::blocks::modded::with_state(state.id(), |s| {
             let props: HashMap<&str, &str> = s.props.iter().copied().collect();
             (
@@ -310,6 +316,7 @@ fn dumped_visual(state: azalea::block::BlockState) -> Option<RenderedBlock> {
                 s.fact.render,
                 s.block_entity,
                 s.fact.offset,
+                s.fact.fluid,
             )
         })?;
     let empty = |state: azalea::block::BlockState| RenderedBlock {
@@ -327,6 +334,15 @@ fn dumped_visual(state: azalea::block::BlockState) -> Option<RenderedBlock> {
         shape: 0,
         torch: false,
     };
+    // A fluid block (`LiquidBlock` renders invisible): its fluid draws.
+    if render == Render::Invisible
+        && let Some(geom) = fluid.and_then(fluid_geom)
+    {
+        return Some(RenderedBlock {
+            geom,
+            ..empty(state)
+        });
+    }
     let drawn_by_plugin = block_entity.is_some_and(crate::modapi::replaces_block_model);
     if render == Render::Invisible || drawn_by_plugin {
         return Some(empty(state));
@@ -358,7 +374,7 @@ fn dumped_visual(state: azalea::block::BlockState) -> Option<RenderedBlock> {
         geom: BlockGeom::Model(baked),
         emission: light,
         emissive: false,
-        waterlogged: bool_prop(&props, "waterlogged"),
+        waterlogged: bool_prop(&props, "waterlogged") || fluid.is_some_and(|f| is_water(f.kind)),
         cull_group: 0,
         tint_kind,
         offset,
@@ -366,6 +382,45 @@ fn dumped_visual(state: azalea::block::BlockState) -> Option<RenderedBlock> {
         translucent,
         shape,
         torch: false,
+    })
+}
+
+fn is_water(fluid: &str) -> bool {
+    matches!(fluid, "minecraft:water" | "minecraft:flowing_water")
+}
+
+/// A dumped fluid state's geometry: vanilla's water and lava as their own,
+/// a modded fluid by its look (`blocks::modded_fluids`).
+fn fluid_geom(fluid: crate::blocks::modded::FluidFact) -> Option<BlockGeom> {
+    use crate::terrain::{FLUID_LAVA, FLUID_MODDED, FLUID_WATER};
+    let (still, flow, kind, tint) = match fluid.kind {
+        k if is_water(k) => (
+            tex("water_still"),
+            tex("water_flow"),
+            FLUID_WATER,
+            0xFF_FFFF,
+        ),
+        "minecraft:lava" | "minecraft:flowing_lava" => {
+            (tex("lava_still"), tex("lava_flow"), FLUID_LAVA, 0xFF_FFFF)
+        }
+        k => {
+            use crate::blocks::modded_fluids::{atlas_key, look, slot};
+            let look = look(k)?;
+            (
+                tex(atlas_key(&look.still)),
+                tex(atlas_key(&look.flowing)),
+                FLUID_MODDED + slot(k),
+                look.tint,
+            )
+        }
+    };
+    Some(BlockGeom::Fluid {
+        amount: fluid.amount,
+        still,
+        flow,
+        lava: kind == FLUID_LAVA,
+        kind,
+        tint,
     })
 }
 

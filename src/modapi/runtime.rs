@@ -34,6 +34,7 @@ pub(super) struct Runtime {
     payload: Option<TypedFunc<(i32, i32), i64>>,
     screen: Option<TypedFunc<(i32, i32), i64>>,
     item_tints: Option<TypedFunc<(i32, i32), i64>>,
+    fluid: Option<TypedFunc<(i32, i32), i64>>,
     pub(super) registration: torch_mod_api::Registration,
 }
 
@@ -165,6 +166,9 @@ impl Runtime {
         let item_tints = instance
             .get_typed_func::<(i32, i32), i64>(&store, "torch_item_tints")
             .ok();
+        let fluid = instance
+            .get_typed_func::<(i32, i32), i64>(&store, "torch_fluid")
+            .ok();
         let mut runtime = Runtime {
             store,
             memory,
@@ -176,6 +180,7 @@ impl Runtime {
             payload,
             screen,
             item_tints,
+            fluid,
             registration: torch_mod_api::Registration::default(),
         };
         let packed = runtime.call_fuelled(|store| init.call(store, ()))?;
@@ -254,6 +259,20 @@ impl Runtime {
         let _ = self.call_fuelled(|store| free.call(store, (ptr, len)));
         let bytes = self.take_result(packed?)?;
         serde_json::from_slice(&bytes).map_err(|e| format!("its screen: {e}"))
+    }
+
+    /// A fluid's look, from its view as JSON.
+    pub(super) fn fluid(
+        &mut self,
+        view: &[u8],
+    ) -> Result<Option<torch_mod_api::FluidLook>, String> {
+        let func = self.fluid.ok_or("it has no torch_fluid")?;
+        let (ptr, len) = self.put(view)?;
+        let packed = self.call_fuelled(|store| func.call(store, (ptr, len)));
+        let free = self.free;
+        let _ = self.call_fuelled(|store| free.call(store, (ptr, len)));
+        let bytes = self.take_result(packed?)?;
+        serde_json::from_slice(&bytes).map_err(|e| format!("its fluid look: {e}"))
     }
 
     /// An item's tint colours, from its view as JSON.

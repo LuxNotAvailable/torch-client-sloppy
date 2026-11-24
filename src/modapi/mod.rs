@@ -45,6 +45,8 @@ struct Plugins {
     tinted_items: HashMap<String, usize>,
     /// Item tints asked so far.
     item_tints: HashMap<String, Vec<u32>>,
+    /// Fluid id to the plugin that gives its look.
+    fluids: HashMap<String, usize>,
     /// Tints asked so far, by modded table generation and state id.
     tints: HashMap<(u32, u16), torch_mod_api::Tint>,
 }
@@ -91,6 +93,9 @@ pub fn load(plugins: Vec<(String, Vec<u8>)>) {
                 }
                 for item in &registration.tinted_items {
                     out.tinted_items.entry(item.clone()).or_insert(index);
+                }
+                for fluid in &registration.fluids {
+                    out.fluids.entry(fluid.clone()).or_insert(index);
                 }
                 crate::log_info!(
                     "modapi",
@@ -222,6 +227,22 @@ fn screen(view: &torch_mod_api::ScreenView) -> Option<torch_mod_api::Screen> {
             None
         }
     }
+}
+
+/// A fluid's look from the plugin that registered it (`Plugin::fluid`);
+/// `None` when none did or it left it to the client. Callers keep it.
+pub fn fluid(fluid: &str) -> Option<torch_mod_api::FluidLook> {
+    let mut plugins = PLUGINS.lock();
+    let index = *plugins.fluids.get(fluid)?;
+    let view = torch_mod_api::FluidView {
+        fluid: fluid.to_owned(),
+    };
+    let input = serde_json::to_vec(&view).ok()?;
+    let loaded = plugins.loaded.get_mut(index)?;
+    loaded.runtime.fluid(&input).unwrap_or_else(|e| {
+        crate::log_warn!("modapi", "{}: look of {fluid}: {e}", loaded.name);
+        None
+    })
 }
 
 /// The colours a plugin gives an item's tint indices (`Plugin::item_tints`),
@@ -372,6 +393,18 @@ mod tests {
         };
         // Its type's size, in sixteenths about its feet.
         assert_eq!((*from, *to), ([-8.0, 0.0, -8.0], [8.0, 8.0, 8.0]));
+    }
+
+    #[test]
+    fn the_example_plugin_gives_its_honey_a_look() {
+        let mut runtime = runtime::Runtime::load("example", EXAMPLE).unwrap();
+        assert_eq!(runtime.registration.fluids, ["example:honey"]);
+        let look = runtime
+            .fluid(br#"{"fluid": "example:honey"}"#)
+            .unwrap()
+            .unwrap();
+        assert_eq!(look.still, "minecraft:block/water_still");
+        assert_eq!(look.tint, 0xF0_A030);
     }
 
     #[test]

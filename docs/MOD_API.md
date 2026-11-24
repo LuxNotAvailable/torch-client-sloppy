@@ -46,6 +46,7 @@ A plugin registers handlers in `init`:
 | `entity` | entity type ids in `entities` (`mymod:biplane`) | when an entity of the type appears, and when its data or a `payload` changes it | a `Rig`, in the entity's own frame |
 | `payload` | the mod's packet channels in `channels` (`mymod:sync_state`) | each play-phase packet the server sends on one | a `Redraw`: entity ids and block entity positions whose rigs to ask for again |
 | `block_tint` | block ids in `tinted_blocks` (`mymod:maple_leaves`) | once per block state, then kept | a `Tint`: `none`, `grass`, `foliage`, `dry_foliage`, `water` (the biome's colour, blended by position) or `color` (`0xRRGGBB`) |
+| `fluid` | source fluid ids in `fluids` (`mymod:honey`; its flowing form asks as it) | once per fluid, then kept | a `FluidLook` (`still`, `flowing`: block atlas sprites; `tint`: `0xRRGGBB`), or `null` to leave it to the client |
 | `item_tints` | item ids in `tinted_items` (`mymod:custom_egg`) | once per item, then kept | the colours of its tint indices (`tintindex`), `0xRRGGBB` each |
 | `screen` | menu type ids in `screens` (`mymod:press`) | when the menu opens, and when its data slots or slot count change | a `Screen`, or `null` for the client's plain grid |
 
@@ -60,6 +61,13 @@ The registration also lists:
 - `tinted_blocks`: blocks whose tinted model faces (`tintindex`) the
   plugin colours: Java's `BlockColor`. Without one, a modded block with
   tinted faces gets foliage, grass or water by its name.
+- `fluids`: fluids whose looks the plugin gives: NeoForge's
+  `IClientFluidTypeExtensions`. The client draws a modded fluid block
+  (one the dump says renders invisible and holds a fluid) as vanilla draws
+  water: heights, flow and faces, joining only the same fluid, in the
+  translucent layer, tinted. Without a plugin it looks for the mod's
+  textures by name (`fluid/<name>_still`, `block/<name>_flow`,
+  `block/fluid/<name>/still`, ...), and a fluid with none doesn't draw.
 - `tinted_items`: items whose tinted layers the plugin colours: Java's
   `ItemColor`, for its default stack. The colours become constant tints
   on every model in the item's definition that names none (icons, held
@@ -222,6 +230,7 @@ Data crosses as UTF-8 JSON in the plugin's memory.
 | `torch_entity` | `(ptr: i32, len: i32) -> i64` | an `EntityView` in, a `Rig` out |
 | `torch_payload` | `(ptr: i32, len: i32) -> i64` | the channel's length (u16, big-endian), the channel, then the data in; a `Redraw` out |
 | `torch_block_tint` | `(ptr: i32, len: i32) -> i64` | a `BlockStateView` in, a `Tint` out |
+| `torch_fluid` | `(ptr: i32, len: i32) -> i64` | a `FluidView` (`{"fluid": ...}`) in, a `FluidLook` or `null` out |
 | `torch_item_tints` | `(ptr: i32, len: i32) -> i64` | an `ItemView` (`{"item": ...}`) in, an array of colours out |
 | `torch_screen` | `(ptr: i32, len: i32) -> i64` | a `ScreenView` in, a `Screen` or `null` out |
 
