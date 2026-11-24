@@ -16,7 +16,9 @@ Rust Minecraft client (Bevy + native Vulkan). Rules: `STYLE_GUIDE.md`.
   `gui/options.rs`, `protocol/hop.rs`, ...): grep for the symbol and read
   that range, never the whole file.
 - Protocol: recipe at top of `src/protocol/hop.rs`.
-- Porting a mod's client code: `docs/porting/AGENT_GUIDE.md`.
+- Porting a mod's client code: `docs/porting/AGENT_GUIDE.md` (local only:
+  the converter, porting tools and `ports/` are git-ignored; the repo ships
+  the client).
 - Android vs PC: `docs/ANDROID_VS_PC.md` lists every difference. Read it
   before touching platform-split code; update it in the same commit.
 - Vanilla parity: decompiled source in `reference/minecraft-<ver>/` (git-ignored,

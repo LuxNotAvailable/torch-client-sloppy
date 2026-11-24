@@ -61,12 +61,7 @@ meshes chunk sections (on `client`'s worker). `vk` (native Vulkan) draws them;
 | `vendor/` | patched crates; read `vendor/PATCHES.md` first |
 | `crates/torch-opus` | safe Opus bindings |
 | `crates/torch-mod-api` | the mod API's SDK: the types ports return and the client reads, host calls, `export_plugin!` (`docs/MOD_API.md`) |
-| `ports/` | ported mods' client code, one crate each, built to `plugin.wasm` (`docs/porting/AGENT_GUIDE.md`); `example/` is the template, `create/` the first real port |
-| `crates/torch-convert` | the standalone mod converter: jar to `.torchmod` (`docs/MOD_TRANSLATOR_PLAN.md`); its own workspace, never built into the client |
-| `crates/torch-port-check` | a port's guardrail: runs a `plugin.wasm` over every block state it draws and checks what it names exists; own workspace |
-| `docs/CONVERTER_CHECKLIST.md` | what converting a mod covers and doesn't, item by item: the work list toward one-shot conversion |
-| `crates/torch-converter` | Torch Mod Converter: a window (egui on wgpu) over torch-convert and the port agent: per-jar convert, load only or skip; live progress (stages, steps, commands); own workspace. `tools/converter_app/build_dist.py` makes the standalone folder |
-| `tools/port_agent.py` | ports a mod's renderers with a local agent (Qwen Code on Ollama) behind gates; `tools/port_agent_model.py` sets up the model (`docs/porting/AGENT_GUIDE.md`) |
+| (not in the repo) | the mod converter (`crates/torch-convert`, `crates/torch-converter`, `crates/torch-port-check`), the porting tools (`tools/port_agent*.py`, `docs/porting/`) and ported mods (`ports/`) stay local and git-ignored: the repo ships the client, which only reads `.torchmod` packages |
 | `reference/minecraft-<ver>/` | decompiled vanilla, for parity checks (git-ignored) |
 | `android/`, `web/`, `fastlane/` | platform shells and store metadata |
 | `docs/` | `ANDROID_VS_PC.md` (every build difference), `ANDROID_SPECIFICS.md` (why the phone differs), `ANDROID_PERF.md` (Pixel measurements), `PC_CANDIDATES.md` (Android findings for PC: applied, and why the rest wasn't), `SESSION_CHECKPOINT.md` (the Android work's state and next steps), `MULTIVERSION_PLAN.md` (what 1.21.1 and NeoForge 1.21.1 support needs, and what can be generated), `MOD_TRANSLATOR_PLAN.md` (turning a modpack's jars into models, shapes and data this client loads), `TORCHMOD_FORMAT.md` (the package), `MOD_API.md` (ported mods' API), `porting/` (how an agent ports a mod) |

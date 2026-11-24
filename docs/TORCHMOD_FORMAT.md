@@ -1,6 +1,6 @@
 # The `.torchmod` package
 
-A converted mod, as `torch-convert` (`crates/torch-convert`) writes it and
+A converted mod, as `torch-convert` (a separate tool, not in this repo) writes it and
 the client loads it from `<storage>/mods/`. One package per mod. It holds
 only what the client reads, never the mod's Java, so a package converted
 once works on any client and in any modpack that has that mod, and can be

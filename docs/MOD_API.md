@@ -17,8 +17,8 @@ features. `docs/porting/` tells an agent how to port Java to it.
 |---|---|---|
 | Guest SDK | `crates/torch-mod-api` | The types and the `export_plugin!` macro a port is written against. Builds for `wasm32-unknown-unknown`. |
 | Host | `src/modapi/` | Loads each package's `plugin.wasm` (wasmi, an interpreter: it runs on every platform the client does), feeds it data, draws what it returns. |
-| Ports | `ports/<modid>/` (or outside the repo, by the mod's licence) | One crate per mod; `torch-convert` builds it into the package. |
-| Porting docs | `docs/porting/` | For the agent: the workflow, Java-to-API mappings, checks. |
+| Ports | `ports/<modid>/`, kept outside the repo (git-ignored) | One crate per mod; `torch-convert` builds it into the package. |
+| Porting docs | `docs/porting/`, kept outside the repo | For the agent: the workflow, Java-to-API mappings, checks. |
 
 ## Design: describe once, animate natively
 

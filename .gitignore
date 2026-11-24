@@ -24,3 +24,16 @@ __pycache__/
 /dist/
 /tools/converter_app/build/
 /crates/torch-converter/settings.json
+
+# The mod converter, porting tools and ported mods stay local: the repo
+# ships the client only (it reads .torchmod packages; it never converts).
+/crates/torch-convert/
+/crates/torch-converter/
+/crates/torch-port-check/
+/ports/
+/tools/port_agent.py
+/tools/port_agent_model.py
+/tools/converter_app/
+/docs/porting/
+/docs/MOD_TRANSLATOR_PLAN.md
+/docs/CONVERTER_CHECKLIST.md

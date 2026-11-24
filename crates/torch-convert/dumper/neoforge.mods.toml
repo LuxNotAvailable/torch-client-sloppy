@@ -1,9 +1,0 @@
-modLoader = "javafml"
-loaderVersion = "[1,)"
-license = "MIT"
-
-[[mods]]
-modId = "torchdump"
-version = "1"
-displayName = "Torch Dump"
-description = "Writes a modpack's blocks, shapes and entity sizes for Torch, then stops the server."
