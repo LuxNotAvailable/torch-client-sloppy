@@ -43,6 +43,7 @@ pub struct FrameView {
     pub block_entities:
         Arc<std::collections::HashMap<[i32; 3], crate::blockentities::feed::BlockEntityInfo>>,
     pub block_entities_version: u64,
+    /// The shown tick's game time; `partial` runs from it.
     pub game_time: u64,
     pub op_level: u8,
     pub local: AnimSample,
@@ -63,6 +64,9 @@ const TICK_SECS: f64 = 0.05;
 #[derive(Clone)]
 struct TickInputs {
     seq: u64,
+    /// The game time this tick left: `partial` runs from it, so time read
+    /// from a later tick would jump back when this one is shown.
+    game_time: u64,
     player_prev: [f32; 3],
     player_pos: [f32; 3],
     camera_eye: [f32; 2],
@@ -80,6 +84,7 @@ impl TickInputs {
     fn of(session: &crate::session::SessionState) -> TickInputs {
         TickInputs {
             seq: session.tick_seq,
+            game_time: session.world.game_time,
             player_prev: session.player_pos_prev,
             player_pos: session.player_pos,
             camera_eye: session.camera_eye,
@@ -272,7 +277,7 @@ impl FrameView {
         self.main_hand_left = s.skin_prefs.main_hand_left;
         self.entities = tick.entities;
         self.players = tick.players;
-        self.game_time = session.world.game_time;
+        self.game_time = tick.game_time;
         self.op_level = session.op_level;
         #[cfg(feature = "skins")]
         {
@@ -390,9 +395,11 @@ mod tests {
         let mut view = FrameView::default();
         let mut next = 0u64;
         let mut last: Option<f32> = None;
+        let mut last_time: Option<f64> = None;
         for t in (0..3000).step_by(2) {
             while next < 60 && 50 * next + late[next as usize % late.len()] <= t {
                 s.session.tick_seq = next;
+                s.session.world.game_time = 5_000_000 + next;
                 s.session.player_pos_prev = [next as f32 - 1.0, 0.0, 0.0];
                 s.session.player_pos = [next as f32, 0.0, 0.0];
                 s.session.last_tick_time = Some(ms(50 * next + late[next as usize % late.len()]));
@@ -400,14 +407,23 @@ mod tests {
             }
             let (tick, partial) = view.pace(&s.session, ms(t));
             let x = tick.player_prev[0] + (tick.player_pos[0] - tick.player_prev[0]) * partial;
+            // Animations' time runs with the player, even while a landed
+            // tick waits to be shown.
+            let time = tick.game_time as f64 + f64::from(partial);
             if t > 500 && next < 60 {
                 let step = x - last.unwrap();
                 assert!(
                     (step - 0.04).abs() <= 0.04 * TickPacer::SLEW as f32 + 1e-4,
                     "at {t} ms the player moved {step} blocks in a 2 ms frame"
                 );
+                let step = time - last_time.unwrap();
+                assert!(
+                    (step - 0.04).abs() <= 0.04 * TickPacer::SLEW + 1e-4,
+                    "at {t} ms the game time moved {step} ticks in a 2 ms frame"
+                );
             }
             last = Some(x);
+            last_time = Some(time);
         }
     }
 

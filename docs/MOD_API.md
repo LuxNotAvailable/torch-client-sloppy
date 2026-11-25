@@ -78,8 +78,10 @@ The registration also lists:
 `tick` is Java's client-side `tick()`. A plugin keeps its own state per
 block entity (keyed by `pos`) and advances it each tick: items gliding
 along a belt, an arm reaching for its target, a handle turning. The client
-blends each part between its last two ticks by the partial tick, as Java's
-renderers lerp `prevX` to `x`, so motion is smooth between ticks. Keep the
+blends each part between the ticks either side of the time it shows, as
+Java's renderers lerp `prevX` to `x`, so motion is smooth between ticks.
+That time trails the newest tick by two, the same for animations, so a
+ticked part and a spinning one stay in step. Keep the
 same parts in the same order while only their transforms change; a
 different part list (an item arriving) draws afresh. `block_entity` is still
 called when the server's data arrives: treat it as Java's `read`, and let

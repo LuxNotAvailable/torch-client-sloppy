@@ -42,8 +42,20 @@ pub struct Placed {
     pub rev: u64,
     /// Bumped each tick a ticking rig's transforms move (same parts).
     pub frame: u64,
-    /// The parts' transforms the tick before, to blend from.
-    pub prev: Option<Arc<[torch_mod_api::Transform]>>,
+    /// The parts' transforms at the last few game times they moved at,
+    /// oldest first; the last is `rig`'s. The renderer blends the two
+    /// either side of the time it shows, which trails the newest.
+    pub frames: Arc<[Frame]>,
+}
+
+/// A rig's parts' transforms at a game time.
+pub type Frame = (u64, Arc<[torch_mod_api::Transform]>);
+
+/// Frames kept: the shown time trails the newest by up to two ticks.
+const FRAMES: usize = 3;
+
+fn transforms(rig: &torch_mod_api::Rig) -> Arc<[torch_mod_api::Transform]> {
+    rig.parts.iter().map(|p| p.transform).collect()
 }
 
 /// `MC_MODAPI_TRACE=<file>`: every view made from the server's data goes
@@ -304,20 +316,29 @@ pub fn tick(world: &azalea_world::World, game_time: u64, player: Option<[f64; 3]
                     && same_parts(&old.rig, &rig)
                 {
                     if old.rig.parts != rig.parts {
-                        old.prev = Some(old.rig.parts.iter().map(|p| p.transform).collect());
+                        let mut frames: Vec<Frame> = old
+                            .frames
+                            .iter()
+                            .filter(|f| f.0 < game_time)
+                            .cloned()
+                            .collect();
+                        frames.push((game_time, transforms(&rig)));
+                        let skip = frames.len().saturating_sub(FRAMES);
+                        old.frames = frames.into_iter().skip(skip).collect();
                         old.rig = Arc::new(rig);
                         old.frame += 1;
                     }
                     continue;
                 }
                 store.next_rev += 1;
+                let frames: Arc<[Frame]> = Arc::new([(game_time, transforms(&rig))]);
                 store.rigs.insert(
                     *pos,
                     Placed {
                         rig: Arc::new(rig),
                         rev: store.next_rev,
                         frame: 0,
-                        prev: None,
+                        frames,
                     },
                 );
             }

@@ -43,9 +43,6 @@ struct ModPart;
 struct LivePart {
     entity: Entity,
     transform: torch_mod_api::Transform,
-    /// A ticking rig's transform the tick before: the part blends from it
-    /// to `transform` across the tick (Java's partial-tick lerp).
-    prev: Option<torch_mod_api::Transform>,
     /// An item's display transform, after the part's; identity otherwise.
     display: Transform,
     animation: Animation,
@@ -57,8 +54,39 @@ struct LiveRig {
     rev: u64,
     /// The ticking frame its parts' transforms are from.
     frame: u64,
+    /// The rig's recent transforms, blended across (Java's partial-tick
+    /// lerp).
+    frames: std::sync::Arc<[super::store::Frame]>,
     levels: (u8, u8),
     parts: Vec<LivePart>,
+}
+
+/// The game time rigs are shown at, in ticks: the shown tick's, less two.
+/// A ticking rig's frame lands up to a tick before the pacer shows its
+/// tick, so the two frames either side of this have always landed.
+fn shown_time(view: &crate::app::FrameView) -> f64 {
+    view.game_time as f64 + f64::from(view.partial) - 2.0
+}
+
+/// Part `i`'s transform at `x` (game ticks): blended between the frames
+/// either side, held past either end.
+fn transform_at(
+    frames: &[super::store::Frame],
+    i: usize,
+    x: f64,
+) -> Option<torch_mod_api::Transform> {
+    let (first, last) = (frames.first()?, frames.last()?);
+    if x <= first.0 as f64 {
+        return first.1.get(i).copied();
+    }
+    for w in frames.windows(2) {
+        let ((ta, a), (tb, b)) = (&w[0], &w[1]);
+        if x < *tb as f64 {
+            let t = ((x - *ta as f64) / (tb - ta) as f64) as f32;
+            return Some(blend(*a.get(i)?, *b.get(i)?, t));
+        }
+    }
+    last.1.get(i).copied()
 }
 
 #[derive(Resource, Default)]
@@ -126,7 +154,7 @@ fn sync_rigs(
     let light_map = crate::client::worldsync::light_map().read();
     live.lights.begin(&lightmap.current);
     let dirs = diffuse_lights(crate::client::dimension::current());
-    let ticks = view.game_time as f32 + view.partial;
+    let ticks = shown_time(&view);
 
     for (pos, placed) in rigs.iter() {
         let (rig, rev) = (&placed.rig, &placed.rev);
@@ -166,6 +194,7 @@ fn sync_rigs(
                 LiveRig {
                     rev: *rev,
                     frame: placed.frame,
+                    frames: placed.frames.clone(),
                     levels,
                     parts,
                 },
@@ -176,25 +205,20 @@ fn sync_rigs(
         let Some(live_rig) = live.rigs.get_mut(pos) else {
             continue;
         };
-        // A ticking rig moved on: blend each part from where it was.
+        // A ticking rig moved on: its parts blend across its frames.
         if live_rig.frame != placed.frame {
             live_rig.frame = placed.frame;
-            for (i, part) in live_rig.parts.iter_mut().enumerate() {
-                let Some(next) = rig.parts.get(i) else {
-                    continue;
-                };
-                part.prev = Some(
-                    placed
-                        .prev
-                        .as_ref()
-                        .and_then(|p| p.get(i).copied())
-                        .unwrap_or(part.transform),
-                );
-                part.transform = next.transform;
-            }
+            live_rig.frames = placed.frames.clone();
         }
-        for part in &mut live_rig.parts {
-            let moving = part.animation != Animation::None || part.prev.is_some();
+        // Until the shown time passes the newest frame (one more tick, to
+        // land on it).
+        let blending = live_rig.frames.len() > 1
+            && live_rig
+                .frames
+                .last()
+                .is_some_and(|f| ticks < f.0 as f64 + 1.0);
+        for (i, part) in live_rig.parts.iter_mut().enumerate() {
+            let moving = part.animation != Animation::None || blending;
             if !moving && part.scroll.is_none() {
                 continue;
             }
@@ -202,11 +226,12 @@ fn sync_rigs(
                 continue;
             };
             if moving {
-                let transform = match part.prev {
-                    Some(prev) => blend(prev, part.transform, view.partial),
-                    None => part.transform,
-                };
-                *t = place(*pos, transform, &part.animation, ticks).mul_transform(part.display);
+                if blending {
+                    part.transform =
+                        transform_at(&live_rig.frames, i, ticks).unwrap_or(part.transform);
+                }
+                *t =
+                    place(*pos, part.transform, &part.animation, ticks).mul_transform(part.display);
             }
             if let Some((source, shown)) = &mut part.scroll {
                 let step = source.scroll.as_ref().and_then(|s| scroll_step(s, ticks));
@@ -287,7 +312,7 @@ fn sync_entity_rigs(
     let Some(atlas) = live.atlas.clone() else {
         return;
     };
-    let ticks = view.game_time as f32 + view.partial;
+    let ticks = shown_time(&view);
     let light_map = crate::client::worldsync::light_map().read();
     live.lights.begin(&lightmap.current);
     let dirs = diffuse_lights(crate::client::dimension::current());
@@ -382,7 +407,7 @@ fn spawn_parts(
     ),
     rig_parts: &[Part],
     (origin, parent): ([i32; 3], Option<Entity>),
-    ticks: f32,
+    ticks: f64,
 ) -> Vec<LivePart> {
     // The light at the part, and full bright (glowing text).
     let (levels, cell, bright, dirs) = light;
@@ -512,7 +537,6 @@ fn spawn_parts(
         parts.push(LivePart {
             entity,
             transform,
-            prev: None,
             display,
             animation: part.animation.clone(),
             scroll: step.map(|step| (part.clone(), step)),
@@ -588,7 +612,7 @@ fn about(pivot: Vec3, inner: Affine3A) -> Affine3A {
 }
 
 /// The animation's motion at `ticks`.
-fn motion(animation: &Animation, ticks: f32) -> Affine3A {
+fn motion(animation: &Animation, ticks: f64) -> Affine3A {
     let turn = |axis: [f32; 3], pivot: [f32; 3], degrees: f32| {
         let axis = Vec3::from(axis).try_normalize().unwrap_or(Vec3::Y);
         about(
@@ -603,7 +627,11 @@ fn motion(animation: &Animation, ticks: f32) -> Affine3A {
             pivot,
             degrees_per_tick,
             phase,
-        } => turn(*axis, *pivot, (phase + degrees_per_tick * ticks) % 360.0),
+        } => turn(
+            *axis,
+            *pivot,
+            (f64::from(*phase) + f64::from(*degrees_per_tick) * ticks).rem_euclid(360.0) as f32,
+        ),
         Animation::Swing {
             axis,
             pivot,
@@ -611,7 +639,7 @@ fn motion(animation: &Animation, ticks: f32) -> Affine3A {
             period_ticks,
             phase,
         } => {
-            let t = std::f32::consts::TAU * ticks / period_ticks.max(1e-3) + phase;
+            let t = std::f32::consts::TAU * cycle(ticks, *period_ticks) + phase;
             turn(*axis, *pivot, amplitude * t.sin())
         }
         Animation::Slide {
@@ -619,27 +647,33 @@ fn motion(animation: &Animation, ticks: f32) -> Affine3A {
             period_ticks,
             phase,
         } => {
-            let t = std::f32::consts::TAU * ticks / period_ticks.max(1e-3) + phase;
+            let t = std::f32::consts::TAU * cycle(ticks, *period_ticks) + phase;
             Affine3A::from_translation(blocks(*offset) * (0.5 - 0.5 * t.cos()))
         }
         Animation::Path { points } => Affine3A::from_translation(blocks(path_at(points, ticks))),
     }
 }
 
+/// How far through its period `ticks` is, 0 to 1.
+fn cycle(ticks: f64, period: f32) -> f32 {
+    (ticks / f64::from(period.max(1e-3))).rem_euclid(1.0) as f32
+}
+
 /// Where a path is at `ticks`: straight between its points, held past
 /// either end.
-fn path_at(points: &[[f32; 4]], ticks: f32) -> [f32; 3] {
+fn path_at(points: &[[f32; 4]], ticks: f64) -> [f32; 3] {
     let at = |p: &[f32; 4]| [p[1], p[2], p[3]];
     let (Some(first), Some(last)) = (points.first(), points.last()) else {
         return [0.0; 3];
     };
-    if ticks <= first[0] {
+    if ticks <= f64::from(first[0]) {
         return at(first);
     }
     for leg in points.windows(2) {
         let (a, b) = (&leg[0], &leg[1]);
-        if ticks < b[0] {
-            let t = ((ticks - a[0]) / (b[0] - a[0]).max(1e-6)).clamp(0.0, 1.0);
+        if ticks < f64::from(b[0]) {
+            let t = ((ticks - f64::from(a[0])) / f64::from((b[0] - a[0]).max(1e-6))).clamp(0.0, 1.0)
+                as f32;
             return std::array::from_fn(|i| a[i + 1] + (b[i + 1] - a[i + 1]) * t);
         }
     }
@@ -652,7 +686,7 @@ fn place(
     pos: [i32; 3],
     t: torch_mod_api::Transform,
     animation: &Animation,
-    ticks: f32,
+    ticks: f64,
 ) -> Transform {
     let pivot = blocks(t.pivot);
     let rotation = Quat::from_rotation_z(t.rotate[2].to_radians())
@@ -718,12 +752,13 @@ fn scroll_tiles(to: &str) -> Vec<[f32; 4]> {
 
 /// The scroll's offset at `ticks`, in steps down its target; `None` when
 /// the target isn't in the atlas.
-fn scroll_step(scroll: &Scroll, ticks: f32) -> Option<u32> {
+fn scroll_step(scroll: &Scroll, ticks: f64) -> Option<u32> {
     let tiles = scroll_tiles(&scroll.to).len() as f32;
     if tiles == 0.0 {
         return None;
     }
-    let cycle = (scroll.per_tick * ticks + scroll.phase).rem_euclid(1.0);
+    let cycle =
+        (f64::from(scroll.per_tick) * ticks + f64::from(scroll.phase)).rem_euclid(1.0) as f32;
     let steps = tiles * SCROLL_STEPS;
     Some(((cycle * scroll.span * steps).round() as u32) % steps as u32)
 }
@@ -946,6 +981,40 @@ mod tests {
             );
             assert!(((p - Vec3::splat(8.0)).length() - 8.0).abs() < 1e-3, "{p}");
         }
+    }
+
+    #[test]
+    fn a_ticked_part_blends_across_its_frames_and_holds_past_them() {
+        let at = |x: f32| torch_mod_api::Transform {
+            translate: [x, 0.0, 0.0],
+            ..Default::default()
+        };
+        let frames: Vec<super::super::store::Frame> = [(10, 0.0), (11, 4.0), (12, 6.0)]
+            .map(|(t, x)| (t, std::sync::Arc::from([at(x)])))
+            .into();
+        let x = |time: f64| transform_at(&frames, 0, time).unwrap().translate[0];
+        assert_eq!(x(9.0), 0.0);
+        assert_eq!(x(10.5), 2.0);
+        assert_eq!(x(11.5), 5.0);
+        assert_eq!(x(13.0), 6.0);
+    }
+
+    #[test]
+    fn a_spin_keeps_its_precision_late_in_a_session() {
+        let spin = Animation::Spin {
+            axis: [0.0, 1.0, 0.0],
+            pivot: [8.0, 8.0, 8.0],
+            degrees_per_tick: 76.8,
+            phase: 0.0,
+        };
+        // Ten hours in, a twentieth of a tick still turns the part.
+        let t = 720_000.0;
+        let a = motion(&spin, t);
+        let b = motion(&spin, t + 0.05);
+        let rim = |m: Affine3A| m.transform_point3(Vec3::new(1.0, 0.5, 0.5));
+        let moved = (rim(a) - rim(b)).length();
+        let want = 2.0 * 0.5 * (76.8f32 * 0.05 / 2.0).to_radians().sin();
+        assert!((moved - want).abs() < 1e-3, "{moved} vs {want}");
     }
 
     #[test]
