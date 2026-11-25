@@ -522,18 +522,58 @@ fn spawn_parts(
 }
 
 /// A sixteenths point as blocks.
-/// A transform `t` of the way from `a` to `b`, field by field (Java's
-/// renderers lerp their values by the partial tick the same way).
+/// A transform `t` of the way from `a` to `b`. The motion between them is
+/// taken as a screw (a turn about a fixed axis plus a slide along it), so a
+/// part turning about any point (a shaft about its centre) keeps its axis
+/// and takes the short way round, even when its angles wrap past 180.
 fn blend(
     a: torch_mod_api::Transform,
     b: torch_mod_api::Transform,
     t: f32,
 ) -> torch_mod_api::Transform {
     let mix = |x: [f32; 3], y: [f32; 3]| [0, 1, 2].map(|i| x[i] + (y[i] - x[i]) * t);
+    if a.rotate == b.rotate && a.pivot == b.pivot {
+        return torch_mod_api::Transform {
+            pivot: a.pivot,
+            rotate: a.rotate,
+            translate: mix(a.translate, b.translate),
+            scale: mix(a.scale, b.scale),
+        };
+    }
+    let rot = |r: [f32; 3]| {
+        Quat::from_rotation_z(r[2].to_radians())
+            * Quat::from_rotation_y(r[1].to_radians())
+            * Quat::from_rotation_x(r[0].to_radians())
+    };
+    // Each as x -> R (S x) + o, in sixteenths.
+    let origin = |tr: &torch_mod_api::Transform, q: Quat| {
+        let pivot = Vec3::from(tr.pivot);
+        Vec3::from(tr.translate) + pivot - q * (Vec3::from(tr.scale) * pivot)
+    };
+    let (qa, qb) = (rot(a.rotate), rot(b.rotate));
+    let (oa, ob) = (origin(&a, qa), origin(&b, qb));
+    // The relative motion: x -> Rd x + td.
+    let mut qd = qb * qa.inverse();
+    if qd.w < 0.0 {
+        qd = -qd;
+    }
+    let td = ob - qd * oa;
+    let (axis, angle) = qd.to_axis_angle();
+    let (q, o) = if angle.abs() < 1e-5 {
+        (qa.slerp(qb, t), oa.lerp(ob, t))
+    } else {
+        // The axis's point: the fixed point of the turn, in its plane.
+        let slide = axis * td.dot(axis);
+        let flat = td - slide;
+        let p = 0.5 * (flat + axis.cross(flat) / (angle * 0.5).tan());
+        let qt = Quat::from_axis_angle(axis, angle * t);
+        (qt * qa, qt * (oa - p) + p + slide * t)
+    };
+    let (z, y, x) = q.to_euler(EulerRot::ZYX);
     torch_mod_api::Transform {
-        pivot: mix(a.pivot, b.pivot),
-        rotate: mix(a.rotate, b.rotate),
-        translate: mix(a.translate, b.translate),
+        pivot: [0.0; 3],
+        rotate: [x.to_degrees(), y.to_degrees(), z.to_degrees()],
+        translate: o.into(),
         scale: mix(a.scale, b.scale),
     }
 }
@@ -867,6 +907,59 @@ fn geometry_quads(geometry: &Geometry) -> Option<(Vec<BakedQuad>, [f32; 4])> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Where a transform puts a point (sixteenths).
+    fn apply(t: &torch_mod_api::Transform, p: Vec3) -> Vec3 {
+        let q = Quat::from_rotation_z(t.rotate[2].to_radians())
+            * Quat::from_rotation_y(t.rotate[1].to_radians())
+            * Quat::from_rotation_x(t.rotate[0].to_radians());
+        let pivot = Vec3::from(t.pivot);
+        Vec3::from(t.translate) + pivot + q * (Vec3::from(t.scale) * (p - pivot))
+    }
+
+    /// A turn of `deg` about the block's centre on Y, as a pose replay
+    /// writes it (pivot 0, the centre's offset in the translation).
+    fn spun(deg: f32) -> torch_mod_api::Transform {
+        let c = Vec3::splat(8.0);
+        let q = Quat::from_rotation_y(deg.to_radians());
+        torch_mod_api::Transform {
+            pivot: [0.0; 3],
+            rotate: [0.0, deg, 0.0],
+            translate: (c - q * c).into(),
+            scale: [1.0; 3],
+        }
+    }
+
+    #[test]
+    fn a_blended_spin_keeps_its_axis_and_takes_the_short_way() {
+        // 170 -> -170 (190): halfway is 180, not 0.
+        let mid = blend(spun(170.0), spun(-170.0), 0.5);
+        let rim = apply(&mid, Vec3::new(16.0, 8.0, 8.0));
+        assert!((rim - Vec3::new(0.0, 8.0, 8.0)).length() < 1e-3, "{rim}");
+        let centre = apply(&mid, Vec3::splat(8.0));
+        assert!((centre - Vec3::splat(8.0)).length() < 1e-3, "{centre}");
+        // Every step stays on the circle.
+        for i in 0..=4 {
+            let p = apply(
+                &blend(spun(10.0), spun(80.0), i as f32 / 4.0),
+                Vec3::new(16.0, 8.0, 8.0),
+            );
+            assert!(((p - Vec3::splat(8.0)).length() - 8.0).abs() < 1e-3, "{p}");
+        }
+    }
+
+    #[test]
+    fn a_blended_slide_is_a_straight_line() {
+        let a = torch_mod_api::Transform {
+            translate: [0.0, 0.0, 0.0],
+            ..Default::default()
+        };
+        let b = torch_mod_api::Transform {
+            translate: [4.0, 0.0, 2.0],
+            ..Default::default()
+        };
+        assert_eq!(blend(a, b, 0.5).translate, [2.0, 0.0, 1.0]);
+    }
 
     #[test]
     fn a_path_runs_its_legs_and_holds_at_the_ends() {

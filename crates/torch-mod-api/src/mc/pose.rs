@@ -675,9 +675,14 @@ impl SuperByteBuffer {
         self
     }
 
-    /// `renderInto(ms, buffer)`: the part, placed by `ms`'s pose.
-    pub fn render_into(&self, ms: &PoseStack) -> Part {
-        self.part_at(ms.last())
+    /// `renderInto(ms, buffer)`: the part, placed by `ms`'s pose. Then the
+    /// buffer's own transforms and scroll reset, as Java's `reset()` does,
+    /// so a buffer drawn again (once per face) starts from its model.
+    pub fn render_into(&mut self, ms: &PoseStack) -> Part {
+        let part = self.part_at(ms.last());
+        self.pose = Pose::default();
+        self.scroll = None;
+        part
     }
 
     /// As drawn with the block's own pose (`renderInto` with a fresh `ms`).
@@ -826,6 +831,24 @@ mod tests {
         assert!(close(tip, [16.0, 8.0, 8.0]), "{tip:?}");
         let centre = api(&p.transform, [8.0, 8.0, 8.0]);
         assert!(close(centre, [8.0, 8.0, 8.0]), "{centre:?}");
+    }
+
+    #[test]
+    fn a_buffer_resets_after_it_draws() {
+        let ms = PoseStack::new();
+        let mut b = CachedBuffers::partial_facing("m", Direction::East);
+        let turned = b
+            .rotate_centered_degrees(90.0, Direction::Up)
+            .render_into(&ms);
+        let again = b.render_into(&ms);
+        assert_ne!(turned.transform, again.transform);
+        // The facing turn is the model's and stays.
+        assert_eq!(
+            again.transform,
+            CachedBuffers::partial_facing("m", Direction::East)
+                .part()
+                .transform
+        );
     }
 
     #[test]
