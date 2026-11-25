@@ -248,6 +248,30 @@ pub(crate) fn modded_item(id: u32) -> Option<&'static str> {
     MODDED_ITEMS.read().unwrap().get(&id).copied()
 }
 
+/// The server's modded items (namespaced, not vanilla's), in its id order:
+/// each mod's in the order it registered them.
+pub(crate) fn modded_items() -> Vec<(u32, &'static str)> {
+    let mut out: Vec<(u32, &'static str)> = MODDED_ITEMS
+        .read()
+        .unwrap()
+        .iter()
+        .filter(|(_, name)| name.contains(':'))
+        .map(|(id, name)| (*id, *name))
+        .collect();
+    out.sort_unstable();
+    out
+}
+
+/// A modded item's native id, by its name (`create:cogwheel`).
+pub(crate) fn modded_item_id(name: &str) -> Option<u32> {
+    MODDED_ITEMS
+        .read()
+        .unwrap()
+        .iter()
+        .find(|(_, n)| **n == name)
+        .map(|(id, _)| *id)
+}
+
 /// Where vanilla's blocks and states end in the server's own numbering.
 pub(crate) fn wire_vanilla(protocol: i32) -> crate::blocks::modded::WireVanilla {
     let count =

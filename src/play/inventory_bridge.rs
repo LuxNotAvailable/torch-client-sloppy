@@ -539,7 +539,15 @@ fn creative_stack(
         return ItemStack::Empty;
     }
     let Ok(kind) = ItemKind::from_str(stack.item) else {
-        return ItemStack::Empty;
+        // A modded item goes as the server's id for it.
+        return crate::protocol::modded_item_id(stack.item)
+            .and_then(std::num::NonZeroU32::new)
+            .map_or(ItemStack::Empty, |raw| {
+                ItemStack::Present(azalea_inventory::ItemStackData {
+                    modded_kind: Some(raw),
+                    ..azalea_inventory::ItemStackData::new(ItemKind::Barrier, stack.count as i32)
+                })
+            });
     };
     let mut out = ItemStack::new(kind, stack.count as i32);
     if !stack.enchantments.is_empty() {

@@ -255,8 +255,13 @@ fn block_ids() -> impl Iterator<Item = &'static str> {
     registry_ids!(BlockKind)
 }
 
+/// Vanilla's items, then the server's modded ones.
 fn item_ids() -> impl Iterator<Item = &'static str> {
-    registry_ids!(ItemKind)
+    registry_ids!(ItemKind).chain(
+        crate::protocol::modded_items()
+            .into_iter()
+            .map(|(_, name)| name),
+    )
 }
 
 fn tag_or<'a>(lower: &str, remaining: &str, ids: impl Iterator<Item = &'a str>) -> Candidates {

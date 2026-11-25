@@ -235,7 +235,7 @@ pub(crate) fn lang_key(kind: &str, id: &str) -> String {
 
 /// An item's name from the language (`item.` then `block.` keys, as a mod's
 /// lang names its items); the id itself when neither is there.
-fn lang_name(item: &str) -> String {
+pub(crate) fn lang_name(item: &str) -> String {
     ["item", "block"]
         .into_iter()
         .map(|kind| lang_key(kind, item))

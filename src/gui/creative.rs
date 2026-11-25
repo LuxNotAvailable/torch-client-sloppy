@@ -43,7 +43,101 @@ const TITLE_COLOR: u32 = 0x40_4040;
 
 const TAB_SEARCH: usize = CREATIVE_TABS.len();
 const TAB_INVENTORY: usize = CREATIVE_TABS.len() + 1;
-const TAB_COUNT: usize = CREATIVE_TABS.len() + 2;
+/// Mods' tabs follow: `MOD_TAB0 + k` is `mod_tabs()[k]`.
+const MOD_TAB0: usize = CREATIVE_TABS.len() + 2;
+/// Mod tabs on each page after vanilla's: five a row, as NeoForge pages them.
+const TABS_PER_PAGE: usize = 10;
+
+/// A mod's items as one tab, in the server's (registration) order.
+struct ModTab {
+    namespace: &'static str,
+    title: &'static str,
+    icon: &'static str,
+    items: Vec<&'static str>,
+}
+
+/// One tab per mod the server has items from, rebuilt when its items change.
+fn mod_tabs() -> std::sync::Arc<Vec<ModTab>> {
+    type Cache = Option<(Vec<(u32, &'static str)>, std::sync::Arc<Vec<ModTab>>)>;
+    static CACHE: std::sync::Mutex<Cache> = std::sync::Mutex::new(None);
+    let items = crate::protocol::modded_items();
+    let mut cache = CACHE.lock().unwrap();
+    if let Some((seen, tabs)) = cache.as_ref()
+        && *seen == items
+    {
+        return tabs.clone();
+    }
+    let tabs = std::sync::Arc::new(group_mod_tabs(&items));
+    *cache = Some((items, tabs.clone()));
+    tabs
+}
+
+/// Items (in id order) as one tab per namespace, each led by its first item.
+fn group_mod_tabs(items: &[(u32, &'static str)]) -> Vec<ModTab> {
+    let mut tabs: Vec<ModTab> = Vec::new();
+    for &(_, id) in items {
+        let ns = id.split_once(':').map_or(id, |(ns, _)| ns);
+        match tabs.iter_mut().find(|t| t.namespace == ns) {
+            Some(tab) => tab.items.push(id),
+            None => tabs.push(ModTab {
+                namespace: ns,
+                title: mod_title(ns),
+                icon: id,
+                items: vec![id],
+            }),
+        }
+    }
+    tabs
+}
+
+/// A mod's tab title: its main creative tab's name from the language
+/// (`itemGroup.create.base`, `itemGroup.create`), else its namespace.
+fn mod_title(ns: &str) -> &'static str {
+    static TITLES: std::sync::LazyLock<
+        std::sync::Mutex<std::collections::HashMap<String, &'static str>>,
+    > = std::sync::LazyLock::new(Default::default);
+    let mut titles = TITLES.lock().unwrap();
+    if let Some(t) = titles.get(ns) {
+        return t;
+    }
+    let title = [format!("itemGroup.{ns}.base"), format!("itemGroup.{ns}")]
+        .into_iter()
+        .find(|k| crate::gui::tooltip::has_translation(k))
+        .map(|k| crate::gui::tooltip::translate(&k, &[]))
+        .unwrap_or_else(|| {
+            let mut c = ns.chars();
+            c.next()
+                .map(|f| f.to_uppercase().chain(c).collect())
+                .unwrap_or_default()
+        });
+    let title: &'static str = Box::leak(title.into_boxed_str());
+    titles.insert(ns.to_owned(), title);
+    title
+}
+
+/// Pages of tabs: vanilla's, then mods' ten at a time.
+fn page_count() -> usize {
+    1 + mod_tabs().len().div_ceil(TABS_PER_PAGE)
+}
+
+fn page_tabs(page: usize) -> Vec<usize> {
+    tabs_on_page(page, mod_tabs().len())
+}
+
+/// The tabs on `page` with `mods` mod tabs; search and the inventory are
+/// on every one.
+fn tabs_on_page(page: usize, mods: usize) -> Vec<usize> {
+    let mut out: Vec<usize> = if page == 0 {
+        (0..CREATIVE_TABS.len()).collect()
+    } else {
+        let first = (page - 1) * TABS_PER_PAGE;
+        (first..(first + TABS_PER_PAGE).min(mods))
+            .map(|k| MOD_TAB0 + k)
+            .collect()
+    };
+    out.extend([TAB_SEARCH, TAB_INVENTORY]);
+    out
+}
 
 pub struct CreativeState {
     pub just_opened: bool,
@@ -54,6 +148,8 @@ pub struct CreativeState {
     pub visible: Vec<ListItem>,
     pub dirty: bool,
     pub hovered_tab_title: Option<&'static str>,
+    /// The page of tabs shown (0: vanilla's).
+    pub page: usize,
 }
 
 impl CreativeState {
@@ -77,6 +173,7 @@ impl Default for CreativeState {
             visible: Vec::new(),
             dirty: true,
             hovered_tab_title: None,
+            page: 0,
         }
     }
 }
@@ -115,6 +212,22 @@ fn tab_info(i: usize) -> TabInfo {
             can_scroll: false,
             show_title: false,
         },
+        i if i >= MOD_TAB0 => {
+            let tabs = mod_tabs();
+            let k = i - MOD_TAB0;
+            let (title, icon) = tabs.get(k).map_or(("", "barrier"), |t| (t.title, t.icon));
+            let slot = k % TABS_PER_PAGE;
+            TabInfo {
+                title,
+                icon,
+                top_row: slot < 5,
+                column: (slot % 5) as u8,
+                aligned_right: false,
+                background: "container/creative_inventory/tab_items",
+                can_scroll: true,
+                show_title: true,
+            }
+        }
         _ => {
             let t = &CREATIVE_TABS[i.min(CREATIVE_TABS.len() - 1)];
             TabInfo {
@@ -312,12 +425,21 @@ fn search_corpus() -> &'static [ListItem] {
 
 fn search_filter(query: &str) -> Vec<ListItem> {
     let q = query.trim().to_lowercase();
+    let modded = crate::protocol::modded_items();
     if q.is_empty() {
-        return search_corpus().to_vec();
+        let mut out = search_corpus().to_vec();
+        out.extend(modded.iter().map(|(_, id)| ListItem::Plain(id)));
+        return out;
     }
     if q.starts_with('#') {
         return Vec::new();
     }
+    let modded = modded.into_iter().map(|(_, id)| id).filter(|id| {
+        id.contains(&q)
+            || crate::gui::tooltip::lang_name(id)
+                .to_lowercase()
+                .contains(&q)
+    });
     search_corpus()
         .iter()
         .filter(|it| match it {
@@ -345,6 +467,7 @@ fn search_filter(query: &str) -> Vec<ListItem> {
             }
         })
         .cloned()
+        .chain(modded.map(ListItem::Plain))
         .collect()
 }
 
@@ -352,6 +475,10 @@ fn rebuild(st: &mut CreativeState) {
     st.visible = match st.tab {
         TAB_SEARCH => search_filter(&st.search.text),
         TAB_INVENTORY => Vec::new(),
+        i if i >= MOD_TAB0 => mod_tabs()
+            .get(i - MOD_TAB0)
+            .map(|t| t.items.iter().map(|id| ListItem::Plain(id)).collect())
+            .unwrap_or_default(),
         i => tab_items(i.min(CREATIVE_TABS.len() - 1)),
     };
     st.dirty = false;
@@ -403,12 +530,17 @@ fn grid_cell_at(mx: f32, my: f32, left: f32, top: f32) -> Option<usize> {
 }
 
 fn max_stack(it: &ListItem) -> u8 {
-    item(it.base_id()).map(|d| d.max_stack).unwrap_or(64)
+    let id = it.base_id();
+    item(id)
+        .map(|d| d.max_stack)
+        .unwrap_or_else(|| crate::items::modded::get(id).map_or(64, |m| m.max_stack.min(99) as u8))
 }
 
 fn list_stack(it: &ListItem, count: u8) -> SlotStack {
     let id = it.base_id();
-    let max_damage = item(id).map(|d| d.max_damage).unwrap_or(0);
+    let max_damage = item(id).map(|d| d.max_damage).unwrap_or_else(|| {
+        crate::items::modded::get(id).map_or(0, |m| m.max_damage.min(u32::from(u16::MAX)) as u16)
+    });
     SlotStack {
         item: id,
         count,
@@ -434,7 +566,12 @@ pub fn draw(
     let left = ((ctx.vw - IMAGE_W) / 2.0).floor();
     let top = ((ctx.vh - IMAGE_H) / 2.0).floor();
 
-    st.tab = st.tab.min(TAB_COUNT - 1);
+    if st.tab >= MOD_TAB0 + mod_tabs().len() {
+        st.tab = 0;
+        st.dirty = true;
+    }
+    st.page = st.page.min(page_count() - 1);
+    let tabs = page_tabs(st.page);
     st.hovered_tab_title = None;
 
     st.search.focused = st.tab == TAB_SEARCH;
@@ -458,7 +595,7 @@ pub fn draw(
 
     dim_background(p, ctx.vw, ctx.vh);
 
-    for i in 0..TAB_COUNT {
+    for &i in &tabs {
         if i != st.tab {
             draw_tab(p, &tab_info(i), false, left, top);
         }
@@ -493,7 +630,10 @@ pub fn draw(
         st.dragging_scrollbar = false;
     }
 
-    draw_tab(p, &info, true, left, top);
+    if tabs.contains(&st.tab) {
+        draw_tab(p, &info, true, left, top);
+    }
+    page_buttons(p, st, ctx, left, top);
     if st.tab == TAB_INVENTORY {
         p.figure(crate::scene::inventory_figure::Figure {
             x0: left + 73.0,
@@ -507,7 +647,7 @@ pub fn draw(
     }
 
     let mut clicked_tab = None;
-    for i in 0..TAB_COUNT {
+    for &i in &tabs {
         let t = tab_info(i);
         let (tx, ty) = (left + tab_x(&t), top + tab_hit_y(&t));
         if ctx.hovering(tx, ty, TAB_W + 1.0, TAB_H + 1.0) {
@@ -564,7 +704,7 @@ pub fn draw(
         st.scroll = subtract_input_from_scroll(st.scroll, ctx.input.scroll, len);
     }
 
-    let on_tab = (0..TAB_COUNT).any(|i| {
+    let on_tab = tabs.iter().any(|&i| {
         let t = tab_info(i);
         ctx.hovering(
             left + tab_x(&t),
@@ -646,6 +786,36 @@ pub fn draw(
     } else {
         None
     }
+}
+
+/// The arrows and `page / pages` above the tabs, when mods add pages.
+fn page_buttons(p: &mut Painter, st: &mut CreativeState, ctx: &ScreenCtx, left: f32, top: f32) {
+    let pages = page_count();
+    if pages < 2 {
+        return;
+    }
+    let y = top - 46.0;
+    let back = (left, st.page > 0);
+    let forward = (left + IMAGE_W - 23.0, st.page + 1 < pages);
+    for (i, (x, active)) in [back, forward].into_iter().enumerate() {
+        if !active {
+            continue;
+        }
+        let hot = ctx.hovering(x, y, 23.0, 13.0);
+        let sprite = match (i, hot) {
+            (0, false) => "widget/page_backward",
+            (0, true) => "widget/page_backward_highlighted",
+            (_, false) => "widget/page_forward",
+            (_, true) => "widget/page_forward_highlighted",
+        };
+        p.sprite(sprite, x, y, 23.0, 13.0);
+        if hot && ctx.input.left_click {
+            st.page = if i == 0 { st.page - 1 } else { st.page + 1 };
+        }
+    }
+    let label = format!("{} / {pages}", st.page + 1);
+    let w = p.atlas.font.width_str(&label);
+    p.text_str(&label, left + (IMAGE_W - w) / 2.0, y + 3.0, 0xFFFFFF, true);
 }
 
 fn select_tab(st: &mut CreativeState, tab: usize) {
@@ -965,6 +1135,55 @@ mod tests {
         let by_id = search_filter("diamond_pick");
         assert!(ids(&by_id).contains(&"diamond_pickaxe"));
         assert!(!ids(&by_id).contains(&"diamond_sword"));
+    }
+
+    #[test]
+    fn mod_items_group_by_namespace_in_registry_order() {
+        let tabs = group_mod_tabs(&[
+            (2000, "create:cogwheel"),
+            (2001, "create:shaft"),
+            (2002, "farmersdelight:tomato"),
+            (2003, "create:belt_connector"),
+        ]);
+        let got: Vec<(&str, &str, Vec<&str>)> = tabs
+            .iter()
+            .map(|t| (t.namespace, t.icon, t.items.clone()))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                (
+                    "create",
+                    "create:cogwheel",
+                    vec!["create:cogwheel", "create:shaft", "create:belt_connector"]
+                ),
+                (
+                    "farmersdelight",
+                    "farmersdelight:tomato",
+                    vec!["farmersdelight:tomato"]
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn mod_tabs_page_after_vanilla_s_ten_at_a_time() {
+        let first = tabs_on_page(0, 12);
+        assert_eq!(first.len(), CREATIVE_TABS.len() + 2);
+        assert!(!first.contains(&MOD_TAB0));
+        let second = tabs_on_page(1, 12);
+        assert_eq!(
+            &second[..10],
+            &(MOD_TAB0..MOD_TAB0 + 10).collect::<Vec<_>>()[..]
+        );
+        assert_eq!(
+            tabs_on_page(2, 12),
+            [MOD_TAB0 + 10, MOD_TAB0 + 11, TAB_SEARCH, TAB_INVENTORY]
+        );
+        // The eleventh mod tab sits where the first did, a page on.
+        let (a, b) = (tab_info(MOD_TAB0), tab_info(MOD_TAB0 + 10));
+        assert_eq!((a.top_row, a.column), (b.top_row, b.column));
+        assert!(!tab_info(MOD_TAB0 + 5).top_row);
     }
 
     #[test]
