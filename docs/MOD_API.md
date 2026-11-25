@@ -85,6 +85,13 @@ different part list (an item arriving) draws afresh. `block_entity` is still
 called when the server's data arrives: treat it as Java's `read`, and let
 the next ticks carry on from it, as Java's client does between syncs.
 
+To check a port's simulation against a real server, run the client with
+`MC_MODAPI_TRACE=<file>`: each modded block entity view made from the
+server's data (a `BlockEntityView`, with `time`) is appended to `file`, one
+JSON line each. `torch-port-check --trace <file>` replays it: for each
+ticking type it reads one update, ticks to the next, and reports how far
+the parts drifted from what the next update draws.
+
 `entity_motion` is a mod's movement handler for the local player
 (Create's `BeltMovementHandler`). Players move themselves on the client, so
 without it a belt carries everything but the player. It gets an

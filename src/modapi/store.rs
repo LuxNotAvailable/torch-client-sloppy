@@ -46,6 +46,35 @@ pub struct Placed {
     pub prev: Option<Arc<[torch_mod_api::Transform]>>,
 }
 
+/// `MC_MODAPI_TRACE=<file>`: every view made from the server's data goes
+/// to `file` as a JSON line, so `torch-port-check --trace` can replay a
+/// session against a port's client-side simulation.
+static TRACE: std::sync::LazyLock<Mutex<Option<std::io::BufWriter<std::fs::File>>>> =
+    std::sync::LazyLock::new(|| {
+        let file = crate::platform::env::var("MC_MODAPI_TRACE")
+            .ok()
+            .and_then(|path| {
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&path)
+                    .inspect_err(|e| crate::log_warn!("modapi", "trace {path}: {e}"))
+                    .ok()
+            });
+        Mutex::new(file.map(std::io::BufWriter::new))
+    });
+
+fn trace(view: &torch_mod_api::BlockEntityView) {
+    use std::io::Write;
+    let mut trace = TRACE.lock();
+    if let Some(out) = trace.as_mut() {
+        if let Ok(line) = serde_json::to_string(view) {
+            let _ = writeln!(out, "{line}");
+            let _ = out.flush();
+        }
+    }
+}
+
 /// Ticking types are simulated this close to the player, in blocks.
 const TICK_DISTANCE: f64 = 96.0;
 
@@ -232,6 +261,7 @@ pub fn tick(world: &azalea_world::World, game_time: u64, player: Option<[f64; 3]
         let answer = if ticking {
             super::tick_block_entity(&view, near(*pos))
         } else {
+            trace(&view);
             super::block_entity(&view, near(*pos))
         };
         let rig = match answer {
