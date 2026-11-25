@@ -699,6 +699,28 @@ pub struct BlockAt {
 }
 
 pub mod buf;
+pub mod catnip;
+pub mod mc;
+
+/// Everything a port usually needs: the API types, vanilla's helpers
+/// ([`mc`]) and Catnip's ([`catnip`]).
+pub mod prelude {
+    pub use crate::catnip::{
+        AngleHelper, AnimationFunctions, AnimationTickHolder, Chaser, DirectionHelper, Force,
+        Iterate, LerpedFloat, PhysicalFloat, Pointing, VecHelper,
+    };
+    pub use crate::mc::StateProps;
+    pub use crate::mc::color::{Abgr32, Argb32, Color};
+    pub use crate::mc::direction::{Axis, AxisDirection, Direction, Mirror, Plane, Rotation};
+    pub use crate::mc::java::{JMath, JavaRandom, RandomSource, string_hash};
+    pub use crate::mc::mth::Mth;
+    pub use crate::mc::nbt::{CompoundTag, ItemStack, ListTag, NBTHelper, NbtUtils};
+    pub use crate::mc::pose::{
+        CachedBuffers, MathAxis, Pose, PoseStack, Quaternion, SuperByteBuffer, TransformStack,
+    };
+    pub use crate::mc::vec::{AABB, BlockPos, Vec3};
+    pub use crate::*;
+}
 
 /// Calls into the client.
 pub mod host {

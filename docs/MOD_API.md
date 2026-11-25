@@ -236,6 +236,39 @@ keeps a mod sprite taller than wide (and not animated) as stacked squares;
 the host cuts quads at their edges and rebuilds the mesh per quarter texel
 of offset.
 
+### Helpers: vanilla's and Catnip's code in Rust
+
+`use torch_mod_api::prelude::*;` brings in the API types and Rust copies
+of the Java a client renderer or tick calls, with Java's behaviour (the
+sine table, `Math.round`, `Direction` tie-breaks, `java.util.Random`), so
+a port renames calls instead of rewriting them:
+
+| Module | Java |
+|---|---|
+| `mc::mth` | `Mth` (`Mth::lerp`, `Mth::sin`, `Mth::wrap_degrees`, ...) |
+| `mc::java` | `Math.round`/`signum`/`floorMod` where Rust differs (`JMath`), `java.util.Random` and `RandomSource.create(seed)` (`JavaRandom`), `String.hashCode` |
+| `mc::direction` | `Direction`, `Direction.Axis`/`AxisDirection`/`Plane`, `Rotation`, `Mirror` |
+| `mc::vec` | `Vec3`, `BlockPos`, `AABB` |
+| `mc::pose` | `PoseStack`, JOML's `Quaternionf`, `com.mojang.math.Axis` (`MathAxis`), Flywheel's `TransformStack`, Catnip's `SuperByteBuffer`/`CachedBuffers`; ends in a `Part` |
+| `mc::nbt` | `CompoundTag`/`ListTag` getters over `view.nbt` with Java's defaults, `NbtUtils`, Catnip's `NBTHelper`, `ItemStack` |
+| `mc::color` | `FastColor.ARGB32`/`ABGR32`, Catnip's `Color` |
+| `catnip` | `LerpedFloat` and `Chaser`, `PhysicalFloat`, `AngleHelper`, `VecHelper`, `DirectionHelper`, `Pointing`, `Iterate`, `AnimationFunctions`, `AnimationTickHolder` |
+
+Names: `Class.methodName(a)` is `Class::method_name(a)`, `v.methodName(a)`
+is `v.method_name(a)`. Java overloads by argument type get one name per
+form: `translate(x, y, z)`/`translate_vec(v)`, `add(v)`/`add_xyz(x, y, z)`,
+`rotate(q)`/`rotate_by(radians, axis)`/`rotate_degrees(degrees, axis)`,
+`scale(f)`/`scale_xyz(x, y, z)`, `wrap_degrees` (float, double) and
+`wrap_degrees_i` (int). `move` is a keyword: `AABB::move_by`,
+`Motion::move_entity`.
+
+Views read like Java's objects: `view.block_pos()`,
+`view.direction("facing")` (`getValue(FACING)`), `view.axis("axis")`,
+`view.flag("powered")`, `view.nbt.get_float("Speed")`,
+`entity.get_bounding_box()`. A movement handler builds its `Motion` with
+`m.move_entity(v)`, `m.set_delta_movement(v)`, `m.offset_pos(v)`,
+`m.set_on_ground(b)` and `m.reset_fall_distance()`, in Java's order.
+
 ### Host functions (imports, module `torch`)
 
 | Function | Does |
