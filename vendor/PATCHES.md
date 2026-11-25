@@ -52,6 +52,9 @@ Treat as our code. History: `git log -- vendor/azalea`. Main areas:
   from a mod plugin's `entity_motion` (a belt carrying the player): `travel`
   applies its `PushStep`s in order (collision moves, `setPos` offsets,
   velocity, on-ground, fall reset) to the local player.
+- Modded items go out under their raw id (`modded_kind`): creative slots
+  (`UntrustedItemStack`, `slot.rs`) and click hashes (`HashedActualItem`,
+  `s_container_click.rs`).
 - `azalea-inventory`: `PotDecorations` hashes as Java's codec writes it
   (absent sides left out, `count` 1 left out), `components/mod.rs`.
 - `azalea-client`: `queue_held_instant_mine` breaks instant blocks in the

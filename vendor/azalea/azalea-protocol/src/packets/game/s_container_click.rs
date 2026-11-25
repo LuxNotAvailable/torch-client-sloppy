@@ -21,12 +21,32 @@ pub struct ServerboundContainerClick {
 #[derive(AzBuf, Clone, Debug, PartialEq)]
 pub struct HashedStack(pub Option<HashedActualItem>);
 
-#[derive(AzBuf, Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct HashedActualItem {
     pub kind: ItemKind,
-    #[var]
     pub count: i32,
     pub components: HashedPatchMap,
+    /// A modded item's raw id, written in place of `kind` (its stand-in).
+    pub modded_kind: Option<std::num::NonZeroU32>,
+}
+
+impl AzBuf for HashedActualItem {
+    fn azalea_read(buf: &mut std::io::Cursor<&[u8]>) -> Result<Self, azalea_buf::BufReadError> {
+        use azalea_buf::AzBufVar;
+        let (kind, modded_kind) = azalea_inventory::read_item_kind(buf)?;
+        Ok(HashedActualItem {
+            kind,
+            count: i32::azalea_read_var(buf)?,
+            components: HashedPatchMap::azalea_read(buf)?,
+            modded_kind,
+        })
+    }
+    fn azalea_write(&self, buf: &mut impl std::io::Write) -> std::io::Result<()> {
+        use azalea_buf::AzBufVar;
+        azalea_inventory::write_item_kind(self.kind, self.modded_kind, buf)?;
+        self.count.azalea_write_var(buf)?;
+        self.components.azalea_write(buf)
+    }
 }
 
 #[derive(AzBuf, Clone, Debug, PartialEq)]
@@ -62,6 +82,7 @@ impl HashedStack {
             kind: item.kind,
             count: item.count,
             components,
+            modded_kind: item.modded_kind,
         };
         Self(Some(item))
     }

@@ -973,4 +973,39 @@ mod modded_item_tests {
             .collect();
         assert_eq!(name, "Modded item #70123");
     }
+
+    #[test]
+    fn a_modded_stack_goes_out_under_its_raw_id() {
+        use azalea_buf::AzBuf;
+        use azalea_inventory::UntrustedItemStack;
+        let stack = ItemStack::Present(ItemStackData {
+            kind: ItemKind::Barrier,
+            count: 3,
+            component_patch: Default::default(),
+            modded_kind: std::num::NonZeroU32::new(70_123),
+        });
+        // A creative slot: the raw id, not the barrier standing in for it.
+        let built = UntrustedItemStack(stack.clone());
+        let mut bytes = Vec::new();
+        built.azalea_write(&mut bytes).unwrap();
+        let read = UntrustedItemStack::azalea_read(&mut std::io::Cursor::new(&bytes[..])).unwrap();
+        assert_eq!(read, built);
+        // A click's hashed stack likewise.
+        let hashed =
+            azalea_protocol::packets::game::s_container_click::HashedStack::from_item_stack(
+                &stack,
+                &Default::default(),
+            );
+        let mut bytes = Vec::new();
+        hashed.azalea_write(&mut bytes).unwrap();
+        let read = azalea_protocol::packets::game::s_container_click::HashedStack::azalea_read(
+            &mut std::io::Cursor::new(&bytes[..]),
+        )
+        .unwrap();
+        assert_eq!(read, hashed);
+        assert_eq!(
+            read.0.unwrap().modded_kind,
+            std::num::NonZeroU32::new(70_123)
+        );
+    }
 }

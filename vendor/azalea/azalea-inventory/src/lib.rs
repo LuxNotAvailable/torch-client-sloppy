@@ -9,7 +9,9 @@ mod slot;
 use std::ops::{Deref, DerefMut, RangeInclusive};
 
 use azalea_inventory_macros::declare_menus;
-pub use slot::{DataComponentPatch, ItemStack, ItemStackData, UntrustedItemStack, read_item_kind};
+pub use slot::{
+    DataComponentPatch, ItemStack, ItemStackData, UntrustedItemStack, read_item_kind, write_item_kind,
+};
 
 #[derive(Clone, Debug)]
 pub struct SlotList<const N: usize>([ItemStack; N]);

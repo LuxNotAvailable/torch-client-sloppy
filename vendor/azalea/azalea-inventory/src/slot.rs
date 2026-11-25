@@ -157,7 +157,7 @@ pub fn read_item_kind(
 }
 
 /// Writes an item id: a modded item's raw id goes back as it came.
-fn write_item_kind(
+pub fn write_item_kind(
     kind: ItemKind,
     modded: Option<std::num::NonZeroU32>,
     buf: &mut impl Write,
@@ -562,7 +562,7 @@ impl AzBuf for UntrustedItemStack {
             ItemStack::Empty => 0_i32.azalea_write_var(buf)?,
             ItemStack::Present(i) => {
                 i.count.azalea_write_var(buf)?;
-                i.kind.azalea_write(buf)?;
+                write_item_kind(i.kind, i.modded_kind, buf)?;
                 i.component_patch.azalea_write_delimited(buf)?;
             }
         };
