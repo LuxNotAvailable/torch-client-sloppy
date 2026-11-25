@@ -34,6 +34,7 @@ __pycache__/
 /ports/
 /tools/port_agent.py
 /tools/port_agent_model.py
+/tools/qwen_watch.py
 /tools/converter_app/
 /docs/porting/
 /docs/MOD_TRANSLATOR_PLAN.md

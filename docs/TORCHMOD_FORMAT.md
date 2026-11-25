@@ -30,7 +30,12 @@ never `minecraft`: a mod package can't restyle vanilla.
 
 Models are plain block models: `torch-convert` rewrites those that need a
 NeoForge loader. A `neoforge:composite` model becomes one with every
-child's elements. A `neoforge:obj` model becomes `torch_quads`, a list of
+child's elements. A mod's own loader (Java that builds the model at
+runtime, Sophisticated Backpacks' `backpack`) needs a recipe
+(`crates/torch-convert/loaders/`, or a port's `loaders.json`): its model
+becomes the default parts merged, and a blockstate using it a multipart
+with a case per part and property. A loader with no recipe is left as it
+is (it draws nothing) and reported. A `neoforge:obj` model becomes `torch_quads`, a list of
 free quads beside (or instead of) `elements`:
 
 ```json
