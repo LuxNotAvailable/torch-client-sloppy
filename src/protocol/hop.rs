@@ -419,6 +419,9 @@ impl Hop {
                     body.is_some(),
                 );
             }
+            if body.is_none() {
+                self.unsent_once(key, native_id, raw.len());
+            }
             return match (body, wire_id) {
                 (Some(body), Some(wire_id)) => frame(wire_id, &body),
                 _ => Box::new([]),
@@ -466,6 +469,34 @@ impl Hop {
         crate::log_warn!(
             "proto",
             "the {} -> {} hop couldn't rewrite {name} ({len} bytes); it went on as it came",
+            self.wire.version().name,
+            self.native.version().name
+        );
+    }
+
+    /// Says once per packet kind that this hop couldn't rewrite one of
+    /// ours, so the server never got it.
+    fn unsent_once(&self, phase: Phase, native_id: u32, len: usize) {
+        static SEEN: std::sync::Mutex<Vec<(i32, i32, Phase, u32)>> =
+            std::sync::Mutex::new(Vec::new());
+        let key = (
+            self.wire.version().protocol,
+            self.native.version().protocol,
+            phase,
+            native_id,
+        );
+        let mut seen = SEEN.lock().unwrap();
+        if seen.contains(&key) {
+            return;
+        }
+        seen.push(key);
+        let name = self
+            .native
+            .name_of(phase, Direction::Serverbound, native_id)
+            .unwrap_or("?");
+        crate::log_warn!(
+            "proto",
+            "the {} -> {} hop couldn't rewrite our {name} ({len} bytes); it wasn't sent",
             self.wire.version().name,
             self.native.version().name
         );

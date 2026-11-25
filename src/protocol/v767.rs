@@ -609,7 +609,8 @@ fn creative_slot(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     let count = r.varint()?;
     write_varint(&mut out, count);
     if count > 0 {
-        write_varint(&mut out, ids.from_native.map(IdSpace::Item, r.varint()?)?);
+        // A modded item too: shifted back past 1.21.1's vanilla items.
+        write_varint(&mut out, hop::unshifted(ids, IdSpace::Item, r.varint()?)?);
         write_varint(&mut out, 0);
         write_varint(&mut out, 0);
     }
@@ -2148,6 +2149,16 @@ mod tests {
         let stone = ids.to_native.map(IdSpace::Item, 1).unwrap() as u8;
         let creative = creative_slot(ids, &[0, 36, 1, stone, 1, 0, 9, 9]).unwrap();
         assert_eq!(&*creative, &[0, 36, 1, 1, 0, 0]);
+        // A modded item, past 1.21.1's vanilla ones, goes back as it came.
+        let wire = ids.to_native.count(IdSpace::Item) + 5;
+        let native = hop::shifted(ids, IdSpace::Item, wire).unwrap();
+        let mut body = vec![0, 36, 1];
+        write_varint(&mut body, native);
+        body.extend_from_slice(&[0, 0]);
+        let mut want = vec![0, 36, 1];
+        write_varint(&mut want, wire);
+        want.extend_from_slice(&[0, 0]);
+        assert_eq!(&*creative_slot(ids, &body).unwrap(), &want[..]);
         assert!(unsent(ids, &[1]).is_none());
     }
 
