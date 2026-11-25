@@ -48,14 +48,46 @@ pub struct Placed {
     pub frames: Arc<[Frame]>,
 }
 
-/// A rig's parts' transforms at a game time.
-pub type Frame = (u64, Arc<[torch_mod_api::Transform]>);
+/// A rig's parts' poses at a game time.
+pub type Frame = (u64, Arc<[Pose]>);
+
+/// Where a part is: its transform, and an item's as a flat sprite.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Pose {
+    pub transform: torch_mod_api::Transform,
+    pub flat: Option<torch_mod_api::Transform>,
+}
 
 /// Frames kept: the shown time trails the newest by up to two ticks.
 const FRAMES: usize = 3;
 
-fn transforms(rig: &torch_mod_api::Rig) -> Arc<[torch_mod_api::Transform]> {
-    rig.parts.iter().map(|p| p.transform).collect()
+fn transforms(rig: &torch_mod_api::Rig) -> Arc<[Pose]> {
+    rig.parts.iter().map(pose).collect()
+}
+
+fn pose(p: &torch_mod_api::Part) -> Pose {
+    let flat = match &p.geometry {
+        torch_mod_api::Geometry::Item { flat, .. } => *flat,
+        _ => None,
+    };
+    Pose {
+        transform: p.transform,
+        flat,
+    }
+}
+
+/// What a part draws, where aside: an item's flat transform is its pose.
+fn look(g: &torch_mod_api::Geometry) -> std::borrow::Cow<'_, torch_mod_api::Geometry> {
+    match g {
+        torch_mod_api::Geometry::Item {
+            item,
+            flat: Some(_),
+        } => std::borrow::Cow::Owned(torch_mod_api::Geometry::Item {
+            item: item.clone(),
+            flat: None,
+        }),
+        _ => std::borrow::Cow::Borrowed(g),
+    }
 }
 
 /// A redrawn rig's frames. Each new part takes the history of the old part
@@ -77,7 +109,9 @@ fn carried_frames(old: Option<&Placed>, rig: &torch_mod_api::Rig, game_time: u64
                 .iter()
                 .enumerate()
                 .filter(|(j, o)| {
-                    !used[*j] && o.geometry == p.geometry && o.animation == p.animation
+                    !used[*j]
+                        && look(&o.geometry) == look(&p.geometry)
+                        && o.animation == p.animation
                 })
                 .map(|(j, o)| {
                     let d = [0, 1, 2].map(|k| o.transform.translate[k] - p.transform.translate[k]);
@@ -147,7 +181,9 @@ const TICK_DISTANCE: f64 = 96.0;
 pub(super) fn same_parts(a: &torch_mod_api::Rig, b: &torch_mod_api::Rig) -> bool {
     a.parts.len() == b.parts.len()
         && a.parts.iter().zip(&b.parts).all(|(x, y)| {
-            x.geometry == y.geometry && x.animation == y.animation && x.scroll == y.scroll
+            look(&x.geometry) == look(&y.geometry)
+                && x.animation == y.animation
+                && x.scroll == y.scroll
         })
 }
 
@@ -513,6 +549,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_flat_item_moving_keeps_its_parts() {
+        let at = |x: f32| {
+            let mut p = torch_mod_api::Part::item("iron_ingot");
+            p.transform.translate = [x, 0.0, 0.0];
+            if let torch_mod_api::Geometry::Item { flat, .. } = &mut p.geometry {
+                let mut f = torch_mod_api::Transform::default();
+                f.translate = [x, -1.5, 0.0];
+                *flat = Some(f);
+            }
+            torch_mod_api::Rig { parts: vec![p] }
+        };
+        let (a, b) = (at(0.0), at(2.0));
+        assert!(same_parts(&a, &b), "only its pose moved");
+        assert_eq!(transforms(&b)[0].flat.unwrap().translate, [2.0, -1.5, 0.0]);
+    }
+
+    #[test]
     fn an_item_arriving_keeps_the_others_gliding() {
         let item = |id: &str, x: f32| {
             let mut p = torch_mod_api::Part::item(id);
@@ -525,7 +578,7 @@ mod tests {
             rev: 1,
             frame: 2,
             frames: [(10, [0.0, 16.0]), (11, [2.0, 18.0]), (12, [4.0, 20.0])]
-                .map(|(t, xs)| (t, xs.map(|x| item("stone", x).transform).into()))
+                .map(|(t, xs)| (t, xs.map(|x| pose(&item("stone", x))).into()))
                 .into(),
         };
         // An iron ingot joins at the front; the stones moved on.
@@ -535,7 +588,7 @@ mod tests {
             item("stone", 6.0),
         ]);
         let frames = carried_frames(Some(&old), &new, 13);
-        let x = |f: &Frame, i: usize| f.1[i].translate[0];
+        let x = |f: &Frame, i: usize| f.1[i].transform.translate[0];
         assert_eq!(frames.iter().map(|f| f.0).collect::<Vec<_>>(), [11, 12, 13]);
         // The stones keep their own pasts; the ingot has none.
         assert_eq!(

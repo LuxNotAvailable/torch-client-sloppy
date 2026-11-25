@@ -42,6 +42,10 @@ struct ModPart;
 
 struct LivePart {
     entity: Entity,
+    /// Its part's index in the rig (parts that can't draw are skipped).
+    index: usize,
+    /// An item drawn as a flat sprite: its pose's `flat` places it.
+    flat: bool,
     transform: torch_mod_api::Transform,
     /// An item's display transform, after the part's; identity otherwise.
     display: Transform,
@@ -70,11 +74,7 @@ fn shown_time(view: &crate::app::FrameView) -> f64 {
 
 /// Part `i`'s transform at `x` (game ticks): blended between the frames
 /// either side, held past either end.
-fn transform_at(
-    frames: &[super::store::Frame],
-    i: usize,
-    x: f64,
-) -> Option<torch_mod_api::Transform> {
+fn transform_at(frames: &[super::store::Frame], i: usize, x: f64) -> Option<super::store::Pose> {
     let (first, last) = (frames.first()?, frames.last()?);
     if x <= first.0 as f64 {
         return first.1.get(i).copied();
@@ -83,7 +83,14 @@ fn transform_at(
         let ((ta, a), (tb, b)) = (&w[0], &w[1]);
         if x < *tb as f64 {
             let t = ((x - *ta as f64) / (tb - ta) as f64) as f32;
-            return Some(blend(*a.get(i)?, *b.get(i)?, t));
+            let (a, b) = (a.get(i)?, b.get(i)?);
+            return Some(super::store::Pose {
+                transform: blend(a.transform, b.transform, t),
+                flat: match (a.flat, b.flat) {
+                    (Some(fa), Some(fb)) => Some(blend(fa, fb, t)),
+                    (_, fb) => fb,
+                },
+            });
         }
     }
     last.1.get(i).copied()
@@ -176,8 +183,11 @@ fn sync_rigs(
             let mut shown = rig.parts.clone();
             if placed.frames.len() > 1 {
                 for (i, part) in shown.iter_mut().enumerate() {
-                    if let Some(t) = transform_at(&placed.frames, i, ticks) {
-                        part.transform = t;
+                    if let Some(at) = transform_at(&placed.frames, i, ticks) {
+                        part.transform = at.transform;
+                        if let Geometry::Item { flat, .. } = &mut part.geometry {
+                            *flat = at.flat;
+                        }
                     }
                 }
             }
@@ -226,7 +236,7 @@ fn sync_rigs(
                 .frames
                 .last()
                 .is_some_and(|f| ticks < f.0 as f64 + 1.0);
-        for (i, part) in live_rig.parts.iter_mut().enumerate() {
+        for part in live_rig.parts.iter_mut() {
             let moving = part.animation != Animation::None || blending;
             if !moving && part.scroll.is_none() {
                 continue;
@@ -235,9 +245,11 @@ fn sync_rigs(
                 continue;
             };
             if moving {
-                if blending {
-                    part.transform =
-                        transform_at(&live_rig.frames, i, ticks).unwrap_or(part.transform);
+                if blending && let Some(at) = transform_at(&live_rig.frames, part.index, ticks) {
+                    part.transform = match at.flat {
+                        Some(flat) if part.flat => flat,
+                        _ => at.transform,
+                    };
                 }
                 *t =
                     place(*pos, part.transform, &part.animation, ticks).mul_transform(part.display);
@@ -443,7 +455,8 @@ fn spawn_parts(
         })
         .clone();
     let mut parts = Vec::with_capacity(rig_parts.len());
-    for part in rig_parts {
+    for (index, part) in rig_parts.iter().enumerate() {
+        let mut flat_sprite = false;
         let step = part.scroll.as_ref().and_then(|s| scroll_step(s, ticks));
         let (mesh, material, transform, display) = match &part.geometry {
             Geometry::Text {
@@ -517,6 +530,7 @@ fn spawn_parts(
                         ))
                     })
                     .clone();
+                flat_sprite = gpu.flat;
                 let transform = match flat {
                     Some(flat) if gpu.flat => *flat,
                     _ => part.transform,
@@ -545,6 +559,8 @@ fn spawn_parts(
         }
         parts.push(LivePart {
             entity,
+            index,
+            flat: flat_sprite,
             transform,
             display,
             animation: part.animation.clone(),
@@ -998,10 +1014,23 @@ mod tests {
             translate: [x, 0.0, 0.0],
             ..Default::default()
         };
+        let pose = |x: f32| super::super::store::Pose {
+            transform: at(x),
+            flat: Some(at(x * 2.0)),
+        };
         let frames: Vec<super::super::store::Frame> = [(10, 0.0), (11, 4.0), (12, 6.0)]
-            .map(|(t, x)| (t, std::sync::Arc::from([at(x)])))
+            .map(|(t, x)| (t, std::sync::Arc::from([pose(x)])))
             .into();
-        let x = |time: f64| transform_at(&frames, 0, time).unwrap().translate[0];
+        let x = |time: f64| transform_at(&frames, 0, time).unwrap().transform.translate[0];
+        // A flat sprite's transform blends alongside.
+        assert_eq!(
+            transform_at(&frames, 0, 10.5)
+                .unwrap()
+                .flat
+                .unwrap()
+                .translate[0],
+            4.0
+        );
         assert_eq!(x(9.0), 0.0);
         assert_eq!(x(10.5), 2.0);
         assert_eq!(x(11.5), 5.0);
