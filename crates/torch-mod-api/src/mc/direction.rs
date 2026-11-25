@@ -4,9 +4,10 @@
 use super::mth::Mth;
 use super::vec::{BlockPos, Vec3};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 pub enum Axis {
     X,
+    #[default]
     Y,
     Z,
 }
@@ -69,8 +70,9 @@ impl Axis {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum AxisDirection {
+    #[default]
     Positive,
     Negative,
 }
@@ -92,8 +94,9 @@ impl AxisDirection {
 }
 
 /// `Direction.Plane`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum Plane {
+    #[default]
     Horizontal,
     Vertical,
 }
@@ -118,10 +121,11 @@ impl Plane {
 }
 
 /// `Direction`, in declaration order (`values()`, ties in `getNearest`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 pub enum Direction {
     Down,
     Up,
+    #[default]
     North,
     South,
     West,
@@ -393,8 +397,9 @@ impl Direction {
 }
 
 /// A block state's `Rotation` (`rotate(state, rotation)`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum Rotation {
+    #[default]
     None,
     Clockwise90,
     Clockwise180,
@@ -428,8 +433,9 @@ impl Rotation {
 }
 
 /// A block state's `Mirror`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum Mirror {
+    #[default]
     None,
     LeftRight,
     FrontBack,

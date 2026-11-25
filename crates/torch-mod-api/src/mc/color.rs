@@ -116,7 +116,7 @@ impl Abgr32 {
 
 /// Catnip's `Color` (`net.createmod.catnip.theme.Color`); the mutable
 /// setters return the changed copy.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub struct Color(pub i32);
 
 impl Color {

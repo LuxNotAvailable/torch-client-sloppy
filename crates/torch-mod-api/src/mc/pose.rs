@@ -701,6 +701,13 @@ impl SuperByteBuffer {
     }
 }
 
+/// An empty model: what a buffer field holds before it's set.
+impl Default for SuperByteBuffer {
+    fn default() -> SuperByteBuffer {
+        CachedBuffers::partial("")
+    }
+}
+
 /// Catnip's `CachedBuffers`.
 pub struct CachedBuffers;
 

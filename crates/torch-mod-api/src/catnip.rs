@@ -65,6 +65,19 @@ pub struct LerpedFloat {
     pub forced_sync: bool,
 }
 
+/// `LerpedFloat.linear()`.
+impl Default for LerpedFloat {
+    fn default() -> LerpedFloat {
+        LerpedFloat::linear()
+    }
+}
+
+impl Default for PhysicalFloat {
+    fn default() -> PhysicalFloat {
+        PhysicalFloat::create()
+    }
+}
+
 impl LerpedFloat {
     fn with(interpolator: Interpolator) -> LerpedFloat {
         LerpedFloat {
@@ -687,8 +700,9 @@ impl DirectionHelper {
 }
 
 /// Catnip's `Pointing`, in declaration order.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum Pointing {
+    #[default]
     Up,
     Left,
     Down,
