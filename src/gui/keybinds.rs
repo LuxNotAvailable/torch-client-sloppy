@@ -238,6 +238,77 @@ pub struct BindDef {
     pub default: Bound,
 }
 
+/// A row of Controls: vanilla's `BINDS`, then the keys mod plugins bind.
+#[derive(Clone, Copy, Debug)]
+pub struct BindInfo {
+    pub id: &'static str,
+    pub name: &'static str,
+    pub category: &'static str,
+    pub default: Bound,
+}
+
+/// The keys loaded plugins bind (`modapi::keys`), names from the language;
+/// built again when the plugins' keys change.
+fn mod_binds() -> std::sync::Arc<Vec<BindInfo>> {
+    type Cache = Option<(
+        Vec<torch_mod_api::KeyBinding>,
+        std::sync::Arc<Vec<BindInfo>>,
+    )>;
+    static CACHE: std::sync::Mutex<Cache> = std::sync::Mutex::new(None);
+    let keys = crate::modapi::keys();
+    let mut cache = CACHE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some((seen, binds)) = cache.as_ref()
+        && *seen == keys
+    {
+        return binds.clone();
+    }
+    let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
+    let words = |key: &str| {
+        let text = crate::gui::tooltip::translate(key, &[]);
+        leak(if text.is_empty() {
+            key.to_owned()
+        } else {
+            text
+        })
+    };
+    let binds: Vec<BindInfo> = keys
+        .iter()
+        .map(|k| BindInfo {
+            id: leak(k.name.clone()),
+            name: words(&k.name),
+            category: if k.category.is_empty() {
+                "Mods"
+            } else {
+                words(&k.category)
+            },
+            default: Bound::from_serialized_name(&k.default),
+        })
+        .collect();
+    let binds = std::sync::Arc::new(binds);
+    *cache = Some((keys, binds.clone()));
+    binds
+}
+
+/// Rows in Controls.
+pub fn bind_count() -> usize {
+    BINDS.len() + mod_binds().len()
+}
+
+/// Row `i` of Controls.
+pub fn bind_info(i: usize) -> Option<BindInfo> {
+    match BINDS.get(i) {
+        Some(d) => Some(BindInfo {
+            id: d.id,
+            name: d.name,
+            category: d.category,
+            default: d.default,
+        }),
+        None => mod_binds().get(i - BINDS.len()).copied(),
+    }
+}
+
 const MOVEMENT: &str = "Movement";
 const MISC: &str = "Miscellaneous";
 const MULTIPLAYER: &str = "Multiplayer";
@@ -404,29 +475,57 @@ pub struct KeyBinds {
 
 impl Default for KeyBinds {
     fn default() -> KeyBinds {
-        let stored = crate::platform::storage::KEYBINDS
-            .load()
-            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
-        let bound = BINDS
-            .iter()
-            .map(|def| {
-                stored
-                    .as_ref()
-                    .and_then(|json| json.get(def.id))
-                    .and_then(|v| v.as_str())
-                    .map(Bound::from_serialized_name)
-                    .unwrap_or(def.default)
-            })
-            .collect();
-        KeyBinds {
-            bound,
+        let mut binds = KeyBinds {
+            bound: Vec::new(),
             capturing: None,
             escape_guard: false,
-        }
+        };
+        binds.sync();
+        binds
     }
 }
 
+fn stored() -> Option<serde_json::Value> {
+    crate::platform::storage::KEYBINDS
+        .load()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+}
+
 impl KeyBinds {
+    /// Rows for keys plugins bound since: as saved, else their defaults.
+    pub fn sync(&mut self) {
+        let count = bind_count();
+        if self.bound.len() >= count {
+            return;
+        }
+        let stored = stored();
+        for i in self.bound.len()..count {
+            let Some(def) = bind_info(i) else { break };
+            let saved = stored
+                .as_ref()
+                .and_then(|json| json.get(def.id))
+                .and_then(|v| v.as_str())
+                .map(Bound::from_serialized_name);
+            self.bound.push(saved.unwrap_or(def.default));
+        }
+    }
+
+    /// The plugin keys pressed this frame, by binding name.
+    pub fn mod_just(
+        &self,
+        keys: &ButtonInput<KeyCode>,
+        buttons: &ButtonInput<MouseButton>,
+    ) -> Vec<&'static str> {
+        (BINDS.len()..bind_count())
+            .filter(|&i| match self.row(i) {
+                Bound::Unbound => false,
+                Bound::Key(code) => keys.just_pressed(code),
+                Bound::Mouse(button) => buttons.just_pressed(button),
+            })
+            .filter_map(|i| bind_info(i).map(|d| d.id))
+            .collect()
+    }
+
     pub fn bound(&self, action: Action) -> Bound {
         self.row(action as usize)
     }
@@ -443,22 +542,24 @@ impl KeyBinds {
     }
 
     pub fn is_default(&self, i: usize) -> bool {
-        BINDS.get(i).is_some_and(|def| def.default == self.row(i))
+        bind_info(i).is_some_and(|def| def.default == self.row(i))
     }
 
     pub fn any_rebound(&self) -> bool {
-        (0..BINDS.len()).any(|i| !self.is_default(i))
+        (0..self.bound.len()).any(|i| !self.is_default(i))
     }
 
     pub fn reset(&mut self, i: usize) {
-        if let Some(def) = BINDS.get(i) {
+        if let Some(def) = bind_info(i) {
             self.set(i, def.default);
         }
     }
 
     pub fn reset_all(&mut self) {
-        for (slot, def) in self.bound.iter_mut().zip(BINDS.iter()) {
-            *slot = def.default;
+        for (i, slot) in self.bound.iter_mut().enumerate() {
+            if let Some(def) = bind_info(i) {
+                *slot = def.default;
+            }
         }
         self.save();
     }
@@ -468,11 +569,11 @@ impl KeyBinds {
         if key == Bound::Unbound {
             return Vec::new();
         }
-        (0..BINDS.len())
+        (0..self.bound.len())
             .filter(|j| {
                 *j != i && self.row(*j) == key && !(self.is_default(*j) && self.is_default(i))
             })
-            .map(|j| BINDS[j].name)
+            .filter_map(|j| bind_info(j).map(|d| d.name))
             .collect()
     }
 
@@ -533,11 +634,16 @@ impl KeyBinds {
     }
 
     fn save(&self) {
-        let map: serde_json::Map<String, serde_json::Value> = BINDS
-            .iter()
-            .zip(&self.bound)
-            .map(|(def, key)| (def.id.to_string(), key.serialized_name().into()))
-            .collect();
+        // Keys of plugins not loaded now keep what was saved for them.
+        let mut map = match stored() {
+            Some(serde_json::Value::Object(m)) => m,
+            _ => serde_json::Map::new(),
+        };
+        for (i, key) in self.bound.iter().enumerate() {
+            if let Some(def) = bind_info(i) {
+                map.insert(def.id.to_string(), key.serialized_name().into());
+            }
+        }
         crate::platform::storage::KEYBINDS.store(&serde_json::Value::Object(map).to_string());
     }
 }

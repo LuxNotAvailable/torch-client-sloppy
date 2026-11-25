@@ -51,6 +51,8 @@ struct Plugins {
     ticking: std::collections::HashSet<String>,
     /// Block entity type to the plugin that moves entities on it.
     movers: HashMap<String, usize>,
+    /// Key binding name to the plugin that bound it, in load order.
+    keys: Vec<(torch_mod_api::KeyBinding, usize)>,
     /// Tints asked so far, by modded table generation and state id.
     tints: HashMap<(u32, u16), torch_mod_api::Tint>,
 }
@@ -105,6 +107,11 @@ pub fn load(plugins: Vec<(String, Vec<u8>)>) {
                 for kind in &registration.moves_entities {
                     out.movers.entry(kind.clone()).or_insert(index);
                 }
+                for key in &registration.keys {
+                    if !out.keys.iter().any(|(k, _)| k.name == key.name) {
+                        out.keys.push((key.clone(), index));
+                    }
+                }
                 crate::log_info!(
                     "modapi",
                     "{name}: plugin loaded, draws {} block entity type(s)",
@@ -120,6 +127,48 @@ pub fn load(plugins: Vec<(String, Vec<u8>)>) {
         }
     }
     *PLUGINS.lock() = out;
+}
+
+/// The keys plugins bind, in load order.
+pub fn keys() -> Vec<torch_mod_api::KeyBinding> {
+    PLUGINS.lock().keys.iter().map(|(k, _)| k.clone()).collect()
+}
+
+/// A plugin's key pressed: to the plugin that bound it.
+pub fn key(view: &torch_mod_api::KeyView) {
+    let mut plugins = PLUGINS.lock();
+    let Some(index) = plugins
+        .keys
+        .iter()
+        .find(|(k, _)| k.name == view.name)
+        .map(|(_, i)| *i)
+    else {
+        return;
+    };
+    let Ok(input) = serde_json::to_vec(view) else {
+        return;
+    };
+    let Some(loaded) = plugins.loaded.get_mut(index) else {
+        return;
+    };
+    if let Err(e) = loaded.runtime.key(&input) {
+        loaded.failures += 1;
+        if loaded.failures <= 3 {
+            crate::log_warn!("modapi", "{}: key {}: {e}", loaded.name, view.name);
+        }
+    }
+}
+
+/// Packets plugins sent (`host::send_to_server`), for the network thread.
+static OUTGOING: Mutex<Vec<(String, Vec<u8>)>> = Mutex::new(Vec::new());
+
+pub(crate) fn queue_send(channel: String, data: Vec<u8>) {
+    OUTGOING.lock().push((channel, data));
+}
+
+/// What plugins sent since the last call, in order.
+pub fn take_outgoing() -> Vec<(String, Vec<u8>)> {
+    std::mem::take(&mut *OUTGOING.lock())
 }
 
 /// Entity rigs a payload asked to redraw, taken by `render` each frame.
@@ -390,6 +439,25 @@ mod tests {
 
     /// The template port (`ports/example`), built for wasm32.
     const EXAMPLE: &[u8] = include_bytes!("testdata/example.wasm");
+
+    #[test]
+    fn the_example_plugin_binds_a_key_and_sends_on_its_own_channel_only() {
+        let mut runtime = runtime::Runtime::load("example", EXAMPLE).unwrap();
+        let key = &runtime.registration.keys[0];
+        assert_eq!(
+            (key.name.as_str(), key.default.as_str()),
+            ("key.example.honk", "key.keyboard.h")
+        );
+        let view = serde_json::json!({"name": "key.example.honk", "screen": null});
+        runtime.key(view.to_string().as_bytes()).unwrap();
+        let sent: Vec<(String, Vec<u8>)> = take_outgoing()
+            .into_iter()
+            .filter(|(c, _)| c == "example:honk" || c == "minecraft:brand")
+            .collect();
+        let mut body = torch_mod_api::buf::Writer::new();
+        body.string("key.example.honk").bool(false);
+        assert_eq!(sent, [("example:honk".to_owned(), body.into_bytes())]);
+    }
 
     #[test]
     fn the_example_plugin_registers_and_spins_its_block() {

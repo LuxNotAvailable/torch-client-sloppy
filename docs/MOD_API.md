@@ -51,6 +51,7 @@ A plugin registers handlers in `init`:
 | `fluid` | source fluid ids in `fluids` (`mymod:honey`; its flowing form asks as it) | once per fluid, then kept | a `FluidLook` (`still`, `flowing`: block atlas sprites; `tint`: `0xRRGGBB`), or `null` to leave it to the client |
 | `item_tints` | item ids in `tinted_items` (`mymod:custom_egg`) | once per item, then kept | the colours of its tint indices (`tintindex`), `0xRRGGBB` each |
 | `screen` | menu type ids in `screens` (`mymod:press`) | when the menu opens, and when its data slots or slot count change | a `Screen`, or `null` for the client's plain grid |
+| `key` | key bindings in `keys` (Java's `KeyMapping`s) | each press, in the world or in a modded menu | nothing; it tells the server with `host::send_to_server` |
 
 The registration also lists:
 
@@ -151,6 +152,18 @@ handles clicks as on vanilla menus. Shift-click isn't predicted (the mod's
 type no plugin registers opens as a plain grid: its slots nine to a row
 over the inventory. Textures load on demand, up to 8 per screen, each
 squeezed into a 256-pixel cell.
+
+`keys` lists `KeyBinding`s: `name` (Java's, `keybind.mymod.open`; the
+language names it and the options save it), `default` (`key.keyboard.b`,
+`key.mouse.middle`, empty for none) and `category` (a translation key).
+They show in Controls after vanilla's, rebindable. `key` gets a `KeyView`
+(`name`, `screen`: the open modded menu's type id or `null` in the
+world). A press is Java's `while (KEY.consumeClick())` body: what Java
+sends with `PacketDistributor.sendToServer` a plugin sends with
+`host::send_to_server(channel, body)`, writing the body with
+`torch_mod_api::buf::Writer` as the payload's `StreamCodec` writes it.
+A plugin may send on its own namespace's channels and on its `channels`;
+packets go out on the next client tick, in order.
 
 Planned for later versions: screen buttons and widgets, HUD elements,
 item renderers.
@@ -276,6 +289,7 @@ Views read like Java's objects: `view.block_pos()`,
 | Function | Does |
 |---|---|
 | `log(ptr, len)` | writes a UTF-8 line to the client log, tagged with the mod |
+| `send(channel_ptr, channel_len, data_ptr, data_len)` | queues a packet to the server on `channel` (the mod's namespace or one of its `channels`; others are refused and logged), sent next tick |
 | `block_at(x, y, z, out_ptr, out_cap) -> len` | the block at a position as JSON (`{"block": ..., "props": {...}}`), for connection logic; writes nothing and returns the needed length if `out_cap` is too small. v1 sees the blocks within 2 of the block entity (a copy made before the call); farther ones return 0 |
 
 ### ABI
@@ -297,6 +311,7 @@ Data crosses as UTF-8 JSON in the plugin's memory.
 | `torch_fluid` | `(ptr: i32, len: i32) -> i64` | a `FluidView` (`{"fluid": ...}`) in, a `FluidLook` or `null` out |
 | `torch_item_tints` | `(ptr: i32, len: i32) -> i64` | an `ItemView` (`{"item": ...}`) in, an array of colours out |
 | `torch_screen` | `(ptr: i32, len: i32) -> i64` | a `ScreenView` in, a `Screen` or `null` out |
+| `torch_key` | `(ptr: i32, len: i32) -> i64` | a `KeyView` in, `null` out |
 
 All but `torch_api`, `torch_alloc`, `torch_free` and `torch_init` are
 optional: a plugin built before a hook existed lacks its export.

@@ -1008,6 +1008,17 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
         );
     }
 
+    // Mod plugins' packets (`host::send_to_server`), before this tick's
+    // clicks, as a key press precedes them.
+    for (channel, payload) in crate::modapi::take_outgoing() {
+        bot.write_packet(
+            azalea_protocol::packets::game::s_custom_payload::ServerboundCustomPayload {
+                identifier: channel.as_str().into(),
+                data: payload.into(),
+            },
+        );
+    }
+
     let (inv_actions, horse) = {
         let mut s = shared.lock().unwrap();
         let actions = std::mem::take(&mut s.session.inventory.inv_actions);

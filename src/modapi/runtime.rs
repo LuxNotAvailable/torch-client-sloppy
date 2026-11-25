@@ -21,6 +21,20 @@ struct HostState {
     name: String,
     /// What `block_at` answers from during the current call.
     near: Near,
+    /// Channels `send` may use beyond the mod's own namespaces: its
+    /// registration's `channels`.
+    channels: Vec<String>,
+}
+
+/// Whether a plugin from package `package` may send on `channel`: the
+/// package's namespace (`sophisticatedbackpacks` for
+/// `sophisticatedbackpacks-3.26.14`), or a channel it reads.
+fn may_send(package: &str, channels: &[String], channel: &str) -> bool {
+    let Some((ns, _)) = channel.split_once(':') else {
+        return false;
+    };
+    let own = package.split('-').next().unwrap_or(package);
+    ns != "minecraft" && ns != "neoforge" && (ns == own || channels.iter().any(|c| c == channel))
 }
 
 pub(super) struct Runtime {
@@ -37,6 +51,7 @@ pub(super) struct Runtime {
     fluid: Option<TypedFunc<(i32, i32), i64>>,
     tick: Option<TypedFunc<(i32, i32), i64>>,
     entity_motion: Option<TypedFunc<(i32, i32), i64>>,
+    key: Option<TypedFunc<(i32, i32), i64>>,
     pub(super) registration: torch_mod_api::Registration,
 }
 
@@ -59,6 +74,7 @@ impl Runtime {
             HostState {
                 name: name.to_owned(),
                 near: Near::new(),
+                channels: Vec::new(),
             },
         );
         let mut linker = <Linker<HostState>>::new(&engine);
@@ -115,6 +131,35 @@ impl Runtime {
                     match memory.write(&mut caller, out.max(0) as usize, bytes) {
                         Ok(()) => bytes.len() as i32,
                         Err(_) => 0,
+                    }
+                },
+            )
+            .map_err(|e| e.to_string())?;
+        linker
+            .func_wrap(
+                "torch",
+                "send",
+                |caller: Caller<'_, HostState>,
+                 channel: i32,
+                 channel_len: i32,
+                 data: i32,
+                 data_len: i32| {
+                    let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory())
+                    else {
+                        return;
+                    };
+                    let (Some(channel), Some(data)) = (
+                        mem_slice(&memory, &caller, channel, channel_len),
+                        mem_slice(&memory, &caller, data, data_len),
+                    ) else {
+                        return;
+                    };
+                    let channel = String::from_utf8_lossy(&channel).into_owned();
+                    let state = caller.data();
+                    if may_send(&state.name, &state.channels, &channel) {
+                        super::queue_send(channel, data);
+                    } else {
+                        crate::log_warn!("modapi", "{}: may not send on {channel}", state.name);
                     }
                 },
             )
@@ -177,6 +222,9 @@ impl Runtime {
         let entity_motion = instance
             .get_typed_func::<(i32, i32), i64>(&store, "torch_entity_motion")
             .ok();
+        let key = instance
+            .get_typed_func::<(i32, i32), i64>(&store, "torch_key")
+            .ok();
         let mut runtime = Runtime {
             store,
             memory,
@@ -191,13 +239,25 @@ impl Runtime {
             fluid,
             tick,
             entity_motion,
+            key,
             registration: torch_mod_api::Registration::default(),
         };
         let packed = runtime.call_fuelled(|store| init.call(store, ()))?;
         let bytes = runtime.take_result(packed)?;
         runtime.registration =
             serde_json::from_slice(&bytes).map_err(|e| format!("its registration: {e}"))?;
+        runtime.store.data_mut().channels = runtime.registration.channels.clone();
         Ok(runtime)
+    }
+
+    /// One of its keys pressed, from the view as JSON.
+    pub(super) fn key(&mut self, view: &[u8]) -> Result<(), String> {
+        let func = self.key.ok_or("it has no torch_key")?;
+        let (ptr, len) = self.put(view)?;
+        let packed = self.call_fuelled(|store| func.call(store, (ptr, len)));
+        let free = self.free;
+        let _ = self.call_fuelled(|store| free.call(store, (ptr, len)));
+        self.take_result(packed?).map(drop)
     }
 
     fn call_fuelled<R>(
@@ -349,5 +409,25 @@ impl Runtime {
         let _ = self.call_fuelled(|store| free.call(store, (ptr, len)));
         let bytes = self.take_result(packed?)?;
         serde_json::from_slice(&bytes).map_err(|e| format!("its rig: {e}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::may_send;
+
+    #[test]
+    fn a_plugin_sends_on_its_mod_s_channels_only() {
+        let theirs = ["othermod:sync".to_owned()];
+        assert!(may_send(
+            "sophisticatedbackpacks-3.26.14",
+            &[],
+            "sophisticatedbackpacks:open"
+        ));
+        assert!(may_send("example", &theirs, "othermod:sync"));
+        assert!(!may_send("example", &theirs, "othermod:other"));
+        assert!(!may_send("example", &[], "minecraft:brand"));
+        assert!(!may_send("minecraft", &[], "minecraft:brand"));
+        assert!(!may_send("example", &[], "no_namespace"));
     }
 }

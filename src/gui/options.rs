@@ -1646,9 +1646,13 @@ enum BindRow {
 }
 
 fn bind_rows() -> Vec<BindRow> {
-    let mut rows = Vec::with_capacity(keybinds::BINDS.len() + 8);
+    let count = keybinds::bind_count();
+    let mut rows = Vec::with_capacity(count + 8);
     let mut category = "";
-    for (i, def) in keybinds::BINDS.iter().enumerate() {
+    for i in 0..count {
+        let Some(def) = keybinds::bind_info(i) else {
+            continue;
+        };
         if def.category != category {
             category = def.category;
             rows.push(BindRow::Category(category));
@@ -2045,7 +2049,9 @@ pub fn draw_controls(p: &mut Painter, state: &mut GuiState, ctx: &ScreenCtx) {
                 );
             }
             BindRow::Bind(bind) => {
-                let def = &keybinds::BINDS[*bind];
+                let Some(def) = keybinds::bind_info(*bind) else {
+                    continue;
+                };
                 let collisions = state.keybinds.collisions(*bind);
                 let selected = state.keybinds.capturing == Some(*bind);
 

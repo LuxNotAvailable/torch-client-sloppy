@@ -1165,6 +1165,40 @@ pub(crate) fn handle_spectator_fly_speed_scroll(
     }
 }
 
+/// Keys mod plugins bind (`Plugin::key`), pressed in the world or in a
+/// modded menu (Java's `consumeClick` loop, a screen's `keyPressed`).
+fn mod_keys(
+    keys: &ButtonInput<KeyCode>,
+    buttons: &ButtonInput<MouseButton>,
+    shared: &Shared,
+    state: &mut crate::gui::GuiState,
+) {
+    use crate::gui::Screen;
+    state.keybinds.sync();
+    let pressed = state.keybinds.mod_just(keys, buttons);
+    if pressed.is_empty() {
+        return;
+    }
+    let screen = if state.screen == Screen::None {
+        None
+    } else {
+        let kind = shared.0.lock().unwrap().session.container.container_kind;
+        match kind {
+            crate::session::ContainerKind::Modded(id) => {
+                crate::protocol::modded_menu(id).map(str::to_owned)
+            }
+            _ => return,
+        }
+    };
+    for name in pressed {
+        crate::modapi::key(&torch_mod_api::KeyView {
+            name: name.to_owned(),
+            screen: screen.clone(),
+            slot: None,
+        });
+    }
+}
+
 pub(crate) fn toggle_screen(
     keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
@@ -1187,6 +1221,7 @@ pub(crate) fn toggle_screen(
     if state.keybinds.capturing.is_some() || (guard && keys.just_pressed(KeyCode::Escape)) {
         return;
     }
+    mod_keys(&keys, &buttons, &shared, &mut state);
 
     #[cfg(feature = "click_gui")]
     {

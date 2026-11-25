@@ -1,7 +1,8 @@
 //! Java's `FriendlyByteBuf`, for reading a mod's own packets
-//! ([`crate::Plugin::payload`]): big-endian numbers, VarInts, strings,
-//! packed block positions, UUIDs and network NBT (as JSON, the way
-//! [`crate::BlockEntityView::nbt`] has it).
+//! ([`crate::Plugin::payload`]) and writing the ones it sends
+//! ([`crate::host::send_to_server`]): big-endian numbers, VarInts,
+//! strings, packed block positions, UUIDs and network NBT (as JSON, the way
+//! [`crate::BlockEntityView::nbt`] has it; read only).
 
 use serde_json::{Map, Value};
 
@@ -197,6 +198,102 @@ impl<'a> Reader<'a> {
     }
 }
 
+/// Writes a payload front to back, as `FriendlyByteBuf.write*` do.
+#[derive(Clone, Debug, Default)]
+pub struct Writer {
+    pub bytes: Vec<u8>,
+}
+
+impl Writer {
+    pub fn new() -> Writer {
+        Writer::default()
+    }
+
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
+
+    pub fn u8(&mut self, v: u8) -> &mut Self {
+        self.bytes.push(v);
+        self
+    }
+
+    pub fn bool(&mut self, v: bool) -> &mut Self {
+        self.u8(u8::from(v))
+    }
+
+    pub fn i16(&mut self, v: i16) -> &mut Self {
+        self.bytes.extend(v.to_be_bytes());
+        self
+    }
+
+    pub fn i32(&mut self, v: i32) -> &mut Self {
+        self.bytes.extend(v.to_be_bytes());
+        self
+    }
+
+    pub fn i64(&mut self, v: i64) -> &mut Self {
+        self.bytes.extend(v.to_be_bytes());
+        self
+    }
+
+    pub fn f32(&mut self, v: f32) -> &mut Self {
+        self.bytes.extend(v.to_be_bytes());
+        self
+    }
+
+    pub fn f64(&mut self, v: f64) -> &mut Self {
+        self.bytes.extend(v.to_be_bytes());
+        self
+    }
+
+    pub fn varint(&mut self, v: i32) -> &mut Self {
+        let mut v = v as u32;
+        loop {
+            if v & !0x7F == 0 {
+                self.bytes.push(v as u8);
+                return self;
+            }
+            self.bytes.push((v as u8 & 0x7F) | 0x80);
+            v >>= 7;
+        }
+    }
+
+    pub fn varlong(&mut self, v: i64) -> &mut Self {
+        let mut v = v as u64;
+        loop {
+            if v & !0x7F == 0 {
+                self.bytes.push(v as u8);
+                return self;
+            }
+            self.bytes.push((v as u8 & 0x7F) | 0x80);
+            v >>= 7;
+        }
+    }
+
+    /// `writeUtf`: a VarInt length in bytes, then UTF-8.
+    pub fn string(&mut self, v: &str) -> &mut Self {
+        self.varint(v.len() as i32);
+        self.bytes.extend(v.as_bytes());
+        self
+    }
+
+    pub fn identifier(&mut self, v: &str) -> &mut Self {
+        self.string(v)
+    }
+
+    /// `writeBlockPos`: x, y and z packed in one long.
+    pub fn block_pos(&mut self, [x, y, z]: [i32; 3]) -> &mut Self {
+        let v = ((i64::from(x) & 0x3FF_FFFF) << 38) | ((i64::from(z) & 0x3FF_FFFF) << 12) | (i64::from(y) & 0xFFF);
+        self.i64(v)
+    }
+
+    /// `writeUUID`: two longs.
+    pub fn uuid(&mut self, v: u128) -> &mut Self {
+        self.i64((v >> 64) as i64).i64(v as i64)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -217,5 +314,21 @@ mod tests {
         assert_eq!(r.nbt(), Some(serde_json::json!({"n": 2})));
         assert_eq!(r.remaining(), 0);
         assert_eq!(r.u8(), None);
+    }
+
+    #[test]
+    fn writes_what_the_reader_reads() {
+        let mut w = Writer::new();
+        w.varint(300).varint(-1).identifier("a:b").block_pos([-5, 64, 7]).bool(true).uuid(7 << 64 | 9).f32(1.5);
+        let bytes = w.into_bytes();
+        let mut r = Reader::new(&bytes);
+        assert_eq!(r.varint(), Some(300));
+        assert_eq!(r.varint(), Some(-1));
+        assert_eq!(r.identifier().as_deref(), Some("a:b"));
+        assert_eq!(r.block_pos(), Some([-5, 64, 7]));
+        assert_eq!(r.bool(), Some(true));
+        assert_eq!(r.uuid(), Some(7 << 64 | 9));
+        assert_eq!(r.f32(), Some(1.5));
+        assert_eq!(r.remaining(), 0);
     }
 }

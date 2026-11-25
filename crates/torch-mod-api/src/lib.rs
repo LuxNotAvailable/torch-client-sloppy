@@ -65,6 +65,40 @@ pub struct Registration {
     /// ([`Plugin::entity_motion`]): a belt, a conveyor.
     #[serde(default)]
     pub moves_entities: Vec<String>,
+    /// Keys the mod binds ([`Plugin::key`]): Java's `KeyMapping`s. They
+    /// show in the client's Controls, rebindable.
+    #[serde(default)]
+    pub keys: Vec<KeyBinding>,
+}
+
+/// A key a mod binds: Java's `KeyMapping`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct KeyBinding {
+    /// Its name, Java's (`keybind.sophisticatedbackpacks.open_backpack`):
+    /// the options save it by this, the language names it.
+    pub name: String,
+    /// The default key, as the options file writes it (`key.keyboard.b`,
+    /// `key.mouse.middle`); empty for none.
+    #[serde(default)]
+    pub default: String,
+    /// Its Controls category, a translation key or plain text
+    /// (`keygroup.sophisticatedbackpacks`).
+    #[serde(default)]
+    pub category: String,
+}
+
+/// A bound key pressed ([`Plugin::key`]).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct KeyView {
+    /// The binding's name.
+    pub name: String,
+    /// The menu type open (`minecraft:generic_9x3`, a mod's), or `None`
+    /// in the world.
+    #[serde(default)]
+    pub screen: Option<String>,
+    /// In a menu, the slot under the cursor, by menu slot index.
+    #[serde(default)]
+    pub slot: Option<u32>,
 }
 
 /// What a payload changed: the rigs to ask for again.
@@ -688,6 +722,13 @@ pub trait Plugin {
         let _ = view;
         None
     }
+
+    /// A key it registered in `keys`, pressed: Java's `consumeClick` loop
+    /// (in the world) or a screen's `keyPressed`. Tell the server with
+    /// [`host::send`].
+    fn key(&mut self, view: &KeyView) {
+        let _ = view;
+    }
 }
 
 /// A block in the world, as `block_at` reports it.
@@ -731,6 +772,32 @@ pub mod host {
     unsafe extern "C" {
         fn log(ptr: *const u8, len: usize);
         fn block_at(x: i32, y: i32, z: i32, out: *mut u8, cap: usize) -> usize;
+        fn send(channel: *const u8, channel_len: usize, data: *const u8, data_len: usize);
+    }
+
+    /// A packet to the mod's server side on `channel` (its own namespace,
+    /// or one of its `channels`), as Java's `PacketDistributor.sendToServer`
+    /// writes it: `data` is the payload's body ([`crate::buf::Writer`]).
+    /// Sent after the current call.
+    pub fn send_to_server(channel: &str, data: &[u8]) {
+        #[cfg(target_arch = "wasm32")]
+        // SAFETY: the host reads the two buffers, which the caller owns.
+        unsafe {
+            send(channel.as_ptr(), channel.len(), data.as_ptr(), data.len())
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        SENT.with(|s| s.borrow_mut().push((channel.to_owned(), data.to_vec())));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    thread_local! {
+        static SENT: std::cell::RefCell<Vec<(String, Vec<u8>)>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    /// Off the wasm host (tests): what [`send_to_server`] sent, taken.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn take_sent() -> Vec<(String, Vec<u8>)> {
+        SENT.with(|s| std::mem::take(&mut *s.borrow_mut()))
     }
 
     /// A line in the client's log, tagged with the mod.
@@ -953,6 +1020,17 @@ macro_rules! export_plugin {
                 }
             };
             $crate::abi::pack(::serde_json::to_vec(&tints).unwrap_or_default())
+        }
+
+        #[unsafe(no_mangle)]
+        pub extern "C" fn torch_key(ptr: i32, len: i32) -> i64 {
+            // SAFETY: the host wrote the view into a buffer from torch_alloc.
+            let input = unsafe { $crate::abi::input(ptr, len) };
+            match ::serde_json::from_slice::<$crate::KeyView>(input) {
+                Ok(view) => PLUGIN.with(|p| p.borrow_mut().key(&view)),
+                Err(e) => $crate::host::log_line(&format!("unreadable key view: {e}")),
+            }
+            $crate::abi::pack(b"null".to_vec())
         }
 
         #[unsafe(no_mangle)]
