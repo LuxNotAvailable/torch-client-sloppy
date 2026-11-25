@@ -58,6 +58,58 @@ fn transforms(rig: &torch_mod_api::Rig) -> Arc<[torch_mod_api::Transform]> {
     rig.parts.iter().map(|p| p.transform).collect()
 }
 
+/// A redrawn rig's frames. Each new part takes the history of the old part
+/// it most likely is (the same look, nearest, within a block), so an item
+/// arriving on a belt doesn't restart every other item's motion.
+fn carried_frames(old: Option<&Placed>, rig: &torch_mod_api::Rig, game_time: u64) -> Arc<[Frame]> {
+    let now = transforms(rig);
+    let Some(old) = old else {
+        return Arc::new([(game_time, now)]);
+    };
+    let mut used = vec![false; old.rig.parts.len()];
+    let from: Vec<Option<usize>> = rig
+        .parts
+        .iter()
+        .map(|p| {
+            let near = old
+                .rig
+                .parts
+                .iter()
+                .enumerate()
+                .filter(|(j, o)| {
+                    !used[*j] && o.geometry == p.geometry && o.animation == p.animation
+                })
+                .map(|(j, o)| {
+                    let d = [0, 1, 2].map(|k| o.transform.translate[k] - p.transform.translate[k]);
+                    (j, d[0] * d[0] + d[1] * d[1] + d[2] * d[2])
+                })
+                .filter(|(_, d)| *d <= 16.0 * 16.0)
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .map(|(j, _)| j);
+            if let Some(j) = near {
+                used[j] = true;
+            }
+            near
+        })
+        .collect();
+    let mut frames: Vec<Frame> = old
+        .frames
+        .iter()
+        .filter(|f| f.0 < game_time)
+        .map(|(t, was)| {
+            let carried = from
+                .iter()
+                .zip(now.iter())
+                .map(|(j, n)| j.and_then(|j| was.get(j).copied()).unwrap_or(*n))
+                .collect();
+            (*t, carried)
+        })
+        .collect();
+    frames.push((game_time, now));
+    let skip = frames.len().saturating_sub(FRAMES);
+    frames.into_iter().skip(skip).collect()
+}
+
 /// `MC_MODAPI_TRACE=<file>`: every view made from the server's data goes
 /// to `file` as a JSON line, so `torch-port-check --trace` can replay a
 /// session against a port's client-side simulation.
@@ -331,7 +383,7 @@ pub fn tick(world: &azalea_world::World, game_time: u64, player: Option<[f64; 3]
                     continue;
                 }
                 store.next_rev += 1;
-                let frames: Arc<[Frame]> = Arc::new([(game_time, transforms(&rig))]);
+                let frames = carried_frames(store.rigs.get(pos), &rig, game_time);
                 store.rigs.insert(
                     *pos,
                     Placed {
@@ -459,6 +511,43 @@ pub(crate) fn read_network_nbt(bytes: &[u8]) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_item_arriving_keeps_the_others_gliding() {
+        let item = |id: &str, x: f32| {
+            let mut p = torch_mod_api::Part::item(id);
+            p.transform.translate = [x, 0.0, 0.0];
+            p
+        };
+        let rig = |parts| torch_mod_api::Rig { parts };
+        let old = Placed {
+            rig: Arc::new(rig(vec![item("stone", 4.0), item("stone", 20.0)])),
+            rev: 1,
+            frame: 2,
+            frames: [(10, [0.0, 16.0]), (11, [2.0, 18.0]), (12, [4.0, 20.0])]
+                .map(|(t, xs)| (t, xs.map(|x| item("stone", x).transform).into()))
+                .into(),
+        };
+        // An iron ingot joins at the front; the stones moved on.
+        let new = rig(vec![
+            item("iron_ingot", 0.0),
+            item("stone", 22.0),
+            item("stone", 6.0),
+        ]);
+        let frames = carried_frames(Some(&old), &new, 13);
+        let x = |f: &Frame, i: usize| f.1[i].translate[0];
+        assert_eq!(frames.iter().map(|f| f.0).collect::<Vec<_>>(), [11, 12, 13]);
+        // The stones keep their own pasts; the ingot has none.
+        assert_eq!(
+            [x(&frames[0], 1), x(&frames[1], 1), x(&frames[2], 1)],
+            [18.0, 20.0, 22.0]
+        );
+        assert_eq!(
+            [x(&frames[0], 2), x(&frames[1], 2), x(&frames[2], 2)],
+            [2.0, 4.0, 6.0]
+        );
+        assert_eq!([x(&frames[0], 0), x(&frames[2], 0)], [0.0, 0.0]);
+    }
 
     #[test]
     fn a_motion_becomes_steps_in_java_s_order() {

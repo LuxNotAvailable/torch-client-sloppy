@@ -172,6 +172,15 @@ fn sync_rigs(
             }
             let cell = live.lights.get(&lightmap.current, levels.0, levels.1);
             let bright = live.lights.get(&lightmap.current, 15, 15);
+            // Parts carrying history start where it puts them now.
+            let mut shown = rig.parts.clone();
+            if placed.frames.len() > 1 {
+                for (i, part) in shown.iter_mut().enumerate() {
+                    if let Some(t) = transform_at(&placed.frames, i, ticks) {
+                        part.transform = t;
+                    }
+                }
+            }
             let parts = spawn_parts(
                 &mut commands,
                 live,
@@ -185,7 +194,7 @@ fn sync_rigs(
                 },
                 &atlas,
                 (levels, cell, bright, dirs),
-                &rig.parts,
+                &shown,
                 (*pos, None),
                 ticks,
             );
