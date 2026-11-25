@@ -113,6 +113,12 @@ const ALL: &[Var] = &[
         enabled: cfg!(feature = "multiversion"),
     },
     Var {
+        name: "MC_MODAPI_TRACE",
+        what: "file to append modded block entity updates to, for replaying against a port",
+        default: "off",
+        enabled: true,
+    },
+    Var {
         name: "MC_MAX_FED",
         what: "entities handed to the world per tick",
         default: "10000",
