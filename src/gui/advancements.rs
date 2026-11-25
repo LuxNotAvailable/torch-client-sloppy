@@ -175,6 +175,7 @@ struct Tab {
     order: Vec<u16>,
     min: (i32, i32),
     max: (i32, i32),
+    /// A GUI sheet, or a texture's full id (`create:textures/gui/x.png`).
     background: &'static str,
     scroll: Vec2,
     centered: bool,
@@ -295,7 +296,18 @@ fn widget(font: &Font, node: u32, n: &Node, display: Arc<Display>, parent: Optio
     }
 }
 
+/// A tab's background: vanilla's from the GUI atlas, any other texture
+/// (a mod's) by its id. 1.21.5+ names it as an asset
+/// (`minecraft:gui/advancements/backgrounds/stone`), older servers by its
+/// file (`minecraft:textures/gui/advancements/backgrounds/stone.png`).
 fn background(p: &Painter, id: Option<&Identifier>) -> &'static str {
+    id.map_or(MISSING_TEXTURE, |id| {
+        background_of(id.namespace(), id.path(), |k| p.atlas.sheet(k).is_some())
+    })
+}
+
+/// `background` for `namespace:path`, `sheet` saying which sheets exist.
+fn background_of(namespace: &str, path: &str, sheet: impl Fn(&str) -> bool) -> &'static str {
     const VANILLA: [&str; 5] = [
         "advancements/backgrounds/stone",
         "advancements/backgrounds/nether",
@@ -303,11 +315,29 @@ fn background(p: &Painter, id: Option<&Identifier>) -> &'static str {
         "advancements/backgrounds/adventure",
         "advancements/backgrounds/husbandry",
     ];
-    id.filter(|id| id.namespace() == "minecraft")
-        .and_then(|id| id.path().strip_prefix("gui/"))
+    let asset = path.strip_prefix("textures/").unwrap_or(path);
+    let asset = asset.strip_suffix(".png").unwrap_or(asset);
+    let vanilla = (namespace == "minecraft")
+        .then(|| asset.strip_prefix("gui/"))
+        .flatten()
         .and_then(|path| VANILLA.into_iter().find(|v| *v == path))
-        .filter(|key| p.atlas.sheet(key).is_some())
-        .unwrap_or(MISSING_TEXTURE)
+        .filter(|key| sheet(key));
+    vanilla.unwrap_or_else(|| texture_key(&format!("{namespace}:textures/{asset}.png")))
+}
+
+/// `key`, kept for the process: a few backgrounds, asked for again on
+/// every rebuild.
+fn texture_key(key: &str) -> &'static str {
+    static KEYS: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
+    let mut keys = KEYS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(k) = keys.iter().find(|k| **k == key) {
+        return k;
+    }
+    let k: &'static str = Box::leak(key.to_owned().into_boxed_str());
+    keys.push(k);
+    k
 }
 
 fn build(p: &Painter, tree: &AdvancementTree) -> Vec<Tab> {
@@ -449,7 +479,12 @@ fn draw_contents(p: &mut Painter, tab: &mut Tab, tree: &AdvancementTree, ox: i32
         for y in -1..=8 {
             let tx = (ox + left + 16 * x) as f32;
             let ty = (oy + top + 16 * y) as f32;
-            p.blit_sheet(tab.background, 0.0, 0.0, 16.0, 16.0, tx, ty);
+            if tab.background.contains(':') {
+                // The whole texture to each 16 x 16 tile, as Java blits it.
+                p.texture_part(tab.background, (0.0, 0.0, 16.0, 16.0), (16.0, 16.0), tx, ty);
+            } else {
+                p.blit_sheet(tab.background, 0.0, 0.0, 16.0, 16.0, tx, ty);
+            }
         }
     }
     let (xo, yo) = (ox + sx, oy + sy);
@@ -852,6 +887,31 @@ pub fn draw(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn backgrounds_read_as_assets_or_files_and_mods_by_texture() {
+        let has = |k: &str| k == "advancements/backgrounds/stone";
+        assert_eq!(
+            background_of("minecraft", "gui/advancements/backgrounds/stone", has),
+            "advancements/backgrounds/stone"
+        );
+        assert_eq!(
+            background_of(
+                "minecraft",
+                "textures/gui/advancements/backgrounds/stone.png",
+                has
+            ),
+            "advancements/backgrounds/stone"
+        );
+        assert_eq!(
+            background_of("create", "textures/gui/advancements.png", has),
+            "create:textures/gui/advancements.png"
+        );
+        assert_eq!(
+            background_of("create", "gui/advancements", has),
+            "create:textures/gui/advancements.png"
+        );
+    }
 
     #[test]
     fn tab_places_follow_the_type_order() {
