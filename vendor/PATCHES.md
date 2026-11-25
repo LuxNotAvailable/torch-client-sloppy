@@ -48,6 +48,9 @@ Treat as our code. History: `git log -- vendor/azalea`. Main areas:
   predicted for it (`operations.rs`); `MenuOpenedEvent.modded_type`, and
   closing a menu with no player slots yet keeps the inventory
   (`azalea-client/src/plugins/inventory/mod.rs`).
+- `azalea-physics`: `ExternalPush` (`lib.rs`), set by the game each tick
+  from a mod plugin's `entity_motion` (a belt carrying the player): `travel`
+  moves the local player by it with collision, then sets its velocity.
 - `azalea-inventory`: `PotDecorations` hashes as Java's codec writes it
   (absent sides left out, `count` 1 left out), `components/mod.rs`.
 - `azalea-client`: `queue_held_instant_mine` breaks instant blocks in the

@@ -57,6 +57,14 @@ pub struct Registration {
     /// gives ([`Plugin::fluid`]): NeoForge's `IClientFluidTypeExtensions`.
     #[serde(default)]
     pub fluids: Vec<String>,
+    /// Of `block_entities`, the types that simulate on the client every
+    /// tick ([`Plugin::tick`]): Java's `tick()` running client-side.
+    #[serde(default)]
+    pub ticking: Vec<String>,
+    /// Block entity types that move entities standing on or in them
+    /// ([`Plugin::entity_motion`]): a belt, a conveyor.
+    #[serde(default)]
+    pub moves_entities: Vec<String>,
 }
 
 /// What a payload changed: the rigs to ask for again.
@@ -422,6 +430,41 @@ pub struct ItemView {
     pub item: String,
 }
 
+/// The local player, as a block entity that moves entities sees it.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct MovingEntity {
+    /// Its feet, in blocks.
+    pub pos: [f64; 3],
+    /// `getDeltaMovement`, blocks a tick.
+    pub velocity: [f64; 3],
+    /// Its bounding box's width and height, in blocks.
+    pub width: f64,
+    pub height: f64,
+    #[serde(default)]
+    pub on_ground: bool,
+    #[serde(default)]
+    pub sneaking: bool,
+}
+
+/// An entity standing on (or in) a block entity of a type in
+/// `moves_entities`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct EntityMotionView {
+    pub block_entity: BlockEntityView,
+    pub entity: MovingEntity,
+}
+
+/// What a block entity does to an entity this tick: Java's
+/// `entity.move(MoverType.SELF, by)` (with collision), then
+/// `setDeltaMovement(velocity)`. Both optional.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Motion {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub move_by: Option<[f64; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub velocity: Option<[f64; 3]>,
+}
+
 /// A fluid, by its id (`mymod:honey`; its flowing form asks as the source).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FluidView {
@@ -552,6 +595,27 @@ pub trait Plugin {
 
     /// The visuals of a block entity of a type it registered.
     fn block_entity(&mut self, view: &BlockEntityView) -> Rig;
+
+    /// One client tick of a block entity of a type it registered in
+    /// `ticking`: advance the plugin's own state for it (keyed by
+    /// `view.pos`; Java's `tick()` on the client) and answer the rig as it
+    /// stands now. Called 20 times a second while the player is near; the
+    /// client blends each part's transform between the last two ticks, as
+    /// Java's renderers lerp by partial ticks. Return the same parts in the
+    /// same order while only their transforms move; a changed part list
+    /// draws afresh. `block_entity` is still called when data arrives:
+    /// treat it as Java's `read`.
+    fn tick(&mut self, view: &BlockEntityView) -> Rig {
+        self.block_entity(view)
+    }
+
+    /// What a block entity of a type in `moves_entities` does to the local
+    /// player standing on or in it, this tick (Java's movement handler
+    /// for it, client-side: the player moves itself).
+    fn entity_motion(&mut self, view: &EntityMotionView) -> Motion {
+        let _ = view;
+        Motion::default()
+    }
 
     /// The visuals of an entity of a type it registered in `entities`.
     /// Parts are in the entity's own frame: the origin at its feet, `+Z`
@@ -748,6 +812,34 @@ macro_rules! export_plugin {
                 }
             };
             $crate::abi::pack(::serde_json::to_vec(&rig).unwrap_or_default())
+        }
+
+        #[unsafe(no_mangle)]
+        pub extern "C" fn torch_tick(ptr: i32, len: i32) -> i64 {
+            // SAFETY: the host wrote the view into a buffer from torch_alloc.
+            let input = unsafe { $crate::abi::input(ptr, len) };
+            let rig = match ::serde_json::from_slice::<$crate::BlockEntityView>(input) {
+                Ok(view) => PLUGIN.with(|p| p.borrow_mut().tick(&view)),
+                Err(e) => {
+                    $crate::host::log_line(&format!("unreadable block entity view: {e}"));
+                    $crate::Rig::default()
+                }
+            };
+            $crate::abi::pack(::serde_json::to_vec(&rig).unwrap_or_default())
+        }
+
+        #[unsafe(no_mangle)]
+        pub extern "C" fn torch_entity_motion(ptr: i32, len: i32) -> i64 {
+            // SAFETY: the host wrote the view into a buffer from torch_alloc.
+            let input = unsafe { $crate::abi::input(ptr, len) };
+            let motion = match ::serde_json::from_slice::<$crate::EntityMotionView>(input) {
+                Ok(view) => PLUGIN.with(|p| p.borrow_mut().entity_motion(&view)),
+                Err(e) => {
+                    $crate::host::log_line(&format!("unreadable entity motion view: {e}"));
+                    $crate::Motion::default()
+                }
+            };
+            $crate::abi::pack(::serde_json::to_vec(&motion).unwrap_or_default())
         }
 
         #[unsafe(no_mangle)]

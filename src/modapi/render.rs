@@ -43,6 +43,9 @@ struct ModPart;
 struct LivePart {
     entity: Entity,
     transform: torch_mod_api::Transform,
+    /// A ticking rig's transform the tick before: the part blends from it
+    /// to `transform` across the tick (Java's partial-tick lerp).
+    prev: Option<torch_mod_api::Transform>,
     /// An item's display transform, after the part's; identity otherwise.
     display: Transform,
     animation: Animation,
@@ -52,6 +55,8 @@ struct LivePart {
 
 struct LiveRig {
     rev: u64,
+    /// The ticking frame its parts' transforms are from.
+    frame: u64,
     levels: (u8, u8),
     parts: Vec<LivePart>,
 }
@@ -98,7 +103,7 @@ fn sync_rigs(
     };
     // Drop what's gone, changed, or out of reach.
     live.rigs.retain(|pos, rig| {
-        let keep = in_reach(pos) && rigs.get(pos).is_some_and(|(_, rev)| *rev == rig.rev);
+        let keep = in_reach(pos) && rigs.get(pos).is_some_and(|p| p.rev == rig.rev);
         if !keep {
             for part in &rig.parts {
                 commands.entity(part.entity).despawn();
@@ -123,7 +128,8 @@ fn sync_rigs(
     let dirs = diffuse_lights(crate::client::dimension::current());
     let ticks = view.game_time as f32 + view.partial;
 
-    for (pos, (rig, rev)) in rigs.iter() {
+    for (pos, placed) in rigs.iter() {
+        let (rig, rev) = (&placed.rig, &placed.rev);
         if !in_reach(pos) {
             continue;
         }
@@ -159,6 +165,7 @@ fn sync_rigs(
                 *pos,
                 LiveRig {
                     rev: *rev,
+                    frame: placed.frame,
                     levels,
                     parts,
                 },
@@ -166,11 +173,28 @@ fn sync_rigs(
             continue;
         }
         // Moving parts: placed again this frame; scrolling ones re-meshed.
-        let Some(rig) = live.rigs.get_mut(pos) else {
+        let Some(live_rig) = live.rigs.get_mut(pos) else {
             continue;
         };
-        for part in &mut rig.parts {
-            let moving = part.animation != Animation::None;
+        // A ticking rig moved on: blend each part from where it was.
+        if live_rig.frame != placed.frame {
+            live_rig.frame = placed.frame;
+            for (i, part) in live_rig.parts.iter_mut().enumerate() {
+                let Some(next) = rig.parts.get(i) else {
+                    continue;
+                };
+                part.prev = Some(
+                    placed
+                        .prev
+                        .as_ref()
+                        .and_then(|p| p.get(i).copied())
+                        .unwrap_or(part.transform),
+                );
+                part.transform = next.transform;
+            }
+        }
+        for part in &mut live_rig.parts {
+            let moving = part.animation != Animation::None || part.prev.is_some();
             if !moving && part.scroll.is_none() {
                 continue;
             }
@@ -178,8 +202,11 @@ fn sync_rigs(
                 continue;
             };
             if moving {
-                *t =
-                    place(*pos, part.transform, &part.animation, ticks).mul_transform(part.display);
+                let transform = match part.prev {
+                    Some(prev) => blend(prev, part.transform, view.partial),
+                    None => part.transform,
+                };
+                *t = place(*pos, transform, &part.animation, ticks).mul_transform(part.display);
             }
             if let Some((source, shown)) = &mut part.scroll {
                 let step = source.scroll.as_ref().and_then(|s| scroll_step(s, ticks));
@@ -485,6 +512,7 @@ fn spawn_parts(
         parts.push(LivePart {
             entity,
             transform,
+            prev: None,
             display,
             animation: part.animation.clone(),
             scroll: step.map(|step| (part.clone(), step)),
@@ -494,6 +522,22 @@ fn spawn_parts(
 }
 
 /// A sixteenths point as blocks.
+/// A transform `t` of the way from `a` to `b`, field by field (Java's
+/// renderers lerp their values by the partial tick the same way).
+fn blend(
+    a: torch_mod_api::Transform,
+    b: torch_mod_api::Transform,
+    t: f32,
+) -> torch_mod_api::Transform {
+    let mix = |x: [f32; 3], y: [f32; 3]| [0, 1, 2].map(|i| x[i] + (y[i] - x[i]) * t);
+    torch_mod_api::Transform {
+        pivot: mix(a.pivot, b.pivot),
+        rotate: mix(a.rotate, b.rotate),
+        translate: mix(a.translate, b.translate),
+        scale: mix(a.scale, b.scale),
+    }
+}
+
 fn blocks(v: [f32; 3]) -> Vec3 {
     Vec3::from(v) / 16.0
 }

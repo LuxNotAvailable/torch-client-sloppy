@@ -35,6 +35,8 @@ pub(super) struct Runtime {
     screen: Option<TypedFunc<(i32, i32), i64>>,
     item_tints: Option<TypedFunc<(i32, i32), i64>>,
     fluid: Option<TypedFunc<(i32, i32), i64>>,
+    tick: Option<TypedFunc<(i32, i32), i64>>,
+    entity_motion: Option<TypedFunc<(i32, i32), i64>>,
     pub(super) registration: torch_mod_api::Registration,
 }
 
@@ -169,6 +171,12 @@ impl Runtime {
         let fluid = instance
             .get_typed_func::<(i32, i32), i64>(&store, "torch_fluid")
             .ok();
+        let tick = instance
+            .get_typed_func::<(i32, i32), i64>(&store, "torch_tick")
+            .ok();
+        let entity_motion = instance
+            .get_typed_func::<(i32, i32), i64>(&store, "torch_entity_motion")
+            .ok();
         let mut runtime = Runtime {
             store,
             memory,
@@ -181,6 +189,8 @@ impl Runtime {
             screen,
             item_tints,
             fluid,
+            tick,
+            entity_motion,
             registration: torch_mod_api::Registration::default(),
         };
         let packed = runtime.call_fuelled(|store| init.call(store, ()))?;
@@ -259,6 +269,31 @@ impl Runtime {
         let _ = self.call_fuelled(|store| free.call(store, (ptr, len)));
         let bytes = self.take_result(packed?)?;
         serde_json::from_slice(&bytes).map_err(|e| format!("its screen: {e}"))
+    }
+
+    /// One client tick of a block entity: its rig after the tick. `near`
+    /// answers `block_at`, as for `block_entity`.
+    pub(super) fn tick(&mut self, view: &[u8], near: Near) -> Result<torch_mod_api::Rig, String> {
+        let func = self.tick.ok_or("it has no torch_tick")?;
+        let (ptr, len) = self.put(view)?;
+        self.store.data_mut().near = near;
+        let packed = self.call_fuelled(|store| func.call(store, (ptr, len)));
+        self.store.data_mut().near.clear();
+        let free = self.free;
+        let _ = self.call_fuelled(|store| free.call(store, (ptr, len)));
+        let bytes = self.take_result(packed?)?;
+        serde_json::from_slice(&bytes).map_err(|e| format!("its ticked rig: {e}"))
+    }
+
+    /// What a block entity does to the local player this tick.
+    pub(super) fn entity_motion(&mut self, view: &[u8]) -> Result<torch_mod_api::Motion, String> {
+        let func = self.entity_motion.ok_or("it has no torch_entity_motion")?;
+        let (ptr, len) = self.put(view)?;
+        let packed = self.call_fuelled(|store| func.call(store, (ptr, len)));
+        let free = self.free;
+        let _ = self.call_fuelled(|store| free.call(store, (ptr, len)));
+        let bytes = self.take_result(packed?)?;
+        serde_json::from_slice(&bytes).map_err(|e| format!("its motion: {e}"))
     }
 
     /// A fluid's look, from its view as JSON.

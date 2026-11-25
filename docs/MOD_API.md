@@ -43,6 +43,8 @@ A plugin registers handlers in `init`:
 | Handler | Registered for | Called | Returns |
 |---|---|---|---|
 | `block_entity` | block entity type ids (`create:kinetic`) | when one appears, its data (NBT) or its block state changes, a face neighbour's block state changes, or a modded block entity appears beside it | a `Rig` |
+| `tick` | of those, the types in `ticking` | every client tick (20 a second) while the player is within 96 blocks | a `Rig`, after advancing the plugin's own state for that block entity |
+| `entity_motion` | block entity types in `moves_entities` (`mymod:belt`) | every tick the local player stands on or in one | a `Motion`: `move_by` (moved with collision) and `velocity` (then set), both optional |
 | `entity` | entity type ids in `entities` (`mymod:biplane`) | when an entity of the type appears, and when its data or a `payload` changes it | a `Rig`, in the entity's own frame |
 | `payload` | the mod's packet channels in `channels` (`mymod:sync_state`) | each play-phase packet the server sends on one | a `Redraw`: entity ids and block entity positions whose rigs to ask for again |
 | `block_tint` | block ids in `tinted_blocks` (`mymod:maple_leaves`) | once per block state, then kept | a `Tint`: `none`, `grass`, `foliage`, `dry_foliage`, `water` (the biome's colour, blended by position) or `color` (`0xRRGGBB`) |
@@ -72,6 +74,24 @@ The registration also lists:
   `ItemColor`, for its default stack. The colours become constant tints
   on every model in the item's definition that names none (icons, held
   items). Spawn eggs need no plugin: the converter writes their colours.
+
+`tick` is Java's client-side `tick()`. A plugin keeps its own state per
+block entity (keyed by `pos`) and advances it each tick: items gliding
+along a belt, an arm reaching for its target, a handle turning. The client
+blends each part between its last two ticks by the partial tick, as Java's
+renderers lerp `prevX` to `x`, so motion is smooth between ticks. Keep the
+same parts in the same order while only their transforms change; a
+different part list (an item arriving) draws afresh. `block_entity` is still
+called when the server's data arrives: treat it as Java's `read`, and let
+the next ticks carry on from it, as Java's client does between syncs.
+
+`entity_motion` is a mod's movement handler for the local player
+(Create's `BeltMovementHandler`). Players move themselves on the client, so
+without it a belt carries everything but the player. It gets an
+`EntityMotionView` (`block_entity`, plus `entity`: `pos`, `velocity`,
+`width`, `height`, `on_ground`, `sneaking`); the client applies the answer
+before the player's next move. Other entities need nothing: the server
+moves them.
 
 `payload` gets the channel and the raw bytes the mod's server side wrote;
 `torch_mod_api::buf::Reader` reads them as Java's `FriendlyByteBuf` does
@@ -123,8 +143,8 @@ type no plugin registers opens as a plain grid: its slots nine to a row
 over the inventory. Textures load on demand, up to 8 per screen, each
 squeezed into a 256-pixel cell.
 
-Planned for later versions: screen buttons and widgets, HUD elements, a
-per-tick hook, item renderers.
+Planned for later versions: screen buttons and widgets, HUD elements,
+item renderers.
 
 ### What a plugin gets: `BlockEntityView`
 
@@ -230,6 +250,8 @@ Data crosses as UTF-8 JSON in the plugin's memory.
 | `torch_entity` | `(ptr: i32, len: i32) -> i64` | an `EntityView` in, a `Rig` out |
 | `torch_payload` | `(ptr: i32, len: i32) -> i64` | the channel's length (u16, big-endian), the channel, then the data in; a `Redraw` out |
 | `torch_block_tint` | `(ptr: i32, len: i32) -> i64` | a `BlockStateView` in, a `Tint` out |
+| `torch_tick` | `(ptr: i32, len: i32) -> i64` | a `BlockEntityView` in, the `Rig` after one tick out |
+| `torch_entity_motion` | `(ptr: i32, len: i32) -> i64` | an `EntityMotionView` in, a `Motion` out |
 | `torch_fluid` | `(ptr: i32, len: i32) -> i64` | a `FluidView` (`{"fluid": ...}`) in, a `FluidLook` or `null` out |
 | `torch_item_tints` | `(ptr: i32, len: i32) -> i64` | an `ItemView` (`{"item": ...}`) in, an array of colours out |
 | `torch_screen` | `(ptr: i32, len: i32) -> i64` | a `ScreenView` in, a `Screen` or `null` out |

@@ -107,6 +107,16 @@ pub fn travel(
             no_physics: matches!(gamemode, Some(GameMode::Spectator)),
         };
 
+        // A block entity carrying the player (`ExternalPush`, from the game).
+        if let Some(push) = crate::ExternalPush::take() {
+            if let Some(by) = push.move_by {
+                move_colliding(&mut ctx, by);
+            }
+            if let Some(velocity) = push.velocity {
+                ctx.physics.velocity = velocity;
+            }
+        }
+
         if swimming.is_some_and(|s| **s) {
             apply_swim_pitch(&mut ctx);
         }

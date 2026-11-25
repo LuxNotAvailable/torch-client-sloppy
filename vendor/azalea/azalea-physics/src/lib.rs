@@ -25,6 +25,27 @@ use azalea_world::{World, WorldName, Worlds};
 use bevy_app::{App, Plugin, Update};
 use bevy_ecs::prelude::*;
 use clip::box_traverse_blocks;
+
+/// What a block entity does to the local player next tick (a belt
+/// carrying it): `move` by `move_by` with collision, then set the velocity.
+/// The game sets it each tick from its mods' plugins; `travel` takes it.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ExternalPush {
+    pub move_by: Option<azalea_core::position::Vec3>,
+    pub velocity: Option<azalea_core::position::Vec3>,
+}
+
+static EXTERNAL_PUSH: std::sync::Mutex<Option<ExternalPush>> = std::sync::Mutex::new(None);
+
+impl ExternalPush {
+    pub fn set(push: Option<Self>) {
+        *EXTERNAL_PUSH.lock().unwrap_or_else(|e| e.into_inner()) = push;
+    }
+
+    pub fn take() -> Option<Self> {
+        EXTERNAL_PUSH.lock().unwrap_or_else(|e| e.into_inner()).take()
+    }
+}
 use collision::{BLOCK_SHAPE, VoxelShape, move_colliding};
 
 use crate::{

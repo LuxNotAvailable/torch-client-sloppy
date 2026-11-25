@@ -47,6 +47,10 @@ struct Plugins {
     item_tints: HashMap<String, Vec<u32>>,
     /// Fluid id to the plugin that gives its look.
     fluids: HashMap<String, usize>,
+    /// Block entity types simulated on the client every tick.
+    ticking: std::collections::HashSet<String>,
+    /// Block entity type to the plugin that moves entities on it.
+    movers: HashMap<String, usize>,
     /// Tints asked so far, by modded table generation and state id.
     tints: HashMap<(u32, u16), torch_mod_api::Tint>,
 }
@@ -96,6 +100,10 @@ pub fn load(plugins: Vec<(String, Vec<u8>)>) {
                 }
                 for fluid in &registration.fluids {
                     out.fluids.entry(fluid.clone()).or_insert(index);
+                }
+                out.ticking.extend(registration.ticking.iter().cloned());
+                for kind in &registration.moves_entities {
+                    out.movers.entry(kind.clone()).or_insert(index);
                 }
                 crate::log_info!(
                     "modapi",
@@ -295,6 +303,61 @@ pub fn block_tint(state: u16, block: &str, props: &[(&str, &str)]) -> Option<tor
     Some(tint)
 }
 
+/// Whether a plugin simulates `kind` block entities every client tick.
+pub fn ticks(kind: &str) -> bool {
+    PLUGINS.lock().ticking.contains(kind)
+}
+
+/// Whether a plugin moves entities standing on `kind` block entities.
+pub fn moves_entities(kind: &str) -> bool {
+    PLUGINS.lock().movers.contains_key(kind)
+}
+
+/// One client tick of a block entity (`Plugin::tick`): its rig after it.
+fn tick_block_entity(
+    view: &torch_mod_api::BlockEntityView,
+    near: runtime::Near,
+) -> Option<Result<torch_mod_api::Rig, String>> {
+    let mut plugins = PLUGINS.lock();
+    let index = *plugins.block_entities.get(&view.kind)?;
+    let loaded = plugins.loaded.get_mut(index)?;
+    let input = match serde_json::to_vec(view) {
+        Ok(bytes) => bytes,
+        Err(e) => return Some(Err(e.to_string())),
+    };
+    match loaded.runtime.tick(&input, near) {
+        Ok(rig) => Some(Ok(rig)),
+        Err(e) => {
+            loaded.failures += 1;
+            (loaded.failures <= 3).then(|| Err(format!("{}: {e}", loaded.name)))
+        }
+    }
+}
+
+/// What a block entity does to the local player standing on it this tick
+/// (`Plugin::entity_motion`); `None` when no plugin moves entities on it.
+pub fn entity_motion(view: &torch_mod_api::EntityMotionView) -> Option<torch_mod_api::Motion> {
+    let mut plugins = PLUGINS.lock();
+    let index = *plugins.movers.get(&view.block_entity.kind)?;
+    let input = serde_json::to_vec(view).ok()?;
+    let loaded = plugins.loaded.get_mut(index)?;
+    match loaded.runtime.entity_motion(&input) {
+        Ok(motion) => Some(motion),
+        Err(e) => {
+            loaded.failures += 1;
+            if loaded.failures <= 3 {
+                crate::log_warn!(
+                    "modapi",
+                    "{}: motion on {}: {e}",
+                    loaded.name,
+                    view.block_entity.kind
+                );
+            }
+            None
+        }
+    }
+}
+
 /// The rig for a block entity, from the plugin that registered its type;
 /// `None` when none did.
 fn block_entity(
@@ -331,7 +394,10 @@ mod tests {
     #[test]
     fn the_example_plugin_registers_and_spins_its_block() {
         let mut runtime = runtime::Runtime::load("example", EXAMPLE).unwrap();
-        assert_eq!(runtime.registration.block_entities, ["example:spinner"]);
+        assert_eq!(
+            runtime.registration.block_entities,
+            ["example:spinner", "example:conveyor"]
+        );
         let view = serde_json::json!({"type": "example:spinner", "pos": [0, 64, 0],
             "block": "example:wheel", "props": {"axis": "z"}, "nbt": {"Speed": 60.0}});
         let rig = runtime
@@ -393,6 +459,37 @@ mod tests {
         };
         // Its type's size, in sixteenths about its feet.
         assert_eq!((*from, *to), ([-8.0, 0.0, -8.0], [8.0, 8.0, 8.0]));
+    }
+
+    #[test]
+    fn the_example_conveyor_ticks_its_own_state_and_carries_the_player() {
+        let mut runtime = runtime::Runtime::load("example", EXAMPLE).unwrap();
+        assert_eq!(runtime.registration.ticking, ["example:conveyor"]);
+        assert_eq!(runtime.registration.moves_entities, ["example:conveyor"]);
+        let view = serde_json::json!({"type": "example:conveyor", "pos": [1, 64, 1],
+            "block": "example:conveyor", "nbt": {"Crate": 4.0}});
+        let input = view.to_string();
+        let at = |rig: &torch_mod_api::Rig| rig.parts[0].transform.translate[0];
+        // Data arrives (Java's `read`), then two ticks move the crate on.
+        let read = runtime
+            .block_entity(input.as_bytes(), runtime::Near::new())
+            .unwrap();
+        assert_eq!(at(&read), 4.0);
+        let one = runtime
+            .tick(input.as_bytes(), runtime::Near::new())
+            .unwrap();
+        let two = runtime
+            .tick(input.as_bytes(), runtime::Near::new())
+            .unwrap();
+        assert_eq!((at(&one), at(&two)), (6.0, 8.0));
+        // Same parts, moved: the host blends instead of drawing afresh.
+        assert!(store::same_parts(&one, &two));
+        let motion = serde_json::json!({"block_entity": view,
+            "entity": {"pos": [1.5, 65.0, 1.5], "velocity": [0, 0, 0], "width": 0.6, "height": 1.8}});
+        let motion = runtime
+            .entity_motion(motion.to_string().as_bytes())
+            .unwrap();
+        assert_eq!(motion.move_by, Some([0.125, 0.0, 0.0]));
     }
 
     #[test]

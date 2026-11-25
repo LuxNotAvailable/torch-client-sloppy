@@ -2,7 +2,8 @@
 //! `block_entity_data` packets (azalea can't hold a modded type), kept by
 //! position. Each tick, `tick` asks the owning plugin for a rig wherever
 //! something changed (its NBT, its block state, or a face neighbour's
-//! state), and publishes every rig for the renderer.
+//! state), ticks the types a plugin simulates client-side (`Plugin::tick`)
+//! near the player, and publishes every rig for the renderer.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -35,9 +36,26 @@ const FACES: [[i32; 3]; 6] = [
 ];
 
 /// A rig for the renderer, with the revision it was made at.
+#[derive(Clone)]
 pub struct Placed {
     pub rig: Arc<torch_mod_api::Rig>,
     pub rev: u64,
+    /// Bumped each tick a ticking rig's transforms move (same parts).
+    pub frame: u64,
+    /// The parts' transforms the tick before, to blend from.
+    pub prev: Option<Arc<[torch_mod_api::Transform]>>,
+}
+
+/// Ticking types are simulated this close to the player, in blocks.
+const TICK_DISTANCE: f64 = 96.0;
+
+/// Whether two rigs have the same parts, transforms aside: a ticking rig
+/// whose parts only moved blends instead of drawing afresh.
+pub(super) fn same_parts(a: &torch_mod_api::Rig, b: &torch_mod_api::Rig) -> bool {
+    a.parts.len() == b.parts.len()
+        && a.parts.iter().zip(&b.parts).all(|(x, y)| {
+            x.geometry == y.geometry && x.animation == y.animation && x.scroll == y.scroll
+        })
 }
 
 #[derive(Default)]
@@ -49,17 +67,18 @@ struct Store {
     unhandled: HashSet<String>,
     /// Rigs logged so far, by type: the first few of each go to the log.
     logged: HashMap<String, u32>,
+    /// The game time ticking types were last ticked at.
+    ticked: Option<u64>,
 }
 
 static STORE: std::sync::LazyLock<Mutex<Store>> = std::sync::LazyLock::new(Default::default);
 
 /// Every rig, by block position; replaced each tick something changes.
-static PUBLISHED: std::sync::LazyLock<
-    parking_lot::RwLock<Arc<HashMap<[i32; 3], (Arc<torch_mod_api::Rig>, u64)>>>,
-> = std::sync::LazyLock::new(Default::default);
+static PUBLISHED: std::sync::LazyLock<parking_lot::RwLock<Arc<HashMap<[i32; 3], Placed>>>> =
+    std::sync::LazyLock::new(Default::default);
 
-/// The rigs to draw, by block position, each with its revision.
-pub fn rigs() -> Arc<HashMap<[i32; 3], (Arc<torch_mod_api::Rig>, u64)>> {
+/// The rigs to draw, by block position.
+pub fn rigs() -> Arc<HashMap<[i32; 3], Placed>> {
     PUBLISHED.read().clone()
 }
 
@@ -131,9 +150,10 @@ pub fn reset() {
     *PUBLISHED.write() = Arc::default();
 }
 
-/// Asks plugins for the rigs of block entities that changed, then
-/// publishes. `world` answers which block stands where.
-pub fn tick(world: &azalea_world::World, game_time: u64) {
+/// Asks plugins for the rigs of block entities that changed, ticks the
+/// client-simulated ones near `player`, then publishes. `world` answers
+/// which block stands where.
+pub fn tick(world: &azalea_world::World, game_time: u64, player: Option<[f64; 3]>) {
     let mut store = STORE.lock();
     let store = &mut *store;
     if store.entries.is_empty() && store.rigs.is_empty() {
@@ -162,6 +182,9 @@ pub fn tick(world: &azalea_world::World, game_time: u64) {
     };
     let mut gone = Vec::new();
     let mut todo = Vec::new();
+    // Ticking types advance once per game tick, however often this runs.
+    let new_tick = store.ticked != Some(game_time);
+    store.ticked = Some(game_time);
     for (pos, entry) in store.entries.iter_mut() {
         let Some(state) = state_at(*pos) else {
             gone.push(*pos);
@@ -178,10 +201,18 @@ pub fn tick(world: &azalea_world::World, game_time: u64) {
         let nbt_time = *entry.nbt_time.get_or_insert(game_time as i64);
         if entry.dirty {
             entry.dirty = false;
-            todo.push((*pos, state, nbt_time));
+            todo.push((*pos, state, nbt_time, false));
+        } else if new_tick
+            && super::ticks(&entry.kind)
+            && player.is_some_and(|p| {
+                let d = [0, 1, 2].map(|i| f64::from(pos[i]) + 0.5 - p[i]);
+                d[0] * d[0] + d[1] * d[1] + d[2] * d[2] < TICK_DISTANCE * TICK_DISTANCE
+            })
+        {
+            todo.push((*pos, state, nbt_time, true));
         }
     }
-    for (pos, state, nbt_time) in todo {
+    for (pos, state, nbt_time, ticking) in todo {
         let pos = &pos;
         let entry = &store.entries[pos];
         let info = crate::blocks::info::info(state);
@@ -198,7 +229,12 @@ pub fn tick(world: &azalea_world::World, game_time: u64) {
             time: game_time as i64,
             nbt_time,
         };
-        let rig = match super::block_entity(&view, near(*pos)) {
+        let answer = if ticking {
+            super::tick_block_entity(&view, near(*pos))
+        } else {
+            super::block_entity(&view, near(*pos))
+        };
+        let rig = match answer {
             Some(Ok(rig)) => Some(rig),
             Some(Err(e)) => {
                 crate::log_warn!("modapi", "{} at {pos:?}: {e}", entry.kind);
@@ -233,12 +269,25 @@ pub fn tick(world: &azalea_world::World, game_time: u64) {
                         parts.join(" | ")
                     );
                 }
+                // Only transforms moved: keep the parts and blend.
+                if let Some(old) = store.rigs.get_mut(pos)
+                    && same_parts(&old.rig, &rig)
+                {
+                    if old.rig.parts != rig.parts {
+                        old.prev = Some(old.rig.parts.iter().map(|p| p.transform).collect());
+                        old.rig = Arc::new(rig);
+                        old.frame += 1;
+                    }
+                    continue;
+                }
                 store.next_rev += 1;
                 store.rigs.insert(
                     *pos,
                     Placed {
                         rig: Arc::new(rig),
                         rev: store.next_rev,
+                        frame: 0,
+                        prev: None,
                     },
                 );
             }
@@ -257,10 +306,71 @@ pub fn tick(world: &azalea_world::World, game_time: u64) {
             store
                 .rigs
                 .iter()
-                .map(|(pos, placed)| (*pos, (placed.rig.clone(), placed.rev)))
+                .map(|(pos, placed)| (*pos, placed.clone()))
                 .collect(),
         );
     }
+}
+
+/// The plugin's view of the block entity at `pos`, if one was captured
+/// and its block is loaded.
+fn view_at(
+    store: &Store,
+    world: &azalea_world::World,
+    pos: [i32; 3],
+) -> Option<torch_mod_api::BlockEntityView> {
+    let entry = store.entries.get(&pos)?;
+    let state =
+        world.get_block_state(azalea_core::position::BlockPos::new(pos[0], pos[1], pos[2]))?;
+    let info = crate::blocks::info::info(state);
+    let time = store.ticked.unwrap_or(0) as i64;
+    Some(torch_mod_api::BlockEntityView {
+        kind: entry.kind.clone(),
+        pos,
+        block: full_id(info.id),
+        props: info
+            .props()
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect(),
+        nbt: entry.nbt.clone(),
+        time,
+        nbt_time: entry.nbt_time.unwrap_or(time),
+    })
+}
+
+/// Asks the plugin of a block entity that moves entities (a belt) under or
+/// around the local player's feet what it does to the player this tick,
+/// and hands that to physics (`azalea_physics::ExternalPush`).
+pub fn push_local(world: &azalea_world::World, entity: torch_mod_api::MovingEntity) {
+    let [x, y, z] = entity.pos;
+    let feet = [x.floor() as i32, y.floor() as i32, z.floor() as i32];
+    let below = [feet[0], (y - 0.25).floor() as i32, feet[2]];
+    let view = {
+        let store = STORE.lock();
+        [feet, below].into_iter().find_map(|at| {
+            let kind = &store.entries.get(&at)?.kind;
+            super::moves_entities(kind)
+                .then(|| view_at(&store, world, at))
+                .flatten()
+        })
+    };
+    let push = view
+        .and_then(|block_entity| {
+            super::entity_motion(&torch_mod_api::EntityMotionView {
+                block_entity,
+                entity,
+            })
+        })
+        .filter(|m| m.move_by.is_some() || m.velocity.is_some())
+        .map(|m| {
+            let vec = |v: [f64; 3]| azalea_core::position::Vec3::new(v[0], v[1], v[2]);
+            azalea_physics::ExternalPush {
+                move_by: m.move_by.map(vec),
+                velocity: m.velocity.map(vec),
+            }
+        });
+    azalea_physics::ExternalPush::set(push);
 }
 
 /// A block id with its namespace (`stone` as `minecraft:stone`).

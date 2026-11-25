@@ -241,6 +241,28 @@ fn read_tick_snapshot(bot: &Client, shared: &Arc<SharedMutex>) -> Option<TickSna
             pos.z,
         ) == Some(crate::util::block_model::EyeFluid::Water);
         RIDING.lock().unwrap().tick(vehicle, under_water, false);
+        // A mod's block entity carrying the player (a belt).
+        if let Some(world) = world_read.as_ref() {
+            use azalea::entity::Pose;
+            let height = match pose {
+                Some(Pose::Crouching) => 1.5,
+                Some(Pose::Swimming | Pose::FallFlying | Pose::SpinAttack) => 0.6,
+                _ => 1.8,
+            };
+            crate::modapi::store::push_local(
+                world,
+                torch_mod_api::MovingEntity {
+                    pos: [pos.x, pos.y, pos.z],
+                    velocity: physics
+                        .as_ref()
+                        .map_or([0.0; 3], |p| [p.velocity.x, p.velocity.y, p.velocity.z]),
+                    width: 0.6,
+                    height,
+                    on_ground: physics.as_ref().is_some_and(|p| p.on_ground()),
+                    sneaking: pose == Some(Pose::Crouching),
+                },
+            );
+        }
     }
     let advanced_tooltips = reads.advanced_tooltips;
     let (
@@ -342,7 +364,7 @@ fn read_tick_snapshot(bot: &Client, shared: &Arc<SharedMutex>) -> Option<TickSna
     };
 
     if let Some(world) = &world {
-        let (game_time, players) = {
+        let (game_time, players, own) = {
             let s = shared.lock().unwrap();
             let own = s.session.player_pos.map(f64::from);
             let others = s
@@ -353,12 +375,13 @@ fn read_tick_snapshot(bot: &Client, shared: &Arc<SharedMutex>) -> Option<TickSna
             (
                 s.session.world.game_time,
                 std::iter::once(own).chain(others).collect::<Vec<_>>(),
+                own,
             )
         };
         let snapshot = {
             let world = world.read();
             crate::entities::cull::run(&world);
-            crate::modapi::store::tick(&world, game_time);
+            crate::modapi::store::tick(&world, game_time, Some(own));
             blockentities::feed::publish(&world, game_time, &players)
         };
         if let Some(snapshot) = snapshot {
