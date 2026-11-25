@@ -55,7 +55,7 @@ pub(super) const SPEC: HopSpec = HopSpec {
         ),
         (Phase::Game, "respawn", body!(respawn)),
         (Phase::Game, "player_position", body!(player_position)),
-        (Phase::Game, "teleport_entity", body!(teleport_entity)),
+        (Phase::Game, "teleport_entity", teleport_entity),
         (Phase::Game, "add_entity", body!(add_entity)),
         // Same shape since 1.21.1, but attribute ids moved: 1.21.2 dropped
         // their `generic.` prefixes and the registry is sorted by name.
@@ -329,7 +329,12 @@ fn player_position(_ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     (r.remaining() == 0).then(|| out.into())
 }
 
-fn teleport_entity(_ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
+/// 1.21.1's only absolute entity move, a server's resync (an item
+/// landing, every 400 ticks) as much as a teleport: since 1.21.2 that's
+/// `entity_position_sync`, which also resets the base later relative moves
+/// count from. As a 1.21.2 `teleport_entity` the base stayed put, and the
+/// next move put the entity back near where it was last synced.
+fn teleport_entity(_ids: &Ids, body: &[u8]) -> Option<Rewritten> {
     let mut r = Reader::new(body);
     let id = r.varint()?;
     let pos = [f64(&mut r)?, f64(&mut r)?, f64(&mut r)?];
@@ -339,10 +344,9 @@ fn teleport_entity(_ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     let mut out = Vec::with_capacity(70);
     write_varint(&mut out, id);
     position_move_rotation(&mut out, pos, [0.0; 3], y_rot, x_rot);
-    out.extend_from_slice(&0i32.to_be_bytes());
     out.push(on_ground);
     // Bytes past 1.21.1's fields are a mod's own; they're dropped.
-    Some(out.into())
+    Some(Rewritten::As("entity_position_sync", out.into()))
 }
 
 /// Shorts in 1/8000 of a block per tick, to 1.21.9's packed `LpVec3`.
@@ -1993,8 +1997,8 @@ mod tests {
 
     #[test]
     fn entity_motion_and_teleport_read_as_26_3() {
+        use azalea_protocol::packets::game::c_entity_position_sync::ClientboundEntityPositionSync;
         use azalea_protocol::packets::game::c_set_entity_motion::ClientboundSetEntityMotion;
-        use azalea_protocol::packets::game::c_teleport_entity::ClientboundTeleportEntity;
         let mut motion = vec![5];
         for v in [8000i16, -4000, 0] {
             motion.extend_from_slice(&v.to_be_bytes());
@@ -2006,7 +2010,12 @@ mod tests {
             tp.extend_from_slice(&v.to_be_bytes());
         }
         tp.extend_from_slice(&[64, 0, 1]);
-        let _: ClientboundTeleportEntity = through("teleport_entity", &tp);
+        // A resync: it moves the base relative moves count from.
+        let sync: ClientboundEntityPositionSync = through("teleport_entity", &tp);
+        assert_eq!(sync.id.0, 5);
+        let at = sync.position.end_position();
+        assert_eq!((at.x, at.y, at.z), (1.0, 2.0, 3.0));
+        assert!(sync.on_ground);
     }
 
     #[test]
