@@ -109,11 +109,17 @@ pub fn travel(
 
         // A block entity carrying the player (`ExternalPush`, from the game).
         if let Some(push) = crate::ExternalPush::take() {
-            if let Some(by) = push.move_by {
-                move_colliding(&mut ctx, by);
-            }
-            if let Some(velocity) = push.velocity {
-                ctx.physics.velocity = velocity;
+            for step in push.steps {
+                match step {
+                    crate::PushStep::Move(by) => move_colliding(&mut ctx, by),
+                    crate::PushStep::Offset(by) => {
+                        let at = **ctx.position;
+                        **ctx.position = at + by;
+                    }
+                    crate::PushStep::Velocity(v) => ctx.physics.velocity = v,
+                    crate::PushStep::OnGround(b) => ctx.physics.set_on_ground(b),
+                    crate::PushStep::ResetFall => ctx.physics.fall_distance = 0.0,
+                }
             }
         }
 

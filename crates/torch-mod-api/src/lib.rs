@@ -454,15 +454,35 @@ pub struct EntityMotionView {
     pub entity: MovingEntity,
 }
 
-/// What a block entity does to an entity this tick: Java's
-/// `entity.move(MoverType.SELF, by)` (with collision), then
-/// `setDeltaMovement(velocity)`. Both optional.
+/// What a block entity does to an entity this tick, in Java's order:
+/// `move_by` (one `entity.move(MoverType.SELF, by)`, with collision), then
+/// each of `steps`, then `velocity` (`setDeltaMovement`). All optional.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Motion {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub move_by: Option<[f64; 3]>,
+    /// More of what Java does, in order: several moves, a `setPos` nudge.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub steps: Vec<Step>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub velocity: Option<[f64; 3]>,
+}
+
+/// One thing a movement handler does to the entity.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Step {
+    /// `entity.move(MoverType.SELF, v)`: moved with collision.
+    Move([f64; 3]),
+    /// `entity.setPos(getX() + x, getY() + y, getZ() + z)`: moved from where
+    /// the moves before left it, without collision.
+    Offset([f64; 3]),
+    /// `entity.setDeltaMovement(v)`.
+    Velocity([f64; 3]),
+    /// `entity.setOnGround(b)`.
+    OnGround(bool),
+    /// `entity.fallDistance = 0`.
+    ResetFall,
 }
 
 /// A fluid, by its id (`mymod:honey`; its flowing form asks as the source).

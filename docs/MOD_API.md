@@ -44,7 +44,7 @@ A plugin registers handlers in `init`:
 |---|---|---|---|
 | `block_entity` | block entity type ids (`create:kinetic`) | when one appears, its data (NBT) or its block state changes, a face neighbour's block state changes, or a modded block entity appears beside it | a `Rig` |
 | `tick` | of those, the types in `ticking` | every client tick (20 a second) while the player is within 96 blocks | a `Rig`, after advancing the plugin's own state for that block entity |
-| `entity_motion` | block entity types in `moves_entities` (`mymod:belt`) | every tick the local player stands on or in one | a `Motion`: `move_by` (moved with collision) and `velocity` (then set), both optional |
+| `entity_motion` | block entity types in `moves_entities` (`mymod:belt`) | every tick the local player stands on or in one | a `Motion`: `move_by` (moved with collision), then `steps` in order (`move`, `offset` (`setPos` relative, no collision), `velocity`, `on_ground`, `reset_fall`), then `velocity` |
 | `entity` | entity type ids in `entities` (`mymod:biplane`) | when an entity of the type appears, and when its data or a `payload` changes it | a `Rig`, in the entity's own frame |
 | `payload` | the mod's packet channels in `channels` (`mymod:sync_state`) | each play-phase packet the server sends on one | a `Redraw`: entity ids and block entity positions whose rigs to ask for again |
 | `block_tint` | block ids in `tinted_blocks` (`mymod:maple_leaves`) | once per block state, then kept | a `Tint`: `none`, `grass`, `foliage`, `dry_foliage`, `water` (the biome's colour, blended by position) or `color` (`0xRRGGBB`) |

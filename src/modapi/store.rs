@@ -392,15 +392,32 @@ pub fn push_local(world: &azalea_world::World, entity: torch_mod_api::MovingEnti
                 entity,
             })
         })
-        .filter(|m| m.move_by.is_some() || m.velocity.is_some())
-        .map(|m| {
-            let vec = |v: [f64; 3]| azalea_core::position::Vec3::new(v[0], v[1], v[2]);
-            azalea_physics::ExternalPush {
-                move_by: m.move_by.map(vec),
-                velocity: m.velocity.map(vec),
-            }
-        });
+        .map(|m| azalea_physics::ExternalPush {
+            steps: push_steps(&m),
+        })
+        .filter(|p| !p.steps.is_empty());
     azalea_physics::ExternalPush::set(push);
+}
+
+/// A plugin's `Motion` as physics steps, in Java's order.
+fn push_steps(m: &torch_mod_api::Motion) -> Vec<azalea_physics::PushStep> {
+    use azalea_physics::PushStep;
+    use torch_mod_api::Step;
+    let vec = |v: [f64; 3]| azalea_core::position::Vec3::new(v[0], v[1], v[2]);
+    let mut out: Vec<PushStep> = m
+        .move_by
+        .map(|v| PushStep::Move(vec(v)))
+        .into_iter()
+        .collect();
+    out.extend(m.steps.iter().map(|s| match *s {
+        Step::Move(v) => PushStep::Move(vec(v)),
+        Step::Offset(v) => PushStep::Offset(vec(v)),
+        Step::Velocity(v) => PushStep::Velocity(vec(v)),
+        Step::OnGround(b) => PushStep::OnGround(b),
+        Step::ResetFall => PushStep::ResetFall,
+    }));
+    out.extend(m.velocity.map(|v| PushStep::Velocity(vec(v))));
+    out
 }
 
 /// A block id with its namespace (`stone` as `minecraft:stone`).
@@ -421,6 +438,24 @@ pub(crate) fn read_network_nbt(bytes: &[u8]) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_motion_becomes_steps_in_java_s_order() {
+        use azalea_physics::PushStep;
+        let m = torch_mod_api::Motion {
+            move_by: Some([0.0, 0.5, 0.0]),
+            steps: vec![
+                torch_mod_api::Step::Move([0.1, 0.0, 0.0]),
+                torch_mod_api::Step::OnGround(true),
+            ],
+            velocity: Some([0.1, 0.0, 0.0]),
+        };
+        let steps = push_steps(&m);
+        assert_eq!(steps.len(), 4);
+        assert!(matches!(steps[0], PushStep::Move(v) if v.y == 0.5));
+        assert!(matches!(steps[2], PushStep::OnGround(true)));
+        assert!(matches!(steps[3], PushStep::Velocity(v) if v.x == 0.1));
+    }
 
     #[test]
     fn network_nbt_reads_as_json() {

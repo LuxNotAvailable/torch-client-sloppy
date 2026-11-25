@@ -27,12 +27,22 @@ use bevy_ecs::prelude::*;
 use clip::box_traverse_blocks;
 
 /// What a block entity does to the local player next tick (a belt
-/// carrying it): `move` by `move_by` with collision, then set the velocity.
-/// The game sets it each tick from its mods' plugins; `travel` takes it.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+/// carrying it): its steps in order. The game sets it each tick from its
+/// mods' plugins; `travel` takes it.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct ExternalPush {
-    pub move_by: Option<azalea_core::position::Vec3>,
-    pub velocity: Option<azalea_core::position::Vec3>,
+    pub steps: Vec<PushStep>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PushStep {
+    /// Moved with collision (`move(MoverType.SELF, v)`).
+    Move(azalea_core::position::Vec3),
+    /// Moved without collision (`setPos` relative to where it is).
+    Offset(azalea_core::position::Vec3),
+    Velocity(azalea_core::position::Vec3),
+    OnGround(bool),
+    ResetFall,
 }
 
 static EXTERNAL_PUSH: std::sync::Mutex<Option<ExternalPush>> = std::sync::Mutex::new(None);
