@@ -30,6 +30,7 @@ __pycache__/
 /crates/torch-convert/
 /crates/torch-converter/
 /crates/torch-port-check/
+/crates/torch-java2rs/
 /ports/
 /tools/port_agent.py
 /tools/port_agent_model.py
