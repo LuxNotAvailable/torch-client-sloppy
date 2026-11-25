@@ -529,6 +529,25 @@ pub(super) fn model_quads(
             });
         }
     }
+    // Free quads (`torch_quads`, a mod's OBJ model), shaded by the side each
+    // faces most, as blocks bake them.
+    for q in &model.quads {
+        let Some(tex) = model
+            .texture_path(&q.texture)
+            .and_then(|p| assets.texture(&p))
+        else {
+            continue;
+        };
+        let pos = q.pos.map(|p| p.map(|c| c / 16.0));
+        let [a, b, c] = [pos[0], pos[1], pos[2]].map(Vec3::from_array);
+        let shade = DIR_SHADE[nearest_direction((b - a).cross(c - a))];
+        out.push(Quad {
+            pos,
+            uv: q.uv.map(|[u, v]| [u / 16.0, v / 16.0]),
+            tex,
+            color: [shade; 3],
+        });
+    }
 }
 
 pub(super) fn cube_quads(tex: &Arc<Tex>, out: &mut Vec<Quad>) {
@@ -1410,6 +1429,37 @@ mod tests {
         let m = parse_transformation(&node);
         let p = m.transform_point3(Vec3::new(0.0, 1.0, 0.0));
         assert!(p.abs_diff_eq(Vec3::new(0.5, -1.0, 0.5), 1e-6), "{p:?}");
+    }
+
+    #[test]
+    fn a_free_quad_model_draws_its_quads() {
+        let assets = Path::new(ASSETS);
+        if !assets.exists() {
+            eprintln!("assets missing, skipping");
+            return;
+        }
+        let cache = Assets::new(assets);
+        // An OBJ model as torch-convert bakes it: no elements, one quad.
+        let model = Resolved {
+            textures: HashMap::from([("3".to_owned(), "block/stone".to_owned())]),
+            quads: vec![crate::items::model::FreeQuad {
+                pos: [
+                    [0.0, 16.0, 0.0],
+                    [0.0, 16.0, 16.0],
+                    [16.0, 16.0, 16.0],
+                    [16.0, 16.0, 0.0],
+                ],
+                uv: [[0.0, 0.0], [0.0, 16.0], [16.0, 16.0], [16.0, 0.0]],
+                texture: "#3".to_owned(),
+            }],
+            ..Default::default()
+        };
+        let mut out = Vec::new();
+        model_quads(&cache, &model, &[], &mut out);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].pos[2], [1.0, 1.0, 1.0]);
+        assert_eq!(out[0].uv[2], [1.0, 1.0]);
+        assert_eq!(out[0].color, [1.0; 3], "a top face is lit full");
     }
 
     #[test]
