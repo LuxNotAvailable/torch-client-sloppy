@@ -50,7 +50,8 @@ Treat as our code. History: `git log -- vendor/azalea`. Main areas:
   (`azalea-client/src/plugins/inventory/mod.rs`).
 - `azalea-physics`: `ExternalPush` (`lib.rs`), set by the game each tick
   from a mod plugin's `entity_motion` (a belt carrying the player): `travel`
-  moves the local player by it with collision, then sets its velocity.
+  applies its `PushStep`s in order (collision moves, `setPos` offsets,
+  velocity, on-ground, fall reset) to the local player.
 - `azalea-inventory`: `PotDecorations` hashes as Java's codec writes it
   (absent sides left out, `count` 1 left out), `components/mod.rs`.
 - `azalea-client`: `queue_held_instant_mine` breaks instant blocks in the

@@ -444,6 +444,10 @@ pub struct MovingEntity {
     pub on_ground: bool,
     #[serde(default)]
     pub sneaking: bool,
+    /// What the player is pressing: Java's `zza` (forward, +1) and `xxa`
+    /// (left, +1).
+    #[serde(default)]
+    pub input: [f32; 2],
 }
 
 /// An entity standing on (or in) a block entity of a type in

@@ -260,6 +260,11 @@ fn read_tick_snapshot(bot: &Client, shared: &Arc<SharedMutex>) -> Option<TickSna
                     height,
                     on_ground: physics.as_ref().is_some_and(|p| p.on_ground()),
                     sneaking: pose == Some(Pose::Crouching),
+                    // `Input.getMoveVector`: x is left (`xxa`), y forward (`zza`).
+                    input: bot
+                        .component::<azalea_physics::client_movement::ClientMovementState>()
+                        .ok()
+                        .map_or([0.0; 2], |m| [m.move_vector.y, m.move_vector.x]),
                 },
             );
         }
