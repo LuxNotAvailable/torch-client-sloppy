@@ -657,6 +657,18 @@ pub(super) fn shifted(ids: &Ids, space: IdSpace, id: i32) -> Option<i32> {
     })
 }
 
+/// `shifted` undone: a native id back to the server's, a modded one (past
+/// vanilla's ids) moved back past the server's vanilla ids.
+pub(super) fn unshifted(ids: &Ids, space: IdSpace, id: i32) -> Option<i32> {
+    ids.from_native.map(space, id).or_else(|| {
+        let native = ids.from_native.count(space);
+        if id < native {
+            return None;
+        }
+        (id - native).checked_add(ids.to_native.count(space))
+    })
+}
+
 pub(super) fn skip_lp_vec3(r: &mut Reader) -> Option<()> {
     let flags = r.u8()?;
     if flags != 0 {
@@ -1230,7 +1242,7 @@ pub(super) fn hashed_stack(ids: &Ids, r: &mut Reader, out: &mut Vec<u8>) -> Opti
 }
 
 pub(super) fn back(ids: &Ids, space: IdSpace, raw: i32, out: &mut Vec<u8>, ok: &mut bool) {
-    let id = ids.from_native.map(space, raw);
+    let id = unshifted(ids, space, raw);
     *ok &= id.is_some();
     write_varint(out, id.unwrap_or_default());
 }
@@ -1276,7 +1288,7 @@ pub(super) fn creative_slot(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
         return Some(out.into_boxed_slice());
     }
 
-    let Some(item) = ids.from_native.map(IdSpace::Item, r.varint()?) else {
+    let Some(item) = unshifted(ids, IdSpace::Item, r.varint()?) else {
         crate::log_warn!(
             "net",
             "clearing a creative slot: this server has no id for what was put in it"
@@ -2925,6 +2937,25 @@ mod tests {
         assert_eq!(r.count(), Some(3), "the payload keeps its own length");
         assert_eq!(r.take(3), Some(&[1, 2, 3][..]));
         assert_eq!(r.remaining(), 0);
+    }
+
+    #[test]
+    fn a_creative_slot_of_a_modded_item_goes_back_under_the_server_s_id() {
+        // A modded item, numbered past the server's vanilla items, as the
+        // client got it.
+        let wire = ids().to_native.count(IdSpace::Item) + 7;
+        let native = shifted(ids(), IdSpace::Item, wire).expect("shifted past vanilla");
+        let mut body = 9u16.to_be_bytes().to_vec();
+        write_varint(&mut body, 1);
+        write_varint(&mut body, native);
+        write_varint(&mut body, 0);
+        write_varint(&mut body, 0);
+
+        let out = creative_slot(ids(), &body).expect("a whole stack");
+        let mut r = Reader::new(&out);
+        assert_eq!(r.take(2), Some(&9u16.to_be_bytes()[..]));
+        assert_eq!(r.varint(), Some(1));
+        assert_eq!(r.varint(), Some(wire));
     }
 
     #[test]
