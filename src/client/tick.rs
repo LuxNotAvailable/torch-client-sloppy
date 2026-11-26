@@ -1405,6 +1405,18 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
             *player = Some(start);
         }
     }
+    // Where a mod menu's player slots sit (azalea's match), for its screen.
+    let player_start = {
+        let ecs = bot.ecs.read();
+        ecs.get::<azalea::entity::inventory::Inventory>(bot.entity)
+            .and_then(|inv| match &inv.container_menu {
+                Some(menu @ azalea_inventory::Menu::Modded { .. }) => {
+                    Some(*menu.player_slots_range().start())
+                }
+                _ => None,
+            })
+    };
+    shared.lock().unwrap().session.container.player_start = player_start;
 
     if let Some(update) = sign_update {
         bot.write_packet(ServerboundSignUpdate {

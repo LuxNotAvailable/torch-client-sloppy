@@ -47,7 +47,12 @@ Treat as our code. History: `git log -- vendor/azalea`. Main areas:
   last unless `player` says), `MenuLocation::Modded`; quick-move isn't
   predicted for it (`operations.rs`); `MenuOpenedEvent.modded_type`, and
   closing a menu with no player slots yet keeps the inventory
-  (`azalea-client/src/plugins/inventory/mod.rs`).
+  (`azalea-client/src/plugins/inventory/mod.rs`); the main hand of a
+  menu with no slots yet reads from the player's menu
+  (`azalea-entity/src/inventory.rs`, `get_equipment`); with no `player`
+  given, its content packet places the player slots where they match the
+  player's own (`place_modded_player_slots`, called from
+  `handle_set_container_content_trigger`).
 - `azalea-physics`: `ExternalPush` (`lib.rs`), set by the game each tick
   from a mod plugin's `entity_motion` (a belt carrying the player): `travel`
   applies its `PushStep`s in order (collision moves, `setPos` offsets,

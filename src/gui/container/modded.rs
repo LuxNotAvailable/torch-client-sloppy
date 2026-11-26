@@ -52,21 +52,30 @@ fn rows(count: usize) -> usize {
     count.saturating_sub(PLAYER_SLOTS).div_ceil(9).max(1)
 }
 
-/// Slot positions for the plain grid: the menu's own nine to a row, then
-/// the inventory.
-fn plain_layout(count: usize) -> Placed {
-    let own = count.saturating_sub(PLAYER_SLOTS);
+/// The menu's first player slot: `player` (azalea's match), else the last
+/// 36.
+fn player_start(count: usize, player: Option<usize>) -> usize {
+    player
+        .filter(|p| p + PLAYER_SLOTS <= count)
+        .unwrap_or(count.saturating_sub(PLAYER_SLOTS))
+}
+
+/// Slot positions for the plain grid: the menu's own slots nine to a row
+/// (those after the player's too, as upgrade slots), then the inventory.
+fn plain_layout(count: usize, player: Option<usize>) -> Placed {
+    let player = player_start(count, player);
     let rows = rows(count);
     let inv_y = 18.0 + rows as f32 * SLOT_PITCH + 13.0;
     let slots = (0..count)
         .map(|i| {
-            Some(if i < own {
-                (
-                    8.0 + (i % 9) as f32 * SLOT_PITCH,
-                    18.0 + (i / 9) as f32 * SLOT_PITCH,
-                )
+            Some(if (player..player + PLAYER_SLOTS).contains(&i) {
+                standard_inventory(i - player, 8.0, inv_y)
             } else {
-                standard_inventory(i - own, 8.0, inv_y)
+                let own = if i < player { i } else { i - PLAYER_SLOTS };
+                (
+                    8.0 + (own % 9) as f32 * SLOT_PITCH,
+                    18.0 + (own / 9) as f32 * SLOT_PITCH,
+                )
             })
         })
         .collect();
@@ -78,10 +87,10 @@ fn plain_layout(count: usize) -> Placed {
 
 /// Slot positions from a plugin's screen. Player slots it leaves out sit
 /// where vanilla menus put them: 8 across, `height - 82` down.
-fn screen_layout(screen: &torch_mod_api::Screen, count: usize) -> Placed {
+fn screen_layout(screen: &torch_mod_api::Screen, count: usize, found: Option<usize>) -> Placed {
     let player = screen
         .player_start
-        .unwrap_or(count.saturating_sub(PLAYER_SLOTS));
+        .unwrap_or_else(|| player_start(count, found));
     let inv = (8.0, screen.height as f32 - 82.0);
     let slots = (0..count)
         .map(|i| match screen.slots.get(i) {
@@ -112,8 +121,8 @@ pub fn draw(
     let count = snap.menu_slots.len();
     let screen = crate::modapi::screens::current(snap.container_id, kind, &title, &data, count);
     *PLACED.write() = match &screen {
-        Some(screen) => screen_layout(screen, count),
-        None => plain_layout(count),
+        Some(screen) => screen_layout(screen, count, snap.container_player_start),
+        None => plain_layout(count, snap.container_player_start),
     };
     let (left, top) = window_origin(Layout::Modded, ctx);
     dim_background(p, ctx.vw, ctx.vh);
@@ -288,12 +297,22 @@ mod tests {
     #[test]
     fn the_plain_grid_puts_the_inventory_under_the_menu_s_rows() {
         // 12 slots of the mod's: two rows.
-        let placed = plain_layout(12 + PLAYER_SLOTS);
+        let placed = plain_layout(12 + PLAYER_SLOTS, None);
         assert_eq!(placed.size, (176.0, 150.0));
         assert_eq!(placed.slots[9], Some((8.0, 36.0)));
         // The inventory's first slot, then the hotbar's.
         assert_eq!(placed.slots[12], Some((8.0, 67.0)));
         assert_eq!(placed.slots[12 + 27], Some((8.0, 125.0)));
+    }
+
+    #[test]
+    fn slots_after_the_player_s_join_the_menu_s_grid() {
+        // 4 storage slots, the player's 36, then 3 upgrade slots: one row.
+        let placed = plain_layout(4 + PLAYER_SLOTS + 3, Some(4));
+        assert_eq!(placed.slots[3], Some((62.0, 18.0)));
+        assert_eq!(placed.slots[4], Some((8.0, 49.0)));
+        assert_eq!(placed.slots[4 + PLAYER_SLOTS], Some((80.0, 18.0)));
+        assert_eq!(placed.slots[4 + PLAYER_SLOTS + 2], Some((116.0, 18.0)));
     }
 
     #[test]
@@ -304,7 +323,7 @@ mod tests {
             slots: vec![Some([56, 17]), None],
             ..Default::default()
         };
-        let placed = screen_layout(&screen, 2 + PLAYER_SLOTS);
+        let placed = screen_layout(&screen, 2 + PLAYER_SLOTS, None);
         assert_eq!(placed.slots[0], Some((56.0, 17.0)));
         assert_eq!(placed.slots[1], None);
         assert_eq!(placed.slots[2], Some((8.0, 84.0)));

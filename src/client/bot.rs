@@ -84,6 +84,12 @@ const DISCONNECT_LOCK_WAIT: std::time::Duration = std::time::Duration::from_mill
 
 static LIVE_CLIENT: Mutex<Option<Client>> = Mutex::new(None);
 
+/// The connected client, for the server tests (`invtest`).
+#[cfg(test)]
+pub(crate) fn live_client() -> Option<Client> {
+    LIVE_CLIENT.lock().ok()?.clone()
+}
+
 fn close_connection() -> bool {
     let Ok(guard) = LIVE_CLIENT.try_lock() else {
         return false;

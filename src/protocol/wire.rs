@@ -81,7 +81,7 @@ impl<'a> Reader<'a> {
 const NBT_MAX_DEPTH: usize = 512;
 
 impl Reader<'_> {
-    fn i32(&mut self) -> Option<i32> {
+    pub(crate) fn i32(&mut self) -> Option<i32> {
         Some(i32::from_be_bytes(self.take(4)?.try_into().ok()?))
     }
 

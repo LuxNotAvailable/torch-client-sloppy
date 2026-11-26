@@ -38,8 +38,8 @@ const BUILTIN: [&str; 7] = [
 
 /// NeoForge's own configuration channels this client handles, all
 /// version `1` and optional (`NetworkInitialization`). Config files,
-/// split packets and the play channels are left out: nothing here reads
-/// them, so the server doesn't send them.
+/// split packets and the play channels other than `OWN_PLAY` are left
+/// out: nothing here reads them, so the server doesn't send them.
 const OWN: [(&str, Option<Flow>); 9] = [
     (
         "neoforge:frozen_registry_sync_start",
@@ -57,6 +57,12 @@ const OWN: [(&str, Option<Flow>); 9] = [
     ("neoforge:feature_flags", Some(Flow::Clientbound)),
     ("neoforge:feature_flags_ack", Some(Flow::Serverbound)),
 ];
+
+/// NeoForge's play channels this client reads. Without the open, a mod
+/// menu's `openMenu` throws on the server and nothing opens. The
+/// server's query is empty, so these must be offered by name.
+const OWN_PLAY: [(&str, Option<Flow>); 1] =
+    [("neoforge:advanced_open_screen", Some(Flow::Clientbound))];
 
 const OWN_VERSION: &str = "1";
 
@@ -384,21 +390,22 @@ impl Handshake {
             flow: claim.flow,
             optional: true,
         });
-        let own = OWN
-            .iter()
-            .filter(|(id, _)| !self.claims.iter().any(|c| c.id == *id))
-            .map(|(id, flow)| Offer {
-                id: id.to_string(),
-                version: OWN_VERSION.to_string(),
-                flow: *flow,
-                optional: true,
-            });
+        let own = |list: &'static [(&'static str, Option<Flow>)]| {
+            list.iter()
+                .filter(|(id, _)| !self.claims.iter().any(|c| c.id == *id))
+                .map(|(id, flow)| Offer {
+                    id: id.to_string(),
+                    version: OWN_VERSION.to_string(),
+                    flow: *flow,
+                    optional: true,
+                })
+        };
         let mut protocols = vec![
             (
                 CONFIGURATION,
-                own.chain(learned.clone()).collect::<Vec<_>>(),
+                own(&OWN).chain(learned.clone()).collect::<Vec<_>>(),
             ),
-            (PLAY, learned.collect()),
+            (PLAY, learned.chain(own(&OWN_PLAY)).collect()),
         ];
         // The server's other channels, echoed as it registered them: some
         // mods send their payloads without checking the client agreed
@@ -650,6 +657,13 @@ mod tests {
         assert_eq!(offers[0].1.len(), OWN.len() + 1);
         assert_eq!(offers[1].0, PLAY);
         assert_eq!(offers[1].1[0].id, "examplemod:sync");
+        // A mod menu opens through it; the server's empty query never names it.
+        assert!(
+            offers[1]
+                .1
+                .iter()
+                .any(|o| o.id == "neoforge:advanced_open_screen")
+        );
         assert!(offers.iter().all(|(_, o)| o.iter().all(|o| o.optional)));
         let answer = h.receive("neoforge:register", b"");
         assert_eq!(answer.replies[0].0, "neoforge:register");

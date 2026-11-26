@@ -1321,6 +1321,8 @@ pub struct Snapshot {
     pub container_title: std::sync::Arc<[crate::text::Span]>,
     pub container_id: i32,
     pub container_data: crate::session::ContainerData,
+    /// A mod menu's first player slot, when known.
+    pub container_player_start: Option<usize>,
     pub enchant_clues: [Option<Box<str>>; 3],
     pub merchant: Option<std::sync::Arc<crate::session::MerchantOffers>>,
     pub merchant_future_xp: u32,

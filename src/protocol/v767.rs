@@ -591,17 +591,54 @@ fn move_vehicle(_ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
 
 /// 1.21.5 sends hashed stacks; 1.21.1 wants whole ones. Claiming no slot
 /// changed and an empty cursor makes the server resend what did change.
-fn container_click(_ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
+/// The predicted slots and cursor go as plain stacks (item and count): the
+/// server corrects every one that isn't exactly what it has. Without them
+/// it would think the client unchanged and leave a wrong guess standing.
+fn container_click(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     let mut r = Reader::new(body);
-    let mut out = Vec::with_capacity(16);
+    let mut out = Vec::with_capacity(body.len());
     let container = r.varint()?;
     out.push(u8::try_from(container).ok()?);
     copy_varint(&mut r, &mut out)?; // state id
     copy(&mut r, &mut out, 2 + 1)?; // slot, button
     copy_varint(&mut r, &mut out)?; // click type
-    write_varint(&mut out, 0); // changed slots
-    write_varint(&mut out, 0); // carried: empty
+    let count = r.count()?;
+    write_varint(&mut out, count as i32);
+    for _ in 0..count {
+        copy(&mut r, &mut out, 2)?; // slot
+        plain_stack(ids, &mut r, &mut out)?;
+    }
+    plain_stack(ids, &mut r, &mut out)?; // carried
     Some(out.into())
+}
+
+/// A `HashedStack` as 1.21.1's stack: its item and count, no components.
+/// An item 1.21.1 lacks goes as an empty stack (still a mismatch).
+fn plain_stack(ids: &Ids, r: &mut Reader, out: &mut Vec<u8>) -> Option<()> {
+    if r.u8()? == 0 {
+        out.push(0);
+        return Some(());
+    }
+    let item = hop::unshifted(ids, IdSpace::Item, r.varint()?);
+    let count = r.varint()?;
+    // The added map (type, hash), then the removed set (type).
+    for _ in 0..r.count()? {
+        r.varint()?;
+        r.take(4)?;
+    }
+    for _ in 0..r.count()? {
+        r.varint()?;
+    }
+    match item {
+        Some(item) if count > 0 => {
+            write_varint(out, count);
+            write_varint(out, item);
+            write_varint(out, 0);
+            write_varint(out, 0);
+        }
+        _ => out.push(0),
+    }
+    Some(())
 }
 
 /// The item and count only: components changed shape across 1.21.2 to
@@ -1039,10 +1076,12 @@ fn dump_once(body: &[u8], recovered: bool) {
     );
 }
 
+/// The window is a signed byte (the cursor's -1, the inventory's -2), a
+/// VarInt since 1.21.2.
 fn container_set_slot(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
     let mut r = Reader::new(body);
-    let mut out = Vec::with_capacity(body.len());
-    copy(&mut r, &mut out, 1)?;
+    let mut out = Vec::with_capacity(body.len() + 4);
+    write_varint(&mut out, i32::from(r.u8()? as i8));
     copy_varint(&mut r, &mut out)?;
     copy(&mut r, &mut out, 2)?;
     let max = (body.first() == Some(&0)).then_some(99);
@@ -1813,8 +1852,11 @@ fn update_advancements(ids: &Ids, body: &[u8]) -> Option<Box<[u8]>> {
 fn custom_payload(ids: &Ids, body: &[u8]) -> Option<Rewritten> {
     let mut r = Reader::new(body);
     let len = r.count()?;
-    if r.take(len)? != b"neoforge:advanced_open_screen" {
-        return Some(Rewritten::Body(body.into()));
+    match r.take(len)? {
+        b"neoforge:advanced_open_screen" => {}
+        b"sophisticatedcore:sync_container_stacks" => return storage_stacks(ids, &mut r),
+        b"sophisticatedcore:sync_slot_stack" => return storage_slot(ids, &mut r),
+        _ => return Some(Rewritten::Body(body.into())),
     }
     let window = r.varint()?;
     let menu = hop::shifted(ids, IdSpace::Menu, r.varint()?)?;
@@ -1823,12 +1865,48 @@ fn custom_payload(ids: &Ids, body: &[u8]) -> Option<Rewritten> {
     let title = r.slice_from(start);
     let data_len = r.count()?;
     let data = r.take(data_len)?;
+    crate::log_info!(
+        "proto",
+        "mod menu {menu} opened (window {window}, {data_len} bytes)"
+    );
     crate::modapi::screens::on_open_data(window, data.to_vec());
     let mut out = Vec::with_capacity(10 + title.len());
     write_varint(&mut out, window);
     write_varint(&mut out, menu);
     out.extend_from_slice(title);
     Some(Rewritten::As("open_screen", out.into()))
+}
+
+/// Sophisticated Core syncs its menus' slots in its own payloads
+/// (`HighStackCountSynchronizer`), never vanilla's: `SyncContainerStacks`
+/// (int window, int state, vanilla's stack list and cursor) becomes
+/// `container_set_content`.
+fn storage_stacks(ids: &Ids, r: &mut Reader) -> Option<Rewritten> {
+    let window = r.i32()?;
+    let state = r.i32()?;
+    let mut set = vec![u8::try_from(window).ok()?];
+    write_varint(&mut set, state);
+    set.extend_from_slice(r.rest());
+    Some(Rewritten::As(
+        "container_set_content",
+        container_set_content(ids, &set)?,
+    ))
+}
+
+/// `SyncSlotStack` (int window, int state, int slot, a stack) becomes
+/// `container_set_slot`.
+fn storage_slot(ids: &Ids, r: &mut Reader) -> Option<Rewritten> {
+    let window = r.i32()?;
+    let state = r.i32()?;
+    let slot = i16::try_from(r.i32()?).ok()?;
+    let mut set = vec![u8::try_from(window).ok()?];
+    write_varint(&mut set, state);
+    set.extend_from_slice(&slot.to_be_bytes());
+    set.extend_from_slice(r.rest());
+    Some(Rewritten::As(
+        "container_set_slot",
+        container_set_slot(ids, &set)?,
+    ))
 }
 
 /// Component patches changed shape across 1.21.2 to 1.21.5; until the
@@ -1891,6 +1969,51 @@ mod tests {
             custom_payload(Hop::v767().ids(), &other),
             Some(Rewritten::Body(b)) if *b == *other
         ));
+    }
+
+    #[test]
+    fn the_cursor_s_window_becomes_a_negative_varint() {
+        // Window -1 (the cursor), state 5, slot -1, an empty stack.
+        let out = container_set_slot(Hop::v767().ids(), &[0xFF, 5, 0xFF, 0xFF, 0]).unwrap();
+        assert_eq!(&*out, &[0xFF, 0xFF, 0xFF, 0xFF, 0x0F, 5, 0xFF, 0xFF, 0]);
+    }
+
+    #[test]
+    fn sophisticated_core_s_slot_sync_becomes_vanilla_container_packets() {
+        let ids = Hop::v767().ids();
+        let payload = |channel: &[u8], fields: &[i32], rest: &[u8]| {
+            let mut body = Vec::new();
+            write_varint(&mut body, channel.len() as i32);
+            body.extend_from_slice(channel);
+            for f in fields {
+                body.extend_from_slice(&f.to_be_bytes());
+            }
+            body.extend_from_slice(rest);
+            body
+        };
+        // Window 4, state 9, two empty slots, an empty cursor.
+        let all = payload(
+            b"sophisticatedcore:sync_container_stacks",
+            &[4, 9],
+            &[2, 0, 0, 0],
+        );
+        let Some(Rewritten::As("container_set_content", out)) = custom_payload(ids, &all) else {
+            panic!("not a container_set_content");
+        };
+        assert_eq!(
+            out,
+            container_set_content(ids, &[4, 9, 2, 0, 0, 0]).unwrap()
+        );
+
+        // Window 4, state 10, slot 300, an empty stack.
+        let one = payload(b"sophisticatedcore:sync_slot_stack", &[4, 10, 300], &[0]);
+        let Some(Rewritten::As("container_set_slot", out)) = custom_payload(ids, &one) else {
+            panic!("not a container_set_slot");
+        };
+        assert_eq!(
+            out,
+            container_set_slot(ids, &[4, 10, 0x01, 0x2C, 0]).unwrap()
+        );
     }
 
     /// Tests that reset or read the per-connection entity map run one at a time.
@@ -2150,12 +2273,20 @@ mod tests {
         assert_eq!(&*move_flags(ids, &[7, 0b10]).unwrap(), &[7, 0]);
         assert_eq!(&*move_flags(ids, &[0b11]).unwrap(), &[1]);
 
-        // container 3, state 4, slot 5, button 0, pickup, two hashed slots...
-        let click = container_click(ids, &[3, 4, 0, 5, 0, 0, 2, 0xFF, 0xFF]).unwrap();
-        assert_eq!(&*click, &[3, 4, 0, 5, 0, 0, 0, 0]);
+        // container 3, state 4, slot 5, button 0, pickup; slot 9 predicted
+        // as 3 stone with one hashed component; an empty cursor.
+        let stone = ids.to_native.map(IdSpace::Item, 1).unwrap() as u8;
+        let click = container_click(
+            ids,
+            &[
+                3, 4, 0, 5, 0, 0, 1, 0, 9, 1, stone, 3, 1, 5, 1, 2, 3, 4, 0, 0,
+            ],
+        )
+        .unwrap();
+        // ...as 1.21.1's plain stacks: 3 stone, no components.
+        assert_eq!(&*click, &[3, 4, 0, 5, 0, 0, 1, 0, 9, 3, 1, 0, 0, 0]);
 
         // slot 36, one item with a component
-        let stone = ids.to_native.map(IdSpace::Item, 1).unwrap() as u8;
         let creative = creative_slot(ids, &[0, 36, 1, stone, 1, 0, 9, 9]).unwrap();
         assert_eq!(&*creative, &[0, 36, 1, 1, 0, 0]);
         // A modded item, past 1.21.1's vanilla ones, goes back as it came.

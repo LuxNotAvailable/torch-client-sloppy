@@ -258,6 +258,7 @@ fn snapshot(state: &GuiState, shared: &Arc<SharedMutex>) -> Snapshot {
             } else {
                 Default::default()
             },
+            container_player_start: s.session.container.player_start,
             enchant_clues: match state.screen {
                 Screen::Container(ContainerKind::Enchantment) => {
                     s.session.container.enchant_clues.clone()

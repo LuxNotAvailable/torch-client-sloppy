@@ -79,6 +79,41 @@ impl Inventory {
         }
     }
 
+    /// A mod's menu that hasn't said where its player slots start: the 36
+    /// slots that best match the player's own (mods add slots after them,
+    /// as Sophisticated Backpacks' upgrades). No match keeps the last 36.
+    pub fn place_modded_player_slots(&mut self) {
+        let own: Vec<ItemStack> = self
+            .inventory_menu
+            .player_slots_range()
+            .filter_map(|i| self.inventory_menu.slot(i).cloned())
+            .collect();
+        let Some(azalea_inventory::Menu::Modded { slots, player, .. }) = &mut self.container_menu
+        else {
+            return;
+        };
+        if player.is_some() || slots.len() < own.len() {
+            return;
+        }
+        let score = |start: usize| -> i32 {
+            own.iter()
+                .zip(&slots[start..])
+                .map(|(mine, theirs)| match (mine.is_present(), mine == theirs) {
+                    (true, true) => 1,
+                    (false, true) => 0,
+                    _ => -1,
+                })
+                .sum()
+        };
+        // Ties go to the later start, the old guess.
+        let best = (0..=slots.len() - own.len()).max_by_key(|&start| (score(start), start));
+        if let Some(start) = best
+            && score(start) > 0
+        {
+            *player = Some(start);
+        }
+    }
+
     fn set_player_slot(&mut self, inventory_menu_index: usize, item: ItemStack) {
         let player_range = self.inventory_menu.player_slots_range();
         if let Some(dst) = self.inventory_menu.slot_mut(inventory_menu_index) {
@@ -658,10 +693,18 @@ impl Inventory {
         let player = self.inventory_menu.as_player();
         let item = match equipment_slot {
             EquipmentSlot::Mainhand => {
+                let selected = self.selected_hotbar_slot as usize;
                 let menu = self.menu();
-                let main_hand_slot_idx =
-                    *menu.hotbar_slots_range().start() + self.selected_hotbar_slot as usize;
-                menu.slot(main_hand_slot_idx)?
+                let main_hand_slot_idx = *menu.hotbar_slots_range().start() + selected;
+                match menu.slot(main_hand_slot_idx) {
+                    Some(item) => item,
+                    // A mod's menu is empty until its slots come: the
+                    // player's own menu holds the hand.
+                    None => {
+                        let own = &self.inventory_menu;
+                        own.slot(*own.hotbar_slots_range().start() + selected)?
+                    }
+                }
             }
             EquipmentSlot::Offhand => &player.offhand,
             EquipmentSlot::Feet => &player.armor[3],
@@ -739,7 +782,44 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_simulate_shift_click_in_crafting_table() {
+    fn a_modded_menu_without_slots_keeps_the_held_item() {
+        let mut inventory = Inventory {
+            container_menu: Some(Menu::modded(32)),
+            selected_hotbar_slot: 2,
+            ..Inventory::default()
+        };
+        let sword = ItemStack::new(ItemKind::IronSword, 1);
+        let i = *inventory.inventory_menu.hotbar_slots_range().start() + 2;
+        *inventory.inventory_menu.slot_mut(i).unwrap() = sword.clone();
+        assert_eq!(inventory.held_item(), &sword);
+    }
+
+    #[test]
+    fn a_modded_menu_finds_player_slots_before_its_upgrades() {
+        let sword = ItemStack::new(ItemKind::IronSword, 1);
+        let dirt = ItemStack::new(ItemKind::Dirt, 5);
+        let mut inventory = Inventory::default();
+        let start = *inventory.inventory_menu.player_slots_range().start();
+        *inventory.inventory_menu.slot_mut(start + 3).unwrap() = sword.clone();
+        *inventory.inventory_menu.slot_mut(start + 30).unwrap() = dirt.clone();
+        // 4 storage slots, the player's 36, then 3 upgrade slots.
+        let mut menu = Menu::modded(32);
+        menu.fit(4 + 36 + 3);
+        *menu.slot_mut(0).unwrap() = dirt.clone();
+        *menu.slot_mut(4 + 3).unwrap() = sword.clone();
+        *menu.slot_mut(4 + 30).unwrap() = dirt.clone();
+        *menu.slot_mut(4 + 36).unwrap() = ItemStack::new(ItemKind::Hopper, 1);
+        inventory.container_menu = Some(menu);
+
+        inventory.place_modded_player_slots();
+        inventory.sync_player_slots(true);
+        assert_eq!(*inventory.menu().player_slots_range().start(), 4);
+        assert_eq!(inventory.inventory_menu.slot(start + 3), Some(&sword));
+        assert_eq!(inventory.inventory_menu.slot(start + 30), Some(&dirt));
+    }
+
+    #[test]
+    fn a_crafting_result_shift_click_waits_for_the_server() {
         let spruce_planks = ItemStack::new(ItemKind::SprucePlanks, 4);
 
         let mut inventory = Inventory {
@@ -765,12 +845,11 @@ mod tests {
             &PlayerAbilities::default(),
         );
 
+        // The server crafts repeatedly and sends the slots; predicting
+        // one move would flicker. Nothing moves until it does.
         let new_slots = inventory.menu().slots();
-        assert_eq!(&new_slots[0], &ItemStack::Empty);
-        assert_eq!(
-            &new_slots[*Menu::CRAFTING_PLAYER_SLOTS.start()],
-            &spruce_planks
-        );
+        assert_eq!(&new_slots[0], &spruce_planks);
+        assert!(Menu::CRAFTING_PLAYER_SLOTS.all(|i| new_slots[i].is_empty()));
     }
 }
 

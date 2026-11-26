@@ -16,6 +16,8 @@ pub(crate) mod cooldowns;
 pub(crate) mod dialogs;
 pub(crate) mod dimension;
 pub(crate) mod envprobe;
+#[cfg(test)]
+mod invtest;
 pub(crate) mod languages;
 pub(crate) mod neoforge;
 pub(crate) mod packets;

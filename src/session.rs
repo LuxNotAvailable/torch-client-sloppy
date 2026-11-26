@@ -127,6 +127,8 @@ pub struct SessionContainer {
     pub container_kind: ContainerKind,
     pub container_title: std::sync::Arc<[crate::text::Span]>,
     pub container_data: ContainerData,
+    /// A mod menu's first player slot, where azalea found it.
+    pub player_start: Option<usize>,
     pub enchant_clues: [Option<Box<str>>; 3],
     pub merchant: Option<std::sync::Arc<MerchantOffers>>,
     pub merchant_hint: i32,

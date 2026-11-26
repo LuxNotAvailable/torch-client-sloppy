@@ -175,6 +175,17 @@ pub fn handle_container_click_event(
         }
     }
 
+    trace(format_args!(
+        "Click id={} state={} op={:?} predicted={:?} carried={:?}",
+        container_click.window_id,
+        inventory.menu_state_id(),
+        container_click.operation,
+        changed_slots
+            .keys()
+            .map(|&i| (i, &new_slots[i as usize]))
+            .collect::<Vec<_>>(),
+        inventory.carried,
+    ));
     commands.trigger(SendGamePacketEvent::new(
         entity,
         ServerboundContainerClick {
@@ -224,6 +235,13 @@ pub fn handle_set_container_content_trigger(
     }
     inventory.container_state_id = set_container_content.state_id;
     inventory.carried = set_container_content.carried_item.clone();
+    inventory.place_modded_player_slots();
+    if let azalea_inventory::Menu::Modded { player, slots, .. } = inventory.menu() {
+        trace(format_args!(
+            "Modded menu: {} slots, player slots from {player:?}",
+            slots.len()
+        ));
+    }
     inventory.sync_player_slots(true);
 }
 
@@ -238,14 +256,15 @@ pub fn trace(args: std::fmt::Arguments<'_>) {
     }
     eprintln!("{args}");
     let file = FILE.get_or_init(|| {
+        let path = trace_path();
         match std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(TRACE_PATH)
+            .open(&path)
         {
             Ok(f) => Some(std::sync::Mutex::new(f)),
             Err(e) => {
-                eprintln!("[inv] could not open {TRACE_PATH}: {e} (stderr only)");
+                eprintln!("[inv] could not open {}: {e} (stderr only)", path.display());
                 None
             }
         }
@@ -257,7 +276,10 @@ pub fn trace(args: std::fmt::Arguments<'_>) {
     }
 }
 
-pub const TRACE_PATH: &str = "/tmp/mc-inv-trace.log";
+/// `mc-inv-trace.log` in the system's temp folder.
+pub fn trace_path() -> std::path::PathBuf {
+    std::env::temp_dir().join("mc-inv-trace.log")
+}
 
 #[derive(EntityEvent)]
 pub struct SetSelectedHotbarSlotEvent {

@@ -350,7 +350,7 @@ impl Hop {
             .flatten();
         let rewritten = rewrite.and_then(|rewrite| rewrite(&self.ids, body));
         if rewrite.is_some() && rewritten.is_none() {
-            self.unread_once(key, native_id, body.len());
+            self.unread_once(key, native_id, body);
         }
 
         let target = match &rewritten {
@@ -448,7 +448,8 @@ impl Hop {
 
     /// Says once per packet kind that this hop's rewrite couldn't read one,
     /// so it went on as it came (and likely won't decode).
-    fn unread_once(&self, phase: Phase, native_id: u32, len: usize) {
+    fn unread_once(&self, phase: Phase, native_id: u32, body: &[u8]) {
+        let len = body.len();
         static SEEN: std::sync::Mutex<Vec<(i32, i32, Phase, u32)>> =
             std::sync::Mutex::new(Vec::new());
         let key = (
@@ -468,9 +469,13 @@ impl Hop {
             .unwrap_or("?");
         crate::log_warn!(
             "proto",
-            "the {} -> {} hop couldn't rewrite {name} ({len} bytes); it went on as it came",
+            "the {} -> {} hop couldn't rewrite {name} ({len} bytes); it went on as it came: {}",
             self.wire.version().name,
-            self.native.version().name
+            self.native.version().name,
+            body.iter()
+                .take(2048)
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>()
         );
     }
 
@@ -1258,14 +1263,16 @@ pub(super) fn hashed_stack(ids: &Ids, r: &mut Reader, out: &mut Vec<u8>) -> Opti
     let mut ok = true;
     back(ids, IdSpace::Item, r.varint()?, out, &mut ok);
     write_varint(out, r.varint()?);
+    // `HashedPatchMap`: the added map (count, then type and hash each),
+    // then the removed set.
     let added = r.count()?;
-    let removed = r.count()?;
     write_varint(out, added as i32);
-    write_varint(out, removed as i32);
     for _ in 0..added {
         back(ids, IdSpace::DataComponentType, r.varint()?, out, &mut ok);
         out.extend_from_slice(r.take(4)?);
     }
+    let removed = r.count()?;
+    write_varint(out, removed as i32);
     for _ in 0..removed {
         back(ids, IdSpace::DataComponentType, r.varint()?, out, &mut ok);
     }
@@ -2892,10 +2899,11 @@ mod tests {
         let mut body = vec![1];
         write_varint(&mut body, ITEM_AT_THE_SEAM + 1);
         write_varint(&mut body, 2);
-        write_varint(&mut body, 1);
+        // `HashedPatchMap`: the added map, then the removed set.
         write_varint(&mut body, 1);
         write_varint(&mut body, COMPONENT_AT_THE_SEAM + 1);
         body.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+        write_varint(&mut body, 1);
         write_varint(&mut body, COMPONENT_AT_THE_SEAM + 3);
 
         let mut r = Reader::new(&body);
@@ -2907,9 +2915,10 @@ mod tests {
         assert_eq!(r.u8(), Some(1));
         assert_eq!(r.varint(), Some(ITEM_AT_THE_SEAM));
         assert_eq!(r.varint(), Some(2), "the count is not an id");
-        assert_eq!((r.count(), r.count()), (Some(1), Some(1)));
+        assert_eq!(r.count(), Some(1));
         assert_eq!(r.varint(), Some(COMPONENT_AT_THE_SEAM));
         assert_eq!(r.take(4), Some(&[0xDE, 0xAD, 0xBE, 0xEF][..]));
+        assert_eq!(r.count(), Some(1));
         assert_eq!(r.varint(), Some(COMPONENT_AT_THE_SEAM + 1));
     }
 
