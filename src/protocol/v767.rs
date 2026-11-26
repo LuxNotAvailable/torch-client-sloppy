@@ -1074,6 +1074,17 @@ fn dump_once(body: &[u8], recovered: bool) {
         "1.21.1 inventory needed recovery (recovered: {recovered}), {} bytes: {hex}",
         body.len()
     );
+    // The server's mod components by id, to decode the dump with.
+    let modded: Vec<String> = (0..1024)
+        .filter_map(|id| {
+            let name = crate::protocol::wire_registry_name(
+                crate::protocol::registries::RegistryId::DataComponentType,
+                id,
+            )??;
+            (!name.starts_with("minecraft:")).then(|| format!("{id}={name}"))
+        })
+        .collect();
+    crate::log_warn!("proto", "the server's mod components: {}", modded.join(" "));
 }
 
 /// The window is a signed byte (the cursor's -1, the inventory's -2), a
@@ -2562,6 +2573,72 @@ mod tests {
                 .all(|s| matches!(s, ItemStack::Empty)),
             "no copper out of letters"
         );
+    }
+
+    /// A modded server's data components (`test-server-components.txt`, as
+    /// the client logged them): vanilla 1.21.1's, then the mods' by id.
+    fn server_components() {
+        use crate::protocol::registries::RegistryId;
+        let vanilla: Vec<String> =
+            serde_json::from_str(include_str!("data/data_component_type-1.21.1.json")).unwrap();
+        let mut entries: Vec<(u32, azalea_registry::identifier::Identifier)> = vanilla
+            .iter()
+            .enumerate()
+            .map(|(i, n)| {
+                (
+                    i as u32,
+                    azalea_registry::identifier::Identifier::new(n.clone()),
+                )
+            })
+            .collect();
+        for line in include_str!("data/test-server-components.txt").lines() {
+            if let Some((id, name)) = line.trim().split_once('=') {
+                entries.push((
+                    id.parse().unwrap(),
+                    azalea_registry::identifier::Identifier::new(name),
+                ));
+            }
+        }
+        crate::protocol::native_snapshot(RegistryId::DataComponentType, entries);
+    }
+
+    fn hex(text: &str) -> Vec<u8> {
+        let text = text.trim();
+        (0..text.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&text[i..i + 2], 16).unwrap())
+            .collect()
+    }
+
+    /// Backpacks' slots as Sophisticated Core sent them (`SyncContainerStacks`,
+    /// as `storage_stacks` passes it on), from a modded server: nested
+    /// backpacks, upgrades, Create Diesel Generators' fluid items.
+    #[test]
+    fn backpacks_slots_read_to_their_end() {
+        let _entities = ENTITY_TEST.lock().unwrap_or_else(|e| e.into_inner());
+        server_components();
+        for (what, dump, slots) in [
+            ("gold", include_str!("data/test-gold-backpack.hex"), 131),
+            (
+                "leather",
+                include_str!("data/test-leather-backpack.hex"),
+                64,
+            ),
+        ] {
+            let body = hex(dump);
+            let mut r = Reader::new(&body);
+            r.u8();
+            r.varint();
+            let count = r.count().unwrap();
+            assert_eq!(count, slots);
+            // Every stack (and the cursor) by its known shapes: no guess.
+            for i in 0..=count {
+                let at = r.pos();
+                super::super::v767_items::stack(Hop::v767().ids(), &mut r, &mut Vec::new())
+                    .unwrap_or_else(|e| panic!("{what} slot {i} at byte {at}: {e:?}"));
+            }
+            assert_eq!(r.remaining(), 0, "{what}: the cursor ends the packet");
+        }
     }
 
     #[test]

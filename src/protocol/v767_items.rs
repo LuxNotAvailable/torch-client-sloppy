@@ -312,7 +312,11 @@ pub(super) fn stacks_until(
     let best = search.slots(start, n)?;
     let mut cache = LEARNED.lock().unwrap();
     for (name, shape) in &best.score.shapes {
-        cache.insert(name.clone(), *shape);
+        // A guess can misread the stacks after it: each is worth a known
+        // shape in `mod_component`.
+        if cache.insert(name.clone(), *shape).is_none() {
+            crate::log_warn!("proto", "guessed mod component {name} as {shape:?}");
+        }
     }
     Some((best.bytes.clone(), best.end))
 }
@@ -953,8 +957,117 @@ fn component(
             holder(r, &mut Vec::new())?;
             Ok(None)
         }
+        other => mod_component(ids, other, r).map(|()| None),
+    }
+}
+
+/// Mods' components whose network shapes their sources give: read and left
+/// out (this client has no such component). Guessing one of these misreads
+/// the stacks after it. Any other mod's is `Unknown`, for the caller to
+/// guess.
+fn mod_component(ids: &Ids, name: &str, r: &mut Reader) -> Walk {
+    let sink = &mut Vec::new();
+    let (ns, path) = name.split_once(':').unwrap_or(("", name));
+    match (ns, path) {
+        // `ByteBufCodecs.INT` and `FLOAT`.
+        (
+            "sophisticatedcore",
+            "number_of_inventory_slots"
+            | "number_of_upgrade_slots"
+            | "main_color"
+            | "accent_color"
+            | "open_tab_id"
+            | "energy_stored"
+            | "burn_time_total"
+            | "cook_time_total"
+            | "level"
+            | "levels_to_store"
+            | "levels_to_take"
+            | "disc_slot_active"
+            | "stored_xp",
+        )
+        | ("sophisticatedbackpacks", "columns_taken" | "loot_factor") => copy(r, sink, 4),
+        // `ByteBufCodecs.BOOL`.
+        (
+            "sophisticatedcore",
+            "linked_storage_primary_endpoint"
+            | "shift_click_into_storage"
+            | "refill_crafting_grid"
+            | "refill_input"
+            | "compact_non_uncraftable"
+            | "should_work_in_gui"
+            | "is_cooking"
+            | "feed_immediately_when_hurt"
+            | "is_playing"
+            | "pickup_items"
+            | "pickup_xp"
+            | "is_input"
+            | "interact_with_hand"
+            | "interact_with_world"
+            | "interact_with_fluid_handler"
+            | "should_void_overflow"
+            | "mend_items"
+            | "enabled"
+            | "shuffle"
+            | "match_all_effects"
+            | "match_effect_duration"
+            | "match_effect_amplifier",
+        )
+        | (
+            "sophisticatedbackpacks",
+            "linked_mob_catcher" | "filter_by_inventory" | "should_swap_weapon",
+        ) => copy(r, sink, 1),
+        // `ByteBufCodecs.VAR_LONG`.
+        (
+            "sophisticatedcore",
+            "linked_storage_render_revision"
+            | "burn_time_finish"
+            | "cook_time_finish"
+            | "disc_finish_time",
+        ) => r.varlong().map(drop).need(),
+        // Enums (`NeoForgeStreamCodecs.enumCodec`, `Direction`) and `VAR_INT`.
+        (
+            "sophisticatedcore",
+            "sort_by"
+            | "void_type"
+            | "automation_direction"
+            | "repeat_mode"
+            | "feed_at_hunger_level"
+            | "direction",
+        )
+        | ("sophisticatedbackpacks", "inventory_order" | "tool_swap_mode")
+        | ("createdieselgenerators", "oil_scanner_progress" | "oil_scanner_state") => {
+            varint(r, sink)
+        }
+        ("sophisticatedcore", "storage_uuid") => copy(r, sink, 16),
+        // `CustomData`: a tag.
+        ("sophisticatedcore", "render_info_tag") => nbt(r, sink),
+        // Identifiers and strings.
+        ("sophisticatedcore", "recipe_id")
+        | ("sophisticatedbackpacks", "loot_table" | "template_location" | "item_name")
+        | ("createdieselgenerators", "mold_type") => string(r, sink),
+        // `ItemContainerContents`: a list of stacks.
+        ("sophisticatedcore", "cooking_inventory" | "lenient_container") => {
+            list(r, sink, |r, out| stack(ids, r, out))
+        }
+        // `SimpleItemContent`: an optional stack.
+        ("sophisticatedcore", "input_item" | "result_item") => stack(ids, r, sink),
+        // `SimpleFluidContent`: an optional fluid stack.
+        ("sophisticatedcore" | "createdieselgenerators", "fluid_contents") => fluid_stack(ids, r),
+        ("sophisticatedcore", "fluid_filters") => list(r, sink, |r, _| fluid_stack(ids, r)),
         _ => Err(Unreadable::Unknown),
     }
+}
+
+/// NeoForge's `FluidStack.OPTIONAL_STREAM_CODEC`: an amount, then (when
+/// above 0) the fluid's id and its component patch.
+fn fluid_stack(ids: &Ids, r: &mut Reader) -> Walk {
+    let amount = r.varint().need()?;
+    if amount <= 0 {
+        return Ok(());
+    }
+    r.varint().need()?;
+    patch(ids, r, &mut Vec::new())
 }
 
 fn firework_explosion(r: &mut Reader, out: &mut Vec<u8>) -> Walk {
