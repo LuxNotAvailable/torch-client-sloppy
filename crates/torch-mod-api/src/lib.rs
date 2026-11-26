@@ -783,7 +783,7 @@ pub trait Plugin {
 
     /// A key it registered in `keys`, pressed: Java's `consumeClick` loop
     /// (in the world) or a screen's `keyPressed`. Tell the server with
-    /// [`host::send`].
+    /// [`host::send_to_server`].
     fn key(&mut self, view: &KeyView) {
         let _ = view;
     }
