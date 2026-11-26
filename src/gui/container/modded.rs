@@ -133,13 +133,15 @@ fn draw_screen(
     out: &mut Vec<InvAction>,
 ) -> Option<SlotStack> {
     for b in &screen.background {
-        p.texture_part(
-            &b.texture,
-            (b.u, b.v, b.width as f32, b.height as f32),
-            (b.texture_width as f32, b.texture_height as f32),
-            left + b.x as f32,
-            top + b.y as f32,
-        );
+        blit(p, b, (left, top));
+    }
+    let (pressed, tooltip) = draw_buttons(p, ctx, screen, (left, top));
+    if let Some((button, menu_button)) = pressed {
+        if let Some(id) = menu_button.and_then(|id| u8::try_from(id).ok()) {
+            out.push(InvAction::ButtonClick(id));
+        }
+        let shift = ctx.input.shift;
+        crate::modapi::screens::press(snap.container_id, &button, ctx.input.right_click, shift);
     }
     let hovered = slots::panel(
         p,
@@ -173,7 +175,77 @@ fn draw_screen(
             t.shadow,
         );
     }
+    if let (Some(lines), Some(m)) = (tooltip, ctx.mouse()) {
+        let lines: Vec<Vec<crate::text::Span>> = lines
+            .iter()
+            .map(|l| crate::text::parse_formatted(l))
+            .collect();
+        crate::gui::tooltip::draw_lines(p, &lines, m.x, m.y, ctx.vw, ctx.vh);
+    }
     hovered
+}
+
+fn blit(p: &mut Painter, b: &torch_mod_api::Blit, (left, top): (f32, f32)) {
+    p.texture_part(
+        &b.texture,
+        (b.u, b.v, b.width as f32, b.height as f32),
+        (b.texture_width as f32, b.texture_height as f32),
+        left + b.x as f32,
+        top + b.y as f32,
+    );
+}
+
+/// The screen's buttons' looks (vanilla's, labelled, when they give none).
+/// The one clicked this frame, with its `menu_button`, and the tooltip of
+/// the one under the cursor (drawn last, over the slots).
+fn draw_buttons<'s>(
+    p: &mut Painter,
+    ctx: &ScreenCtx,
+    screen: &'s torch_mod_api::Screen,
+    (left, top): (f32, f32),
+) -> (Option<(String, Option<i32>)>, Option<&'s Vec<String>>) {
+    let mut pressed = None;
+    let mut tooltip = None;
+    for b in &screen.buttons {
+        let (x, y, w, h) = (
+            left + b.x as f32,
+            top + b.y as f32,
+            b.width as f32,
+            b.height as f32,
+        );
+        let hot = ctx.hovering(x, y, w, h);
+        if b.look.is_empty() {
+            crate::gui::widgets::Button::new(x, y, w, h, &b.label).draw(p, ctx);
+        } else {
+            let look = if hot && !b.hover.is_empty() {
+                &b.hover
+            } else {
+                &b.look
+            };
+            for blit_ in look {
+                blit(p, blit_, (left, top));
+            }
+            if !b.label.is_empty() {
+                let tw = p.atlas.font.width_str(&b.label);
+                p.text_plain(
+                    &b.label,
+                    x + ((w - tw) / 2.0).floor(),
+                    y + ((h - 8.0) / 2.0).floor(),
+                    0xFFFFFF,
+                    true,
+                );
+            }
+        }
+        if hot {
+            if ctx.input.left_click || ctx.input.right_click {
+                pressed = Some((b.id.clone(), b.menu_button));
+            }
+            if !b.tooltip.is_empty() {
+                tooltip = Some(&b.tooltip);
+            }
+        }
+    }
+    (pressed, tooltip)
 }
 
 fn draw_plain(

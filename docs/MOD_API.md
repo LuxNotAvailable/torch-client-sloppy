@@ -51,6 +51,7 @@ A plugin registers handlers in `init`:
 | `fluid` | source fluid ids in `fluids` (`mymod:honey`; its flowing form asks as it) | once per fluid, then kept | a `FluidLook` (`still`, `flowing`: block atlas sprites; `tint`: `0xRRGGBB`), or `null` to leave it to the client |
 | `item_tints` | item ids in `tinted_items` (`mymod:custom_egg`) | once per item, then kept | the colours of its tint indices (`tintindex`), `0xRRGGBB` each |
 | `screen` | menu type ids in `screens` (`mymod:press`) | when the menu opens, and when its data slots or slot count change | a `Screen`, or `null` for the client's plain grid |
+| `button` | its screens' buttons | a button pressed | a `Screen` to show from then on, or `null` to keep it |
 | `key` | key bindings in `keys` (Java's `KeyMapping`s) | each press, in the world or in a modded menu | nothing; it tells the server with `host::send_to_server` |
 
 The registration also lists:
@@ -142,6 +143,15 @@ unsent ones read 0), `slots` how many slots the server sent. It answers a
   hides one. Player slots left off the end sit where vanilla puts them (8
   across, `height - 82` down). `player_start`: where the player's 36 start,
   when not last.
+- `buttons`: `addRenderableWidget`'s buttons, drawn over the background
+  and under the slots: `id` (the plugin's), `x`, `y`, `width`, `height`,
+  and a `look` (blits; with none, vanilla's button showing `label`),
+  `hover` (blits under the cursor), `label`, `tooltip` (lines) and
+  `menu_button` (an id the client sends as vanilla's container button
+  click, Java's `clickMenuButton`). A press first sends `menu_button`,
+  then calls `button` with a `ButtonView` (`button`, `right`, `shift`,
+  `screen`: the `ScreenView`); a packet the mod's screen sends goes out
+  with `host::send_to_server`.
 - `title_at`, `inventory_label_at` (default `[8, 6]` and
   `[8, height - 94]`), `hide_title`, `hide_inventory_label`, and `texts`
   (`renderLabels`'s other strings: `text`, `x`, `y`, `color`, `shadow`).
@@ -165,7 +175,8 @@ sends with `PacketDistributor.sendToServer` a plugin sends with
 A plugin may send on its own namespace's channels and on its `channels`;
 packets go out on the next client tick, in order.
 
-Planned for later versions: screen buttons and widgets, HUD elements,
+Planned for later versions: screen widgets beyond buttons (text fields,
+scroll bars), HUD elements,
 item renderers.
 
 ### What a plugin gets: `BlockEntityView`
@@ -312,6 +323,7 @@ Data crosses as UTF-8 JSON in the plugin's memory.
 | `torch_item_tints` | `(ptr: i32, len: i32) -> i64` | an `ItemView` (`{"item": ...}`) in, an array of colours out |
 | `torch_screen` | `(ptr: i32, len: i32) -> i64` | a `ScreenView` in, a `Screen` or `null` out |
 | `torch_key` | `(ptr: i32, len: i32) -> i64` | a `KeyView` in, `null` out |
+| `torch_button` | `(ptr: i32, len: i32) -> i64` | a `ButtonView` in, a `Screen` or `null` out |
 
 All but `torch_api`, `torch_alloc`, `torch_free` and `torch_init` are
 optional: a plugin built before a hook existed lacks its export.

@@ -24,6 +24,9 @@ struct HostState {
     /// Channels `send` may use beyond the mod's own namespaces: its
     /// registration's `channels`.
     channels: Vec<String>,
+    /// Packets `send` queued, oldest first, until the network thread takes
+    /// them.
+    outbox: Vec<(String, Vec<u8>)>,
 }
 
 /// Whether a plugin from package `package` may send on `channel`: the
@@ -52,6 +55,7 @@ pub(super) struct Runtime {
     tick: Option<TypedFunc<(i32, i32), i64>>,
     entity_motion: Option<TypedFunc<(i32, i32), i64>>,
     key: Option<TypedFunc<(i32, i32), i64>>,
+    button: Option<TypedFunc<(i32, i32), i64>>,
     pub(super) registration: torch_mod_api::Registration,
 }
 
@@ -75,6 +79,7 @@ impl Runtime {
                 name: name.to_owned(),
                 near: Near::new(),
                 channels: Vec::new(),
+                outbox: Vec::new(),
             },
         );
         let mut linker = <Linker<HostState>>::new(&engine);
@@ -139,7 +144,7 @@ impl Runtime {
             .func_wrap(
                 "torch",
                 "send",
-                |caller: Caller<'_, HostState>,
+                |mut caller: Caller<'_, HostState>,
                  channel: i32,
                  channel_len: i32,
                  data: i32,
@@ -155,9 +160,9 @@ impl Runtime {
                         return;
                     };
                     let channel = String::from_utf8_lossy(&channel).into_owned();
-                    let state = caller.data();
+                    let state = caller.data_mut();
                     if may_send(&state.name, &state.channels, &channel) {
-                        super::queue_send(channel, data);
+                        state.outbox.push((channel, data));
                     } else {
                         crate::log_warn!("modapi", "{}: may not send on {channel}", state.name);
                     }
@@ -225,6 +230,9 @@ impl Runtime {
         let key = instance
             .get_typed_func::<(i32, i32), i64>(&store, "torch_key")
             .ok();
+        let button = instance
+            .get_typed_func::<(i32, i32), i64>(&store, "torch_button")
+            .ok();
         let mut runtime = Runtime {
             store,
             memory,
@@ -240,6 +248,7 @@ impl Runtime {
             tick,
             entity_motion,
             key,
+            button,
             registration: torch_mod_api::Registration::default(),
         };
         let packed = runtime.call_fuelled(|store| init.call(store, ()))?;
@@ -248,6 +257,22 @@ impl Runtime {
             serde_json::from_slice(&bytes).map_err(|e| format!("its registration: {e}"))?;
         runtime.store.data_mut().channels = runtime.registration.channels.clone();
         Ok(runtime)
+    }
+
+    /// A button on its screen pressed: the screen to show now, or `None`.
+    pub(super) fn button(&mut self, view: &[u8]) -> Result<Option<torch_mod_api::Screen>, String> {
+        let func = self.button.ok_or("it has no torch_button")?;
+        let (ptr, len) = self.put(view)?;
+        let packed = self.call_fuelled(|store| func.call(store, (ptr, len)));
+        let free = self.free;
+        let _ = self.call_fuelled(|store| free.call(store, (ptr, len)));
+        let bytes = self.take_result(packed?)?;
+        serde_json::from_slice(&bytes).map_err(|e| format!("its screen after a button: {e}"))
+    }
+
+    /// The packets it sent since the last call, oldest first.
+    pub(super) fn take_sent(&mut self) -> Vec<(String, Vec<u8>)> {
+        std::mem::take(&mut self.store.data_mut().outbox)
     }
 
     /// One of its keys pressed, from the view as JSON.

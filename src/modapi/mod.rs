@@ -129,6 +129,31 @@ pub fn load(plugins: Vec<(String, Vec<u8>)>) {
     *PLUGINS.lock() = out;
 }
 
+/// A button pressed on a plugin's screen: the screen it shows now, if it
+/// says.
+fn button(view: &torch_mod_api::ButtonView) -> Option<torch_mod_api::Screen> {
+    let mut plugins = PLUGINS.lock();
+    let index = *plugins.screens.get(&view.screen.menu)?;
+    let input = serde_json::to_vec(view).ok()?;
+    let loaded = plugins.loaded.get_mut(index)?;
+    match loaded.runtime.button(&input) {
+        Ok(screen) => screen,
+        Err(e) => {
+            loaded.failures += 1;
+            if loaded.failures <= 3 {
+                crate::log_warn!(
+                    "modapi",
+                    "{}: button {} of {}: {e}",
+                    loaded.name,
+                    view.button,
+                    view.screen.menu
+                );
+            }
+            None
+        }
+    }
+}
+
 /// The keys plugins bind, in load order.
 pub fn keys() -> Vec<torch_mod_api::KeyBinding> {
     PLUGINS.lock().keys.iter().map(|(k, _)| k.clone()).collect()
@@ -159,16 +184,15 @@ pub fn key(view: &torch_mod_api::KeyView) {
     }
 }
 
-/// Packets plugins sent (`host::send_to_server`), for the network thread.
-static OUTGOING: Mutex<Vec<(String, Vec<u8>)>> = Mutex::new(Vec::new());
-
-pub(crate) fn queue_send(channel: String, data: Vec<u8>) {
-    OUTGOING.lock().push((channel, data));
-}
-
-/// What plugins sent since the last call, in order.
+/// What plugins sent (`host::send_to_server`) since the last call, for the
+/// network thread: each plugin's in order.
 pub fn take_outgoing() -> Vec<(String, Vec<u8>)> {
-    std::mem::take(&mut *OUTGOING.lock())
+    PLUGINS
+        .lock()
+        .loaded
+        .iter_mut()
+        .flat_map(|l| l.runtime.take_sent())
+        .collect()
 }
 
 /// Entity rigs a payload asked to redraw, taken by `render` each frame.
@@ -450,13 +474,40 @@ mod tests {
         );
         let view = serde_json::json!({"name": "key.example.honk", "screen": null});
         runtime.key(view.to_string().as_bytes()).unwrap();
-        let sent: Vec<(String, Vec<u8>)> = take_outgoing()
-            .into_iter()
-            .filter(|(c, _)| c == "example:honk" || c == "minecraft:brand")
-            .collect();
+        let sent = runtime.take_sent();
         let mut body = torch_mod_api::buf::Writer::new();
         body.string("key.example.honk").bool(false);
         assert_eq!(sent, [("example:honk".to_owned(), body.into_bytes())]);
+    }
+
+    #[test]
+    fn a_screen_button_tells_the_server_and_changes_the_screen() {
+        let mut runtime = runtime::Runtime::load("example", EXAMPLE).unwrap();
+        let view = torch_mod_api::ScreenView {
+            menu: "example:press".into(),
+            ..Default::default()
+        };
+        let screen = runtime
+            .screen(&serde_json::to_vec(&view).unwrap())
+            .unwrap()
+            .unwrap();
+        let button = &screen.buttons[0];
+        assert_eq!(
+            (button.label.as_str(), button.menu_button),
+            ("Start", Some(0))
+        );
+        let press = torch_mod_api::ButtonView {
+            button: "toggle".into(),
+            screen: view,
+            ..Default::default()
+        };
+        let after = runtime
+            .button(&serde_json::to_vec(&press).unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(after.buttons[0].label, "Stop");
+        let sent = runtime.take_sent();
+        assert_eq!(sent, [("example:press".to_owned(), vec![1])]);
     }
 
     #[test]

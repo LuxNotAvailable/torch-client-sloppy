@@ -601,6 +601,55 @@ pub struct Screen {
     /// `renderLabels`'s other text, over the slots.
     #[serde(default)]
     pub texts: Vec<ScreenText>,
+    /// The screen's buttons (`addRenderableWidget`), over the background
+    /// and under the slots ([`Plugin::button`]).
+    #[serde(default)]
+    pub buttons: Vec<ScreenButton>,
+}
+
+/// A button on a screen: Java's `Button`, `ImageButton` or a widget that
+/// acts as one (a tab, a toggle).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ScreenButton {
+    /// Its id, the plugin's own (`sort`, `tab_2`).
+    pub id: String,
+    /// Where it is, in GUI pixels from the screen's top left.
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+    /// Its look: blits (screen coordinates, like `background`); with none,
+    /// vanilla's button with `label` on it.
+    #[serde(default)]
+    pub look: Vec<Blit>,
+    /// Its look under the cursor; `look` when empty.
+    #[serde(default)]
+    pub hover: Vec<Blit>,
+    #[serde(default)]
+    pub label: String,
+    /// Lines shown under the cursor.
+    #[serde(default)]
+    pub tooltip: Vec<String>,
+    /// The id the client sends as vanilla's container button click
+    /// (`menu.clickMenuButton`, `ServerboundContainerButtonClickPacket`)
+    /// when pressed, for a menu whose server side reads those.
+    #[serde(default)]
+    pub menu_button: Option<i32>,
+}
+
+/// A button pressed on a plugin's screen ([`Plugin::button`]).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ButtonView {
+    /// The button's id.
+    pub button: String,
+    /// Right click rather than left.
+    #[serde(default)]
+    pub right: bool,
+    /// Shift held.
+    #[serde(default)]
+    pub shift: bool,
+    /// The screen as `screen` last saw it.
+    pub screen: ScreenView,
 }
 
 /// One `GuiGraphics.blit`: a `width` x `height` piece of `texture` from
@@ -719,6 +768,15 @@ pub trait Plugin {
     /// The screen of a menu type it registered in `screens`. `None` leaves
     /// it to the client's plain grid of slots.
     fn screen(&mut self, view: &ScreenView) -> Option<Screen> {
+        let _ = view;
+        None
+    }
+
+    /// A button on its screen pressed (after the client sends its
+    /// `menu_button`, if it has one). Tell the server with
+    /// [`host::send_to_server`]; a `Screen` answered replaces the shown one
+    /// (a toggled button's look), `None` keeps it.
+    fn button(&mut self, view: &ButtonView) -> Option<Screen> {
         let _ = view;
         None
     }
@@ -1020,6 +1078,20 @@ macro_rules! export_plugin {
                 }
             };
             $crate::abi::pack(::serde_json::to_vec(&tints).unwrap_or_default())
+        }
+
+        #[unsafe(no_mangle)]
+        pub extern "C" fn torch_button(ptr: i32, len: i32) -> i64 {
+            // SAFETY: the host wrote the view into a buffer from torch_alloc.
+            let input = unsafe { $crate::abi::input(ptr, len) };
+            let screen = match ::serde_json::from_slice::<$crate::ButtonView>(input) {
+                Ok(view) => PLUGIN.with(|p| p.borrow_mut().button(&view)),
+                Err(e) => {
+                    $crate::host::log_line(&format!("unreadable button view: {e}"));
+                    None
+                }
+            };
+            $crate::abi::pack(::serde_json::to_vec(&screen).unwrap_or_default())
         }
 
         #[unsafe(no_mangle)]

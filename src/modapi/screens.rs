@@ -80,6 +80,39 @@ pub(crate) fn current(
     open.screen.clone()
 }
 
+/// A button on the open plugin screen pressed: the plugin hears it, and
+/// the screen it answers is shown from then on.
+pub(crate) fn press(window: i32, button: &str, right: bool, shift: bool) {
+    let mut guard = OPEN.lock();
+    let Some(open) = guard.as_mut().filter(|o| o.window == window) else {
+        return;
+    };
+    let Some(menu) = crate::protocol::modded_menu(open.kind) else {
+        return;
+    };
+    let (data, slots) = open.asked.clone().unwrap_or_default();
+    let view = torch_mod_api::ButtonView {
+        button: button.to_owned(),
+        right,
+        shift,
+        screen: torch_mod_api::ScreenView {
+            menu: menu.to_owned(),
+            title: String::new(),
+            extra: open.extra.clone(),
+            data,
+            slots,
+        },
+    };
+    // The plugin may call back into the host; not under this lock.
+    drop(guard);
+    let answer = super::button(&view);
+    if let Some(screen) = answer
+        && let Some(open) = OPEN.lock().as_mut().filter(|o| o.window == window)
+    {
+        open.screen = Some(Arc::new(screen));
+    }
+}
+
 /// The open screen's window and where its player slots start, when its
 /// plugin says (`Screen::player_start`).
 pub(crate) fn player_start() -> Option<(i32, usize)> {
