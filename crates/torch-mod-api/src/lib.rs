@@ -92,13 +92,24 @@ pub struct KeyBinding {
 pub struct KeyView {
     /// The binding's name.
     pub name: String,
-    /// The menu type open (`minecraft:generic_9x3`, a mod's), or `None`
-    /// in the world.
+    /// The menu type open (`minecraft:generic_9x3`, a mod's;
+    /// `minecraft:inventory` for the player's own), or `None` in the world.
     #[serde(default)]
     pub screen: Option<String>,
     /// In a menu, the slot under the cursor, by menu slot index.
     #[serde(default)]
     pub slot: Option<u32>,
+    /// That slot's item (`minecraft:stone`, a mod's), when it holds one.
+    #[serde(default)]
+    pub item: Option<String>,
+    /// That slot's stack size.
+    #[serde(default)]
+    pub count: u32,
+    /// When that slot is the player's own, its index in the player's
+    /// inventory (Java's `Slot.getSlotIndex`): hotbar 0-8, main 9-35,
+    /// armor 36-39 (feet first), offhand 40.
+    #[serde(default)]
+    pub inventory_slot: Option<u32>,
 }
 
 /// What a payload changed: the rigs to ask for again.

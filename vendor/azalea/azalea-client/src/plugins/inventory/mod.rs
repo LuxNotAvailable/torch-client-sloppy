@@ -238,8 +238,16 @@ pub fn handle_set_container_content_trigger(
     inventory.place_modded_player_slots();
     if let azalea_inventory::Menu::Modded { player, slots, .. } = inventory.menu() {
         trace(format_args!(
-            "Modded menu: {} slots, player slots from {player:?}",
-            slots.len()
+            "Modded menu: {} slots, player slots from {player:?}: {:?}",
+            slots.len(),
+            slots
+                .iter()
+                .enumerate()
+                .filter_map(|(i, s)| match s {
+                    ItemStack::Present(d) => Some((i, d.kind, d.count)),
+                    ItemStack::Empty => None,
+                })
+                .collect::<Vec<_>>()
         ));
     }
     inventory.sync_player_slots(true);

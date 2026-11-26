@@ -1179,24 +1179,123 @@ fn mod_keys(
     if pressed.is_empty() {
         return;
     }
-    let screen = if state.screen == Screen::None {
-        None
-    } else {
-        let kind = shared.0.lock().unwrap().session.container.container_kind;
-        match kind {
-            crate::session::ContainerKind::Modded(id) => {
-                crate::protocol::modded_menu(id).map(str::to_owned)
-            }
+    // In the world, or a menu screen (Java's `AbstractContainerScreen`):
+    // with the slot under the mouse.
+    let mut view = torch_mod_api::KeyView::default();
+    if state.screen != Screen::None {
+        let s = shared.0.lock().unwrap();
+        let kind = s.session.container.container_kind;
+        view.screen = Some(match state.screen {
+            Screen::Inventory => "minecraft:inventory".to_owned(),
+            Screen::Container(_) => menu_type(kind),
             _ => return,
+        });
+        let slots = &s.session.inventory.menu_slots;
+        if let Some(i) = state.slots.hovered.filter(|&i| i < slots.len()) {
+            view.slot = Some(i as u32);
+            let stack = &slots[i];
+            if stack.count > 0 {
+                view.item = Some(if stack.item.contains(':') {
+                    stack.item.to_owned()
+                } else {
+                    format!("minecraft:{}", stack.item)
+                });
+                view.count = u32::from(stack.count);
+            }
+            let player =
+                (state.screen != Screen::Inventory).then(|| s.session.container.player_start);
+            view.inventory_slot = inventory_slot(slots.len(), player, i);
         }
-    };
+    }
     for name in pressed {
         crate::modapi::key(&torch_mod_api::KeyView {
             name: name.to_owned(),
-            screen: screen.clone(),
-            slot: None,
+            ..view.clone()
         });
     }
+}
+
+/// The open menu's type id, as plugins see it.
+fn menu_type(kind: crate::session::ContainerKind) -> String {
+    use crate::session::ContainerKind as K;
+    match kind {
+        K::Modded(id) => crate::protocol::modded_menu(id)
+            .unwrap_or("minecraft:unknown")
+            .to_owned(),
+        K::Chest(rows) => format!("minecraft:generic_9x{rows}"),
+        K::Horse(_) => "minecraft:horse".to_owned(),
+        // The rest by name: `BrewingStand` as `minecraft:brewing_stand`.
+        other => {
+            let debug = format!("{other:?}");
+            let name = debug.split('(').next().unwrap_or_default();
+            let mut out = String::from("minecraft:");
+            for (n, c) in name.chars().enumerate() {
+                if c.is_uppercase() && n > 0 {
+                    out.push('_');
+                }
+                out.push(c.to_ascii_lowercase());
+            }
+            out
+        }
+    }
+}
+
+#[cfg(test)]
+mod plugin_key_tests {
+    use super::{inventory_slot, menu_type};
+    use crate::session::ContainerKind;
+
+    #[test]
+    fn a_hovered_slot_maps_to_the_player_s_inventory_index() {
+        // The inventory screen: head, main, hotbar, offhand.
+        assert_eq!(inventory_slot(46, None, 5), Some(39));
+        assert_eq!(inventory_slot(46, None, 9), Some(9));
+        assert_eq!(inventory_slot(46, None, 37), Some(1));
+        assert_eq!(inventory_slot(46, None, 45), Some(40));
+        assert_eq!(inventory_slot(46, None, 2), None);
+        // A backpack: 27 storage, the player's 36 from 27, an upgrade.
+        assert_eq!(inventory_slot(64, Some(Some(27)), 26), None);
+        assert_eq!(inventory_slot(64, Some(Some(27)), 27), Some(9));
+        assert_eq!(inventory_slot(64, Some(Some(27)), 54), Some(0));
+        assert_eq!(inventory_slot(64, Some(Some(27)), 63), None);
+        // A chest: the last 36.
+        assert_eq!(inventory_slot(63, Some(None), 62), Some(8));
+    }
+
+    #[test]
+    fn vanilla_menus_have_their_type_names() {
+        assert_eq!(menu_type(ContainerKind::Chest(3)), "minecraft:generic_9x3");
+        assert_eq!(
+            menu_type(ContainerKind::BrewingStand),
+            "minecraft:brewing_stand"
+        );
+    }
+}
+
+/// A menu slot's index in the player's own inventory (Java's
+/// `Slot.getSlotIndex`), when it is one of the player's. `player` is `None`
+/// for the inventory screen's own menu, else the open menu's first player
+/// slot when known (the last 36 otherwise).
+fn inventory_slot(len: usize, player: Option<Option<usize>>, i: usize) -> Option<u32> {
+    let index = match player {
+        // The inventory menu: armor head first, main, hotbar, offhand.
+        None => match i {
+            5..=8 => 44 - i,
+            9..=35 => i,
+            36..=44 => i - 36,
+            45 => 40,
+            _ => return None,
+        },
+        Some(start) => {
+            let start = start.unwrap_or(len.saturating_sub(36));
+            match i.checked_sub(start)? {
+                rel @ 0..=26 => 9 + rel,
+                rel @ 27..=35 => rel - 27,
+                _ => return None,
+            }
+        }
+    };
+    Some(index as u32)
 }
 
 pub(crate) fn toggle_screen(

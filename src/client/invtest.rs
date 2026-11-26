@@ -274,8 +274,11 @@ fn menu_player_items(inv: &Inventory) -> Vec<(usize, String, u32)> {
         .collect()
 }
 
+/// Queues `action` for the client's tick and waits until the tick has sent
+/// it, so a packet written after it can't overtake it.
 fn queue(action: InvAction) {
     let shared = crate::SHARED.get().unwrap();
+    let pending = || shared.lock().unwrap().session.inventory.inv_actions.len();
     shared
         .lock()
         .unwrap()
@@ -283,6 +286,11 @@ fn queue(action: InvAction) {
         .inventory
         .inv_actions
         .push(action);
+    let end = Instant::now() + Duration::from_secs(5);
+    while pending() > 0 {
+        assert!(Instant::now() < end, "the tick never took the action");
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
 fn click(slot: u16) {
@@ -438,6 +446,12 @@ fn inventory_matches_a_neoforge_server() {
         QuickMoveClick::Left { slot: 38 },
     )));
     agrees(&mut server, "sword shift-clicked");
+    assert!(
+        server
+            .inventory()
+            .contains(&(11, "minecraft:diamond_sword".to_owned(), 1)),
+        "the server moved the sword to main slot 11"
+    );
 
     // A leather backpack: 27 storage slots, the player's 36, its upgrade.
     open_backpack();
@@ -461,12 +475,16 @@ fn inventory_matches_a_neoforge_server() {
     // (10), the potion (hotbar 3 = 39), the sword (11), into storage.
     for from in [27 + 1, 27 + 30, 27 + 2] {
         eventually("a stack to move", Duration::from_secs(3), || {
-            inventory()
-                .menu()
-                .slot(from)
-                .is_some_and(ItemStack::is_present)
-                .then_some(())
-                .ok_or(format!("slot {from} is empty"))
+            let inv = inventory();
+            if inv.menu().slot(from).is_some_and(ItemStack::is_present) {
+                return Ok(());
+            }
+            Err(format!(
+                "slot {from} is empty\nshown {:?}\nserver {:?}\nstorage {:?}",
+                menu_player_items(&inv),
+                server.inventory(),
+                storage(&inv)
+            ))
         });
         let free = (0..27)
             .find(|&i| inventory().menu().slot(i).is_some_and(ItemStack::is_empty))
@@ -495,6 +513,23 @@ fn inventory_matches_a_neoforge_server() {
     click(27 + 5);
     close();
     agrees(&mut server, "stone taken back out");
+
+    // The open key over the backpack in the inventory screen: Java's
+    // `BackpackOpenPayload(4, "", "main")` (hotbar slot 4).
+    {
+        use azalea_protocol::packets::game::s_custom_payload::ServerboundCustomPayload;
+        let mut body = 4i32.to_be_bytes().to_vec();
+        body.extend_from_slice(&[0, 4]);
+        body.extend_from_slice(b"main");
+        crate::client::bot::live_client()
+            .unwrap()
+            .write_packet(ServerboundCustomPayload {
+                identifier: "sophisticatedbackpacks:backpack_open".into(),
+                data: body.into(),
+            });
+    }
+    wait_backpack(27);
+    close();
 }
 
 #[test]

@@ -166,9 +166,14 @@ squeezed into a 256-pixel cell.
 `keys` lists `KeyBinding`s: `name` (Java's, `keybind.mymod.open`; the
 language names it and the options save it), `default` (`key.keyboard.b`,
 `key.mouse.middle`, empty for none) and `category` (a translation key).
-They show in Controls after vanilla's, rebindable. `key` gets a `KeyView`
-(`name`, `screen`: the open modded menu's type id or `null` in the
-world). A press is Java's `while (KEY.consumeClick())` body: what Java
+They show in Controls after vanilla's, rebindable. `key` gets a `KeyView`:
+`name`; `screen`, the open menu's type id (`minecraft:inventory` for the
+player's own, `minecraft:generic_9x3`, a mod's) or `null` in the world;
+in a menu, the slot under the mouse (`slot`, its `item` and `count`, and
+`inventory_slot`, Java's `Slot.getSlotIndex` when it's one of the player's).
+Keys reach plugins in the world and on menu screens (Java's
+`AbstractContainerScreen`), not in other screens or while typing. A press
+is Java's `while (KEY.consumeClick())` body: what Java
 sends with `PacketDistributor.sendToServer` a plugin sends with
 `host::send_to_server(channel, body)`, writing the body with
 `torch_mod_api::buf::Writer` as the payload's `StreamCodec` writes it.

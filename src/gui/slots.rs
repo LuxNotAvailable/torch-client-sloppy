@@ -445,12 +445,15 @@ pub struct SlotState {
     pub menu_preview: MenuPreview,
     /// The slots a shift-drag has already quick-moved this sweep.
     pub shift_swept: Vec<usize>,
+    /// The menu slot under the mouse, as last drawn (plugins' keys).
+    pub hovered: Option<usize>,
 }
 
 impl SlotState {
     pub fn reset_for_screen_change(&mut self) {
         // The closed menu's cursor went with it.
         self.cursor = None;
+        self.hovered = None;
         self.drag.clear();
         self.last_click_slot = None;
         self.menu_preview = MenuPreview::default();
@@ -1148,6 +1151,7 @@ pub fn panel(
         let (sx, sy) = layout.slot_pos(*i);
         ctx.hovering(left + sx - 1.0, top + sy - 1.0, SLOT_PITCH, SLOT_PITCH)
     });
+    state.hovered = hovered_index;
 
     retire_committed_drag(&mut state.drag, snap);
     retire_menu_preview(&mut state.menu_preview, snap, count);
