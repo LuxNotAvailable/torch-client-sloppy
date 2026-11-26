@@ -1192,19 +1192,21 @@ fn mod_keys(
         });
         let slots = &s.session.inventory.menu_slots;
         if let Some(i) = state.slots.hovered.filter(|&i| i < slots.len()) {
-            view.slot = Some(i as u32);
             let stack = &slots[i];
-            if stack.count > 0 {
-                view.item = Some(if stack.item.contains(':') {
-                    stack.item.to_owned()
-                } else {
-                    format!("minecraft:{}", stack.item)
-                });
-                view.count = u32::from(stack.count);
-            }
             let player =
                 (state.screen != Screen::Inventory).then(|| s.session.container.player_start);
-            view.inventory_slot = inventory_slot(slots.len(), player, i);
+            view.slot = Some(torch_mod_api::SlotView {
+                index: i as u32,
+                item: (stack.count > 0).then(|| torch_mod_api::ItemView {
+                    item: if stack.item.contains(':') {
+                        stack.item.to_owned()
+                    } else {
+                        format!("minecraft:{}", stack.item)
+                    },
+                    count: u32::from(stack.count),
+                }),
+                inventory_slot: inventory_slot(slots.len(), player, i),
+            });
         }
     }
     for name in pressed {

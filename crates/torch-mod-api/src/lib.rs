@@ -1,4 +1,4 @@
-//! The Torch mod API, version 1 (`docs/MOD_API.md`): what a ported mod's
+//! The Torch mod API, version 2 (`docs/MOD_API.md`): what a ported mod's
 //! client code is written against. A port implements [`Plugin`] and calls
 //! [`export_plugin!`]; built for `wasm32-unknown-unknown`, it becomes the
 //! `plugin.wasm` in its mod's `.torchmod` package.
@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 pub use serde_json::Value;
 
 /// The API version this SDK builds plugins for.
-pub const API_VERSION: i32 = 1;
+pub const API_VERSION: i32 = 2;
 
 /// What a plugin handles, returned once from `init`.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -96,20 +96,59 @@ pub struct KeyView {
     /// `minecraft:inventory` for the player's own), or `None` in the world.
     #[serde(default)]
     pub screen: Option<String>,
-    /// In a menu, the slot under the cursor, by menu slot index.
+    /// In a menu, the slot under the mouse (Java's `getSlotUnderMouse`).
     #[serde(default)]
-    pub slot: Option<u32>,
-    /// That slot's item (`minecraft:stone`, a mod's), when it holds one.
+    pub slot: Option<SlotView>,
+}
+
+/// A menu slot.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct SlotView {
+    /// Its menu slot index (Java's `Slot.index`).
+    pub index: u32,
+    /// What it holds.
     #[serde(default)]
-    pub item: Option<String>,
-    /// That slot's stack size.
-    #[serde(default)]
-    pub count: u32,
-    /// When that slot is the player's own, its index in the player's
+    pub item: Option<ItemView>,
+    /// When it's one of the player's own slots, its index in the player's
     /// inventory (Java's `Slot.getSlotIndex`): hotbar 0-8, main 9-35,
     /// armor 36-39 (feet first), offhand 40.
     #[serde(default)]
     pub inventory_slot: Option<u32>,
+}
+
+/// The local player, at the start of this tick ([`host::player`]).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct PlayerView {
+    /// The feet's position.
+    pub pos: [f64; 3],
+    /// Java's `getYRot` and `getXRot`, in degrees.
+    pub yaw: f32,
+    pub pitch: f32,
+    /// The selected hotbar slot, 0-8.
+    pub selected: u32,
+    #[serde(default)]
+    pub main_hand: Option<ItemView>,
+    #[serde(default)]
+    pub off_hand: Option<ItemView>,
+    pub sneaking: bool,
+    /// What the crosshair is on (Java's `Minecraft.hitResult`, misses as
+    /// `None`).
+    #[serde(default)]
+    pub hit: Option<Hit>,
+}
+
+/// A crosshair target.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Hit {
+    /// `BlockHitResult`: the block, the face hit, and the point.
+    Block {
+        pos: [i32; 3],
+        face: mc::direction::Direction,
+        at: [f64; 3],
+    },
+    /// `EntityHitResult`: the entity's network id, and the point.
+    Entity { id: i32, at: [f64; 3] },
 }
 
 /// What a payload changed: the rigs to ask for again.
@@ -468,11 +507,14 @@ pub enum Animation {
     Path { points: Vec<[f32; 4]> },
 }
 
-/// An item, for hooks that depend on its type alone.
+/// An item stack.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ItemView {
-    /// Its id (`mymod:custom_egg`).
+    /// Its id (`minecraft:stone`, `mymod:custom_egg`).
     pub item: String,
+    /// Its size (1 where a hook depends on the item's type alone).
+    #[serde(default)]
+    pub count: u32,
 }
 
 /// The local player, as a block entity that moves entities sees it.
@@ -842,6 +884,40 @@ pub mod host {
         fn log(ptr: *const u8, len: usize);
         fn block_at(x: i32, y: i32, z: i32, out: *mut u8, cap: usize) -> usize;
         fn send(channel: *const u8, channel_len: usize, data: *const u8, data_len: usize);
+        #[link_name = "player"]
+        fn player_import(out: *mut u8, cap: usize) -> usize;
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    thread_local! {
+        static PLAYER: std::cell::RefCell<Option<super::PlayerView>> = const { std::cell::RefCell::new(None) };
+    }
+
+    /// The local player as this tick began: where it is, what it holds,
+    /// what it looks at. `None` before it joins a world.
+    pub fn player() -> Option<super::PlayerView> {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let mut buf = vec![0u8; 512];
+            // SAFETY: the host writes at most `cap` bytes into `buf`.
+            let mut len = unsafe { player_import(buf.as_mut_ptr(), buf.len()) };
+            if len > buf.len() {
+                buf.resize(len, 0);
+                len = unsafe { player_import(buf.as_mut_ptr(), buf.len()) };
+            }
+            if len == 0 || len > buf.len() {
+                return None;
+            }
+            serde_json::from_slice(&buf[..len]).ok()
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        PLAYER.with(|p| p.borrow().clone())
+    }
+
+    /// Off the wasm host (tests): what [`player`] answers.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_player(player: Option<super::PlayerView>) {
+        PLAYER.with(|p| *p.borrow_mut() = player);
     }
 
     /// A packet to the mod's server side on `channel` (its own namespace,
@@ -1135,6 +1211,28 @@ macro_rules! export_plugin {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_player_reads_as_the_host_writes_it() {
+        let player: PlayerView = serde_json::from_str(
+            r#"{"pos": [1.5, 64.0, -2.5], "yaw": 90.0, "pitch": 10.0, "selected": 2,
+                "main_hand": {"item": "minecraft:iron_pickaxe", "count": 1},
+                "sneaking": false,
+                "hit": {"kind": "block", "pos": [1, 63, -3], "face": "up", "at": [1.5, 64.0, -2.5]}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            player.hit,
+            Some(Hit::Block {
+                pos: [1, 63, -3],
+                face: mc::direction::Direction::Up,
+                at: [1.5, 64.0, -2.5]
+            })
+        );
+        assert_eq!(player.off_hand, None);
+        let entity = serde_json::to_value(Hit::Entity { id: 7, at: [0.0; 3] }).unwrap();
+        assert_eq!(entity["kind"], "entity");
+    }
 
     #[test]
     fn a_screen_fills_java_s_defaults() {

@@ -121,7 +121,21 @@ impl Plane {
 }
 
 /// `Direction`, in declaration order (`values()`, ties in `getNearest`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
+/// Serialized by name (`"north"`).
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+#[serde(rename_all = "lowercase")]
 pub enum Direction {
     Down,
     Up,

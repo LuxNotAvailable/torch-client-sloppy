@@ -154,6 +154,19 @@ fn button(view: &torch_mod_api::ButtonView) -> Option<torch_mod_api::Screen> {
     }
 }
 
+/// The local player as plugins see it (`host::player`), JSON, refreshed
+/// each game tick.
+static PLAYER: Mutex<Option<String>> = Mutex::new(None);
+
+/// This tick's player (`play::looking`), or `None` out of a world.
+pub fn set_player(view: Option<torch_mod_api::PlayerView>) {
+    *PLAYER.lock() = view.and_then(|v| serde_json::to_string(&v).ok());
+}
+
+pub(super) fn player_json() -> Option<String> {
+    PLAYER.lock().clone()
+}
+
 /// The keys plugins bind, in load order.
 pub fn keys() -> Vec<torch_mod_api::KeyBinding> {
     PLUGINS.lock().keys.iter().map(|(k, _)| k.clone()).collect()
@@ -336,6 +349,7 @@ pub fn item_tints(item: &str) -> Option<Vec<u32>> {
     }
     let view = torch_mod_api::ItemView {
         item: item.to_owned(),
+        count: 1,
     };
     let input = serde_json::to_vec(&view).ok()?;
     let loaded = plugins.loaded.get_mut(index)?;

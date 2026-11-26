@@ -58,14 +58,72 @@ pub(crate) fn tick(bot: &Client) {
         .component::<azalea::entity::Pose>()
         .is_ok_and(|p| *p == azalea::entity::Pose::Crouching);
     SNEAKING.store(crouching, std::sync::atomic::Ordering::Relaxed);
-    let found = match bot.hit_result() {
-        Ok(HitResult::Block(hit)) if !hit.miss => block(bot, hit.block_pos),
-        Ok(HitResult::Entity(hit)) => entity(bot, hit.entity),
+    let hit = bot.hit_result().ok();
+    let found = match &hit {
+        Some(HitResult::Block(hit)) if !hit.miss => block(bot, hit.block_pos),
+        Some(HitResult::Entity(hit)) => entity(bot, hit.entity),
         _ => None,
     };
     if let Ok(mut looking) = LOOKING.lock() {
         *looking = found;
     }
+    crate::modapi::set_player(player_view(bot, hit.as_ref(), crouching));
+}
+
+/// The player for mod plugins (`host::player`), this tick.
+fn player_view(
+    bot: &Client,
+    hit: Option<&HitResult>,
+    sneaking: bool,
+) -> Option<torch_mod_api::PlayerView> {
+    use torch_mod_api::mc::direction::Direction;
+    let pos = bot.position().ok()?;
+    let look = bot.component::<azalea::entity::LookDirection>().ok()?;
+    let inventory = bot
+        .component::<azalea::entity::inventory::Inventory>()
+        .ok()?;
+    let item = |stack: &azalea_inventory::ItemStack| match stack {
+        azalea_inventory::ItemStack::Present(d) => {
+            let id = crate::items::stack_id(d);
+            Some(torch_mod_api::ItemView {
+                item: if id.contains(':') {
+                    id.to_owned()
+                } else {
+                    format!("minecraft:{id}")
+                },
+                count: d.count.max(0) as u32,
+            })
+        }
+        azalea_inventory::ItemStack::Empty => None,
+    };
+    let at = |v: &azalea_core::position::Vec3| [v.x, v.y, v.z];
+    let hit = match hit {
+        Some(HitResult::Block(h)) if !h.miss => Some(torch_mod_api::Hit::Block {
+            pos: [h.block_pos.x, h.block_pos.y, h.block_pos.z],
+            face: Direction::from_3d_data_value(h.direction as i32),
+            at: at(&h.location),
+        }),
+        Some(HitResult::Entity(h)) => bot
+            .entity_component::<azalea_core::entity_id::MinecraftEntityId>(h.entity)
+            .ok()
+            .map(|id| torch_mod_api::Hit::Entity {
+                id: id.0,
+                at: at(&h.location),
+            }),
+        _ => None,
+    };
+    Some(torch_mod_api::PlayerView {
+        pos: [pos.x, pos.y, pos.z],
+        yaw: look.y_rot(),
+        pitch: look.x_rot(),
+        selected: u32::from(inventory.selected_hotbar_slot),
+        main_hand: item(inventory.held_item()),
+        off_hand: inventory
+            .get_equipment(azalea_inventory::components::EquipmentSlot::Offhand)
+            .and_then(item),
+        sneaking,
+        hit,
+    })
 }
 
 fn block(bot: &Client, pos: azalea_core::position::BlockPos) -> Option<Looking> {

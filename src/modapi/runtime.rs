@@ -66,6 +66,21 @@ fn mem_slice(memory: &Memory, store: impl wasmi::AsContext, ptr: i32, len: i32) 
     data.get(start..end).map(<[u8]>::to_vec)
 }
 
+/// A host answer into the plugin's `out` buffer of `cap` bytes: its length,
+/// or (when it doesn't fit) the length needed, for a second call.
+fn write_answer(caller: &mut Caller<'_, HostState>, bytes: &[u8], out: i32, cap: i32) -> i32 {
+    if bytes.len() > usize::try_from(cap).unwrap_or(0) {
+        return bytes.len() as i32;
+    }
+    let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory()) else {
+        return 0;
+    };
+    match memory.write(caller, out.max(0) as usize, bytes) {
+        Ok(()) => bytes.len() as i32,
+        Err(_) => 0,
+    }
+}
+
 impl Runtime {
     /// Loads `wasm` and runs its `torch_init`. `name` tags its log lines.
     pub(super) fn load(name: &str, wasm: &[u8]) -> Result<Runtime, String> {
@@ -125,18 +140,7 @@ impl Runtime {
                         Some(serde_json::json!({"block": block, "props": info.map()}).to_string())
                     });
                     let Some(answer) = answer else { return 0 };
-                    let bytes = answer.as_bytes();
-                    if bytes.len() > usize::try_from(cap).unwrap_or(0) {
-                        return bytes.len() as i32;
-                    }
-                    let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory())
-                    else {
-                        return 0;
-                    };
-                    match memory.write(&mut caller, out.max(0) as usize, bytes) {
-                        Ok(()) => bytes.len() as i32,
-                        Err(_) => 0,
-                    }
+                    write_answer(&mut caller, answer.as_bytes(), out, cap)
                 },
             )
             .map_err(|e| e.to_string())?;
@@ -169,6 +173,18 @@ impl Runtime {
                 },
             )
             .map_err(|e| e.to_string())?;
+        linker
+            .func_wrap(
+                "torch",
+                "player",
+                |mut caller: Caller<'_, HostState>, out: i32, cap: i32| -> i32 {
+                    let Some(answer) = super::player_json() else {
+                        return 0;
+                    };
+                    write_answer(&mut caller, answer.as_bytes(), out, cap)
+                },
+            )
+            .map_err(|e| e.to_string())?;
         store.set_fuel(FUEL).map_err(|e| e.to_string())?;
         let instance: Instance = linker
             .instantiate_and_start(&mut store, &module)
@@ -181,7 +197,9 @@ impl Runtime {
             .map_err(|e| e.to_string())?
             .call(&mut store, ())
             .map_err(|e| e.to_string())?;
-        if api > torch_mod_api::API_VERSION || api < 1 {
+        // Each version reshapes the views: only plugins built for this one
+        // load (re-convert the mod for a new client).
+        if api != torch_mod_api::API_VERSION {
             return Err(format!(
                 "it's built for mod API {api}; this client has {}",
                 torch_mod_api::API_VERSION

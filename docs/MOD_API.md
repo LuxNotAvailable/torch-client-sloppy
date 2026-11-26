@@ -31,10 +31,12 @@ spinning shaft costs one call when its speed changes, not one per frame.
 This keeps the interpreter off the hot path and makes the API declarative,
 which is also easier to port to and to check.
 
-## Version 1
+## Version 2
 
-`api: 1` in a package manifest. The host refuses a plugin whose
-`torch_api()` is newer than it knows.
+`api: 2` in a package manifest. The host loads only plugins whose
+`torch_api()` is its own version: each version may reshape the views, so a
+mod is re-converted for a new client. 2 adds `host::player` and the slot
+under the mouse in `KeyView`.
 
 ### Handlers
 
@@ -169,8 +171,10 @@ language names it and the options save it), `default` (`key.keyboard.b`,
 They show in Controls after vanilla's, rebindable. `key` gets a `KeyView`:
 `name`; `screen`, the open menu's type id (`minecraft:inventory` for the
 player's own, `minecraft:generic_9x3`, a mod's) or `null` in the world;
-in a menu, the slot under the mouse (`slot`, its `item` and `count`, and
-`inventory_slot`, Java's `Slot.getSlotIndex` when it's one of the player's).
+in a menu, `slot`, the slot under the mouse (`index`, its `item` as
+`{"item", "count"}`, and `inventory_slot`, Java's `Slot.getSlotIndex` when
+it's one of the player's). What the crosshair is on, and the held items,
+come from `host::player()`.
 Keys reach plugins in the world and on menu screens (Java's
 `AbstractContainerScreen`), not in other screens or while typing. A press
 is Java's `while (KEY.consumeClick())` body: what Java
@@ -306,7 +310,8 @@ Views read like Java's objects: `view.block_pos()`,
 |---|---|
 | `log(ptr, len)` | writes a UTF-8 line to the client log, tagged with the mod |
 | `send(channel_ptr, channel_len, data_ptr, data_len)` | queues a packet to the server on `channel` (the mod's namespace or one of its `channels`; others are refused and logged), sent next tick |
-| `block_at(x, y, z, out_ptr, out_cap) -> len` | the block at a position as JSON (`{"block": ..., "props": {...}}`), for connection logic; writes nothing and returns the needed length if `out_cap` is too small. v1 sees the blocks within 2 of the block entity (a copy made before the call); farther ones return 0 |
+| `block_at(x, y, z, out_ptr, out_cap) -> len` | the block at a position as JSON (`{"block": ..., "props": {...}}`), for connection logic; writes nothing and returns the needed length if `out_cap` is too small. It sees the blocks within 2 of the block entity (a copy made before the call); farther ones return 0 |
+| `player(out_ptr, out_cap) -> len` | the local player as JSON (`PlayerView`: `pos`, `yaw`, `pitch`, `selected`, `main_hand`, `off_hand`, `sneaking`, and `hit`, Java's `hitResult`: `{"kind": "block", "pos", "face", "at"}` or `{"kind": "entity", "id", "at"}`), as this game tick began; 0 out of a world. Sized as `block_at` |
 
 ### ABI
 
