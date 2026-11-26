@@ -697,6 +697,8 @@ impl SuperByteBuffer {
             transform: pose.transform(),
             animation: crate::Animation::None,
             scroll: self.scroll.clone(),
+            retexture: Default::default(),
+            parent: None,
         }
     }
 }

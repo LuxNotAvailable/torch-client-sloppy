@@ -285,6 +285,17 @@ pub struct Part {
     /// A texture moving across the part's quads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scroll: Option<Scroll>,
+    /// Sprites swapped on the part's quads, `from` to `to` (Java's
+    /// `SpriteShiftEntry` with no motion, a `Material` retexture): each
+    /// quad drawn from a `from` sprite draws the same texels of `to`.
+    /// Declare a `to` no model names in [`Registration::sprites`].
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub retexture: BTreeMap<String, String>,
+    /// An earlier part (its index in the rig) this one hangs from: placed
+    /// in that part's frame, after its animation and transform, so it
+    /// follows the parent's motion with its own on top (a jointed arm).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<usize>,
 }
 
 /// Java's `SpriteShiftEntry` with `shiftUVScrolling`: the part's quads drawn
@@ -320,6 +331,8 @@ impl Part {
             transform: Transform::default(),
             animation: Animation::None,
             scroll: None,
+            retexture: BTreeMap::new(),
+            parent: None,
         }
     }
 
@@ -344,7 +357,34 @@ impl Part {
             transform: Transform::default(),
             animation: Animation::None,
             scroll: None,
+            retexture: BTreeMap::new(),
+            parent: None,
         }
+    }
+
+    /// A joint ([`Geometry::Joint`]) at `transform`.
+    pub fn joint(transform: Transform) -> Part {
+        Part::of(Geometry::Joint).with_transform(transform)
+    }
+
+    /// A part with this geometry and nothing else.
+    pub fn of(geometry: Geometry) -> Part {
+        Part {
+            geometry,
+            ..Part::model("")
+        }
+    }
+
+    /// Hangs this part from rig part `parent` ([`Part::parent`]).
+    pub fn with_parent(mut self, parent: usize) -> Part {
+        self.parent = Some(parent);
+        self
+    }
+
+    /// Swaps sprite `from` for `to` ([`Part::retexture`]).
+    pub fn with_retexture(mut self, from: impl Into<String>, to: impl Into<String>) -> Part {
+        self.retexture.insert(from.into(), to.into());
+        self
     }
 
     pub fn with_scroll(mut self, scroll: Scroll) -> Part {
@@ -390,6 +430,12 @@ pub enum Geometry {
         /// whole sprite when left out.
         #[serde(default)]
         uv: Option<[f32; 4]>,
+        /// The sprite repeated a block at a time instead of stretched: the
+        /// box cut at block edges, each piece's faces showing the sprite's
+        /// texels under it, as a block model's element would (Create's
+        /// `renderFluidBox` on a tall tank). `uv` is ignored.
+        #[serde(default)]
+        tile: bool,
     },
     /// Text in the game's font, as a sign draws it: in the part's XY
     /// plane, readable from `+Z`, each line centred on the origin and the
@@ -421,6 +467,9 @@ pub enum Geometry {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         flat: Option<Transform>,
     },
+    /// Nothing drawn: a frame for other parts to hang from
+    /// ([`Part::parent`]), as a joint of a jointed arm.
+    Joint,
 }
 
 fn all_faces() -> u8 {
@@ -505,6 +554,17 @@ pub enum Animation {
     /// the first, after the last at the last (an item stopping at a
     /// belt's end).
     Path { points: Vec<[f32; 4]> },
+    /// Turns about `axis` through `pivot` by an angle keyed in time: `keys`
+    /// are `[tick, degrees]` (game ticks) in time order, straight between
+    /// them, held before the first and after the last. A one-off turn (a
+    /// valve handle's) is two keys; an eased one, a key a tick. With
+    /// [`Part::parent`], each joint of an arm turns this way.
+    Turn {
+        axis: [f32; 3],
+        #[serde(default = "centre")]
+        pivot: [f32; 3],
+        keys: Vec<[f32; 2]>,
+    },
 }
 
 /// An item stack.

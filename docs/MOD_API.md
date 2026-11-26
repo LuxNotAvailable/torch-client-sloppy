@@ -226,9 +226,10 @@ Geometry:
 |---|---|---|
 | `model` | `model` (a block model id), `x`, `y` (quarter turns, as a blockstate variant), `uvlock` | the mod's partial models: shafts, cogs, lids, arms |
 | `block` | `block`, `props` | a whole block state's model (a carried block, a display) |
-| `cuboid` | `from`, `to`, `texture` (a sprite id), `faces` (which of down, up, north, south, west, east), `tint` (ARGB), `uv` (optional rect in sixteenths) | simple boxes: a tank's fluid, a gauge needle |
+| `cuboid` | `from`, `to`, `texture` (a sprite id), `faces` (which of down, up, north, south, west, east), `tint` (ARGB), `uv` (optional rect in sixteenths), `tile` (the sprite a block at a time: the box cut at block edges, each piece showing the texels under it, as a model element would) | simple boxes: a tank's fluid (tiled), a gauge needle |
 | `text` | `lines` (with `§` codes), `color` (ARGB), `shadow`, `glowing` | text as a sign draws it, readable from `+Z`, one font pixel a sixteenth: displays, nixie tubes, labels |
 | `item` | `item` (an item id), `flat` (optional transform) | an item as Java's `ItemDisplayContext.FIXED` draws it: items on belts, depots, displays |
+| `joint` | | nothing drawn: a frame for other parts to hang from |
 
 An `item` is the item's model with its `fixed` display transform, centred
 on the part's origin: the block's corner before the transform, so give
@@ -250,6 +251,19 @@ Animation, played after the transform:
 | `swing` | `axis`, `pivot`, `amplitude`, `period_ticks`, `phase` | angle = `amplitude` x sin(2 pi (ticks / `period_ticks`) + `phase`) |
 | `slide` | `offset`, `period_ticks`, `phase` | moves to `offset` and back, a smooth (cosine) ping-pong |
 | `path` | `points` (`[tick, x, y, z]`, game ticks and an offset) | straight legs between the points; held at the first before it and at the last after (an item gliding to a belt's end) |
+| `turn` | `axis`, `pivot`, `keys` (`[tick, degrees]`) | an angle straight between keys, held past either end: a one-off turn (two keys), an eased one (a key a tick), a joint of an arm |
+
+Parents (optional, `parent`: an earlier part's index): the part is placed
+in that part's frame, after its animation and transform, so it follows
+the parent's motion with its own on top. A jointed arm is a chain of
+`joint` parts, each a static offset part and a turning one, with the
+models hung from them; the client multiplies the chain each frame, so
+the plugin keys each joint's angle (from Java's own angle maths) and is
+called again only when the target changes.
+
+Retexture (optional, `retexture`: `{from: to}` sprite ids): quads drawn
+from sprite `from` draw the same texels of `to` (Java's `Material` swaps:
+a water wheel's wood).
 
 Ticks are the client's game time with the partial tick, so motion is
 smooth between server updates.

@@ -35,6 +35,57 @@ struct ModEntityRoot;
 struct LiveEntity {
     root: Entity,
     parts: Vec<LivePart>,
+    joints: Vec<Joint>,
+}
+
+/// A rig part as its children see it ([`Part::parent`]): where it is, how
+/// it moves, what it hangs from. Kept for every part, drawn or not.
+#[derive(Clone)]
+struct Joint {
+    transform: torch_mod_api::Transform,
+    animation: Animation,
+    parent: Option<usize>,
+}
+
+fn joints(parts: &[Part]) -> Vec<Joint> {
+    parts
+        .iter()
+        .enumerate()
+        .map(|(i, p)| Joint {
+            transform: p.transform,
+            animation: p.animation.clone(),
+            // Only an earlier part: no cycles.
+            parent: p.parent.filter(|&j| j < i),
+        })
+        .collect()
+}
+
+/// Part `i`'s ancestors, nearest first.
+fn ancestors(joints: &[Joint], i: usize) -> impl Iterator<Item = usize> + '_ {
+    std::iter::successors(joints.get(i).and_then(|j| j.parent), |&j| {
+        joints.get(j).and_then(|p| p.parent)
+    })
+}
+
+/// Whether part `i` moves by itself or through an ancestor.
+fn chain_moves(joints: &[Joint], i: usize) -> bool {
+    std::iter::once(i).chain(ancestors(joints, i)).any(|j| {
+        joints
+            .get(j)
+            .is_some_and(|j| j.animation != Animation::None)
+    })
+}
+
+/// Part `i`'s frame in the rig: each ancestor's motion and transform,
+/// outermost first, then its own motion.
+fn frame_of(joints: &[Joint], i: usize, ticks: f64) -> Affine3A {
+    let own = joints
+        .get(i)
+        .map_or(Affine3A::IDENTITY, |j| motion(&j.animation, ticks));
+    ancestors(joints, i).fold(own, |inner, j| {
+        let j = &joints[j];
+        motion(&j.animation, ticks) * local(j.transform) * inner
+    })
 }
 
 #[derive(Component)]
@@ -49,7 +100,6 @@ struct LivePart {
     transform: torch_mod_api::Transform,
     /// An item's display transform, after the part's; identity otherwise.
     display: Transform,
-    animation: Animation,
     /// The part, while its texture scrolls, and the step its mesh shows.
     scroll: Option<(Part, u32)>,
 }
@@ -63,6 +113,7 @@ struct LiveRig {
     frames: std::sync::Arc<[super::store::Frame]>,
     levels: (u8, u8),
     parts: Vec<LivePart>,
+    joints: Vec<Joint>,
 }
 
 /// The game time rigs are shown at, in ticks: the shown tick's, less two.
@@ -216,6 +267,7 @@ fn sync_rigs(
                     frames: placed.frames.clone(),
                     levels,
                     parts,
+                    joints: joints(&shown),
                 },
             );
             continue;
@@ -236,8 +288,15 @@ fn sync_rigs(
                 .frames
                 .last()
                 .is_some_and(|f| ticks < f.0 as f64 + 1.0);
+        if blending {
+            for (i, joint) in live_rig.joints.iter_mut().enumerate() {
+                if let Some(at) = transform_at(&live_rig.frames, i, ticks) {
+                    joint.transform = at.transform;
+                }
+            }
+        }
         for part in live_rig.parts.iter_mut() {
-            let moving = part.animation != Animation::None || blending;
+            let moving = blending || chain_moves(&live_rig.joints, part.index);
             if !moving && part.scroll.is_none() {
                 continue;
             }
@@ -251,8 +310,8 @@ fn sync_rigs(
                         _ => at.transform,
                     };
                 }
-                *t =
-                    place(*pos, part.transform, &part.animation, ticks).mul_transform(part.display);
+                let frame = frame_of(&live_rig.joints, part.index, ticks);
+                *t = place(*pos, frame, part.transform).mul_transform(part.display);
             }
             if let Some((source, shown)) = &mut part.scroll {
                 let step = source.scroll.as_ref().and_then(|s| scroll_step(s, ticks));
@@ -348,10 +407,10 @@ fn sync_entity_rigs(
             if let Ok(mut t) = roots.get_mut(e.root) {
                 *t = root_at;
             }
-            for part in e.parts.iter().filter(|p| p.animation != Animation::None) {
+            for part in e.parts.iter().filter(|p| chain_moves(&e.joints, p.index)) {
                 if let Ok(mut t) = part_transforms.get_mut(part.entity) {
-                    *t = place([0; 3], part.transform, &part.animation, ticks)
-                        .mul_transform(part.display);
+                    let frame = frame_of(&e.joints, part.index, ticks);
+                    *t = place([0; 3], frame, part.transform).mul_transform(part.display);
                 }
             }
             continue;
@@ -398,7 +457,14 @@ fn sync_entity_rigs(
             ([0; 3], Some(root)),
             ticks,
         );
-        live.entities.insert(*id, LiveEntity { root, parts });
+        live.entities.insert(
+            *id,
+            LiveEntity {
+                root,
+                parts,
+                joints: joints(&rig.parts),
+            },
+        );
     }
 }
 
@@ -455,6 +521,7 @@ fn spawn_parts(
         })
         .clone();
     let mut parts = Vec::with_capacity(rig_parts.len());
+    let skeleton = joints(rig_parts);
     for (index, part) in rig_parts.iter().enumerate() {
         let mut flat_sprite = false;
         let step = part.scroll.as_ref().and_then(|s| scroll_step(s, ticks));
@@ -549,7 +616,7 @@ fn spawn_parts(
             .spawn((
                 Mesh3d(mesh),
                 crate::draw::Material3d(material),
-                place(origin, transform, &part.animation, ticks).mul_transform(display),
+                place(origin, frame_of(&skeleton, index, ticks), transform).mul_transform(display),
                 Visibility::Inherited,
                 ModPart,
             ))
@@ -563,7 +630,6 @@ fn spawn_parts(
             flat: flat_sprite,
             transform,
             display,
-            animation: part.animation.clone(),
             scroll: step.map(|step| (part.clone(), step)),
         });
     }
@@ -676,7 +742,26 @@ fn motion(animation: &Animation, ticks: f64) -> Affine3A {
             Affine3A::from_translation(blocks(*offset) * (0.5 - 0.5 * t.cos()))
         }
         Animation::Path { points } => Affine3A::from_translation(blocks(path_at(points, ticks))),
+        Animation::Turn { axis, pivot, keys } => turn(*axis, *pivot, keyed(keys, ticks)),
     }
+}
+
+/// A keyed angle at `ticks`: straight between keys, held past either end.
+fn keyed(keys: &[[f32; 2]], ticks: f64) -> f32 {
+    let (Some(first), Some(last)) = (keys.first(), keys.last()) else {
+        return 0.0;
+    };
+    if ticks <= f64::from(first[0]) {
+        return first[1];
+    }
+    for w in keys.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        if ticks < f64::from(b[0]) {
+            let t = ((ticks - f64::from(a[0])) / f64::from((b[0] - a[0]).max(1e-6))) as f32;
+            return a[1] + (b[1] - a[1]) * t.clamp(0.0, 1.0);
+        }
+    }
+    last[1]
 }
 
 /// How far through its period `ticks` is, 0 to 1.
@@ -705,26 +790,25 @@ fn path_at(points: &[[f32; 4]], ticks: f64) -> [f32; 3] {
     at(last)
 }
 
-/// A part's world transform: the block's corner, then its animation, then
-/// its static transform (scale and rotate about the pivot, translate).
-fn place(
-    pos: [i32; 3],
-    t: torch_mod_api::Transform,
-    animation: &Animation,
-    ticks: f64,
-) -> Transform {
+/// A static transform: scale and rotate about the pivot, then translate.
+fn local(t: torch_mod_api::Transform) -> Affine3A {
     let pivot = blocks(t.pivot);
     let rotation = Quat::from_rotation_z(t.rotate[2].to_radians())
         * Quat::from_rotation_y(t.rotate[1].to_radians())
         * Quat::from_rotation_x(t.rotate[0].to_radians());
-    let local = Affine3A::from_translation(blocks(t.translate))
+    Affine3A::from_translation(blocks(t.translate))
         * about(
             pivot,
             Affine3A::from_rotation_translation(rotation, Vec3::ZERO)
                 * Affine3A::from_scale(Vec3::from(t.scale)),
-        );
+        )
+}
+
+/// A part's world transform: the block's corner, then its frame (its
+/// ancestors and its own animation, `frame_of`), then its static transform.
+fn place(pos: [i32; 3], frame: Affine3A, t: torch_mod_api::Transform) -> Transform {
     let corner = Affine3A::from_translation(Vec3::new(pos[0] as f32, pos[1] as f32, pos[2] as f32));
-    Transform::from_matrix(Mat4::from(corner * motion(animation, ticks) * local))
+    Transform::from_matrix(Mat4::from(corner * frame * local(t)))
 }
 
 /// The mesh for a part's geometry (at a scroll step), built once per
@@ -740,10 +824,14 @@ fn part_mesh(
     if let Some((s, step)) = scroll {
         key.push_str(&format!("|{}>{}@{step}", s.from, s.to));
     }
+    for (from, to) in &part.retexture {
+        key.push_str(&format!("|{from}={to}"));
+    }
     if let Some(hit) = cache.get(&key) {
         return hit.clone();
     }
     let built = geometry_quads(&part.geometry)
+        .map(|(quads, tint)| (retextured(quads, &part.retexture), tint))
         .map(|(quads, tint)| match scroll {
             Some((s, step)) => (scrolled(&quads, s, step).unwrap_or(quads), tint),
             None => (quads, tint),
@@ -786,6 +874,19 @@ fn scroll_step(scroll: &Scroll, ticks: f64) -> Option<u32> {
         (f64::from(scroll.per_tick) * ticks + f64::from(scroll.phase)).rem_euclid(1.0) as f32;
     let steps = tiles * SCROLL_STEPS;
     Some(((cycle * scroll.span * steps).round() as u32) % steps as u32)
+}
+
+/// `quads` with each `from` sprite's texels drawn from its `to` instead.
+fn retextured(
+    mut quads: Vec<BakedQuad>,
+    swaps: &std::collections::BTreeMap<String, String>,
+) -> Vec<BakedQuad> {
+    for (from, to) in swaps {
+        if let (Some(from), Some(to)) = (sprite_rect(from), sprite_rect(to)) {
+            quads = shift_quads(&quads, from, &[to], 0.0);
+        }
+    }
+    quads
 }
 
 /// `quads` with the texels of `scroll.from` moved `step` down `scroll.to`.
@@ -875,6 +976,56 @@ fn bilerp<const N: usize>(c: &[[f32; N]; 4], a: f32, b: f32) -> [f32; N] {
     })
 }
 
+/// A cuboid's pieces (sixteenths, `[from, to]`): itself, or with `tile`
+/// cut where it crosses a block's edge.
+fn cuboid_pieces(from: [f32; 3], to: [f32; 3], tile: bool) -> Vec<[[f32; 3]; 2]> {
+    let cuts = |a: f32, b: f32| -> Vec<f32> {
+        let mut at = vec![a];
+        if tile {
+            let mut edge = (a / 16.0).floor() * 16.0 + 16.0;
+            while edge < b - 1e-4 {
+                at.push(edge);
+                edge += 16.0;
+            }
+        }
+        at.push(b);
+        at
+    };
+    let (xs, ys, zs) = (
+        cuts(from[0], to[0]),
+        cuts(from[1], to[1]),
+        cuts(from[2], to[2]),
+    );
+    let mut out = Vec::new();
+    for x in xs.windows(2) {
+        for y in ys.windows(2) {
+            for z in zs.windows(2) {
+                out.push([[x[0], y[0], z[0]], [x[1], y[1], z[1]]]);
+            }
+        }
+    }
+    out
+}
+
+/// Vanilla's default UVs for a model element's face (`FaceBakery`), from
+/// the element's place in its block: the sprite's texels under it.
+fn default_face_uv(dir: usize, lo: [f32; 3], hi: [f32; 3]) -> [f32; 4] {
+    // Within the block the piece sits in.
+    let base = lo.map(|v| (v / 16.0).floor() * 16.0);
+    let (f, t): ([f32; 3], [f32; 3]) = (
+        std::array::from_fn(|i| lo[i] - base[i]),
+        std::array::from_fn(|i| hi[i] - base[i]),
+    );
+    match dir {
+        0 => [f[0], 16.0 - t[2], t[0], 16.0 - f[2]],
+        1 => [f[0], f[2], t[0], t[2]],
+        2 => [16.0 - t[0], 16.0 - t[1], 16.0 - f[0], 16.0 - f[1]],
+        3 => [f[0], 16.0 - t[1], t[0], 16.0 - f[1]],
+        4 => [f[2], 16.0 - t[1], t[2], 16.0 - f[1]],
+        _ => [16.0 - t[2], 16.0 - t[1], 16.0 - f[2], 16.0 - f[1]],
+    }
+}
+
 /// A geometry's quads (in blocks, 0..1 inside its cell) and the colour
 /// they're multiplied by.
 fn geometry_quads(geometry: &Geometry) -> Option<(Vec<BakedQuad>, [f32; 4])> {
@@ -920,47 +1071,66 @@ fn geometry_quads(geometry: &Geometry) -> Option<(Vec<BakedQuad>, [f32; 4])> {
             faces,
             tint,
             uv,
+            tile,
         } => {
             let sprite = crate::items::model::strip_namespace(texture);
-            let tile = crate::TEXTURE_MAP
+            let cell = crate::TEXTURE_MAP
                 .get()?
                 .get(crate::blocks::bake::sprite_key(sprite))
                 .copied()?;
-            let [u0, v0, u1, v1] = crate::blocks::bake::tile_uv_rect(tile, rows);
-            let rect = uv.unwrap_or([0.0, 0.0, 16.0, 16.0]);
+            let [u0, v0, u1, v1] = crate::blocks::bake::tile_uv_rect(cell, rows);
             let lerp = |a: f32, b: f32, t: f32| a + (b - a) * (t / 16.0);
-            let (fu0, fv0, fu1, fv1) = (
-                lerp(u0, u1, rect[0]),
-                lerp(v0, v1, rect[1]),
-                lerp(u0, u1, rect[2]),
-                lerp(v0, v1, rect[3]),
-            );
-            let (a, b) = (blocks(*from), blocks(*to));
             let mut quads = Vec::new();
-            for dir in 0..6 {
-                if faces & (1 << dir) == 0 {
-                    continue;
+            for piece in cuboid_pieces(*from, *to, *tile) {
+                let (lo, hi) = (piece[0], piece[1]);
+                for dir in 0..6 {
+                    // Inner faces between pieces aren't drawn.
+                    let outer = [
+                        lo[1] == from[1],
+                        hi[1] == to[1],
+                        lo[2] == from[2],
+                        hi[2] == to[2],
+                        lo[0] == from[0],
+                        hi[0] == to[0],
+                    ];
+                    if faces & (1 << dir) == 0 || !outer[dir] {
+                        continue;
+                    }
+                    let rect = if *tile {
+                        default_face_uv(dir, lo, hi)
+                    } else {
+                        uv.unwrap_or([0.0, 0.0, 16.0, 16.0])
+                    };
+                    let (fu0, fv0, fu1, fv1) = (
+                        lerp(u0, u1, rect[0]),
+                        lerp(v0, v1, rect[1]),
+                        lerp(u0, u1, rect[2]),
+                        lerp(v0, v1, rect[3]),
+                    );
+                    let pos = crate::items::model::face_positions(
+                        blocks(lo).to_array(),
+                        blocks(hi).to_array(),
+                        dir,
+                    );
+                    let d = crate::blocks::rotation::DIR_VEC[dir];
+                    quads.push(BakedQuad {
+                        pos,
+                        uv: [[fu0, fv0], [fu0, fv1], [fu1, fv1], [fu1, fv0]],
+                        normal: [d[0] as f32, d[1] as f32, d[2] as f32],
+                        face: dir as u8,
+                        cull: None,
+                        shaded: true,
+                        tint: -1,
+                        opaque: false,
+                    });
                 }
-                let pos = crate::items::model::face_positions(a.to_array(), b.to_array(), dir);
-                let uvs = [[fu0, fv0], [fu0, fv1], [fu1, fv1], [fu1, fv0]];
-                let d = crate::blocks::rotation::DIR_VEC[dir];
-                quads.push(BakedQuad {
-                    pos,
-                    uv: uvs,
-                    normal: [d[0] as f32, d[1] as f32, d[2] as f32],
-                    face: dir as u8,
-                    cull: None,
-                    shaded: true,
-                    tint: -1,
-                    opaque: false,
-                });
             }
             let argb = *tint;
             let channel = |shift: u32| ((argb >> shift) & 0xFF) as f32 / 255.0;
             Some((quads, [channel(16), channel(8), channel(0), channel(24)]))
         }
         // Drawn from the item's own mesh or the font, not block quads.
-        Geometry::Item { .. } | Geometry::Text { .. } => None,
+        Geometry::Item { .. } | Geometry::Text { .. } | Geometry::Joint => None,
     }
 }
 
@@ -1093,9 +1263,8 @@ mod tests {
         // 10 ticks: a quarter turn about the block's centre line.
         let t = place(
             [10, 64, 0],
+            motion(&spin, 10.0),
             torch_mod_api::Transform::default(),
-            &spin,
-            10.0,
         );
         let corner = t.transform_point(Vec3::ZERO);
         assert!(
@@ -1110,11 +1279,72 @@ mod tests {
     fn a_static_part_sits_in_its_block() {
         let t = place(
             [1, 2, 3],
+            motion(&Animation::None, 50.0),
             torch_mod_api::Transform::default(),
-            &Animation::None,
-            50.0,
         );
         assert!((t.transform_point(Vec3::ZERO) - Vec3::new(1.0, 2.0, 3.0)).length() < 1e-5);
+    }
+
+    #[test]
+    fn a_turn_runs_between_its_keys_and_holds_at_the_ends() {
+        let keys = [[100.0, 0.0], [110.0, 90.0], [130.0, 45.0]];
+        assert_eq!(keyed(&keys, 50.0), 0.0);
+        assert_eq!(keyed(&keys, 105.0), 45.0);
+        assert_eq!(keyed(&keys, 120.0), 67.5);
+        assert_eq!(keyed(&keys, 900.0), 45.0);
+        assert_eq!(keyed(&[], 1.0), 0.0);
+    }
+
+    #[test]
+    fn a_child_part_follows_its_parent_s_turn() {
+        use torch_mod_api::{Geometry, Part};
+        let turn = |pivot: [f32; 3], degrees: f32| Animation::Turn {
+            axis: [0.0, 1.0, 0.0],
+            pivot,
+            keys: vec![[0.0, degrees]],
+        };
+        let cube = || {
+            Part::of(Geometry::Block {
+                block: "minecraft:stone".into(),
+                props: Default::default(),
+            })
+        };
+        // An arm turned a quarter about the block's centre; its hand, a
+        // block out along +X, turned a quarter more about the arm's end.
+        let arm = cube().with_animation(turn([8.0, 8.0, 8.0], 90.0));
+        let mut hand = cube()
+            .with_parent(0)
+            .with_animation(turn([24.0, 8.0, 8.0], 90.0));
+        hand.transform.translate = [16.0, 0.0, 0.0];
+        let skeleton = joints(&[arm, hand.clone()]);
+        assert!(chain_moves(&skeleton, 1));
+        let t = place([0; 3], frame_of(&skeleton, 1, 0.0), hand.transform);
+        // The hand's centre (1.5, 0.5, 0.5) unturned: its own quarter turn
+        // keeps it on the pivot line; the arm's carries it to (0.5, _, -0.5).
+        let centre = t.transform_point(Vec3::splat(0.5));
+        assert!(
+            (centre - Vec3::new(0.5, 0.5, -0.5)).length() < 1e-4,
+            "{centre}"
+        );
+        // A parent later in the rig is ignored (no cycles).
+        let looped = joints(&[cube().with_parent(1), cube()]);
+        assert_eq!(looped[0].parent, None);
+    }
+
+    #[test]
+    fn a_tiled_cuboid_is_cut_at_block_edges_with_each_piece_s_texels() {
+        // A tank's fluid: 2 blocks tall, a 12-wide column.
+        let pieces = cuboid_pieces([2.0, 1.0, 2.0], [14.0, 31.0, 14.0], true);
+        assert_eq!(pieces.len(), 2);
+        assert_eq!(pieces[0], [[2.0, 1.0, 2.0], [14.0, 16.0, 14.0]]);
+        assert_eq!(pieces[1], [[2.0, 16.0, 2.0], [14.0, 31.0, 14.0]]);
+        // The upper piece's north face: y 0 to 15 in its block.
+        assert_eq!(
+            default_face_uv(2, pieces[1][0], pieces[1][1]),
+            [2.0, 1.0, 14.0, 16.0]
+        );
+        // Untiled, it stays whole.
+        assert_eq!(cuboid_pieces([0.0; 3], [16.0, 40.0, 16.0], false).len(), 1);
     }
 
     /// A unit quad whose `t` runs with b (corner 0 to 1), `v[0]` to `v[1]`.
