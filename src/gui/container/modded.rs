@@ -181,6 +181,7 @@ fn draw_screen(
             id: button,
             right: ctx.input.right_click,
             shift: ctx.input.shift,
+            ctrl: ctx.input.ctrl,
         });
     }
     let ui = &mut state.container.plugin;
@@ -220,6 +221,7 @@ fn draw_screen(
                 slot,
                 right: matches!(op, ClickOperation::Pickup(PickupClick::Right { .. })),
                 shift: matches!(op, ClickOperation::QuickMove(_)),
+                ctrl: ctx.input.ctrl,
             });
             false
         });

@@ -532,6 +532,7 @@ mod tests {
             id: "toggle".into(),
             right: false,
             shift: false,
+            ctrl: false,
         })
         .screen
         .unwrap();

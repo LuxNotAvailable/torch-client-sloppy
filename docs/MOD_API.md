@@ -184,9 +184,9 @@ says `screen` (state the server sent). It answers a
   (`renderLabels`'s other strings: `text`, `x`, `y`, `color`, `shadow`).
 
 `screen_input` gets a `ScreenEvent` (`screen`, the `ScreenView`, and
-`input`: `{"kind": "button", "id", "right", "shift"}`, `{"kind": "text",
+`input`: `{"kind": "button", "id", "right", "shift", "ctrl"}`, `{"kind": "text",
 "id", "text"}`, `{"kind": "submit", ...}`, `{"kind": "scroll", "id",
-"value"}`, `{"kind": "slot_click", "slot", "right", "shift"}` or
+"value"}`, `{"kind": "slot_click", "slot", "right", "shift", "ctrl"}` or
 `{"kind": "key", "key": "key.keyboard.escape", "shift", "ctrl"}`). Keys come while no text field has focus, before the client
 acts on them: Java's `keyPressed`. Answer `consumed` to keep the client
 from acting (Escape won't close), `close` to close the screen.
@@ -214,7 +214,8 @@ Keys reach plugins in the world and on menu screens (Java's
 is Java's `while (KEY.consumeClick())` body: what Java
 sends with `PacketDistributor.sendToServer` a plugin sends with
 `host::send_to_server(channel, body)`, writing the body with
-`torch_mod_api::buf::Writer` as the payload's `StreamCodec` writes it.
+`torch_mod_api::buf::Writer` as the payload's `StreamCodec` writes it
+(a `CompoundTag` with `w.nbt(&buf::Tag::compound([("action", "sort".into())]))`).
 A plugin may send on its own namespace's channels and on its `channels`;
 a library mod's channel (`sophisticatedcore:transfer_items` from the
 backpacks plugin) goes in `channels`. Packets go out on the next client

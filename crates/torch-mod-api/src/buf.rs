@@ -198,6 +198,70 @@ impl<'a> Reader<'a> {
     }
 }
 
+/// An NBT tag to write ([`Writer::nbt`]), typed as Java's `Tag`s are (JSON,
+/// what [`Reader::nbt`] gives, can't tell a byte from an int).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Tag {
+    Byte(i8),
+    Short(i16),
+    Int(i32),
+    Long(i64),
+    Float(f32),
+    Double(f64),
+    ByteArray(Vec<i8>),
+    String(String),
+    /// Elements of one type (Java's `ListTag`).
+    List(Vec<Tag>),
+    /// Entries in order (Java's `CompoundTag`).
+    Compound(Vec<(String, Tag)>),
+    IntArray(Vec<i32>),
+    LongArray(Vec<i64>),
+}
+
+impl Tag {
+    /// A `CompoundTag` from `(name, tag)` pairs:
+    /// `Tag::compound([("action", Tag::from("sort"))])`.
+    pub fn compound<K: Into<String>>(entries: impl IntoIterator<Item = (K, Tag)>) -> Tag {
+        Tag::Compound(entries.into_iter().map(|(k, v)| (k.into(), v)).collect())
+    }
+
+    fn id(&self) -> u8 {
+        match self {
+            Tag::Byte(_) => 1,
+            Tag::Short(_) => 2,
+            Tag::Int(_) => 3,
+            Tag::Long(_) => 4,
+            Tag::Float(_) => 5,
+            Tag::Double(_) => 6,
+            Tag::ByteArray(_) => 7,
+            Tag::String(_) => 8,
+            Tag::List(_) => 9,
+            Tag::Compound(_) => 10,
+            Tag::IntArray(_) => 11,
+            Tag::LongArray(_) => 12,
+        }
+    }
+}
+
+impl From<&str> for Tag {
+    fn from(v: &str) -> Tag {
+        Tag::String(v.to_owned())
+    }
+}
+
+impl From<i32> for Tag {
+    fn from(v: i32) -> Tag {
+        Tag::Int(v)
+    }
+}
+
+impl From<bool> for Tag {
+    /// Java's `putBoolean`: a byte.
+    fn from(v: bool) -> Tag {
+        Tag::Byte(i8::from(v))
+    }
+}
+
 /// Writes a payload front to back, as `FriendlyByteBuf.write*` do.
 #[derive(Clone, Debug, Default)]
 pub struct Writer {
@@ -294,6 +358,74 @@ impl Writer {
     pub fn uuid(&mut self, v: u128) -> &mut Self {
         self.i64((v >> 64) as i64).i64(v as i64)
     }
+
+    /// `writeNbt` (`ByteBufCodecs.COMPOUND_TAG`, `TRUSTED_TAG`): network
+    /// NBT, the root's type then its payload, no name.
+    pub fn nbt(&mut self, tag: &Tag) -> &mut Self {
+        self.u8(tag.id());
+        self.nbt_payload(tag)
+    }
+
+    /// `writeNbt(null)`: no tag.
+    pub fn nbt_none(&mut self) -> &mut Self {
+        self.u8(0)
+    }
+
+    fn nbt_string(&mut self, v: &str) -> &mut Self {
+        // Modified UTF-8 matches UTF-8 for text without NULs or astral
+        // characters: ids and the like.
+        self.bytes.extend((v.len() as u16).to_be_bytes());
+        self.bytes.extend(v.as_bytes());
+        self
+    }
+
+    fn nbt_payload(&mut self, tag: &Tag) -> &mut Self {
+        match tag {
+            Tag::Byte(v) => self.u8(*v as u8),
+            Tag::Short(v) => self.i16(*v),
+            Tag::Int(v) => self.i32(*v),
+            Tag::Long(v) => self.i64(*v),
+            Tag::Float(v) => self.f32(*v),
+            Tag::Double(v) => self.f64(*v),
+            Tag::ByteArray(v) => {
+                self.i32(v.len() as i32);
+                self.bytes.extend(v.iter().map(|b| *b as u8));
+                self
+            }
+            Tag::String(v) => self.nbt_string(v),
+            Tag::List(v) => {
+                // An empty list is of `END`, as Java writes it.
+                self.u8(v.first().map_or(0, Tag::id));
+                self.i32(v.len() as i32);
+                for t in v {
+                    self.nbt_payload(t);
+                }
+                self
+            }
+            Tag::Compound(entries) => {
+                for (name, t) in entries {
+                    self.u8(t.id());
+                    self.nbt_string(name);
+                    self.nbt_payload(t);
+                }
+                self.u8(0)
+            }
+            Tag::IntArray(v) => {
+                self.i32(v.len() as i32);
+                for i in v {
+                    self.i32(*i);
+                }
+                self
+            }
+            Tag::LongArray(v) => {
+                self.i32(v.len() as i32);
+                for i in v {
+                    self.i64(*i);
+                }
+                self
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -338,5 +470,35 @@ mod tests {
         assert_eq!(r.uuid(), Some(7 << 64 | 9));
         assert_eq!(r.f32(), Some(1.5));
         assert_eq!(r.remaining(), 0);
+    }
+
+    /// Sophisticated's `sendToServer(data -> data.putString("action",
+    /// "sort"))`: network NBT as Java writes it, and read back.
+    #[test]
+    fn writes_network_nbt() {
+        let mut w = Writer::new();
+        w.nbt(&Tag::compound([("action", Tag::from("sort"))]));
+        let mut want = vec![10, 8, 0, 6];
+        want.extend(b"action");
+        want.extend([0, 4]);
+        want.extend(b"sort");
+        want.push(0);
+        assert_eq!(w.bytes, want);
+
+        let mut w = Writer::new();
+        w.nbt(&Tag::compound([
+            ("n", Tag::Int(5)),
+            ("l", Tag::List(vec![Tag::Short(1), Tag::Short(2)])),
+            ("e", Tag::List(vec![])),
+            ("b", Tag::from(true)),
+        ]));
+        let read = Reader::new(&w.bytes).nbt().unwrap();
+        assert_eq!(
+            read,
+            serde_json::json!({"n": 5, "l": [1, 2], "e": [], "b": 1})
+        );
+        let mut w = Writer::new();
+        w.nbt_none();
+        assert_eq!(Reader::new(&w.bytes).nbt(), Some(Value::Null));
     }
 }

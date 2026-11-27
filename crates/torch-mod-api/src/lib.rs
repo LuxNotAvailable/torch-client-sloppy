@@ -884,6 +884,8 @@ pub enum ScreenInput {
         right: bool,
         #[serde(default)]
         shift: bool,
+        #[serde(default)]
+        ctrl: bool,
     },
     /// A text field's text changed (`EditBox.setResponder`).
     Text { id: String, text: String },
@@ -899,6 +901,8 @@ pub enum ScreenInput {
         right: bool,
         #[serde(default)]
         shift: bool,
+        #[serde(default)]
+        ctrl: bool,
     },
     /// A key pressed with no text field focused (`keyPressed`): `key` as
     /// the options name it (`key.keyboard.escape`). Answer `consumed`
