@@ -55,7 +55,7 @@ pub(super) struct Runtime {
     tick: Option<TypedFunc<(i32, i32), i64>>,
     entity_motion: Option<TypedFunc<(i32, i32), i64>>,
     key: Option<TypedFunc<(i32, i32), i64>>,
-    button: Option<TypedFunc<(i32, i32), i64>>,
+    screen_input: Option<TypedFunc<(i32, i32), i64>>,
     pub(super) registration: torch_mod_api::Registration,
 }
 
@@ -248,8 +248,8 @@ impl Runtime {
         let key = instance
             .get_typed_func::<(i32, i32), i64>(&store, "torch_key")
             .ok();
-        let button = instance
-            .get_typed_func::<(i32, i32), i64>(&store, "torch_button")
+        let screen_input = instance
+            .get_typed_func::<(i32, i32), i64>(&store, "torch_screen_input")
             .ok();
         let mut runtime = Runtime {
             store,
@@ -266,7 +266,7 @@ impl Runtime {
             tick,
             entity_motion,
             key,
-            button,
+            screen_input,
             registration: torch_mod_api::Registration::default(),
         };
         let packed = runtime.call_fuelled(|store| init.call(store, ()))?;
@@ -277,15 +277,18 @@ impl Runtime {
         Ok(runtime)
     }
 
-    /// A button on its screen pressed: the screen to show now, or `None`.
-    pub(super) fn button(&mut self, view: &[u8]) -> Result<Option<torch_mod_api::Screen>, String> {
-        let func = self.button.ok_or("it has no torch_button")?;
-        let (ptr, len) = self.put(view)?;
+    /// Input on its screen: what it does about it.
+    pub(super) fn screen_input(
+        &mut self,
+        event: &[u8],
+    ) -> Result<torch_mod_api::ScreenAnswer, String> {
+        let func = self.screen_input.ok_or("it has no torch_screen_input")?;
+        let (ptr, len) = self.put(event)?;
         let packed = self.call_fuelled(|store| func.call(store, (ptr, len)));
         let free = self.free;
         let _ = self.call_fuelled(|store| free.call(store, (ptr, len)));
         let bytes = self.take_result(packed?)?;
-        serde_json::from_slice(&bytes).map_err(|e| format!("its screen after a button: {e}"))
+        serde_json::from_slice(&bytes).map_err(|e| format!("its screen answer: {e}"))
     }
 
     /// The packets it sent since the last call, oldest first.

@@ -53,7 +53,7 @@ A plugin registers handlers in `init`:
 | `fluid` | source fluid ids in `fluids` (`mymod:honey`; its flowing form asks as it) | once per fluid, then kept | a `FluidLook` (`still`, `flowing`: block atlas sprites; `tint`: `0xRRGGBB`), or `null` to leave it to the client |
 | `item_tints` | item ids in `tinted_items` (`mymod:custom_egg`) | once per item, then kept | the colours of its tint indices (`tintindex`), `0xRRGGBB` each |
 | `screen` | menu type ids in `screens` (`mymod:press`) | when the menu opens, and when its data slots or slot count change | a `Screen`, or `null` for the client's plain grid |
-| `button` | its screens' buttons | a button pressed | a `Screen` to show from then on, or `null` to keep it |
+| `screen_input` | its screens' input | a button pressed, a text field edited or submitted, a scroll bar moved, a key pressed | a `ScreenAnswer`: the `screen` from then on (or `null`), `consumed`, `close` |
 | `key` | key bindings in `keys` (Java's `KeyMapping`s) | each press, in the world or in a modded menu | nothing; it tells the server with `host::send_to_server` |
 
 The registration also lists:
@@ -129,10 +129,14 @@ can't depend on position or time, since the answer is kept per state.
 
 `screen` is Java's `MenuScreens.register` plus the screen class. It gets a
 `ScreenView` (`{"menu": ..., "title": ..., "extra": [...], "data": [...],
-"slots": 38}`): `extra` is the data NeoForge opened the menu with (the
-buffer the mod's `IContainerFactory` reads, often a block position; read it
-with `buf::Reader`), `data` the menu's `ContainerData` slots by index (32;
-unsent ones read 0), `slots` how many slots the server sent. It answers a
+"slots": 38, "window": [427, 240]}`): `extra` is the data NeoForge opened
+the menu with (the buffer the mod's `IContainerFactory` reads, often a
+block position; read it with `buf::Reader`), `data` the menu's
+`ContainerData` slots by index (32; unsent ones read 0), `slots` how many
+slots the server sent, `window` the GUI's size in GUI pixels (Java's
+`getGuiScaledWidth`/`Height`, for screens that fit themselves to it). It
+is asked again when any of those change, or when a payload's `Redraw`
+says `screen` (state the server sent). It answers a
 `Screen`, an `AbstractContainerScreen` in GUI pixels from its top left:
 
 - `width`, `height`: `imageWidth`, `imageHeight`; the client centres it.
@@ -151,14 +155,39 @@ unsent ones read 0), `slots` how many slots the server sent. It answers a
   `hover` (blits under the cursor), `label`, `tooltip` (lines) and
   `menu_button` (an id the client sends as vanilla's container button
   click, Java's `clickMenuButton`). A press first sends `menu_button`,
-  then calls `button` with a `ButtonView` (`button`, `right`, `shift`,
-  `screen`: the `ScreenView`); a packet the mod's screen sends goes out
-  with `host::send_to_server`.
+  then calls `screen_input`; a packet the mod's screen sends goes out
+  with `host::send_to_server`. Toggles and tabs are buttons whose look the
+  plugin changes in its answer.
+- `text_fields`: `EditBox`es (`id`, `x`, `y`, `width`, `height`, `text`,
+  `max_length`, `hint`, `bordered`). The client edits them; each change is
+  a `text` input and Enter a `submit`. A different `text` in a later
+  answer replaces what was typed (a cleared search).
+- `scrolls`: scroll bars (`id`, the track's `x`, `y`, `width`, `height`,
+  `value` of `0..=max`, `area` the wheel works over, `thumb` blits and
+  `thumb_height`; vanilla's creative scroller when no `thumb`). The wheel
+  or a drag moves it and reports a `scroll` input; the plugin answers the
+  screen scrolled (its slots moved), as Java's panels lay themselves out.
+- `overlay`: drawn over the slots and their items, in order: `blit`s,
+  `fill`s (`x`, `y`, `width`, `height`, ARGB `color`) and `item`s (`item`,
+  `count`, `x`, `y`, drawn as a slot would): `renderSlotOverlays`, ghost
+  items, a tab's contents.
+- `plugin_slots`: menu slots whose clicks are the plugin's (Java handles
+  them on the client: a filter's ghost slots). A click on one moves
+  nothing and is a `slot_click` input.
 - `title_at`, `inventory_label_at` (default `[8, 6]` and
   `[8, height - 94]`), `hide_title`, `hide_inventory_label`, and `texts`
   (`renderLabels`'s other strings: `text`, `x`, `y`, `color`, `shadow`).
 
-The client draws the blits, then the slots and items, then the labels, and
+`screen_input` gets a `ScreenEvent` (`screen`, the `ScreenView`, and
+`input`: `{"kind": "button", "id", "right", "shift"}`, `{"kind": "text",
+"id", "text"}`, `{"kind": "submit", ...}`, `{"kind": "scroll", "id",
+"value"}`, `{"kind": "slot_click", "slot", "right", "shift"}` or
+`{"kind": "key", "key": "key.keyboard.escape", "shift", "ctrl"}`). Keys come while no text field has focus, before the client
+acts on them: Java's `keyPressed`. Answer `consumed` to keep the client
+from acting (Escape won't close), `close` to close the screen.
+
+The client draws the background, the buttons, text fields and scroll
+bars, then the slots and items, the overlay, then the labels, and
 handles clicks as on vanilla menus. Shift-click isn't predicted (the mod's
 `quickMoveStack` runs on the server; its answer moves the items). A menu
 type no plugin registers opens as a plain grid: its slots nine to a row
@@ -184,9 +213,7 @@ sends with `PacketDistributor.sendToServer` a plugin sends with
 A plugin may send on its own namespace's channels and on its `channels`;
 packets go out on the next client tick, in order.
 
-Planned for later versions: screen widgets beyond buttons (text fields,
-scroll bars), HUD elements,
-item renderers.
+Planned for later versions: HUD elements, item renderers.
 
 ### What a plugin gets: `BlockEntityView`
 
@@ -347,7 +374,7 @@ Data crosses as UTF-8 JSON in the plugin's memory.
 | `torch_item_tints` | `(ptr: i32, len: i32) -> i64` | an `ItemView` (`{"item": ...}`) in, an array of colours out |
 | `torch_screen` | `(ptr: i32, len: i32) -> i64` | a `ScreenView` in, a `Screen` or `null` out |
 | `torch_key` | `(ptr: i32, len: i32) -> i64` | a `KeyView` in, `null` out |
-| `torch_button` | `(ptr: i32, len: i32) -> i64` | a `ButtonView` in, a `Screen` or `null` out |
+| `torch_screen_input` | `(ptr: i32, len: i32) -> i64` | a `ScreenEvent` in, a `ScreenAnswer` out |
 
 All but `torch_api`, `torch_alloc`, `torch_free` and `torch_init` are
 optional: a plugin built before a hook existed lacks its export.

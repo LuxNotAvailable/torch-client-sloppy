@@ -25,6 +25,8 @@ pub struct ContainerUi {
     pub beacon: BeaconPick,
     pub merchant_title: Option<TitleCache>,
     pub anvil: anvil::AnvilUi,
+    /// A plugin screen's text fields and scroll drag.
+    pub plugin: modded::PluginUi,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -50,6 +52,7 @@ impl Default for ContainerUi {
             beacon: BeaconPick::default(),
             merchant_title: None,
             anvil: anvil::AnvilUi::default(),
+            plugin: modded::PluginUi::default(),
         }
     }
 }

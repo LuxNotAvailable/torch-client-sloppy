@@ -160,6 +160,10 @@ pub struct Redraw {
     /// Block entity positions whose [`Plugin::block_entity`] rigs change.
     #[serde(default)]
     pub block_entities: Vec<[i32; 3]>,
+    /// The open screen changes: the client asks [`Plugin::screen`] again
+    /// (state the server sent it, as a storage's settings).
+    #[serde(default)]
+    pub screen: bool,
 }
 
 /// An entity as the plugin sees it, when it appears.
@@ -679,6 +683,10 @@ pub struct ScreenView {
     /// How many slots the server sent, the player's 36 included.
     #[serde(default)]
     pub slots: usize,
+    /// The window in GUI pixels (Java's `getGuiScaledWidth`/`Height`):
+    /// screens that size themselves to it (a tall storage) read it.
+    #[serde(default)]
+    pub window: [i32; 2],
 }
 
 /// A menu screen: Java's `AbstractContainerScreen`. Coordinates are GUI
@@ -715,9 +723,106 @@ pub struct Screen {
     #[serde(default)]
     pub texts: Vec<ScreenText>,
     /// The screen's buttons (`addRenderableWidget`), over the background
-    /// and under the slots ([`Plugin::button`]).
+    /// and under the slots ([`Plugin::screen_input`]).
     #[serde(default)]
     pub buttons: Vec<ScreenButton>,
+    /// Drawn over the slots and their items, in order: slot overlays and
+    /// highlights (`renderSlotOverlays`), ghost items, a tab's contents.
+    #[serde(default)]
+    pub overlay: Vec<Draw>,
+    /// Text boxes (`EditBox`): the client edits them and reports each
+    /// change and Enter ([`ScreenInput::Text`], [`ScreenInput::Submit`]).
+    #[serde(default)]
+    pub text_fields: Vec<TextField>,
+    /// Scroll bars: the wheel over `area` or a drag of the thumb moves
+    /// `value` and reports it ([`ScreenInput::Scroll`]); the plugin
+    /// answers the screen scrolled (its slots moved, say).
+    #[serde(default)]
+    pub scrolls: Vec<ScrollBar>,
+    /// Menu slots whose clicks are the plugin's, not the server's (Java
+    /// handles them on the client: a filter's ghost slots): a click on one
+    /// is a [`ScreenInput::SlotClick`] and moves nothing.
+    #[serde(default)]
+    pub plugin_slots: Vec<u32>,
+}
+
+/// Something drawn on a screen's overlay.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Draw {
+    Blit(Blit),
+    /// `GuiGraphics.fill`: a rectangle of `color` (ARGB).
+    Fill {
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+        color: u32,
+    },
+    /// An item as a slot draws it (`renderItem` and its count), at its
+    /// top left; a count of 1 shows none.
+    Item {
+        item: String,
+        #[serde(default = "one_item")]
+        count: u32,
+        x: i32,
+        y: i32,
+    },
+}
+
+fn one_item() -> u32 {
+    1
+}
+
+/// A text box (`EditBox`).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct TextField {
+    /// Its id, the plugin's own (`search`).
+    pub id: String,
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+    /// Its text. The client keeps what the player types; a different
+    /// `text` in a new answer replaces it (a cleared search).
+    #[serde(default)]
+    pub text: String,
+    /// `setMaxLength`; 32 when 0.
+    #[serde(default)]
+    pub max_length: usize,
+    /// Grey text shown while it's empty (`setHint`).
+    #[serde(default)]
+    pub hint: String,
+    /// Vanilla's black box with a grey border (`setBordered`); off for a
+    /// field drawn on the plugin's own background.
+    #[serde(default)]
+    pub bordered: bool,
+}
+
+/// A scroll bar: a thumb on a track.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ScrollBar {
+    /// Its id, the plugin's own (`rows`).
+    pub id: String,
+    /// The track, in GUI pixels from the screen's top left.
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+    /// Where it is, 0 to `max` steps (rows, say).
+    pub value: i32,
+    pub max: i32,
+    /// Where the wheel scrolls it (the panel it moves); the track when
+    /// left out.
+    #[serde(default)]
+    pub area: Option<[i32; 4]>,
+    /// The thumb's look, drawn at its place (blits at `0, 0` are its top
+    /// left); vanilla's creative scroller when empty.
+    #[serde(default)]
+    pub thumb: Vec<Blit>,
+    /// The thumb's height in pixels; 15 (the creative scroller's) when 0.
+    #[serde(default)]
+    pub thumb_height: i32,
 }
 
 /// A button on a screen: Java's `Button`, `ImageButton` or a widget that
@@ -750,19 +855,90 @@ pub struct ScreenButton {
     pub menu_button: Option<i32>,
 }
 
-/// A button pressed on a plugin's screen ([`Plugin::button`]).
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct ButtonView {
-    /// The button's id.
-    pub button: String,
-    /// Right click rather than left.
-    #[serde(default)]
-    pub right: bool,
-    /// Shift held.
-    #[serde(default)]
-    pub shift: bool,
+/// Input on a plugin's screen ([`Plugin::screen_input`]).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ScreenEvent {
     /// The screen as `screen` last saw it.
     pub screen: ScreenView,
+    pub input: ScreenInput,
+}
+
+/// What happened on a screen.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ScreenInput {
+    /// A button pressed (after the client sends its `menu_button`).
+    Button {
+        id: String,
+        #[serde(default)]
+        right: bool,
+        #[serde(default)]
+        shift: bool,
+    },
+    /// A text field's text changed (`EditBox.setResponder`).
+    Text { id: String, text: String },
+    /// Enter in a text field.
+    Submit { id: String, text: String },
+    /// A scroll bar moved to `value`.
+    Scroll { id: String, value: i32 },
+    /// A click on one of its `plugin_slots` (`slotClicked` handled on the
+    /// client).
+    SlotClick {
+        slot: u32,
+        #[serde(default)]
+        right: bool,
+        #[serde(default)]
+        shift: bool,
+    },
+    /// A key pressed with no text field focused (`keyPressed`): `key` as
+    /// the options name it (`key.keyboard.escape`). Answer `consumed`
+    /// to keep the client from acting on it (Escape closing the screen).
+    Key {
+        key: String,
+        #[serde(default)]
+        shift: bool,
+        #[serde(default)]
+        ctrl: bool,
+    },
+}
+
+/// What a plugin does with screen input.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ScreenAnswer {
+    /// The screen from now on (a toggled button, scrolled slots); `None`
+    /// keeps it.
+    #[serde(default)]
+    pub screen: Option<Screen>,
+    /// The input was the plugin's: the client doesn't act on it.
+    #[serde(default)]
+    pub consumed: bool,
+    /// Close the screen (as Escape would).
+    #[serde(default)]
+    pub close: bool,
+}
+
+impl ScreenAnswer {
+    /// A new screen.
+    pub fn screen(screen: Screen) -> ScreenAnswer {
+        ScreenAnswer {
+            screen: Some(screen),
+            ..ScreenAnswer::default()
+        }
+    }
+
+    /// Consumed, nothing else changed.
+    pub fn consumed() -> ScreenAnswer {
+        ScreenAnswer {
+            consumed: true,
+            ..ScreenAnswer::default()
+        }
+    }
+
+    /// This answer with `screen` as the screen from now on.
+    pub fn with_screen(mut self, screen: Option<Screen>) -> ScreenAnswer {
+        self.screen = screen;
+        self
+    }
 }
 
 /// One `GuiGraphics.blit`: a `width` x `height` piece of `texture` from
@@ -885,13 +1061,12 @@ pub trait Plugin {
         None
     }
 
-    /// A button on its screen pressed (after the client sends its
-    /// `menu_button`, if it has one). Tell the server with
-    /// [`host::send_to_server`]; a `Screen` answered replaces the shown one
-    /// (a toggled button's look), `None` keeps it.
-    fn button(&mut self, view: &ButtonView) -> Option<Screen> {
-        let _ = view;
-        None
+    /// Input on its screen: a button, a text field, a scroll bar, a key.
+    /// Tell the server with [`host::send_to_server`]; answer the screen as
+    /// it now looks, whether the input was consumed, or close it.
+    fn screen_input(&mut self, event: &ScreenEvent) -> ScreenAnswer {
+        let _ = event;
+        ScreenAnswer::default()
     }
 
     /// A key it registered in `keys`, pressed: Java's `consumeClick` loop
@@ -1228,17 +1403,17 @@ macro_rules! export_plugin {
         }
 
         #[unsafe(no_mangle)]
-        pub extern "C" fn torch_button(ptr: i32, len: i32) -> i64 {
-            // SAFETY: the host wrote the view into a buffer from torch_alloc.
+        pub extern "C" fn torch_screen_input(ptr: i32, len: i32) -> i64 {
+            // SAFETY: the host wrote the event into a buffer from torch_alloc.
             let input = unsafe { $crate::abi::input(ptr, len) };
-            let screen = match ::serde_json::from_slice::<$crate::ButtonView>(input) {
-                Ok(view) => PLUGIN.with(|p| p.borrow_mut().button(&view)),
+            let answer = match ::serde_json::from_slice::<$crate::ScreenEvent>(input) {
+                Ok(event) => PLUGIN.with(|p| p.borrow_mut().screen_input(&event)),
                 Err(e) => {
-                    $crate::host::log_line(&format!("unreadable button view: {e}"));
-                    None
+                    $crate::host::log_line(&format!("unreadable screen event: {e}"));
+                    $crate::ScreenAnswer::default()
                 }
             };
-            $crate::abi::pack(::serde_json::to_vec(&screen).unwrap_or_default())
+            $crate::abi::pack(::serde_json::to_vec(&answer).unwrap_or_default())
         }
 
         #[unsafe(no_mangle)]

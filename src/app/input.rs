@@ -1384,6 +1384,48 @@ pub(crate) fn toggle_screen(
         return;
     }
 
+    // A plugin's screen hears keys first (Java's `keyPressed`): one it
+    // consumes isn't the client's; a close it asks for is Escape's.
+    let (mut close_key, mut toggle_key) = (close_key, toggle_key);
+    if let Screen::Container(crate::session::ContainerKind::Modded(_)) = state.screen
+        && !state.container.plugin.typing()
+    {
+        let window = shared.0.lock().unwrap().session.container.container_id;
+        if crate::modapi::screens::is_open(window) {
+            let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+            let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
+            let inventory = state.keybinds.bound(Action::Inventory);
+            for code in keys.get_just_pressed() {
+                let bound = crate::gui::keybinds::Bound::Key(*code);
+                let name = bound.serialized_name();
+                if name == "key.keyboard.unknown" {
+                    continue;
+                }
+                let answer = crate::modapi::screens::input(
+                    window,
+                    torch_mod_api::ScreenInput::Key {
+                        key: name.to_owned(),
+                        shift,
+                        ctrl,
+                    },
+                );
+                if answer.consumed {
+                    close_key &= *code != KeyCode::Escape;
+                    toggle_key &= bound != inventory;
+                }
+                close_key |= answer.close;
+            }
+        }
+    }
+    // Only while its screen is still up: a stale one would open the pause
+    // menu.
+    let plugin_close = std::mem::take(&mut state.container.plugin.close);
+    close_key |= plugin_close
+        && matches!(
+            state.screen,
+            Screen::Container(crate::session::ContainerKind::Modded(_))
+        );
+
     let pause_key = false;
     let submit_key = state.screen.chat_open()
         && (keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::NumpadEnter));

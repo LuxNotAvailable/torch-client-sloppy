@@ -129,27 +129,30 @@ pub fn load(plugins: Vec<(String, Vec<u8>)>) {
     *PLUGINS.lock() = out;
 }
 
-/// A button pressed on a plugin's screen: the screen it shows now, if it
-/// says.
-fn button(view: &torch_mod_api::ButtonView) -> Option<torch_mod_api::Screen> {
+/// Input on a plugin's screen: what the plugin does about it.
+fn screen_input(event: &torch_mod_api::ScreenEvent) -> torch_mod_api::ScreenAnswer {
     let mut plugins = PLUGINS.lock();
-    let index = *plugins.screens.get(&view.screen.menu)?;
-    let input = serde_json::to_vec(view).ok()?;
-    let loaded = plugins.loaded.get_mut(index)?;
-    match loaded.runtime.button(&input) {
-        Ok(screen) => screen,
+    let Some(&index) = plugins.screens.get(&event.screen.menu) else {
+        return Default::default();
+    };
+    let (Ok(input), Some(loaded)) = (serde_json::to_vec(event), plugins.loaded.get_mut(index))
+    else {
+        return Default::default();
+    };
+    match loaded.runtime.screen_input(&input) {
+        Ok(answer) => answer,
         Err(e) => {
             loaded.failures += 1;
             if loaded.failures <= 3 {
                 crate::log_warn!(
                     "modapi",
-                    "{}: button {} of {}: {e}",
+                    "{}: {:?} on {}: {e}",
                     loaded.name,
-                    view.button,
-                    view.screen.menu
+                    event.input,
+                    event.screen.menu
                 );
             }
-            None
+            Default::default()
         }
     }
 }
@@ -235,6 +238,9 @@ pub fn on_payload(channel: &str, data: &[u8]) {
     };
     store::redraw(&redraw.block_entities);
     REDRAW_ENTITIES.lock().extend(redraw.entities);
+    if redraw.screen {
+        screens::refresh();
+    }
 }
 
 /// Modded entities' synced data the client could read, by entity id, then
@@ -495,7 +501,8 @@ mod tests {
     }
 
     #[test]
-    fn a_screen_button_tells_the_server_and_changes_the_screen() {
+    fn screen_input_tells_the_server_and_changes_the_screen() {
+        use torch_mod_api::{ScreenAnswer, ScreenEvent, ScreenInput};
         let mut runtime = runtime::Runtime::load("example", EXAMPLE).unwrap();
         let view = torch_mod_api::ScreenView {
             menu: "example:press".into(),
@@ -510,16 +517,42 @@ mod tests {
             (button.label.as_str(), button.menu_button),
             ("Start", Some(0))
         );
-        let press = torch_mod_api::ButtonView {
-            button: "toggle".into(),
-            screen: view,
-            ..Default::default()
+        assert_eq!(screen.text_fields[0].id, "name");
+        let mut send = |input: ScreenInput| -> ScreenAnswer {
+            let event = ScreenEvent {
+                screen: view.clone(),
+                input,
+            };
+            runtime
+                .screen_input(&serde_json::to_vec(&event).unwrap())
+                .unwrap()
         };
-        let after = runtime
-            .button(&serde_json::to_vec(&press).unwrap())
-            .unwrap()
-            .unwrap();
+        // The toggle: a new label and the output ringed.
+        let after = send(ScreenInput::Button {
+            id: "toggle".into(),
+            right: false,
+            shift: false,
+        })
+        .screen
+        .unwrap();
         assert_eq!(after.buttons[0].label, "Stop");
+        assert_eq!(after.overlay.len(), 1);
+        // Typing keeps the name; Escape then clears it instead of closing.
+        let typed = send(ScreenInput::Text {
+            id: "name".into(),
+            text: "Mill".into(),
+        });
+        assert_eq!(typed.screen.unwrap().text_fields[0].text, "Mill");
+        let escape = || ScreenInput::Key {
+            key: "key.keyboard.escape".into(),
+            shift: false,
+            ctrl: false,
+        };
+        let cleared = send(escape());
+        assert!(cleared.consumed && !cleared.close);
+        assert_eq!(cleared.screen.unwrap().text_fields[0].text, "");
+        // With no name, Escape is the client's.
+        assert!(!send(escape()).consumed);
         let sent = runtime.take_sent();
         assert_eq!(sent, [("example:press".to_owned(), vec![1])]);
     }
@@ -659,6 +692,7 @@ mod tests {
             extra: packed.to_be_bytes().to_vec(),
             data: vec![50, 100],
             slots: 38,
+            window: [427, 240],
         };
         let input = serde_json::to_vec(&view).unwrap();
         let screen = runtime.screen(&input).unwrap().unwrap();

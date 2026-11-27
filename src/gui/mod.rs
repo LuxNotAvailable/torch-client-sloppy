@@ -1265,6 +1265,8 @@ impl GuiState {
     pub fn anvil_typing(&self) -> bool {
         (self.screen == Screen::Container(ContainerKind::Anvil) && self.container.anvil.editable())
             || self.recipe_viewer.search_focused()
+            || (matches!(self.screen, Screen::Container(ContainerKind::Modded(_)))
+                && self.container.plugin.typing())
     }
 
     pub fn in_menu(&self) -> bool {

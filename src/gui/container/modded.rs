@@ -13,6 +13,25 @@ use super::{
 };
 use crate::gui::slots::{PLAYER_SLOTS, SLOT_PITCH, standard_inventory};
 
+/// A plugin screen's client-side widgets: its text fields (with the text
+/// the plugin last gave each), the scroll bar being dragged, and a close
+/// the plugin asked for. Reset when another window opens.
+#[derive(Default)]
+pub struct PluginUi {
+    window: i32,
+    fields: std::collections::HashMap<String, (crate::gui::widgets::TextBox, String)>,
+    drag: Option<String>,
+    /// The plugin answered `close`: the screen closes as Escape would.
+    pub close: bool,
+}
+
+impl PluginUi {
+    /// A text field has focus: keys are typing, not binds.
+    pub fn typing(&self) -> bool {
+        self.fields.values().any(|(f, _)| f.focused)
+    }
+}
+
 /// Where a hidden slot goes: off every screen.
 const HIDDEN: (f32, f32) = (-10_000.0, -10_000.0);
 
@@ -119,7 +138,9 @@ pub fn draw(
     let title: String = snap.container_title.iter().map(|s| &*s.text).collect();
     let data: Vec<i32> = snap.container_data.iter().map(|v| i32::from(*v)).collect();
     let count = snap.menu_slots.len();
-    let screen = crate::modapi::screens::current(snap.container_id, kind, &title, &data, count);
+    let gui = [ctx.vw as i32, ctx.vh as i32];
+    let screen =
+        crate::modapi::screens::current(snap.container_id, kind, &title, &data, count, gui);
     *PLACED.write() = match &screen {
         Some(screen) => screen_layout(screen, count, snap.container_player_start),
         None => plain_layout(count, snap.container_player_start),
@@ -144,14 +165,27 @@ fn draw_screen(
     for b in &screen.background {
         blit(p, b, (left, top));
     }
+    let mut events = Vec::new();
     let (pressed, tooltip) = draw_buttons(p, ctx, screen, (left, top));
     if let Some((button, menu_button)) = pressed {
         if let Some(id) = menu_button.and_then(|id| u8::try_from(id).ok()) {
             out.push(InvAction::ButtonClick(id));
         }
-        let shift = ctx.input.shift;
-        crate::modapi::screens::press(snap.container_id, &button, ctx.input.right_click, shift);
+        events.push(torch_mod_api::ScreenInput::Button {
+            id: button,
+            right: ctx.input.right_click,
+            shift: ctx.input.shift,
+        });
     }
+    let ui = &mut state.container.plugin;
+    if ui.window != snap.container_id {
+        *ui = PluginUi {
+            window: snap.container_id,
+            ..PluginUi::default()
+        };
+    }
+    text_fields(p, ctx, ui, screen, (left, top), &mut events);
+    scroll_bars(p, ctx, ui, screen, (left, top), &mut events);
     let hovered = slots::panel(
         p,
         Layout::Modded,
@@ -161,6 +195,39 @@ fn draw_screen(
         &mut state.slots,
         out,
     );
+    // Clicks on the plugin's own slots are its, not the server's (and any
+    // pickup the slot panel previewed is dropped).
+    if !screen.plugin_slots.is_empty() {
+        let before = events.len();
+        out.retain(|action| {
+            let InvAction::Click(op) = action else {
+                return true;
+            };
+            let Some(slot) = op.slot_num().map(u32::from) else {
+                return true;
+            };
+            if !screen.plugin_slots.contains(&slot) {
+                return true;
+            }
+            use azalea_inventory::operations::{ClickOperation, PickupClick};
+            events.push(torch_mod_api::ScreenInput::SlotClick {
+                slot,
+                right: matches!(op, ClickOperation::Pickup(PickupClick::Right { .. })),
+                shift: matches!(op, ClickOperation::QuickMove(_)),
+            });
+            false
+        });
+        if events.len() > before {
+            state.slots.cursor = None;
+        }
+    }
+    for d in &screen.overlay {
+        draw_overlay(p, d, (left, top));
+    }
+    for input in events {
+        let answer = crate::modapi::screens::input(snap.container_id, input);
+        state.container.plugin.close |= answer.close;
+    }
     if !screen.hide_title {
         let [x, y] = screen.title_at.unwrap_or([8, 6]);
         draw_title(p, &snap.container_title, left + x as f32, top + y as f32);
@@ -192,6 +259,156 @@ fn draw_screen(
         crate::gui::tooltip::draw_lines(p, &lines, m.x, m.y, ctx.vw, ctx.vh);
     }
     hovered
+}
+
+/// One overlay drawing.
+fn draw_overlay(p: &mut Painter, d: &torch_mod_api::Draw, (left, top): (f32, f32)) {
+    match d {
+        torch_mod_api::Draw::Blit(b) => blit(p, b, (left, top)),
+        torch_mod_api::Draw::Fill {
+            x,
+            y,
+            width,
+            height,
+            color,
+        } => p.fill(
+            left + *x as f32,
+            top + *y as f32,
+            *width as f32,
+            *height as f32,
+            *color,
+        ),
+        torch_mod_api::Draw::Item { item, count, x, y } => {
+            let (x, y) = (left + *x as f32, top + *y as f32);
+            p.item_icon(item.strip_prefix("minecraft:").unwrap_or(item), x, y);
+            let count = u8::try_from(*count).unwrap_or(u8::MAX);
+            p.item_decorations(x, y, count, 0, 0);
+        }
+    }
+}
+
+/// The screen's text fields: focused by a click, edited by the client,
+/// each change and Enter told to the plugin.
+fn text_fields(
+    p: &mut Painter,
+    ctx: &ScreenCtx,
+    ui: &mut PluginUi,
+    screen: &torch_mod_api::Screen,
+    (left, top): (f32, f32),
+    events: &mut Vec<torch_mod_api::ScreenInput>,
+) {
+    let frame = p.frame;
+    ui.fields
+        .retain(|id, _| screen.text_fields.iter().any(|f| &f.id == id));
+    for f in &screen.text_fields {
+        let (x, y, w, h) = (
+            left + f.x as f32,
+            top + f.y as f32,
+            f.width as f32,
+            f.height as f32,
+        );
+        let max = if f.max_length == 0 { 32 } else { f.max_length };
+        let (field, given) = ui.fields.entry(f.id.clone()).or_insert_with(|| {
+            let mut field = crate::gui::widgets::TextBox::new(max, &f.hint);
+            field.set_text(&f.text);
+            (field, f.text.clone())
+        });
+        // The plugin set new text (a cleared search).
+        if *given != f.text {
+            field.set_text(&f.text);
+            *given = f.text.clone();
+        }
+        field.max_len = max;
+        field.bordered = f.bordered;
+        field.placeholder.clone_from(&f.hint);
+        if ctx.input.left_click {
+            field.focused = ctx.hovering(x, y, w, h);
+        }
+        field.handle_mouse(ctx.input, &p.atlas.font, x, y, w, h);
+        if field.focused {
+            if field.handle_input(ctx.input) {
+                given.clone_from(&field.text);
+                events.push(torch_mod_api::ScreenInput::Text {
+                    id: f.id.clone(),
+                    text: field.text.clone(),
+                });
+            }
+            if ctx.input.enter {
+                events.push(torch_mod_api::ScreenInput::Submit {
+                    id: f.id.clone(),
+                    text: field.text.clone(),
+                });
+            }
+        }
+        field.draw(p, x, y, w, h, frame);
+    }
+}
+
+/// The screen's scroll bars: the wheel over a bar's area steps it, a drag
+/// of its track moves it; a new value is told to the plugin, whose answer
+/// shows it.
+fn scroll_bars(
+    p: &mut Painter,
+    ctx: &ScreenCtx,
+    ui: &mut PluginUi,
+    screen: &torch_mod_api::Screen,
+    (left, top): (f32, f32),
+    events: &mut Vec<torch_mod_api::ScreenInput>,
+) {
+    if !ctx.input.left_down {
+        ui.drag = None;
+    }
+    for sb in &screen.scrolls {
+        let (x, y, w, h) = (
+            left + sb.x as f32,
+            top + sb.y as f32,
+            sb.width as f32,
+            sb.height as f32,
+        );
+        let max = sb.max.max(0);
+        let thumb = if sb.thumb_height > 0 {
+            sb.thumb_height as f32
+        } else {
+            15.0
+        };
+        let [ax, ay, aw, ah] = sb.area.unwrap_or([sb.x, sb.y, sb.width, sb.height]);
+        let over_area = ctx.hovering(left + ax as f32, top + ay as f32, aw as f32, ah as f32);
+        if ctx.input.left_click && ctx.hovering(x, y, w, h) && max > 0 {
+            ui.drag = Some(sb.id.clone());
+        }
+        let mut value = sb.value.clamp(0, max);
+        if ui.drag.as_deref() == Some(sb.id.as_str())
+            && let Some(m) = ctx.mouse()
+        {
+            let t = ((m.y - y - thumb / 2.0) / (h - thumb).max(1.0)).clamp(0.0, 1.0);
+            value = (t * max as f32).round() as i32;
+        } else if ctx.input.scroll != 0.0 && over_area {
+            value = (value - ctx.input.scroll.signum() as i32).clamp(0, max);
+        }
+        if value != sb.value.clamp(0, max) {
+            events.push(torch_mod_api::ScreenInput::Scroll {
+                id: sb.id.clone(),
+                value,
+            });
+        }
+        let at = if max > 0 {
+            (h - thumb) * sb.value.clamp(0, max) as f32 / max as f32
+        } else {
+            0.0
+        };
+        if sb.thumb.is_empty() {
+            let sprite = if max > 0 {
+                "container/creative_inventory/scroller"
+            } else {
+                "container/creative_inventory/scroller_disabled"
+            };
+            p.sprite(sprite, x, y + at, 12.0, thumb);
+        } else {
+            for b in &sb.thumb {
+                blit(p, b, (x, y + at));
+            }
+        }
+    }
 }
 
 fn blit(p: &mut Painter, b: &torch_mod_api::Blit, (left, top): (f32, f32)) {
