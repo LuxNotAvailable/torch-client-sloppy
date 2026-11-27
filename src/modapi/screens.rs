@@ -20,14 +20,15 @@ struct Open {
     kind: u32,
     extra: Vec<u8>,
     title: String,
-    /// The menu's data, slot count and GUI size the screen was asked with.
-    asked: Option<(Vec<i32>, usize, [i32; 2])>,
+    /// The menu's data, slot count, GUI size and player slots' start the
+    /// screen was asked with.
+    asked: Option<(Vec<i32>, usize, [i32; 2], Option<usize>)>,
     screen: Option<Arc<torch_mod_api::Screen>>,
 }
 
 impl Open {
     fn view(&self) -> Option<torch_mod_api::ScreenView> {
-        let (data, slots, window) = self.asked.clone().unwrap_or_default();
+        let (data, slots, window, player_start) = self.asked.clone().unwrap_or_default();
         Some(torch_mod_api::ScreenView {
             menu: crate::protocol::modded_menu(self.kind)?.to_owned(),
             title: self.title.clone(),
@@ -35,6 +36,7 @@ impl Open {
             data,
             slots,
             window,
+            player_start,
         })
     }
 }
@@ -58,8 +60,9 @@ pub(crate) fn take_open_data(window: i32) -> Option<Vec<u8>> {
 
 /// The plugin's screen for the open modded menu (`kind`, the server's
 /// menu type id), or `None` for the client's plain grid. Asks the plugin
-/// again when the menu's data, its slot count or the GUI's size change,
-/// or the plugin asked to be ([`refresh`]).
+/// again when the menu's data, its slot count, the GUI's size or where the
+/// player's slots start (`player`, once found) change, or the plugin asked
+/// to be ([`refresh`]).
 pub(crate) fn current(
     window: i32,
     kind: u32,
@@ -67,6 +70,7 @@ pub(crate) fn current(
     data: &[i32],
     slots: usize,
     gui: [i32; 2],
+    player: Option<usize>,
 ) -> Option<Arc<torch_mod_api::Screen>> {
     let mut guard = OPEN.lock();
     // New open data means a new open, even of a reused window id.
@@ -85,7 +89,7 @@ pub(crate) fn current(
         });
     }
     let open = guard.as_mut()?;
-    let inputs = (data.to_vec(), slots, gui);
+    let inputs = (data.to_vec(), slots, gui, player);
     let refresh = REFRESH.swap(false, std::sync::atomic::Ordering::Relaxed);
     if open.asked.as_ref() == Some(&inputs) && !refresh {
         return open.screen.clone();
@@ -154,6 +158,19 @@ pub(crate) fn player_start() -> Option<(i32, usize)> {
 pub(crate) fn reset() {
     OPEN_DATA.lock().clear();
     *OPEN.lock() = None;
+}
+
+/// Tests: `screen` as a plugin's answer for `window`, no GUI needed.
+#[cfg(test)]
+pub(crate) fn open_for_test(window: i32, screen: torch_mod_api::Screen) {
+    *OPEN.lock() = Some(Open {
+        window,
+        kind: 0,
+        extra: Vec::new(),
+        title: String::new(),
+        asked: None,
+        screen: Some(Arc::new(screen)),
+    });
 }
 
 #[cfg(test)]

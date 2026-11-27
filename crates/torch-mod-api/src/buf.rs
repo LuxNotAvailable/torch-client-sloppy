@@ -284,7 +284,9 @@ impl Writer {
 
     /// `writeBlockPos`: x, y and z packed in one long.
     pub fn block_pos(&mut self, [x, y, z]: [i32; 3]) -> &mut Self {
-        let v = ((i64::from(x) & 0x3FF_FFFF) << 38) | ((i64::from(z) & 0x3FF_FFFF) << 12) | (i64::from(y) & 0xFFF);
+        let v = ((i64::from(x) & 0x3FF_FFFF) << 38)
+            | ((i64::from(z) & 0x3FF_FFFF) << 12)
+            | (i64::from(y) & 0xFFF);
         self.i64(v)
     }
 
@@ -319,7 +321,13 @@ mod tests {
     #[test]
     fn writes_what_the_reader_reads() {
         let mut w = Writer::new();
-        w.varint(300).varint(-1).identifier("a:b").block_pos([-5, 64, 7]).bool(true).uuid(7 << 64 | 9).f32(1.5);
+        w.varint(300)
+            .varint(-1)
+            .identifier("a:b")
+            .block_pos([-5, 64, 7])
+            .bool(true)
+            .uuid(7 << 64 | 9)
+            .f32(1.5);
         let bytes = w.into_bytes();
         let mut r = Reader::new(&bytes);
         assert_eq!(r.varint(), Some(300));

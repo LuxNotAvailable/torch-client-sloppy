@@ -99,6 +99,15 @@ fn walk(text: &FormattedText, inherited: Style, out: &mut Vec<Span>, sink: &mut 
         FormattedText::Text(c) => {
             push_legacy(out, &c.text, style);
         }
+        // A key only the client's lang has (a mod's: a modded menu's
+        // title): azalea knows vanilla's alone.
+        FormattedText::Translatable(c)
+            if azalea_language::get(&c.key).is_none()
+                && crate::gui::tooltip::has_translation(&c.key) =>
+        {
+            let args: Vec<String> = c.args.iter().map(ToString::to_string).collect();
+            push_legacy(out, &crate::gui::tooltip::translate(&c.key, &args), style);
+        }
         FormattedText::Translatable(c) => match c.read() {
             Ok(read) => {
                 push_legacy(out, &read.text, style);
@@ -197,5 +206,25 @@ impl Sink<'_> {
                 Hover::Lines(lines)
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A key azalea doesn't know but the client's lang has (a mod menu's
+    /// title, here one of the client's own strings) is translated.
+    #[test]
+    fn keys_only_the_client_knows_are_translated() {
+        let text = FormattedText::Translatable(
+            azalea_chat::translatable_component::TranslatableComponent::new(
+                "torch.accountlist.offline_account".into(),
+                vec![],
+            ),
+        );
+        let spans = to_spans(&text);
+        let joined: String = spans.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(joined, "Offline Account");
     }
 }

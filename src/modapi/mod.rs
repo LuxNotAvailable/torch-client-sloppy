@@ -693,6 +693,7 @@ mod tests {
             data: vec![50, 100],
             slots: 38,
             window: [427, 240],
+            player_start: Some(2),
         };
         let input = serde_json::to_vec(&view).unwrap();
         let screen = runtime.screen(&input).unwrap().unwrap();

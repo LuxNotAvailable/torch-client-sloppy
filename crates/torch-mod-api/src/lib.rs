@@ -688,6 +688,13 @@ pub struct ScreenView {
     /// screens that size themselves to it (a tall storage) read it.
     #[serde(default)]
     pub window: [i32; 2],
+    /// Where the player's 36 slots start among `slots`, once the client
+    /// has found them by matching the inventory (`None` until then). Slots
+    /// before it are the menu's own; those after the player's are more of
+    /// its own (Sophisticated's upgrades). Lay the screen out from this,
+    /// not from `slots - 36`.
+    #[serde(default)]
+    pub player_start: Option<usize>,
 }
 
 /// A menu screen: Java's `AbstractContainerScreen`. Coordinates are GUI
@@ -704,8 +711,10 @@ pub struct Screen {
     /// border), by slot index; `null` hides one (an inactive slot).
     #[serde(default)]
     pub slots: Vec<Option<[i32; 2]>>,
-    /// Where the player's 36 slots start among the menu's; the last 36
-    /// when left out.
+    /// Where the player's 36 slots start among the menu's, for a menu
+    /// whose player slots the client can't find by matching (an empty
+    /// inventory): the client's match wins when it has one
+    /// ([`ScreenView::player_start`]). The last 36 when left out.
     #[serde(default)]
     pub player_start: Option<usize>,
     /// `titleLabelX`/`Y`; `[8, 6]` when left out.
@@ -1466,7 +1475,11 @@ mod tests {
             })
         );
         assert_eq!(player.off_hand, None);
-        let entity = serde_json::to_value(Hit::Entity { id: 7, at: [0.0; 3] }).unwrap();
+        let entity = serde_json::to_value(Hit::Entity {
+            id: 7,
+            at: [0.0; 3],
+        })
+        .unwrap();
         assert_eq!(entity["kind"], "entity");
     }
 

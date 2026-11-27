@@ -129,12 +129,15 @@ can't depend on position or time, since the answer is kept per state.
 
 `screen` is Java's `MenuScreens.register` plus the screen class. It gets a
 `ScreenView` (`{"menu": ..., "title": ..., "extra": [...], "data": [...],
-"slots": 38, "window": [427, 240]}`): `extra` is the data NeoForge opened
+"slots": 38, "window": [427, 240], "player_start": 2}`): `extra` is the data NeoForge opened
 the menu with (the buffer the mod's `IContainerFactory` reads, often a
 block position; read it with `buf::Reader`), `data` the menu's
 `ContainerData` slots by index (32; unsent ones read 0), `slots` how many
 slots the server sent, `window` the GUI's size in GUI pixels (Java's
-`getGuiScaledWidth`/`Height`, for screens that fit themselves to it). It
+`getGuiScaledWidth`/`Height`, for screens that fit themselves to it),
+`player_start` where the client found the player's 36 slots by matching
+the inventory (`null` until it has; a menu may have slots after them, as
+Sophisticated's upgrades, so lay out from it, not `slots - 36`). It
 is asked again when any of those change, or when a payload's `Redraw`
 says `screen` (state the server sent). It answers a
 `Screen`, an `AbstractContainerScreen` in GUI pixels from its top left:
@@ -148,7 +151,9 @@ says `screen` (state the server sent). It answers a
 - `slots`: each menu slot's `x`, `y` (`Slot.x`/`y`) by slot index; `null`
   hides one. Player slots left off the end sit where vanilla puts them:
   the main rows from `x` 8, `y` `height - 82`, the hotbar 58 lower.
-  `player_start`: where the player's 36 start, when not last.
+  `player_start`: where the player's 36 start, used only when the client
+  found none (its match wins: a wrong start would sync the wrong slots
+  into the inventory).
 - `buttons`: `addRenderableWidget`'s buttons, drawn over the background
   and under the slots: `id` (the plugin's), `x`, `y`, `width`, `height`,
   and a `look` (blits; with none, vanilla's button showing `label`),

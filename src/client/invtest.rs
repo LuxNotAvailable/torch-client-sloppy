@@ -456,6 +456,19 @@ fn inventory_matches_a_neoforge_server() {
     // A leather backpack: 27 storage slots, the player's 36, its upgrade.
     open_backpack();
     wait_backpack(27);
+    // A plugin's screen counting the player's slots from the end (28, past
+    // the upgrade): the client's match must win, or the wrong slots sync
+    // into the inventory (the in-game bug of 2026-11-27).
+    let inv = inventory();
+    crate::modapi::screens::open_for_test(
+        inv.id,
+        torch_mod_api::Screen {
+            player_start: Some(inv.menu().len() - 36),
+            ..Default::default()
+        },
+    );
+    std::thread::sleep(Duration::from_millis(500));
+    wait_backpack(27);
     eventually(
         "the backpack shows the inventory",
         Duration::from_secs(5),
@@ -493,6 +506,7 @@ fn inventory_matches_a_neoforge_server() {
         click(free);
     }
     close();
+    crate::modapi::screens::reset();
     agrees(&mut server, "three stacks put in the backpack");
 
     open_backpack();

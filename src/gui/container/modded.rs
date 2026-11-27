@@ -107,9 +107,8 @@ fn plain_layout(count: usize, player: Option<usize>) -> Placed {
 /// Slot positions from a plugin's screen. Player slots it leaves out sit
 /// where vanilla menus put them: from x 8, y `height - 82`.
 fn screen_layout(screen: &torch_mod_api::Screen, count: usize, found: Option<usize>) -> Placed {
-    let player = screen
-        .player_start
-        .unwrap_or_else(|| player_start(count, found));
+    // azalea's match first: the plugin's start only fills in for none.
+    let player = player_start(count, found.or(screen.player_start));
     let inv = (8.0, screen.height as f32 - 82.0);
     let slots = (0..count)
         .map(|i| match screen.slots.get(i) {
@@ -139,8 +138,15 @@ pub fn draw(
     let data: Vec<i32> = snap.container_data.iter().map(|v| i32::from(*v)).collect();
     let count = snap.menu_slots.len();
     let gui = [ctx.vw as i32, ctx.vh as i32];
-    let screen =
-        crate::modapi::screens::current(snap.container_id, kind, &title, &data, count, gui);
+    let screen = crate::modapi::screens::current(
+        snap.container_id,
+        kind,
+        &title,
+        &data,
+        count,
+        gui,
+        snap.container_player_start,
+    );
     *PLACED.write() = match &screen {
         Some(screen) => screen_layout(screen, count, snap.container_player_start),
         None => plain_layout(count, snap.container_player_start),

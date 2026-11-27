@@ -1394,25 +1394,30 @@ pub(crate) fn handle_tick(bot: &Client, shared: &Arc<SharedMutex>) {
         }
     }
 
-    // A mod screen saying where its menu's player slots start.
+    // A mod screen saying where its menu's player slots start: only where
+    // azalea's match found none once the contents came. A plugin can't
+    // count slots after the player's (Sophisticated's upgrades), and a wrong
+    // start syncs the wrong slots into the inventory.
     if let Some((window, start)) = crate::modapi::screens::player_start() {
         let mut ecs = bot.ecs.write();
         if let Some(mut inv) = ecs.get_mut::<azalea::entity::inventory::Inventory>(bot.entity)
             && inv.id == window
-            && let Some(azalea_inventory::Menu::Modded { player, .. }) = inv.container_menu.as_mut()
-            && *player != Some(start)
+            && let Some(azalea_inventory::Menu::Modded { slots, player, .. }) =
+                inv.container_menu.as_mut()
+            && player.is_none()
+            && slots.iter().any(|s| s.is_present())
+            && start + 36 <= slots.len()
         {
             *player = Some(start);
         }
     }
-    // Where a mod menu's player slots sit (azalea's match), for its screen.
+    // Where a mod menu's player slots sit (azalea's match), for its screen;
+    // `None` while unknown (the last 36).
     let player_start = {
         let ecs = bot.ecs.read();
         ecs.get::<azalea::entity::inventory::Inventory>(bot.entity)
             .and_then(|inv| match &inv.container_menu {
-                Some(menu @ azalea_inventory::Menu::Modded { .. }) => {
-                    Some(*menu.player_slots_range().start())
-                }
+                Some(azalea_inventory::Menu::Modded { player, .. }) => *player,
                 _ => None,
             })
     };
