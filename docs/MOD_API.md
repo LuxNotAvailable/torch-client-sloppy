@@ -146,9 +146,9 @@ says `screen` (state the server sent). It answers a
   (`mymod:textures/gui/sprites/arrow.png`). Progress bars are blits sized
   from `data`, as `renderBg` computes them.
 - `slots`: each menu slot's `x`, `y` (`Slot.x`/`y`) by slot index; `null`
-  hides one. Player slots left off the end sit where vanilla puts them (8
-  across, `height - 82` down). `player_start`: where the player's 36 start,
-  when not last.
+  hides one. Player slots left off the end sit where vanilla puts them:
+  the main rows from `x` 8, `y` `height - 82`, the hotbar 58 lower.
+  `player_start`: where the player's 36 start, when not last.
 - `buttons`: `addRenderableWidget`'s buttons, drawn over the background
   and under the slots: `id` (the plugin's), `x`, `y`, `width`, `height`,
   and a `look` (blits; with none, vanilla's button showing `label`),
@@ -211,7 +211,9 @@ sends with `PacketDistributor.sendToServer` a plugin sends with
 `host::send_to_server(channel, body)`, writing the body with
 `torch_mod_api::buf::Writer` as the payload's `StreamCodec` writes it.
 A plugin may send on its own namespace's channels and on its `channels`;
-packets go out on the next client tick, in order.
+a library mod's channel (`sophisticatedcore:transfer_items` from the
+backpacks plugin) goes in `channels`. Packets go out on the next client
+tick, in order.
 
 Planned for later versions: HUD elements, item renderers.
 

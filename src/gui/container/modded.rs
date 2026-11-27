@@ -105,7 +105,7 @@ fn plain_layout(count: usize, player: Option<usize>) -> Placed {
 }
 
 /// Slot positions from a plugin's screen. Player slots it leaves out sit
-/// where vanilla menus put them: 8 across, `height - 82` down.
+/// where vanilla menus put them: from x 8, y `height - 82`.
 fn screen_layout(screen: &torch_mod_api::Screen, count: usize, found: Option<usize>) -> Placed {
     let player = screen
         .player_start
