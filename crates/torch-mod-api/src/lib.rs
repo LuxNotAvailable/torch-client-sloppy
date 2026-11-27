@@ -41,8 +41,9 @@ pub struct Registration {
     /// ([`Plugin::entity`]).
     #[serde(default)]
     pub entities: Vec<String>,
-    /// The mod's own packet channels (`mymod:sync_state`) this plugin
-    /// reads ([`Plugin::payload`]).
+    /// Packet channels this plugin reads ([`Plugin::payload`]) or sends on
+    /// outside its own namespace (a library mod's,
+    /// `sophisticatedcore:transfer_items`).
     #[serde(default)]
     pub channels: Vec<String>,
     /// Menu type ids (`mymod:press`) whose screens this plugin draws
